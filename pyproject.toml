@@ -47,7 +47,9 @@ dependencies = [
 
 [project.optional-dependencies]
 server = [
-    "fastapi>=0.111.0",
+    # 0.132.0: strict_content_type (default on) -- a body without a JSON
+    # Content-Type is not parsed as JSON for a handler.
+    "fastapi>=0.132.0",
     "uvicorn[standard]>=0.30.1",
     "slowapi>=0.1.9",
     # Used directly by pyrite/server/auth_rate_limit.py (slowapi depends on it too).

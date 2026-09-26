@@ -460,17 +460,15 @@ def test_read_tier_operator_key_gets_the_same_refusal_for_missing_and_existing_r
 
 
 # ---------------------------------------------------------------------------
-# A KB named in a body that is not declared JSON never reaches a handler
+# A KB named in a body that is not declared JSON is still checked
 # ---------------------------------------------------------------------------
 
 
-def test_json_body_without_content_type_never_reaches_the_handler(env):
-    """`_resolve_kb_names` reads a body's KB only when the request says it is
-    JSON (`_has_json_body`). That is sound only because FastAPI, with
-    `strict_content_type` (default True), also refuses to parse such a body
-    for the handler: the guard sees no KB, but the handler never runs.
-    If that default ever changed, this request would write into a private
-    KB past a guard that checked only the caller's global role."""
+def test_json_body_without_content_type_is_checked_by_the_guard(env):
+    """`_resolve_kb_names` reads the body whatever its Content-Type, so
+    the private KB named in an undeclared body is refused by the guard itself
+    -- the same 404 as a declared one -- instead of depending on FastAPI's
+    `strict_content_type` to keep the body from the handler."""
     import json
 
     client = _as(env, "alice")
@@ -479,13 +477,8 @@ def test_json_body_without_content_type_never_reaches_the_handler(env):
         content=json.dumps({"kb": PRIVATE, "title": "Smuggled", "body": "x"}).encode(),
     )
     assert "content-type" not in {k.lower() for k in r.request.headers}
-    # FastAPI's own body-validation refusal, raised before the handler runs --
-    # not a 422 the handler produced after receiving the KB.
-    assert r.status_code == 422, r.text
-    detail = r.json().get("detail")
-    assert isinstance(detail, list) and detail[0]["loc"] == ["body"], (
-        f"the body reached the handler: {r.text}"
-    )
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"]["code"] == "KB_NOT_FOUND", r.text
     assert not list((env["tmp"] / PRIVATE).rglob("*.md")), "a file was written"
     assert (
         env["db"].execute_sql(

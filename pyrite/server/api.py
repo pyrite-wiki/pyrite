@@ -618,17 +618,22 @@ async def _resolve_kb_names(request: Request) -> list[str]:
     Order is preserved and duplicates removed, so the first value is still
     a sensible single name for an error message.
 
-    Raises `_UnparseableBodyError` when a **JSON** body cannot be parsed:
-    "no KB named" is what lets a request through, so a body that was
-    supposed to carry a KB and could not be read must not produce it.
+    Raises `_UnparseableBodyError` when a body cannot be read or parsed:
+    "no KB named" is what lets a request through, so a body that could carry
+    a KB and could not be read must not produce it.
 
-    A body of any other content type is not read at all. Only a JSON object
-    can name a KB the way this resolver understands, and a multipart upload
-    (`/api/entries/import` binds `UploadFile = File(...)`) is consumed as a
-    stream by FastAPI, so reading it here raises
-    `RuntimeError("Stream consumed")` -- which is neither a malformed body
-    nor an attack, and those routes name their KB in the query string
-    anyway.
+    **The body is read whatever its Content-Type says**. The guard must
+    see every body the handler could bind, and whether a handler binds a
+    body as JSON is FastAPI's decision, not this resolver's: before 0.132
+    FastAPI parsed a body with *no* Content-Type as JSON, and any version may
+    draw that line differently. The KBs checked must be the KBs the handler
+    acts on, so every non-form body is parsed here, and one that does not
+    parse is refused.
+
+    Only a form body is left unread: `/api/entries/import` binds
+    `UploadFile = File(...)`, which FastAPI consumes as a stream (reading it
+    here raises `RuntimeError("Stream consumed")`), and FastAPI never binds a
+    form as JSON. Those routes name their KB in the query string.
     """
     names: list[str] = []
 
@@ -644,10 +649,12 @@ async def _resolve_kb_names(request: Request) -> list[str]:
         add(request.path_params.get(param))
     add(_admin_kb_path_name(request))
 
+    # Every value of a repeated parameter, not just the one FastAPI binds.
     for param in KB_PARAM_NAMES:
-        add(request.query_params.get(param))
+        for value in request.query_params.getlist(param):
+            add(value)
 
-    if not _has_json_body(request):
+    if _is_form_body(request):
         return names
 
     try:
@@ -670,16 +677,24 @@ async def _resolve_kb_names(request: Request) -> list[str]:
     return names
 
 
-def _has_json_body(request: Request) -> bool:
-    """Could this request's body be a JSON object naming a KB?
+_FORM_MEDIA_TYPES = frozenset({"multipart/form-data", "application/x-www-form-urlencoded"})
 
-    Anything else -- a multipart upload, a form post, no body at all -- is
-    left unread. The KB in those cases is in the path or the query, which
-    the caller has already collected.
+
+def _is_form_body(request: Request) -> bool:
+    """Is this request's body a form, which FastAPI never binds as JSON?
+
+    Parsed the way FastAPI parses the header (`email.message`), so the two
+    cannot disagree about what the media type is. Everything else -- JSON,
+    no Content-Type, text, an unknown type -- is read by the resolver.
     """
-    content_type = request.headers.get("content-type", "")
-    media_type = content_type.split(";", 1)[0].strip().lower()
-    return media_type == "application/json" or media_type.endswith("+json")
+    import email.message
+
+    content_type = request.headers.get("content-type")
+    if not content_type:
+        return False
+    message = email.message.Message()
+    message["content-type"] = content_type
+    return message.get_content_type() in _FORM_MEDIA_TYPES
 
 
 def _admin_kb_path_name(request: Request) -> str | None:
@@ -925,10 +940,10 @@ def requires_kb_tier(tier: str, *, resolve_kb=None):
     - ``requires_kb_tier("write")`` -- the KB is the one the **request names**
       (`kb`/`kb_name`/... in path, query or JSON body; every value is
       checked, so naming a writable KB beside a private one buys nothing).
-      A route using this form must declare a KB-bearing parameter:
-      `tests/test_kb_write_guard_is_structural.py` fails otherwise, because
-      a request that names no KB falls back to the caller's *global* role,
-      which is never enough for a KB-scoped write.
+      A route using this form must declare a KB-bearing parameter
+      (`tests/test_kb_write_guard_is_structural.py`), and a request that
+      names no KB is refused (422 `KB_REQUIRED`): the caller's *global* role
+      is never enough for a KB-scoped write.
     - ``requires_kb_tier("write", resolve_kb=dep)`` -- for a route that
       changes a row by id and names no KB. `dep` is a FastAPI dependency that
       looks the row up and returns a `RowKB`; the rule is applied to the
@@ -982,10 +997,14 @@ def requires_kb_tier(tier: str, *, resolve_kb=None):
             ) from None
 
         if not kb_names:
-            # Only reachable on a route the structural test would reject: no
-            # KB-bearing parameter, so the global role is all there is.
-            _enforce_tier(principal, tier)
-            return
+            # A KB-scoped write that names no KB has nothing to be authorised
+            # against. It is refused -- never checked against the caller's
+            # global role, which says nothing about the KB the handler would
+            # then act on.
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "KB_REQUIRED", "message": "This write must name a knowledge base"},
+            )
 
         for kb_name in kb_names:
             await _enforce_kb_tier(request, config, db, kb_name, tier, kb_not_found(kb_name))
