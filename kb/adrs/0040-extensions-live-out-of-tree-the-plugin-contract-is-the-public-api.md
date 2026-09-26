@@ -4,7 +4,7 @@ title: Extensions live out of tree; the plugin contract is the public API
 type: adr
 importance: 5
 adr_number: 40
-status: proposed
+status: accepted
 date: '2026-09-26'
 tags: [architecture, plugins, extensions, api, compatibility, testing]
 links:
@@ -408,32 +408,17 @@ CHANGELOG.md  LICENSE
 (L, Opus then Sonnet), the façade and kit (M, Opus). After them, each
 extension is one in-tree theme and one extraction theme.
 
-## Decisions for the maintainer
+## Decisions (maintainer, 2026-09-26: accepted with these)
 
-1. **A façade module (`pyrite.plugin_api`) or blessing the existing paths.**
-   The recommendation is the façade, because it is the only way to make
-   "everything else is internal" something a test can check.
-2. **cascade: move it out, or finish the absorption into JI and delete it.**
-   `kb/notes/remove-cascade-plugin.md` plans the deletion, and cascade is
-   deprecated as a site. The recommendation is to delete it rather than
-   extract it, because extraction would publish a package that exists only to
-   be removed.
-3. **An operator allowlist.** Add a `plugins: [..]` list to `config.yaml`
-   that narrows which installed plugins load, or rely on installation alone.
-   The recommendation is to add it and default it to "all installed", which
-   keeps today's behaviour.
-4. **zettelkasten.** Move it out, or keep it in tree as the second in-tree
-   plugin, since `pyrite init` and the web settings page offer it.
-5. **A canary job.** Core's nightly CI would install the latest release of
-   each published plugin and run its conformance test against `dev`. The
-   recommendation is yes: it is the only early warning core gets.
-6. **Where the plugins live.** The `pyrite-wiki` org, one repo per plugin,
-   published to PyPI under the existing `pyrite-<name>` distribution names.
-   A `pyrite[journalism]` extra in core would install the published package.
-7. **Contract versioning.** `PLUGIN_API_VERSION` separate from Pyrite's
-   version, or the Pyrite minor alone. The recommendation is separate. It is
-   cheap, and it lets core ship a minor without a contract change.
+1. **A façade module, `pyrite.plugin_api`.** Everything not exported there is internal. A snapshot test pins the contract.
+2. **cascade is deleted, not extracted.** Its remaining pieces are absorbed into journalism-investigation (`kb/notes/remove-cascade-plugin.md`).
+3. **An operator allowlist.** `plugins: [..]` in `config.yaml` narrows which installed plugins load, and defaults to all installed.
+4. **zettelkasten moves out after journalism-investigation, not first.** It stays in tree as the reference example until the template repo exists and `pyrite init` can install it on demand, or through `pyrite[zettelkasten]`.
+5. **A nightly canary job**, running each published plugin's conformance test against `dev`.
+6. **The plugins live in the `pyrite-wiki` org,** one repo per plugin, on PyPI under the existing `pyrite-<name>` names. Core gets a `pyrite[journalism]` extra.
+7. **A separate `PLUGIN_API_VERSION`.** Core minors ship without a contract change.
 
+**Sequencing.** Themes 1–4 (the façade, plugin wiring, context services and the conformance kit) are 0.27 core work, after G1. They are worth doing even if nothing moves. Theme 3 fixes #94 and #92. Extracting journalism-investigation is the last step of 0.27.
 ---
 
 <small>Inventory commands, run in a worktree at `dev` 4f72d76e. Imports: an
