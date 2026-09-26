@@ -562,9 +562,15 @@ class PyriteConfig:
         Config.yaml KBs always take precedence. DB KBs are available via get_kb()
         but don't appear in knowledge_bases (so seed_from_config won't re-register them).
 
+        A row the loader now refuses leaves the lookup. The new lookup is
+        built aside and swapped in with one assignment, so a reader on
+        another thread sees the old one or the new one -- never a KB missing
+        mid-update, never a dict changing size under ``all_kbs()``.
+
         Args:
             db_kbs: List of dicts with keys: name, path, kb_type, description
         """
+        new = dict(self._db_kb_cache)
         added = 0
         for kb_data in db_kbs:
             name = kb_data.get("name", "")
@@ -572,25 +578,40 @@ class PyriteConfig:
                 continue
             kb = self.kb_config_from_registry_row(kb_data)
             if kb is None:
+                new.pop(name, None)
                 continue
-            self._db_kb_cache[name] = kb
+            new[name] = kb
             added += 1
+        self._db_kb_cache = new
         return added
 
     def forget_db_kb(self, name: str) -> None:
-        """Drop a registry KB from the fallback lookup.
+        """Drop a registry KB from the fallback lookup (a removed KB).
 
-        The registry's write paths call this (and `register_db_kbs` again,
-        for a row that still exists) so that `get_kb`, `all_kbs` and the
-        access policy never read a row older than the index's: the cache was
-        once filled at startup and never refreshed, and a KB an admin closed
-        stayed public until a restart.
+        Copy, then swap: see `register_db_kbs`.
         """
-        self._db_kb_cache.pop(name, None)
+        if name in self._db_kb_cache:
+            new = dict(self._db_kb_cache)
+            del new[name]
+            self._db_kb_cache = new
 
-    def defined_in_config(self, name: str) -> bool:
-        """Is `name` a KB of config.yaml (not only of the index's registry)?"""
-        return name in self._kb_by_name
+    def server_written_kb(self, name: str) -> KBConfig | None:
+        """A config.yaml KB the server added itself (ephemeral or
+        repo-subscribed), whose entry the server may rewrite; else None."""
+        kb = self._kb_by_name.get(name)
+        if kb is not None and (kb.ephemeral or kb.repo):
+            return kb
+        return None
+
+    def default_role_is_hand_written(self, name: str) -> bool:
+        """Does an operator's own config.yaml entry set this KB's policy?
+
+        True for a KB of config.yaml that the server did not add itself: an
+        ephemeral KB and a repo-subscribed KB are written there by the
+        server, which manages their policy too.
+        """
+        kb = self._kb_by_name.get(name)
+        return kb is not None and not kb.ephemeral and not kb.repo
 
     def get_kb_by_shortname(self, shortname: str) -> KBConfig | None:
         """Get a KB by its shortname alias."""

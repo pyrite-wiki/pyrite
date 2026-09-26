@@ -27,6 +27,9 @@ class KBInfo(BaseModel):
     last_indexed: str | None = None
     shortname: str | None = None
     default_role: str | None = None
+    #: False for a KB whose default_role an operator set by hand in
+    #: config.yaml: `PUT /api/kbs/{name}/default-role` refuses it there.
+    default_role_editable: bool = True
 
 
 class KBListResponse(BaseModel):

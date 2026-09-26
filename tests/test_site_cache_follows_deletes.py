@@ -169,9 +169,10 @@ class TestDeleteRemovesThePage:
         assert (env["tmp"] / "index.db").is_file()
         assert (env["cache"] / KB / "keep.html").is_file()
 
-    def test_a_delete_in_a_kb_that_is_no_longer_public_renders_nothing_for_it(self, env):
+    def test_refreshing_a_kb_that_is_no_longer_public_renders_nothing_for_it(self, env):
         """The KB closed since the last render (config.yaml edited, server
-        restarted): the delete must not re-render the closed KB's index."""
+        restarted): refreshing its stale index must not render the closed
+        KB's pages; it drops them."""
         db = env["db"]
         db.upsert_entry(_entry("keep", "Keep"))
         db.upsert_entry(_entry("gone", "Gone"))
@@ -180,4 +181,35 @@ class TestDeleteRemovesThePage:
         env["config"].get_kb(KB).default_role = "none"
         db.delete_entry("gone", KB)
         svc.invalidate_entry("gone", KB)
+        svc.refresh_kb_index(KB)
         assert not (env["cache"] / KB).exists()
+
+    def test_a_bulk_delete_renders_no_index_per_entry(self, env, monkeypatch):
+        """Each delete removes its page and marks the KB; the index pages are
+        rendered once, on the next visit, and are correct then."""
+        client = TestClient(create_app(config=env["config"]))
+        titles = [f"Bulk {i}" for i in range(5)]
+        for title in ["Stays Here", *titles]:
+            r = client.post("/api/entries", json={"kb": KB, "title": title}, headers=ADMIN)
+            assert r.status_code == 200, r.text
+        assert client.post("/api/site/render", headers=ADMIN).status_code == 200
+
+        renders = []
+        real = SiteCacheService._render_kb_index
+        monkeypatch.setattr(
+            SiteCacheService,
+            "_render_kb_index",
+            lambda self, *a, **k: (renders.append(1), real(self, *a, **k))[1],
+        )
+        for i in range(5):
+            r = client.delete(f"/api/entries/bulk-{i}", params={"kb": KB}, headers=ADMIN)
+            assert r.status_code == 200, r.text
+            assert client.get(f"/site/{KB}/bulk-{i}").status_code == 404
+        assert renders == []
+
+        index = client.get(f"/site/{KB}").text
+        assert renders == [1]
+        assert "Stays Here" in index
+        assert not any(t in index for t in titles)
+        client.get(f"/site/{KB}")
+        assert renders == [1], "a fresh index is not rendered again"

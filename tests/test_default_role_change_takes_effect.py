@@ -212,9 +212,10 @@ class TestRemovingARegistryKB:
 
 
 class TestALandingRenderedUnderAnOlderPolicy:
-    """The landing is withheld while it lists a KB that is not public now,
+    """A landing that lists a KB not public now is never served as it is,
     whatever path closed the KB -- here config.yaml edited and the server
-    restarted, which no endpoint sees (A6-F6)."""
+    restarted, which no endpoint sees (A6-F6). Nor does the site go dark:
+    the landing is rendered again on the request that finds it stale."""
 
     def test_a_kb_closed_outside_the_endpoint_leaves_the_landing(self, world):
         c = world["client"]
@@ -223,14 +224,36 @@ class TestALandingRenderedUnderAnOlderPolicy:
         world["config"].get_kb(YAML_KB).default_role = "none"
         r = c.get("/site")
         assert YAML_KB not in r.text
-        assert r.headers["X-Pyrite-Cache"] == "MISS"
+        assert r.headers["X-Pyrite-Cache"] == "HIT"
+        assert USER_KB in r.text
 
-    def test_a_landing_with_no_manifest_is_withheld(self, world):
-        """A landing rendered by an earlier version carries no manifest."""
+    def test_a_cache_from_before_the_manifest_is_rendered_not_darkened(self, world):
+        """Upgrading: a landing rendered by an earlier version carries no
+        manifest. The first visit renders it; the site stays up."""
         c = world["client"]
         _render(c)
-        (world["tmp"] / "site-cache" / ".landing-kbs.json").unlink(missing_ok=True)
-        assert c.get("/site").headers["X-Pyrite-Cache"] == "MISS"
+        manifest = world["tmp"] / "site-cache" / ".landing-kbs.json"
+        manifest.unlink()
+        r = c.get("/site")
+        assert r.headers["X-Pyrite-Cache"] == "HIT"
+        assert USER_KB in r.text and YAML_KB in r.text
+        assert manifest.is_file()
+
+    def test_a_landing_that_cannot_be_rendered_again_is_withheld(self, world, monkeypatch):
+        """Fail closed: if the re-render fails, the stale page is not served."""
+        from pyrite.services.site_cache import SiteCacheService
+
+        c = world["client"]
+        _render(c)
+        world["config"].get_kb(YAML_KB).default_role = "none"
+
+        def broken(self):
+            raise OSError("read-only cache")
+
+        monkeypatch.setattr(SiteCacheService, "render_landing", broken)
+        r = c.get("/site")
+        assert YAML_KB not in r.text
+        assert r.headers["X-Pyrite-Cache"] == "MISS"
 
     @pytest.mark.control(reason="a current landing was always served")
     def test_a_current_landing_is_served(self, world):

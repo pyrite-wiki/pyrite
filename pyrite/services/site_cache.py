@@ -56,6 +56,48 @@ def landing_is_current(cache_dir: Path, public: set[str]) -> bool:
     return isinstance(names, list) and all(isinstance(n, str) and n in public for n in names)
 
 
+#: In a KB's cache directory: an entry was deleted since its index pages were
+#: rendered. `/site` renders them again before serving them
+#: (`SiteCacheService.refresh_kb_index`); a full render clears it too.
+INDEX_STALE = ".index-stale"
+
+
+def kb_index_is_current(cache_dir: Path, kb_name: str) -> bool:
+    return not (cache_dir / kb_name / INDEX_STALE).exists()
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    """Write a page a concurrent request may be reading: never half-written."""
+    import os
+    import tempfile
+
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def drop_kb_site_pages(config: PyriteConfig, db: PyriteDB, kb_name: str) -> None:
+    """Remove a KB's pre-rendered `/site` pages and re-render the landing
+    from the KBs public now (P-S3, P-F6). Every path that changes a KB's
+    policy or removes a KB calls this, so the landing never lists a KB that
+    is gone -- which would withhold it (`landing_is_current`).
+
+    Best effort: `/site` refuses a KB that is not public on every request
+    and re-renders a stale landing on demand; this takes the pages off the
+    disk. A failure (an unreadable branding.yaml, a read-only cache) is
+    logged and never undoes the write it follows.
+    """
+    try:
+        SiteCacheService(config, db).invalidate_kb(kb_name)
+    except Exception:
+        logger.warning("Could not drop the /site pages of KB %r", kb_name, exc_info=True)
+
+
 def _remove_path(path: Path) -> None:
     """Remove a file, a symlink or a directory tree; never follow a link."""
     if path.is_symlink() or path.is_file():
@@ -299,19 +341,30 @@ class SiteCacheService:
         return self.cache_dir / kb_name
 
     def invalidate_entry(self, entry_id: str, kb_name: str) -> None:
-        """Remove a deleted entry's page, and re-render the pages that list it.
+        """Take a deleted entry off the site: its page goes now; the pages
+        that list it are marked stale.
 
         The page is found by the name the renderer writes
         (`sanitize_filename`), so it is the page that is removed and nothing
-        outside the KB's directory can be. The KB's index and browse pages
-        and the landing's count are rendered again from the index, if the KB
-        is public and was rendered; nothing is created for a site that was
-        never rendered.
+        outside the KB's directory can be. Re-rendering the KB's index here
+        made a bulk delete cost a full index render per entry; instead the
+        KB is marked (`INDEX_STALE`) and `/site` renders its index once, on
+        the next visit (`refresh_kb_index`), or the next full render does.
+        Nothing is created for a KB that was never rendered.
         """
         kb_dir = self._kb_dir(kb_name)
         if kb_dir is None or not kb_dir.is_dir() or kb_dir.is_symlink():
             return
         (kb_dir / f"{sanitize_filename(entry_id)}.html").unlink(missing_ok=True)
+        (kb_dir / INDEX_STALE).touch()
+
+    def refresh_kb_index(self, kb_name: str) -> None:
+        """Render a KB's index and browse pages again from the index, and the
+        landing's counts, and clear the KB's stale mark. A KB that is not
+        public now loses its pages instead."""
+        kb_dir = self._kb_dir(kb_name)
+        if kb_dir is None or not kb_dir.is_dir() or kb_dir.is_symlink():
+            return
         if kb_name not in set(public_kb_names(self.config)):
             self.invalidate_kb(kb_name)
             return
@@ -325,8 +378,14 @@ class SiteCacheService:
         self._render_kb_index(kb_info, entries)
         self._render_paginated_index(kb_name, entries)
         self._prune_pages(kb_name, len(entries))
+        (kb_dir / INDEX_STALE).unlink(missing_ok=True)
         if (self.cache_dir / "index.html").is_file():
-            self._render_landing(self._public_kb_cards())
+            self.render_landing()
+
+    def render_landing(self) -> None:
+        """Render the landing page (and its manifest) from the KBs public now."""
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._render_landing(self._public_kb_cards())
 
     def invalidate_kb(self, kb_name: str) -> None:
         """Remove every cached page of a KB that stopped being public (or is
@@ -335,7 +394,7 @@ class SiteCacheService:
         if kb_dir is not None:
             _remove_path(kb_dir)
         if (self.cache_dir / "index.html").is_file():
-            self._render_landing(self._public_kb_cards())
+            self.render_landing()
 
     def _render_landing(self, kbs: list[dict]):
         """Render the /site landing page."""
@@ -376,10 +435,8 @@ class SiteCacheService:
         # is withheld (no manifest), so a crash between them never pairs a
         # page with a manifest that lists fewer KBs than the page shows.
         (self.cache_dir / LANDING_MANIFEST).unlink(missing_ok=True)
-        (self.cache_dir / "index.html").write_text(html, encoding="utf-8")
-        (self.cache_dir / LANDING_MANIFEST).write_text(
-            json.dumps([kb["name"] for kb in kbs]), encoding="utf-8"
-        )
+        _write_atomic(self.cache_dir / "index.html", html)
+        _write_atomic(self.cache_dir / LANDING_MANIFEST, json.dumps([kb["name"] for kb in kbs]))
 
     def _render_kb_index(self, kb: dict, entries: list[dict]):
         """Render a KB index page. Uses _homepage entry content if available."""
@@ -439,7 +496,7 @@ class SiteCacheService:
             canonical=f'<link rel="canonical" href="/site/{_esc(kb_name)}">',
             body=body,
         )
-        (self.cache_dir / kb_name / "index.html").write_text(html, encoding="utf-8")
+        _write_atomic(self.cache_dir / kb_name / "index.html", html)
 
     def _render_paginated_index(self, kb_name: str, entries: list[dict], page_size: int = 100):
         """Render paginated HTML index pages for crawlers and AI agents."""
@@ -516,7 +573,7 @@ class SiteCacheService:
                 canonical=f'<link rel="canonical" href="/site/{_esc(kb_name)}/page/{page_num}">',
                 body=body,
             )
-            (page_dir / f"{page_num}.html").write_text(html, encoding="utf-8")
+            _write_atomic(page_dir / f"{page_num}.html", html)
 
     def _render_entry(
         self,

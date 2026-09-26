@@ -3941,6 +3941,7 @@
       "kbs": [
         {
           "default_role": null,
+          "default_role_editable": false,
           "description": "",
           "entries": "<CONTENT_STATE>",
           "indexed": "<CONTENT_STATE>",
@@ -3953,6 +3954,7 @@
         },
         {
           "default_role": "none",
+          "default_role_editable": false,
           "description": "",
           "entries": "<CONTENT_STATE>",
           "indexed": "<CONTENT_STATE>",
@@ -3965,6 +3967,7 @@
         },
         {
           "default_role": "read",
+          "default_role_editable": false,
           "description": "",
           "entries": "<CONTENT_STATE>",
           "indexed": "<CONTENT_STATE>",
@@ -3977,6 +3980,7 @@
         },
         {
           "default_role": "read",
+          "default_role_editable": false,
           "description": "",
           "entries": "<CONTENT_STATE>",
           "indexed": "<CONTENT_STATE>",
@@ -3997,6 +4001,7 @@
       "kbs": [
         {
           "default_role": null,
+          "default_role_editable": false,
           "description": "",
           "entries": "<CONTENT_STATE>",
           "indexed": "<CONTENT_STATE>",
@@ -4009,6 +4014,7 @@
         },
         {
           "default_role": "none",
+          "default_role_editable": false,
           "description": "",
           "entries": "<CONTENT_STATE>",
           "indexed": "<CONTENT_STATE>",
@@ -4021,6 +4027,7 @@
         },
         {
           "default_role": "read",
+          "default_role_editable": false,
           "description": "",
           "entries": "<CONTENT_STATE>",
           "indexed": "<CONTENT_STATE>",
@@ -4033,6 +4040,7 @@
         },
         {
           "default_role": "read",
+          "default_role_editable": false,
           "description": "",
           "entries": "<CONTENT_STATE>",
           "indexed": "<CONTENT_STATE>",
@@ -4053,6 +4061,7 @@
       "kbs": [
         {
           "default_role": null,
+          "default_role_editable": false,
           "description": "",
           "entries": "<CONTENT_STATE>",
           "indexed": "<CONTENT_STATE>",
@@ -4065,6 +4074,7 @@
         },
         {
           "default_role": "none",
+          "default_role_editable": false,
           "description": "",
           "entries": "<CONTENT_STATE>",
           "indexed": "<CONTENT_STATE>",
@@ -4077,6 +4087,7 @@
         },
         {
           "default_role": "read",
+          "default_role_editable": false,
           "description": "",
           "entries": "<CONTENT_STATE>",
           "indexed": "<CONTENT_STATE>",
@@ -4089,6 +4100,7 @@
         },
         {
           "default_role": "read",
+          "default_role_editable": false,
           "description": "",
           "entries": "<CONTENT_STATE>",
           "indexed": "<CONTENT_STATE>",
@@ -4109,6 +4121,7 @@
       "kbs": [
         {
           "default_role": null,
+          "default_role_editable": false,
           "description": "",
           "entries": "<CONTENT_STATE>",
           "indexed": "<CONTENT_STATE>",
@@ -4121,6 +4134,7 @@
         },
         {
           "default_role": "none",
+          "default_role_editable": false,
           "description": "",
           "entries": "<CONTENT_STATE>",
           "indexed": "<CONTENT_STATE>",
@@ -4133,6 +4147,7 @@
         },
         {
           "default_role": "read",
+          "default_role_editable": false,
           "description": "",
           "entries": "<CONTENT_STATE>",
           "indexed": "<CONTENT_STATE>",
@@ -4145,6 +4160,7 @@
         },
         {
           "default_role": "read",
+          "default_role_editable": false,
           "description": "",
           "entries": "<CONTENT_STATE>",
           "indexed": "<CONTENT_STATE>",
@@ -4172,6 +4188,7 @@
   "GET /api/kbs/{kb_name} | write_key | no-default-role-kb": {
     "body": {
       "default_role": null,
+      "default_role_editable": false,
       "description": "",
       "entries": "<ENUMERATION_CONTENT>",
       "indexed": "<ENUMERATION_CONTENT>",
@@ -4188,6 +4205,7 @@
   "GET /api/kbs/{kb_name} | write_key | private-kb": {
     "body": {
       "default_role": "none",
+      "default_role_editable": false,
       "description": "",
       "entries": "<ENUMERATION_CONTENT>",
       "indexed": "<ENUMERATION_CONTENT>",
@@ -4204,6 +4222,7 @@
   "GET /api/kbs/{kb_name} | write_key | readable-kb": {
     "body": {
       "default_role": "read",
+      "default_role_editable": false,
       "description": "",
       "entries": "<ENUMERATION_CONTENT>",
       "indexed": "<ENUMERATION_CONTENT>",

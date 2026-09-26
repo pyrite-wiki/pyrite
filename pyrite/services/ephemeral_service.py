@@ -173,6 +173,9 @@ class EphemeralKBService:
         self._remove_dir(kb)
         self.config.remove_kb(kb.name)
         announce_kb_policy_change(kb.name)
+        from .site_cache import drop_kb_site_pages
+
+        drop_kb_site_pages(self.config, self.db, kb.name)
 
     def force_expire_kb(self, name: str) -> bool:
         """Force-expire a specific ephemeral KB. Returns True if removed."""

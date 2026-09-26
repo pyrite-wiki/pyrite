@@ -263,6 +263,8 @@ class RepoService:
         if not repo:
             return {"success": False, "error": f"Repo '{repo_name}' not found"}
 
+        from .site_cache import drop_kb_site_pages
+
         # Remove KBs associated with this repo -- but first make sure the
         # config save at the end will go through, before any row or clone is
         # deleted (#377).
@@ -274,6 +276,7 @@ class RepoService:
             self.config.forget_db_kb(kb_row["name"])
             self.db.unregister_kb(kb_row["name"])
             announce_kb_policy_change(kb_row["name"])
+            drop_kb_site_pages(self.config, self.db, kb_row["name"])
 
         # Remove workspace membership
         user = self.user_service.get_current_user()

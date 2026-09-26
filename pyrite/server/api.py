@@ -1462,8 +1462,30 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
     if dist_dir is None:
         dist_dir = Path(__file__).parent.parent.parent / "web" / "dist"
     # Always mount /site and /viewer routes (independent of SPA dist)
+    import threading
+
     from .static import mount_site_routes
 
+    site_refresh_lock = threading.Lock()
+
+    def _site_refresh(served_dir: Path, what: str, kb_name: str | None) -> None:
+        """Re-render a stale part of the /site cache (`static._refresh`).
+
+        One at a time: concurrent visitors to a stale page wait for one
+        render instead of each starting one. Only when the renderer writes
+        where /site serves from."""
+        from ..services.site_cache import SiteCacheService
+
+        with site_refresh_lock, _app_db().request_handle() as db:
+            svc = SiteCacheService(application.state.pyrite_config, db)
+            if svc.cache_dir.resolve() != served_dir.resolve():
+                return
+            if what == "landing":
+                svc.render_landing()
+            elif what == "kb_index" and kb_name:
+                svc.refresh_kb_index(kb_name)
+
+    application.state.site_refresh = _site_refresh
     mount_site_routes(application)
 
     # Mount SPA static files if dist directory exists

@@ -182,6 +182,20 @@ def mount_site_routes(app: FastAPI) -> None:
         config = getattr(request.app.state, "pyrite_config", None)
         return set(public_kb_names(config)) if config is not None else set()
 
+    async def _refresh(request: Request, what: str, kb_name: str | None) -> None:
+        """Re-render a stale part of the cache through the app's
+        ``site_refresh`` hook (set by ``create_app``), off the event loop.
+        A failure is logged; the caller then serves what the checks allow."""
+        from starlette.concurrency import run_in_threadpool
+
+        hook = getattr(request.app.state, "site_refresh", None)
+        if hook is None:
+            return
+        try:
+            await run_in_threadpool(hook, site_cache_dir, what, kb_name)
+        except Exception:
+            logger.warning("Could not re-render /site (%s %s)", what, kb_name or "", exc_info=True)
+
     def _csp(request: Request, response: Response) -> Response:
         # The built-in policy is already on the response; apply the
         # operator's `site_csp_extra`, read per request like _public().
@@ -239,6 +253,13 @@ def mount_site_routes(app: FastAPI) -> None:
     # Serve /site/* from pre-rendered cache
     @app.get("/site/{path:path}", include_in_schema=False)
     async def site_page(request: Request, path: str):
+        parts = path.rstrip("/").split("/")
+        public = _public(request)
+        if parts[0] in public and (len(parts) == 1 or parts[1] == "page"):
+            from ..services.site_cache import kb_index_is_current
+
+            if not kb_index_is_current(site_cache_dir, parts[0]):
+                await _refresh(request, "kb_index", parts[0])
         return _csp(
             request,
             _serve_site_cached(
@@ -251,6 +272,15 @@ def mount_site_routes(app: FastAPI) -> None:
 
     @app.get("/site", include_in_schema=False)
     async def site_index(request: Request):
+        from ..services.site_cache import landing_is_current
+
+        if (site_cache_dir / "index.html").is_file() and not landing_is_current(
+            site_cache_dir, _public(request)
+        ):
+            # A landing rendered under an older policy, or by a version that
+            # wrote no manifest (an upgrade): render it now rather than go
+            # dark. Withheld only if that fails.
+            await _refresh(request, "landing", None)
         return _csp(
             request,
             _serve_site_cached(
@@ -475,7 +505,8 @@ def _serve_site_cached(
         cache_path = cache_dir / "index.html"
         if not landing_is_current(cache_dir, public):
             # Rendered with a KB that is not public now (or by a version with
-            # no manifest): withheld until the next render, like a miss.
+            # no manifest), and re-rendering it on this request failed:
+            # withheld, like a miss.
             return HTMLResponse(
                 content=fallback_html,
                 headers={"X-Pyrite-Cache": "MISS", **SITE_SECURITY_HEADERS},
@@ -514,9 +545,10 @@ def _serve_site_cached(
             },
         )
 
-    if path and (cache_dir / path.split("/", 1)[0]).is_dir():
-        # The KB was rendered and this page is not in it: no such entry (a
-        # deleted one's page is removed), not a page still to be rendered.
+    if path:
+        # Below the landing a miss is 404, whatever the reason: a missing
+        # entry, a deleted one, or a public one not rendered yet must not
+        # answer differently from a private one.
         return _site_404()
 
     # Cache miss — return SPA fallback (client-side rendering)

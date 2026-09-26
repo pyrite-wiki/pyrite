@@ -20,6 +20,7 @@ from ..exceptions import (
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
 from .credential_events import announce_kb_policy_change
+from .site_cache import drop_kb_site_pages
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,7 @@ class KBRegistryService:
                 "indexed": bool(r.get("last_indexed")),
                 "last_indexed": r.get("last_indexed"),
                 "default_role": r.get("default_role"),
+                "default_role_editable": not self.config.default_role_is_hand_written(r["name"]),
             }
             if type_filter and kb_info["type"] != type_filter:
                 continue
@@ -135,6 +137,7 @@ class KBRegistryService:
             "indexed": bool(kb.last_indexed),
             "last_indexed": kb.last_indexed,
             "default_role": kb.default_role,
+            "default_role_editable": not self.config.default_role_is_hand_written(name),
         }
 
     def add_kb(
@@ -316,28 +319,33 @@ class KBRegistryService:
         self.db.unregister_kb(name)
         self.config.forget_db_kb(name)
         announce_kb_policy_change(name)
-        self._drop_site_pages(name)
+        drop_kb_site_pages(self.config, self.db, name)
         return True
 
     def update_kb(self, name: str, **updates: Any) -> dict[str, Any]:
         """Update KB metadata (description, kb_type, default_role).
 
         The change is visible to this process's config -- and so to the
-        access policy and every anonymous surface -- when this returns. A
-        ``default_role`` change on a config.yaml KB is refused
-        (`KBDefinedInConfigError`): config.yaml, not the row, is that KB's
-        policy, so the write would change nothing.
+        access policy and every anonymous surface -- when this returns.
+
+        ``default_role`` has one source of truth per KB. A registry KB's is
+        its row. A KB the server itself wrote into config.yaml (ephemeral,
+        repo-subscribed) has its entry there, which the server rewrites with
+        the row. A KB an operator wrote into config.yaml by hand is theirs:
+        the change is refused (`KBDefinedInConfigError`, naming the file)
+        rather than reported as done and overridden by the file.
         """
+        from ..config import current_config_file, save_config
         from ..storage.models import KB
 
         kb = self.db.session.get(KB, name)
         if not kb:
             raise KBNotFoundError(f"KB '{name}' not found")
 
-        if "default_role" in updates and self.config.defined_in_config(name):
+        if "default_role" in updates and self.config.default_role_is_hand_written(name):
             raise KBDefinedInConfigError(
-                f"KB '{name}' is defined in config.yaml, which sets its default_role. "
-                "Change default_role there and restart the server."
+                f"KB '{name}' is defined by hand in {current_config_file()}, which sets its "
+                "default_role. Change default_role there and restart the server."
             )
         allowed = {"description", "kb_type", "default_role"}
         if "default_role" in updates and (
@@ -348,46 +356,39 @@ class KBRegistryService:
                 "server runs on an untrusted repo-local config, where a KB can only be closed. "
                 "Publish KBs from a trusted config (~/.pyrite or PYRITE_CONFIG_DIR)."
             )
-        role_before = kb.default_role
+        current = self.config.get_kb(name)
+        role_before = current.default_role if current is not None else kb.default_role
         for key, value in updates.items():
             if key in allowed:
                 setattr(kb, key, value)
+        written = self.config.server_written_kb(name)
+        if "default_role" in updates and written is not None:
+            # The server's own config.yaml entry is this KB's policy: rewrite
+            # it first, so a refused save leaves neither changed.
+            previous = written.default_role
+            written.default_role = updates["default_role"]
+            try:
+                save_config(self.config)
+            except BaseException:
+                written.default_role = previous
+                self.db.session.rollback()
+                raise
         self.db.session.commit()
-        self._refresh_config_view(name)
+        self._refresh_config_view()
         if "default_role" in updates and updates["default_role"] != role_before:
             announce_kb_policy_change(name)
-            self._drop_site_pages(name)
+            drop_kb_site_pages(self.config, self.db, name)
         return self.get_kb(name)  # type: ignore[return-value]
 
-    def _drop_site_pages(self, name: str) -> None:
-        """Remove a KB's pre-rendered `/site` pages and re-render the landing
-        from the KBs public now (P-S3, P-F6). Called on a default_role change
-        and a removal; a KB that became public has no pages to lose and gets
-        its landing card, and its pages at the next render.
-
-        Best effort: `/site` already refuses a KB that is not public on every
-        request, and withholds a landing that lists one
-        (`site_cache.landing_is_current`); this takes the pages off the disk
-        and keeps the landing served. A failure (an unreadable
-        branding.yaml, a read-only cache) is logged and never undoes the
-        registry write it follows.
-        """
-        try:
-            from .site_cache import SiteCacheService
-
-            SiteCacheService(self.config, self.db).invalidate_kb(name)
-        except Exception:
-            logger.warning("Could not drop the /site pages of KB %r", name, exc_info=True)
-
-    def _refresh_config_view(self, name: str) -> None:
-        """Make the config's cached copy of a registry KB equal its row.
+    def _refresh_config_view(self) -> None:
+        """Make the config's view of the registry KBs equal the rows.
 
         Re-read through `merge_registered_kbs`, the one loader of registry
         rows (it applies the untrusted-config confinement and the orphaned
-        ephemeral rule), after forgetting the old copy -- so a row the
-        loader now refuses is not left behind in its old form.
+        ephemeral rule), which builds the new lookup aside and swaps it in:
+        a row the loader now refuses leaves it, and no reader sees the KB
+        missing while it is rebuilt.
         """
-        self.config.forget_db_kb(name)
         self.db.merge_registered_kbs(self.config)
 
     def reindex_kb(self, name: str) -> dict[str, int]:
