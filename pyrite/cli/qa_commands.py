@@ -553,7 +553,9 @@ def qa_fix(
 
     with cli_context() as (config, db, svc):
         qa = QAService(config, db)
-        result = qa.fix_kb(kb_name, dry_run=dry_run, fix_rules=fix_rule or None)
+        result = qa.fix_kb(
+            kb_name, dry_run=dry_run, fix_rules=fix_rule or None, readable_kbs=UNSCOPED
+        )
 
         if output_format == "json":
             typer.echo(json_mod.dumps(result, indent=2, default=str))

@@ -129,7 +129,7 @@ def _disposable_entry(world: World, kb: str) -> str:
     from pyrite.services.kb_service import KBService
 
     svc = KBService(world.config, world.db)
-    if svc.get_entry(_DISPOSABLE_ENTRY_ID, kb_name=kb) is None:
+    if svc.get_entry(_DISPOSABLE_ENTRY_ID, kb_name=kb, readable_kbs=None) is None:
         try:
             svc.create_entry(
                 kb,

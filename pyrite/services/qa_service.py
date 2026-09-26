@@ -1300,13 +1300,18 @@ class QAService:
         *,
         dry_run: bool = True,
         fix_rules: list[str] | None = None,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any]:
-        """Auto-fix safe structural issues in a KB. Delegates to QAFixService."""
+        """Auto-fix safe structural issues in a KB. Delegates to QAFixService.
+
+        The validation that finds the issues runs within ``readable_kbs``,
+        as `validate_kb` does.
+        """
         return self._fix_svc.fix_kb(
             kb_name,
             dry_run=dry_run,
             fix_rules=fix_rules,
-            validate_kb_fn=self.validate_kb,
+            validate_kb_fn=lambda kb: self.validate_kb(kb, readable_kbs=readable_kbs),
         )
 
     def _get_all_entry_ids(self, kb_name: str) -> list[str]:

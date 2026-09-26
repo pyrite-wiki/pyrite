@@ -193,6 +193,7 @@ AMBIGUOUS_SCOPED_METHODS = {
     "get_status": "QAService.get_status vs other services' get_status",
     "validate_entry": "QAService.validate_entry vs KBSchema.validate_entry",
     "validate_all": "QAService.validate_all vs KBRepository.validate_all",
+    "fix_kb": "QAService.fix_kb vs QAFixService.fix_kb, which is handed the scoped validation",
 }
 
 

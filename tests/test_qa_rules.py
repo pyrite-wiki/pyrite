@@ -15,6 +15,7 @@ import pytest
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.services.qa_service import QAService
 from pyrite.storage.database import PyriteDB
+from pyrite.services.access_policy import UNSCOPED
 
 _registered_kbs: set[tuple] = set()
 
@@ -380,7 +381,7 @@ class TestCheckBrokenLinks:
         _insert_entry(db, id="target")
         _insert_link(db, "source", "target")
         issues: list[dict[str, Any]] = []
-        svc._check_broken_links(issues, "test")
+        svc._check_broken_links(issues, "test", readable_kbs=UNSCOPED)
         assert not any(i["rule"] == "broken_link" for i in issues)
 
     def test_flags_link_to_nonexistent_target(self, qa):
@@ -388,7 +389,7 @@ class TestCheckBrokenLinks:
         _insert_entry(db, id="source")
         _insert_link(db, "source", "nonexistent")
         issues: list[dict[str, Any]] = []
-        svc._check_broken_links(issues, "test")
+        svc._check_broken_links(issues, "test", readable_kbs=UNSCOPED)
         matched = [i for i in issues if i["rule"] == "broken_link"]
         assert len(matched) == 1
         assert matched[0]["entry_id"] == "source"
@@ -403,7 +404,7 @@ class TestCheckBrokenLinks:
         _insert_link(db, "source", "ghost-1")
         _insert_link(db, "source", "ghost-2")
         issues: list[dict[str, Any]] = []
-        svc._check_broken_links(issues, "test")
+        svc._check_broken_links(issues, "test", readable_kbs=UNSCOPED)
         matched = [i for i in issues if i["rule"] == "broken_link"]
         assert len(matched) == 2
 
@@ -412,7 +413,7 @@ class TestCheckBrokenLinks:
         _insert_entry(db, id="other-src", kb_name="other")
         _insert_link(db, "other-src", "ghost", source_kb="other")
         issues: list[dict[str, Any]] = []
-        svc._check_broken_links(issues, "test")
+        svc._check_broken_links(issues, "test", readable_kbs=UNSCOPED)
         # Should not find broken links from "other" KB
         assert not any(i["entry_id"] == "other-src" for i in issues)
 
@@ -421,7 +422,7 @@ class TestCheckBrokenLinks:
         _insert_entry(db, id="src")
         _insert_link(db, "src", "missing", relation="references")
         issues: list[dict[str, Any]] = []
-        svc._check_broken_links(issues, "test")
+        svc._check_broken_links(issues, "test", readable_kbs=UNSCOPED)
         matched = [i for i in issues if i["rule"] == "broken_link"]
         assert "references" in matched[0]["message"]
 
@@ -436,7 +437,7 @@ class TestCheckOrphans:
         svc, db, _, _ = qa
         _insert_entry(db, id="loner")
         issues: list[dict[str, Any]] = []
-        svc._check_orphans(issues, "test")
+        svc._check_orphans(issues, "test", readable_kbs=UNSCOPED)
         matched = [i for i in issues if i["entry_id"] == "loner"]
         assert len(matched) == 1
         assert matched[0]["rule"] == "orphan_entry"
@@ -449,7 +450,7 @@ class TestCheckOrphans:
         _insert_entry(db, id="target")
         _insert_link(db, "linked-out", "target")
         issues: list[dict[str, Any]] = []
-        svc._check_orphans(issues, "test")
+        svc._check_orphans(issues, "test", readable_kbs=UNSCOPED)
         assert not any(i["entry_id"] == "linked-out" for i in issues)
 
     def test_no_issue_when_entry_has_incoming_link(self, qa):
@@ -458,7 +459,7 @@ class TestCheckOrphans:
         _insert_entry(db, id="source")
         _insert_link(db, "source", "linked-in")
         issues: list[dict[str, Any]] = []
-        svc._check_orphans(issues, "test")
+        svc._check_orphans(issues, "test", readable_kbs=UNSCOPED)
         assert not any(i["entry_id"] == "linked-in" for i in issues)
 
 
@@ -608,7 +609,7 @@ class TestCheckEntryLinks:
         _insert_entry(db, id="tgt")
         _insert_link(db, "src", "tgt")
         issues: list[dict[str, Any]] = []
-        svc._check_entry_links("src", "test", issues)
+        svc._check_entry_links("src", "test", issues, readable_kbs=UNSCOPED)
         assert not any(i["rule"] == "broken_link" for i in issues)
 
     def test_flags_broken_outlink(self, qa):
@@ -616,7 +617,7 @@ class TestCheckEntryLinks:
         _insert_entry(db, id="src")
         _insert_link(db, "src", "missing-target")
         issues: list[dict[str, Any]] = []
-        svc._check_entry_links("src", "test", issues)
+        svc._check_entry_links("src", "test", issues, readable_kbs=UNSCOPED)
         matched = [i for i in issues if i["rule"] == "broken_link"]
         assert len(matched) == 1
         # Wanted-page semantics: visible but not CI-failing.
@@ -627,7 +628,7 @@ class TestCheckEntryLinks:
         svc, db, _, _ = qa
         _insert_entry(db, id="isolated")
         issues: list[dict[str, Any]] = []
-        svc._check_entry_links("isolated", "test", issues)
+        svc._check_entry_links("isolated", "test", issues, readable_kbs=UNSCOPED)
         assert issues == []
 
 
