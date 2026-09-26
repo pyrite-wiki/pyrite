@@ -44,6 +44,7 @@ _EXPLICIT: dict[str, Callable[[World, str, str], dict[str, Any]]] = {
     "kb_list": lambda world, kb, call_key: {},
     "kb_timeline": lambda world, kb, call_key: {},
     "kb_stats": lambda world, kb, call_key: {},
+    "social_reputation": lambda world, kb, call_key: {"user_id": "characterization-author"},
     "kb_batch_read": lambda world, kb, call_key: {
         "entries": [{"entry_id": _entry_for(world, kb), "kb_name": kb}]
     },

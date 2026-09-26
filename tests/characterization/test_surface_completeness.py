@@ -133,9 +133,11 @@ def test_exclusion_counts_are_pinned():
         f"pinned at 69 -- update this assert deliberately, with a reason, rather "
         f"than letting it drift."
     )
-    assert MCP_ACCESS_EXCLUSIONS_COUNT == len(MCP_ACCESS_EXCLUSIONS) == 6, (
+    # 6 -> 5: social_reputation filters by the readable set now (it sums
+    # votes from every KB), so it is characterized, not excluded.
+    assert MCP_ACCESS_EXCLUSIONS_COUNT == len(MCP_ACCESS_EXCLUSIONS) == 5, (
         f"MCP_ACCESS_EXCLUSIONS now has {len(MCP_ACCESS_EXCLUSIONS)} entries, "
-        f"pinned at 6 -- update this assert deliberately, with a reason, rather "
+        f"pinned at 5 -- update this assert deliberately, with a reason, rather "
         f"than letting it drift."
     )
     assert TRANSPORT_ROUTE_EXCLUSIONS_COUNT == len(TRANSPORT_ROUTE_EXCLUSIONS) == 4, (

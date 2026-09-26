@@ -326,7 +326,7 @@ MCP_ACCESS_EXCLUSIONS: dict[str, str] = {
     ),
     "kb_registry_reindex": "admin tool tier only; no per-KB branch beyond KBNotFoundError.",
     "kb_registry_health": "admin tool tier only; no per-KB branch beyond KBNotFoundError.",
-    # Both already excluded from kb_bearing_mcp_tool_names's OWN output (it
+    # Already excluded from kb_bearing_mcp_tool_names's OWN output (it
     # subtracts NON_KB_CONTENT_TOOLS, mcp_server.py's own authoritative "no
     # KB content" list) -- added here too (#476 round-2 issue 2's
     # completeness sweep) so the reasoning is visible in the one place a
@@ -334,7 +334,6 @@ MCP_ACCESS_EXCLUSIONS: dict[str, str] = {
     "kb_index_job_status": (
         "NON_KB_CONTENT_TOOLS (mcp_server.py): background job state keyed by job id, not a KB."
     ),
-    "social_reputation": "NON_KB_CONTENT_TOOLS (mcp_server.py): a per-user score, no KB rows.",
 }
 MCP_ACCESS_EXCLUSIONS_COUNT = len(MCP_ACCESS_EXCLUSIONS)
 

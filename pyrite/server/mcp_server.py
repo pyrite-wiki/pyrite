@@ -300,7 +300,6 @@ NON_KB_CONTENT_TOOLS = frozenset(
         "kb_registry_reindex",
         "kb_registry_health",
         "kb_registry_add",
-        "social_reputation",  # a per-user score, no KB rows
     }
 )
 
