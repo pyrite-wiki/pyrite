@@ -244,8 +244,12 @@ class QAService:
         kb_name: str,
         tier: int = 1,
         create_task_on_fail: bool = False,
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> dict[str, Any]:
         """Assess a single entry and create a qa_assessment entry.
+
+        ``readable_kbs`` bounds the link checks, as in `validate_entry`.
 
         Returns dict with assessment_id, qa_status, issues_found, issues,
         llm_available.
@@ -253,7 +257,7 @@ class QAService:
         Tier 1: structural validation + deterministic rubric checks.
         Tier 2+: tier 1 + LLM judgment rubric evaluation.
         """
-        result = self.validate_entry(entry_id, kb_name)
+        result = self.validate_entry(entry_id, kb_name, readable_kbs=readable_kbs)
         issues = result["issues"]
 
         # Tier 2+: LLM rubric evaluation
@@ -314,8 +318,12 @@ class QAService:
         tier: int = 1,
         max_age_hours: int = 24,
         create_task_on_fail: bool = False,
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> dict[str, Any]:
         """Assess all entries in a KB (skipping qa_assessment entries and recently assessed).
+
+        ``readable_kbs`` bounds each entry's link checks, as in `validate_entry`.
 
         Returns dict with kb_name, assessed count, skipped count, and results list.
         """
@@ -342,7 +350,11 @@ class QAService:
                 continue
 
             result = self.assess_entry(
-                eid, kb_name, tier=tier, create_task_on_fail=create_task_on_fail
+                eid,
+                kb_name,
+                tier=tier,
+                create_task_on_fail=create_task_on_fail,
+                readable_kbs=readable_kbs,
             )
             results.append(result)
 

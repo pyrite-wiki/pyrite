@@ -633,11 +633,11 @@ class PyriteMCPServer:
     ) -> dict[str, Any]:
         """Get entry by ID.
 
-        With `kb_name` omitted, `KBService.get_entry` walks every KB in
-        config order and returns the first hit -- so omitting it was itself a
-        way to reach private content. A hit in an unreadable KB is reported
-        as a plain entry miss rather than a KB refusal: naming the KB would
-        reveal which private KB holds the entry.
+        With `kb_name` omitted, `KBService.get_entry` walks the KBs in
+        config order and returns the first hit -- so it is handed the
+        caller's readable set, and an entry in an unreadable KB is a plain
+        miss (naming the KB would reveal which private KB holds it) that
+        never hides a readable entry with the same id.
         """
         entry_id = args.get("entry_id")
         kb_name = args.get("kb_name")
@@ -645,9 +645,10 @@ class PyriteMCPServer:
         body_offset = args.get("body_offset", 0)
         body_limit = args.get("body_limit")
 
-        result = self.svc.get_entry(entry_id, kb_name=kb_name)
-        if result and readable_kbs is not None and result.get("kb_name") not in readable_kbs:
-            result = None
+        # Scoped lookup: without `kb_name` it walks only readable KBs, so a
+        # private entry neither answers nor shadows a readable twin (P-R5),
+        # and the entry's links cover readable KBs only (P-R4).
+        result = self.svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=readable_kbs)
 
         if not result:
             return _error(
@@ -681,9 +682,7 @@ class PyriteMCPServer:
         offset = max(0, int(args.get("body_offset", 0)))
         limit = self.body_bounds.effective_limit(args.get("body_limit"))
 
-        result = self.svc.get_entry(entry_id, kb_name=kb_name)
-        if result and readable_kbs is not None and result.get("kb_name") not in readable_kbs:
-            result = None
+        result = self.svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=readable_kbs)
         if not result:
             return _error(
                 "NOT_FOUND",
@@ -725,13 +724,20 @@ class PyriteMCPServer:
             "events": results,
         }
 
-    def _kb_backlinks(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Get backlinks to an entry."""
+    def _kb_backlinks(
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any]:
+        """Get backlinks to an entry, from the KBs the caller can read.
+
+        The chokepoint checks the named KB; the sources come from any KB, so
+        one the caller cannot read is dropped in the query (P-R4), and the
+        count and `has_more` are over what is returned.
+        """
         entry_id = args.get("entry_id")
         kb_name = args.get("kb_name")
         limit = args.get("limit", 100)
         backlinks = self.graph_svc.get_backlinks(
-            entry_id, kb_name, limit=limit, offset=args.get("offset", 0)
+            entry_id, kb_name, limit=limit, offset=args.get("offset", 0), readable_kbs=readable_kbs
         )
         return {
             "entry_id": entry_id,
@@ -807,14 +813,17 @@ class PyriteMCPServer:
         severity_filter = args.get("severity", "warning")
         limit = args.get("limit", 50)
 
+        # Link checks are bounded by the readable set too: a target the caller
+        # cannot read is reported as a missing one, and a private linker does
+        # not keep an entry from being an orphan (P-R4, P-R5).
         if entry_id and kb_name:
-            result = qa.validate_entry(entry_id, kb_name)
+            result = qa.validate_entry(entry_id, kb_name, readable_kbs=readable_kbs)
             issues = result["issues"]
         elif kb_name:
-            result = qa.validate_kb(kb_name)
+            result = qa.validate_kb(kb_name, readable_kbs=readable_kbs)
             issues = result["issues"]
         else:
-            result = qa.validate_all(kb_names=readable_kbs)
+            result = qa.validate_all(kb_names=readable_kbs, readable_kbs=readable_kbs)
             issues = []
             for kb in result["kbs"]:
                 issues.extend(kb["issues"])
@@ -1019,8 +1028,10 @@ class PyriteMCPServer:
             "count": len(entries),
         }
 
-    def _kb_qa_assess(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Assess entry or KB quality."""
+    def _kb_qa_assess(
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any]:
+        """Assess entry or KB quality; link checks bounded by the readable set."""
         qa = self.qa_svc
         kb_name = args["kb_name"]
         entry_id = args.get("entry_id")
@@ -1028,19 +1039,39 @@ class PyriteMCPServer:
         create_tasks = args.get("create_tasks", False)
 
         if entry_id:
-            return qa.assess_entry(entry_id, kb_name, tier=tier, create_task_on_fail=create_tasks)
+            return qa.assess_entry(
+                entry_id,
+                kb_name,
+                tier=tier,
+                create_task_on_fail=create_tasks,
+                readable_kbs=readable_kbs,
+            )
         else:
             max_age = args.get("max_age_hours", 24)
             return qa.assess_kb(
-                kb_name, tier=tier, max_age_hours=max_age, create_task_on_fail=create_tasks
+                kb_name,
+                tier=tier,
+                max_age_hours=max_age,
+                create_task_on_fail=create_tasks,
+                readable_kbs=readable_kbs,
             )
 
     # =========================================================================
     # Post-save QA validation
     # =========================================================================
 
-    def _maybe_validate(self, entry_id: str, kb_name: str, args: dict) -> list[dict] | None:
-        """Run post-save QA validation if requested or KB has qa_on_write."""
+    def _maybe_validate(
+        self,
+        entry_id: str,
+        kb_name: str,
+        args: dict,
+        readable_kbs: set[str] | None = None,
+    ) -> list[dict] | None:
+        """Run post-save QA validation if requested or KB has qa_on_write.
+
+        The issues go back to the writer, so their link checks are bounded
+        by the writer's readable set, as `kb_qa_validate`'s are.
+        """
         should_validate = args.get("validate", False)
         if not should_validate:
             kb_config = self.config.get_kb(kb_name)
@@ -1048,7 +1079,7 @@ class PyriteMCPServer:
                 schema = kb_config.kb_schema
                 should_validate = schema.validation.get("qa_on_write", False)
         if should_validate:
-            result = self.qa_svc.validate_entry(entry_id, kb_name)
+            result = self.qa_svc.validate_entry(entry_id, kb_name, readable_kbs=readable_kbs)
             if result["issues"]:
                 return result["issues"]
         return None
@@ -1180,7 +1211,9 @@ class PyriteMCPServer:
     # Write handlers
     # =========================================================================
 
-    def _kb_create(self, args: dict[str, Any]) -> dict[str, Any]:
+    def _kb_create(
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any]:
         """Create a new entry. Every create decision is KBService's (#378)."""
         kb_name = args.get("kb_name")
         spec = {k: v for k, v in args.items() if k not in _CREATE_CONTROL_KEYS}
@@ -1210,7 +1243,7 @@ class PyriteMCPServer:
         }
         if written.warnings:
             result["warnings"] = written.warnings
-        qa_issues = self._maybe_validate(entry.id, kb_name, args)
+        qa_issues = self._maybe_validate(entry.id, kb_name, args, readable_kbs)
         if qa_issues:
             result["qa_issues"] = qa_issues
         return result
@@ -1247,7 +1280,9 @@ class PyriteMCPServer:
             "results": results,
         }
 
-    def _kb_update(self, args: dict[str, Any]) -> dict[str, Any]:
+    def _kb_update(
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any]:
         """Update an existing entry.
 
         Only the entry type's own fields are passed on -- the set comes from
@@ -1284,7 +1319,7 @@ class PyriteMCPServer:
         }
         if written.warnings:
             result["warnings"] = written.warnings
-        qa_issues = self._maybe_validate(entry.id, kb_name, args)
+        qa_issues = self._maybe_validate(entry.id, kb_name, args, readable_kbs)
         if qa_issues:
             result["qa_issues"] = qa_issues
         return result
@@ -1935,9 +1970,9 @@ class PyriteMCPServer:
         entry_id = args.get("entry_id", "")
         kb_name = args.get("kb_name")
 
-        entry = self.svc.get_entry(entry_id, kb_name=kb_name)
-        if entry and readable_kbs is not None and entry.get("kb_name") not in readable_kbs:
-            entry = None
+        # The prompt embeds the whole entry, links included: both bounded by
+        # the caller's readable set (P-R4, P-R5).
+        entry = self.svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=readable_kbs)
         if not entry:
             return {
                 "messages": [
@@ -1974,16 +2009,12 @@ class PyriteMCPServer:
         entry_a_id = args.get("entry_a", "")
         entry_b_id = args.get("entry_b", "")
 
-        def _readable(entry):
-            if entry and readable_kbs is not None and entry.get("kb_name") not in readable_kbs:
-                return None
-            return entry
-
-        # Both lookups span every KB (no kb parameter at all), so each is
-        # filtered; an unreadable hit reads as "not found", exactly as a
-        # missing id does.
-        entry_a = _readable(self.svc.get_entry(entry_a_id))
-        entry_b = _readable(self.svc.get_entry(entry_b_id))
+        # Both lookups span every KB (no kb parameter at all), so each walks
+        # only the readable ones: an entry elsewhere reads as "not found",
+        # exactly as a missing id does, and the embedded links are bounded
+        # the same way.
+        entry_a = self.svc.get_entry(entry_a_id, readable_kbs=readable_kbs)
+        entry_b = self.svc.get_entry(entry_b_id, readable_kbs=readable_kbs)
 
         entry_a_text = (
             json.dumps(entry_a, separators=(",", ":"), default=str)
@@ -2129,13 +2160,11 @@ class PyriteMCPServer:
         # pyrite://entries/{id}
         if uri.startswith(f"{URI_SCHEME}entries/"):
             entry_id = uri[len(f"{URI_SCHEME}entries/") :]
-            entry = self.svc.get_entry(entry_id)
-            if entry and readable_kbs is not None and entry.get("kb_name") not in readable_kbs:
-                # The lookup walks every KB, so it can land in one the caller
-                # may not read. Reported as a plain entry miss, not as a KB
-                # refusal: naming the KB here would reveal which private KB
-                # the entry lives in.
-                entry = None
+            # The lookup walks the KBs in config order, so it is bounded by the
+            # caller's readable set: an entry in a private KB is a plain miss
+            # (naming the KB would reveal which one holds it) and never hides
+            # a readable entry with the same id; its links are bounded too.
+            entry = self.svc.get_entry(entry_id, readable_kbs=readable_kbs)
             if not entry:
                 return _error("NOT_FOUND", f"Entry '{entry_id}' not found")
             return {
