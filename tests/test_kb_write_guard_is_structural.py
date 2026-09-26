@@ -24,6 +24,8 @@ request -- not the handler source.
 
 import inspect
 
+import pytest
+
 from fastapi.routing import APIRoute
 
 from pyrite.server.api import KB_PARAM_NAMES, RowKB, create_app
@@ -123,6 +125,9 @@ def test_every_requires_kb_tier_route_names_its_kb_or_resolves_the_row():
         )
 
 
+@pytest.mark.control(
+    reason="pins the FastAPI setting; only its docstring changed with the guard fix"
+)
 def test_every_route_with_a_body_refuses_to_parse_an_undeclared_content_type():
     """Pins FastAPI's `strict_content_type` on every route with a body.
 

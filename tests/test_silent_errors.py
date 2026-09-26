@@ -5,11 +5,14 @@ import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # 1. pyrite/server/api.py — _resolve_kb_name body parse failure
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.control(reason="existing fail-closed pin; its mock gained real QueryParams")
 def test_resolve_kb_names_logs_warning_and_fails_closed_on_body_parse_failure(caplog):
     """A body that cannot be parsed logs a warning AND refuses to resolve.
 
