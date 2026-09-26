@@ -23,8 +23,10 @@ class GraphService:
         entry_type: str | None = None,
         depth: int = 2,
         limit: int = 500,
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> dict[str, Any]:
-        """Get graph data for visualization."""
+        """Get graph data for visualization, bounded by the caller's readable set."""
         return self.db.get_graph_data(
             center=center,
             center_kb=center_kb,
@@ -32,6 +34,7 @@ class GraphService:
             entry_type=entry_type,
             depth=depth,
             limit=limit,
+            readable_kbs=readable_kbs,
         )
 
     def get_refs_to(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
@@ -48,13 +51,19 @@ class GraphService:
         kb_name: str,
         limit: int = 0,
         offset: int = 0,
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Get entries that link TO this entry."""
-        return self.db.get_backlinks(entry_id, kb_name, limit=limit, offset=offset)
+        """Get entries that link TO this entry, from KBs the caller can read."""
+        return self.db.get_backlinks(
+            entry_id, kb_name, limit=limit, offset=offset, readable_kbs=readable_kbs
+        )
 
-    def get_outlinks(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
-        """Get entries that this entry links TO."""
-        return self.db.get_outlinks(entry_id, kb_name)
+    def get_outlinks(
+        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Get entries that this entry links TO; an unreadable target reads as missing."""
+        return self.db.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
 
     def get_edge_endpoints(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
         """Get endpoints of an edge-type entry."""

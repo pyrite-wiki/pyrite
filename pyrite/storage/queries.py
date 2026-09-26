@@ -83,15 +83,25 @@ class QueryMixin:
         kb_name: str,
         limit: int = 0,
         offset: int = 0,
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Get entries that link TO this entry."""
+        """Get entries that link TO this entry, from KBs in ``readable_kbs``."""
         return self._backend.get_backlinks(
-            entry_id=entry_id, kb_name=kb_name, limit=limit, offset=offset
+            entry_id=entry_id,
+            kb_name=kb_name,
+            limit=limit,
+            offset=offset,
+            readable_kbs=readable_kbs,
         )
 
-    def get_outlinks(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
-        """Get entries that this entry links TO."""
-        return self._backend.get_outlinks(entry_id=entry_id, kb_name=kb_name)
+    def get_outlinks(
+        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Get entries this entry links TO; an unreadable target reads as missing."""
+        return self._backend.get_outlinks(
+            entry_id=entry_id, kb_name=kb_name, readable_kbs=readable_kbs
+        )
 
     def get_all_backlinks_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
         """Get ALL backlinks targeting entries in a KB (1 query, not N)."""
@@ -127,8 +137,10 @@ class QueryMixin:
         entry_type: str | None = None,
         depth: int = 2,
         limit: int = 500,
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> dict[str, Any]:
-        """Multi-hop BFS graph traversal returning nodes and edges."""
+        """Multi-hop BFS graph traversal returning nodes and edges, within ``readable_kbs``."""
         return self._backend.get_graph_data(
             center=center,
             center_kb=center_kb,
@@ -136,6 +148,7 @@ class QueryMixin:
             entry_type=entry_type,
             depth=depth,
             limit=limit,
+            readable_kbs=readable_kbs,
         )
 
     # =========================================================================

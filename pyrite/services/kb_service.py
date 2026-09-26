@@ -419,27 +419,52 @@ class KBService:
     # Entry Operations
     # =========================================================================
 
-    def get_entry(self, entry_id: str, kb_name: str | None = None) -> dict[str, Any] | None:
+    def get_entry(
+        self,
+        entry_id: str,
+        kb_name: str | None = None,
+        *,
+        readable_kbs: set[str] | None = None,
+    ) -> dict[str, Any] | None:
         """
-        Get entry by ID.
+        Get entry by ID, with its outlinks and backlinks.
 
-        If kb_name not specified, searches all KBs.
+        If kb_name not specified, searches all KBs in config order.
+
+        ``readable_kbs`` is the caller's ``ReadScope`` set (``None``:
+        unscoped). With it, a lookup without a KB walks only readable KBs,
+        so an entry in a KB the caller cannot read neither answers nor
+        shadows a readable one with the same id (P-R5), and the links are
+        computed over readable KBs only (P-R4). A named KB the caller
+        cannot read is the caller's to refuse; here it reads as a miss.
         """
         if kb_name:
+            if readable_kbs is not None and kb_name not in readable_kbs:
+                return None
             result = self.db.get_entry(entry_id, kb_name)
             if result:
-                result["outlinks"] = self.db.get_outlinks(entry_id, kb_name)
-                result["backlinks"] = self.db.get_backlinks(entry_id, kb_name)
+                self._attach_links(result, entry_id, kb_name, readable_kbs)
             return result
 
-        # Search all KBs
+        # Search all KBs the caller can read
         for kb in self.config.all_kbs():
+            if readable_kbs is not None and kb.name not in readable_kbs:
+                continue
             result = self.db.get_entry(entry_id, kb.name)
             if result:
-                result["outlinks"] = self.db.get_outlinks(entry_id, kb.name)
-                result["backlinks"] = self.db.get_backlinks(entry_id, kb.name)
+                self._attach_links(result, entry_id, kb.name, readable_kbs)
                 return result
         return None
+
+    def _attach_links(
+        self,
+        result: dict[str, Any],
+        entry_id: str,
+        kb_name: str,
+        readable_kbs: set[str] | None,
+    ) -> None:
+        result["outlinks"] = self.db.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
+        result["backlinks"] = self.db.get_backlinks(entry_id, kb_name, readable_kbs=readable_kbs)
 
     def _resolve_entry_type(self, entry_type: str, kb_type: str = "") -> str:
         """Resolve a generic core type to a plugin subtype if one exists.

@@ -632,7 +632,15 @@ class BaseBackend(ABC):
         kb_name: str,
         limit: int = 0,
         offset: int = 0,
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> list[dict[str, Any]]:
+        """Entries linking TO this one.
+
+        ``readable_kbs`` (the caller's ``ReadScope`` set; ``None`` unscoped)
+        drops a source the caller cannot read -- the same answer as a source
+        that does not exist, which never has a row here (P-R4, P-R5).
+        """
         sql = """
             SELECT e.id, e.kb_name, e.title, e.entry_type,
                    l.inverse_relation as relation, l.note
@@ -641,22 +649,37 @@ class BaseBackend(ABC):
             WHERE l.target_id = :entry_id AND l.target_kb = :kb_name
         """
         params: dict[str, Any] = {"entry_id": entry_id, "kb_name": kb_name}
+        scope = kb_names_clause("e.kb_name", readable_kbs, params)
+        if scope:
+            sql += f" AND {scope}"
         if limit > 0:
             sql += " LIMIT :limit OFFSET :offset"
             params["limit"] = limit
             params["offset"] = offset
         return self._exec(sql, params)
 
-    def get_outlinks(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
+    def get_outlinks(
+        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Entries this one links TO.
+
+        The row itself comes from the source's own body, so it is kept; with
+        ``readable_kbs`` set the join to the target only matches a readable
+        KB, and a target the caller cannot read comes back exactly as a
+        missing one does -- ``title`` and ``entry_type`` null (P-R5).
+        """
+        params: dict[str, Any] = {"entry_id": entry_id, "kb_name": kb_name}
+        scope = kb_names_clause("e.kb_name", readable_kbs, params)
         return self._exec(
-            """
+            f"""
             SELECT l.target_id as id, l.target_kb as kb_name,
                    e.title, e.entry_type, l.relation, l.note
             FROM link l
             LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
+                {f"AND {scope}" if scope else ""}
             WHERE l.source_id = :entry_id AND l.source_kb = :kb_name
             """,
-            {"entry_id": entry_id, "kb_name": kb_name},
+            params,
         )
 
     def get_all_backlinks_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
@@ -725,8 +748,24 @@ class BaseBackend(ABC):
         entry_type: str | None = None,
         depth: int = 2,
         limit: int = 500,
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> dict[str, Any]:
+        """Nodes and edges around ``center``, or across the index without one.
+
+        ``readable_kbs`` (the caller's ``ReadScope`` set; ``None`` unscoped)
+        bounds the walk (P-R4, P-R5): an unreadable centre answers like a
+        missing one, a link from an unreadable source is not followed, and a
+        link to an unreadable target reads as a link to a missing one (a
+        bare node, title = id, type "unknown"). ``link_count`` is taken over
+        the edges returned, so it counts nothing the caller cannot read.
+        """
         depth = max(1, min(3, depth))
+        # One binding of the set, shared by the three predicates below.
+        scope: dict[str, Any] = {}
+        center_clause = kb_names_clause("kb_name", readable_kbs, scope)
+        entry_clause = kb_names_clause("e.kb_name", readable_kbs, scope)
+        source_clause = kb_names_clause("l.source_kb", readable_kbs, scope)
         nodes: dict[tuple[str, str], dict[str, Any]] = {}
         edges: list[dict[str, Any]] = []
         edge_set: set[tuple[str, str, str, str]] = set()
@@ -734,8 +773,9 @@ class BaseBackend(ABC):
         if center and center_kb:
             row = self._exec_one(
                 "SELECT id, kb_name, title, entry_type FROM entry "
-                "WHERE id = :center AND kb_name = :center_kb",
-                {"center": center, "center_kb": center_kb},
+                "WHERE id = :center AND kb_name = :center_kb"
+                + (f" AND {center_clause}" if center_clause else ""),
+                {"center": center, "center_kb": center_kb, **scope},
             )
             if not row:
                 return {"nodes": [], "edges": []}
@@ -750,12 +790,14 @@ class BaseBackend(ABC):
                     if len(nodes) >= limit:
                         break
                     out_rows = self._exec(
-                        """SELECT l.target_id, l.target_kb, l.relation,
+                        f"""SELECT l.target_id, l.target_kb, l.relation,
                                   e.title, e.entry_type
                            FROM link l
                            LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
-                           WHERE l.source_id = :eid AND l.source_kb = :ekb""",
-                        {"eid": eid, "ekb": ekb},
+                               {f"AND {entry_clause}" if entry_clause else ""}
+                           WHERE l.source_id = :eid AND l.source_kb = :ekb
+                               {f"AND {source_clause}" if source_clause else ""}""",
+                        {"eid": eid, "ekb": ekb, **scope},
                     )
                     for r in out_rows:
                         if len(nodes) >= limit:
@@ -787,12 +829,13 @@ class BaseBackend(ABC):
                             next_frontier.append((tid, tkb))
 
                     in_rows = self._exec(
-                        """SELECT l.source_id, l.source_kb, l.relation,
+                        f"""SELECT l.source_id, l.source_kb, l.relation,
                                   e.title, e.entry_type
                            FROM link l
                            JOIN entry e ON l.source_id = e.id AND l.source_kb = e.kb_name
-                           WHERE l.target_id = :eid AND l.target_kb = :ekb""",
-                        {"eid": eid, "ekb": ekb},
+                           WHERE l.target_id = :eid AND l.target_kb = :ekb
+                               {f"AND {entry_clause}" if entry_clause else ""}""",
+                        {"eid": eid, "ekb": ekb, **scope},
                     )
                     for r in in_rows:
                         if len(nodes) >= limit:
@@ -825,13 +868,31 @@ class BaseBackend(ABC):
 
                 frontier = next_frontier
         else:
-            sql = """
-                SELECT e.id, e.kb_name, e.title, e.entry_type
-                FROM entry e
-                WHERE (e.id IN (SELECT source_id FROM link)
-                   OR e.id IN (SELECT target_id FROM link))
-            """
             params: dict[str, Any] = {}
+            if readable_kbs is None:
+                sql = """
+                    SELECT e.id, e.kb_name, e.title, e.entry_type
+                    FROM entry e
+                    WHERE (e.id IN (SELECT source_id FROM link)
+                       OR e.id IN (SELECT target_id FROM link))
+                """
+            else:
+                # A node earns its place by a link the caller can see: one it
+                # makes itself, or one made to it from a readable source.
+                # Otherwise a readable entry linked only from a private KB
+                # would appear, and take a slot of `limit`, because of it.
+                inbound = kb_names_clause("l.source_kb", readable_kbs, params)
+                entry_scope = kb_names_clause("e.kb_name", readable_kbs, params)
+                sql = f"""
+                    SELECT e.id, e.kb_name, e.title, e.entry_type
+                    FROM entry e
+                    WHERE (EXISTS (SELECT 1 FROM link l
+                                   WHERE l.source_id = e.id AND l.source_kb = e.kb_name)
+                       OR EXISTS (SELECT 1 FROM link l
+                                  WHERE l.target_id = e.id AND l.target_kb = e.kb_name
+                                    AND {inbound}))
+                      AND {entry_scope}
+                """
             if kb_name:
                 sql += " AND e.kb_name = :kb_name"
                 params["kb_name"] = kb_name

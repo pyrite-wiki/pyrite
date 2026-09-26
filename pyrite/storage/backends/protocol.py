@@ -201,12 +201,16 @@ class SearchBackend(Protocol):
         kb_name: str,
         limit: int = 0,
         offset: int = 0,
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Get entries that link TO this entry."""
+        """Get entries that link TO this entry; sources outside ``readable_kbs`` dropped."""
         ...
 
-    def get_outlinks(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
-        """Get entries this entry links TO."""
+    def get_outlinks(
+        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Get entries this entry links TO; a target outside ``readable_kbs`` reads as missing."""
         ...
 
     def get_all_backlinks_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
@@ -238,8 +242,10 @@ class SearchBackend(Protocol):
         entry_type: str | None = None,
         depth: int = 2,
         limit: int = 500,
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> dict[str, Any]:
-        """Multi-hop BFS graph traversal returning {nodes, edges}."""
+        """Multi-hop BFS graph traversal returning {nodes, edges}, within ``readable_kbs``."""
         ...
 
     def get_most_linked(self, kb_name: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
