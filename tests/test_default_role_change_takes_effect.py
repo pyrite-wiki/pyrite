@@ -247,10 +247,10 @@ class TestALandingRenderedUnderAnOlderPolicy:
         _render(c)
         world["config"].get_kb(YAML_KB).default_role = "none"
 
-        def broken(self):
+        def broken(self, *a, **k):
             raise OSError("read-only cache")
 
-        monkeypatch.setattr(SiteCacheService, "render_landing", broken)
+        monkeypatch.setattr(SiteCacheService, "_render_landing", broken)
         r = c.get("/site")
         assert YAML_KB not in r.text
         assert r.headers["X-Pyrite-Cache"] == "MISS"

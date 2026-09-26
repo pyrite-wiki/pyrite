@@ -25,7 +25,7 @@ from pyrite.config import AuthConfig, KBConfig, PyriteConfig, Settings
 from pyrite.server.api import create_app
 from pyrite.services.kb_registry_service import KBRegistryService
 from pyrite.services.public_kbs import public_kb_names
-from pyrite.services.site_cache import LANDING_MANIFEST, SiteCacheService, landing_is_current
+from pyrite.services.site_cache import SiteCacheService
 from pyrite.storage.database import PyriteDB
 from tests.auth_seed import app_db
 
@@ -166,6 +166,8 @@ class TestRemovingAKBKeepsTheLandingUp:
         return cache
 
     def _assert_landing_up_without(self, world, cache, kb):
+        from pyrite.services.site_cache import LANDING_MANIFEST, landing_is_current
+
         public = set(public_kb_names(world["config"]))
         assert not (cache / kb).exists()
         assert landing_is_current(cache, public)
