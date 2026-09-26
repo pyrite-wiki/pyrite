@@ -207,6 +207,10 @@ def test_ambiguous_scoped_names_are_pinned():
     assert not {name for name, is_method in ambiguous if not is_method}
 
 
+@pytest.mark.control(
+    reason="UNSCOPED does not exist on the batch base; against round 1 it failed on the "
+    "three #74 routes. It guards the next handler that reaches for it"
+)
 def test_unscoped_is_never_spelled_where_there_is_a_caller():
     """``UNSCOPED`` is for code with no caller identity at all (the CLI, the
     local UI, a service's own walk inside one named KB). The server and the

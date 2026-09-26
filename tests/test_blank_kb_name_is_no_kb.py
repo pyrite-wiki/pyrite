@@ -167,8 +167,21 @@ def _rest_cases(w):
     return [(op.method, op.path) for op in kb_bearing_rest_operations(w.app)]
 
 
-@pytest.mark.parametrize("blank", BLANKS, ids=["empty", "whitespace"])
-@pytest.mark.parametrize("principal", ["local_user", "writer"])
+_HELD_ON_THE_BASE = pytest.mark.control(
+    reason="a class sweep: this combination already held before the fix (the resolver "
+    "refused a whitespace name for a reader); it pins the class for every route"
+)
+
+
+@pytest.mark.parametrize(
+    ("principal", "blank"),
+    [
+        pytest.param("local_user", "", id="local_user-empty"),
+        pytest.param("local_user", "   ", id="local_user-whitespace", marks=_HELD_ON_THE_BASE),
+        pytest.param("writer", "", id="writer-empty"),
+        pytest.param("writer", "   ", id="writer-whitespace"),
+    ],
+)
 def test_every_kb_route_treats_a_blank_kb_as_no_kb(
     w, writer, echo_llm, principal, blank, monkeypatch
 ):
@@ -209,6 +222,10 @@ def _mcp_answer(w, tool, readable, writable, variant, monkeypatch, blank):
     return json.dumps(body, sort_keys=True, default=str)
 
 
+@pytest.mark.control(
+    reason="a class sweep: no MCP tool leaked a blank KB on the base (the chokepoint "
+    "fails closed); it pins that every KB-bearing tool keeps holding"
+)
 @pytest.mark.parametrize("blank", BLANKS, ids=["empty", "whitespace"])
 def test_every_kb_tool_treats_a_blank_kb_as_no_kb(w, blank, monkeypatch):
     p = w.principals["local_user"]
