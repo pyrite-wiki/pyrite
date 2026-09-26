@@ -107,6 +107,9 @@ def _anon_rest(client):
 class TestClosingARegistryKB:
     """`default_role` read -> none, on a KB registered in the index."""
 
+    @pytest.mark.control(
+        reason="the precondition the other tests start from; true before and after"
+    )
     def test_open_before_the_change(self, world):
         c = world["client"]
         _render(c)
@@ -223,11 +226,10 @@ class TestALandingRenderedUnderAnOlderPolicy:
         assert r.headers["X-Pyrite-Cache"] == "MISS"
 
     def test_a_landing_with_no_manifest_is_withheld(self, world):
-        from pyrite.services.site_cache import LANDING_MANIFEST
-
+        """A landing rendered by an earlier version carries no manifest."""
         c = world["client"]
         _render(c)
-        (world["tmp"] / "site-cache" / LANDING_MANIFEST).unlink()
+        (world["tmp"] / "site-cache" / ".landing-kbs.json").unlink(missing_ok=True)
         assert c.get("/site").headers["X-Pyrite-Cache"] == "MISS"
 
     @pytest.mark.control(reason="a current landing was always served")
@@ -267,6 +269,9 @@ class TestAConfigYamlKB:
         assert row_after == row_before == "read"
         assert world["config"].get_kb(YAML_KB).default_role == "read"
 
+    @pytest.mark.control(
+        reason="an unknown KB was always 404; pins that the refusal did not replace it"
+    )
     def test_an_unknown_kb_is_still_404(self, world):
         assert _set_role(world["client"], "no-such-kb", "none").status_code == 404
 
@@ -282,6 +287,7 @@ class TestEveryRegistryWriteRefreshesTheConfigView:
         yield KBRegistryService(config, db), config, tmp_path
         db.close()
 
+    @pytest.mark.control(reason="add_kb already updated the cache; pinned so the refresh keeps it")
     def test_add_is_visible(self, reg):
         registry, config, tmp = reg
         registry.add_kb("k", str(tmp / "k"))
@@ -326,6 +332,9 @@ class TestEveryRegistryWriteRefreshesTheConfigView:
         assert "k" not in public_kb_names(config)
         assert config.get_kb("k") is None
 
+    @pytest.mark.control(
+        reason="add registered None already; pins that remove+add inherits no policy"
+    )
     def test_a_removed_and_re_added_kb_is_not_public(self, reg):
         """The next KB under the same name must not inherit the old policy."""
         registry, config, tmp = reg

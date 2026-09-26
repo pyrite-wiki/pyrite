@@ -117,6 +117,9 @@ class TestDefaultRoleChange:
             assert r.status_code == 200, r.text
             _assert_open(op, c)
 
+    @pytest.mark.control(
+        reason="nothing closed before the fix either; pins the no-change condition"
+    )
     def test_a_default_role_write_that_changes_nothing_closes_nothing(self, env):
         """read -> read is no policy change: a socket that read the KB stays."""
         with TestClient(env) as c, c.websocket_connect("/ws") as anon:

@@ -104,6 +104,9 @@ class TestRenderPrunes:
         svc.render_all()
         assert not (env["cache"] / KB / "page" / "2.html").exists()
 
+    @pytest.mark.control(
+        reason="rendering never deleted pages; pins that pruning compares sanitised names"
+    )
     def test_a_sanitised_page_name_is_kept_while_its_entry_exists(self, env):
         """The renderer writes `sanitize_filename(id)`; pruning must compare
         against that name, not the raw id, or it deletes live pages."""
