@@ -460,7 +460,9 @@ def _serve_site_cached(
         /site/boyd      → cache_dir/boyd/index.html
         /site/boyd/ooda → cache_dir/boyd/ooda.html
 
-    Anything below the landing page is served only when the *resolved* file
+    The landing page is served only while every KB it was rendered with is
+    still public (`site_cache.landing_is_current`). Anything below it is
+    served only when the *resolved* file
     lies in a public KB's directory. ``path`` arrives percent-decoded, so
     ``%2e%2e`` and ``%2F`` are already ``..`` and ``/`` here: a path with a
     ``.``, ``..`` or empty segment is refused before it is joined, and the
@@ -468,7 +470,16 @@ def _serve_site_cached(
     first-segment check alone let ``public-kb/%2e%2e/private-kb/x`` through.
     """
     if not path:
+        from ..services.site_cache import landing_is_current
+
         cache_path = cache_dir / "index.html"
+        if not landing_is_current(cache_dir, public):
+            # Rendered with a KB that is not public now (or by a version with
+            # no manifest): withheld until the next render, like a miss.
+            return HTMLResponse(
+                content=fallback_html,
+                headers={"X-Pyrite-Cache": "MISS", **SITE_SECURITY_HEADERS},
+            )
     else:
         parts = path.rstrip("/").split("/")
         if any(p in ("", ".", "..") or "\\" in p or "\x00" in p for p in parts):
@@ -502,6 +513,11 @@ def _serve_site_cached(
                 **SITE_SECURITY_HEADERS,
             },
         )
+
+    if path and (cache_dir / path.split("/", 1)[0]).is_dir():
+        # The KB was rendered and this page is not in it: no such entry (a
+        # deleted one's page is removed), not a page still to be rendered.
+        return _site_404()
 
     # Cache miss — return SPA fallback (client-side rendering)
     return HTMLResponse(

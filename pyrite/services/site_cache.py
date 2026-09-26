@@ -1,6 +1,8 @@
 """Site cache service — renders /site pages to static HTML files for fast serving."""
 
+import json
 import logging
+import shutil
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
@@ -30,6 +32,36 @@ def _render_template(template_name: str, **kwargs: object) -> str:
 def _render_page(**kwargs: object) -> str:
     """Render a page using the Jinja2 base.html template."""
     return _render_template("base.html", **kwargs)
+
+
+#: Beside the landing page: the KBs it was rendered with. `/site` serves the
+#: landing only while every one of them is still public (`landing_is_current`),
+#: so a KB closed by any path -- the default-role endpoint, a config.yaml edit
+#: and a restart, another process -- leaves the landing at once, not at the
+#: next render (P-S3). Not served: its name is no public KB's.
+LANDING_MANIFEST = ".landing-kbs.json"
+
+
+def landing_is_current(cache_dir: Path, public: set[str]) -> bool:
+    """May the cached landing page be served to a visitor who sees `public`?
+
+    False when the manifest is missing or unreadable (a landing rendered by
+    an earlier version, or half-written), or names a KB that is not public
+    now: fail closed, the page is withheld until the next render.
+    """
+    try:
+        names = json.loads((cache_dir / LANDING_MANIFEST).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(names, list) and all(isinstance(n, str) and n in public for n in names)
+
+
+def _remove_path(path: Path) -> None:
+    """Remove a file, a symlink or a directory tree; never follow a link."""
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.is_dir():
+        shutil.rmtree(path, ignore_errors=True)
 
 
 # schema.org type mapping
@@ -184,7 +216,58 @@ class SiteCacheService:
                     logger.warning("Failed to render %s/%s: %s", kb_name, eid, e)
                     stats["errors"] += 1
 
+        self._prune(kb_entries)
         return stats
+
+    def _prune(self, rendered: dict[str, list[dict]]) -> None:
+        """Remove every cached page this render did not write (P-S3).
+
+        After a render the cache holds exactly the current public entry set:
+        a KB directory that is not a public KB goes whole; in a public KB,
+        an entry page whose entry is gone and a browse page past the last
+        goes. Names are compared as the renderer writes them
+        (`sanitize_filename`). Top-level files (the landing and its manifest)
+        are the renderer's own and are left.
+        """
+        if not self.cache_dir.is_dir():
+            return
+        for child in self.cache_dir.iterdir():
+            if child.name in rendered and child.is_dir() and not child.is_symlink():
+                continue
+            if child.is_dir() or child.is_symlink():
+                _remove_path(child)
+        for kb_name, entries in rendered.items():
+            kb_dir = self.cache_dir / kb_name
+            if not kb_dir.is_dir():
+                continue
+            keep = {"index.html", "page"} | {f"{sanitize_filename(e['id'])}.html" for e in entries}
+            for child in kb_dir.iterdir():
+                if child.name not in keep or (child.name == "page" and child.is_symlink()):
+                    _remove_path(child)
+            self._prune_pages(kb_name, len(entries))
+
+    def _prune_pages(self, kb_name: str, entry_count: int, page_size: int = 100) -> None:
+        page_dir = self.cache_dir / kb_name / "page"
+        if not page_dir.is_dir():
+            return
+        total_pages = max(1, (entry_count + page_size - 1) // page_size)
+        keep = {f"{n}.html" for n in range(1, total_pages + 1)}
+        for child in page_dir.iterdir():
+            if child.name not in keep:
+                _remove_path(child)
+
+    def _public_kb_cards(self) -> list[dict]:
+        """The landing page's cards for the KBs public now, with counts."""
+        public = set(public_kb_names(self.config))
+        return [
+            {
+                "name": kb.name,
+                "description": getattr(kb, "description", ""),
+                "entry_count": self.db.count_entries(kb_name=kb.name),
+            }
+            for kb in self.config.all_kbs()
+            if kb.name in public
+        ]
 
     def render_entry_by_id(self, entry_id: str, kb_name: str) -> bool:
         """Render a single entry page. Returns True if successful.
@@ -208,21 +291,51 @@ class SiteCacheService:
         self._render_entry(kb_name, entry, backlinks, outlinks)
         return True
 
-    def invalidate_entry(self, entry_id: str, kb_name: str):
-        """Delete cached page for an entry."""
-        path = self.cache_dir / kb_name / f"{entry_id}.html"
-        path.unlink(missing_ok=True)
-        # Also invalidate KB index since entry list changed
-        (self.cache_dir / kb_name / "index.html").unlink(missing_ok=True)
+    def _kb_dir(self, kb_name: str) -> Path | None:
+        """The cache directory of `kb_name`, or None when that name could not
+        be one the renderer writes (a separator or a dot segment)."""
+        if not kb_name or kb_name in (".", "..") or "/" in kb_name or "\\" in kb_name:
+            return None
+        return self.cache_dir / kb_name
 
-    def invalidate_kb(self, kb_name: str):
-        """Delete all cached pages for a KB."""
-        import shutil
+    def invalidate_entry(self, entry_id: str, kb_name: str) -> None:
+        """Remove a deleted entry's page, and re-render the pages that list it.
 
-        kb_dir = self.cache_dir / kb_name
-        if kb_dir.exists():
-            shutil.rmtree(kb_dir)
-        (self.cache_dir / "index.html").unlink(missing_ok=True)
+        The page is found by the name the renderer writes
+        (`sanitize_filename`), so it is the page that is removed and nothing
+        outside the KB's directory can be. The KB's index and browse pages
+        and the landing's count are rendered again from the index, if the KB
+        is public and was rendered; nothing is created for a site that was
+        never rendered.
+        """
+        kb_dir = self._kb_dir(kb_name)
+        if kb_dir is None or not kb_dir.is_dir() or kb_dir.is_symlink():
+            return
+        (kb_dir / f"{sanitize_filename(entry_id)}.html").unlink(missing_ok=True)
+        if kb_name not in set(public_kb_names(self.config)):
+            self.invalidate_kb(kb_name)
+            return
+        entries = self.db.list_entries(kb_name=kb_name, limit=10000)
+        kb_config = self.config.get_kb(kb_name)
+        kb_info = {
+            "name": kb_name,
+            "description": getattr(kb_config, "description", "") if kb_config else "",
+            "entry_count": len(entries),
+        }
+        self._render_kb_index(kb_info, entries)
+        self._render_paginated_index(kb_name, entries)
+        self._prune_pages(kb_name, len(entries))
+        if (self.cache_dir / "index.html").is_file():
+            self._render_landing(self._public_kb_cards())
+
+    def invalidate_kb(self, kb_name: str) -> None:
+        """Remove every cached page of a KB that stopped being public (or is
+        gone), and re-render the landing without it (P-S3, P-F6)."""
+        kb_dir = self._kb_dir(kb_name)
+        if kb_dir is not None:
+            _remove_path(kb_dir)
+        if (self.cache_dir / "index.html").is_file():
+            self._render_landing(self._public_kb_cards())
 
     def _render_landing(self, kbs: list[dict]):
         """Render the /site landing page."""
@@ -259,7 +372,14 @@ class SiteCacheService:
             canonical='<link rel="canonical" href="/site">',
             body=body,
         )
+        # Manifest out, page, manifest in: until both are written the landing
+        # is withheld (no manifest), so a crash between them never pairs a
+        # page with a manifest that lists fewer KBs than the page shows.
+        (self.cache_dir / LANDING_MANIFEST).unlink(missing_ok=True)
         (self.cache_dir / "index.html").write_text(html, encoding="utf-8")
+        (self.cache_dir / LANDING_MANIFEST).write_text(
+            json.dumps([kb["name"] for kb in kbs]), encoding="utf-8"
+        )
 
     def _render_kb_index(self, kb: dict, entries: list[dict]):
         """Render a KB index page. Uses _homepage entry content if available."""

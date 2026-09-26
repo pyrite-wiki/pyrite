@@ -1187,7 +1187,23 @@ class KBService:
         if entry:
             self._run_hooks("after_delete", entry, hook_ctx)
 
+        if file_deleted:
+            self._drop_site_page(entry_id, kb_name)
         return file_deleted
+
+    def _drop_site_page(self, entry_id: str, kb_name: str) -> None:
+        """Take a deleted entry off the pre-rendered `/site` (P-S3): its page,
+        and its row in the KB's index pages. Only a cache that exists is
+        touched. Best effort: a failure is logged and never fails the delete;
+        the next render prunes what this missed."""
+        from .site_cache import SiteCacheService
+
+        try:
+            SiteCacheService(self.config, self.db).invalidate_entry(entry_id, kb_name)
+        except Exception:
+            logger.warning(
+                "Could not drop the /site page of %s/%s", kb_name, entry_id, exc_info=True
+            )
 
     def rename_entry(
         self,

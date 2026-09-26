@@ -78,6 +78,9 @@ _STATUS_BY_CODE: dict[str, int] = {
     "INVALID_REF": 422,
     "CONFIG_SAVE_REFUSED": 409,
     "CONFIG_CONFLICT": 409,
+    # A default_role change on a config.yaml KB: config.yaml is the source of
+    # truth there, so the change is refused rather than reported as done.
+    "KB_DEFINED_IN_CONFIG": 409,
     # KBAlreadyExistsError's own code (#506) -- listed explicitly so its
     # status doesn't depend on _BASE_CLASS_FALLBACK's ConfigError row (which
     # happens to answer the same 409 today, but coincidentally: nothing pins

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ..config import KBConfig, PyriteConfig, check_config_save, save_config
 from ..storage.database import PyriteDB
+from .credential_events import announce_kb_policy_change
 from .kb_names import PLAIN_KB_NAME_RULE, is_plain_kb_name, kb_name_in_use
 
 logger = logging.getLogger(__name__)
@@ -171,6 +172,7 @@ class EphemeralKBService:
         # never deleted outside the ephemeral root (see _remove_dir).
         self._remove_dir(kb)
         self.config.remove_kb(kb.name)
+        announce_kb_policy_change(kb.name)
 
     def force_expire_kb(self, name: str) -> bool:
         """Force-expire a specific ephemeral KB. Returns True if removed."""

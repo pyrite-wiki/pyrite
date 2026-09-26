@@ -24,6 +24,7 @@ from ..config import (
 from ..github_auth import get_github_token
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
+from .credential_events import announce_kb_policy_change
 from .git_service import GitService
 from .kb_names import PLAIN_KB_NAME_RULE, is_plain_kb_name
 from .user_service import UserService
@@ -270,7 +271,9 @@ class RepoService:
         check_config_save(self.config, removed=removed)
         for kb_row in kb_rows:
             self.config.remove_kb(kb_row["name"])
+            self.config.forget_db_kb(kb_row["name"])
             self.db.unregister_kb(kb_row["name"])
+            announce_kb_policy_change(kb_row["name"])
 
         # Remove workspace membership
         user = self.user_service.get_current_user()

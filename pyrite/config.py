@@ -577,6 +577,21 @@ class PyriteConfig:
             added += 1
         return added
 
+    def forget_db_kb(self, name: str) -> None:
+        """Drop a registry KB from the fallback lookup.
+
+        The registry's write paths call this (and `register_db_kbs` again,
+        for a row that still exists) so that `get_kb`, `all_kbs` and the
+        access policy never read a row older than the index's: the cache was
+        once filled at startup and never refreshed, and a KB an admin closed
+        stayed public until a restart.
+        """
+        self._db_kb_cache.pop(name, None)
+
+    def defined_in_config(self, name: str) -> bool:
+        """Is `name` a KB of config.yaml (not only of the index's registry)?"""
+        return name in self._kb_by_name
+
     def get_kb_by_shortname(self, shortname: str) -> KBConfig | None:
         """Get a KB by its shortname alias."""
         for kb in self.knowledge_bases:

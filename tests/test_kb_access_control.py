@@ -197,18 +197,30 @@ class TestRegistryDefaultRole:
         assert kb["default_role"] == "read"
 
     def test_update_kb_default_role(self, setup):
-        """update_kb with default_role updates the value."""
+        """update_kb with default_role updates the value (a registry KB)."""
         registry, db, _ = setup
-        registry.seed_from_config()
-        result = registry.update_kb("config-kb", default_role="none")
+        db.register_kb("user-kb", "generic", "/tmp/user", source="user", default_role="read")
+        result = registry.update_kb("user-kb", default_role="none")
         assert result["default_role"] == "none"
 
     def test_update_kb_default_role_to_null(self, setup):
-        """update_kb can set default_role to None."""
-        registry, _, _ = setup
-        registry.seed_from_config()
-        result = registry.update_kb("config-kb", default_role=None)
+        """update_kb can set default_role to None (a registry KB)."""
+        registry, db, _ = setup
+        db.register_kb("user-kb", "generic", "/tmp/user", source="user", default_role="read")
+        result = registry.update_kb("user-kb", default_role=None)
         assert result["default_role"] is None
+
+    def test_update_kb_default_role_of_a_config_kb_is_refused(self, setup):
+        """config.yaml sets a config KB's policy: a registry write would change
+        nothing, so it is refused, not reported as done (P-M1)."""
+        from pyrite.exceptions import KBDefinedInConfigError
+
+        registry, _, config = setup
+        registry.seed_from_config()
+        with pytest.raises(KBDefinedInConfigError):
+            registry.update_kb("config-kb", default_role="none")
+        assert registry.get_kb("config-kb")["default_role"] == "read"
+        assert config.get_kb("config-kb").default_role == "read"
 
     def test_get_kb_config_includes_default_role(self, setup):
         """get_kb_config builds KBConfig with default_role from DB."""

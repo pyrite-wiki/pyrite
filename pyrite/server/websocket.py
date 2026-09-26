@@ -9,8 +9,10 @@ only (KB name, entry id), and re-resolving per event would put a DB walk per
 socket per event on the loop. Instead a socket lives no longer than the
 credential that opened it (#411, ADR-0036): each socket records the user and
 session it was opened with, and the server closes it when that session ends
-(logout, eviction, expiry) or that user's role or KB grants change. The
-client then reconnects and is scoped afresh. ``AuthService`` announces each
+(logout, eviction, expiry) or that user's role or KB grants change, and
+every scoped socket -- anonymous ones too -- that could read a KB is closed
+when that KB's ``default_role`` changes or it is removed. The client then
+reconnects and is scoped afresh. ``AuthService`` announces each
 change through ``pyrite.services.credential_events``; ``on_credential_change``
 is the listener the app subscribes at startup. Expiry has no event: the
 recorded expiry is checked before every send and by a periodic sweep.
@@ -76,9 +78,20 @@ class SocketScope:
         return self.user_id is not None or self.session_hash is not None
 
     def matches(self, change: CredentialChange) -> bool:
+        if change.kb_name is not None:
+            # A KB's own policy changed: every socket scoped with that KB in
+            # its readable set was scoped by the old policy, anonymous or not.
+            return self.readable is not None and change.kb_name in self.readable
         if change.session_hash is not None and change.session_hash == self.session_hash:
             return True
         return change.user_id is not None and change.user_id == self.user_id
+
+    def stale_after(self, credential_changed: bool, kb_policy_changed: bool) -> bool:
+        """Could a change processed during this socket's handshake have
+        altered the scope it was resolved with?"""
+        if credential_changed and self.revocable:
+            return True
+        return kb_policy_changed and self.readable is not None
 
     def expired(self, now: datetime) -> bool:
         return self.expires_at is not None and self.expires_at <= now
@@ -171,29 +184,39 @@ class ConnectionManager:
 
     def __init__(self):
         self._connections: dict[WebSocket, SocketScope] = {}
-        # Bumped by every `revoke`. A handshake reads it before resolving its
-        # credential and `connect` compares it after `accept`: a change that
-        # landed in between may have revoked the credential just resolved.
+        # Bumped by every `revoke`: the first by a credential change, the
+        # second by a KB policy change. A handshake reads them before
+        # resolving its scope and `connect` compares them after `accept`: a
+        # change that landed in between may have revoked the credential, or
+        # changed the policy, just resolved. Kept apart so a user's logout
+        # does not refuse every anonymous handshake under way.
         self._epoch = 0
+        self._kb_epoch = 0
         self._pending_closes: set[asyncio.Task] = set()
 
     @property
-    def epoch(self) -> int:
-        return self._epoch
+    def epoch(self) -> tuple[int, int]:
+        return (self._epoch, self._kb_epoch)
 
-    async def connect(self, ws: WebSocket, scope: SocketScope, epoch: int | None = None) -> bool:
+    async def connect(
+        self, ws: WebSocket, scope: SocketScope, epoch: tuple[int, int] | None = None
+    ) -> bool:
         """Accept an *already authenticated* socket with its scope.
 
-        ``epoch`` is ``self.epoch`` as read before the credential was
-        resolved. If a credential change has been processed since, and this
-        socket's credential is revocable, the socket is closed at once
-        instead of registered (the client reconnects and is resolved afresh)
-        and False is returned. The check and the registration have no
-        ``await`` between them, so no change can slip past both.
+        ``epoch`` is ``self.epoch`` as read before the scope was resolved.
+        If a credential change has been processed since and this socket's
+        credential is revocable, or a KB policy change and this socket is
+        scoped, the socket is closed at once instead of registered (the
+        client reconnects and is resolved afresh) and False is returned. The
+        check and the registration have no ``await`` between them, so no
+        change can slip past both.
         """
         await ws.accept()
-        if epoch is not None and scope.revocable and epoch != self._epoch:
-            logger.info("Closed /ws: its credential changed during the handshake")
+        if epoch is not None and scope.stale_after(
+            credential_changed=epoch[0] != self._epoch,
+            kb_policy_changed=epoch[1] != self._kb_epoch,
+        ):
+            logger.info("Closed /ws: its scope changed during the handshake")
             await self._close_quietly(ws)
             return False
         self._connections[ws] = scope
@@ -205,13 +228,17 @@ class ConnectionManager:
         logger.debug("WebSocket disconnected, total: %d", len(self._connections))
 
     def revoke(self, change: CredentialChange) -> int:
-        """Close every socket opened with the credential ``change`` names.
+        """Close every socket opened with the credential ``change`` names, or
+        scoped with the KB whose policy it says changed.
 
         Each socket leaves the manager *now*, before its close frame is sent,
         so no event broadcast after this call can reach it. Returns the
         number closed.
         """
-        self._epoch += 1
+        if change.kb_name is not None:
+            self._kb_epoch += 1
+        else:
+            self._epoch += 1
         victims = [ws for ws, scope in self._connections.items() if scope.matches(change)]
         for ws in victims:
             self._close(ws)
