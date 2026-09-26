@@ -251,6 +251,37 @@ async def _already_sent(scope, receive, send) -> None:
     """The response the SSE stream already was: nothing more to send."""
 
 
+# The first MCP SDK whose SSE transport refuses a message from a principal
+# other than the session's (the check `_session_owner` feeds).
+REQUIRED_MCP_FOR_OWNER_CHECK = "1.27.2"
+
+
+def _sdk_checks_session_owner(transport: Any) -> bool:
+    """Does the installed SDK's SSE transport enforce the same-owner check?
+
+    Detects the feature, not a version string: the transport keeps a
+    per-session owner table, the SDK can derive an owner from a user, and
+    two different principals yield two different owners. Without all three,
+    a session id alone would authorize its messages (P-M3).
+    """
+    try:
+        from mcp.server.auth.middleware.bearer_auth import authorization_context
+    except ImportError:
+        return False
+    if not isinstance(getattr(transport, "_session_owners", None), dict):
+        return False
+    try:
+        one = authorization_context(
+            _session_owner({"principal_kind": "probe", "principal_id": "1"})
+        )
+        two = authorization_context(
+            _session_owner({"principal_kind": "probe", "principal_id": "2"})
+        )
+    except Exception:
+        return False
+    return one != two
+
+
 def mount_mcp_routes(
     app: FastAPI,
     app_get_config: Callable[[], PyriteConfig],
@@ -274,6 +305,16 @@ def mount_mcp_routes(
     # here double-prefixes it to "/mcp/mcp/messages/", which 404s — the
     # endpoint must be relative to the mount point, i.e. just "/messages/".
     sse_transport = SseServerTransport("/messages/")
+    if not _sdk_checks_session_owner(sse_transport):
+        # Fail closed: serving /mcp without the check would let anyone who
+        # learns a session id act as that session's principal.
+        logger.error(
+            "MCP over HTTP (/mcp) is disabled: the installed mcp SDK does not "
+            "check that a message comes from its session's owner. "
+            "Install mcp>=%s to serve /mcp.",
+            REQUIRED_MCP_FOR_OWNER_CHECK,
+        )
+        return
     # The characterization harness reaches the transport's session table here.
     app.state.pyrite_mcp_sse_transport = sse_transport
     # Idempotent: the listener is module-level, like the registry.

@@ -162,6 +162,15 @@ class _SSE:
         return False
 
 
+def _live_sessions() -> int:
+    """Sessions this process's registry still holds (one test at a time per
+    process, so a test's own streams are the only ones)."""
+    from pyrite.server.mcp_sessions import sessions
+
+    with sessions._lock:
+        return len(sessions._live)
+
+
 class _World:
     def __init__(self, app, config):
         self.app = app
@@ -359,6 +368,7 @@ class TestSessionLifetime:
             r = await w.http.post("/auth/logout", headers=_cookie(token))
             assert r.status_code == 200, r.text
             assert await sse.wait_ended(), "SSE session outlived its logged-out credential"
+            assert _live_sessions() == 0, "an ended session stayed registered"
 
         _run(client, scenario)
 
@@ -427,6 +437,7 @@ class TestSessionLifetime:
         async def scenario(tg):
             sse = await _SSE(w.app, _cookie(token)).open(tg)
             assert await sse.wait_ended(), "SSE session outlived its session's expiry"
+            assert _live_sessions() == 0, "an expired session stayed registered"
 
         _run(client, scenario)
 
@@ -452,6 +463,7 @@ class TestSessionLifetime:
             sse = _SSE(w.app, alice)
             tg.start_soon(sse.run)
             assert await sse.wait_ended(), "a session resolved before a revocation stayed open"
+            assert _live_sessions() == 0, "a session ended at the handshake stayed registered"
 
         _run(client, scenario)
 
@@ -511,3 +523,67 @@ class TestRateLimitIdentity:
             assert out.get("error_code") != "RATE_LIMITED", out
 
         _run(client, scenario)
+
+
+# =============================================================================
+# 4. Fail closed on an SDK without the same-owner check (P-M3)
+# =============================================================================
+
+
+def _app_without_owner_check(tmp: Path, monkeypatch, remove: str):
+    """``create_app`` with the SDK's owner-check feature taken away: either
+    the transport's per-session owner table, the SDK's owner derivation, or
+    that derivation telling two principals apart."""
+    import mcp.server.auth.middleware.bearer_auth as bearer_auth
+    import mcp.server.sse as sdk_sse
+
+    if remove == "owner-table":
+        real_init = sdk_sse.SseServerTransport.__init__
+
+        def init_without_owners(self, *args, **kwargs):
+            real_init(self, *args, **kwargs)
+            del self._session_owners
+
+        monkeypatch.setattr(sdk_sse.SseServerTransport, "__init__", init_without_owners)
+    elif remove == "owner-derivation":
+        monkeypatch.delattr(bearer_auth, "authorization_context")
+    else:  # an SDK whose owners do not tell principals apart
+        monkeypatch.setattr(bearer_auth, "authorization_context", lambda user: {})
+    return create_app(config=_config(tmp))
+
+
+@pytest.mark.parametrize("remove", ["owner-table", "owner-derivation", "owner-collapsed"])
+def test_mcp_is_not_served_without_the_sdk_owner_check(monkeypatch, remove):
+    with tempfile.TemporaryDirectory() as d:
+        app = _app_without_owner_check(Path(d), monkeypatch, remove)
+        with TestClient(app) as client:
+            # /mcp/sse last: served, it would open a stream that never returns.
+            assert client.get("/mcp/info", headers=_bearer(OPERATOR_KEY)).status_code == 404
+            post = client.post(
+                "/mcp/messages/?session_id=00000000000000000000000000000000",
+                content="{}",
+                headers={"content-type": "application/json", **_bearer(OPERATOR_KEY)},
+            )
+            assert post.status_code == 404
+            assert client.get("/mcp/sse", headers=_bearer(OPERATOR_KEY)).status_code == 404
+            # The rest of the app still serves.
+            assert client.get("/api/kbs", headers={"x-api-key": OPERATOR_KEY}).status_code == 200
+
+
+def test_disabling_mcp_logs_the_required_version(monkeypatch, caplog):
+    from pyrite.server.mcp_routes import REQUIRED_MCP_FOR_OWNER_CHECK
+
+    with tempfile.TemporaryDirectory() as d:
+        with caplog.at_level("ERROR", logger="pyrite.server.mcp_routes"):
+            _app_without_owner_check(Path(d), monkeypatch, "owner-table")
+    assert any(
+        REQUIRED_MCP_FOR_OWNER_CHECK in r.getMessage() and "/mcp" in r.getMessage()
+        for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]
+
+
+@pytest.mark.control(reason="the installed SDK has the check, so /mcp is served")
+def test_mcp_is_served_with_the_sdk_owner_check():
+    with tempfile.TemporaryDirectory() as d:
+        with TestClient(create_app(config=_config(Path(d)))) as client:
+            assert client.get("/mcp/info", headers=_bearer(OPERATOR_KEY)).status_code == 200
