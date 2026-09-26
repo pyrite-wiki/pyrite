@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Topbar from '$lib/components/layout/Topbar.svelte';
+	import DefaultRoleSelect from '$lib/components/kb/DefaultRoleSelect.svelte';
 	import { api, ApiError } from '$lib/api/client';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { page } from '$app/stores';
@@ -22,10 +23,6 @@
 	let health = $state<KBHealthResponse | null>(null);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
-
-	// Default role editing
-	let savingRole = $state(false);
-	let roleMessage = $state<string | null>(null);
 
 	// Description editing
 	let editingDescription = $state(false);
@@ -162,23 +159,6 @@
 			feedback = { ok: false, message: e instanceof ApiError ? e.detail : 'PR creation failed' };
 		} finally {
 			creatingPR = false;
-		}
-	}
-
-	async function handleDefaultRoleChange(newRole: string) {
-		if (!kb) return;
-		savingRole = true;
-		roleMessage = null;
-		try {
-			const roleValue = newRole === '' ? null : newRole;
-			await api.updateKBDefaultRole(kbName, roleValue);
-			kb = { ...kb, default_role: roleValue };
-			roleMessage = 'Default role updated';
-			setTimeout(() => (roleMessage = null), 3000);
-		} catch (e) {
-			roleMessage = e instanceof ApiError ? e.detail : 'Failed to update';
-		} finally {
-			savingRole = false;
 		}
 	}
 
@@ -581,25 +561,14 @@
 						<p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
 							Who can access this KB by default. "None" = private (explicit grants only).
 						</p>
-						<div class="flex items-center gap-3">
-							<select
-								id="default-role"
-								value={kb.default_role || ''}
-								class="px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm"
-								disabled={savingRole}
-								onchange={(e) => handleDefaultRoleChange(e.currentTarget.value)}
-							>
-								<option value="">Use global role</option>
-								<option value="read">Read (public)</option>
-								<option value="write">Write</option>
-								<option value="none">None (private)</option>
-							</select>
-							{#if roleMessage}
-								<span class="text-xs text-green-600 dark:text-green-400"
-									>{roleMessage}</span
-								>
-							{/if}
-						</div>
+						<DefaultRoleSelect
+							{kbName}
+							value={kb.default_role}
+							editable={kb.default_role_editable !== false}
+							onSaved={(role) => {
+								if (kb) kb = { ...kb, default_role: role };
+							}}
+						/>
 					</div>
 
 					<!-- Explicit Grants -->
