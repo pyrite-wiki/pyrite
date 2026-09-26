@@ -33,6 +33,7 @@ from ..services.access_policy import (
     Action,
     Principal,
     authorize_tier,
+    named_kb,
     resolve_api_key_role,
 )
 from ..services.block_service import BlockService
@@ -587,11 +588,11 @@ def _enforce_tier(principal: Principal | None, tier: str) -> None:
 # per-route allowlist: the rule is that naming two KBs gets both checked, so
 # the only thing a route-specific exception would buy is a request that names
 # a readable KB in one parameter and serves from a private one in the other
-# (#186). `center_kb` is deliberately absent -- `/api/graph` filters nodes and
-# edges by the readable set after building the graph, so a KB named there that
-# the caller cannot read contributes nothing to the response, and checking it
-# would turn a harmless name into a 404.
-KB_PARAM_NAMES = ("kb", "kb_name", "source_kb", "target_kb")
+# (#186). `center_kb` (`/api/graph`) is checked too: it was once left out on
+# the grounds that the graph was filtered after it was built, but a private
+# centre still answered differently from a missing one (private #57), so it is
+# refused the same way as any other unreadable KB -- and a missing one alike.
+KB_PARAM_NAMES = ("kb", "kb_name", "source_kb", "target_kb", "center_kb")
 
 
 class _UnparseableBodyError(Exception):
@@ -618,23 +619,31 @@ async def _resolve_kb_names(request: Request) -> list[str]:
     Order is preserved and duplicates removed, so the first value is still
     a sensible single name for an error message.
 
-    Raises `_UnparseableBodyError` when a **JSON** body cannot be parsed:
-    "no KB named" is what lets a request through, so a body that was
-    supposed to carry a KB and could not be read must not produce it.
+    Raises `_UnparseableBodyError` when a body cannot be read or parsed:
+    "no KB named" is what lets a request through, so a body that could carry
+    a KB and could not be read must not produce it.
 
-    A body of any other content type is not read at all. Only a JSON object
-    can name a KB the way this resolver understands, and a multipart upload
-    (`/api/entries/import` binds `UploadFile = File(...)`) is consumed as a
-    stream by FastAPI, so reading it here raises
-    `RuntimeError("Stream consumed")` -- which is neither a malformed body
-    nor an attack, and those routes name their KB in the query string
-    anyway.
+    **The body is read whatever its Content-Type says**. The guard must
+    see every body the handler could bind, and whether a handler binds a
+    body as JSON is FastAPI's decision, not this resolver's: before 0.132
+    FastAPI parsed a body with *no* Content-Type as JSON, and any version may
+    draw that line differently. The KBs checked must be the KBs the handler
+    acts on, so every non-form body is parsed here, and one that does not
+    parse is refused.
+
+    Only a form body is left unread: `/api/entries/import` binds
+    `UploadFile = File(...)`, which FastAPI consumes as a stream (reading it
+    here raises `RuntimeError("Stream consumed")`), and FastAPI never binds a
+    form as JSON. Those routes name their KB in the query string.
     """
     names: list[str] = []
 
     def add(value: object) -> None:
-        if isinstance(value, str) and value and value not in names:
-            names.append(value)
+        # A blank or whitespace-only name names no KB (private #74): see
+        # `access_policy.named_kb`, which the services read the same way.
+        name = named_kb(value)
+        if name and name not in names:
+            names.append(name)
 
     # Path first: it is the route's own identity, the one location a caller
     # cannot add or remove. Only `kb`/`kb_name`; `/plugins/{name}` and
@@ -644,10 +653,12 @@ async def _resolve_kb_names(request: Request) -> list[str]:
         add(request.path_params.get(param))
     add(_admin_kb_path_name(request))
 
+    # Every value of a repeated parameter, not just the one FastAPI binds.
     for param in KB_PARAM_NAMES:
-        add(request.query_params.get(param))
+        for value in request.query_params.getlist(param):
+            add(value)
 
-    if not _has_json_body(request):
+    if _is_form_body(request):
         return names
 
     try:
@@ -670,16 +681,24 @@ async def _resolve_kb_names(request: Request) -> list[str]:
     return names
 
 
-def _has_json_body(request: Request) -> bool:
-    """Could this request's body be a JSON object naming a KB?
+_FORM_MEDIA_TYPES = frozenset({"multipart/form-data", "application/x-www-form-urlencoded"})
 
-    Anything else -- a multipart upload, a form post, no body at all -- is
-    left unread. The KB in those cases is in the path or the query, which
-    the caller has already collected.
+
+def _is_form_body(request: Request) -> bool:
+    """Is this request's body a form, which FastAPI never binds as JSON?
+
+    Parsed the way FastAPI parses the header (`email.message`), so the two
+    cannot disagree about what the media type is. Everything else -- JSON,
+    no Content-Type, text, an unknown type -- is read by the resolver.
     """
-    content_type = request.headers.get("content-type", "")
-    media_type = content_type.split(";", 1)[0].strip().lower()
-    return media_type == "application/json" or media_type.endswith("+json")
+    import email.message
+
+    content_type = request.headers.get("content-type")
+    if not content_type:
+        return False
+    message = email.message.Message()
+    message["content-type"] = content_type
+    return message.get_content_type() in _FORM_MEDIA_TYPES
 
 
 def _admin_kb_path_name(request: Request) -> str | None:
@@ -925,10 +944,10 @@ def requires_kb_tier(tier: str, *, resolve_kb=None):
     - ``requires_kb_tier("write")`` -- the KB is the one the **request names**
       (`kb`/`kb_name`/... in path, query or JSON body; every value is
       checked, so naming a writable KB beside a private one buys nothing).
-      A route using this form must declare a KB-bearing parameter:
-      `tests/test_kb_write_guard_is_structural.py` fails otherwise, because
-      a request that names no KB falls back to the caller's *global* role,
-      which is never enough for a KB-scoped write.
+      A route using this form must declare a KB-bearing parameter
+      (`tests/test_kb_write_guard_is_structural.py`), and a request that
+      names no KB is refused (422 `KB_REQUIRED`): the caller's *global* role
+      is never enough for a KB-scoped write.
     - ``requires_kb_tier("write", resolve_kb=dep)`` -- for a route that
       changes a row by id and names no KB. `dep` is a FastAPI dependency that
       looks the row up and returns a `RowKB`; the rule is applied to the
@@ -982,10 +1001,18 @@ def requires_kb_tier(tier: str, *, resolve_kb=None):
             ) from None
 
         if not kb_names:
-            # Only reachable on a route the structural test would reject: no
-            # KB-bearing parameter, so the global role is all there is.
-            _enforce_tier(principal, tier)
-            return
+            # A KB-scoped write that names no KB has nothing to be authorised
+            # against. It is refused -- never admitted on the caller's global
+            # role, which says nothing about the KB the handler would then act
+            # on. A caller with the same role on every KB (an operator key,
+            # auth disabled) whose role is too low still gets the 403 it
+            # always got: the global check here can only refuse.
+            if not principal.scoped:
+                _enforce_tier(principal, tier)
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "KB_REQUIRED", "message": "This write must name a knowledge base"},
+            )
 
         for kb_name in kb_names:
             await _enforce_kb_tier(request, config, db, kb_name, tier, kb_not_found(kb_name))
@@ -1439,8 +1466,12 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
     if dist_dir is None:
         dist_dir = Path(__file__).parent.parent.parent / "web" / "dist"
     # Always mount /site and /viewer routes (independent of SPA dist)
-    from .static import mount_site_routes
 
+    from .static import SiteRefresher, mount_site_routes
+
+    application.state.site_refresh = SiteRefresher(
+        get_config=lambda: application.state.pyrite_config, open_db=_app_db
+    )
     mount_site_routes(application)
 
     # Mount SPA static files if dist directory exists

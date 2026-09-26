@@ -30,19 +30,26 @@ def get_qa_status(
     the KBs swept, and one the caller cannot read must contribute to
     neither.
     """
-    return svc.get_status(kb_name=kb, kb_names=None if kb else scope.as_set())
+    readable = scope.as_set()
+    return svc.get_status(kb_name=kb, kb_names=None if kb else readable, readable_kbs=readable)
 
 
-@router.get("/qa/validate/{entry_id}", dependencies=[Depends(authorize(Action.KB_READ, KB))])
+@router.get("/qa/validate/{entry_id}")
 @limiter.limit("60/minute")
 def validate_entry(
     request: Request,
     entry_id: str,
     kb: str = Query(..., description="KB name (required)"),
     svc: QAService = Depends(get_qa_service),
+    scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ) -> dict[str, Any]:
-    """Validate a single entry and return issues."""
-    return svc.validate_entry(entry_id, kb)
+    """Validate a single entry and return issues.
+
+    Its links may point into KBs the caller cannot read; a target there is
+    reported exactly as a missing one, so the answer is not an existence
+    oracle (P-R5).
+    """
+    return svc.validate_entry(entry_id, kb, readable_kbs=scope.as_set())
 
 
 @router.get("/qa/validate")
@@ -59,9 +66,10 @@ def validate_kb(
     every entry id in it -- a full inventory. It now covers only the KBs
     the caller may read.
     """
+    readable = scope.as_set()
     if kb:
-        return svc.validate_kb(kb)
-    return svc.validate_all(kb_names=scope.as_set())
+        return svc.validate_kb(kb, readable_kbs=readable)
+    return svc.validate_all(kb_names=readable, readable_kbs=readable)
 
 
 @router.get("/qa/coverage", dependencies=[Depends(authorize(Action.KB_READ, KB))])

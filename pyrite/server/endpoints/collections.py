@@ -6,16 +6,17 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from ...exceptions import EntryNotFoundError
 from ...plugins.registry import get_registry
-from ...services.access_policy import KB, Action, ReadScope
+from ...services.access_policy import KB, AccessPolicy, Action, ReadScope
 from ...services.kb_service import KBService
 from ...utils.metadata import parse_metadata
 from ..api import (
+    get_access_policy,
     get_kb_service,
     limiter,
     negotiate_response,
     requires_kb_tier,
 )
-from ..authz import authorize
+from ..authz import authorize, read_scope
 from ..schemas import (
     CollectionEntriesResponse,
     CollectionListResponse,
@@ -108,8 +109,15 @@ def create_collection(
     request: Request,
     body: CreateCollectionRequest = Body(...),
     svc: KBService = Depends(get_kb_service),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
-    """Create a new virtual collection."""
+    """Create a new virtual collection.
+
+    The write is decided by `requires_kb_tier("write")`; the slug check reads
+    within the caller's `ReadScope`, asked of the policy here because this
+    route has no read declaration to take it from.
+    """
+    readable = read_scope(request, policy).as_set()
     metadata = {
         "description": body.description or "",
         "source_type": "query",
@@ -129,7 +137,7 @@ def create_collection(
     counter = 1
     while True:
         try:
-            existing = svc.get_entry(slug, kb_name=body.kb)
+            existing = svc.get_entry(slug, kb_name=body.kb, readable_kbs=readable)
             if existing:
                 counter += 1
                 slug = f"{base_slug}-{counter}"
@@ -165,7 +173,6 @@ def create_collection(
 @router.get(
     "/collections/{collection_id}",
     response_model=CollectionResponse,
-    dependencies=[Depends(authorize(Action.KB_READ, KB))],
 )
 @limiter.limit("100/minute")
 def get_collection(
@@ -173,9 +180,14 @@ def get_collection(
     collection_id: str,
     kb: str = Query(..., description="KB name"),
     svc: KBService = Depends(get_kb_service),
+    scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
-    """Get collection metadata."""
-    result = svc.get_entry(collection_id, kb_name=kb)
+    """Get collection metadata.
+
+    A blank ``kb`` names no KB (private #74); the lookup is bounded by the
+    caller's scope either way.
+    """
+    result = svc.get_entry(collection_id, kb_name=kb, readable_kbs=scope.as_set())
     if not result or result.get("entry_type") != "collection":
         raise HTTPException(
             status_code=404,
@@ -206,7 +218,6 @@ def get_collection(
 @router.get(
     "/collections/{collection_id}/entries",
     response_model=CollectionEntriesResponse,
-    dependencies=[Depends(authorize(Action.KB_READ, KB))],
 )
 @limiter.limit("100/minute")
 def get_collection_entries(
@@ -218,8 +229,14 @@ def get_collection_entries(
     limit: int = Query(200, ge=1, le=500),
     offset: int = Query(0, ge=0),
     svc: KBService = Depends(get_kb_service),
+    scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
-    """List entries within a collection."""
+    """List entries within a collection.
+
+    A stored query can name a KB of its own (``kb:`` in its text); it is
+    evaluated within the viewer's readable set, so one the viewer cannot
+    read returns what a missing KB returns.
+    """
     try:
         results, total = svc.get_collection_entries(
             collection_id,
@@ -228,6 +245,7 @@ def get_collection_entries(
             sort_order=sort_order,
             limit=limit,
             offset=offset,
+            readable_kbs=scope.as_set(),
         )
     except EntryNotFoundError as e:
         raise HTTPException(
@@ -265,15 +283,11 @@ def preview_collection_query(
     """Preview results for a collection query without saving.
 
     A read route despite the POST: it runs an arbitrary query and returns
-    the matching entries. With no ``kb`` in the body the query spans every
-    KB, so the readable set is pushed into the evaluation -- ``total``
-    counts the matched rows and must not count private ones.
+    the matching entries. With no ``kb`` in the body or the query the query
+    spans every KB, so the readable set is pushed into the evaluation --
+    ``total`` counts the matched rows and must not count private ones.
     """
-    from ...services.collection_query import (
-        evaluate_query,
-        parse_query,
-        validate_query,
-    )
+    from ...services.collection_query import parse_query, validate_query
 
     query = parse_query(body.query)
     if body.kb:
@@ -287,9 +301,9 @@ def preview_collection_query(
             detail={"code": "INVALID_QUERY", "message": "; ".join(errors)},
         )
 
-    results, total = evaluate_query(
-        query, svc.db, kb_names=None if query.kb_name else scope.as_set()
-    )
+    # The query's own `kb:` is authorized against the same set as the body's
+    # `kb` was: an unreadable one answers like a missing one (P-R2, P-R5).
+    results, total = svc.evaluate_collection_query(query, readable_kbs=scope.as_set())
 
     entries = []
     for r in results:

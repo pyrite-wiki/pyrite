@@ -64,9 +64,10 @@ def after_save_update_counts(entry: Entry, context: dict[str, Any]) -> None:
         try:
             now = datetime.now(UTC).isoformat()
             db._raw_conn.execute(
-                """INSERT INTO social_reputation_log (user_id, delta, reason, created_at)
-                   VALUES (?, ?, ?, ?)""",
-                (author_id, 1, f"writeup_created:{entry.id}", now),
+                """INSERT INTO social_reputation_log
+                   (user_id, delta, reason, entry_id, kb_name, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (author_id, 1, f"writeup_created:{entry.id}", entry.id, kb_name or None, now),
             )
             db._raw_conn.commit()
             logger.info("Writeup count incremented for %s in %s", author_id, kb_name)
@@ -106,9 +107,17 @@ def after_delete_adjust_reputation(entry: Entry, context: dict[str, Any]) -> Non
             if vote_total != 0:
                 now = datetime.now(UTC).isoformat()
                 db._raw_conn.execute(
-                    """INSERT INTO social_reputation_log (user_id, delta, reason, created_at)
-                       VALUES (?, ?, ?, ?)""",
-                    (author_id, -vote_total, f"writeup_deleted:{entry.id}", now),
+                    """INSERT INTO social_reputation_log
+                       (user_id, delta, reason, entry_id, kb_name, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        author_id,
+                        -vote_total,
+                        f"writeup_deleted:{entry.id}",
+                        entry.id,
+                        context.get("kb_name") or None,
+                        now,
+                    ),
                 )
                 db._raw_conn.commit()
                 logger.info(

@@ -33,7 +33,11 @@ _SITE_CSP_DIRECTIVES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("script-src", ("'self'",)),
     ("style-src", ("'self'", "'unsafe-inline'", "https://fonts.googleapis.com")),
     ("font-src", ("'self'", "https://fonts.gstatic.com")),
-    ("img-src", ("'self'", "data:")),
+    # `https:` (any https host), not just `'self'`/`data:`: an entry body can
+    # embed `![](https://example.com/x.png)` and an operator's branding
+    # `logo_url`/`og_image_url` is commonly an external https URL. An image
+    # cannot execute script, so this widens what renders, not what runs.
+    ("img-src", ("'self'", "data:", "https:")),
     ("connect-src", ("'self'",)),
     ("object-src", ("'none'",)),
     ("base-uri", ("'self'",)),
@@ -109,6 +113,51 @@ SITE_SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
 }
 
+# The hash SvelteKit's build emits in its own <meta http-equiv> CSP tag for
+# the inline bootstrap script (`kit.csp.mode: 'hash'` in web/svelte.config.js).
+# A nonce is forbidden for prerendered pages (adapter-static prerenders
+# everything) and is unsafe there anyway; a hash changes on every build
+# because the bootstrap embeds a per-build-randomised `__sveltekit_<id>`
+# variable name, so it cannot be hardcoded here -- it is read out of the
+# build's own output instead.
+_BUILD_SCRIPT_HASH = re.compile(r"'sha256-[A-Za-z0-9+/]+=*'")
+
+
+def _spa_script_hash_extra(index_content: str) -> str:
+    """The ``site_csp_extra``-style fragment adding the build's own inline
+    script hash(es) to ``script-src``, or ``""`` if none were found.
+
+    If this is ever empty for a real build (an adapter/config regression),
+    the header falls back to a bare ``script-src 'self'`` with no hash --
+    that blocks SvelteKit's own bootstrap script and the app loads to a
+    blank page with no visible error. ``mount_static`` warns at mount time
+    when this happens; see the call site.
+    """
+    hashes = _BUILD_SCRIPT_HASH.findall(index_content)
+    if not hashes:
+        return ""
+    return "script-src " + " ".join(hashes)
+
+
+def _spa_csp_headers(index_content: str, site_csp_extra: str = "") -> dict[str, str]:
+    """Security headers for an SPA ``index.html`` response (P-B1).
+
+    Same baseline as ``/site``, plus the build's own inline-script hash(es)
+    added to ``script-src`` so the bootstrap SvelteKit itself emits still
+    runs -- a header CSP and a page's ``<meta http-equiv>`` CSP combine with
+    AND semantics, so a header ``script-src 'self'`` with no hash would block
+    it even though the meta tag allows it. ``site_csp_extra`` is the same
+    per-request operator setting ``/site`` honours (``build_site_csp``);
+    both are merged into one ``script-src`` extra so an operator's directive
+    and the build's own hash don't clobber each other.
+    """
+    parts = [p for p in (_spa_script_hash_extra(index_content), site_csp_extra) if p]
+    extra = "; ".join(parts)
+    return {
+        "Content-Security-Policy": build_site_csp(extra),
+        "X-Content-Type-Options": "nosniff",
+    }
+
 
 # The only files /site/_static serves: the /site pages' scripts.
 _SITE_STATIC_DIR = Path(__file__).parent / "templates"
@@ -117,6 +166,89 @@ _SITE_STATIC_FILES = {"site.js", "site-search.js"}
 
 def _site_404() -> HTMLResponse:
     return HTMLResponse(status_code=404, headers=SITE_SECURITY_HEADERS)
+
+
+class SiteRefresher:
+    """Re-renders a stale part of the /site cache on the visit that finds it.
+
+    One visit's worth of render per stale page, and failures do not amplify:
+
+    - one render at a time, and a visitor who finds one running is not made
+      to wait (nor to hold a threadpool thread): they get the withheld page;
+    - the render re-checks freshness under the lock, so visitors who all
+      saw the page stale produce one render, not one each;
+    - a render that fails is not tried again for `backoff_seconds` for that
+      page, whatever the traffic.
+    """
+
+    backoff_seconds = 60.0
+
+    def __init__(self, get_config, open_db, clock=None) -> None:
+        import threading
+        import time
+
+        self._get_config = get_config
+        self._open_db = open_db
+        self._clock = clock or time.monotonic
+        self.lock = threading.Lock()
+        self._failed_at: dict[tuple[str, str | None], float] = {}
+        self.renders = 0  # renders attempted; read by tests and diagnostics
+
+    def may_try(self, what: str, kb_name: str | None) -> bool:
+        """Cheap, on the event loop: is a render worth dispatching?"""
+        return not self.lock.locked() and self.may_try_after_failure((what, kb_name))
+
+    def refresh(self, served_dir: Path, what: str, kb_name: str | None) -> None:
+        """Render the stale part, if it is still stale and nobody else is.
+
+        Never raises: a failure is logged and remembered for the backoff."""
+        from ..services.public_kbs import public_kb_names
+        from ..services.site_cache import (
+            SiteCacheService,
+            kb_index_is_current,
+            landing_is_current,
+        )
+
+        if not self.lock.acquire(blocking=False):
+            return
+        key = (what, kb_name)
+        try:
+            if not self.may_try_after_failure(key):
+                return
+            config = self._get_config()
+            if what == "landing":
+                if landing_is_current(served_dir, set(public_kb_names(config))):
+                    return
+            elif what == "kb_index" and kb_name:
+                if kb_index_is_current(served_dir, kb_name):
+                    return
+            else:
+                return
+            with self._open_db().request_handle() as db:
+                svc = SiteCacheService(config, db)
+                if svc.cache_dir.resolve() != served_dir.resolve():
+                    return
+                self.renders += 1
+                if what == "landing":
+                    svc.render_landing()
+                else:
+                    svc.refresh_kb_index(kb_name)
+            self._failed_at.pop(key, None)
+        except Exception:
+            self._failed_at[key] = self._clock()
+            logger.warning(
+                "Could not re-render /site (%s %s); not retrying for %.0fs",
+                what,
+                kb_name or "",
+                self.backoff_seconds,
+                exc_info=True,
+            )
+        finally:
+            self.lock.release()
+
+    def may_try_after_failure(self, key: tuple[str, str | None]) -> bool:
+        failed = self._failed_at.get(key)
+        return failed is None or self._clock() - failed >= self.backoff_seconds
 
 
 def mount_site_routes(app: FastAPI) -> None:
@@ -132,6 +264,18 @@ def mount_site_routes(app: FastAPI) -> None:
 
         config = getattr(request.app.state, "pyrite_config", None)
         return set(public_kb_names(config)) if config is not None else set()
+
+    async def _refresh(request: Request, what: str, kb_name: str | None) -> None:
+        """Re-render a stale part of the cache through the app's
+        `SiteRefresher` (set by ``create_app``), off the event loop -- unless
+        a render is already running or failed recently, in which case this
+        visitor is answered at once with what the checks allow."""
+        from starlette.concurrency import run_in_threadpool
+
+        refresher = getattr(request.app.state, "site_refresh", None)
+        if refresher is None or not refresher.may_try(what, kb_name):
+            return
+        await run_in_threadpool(refresher.refresh, site_cache_dir, what, kb_name)
 
     def _csp(request: Request, response: Response) -> Response:
         # The built-in policy is already on the response; apply the
@@ -190,6 +334,13 @@ def mount_site_routes(app: FastAPI) -> None:
     # Serve /site/* from pre-rendered cache
     @app.get("/site/{path:path}", include_in_schema=False)
     async def site_page(request: Request, path: str):
+        parts = path.rstrip("/").split("/")
+        public = _public(request)
+        if parts[0] in public and (len(parts) == 1 or parts[1] == "page"):
+            from ..services.site_cache import kb_index_is_current
+
+            if not kb_index_is_current(site_cache_dir, parts[0]):
+                await _refresh(request, "kb_index", parts[0])
         return _csp(
             request,
             _serve_site_cached(
@@ -202,6 +353,15 @@ def mount_site_routes(app: FastAPI) -> None:
 
     @app.get("/site", include_in_schema=False)
     async def site_index(request: Request):
+        from ..services.site_cache import landing_is_current
+
+        if (site_cache_dir / "index.html").is_file() and not landing_is_current(
+            site_cache_dir, _public(request)
+        ):
+            # A landing rendered under an older policy, or by a version that
+            # wrote no manifest (an upgrade): render it now rather than go
+            # dark. Withheld only if that fails.
+            await _refresh(request, "landing", None)
         return _csp(
             request,
             _serve_site_cached(
@@ -225,6 +385,30 @@ def mount_static(app: FastAPI, dist_dir: Path) -> None:
         return
 
     index_content = index_html.read_text()
+    hash_extra = _spa_script_hash_extra(index_content)
+    if not hash_extra:
+        logger.warning(
+            "web/dist/index.html has no SvelteKit CSP script hash (no "
+            "'sha256-...' <meta http-equiv=\"content-security-policy\"> tag). "
+            "The served app's script-src 'self' will have no allowance for "
+            "the build's own inline bootstrap script, so it will load to a "
+            "blank page. Check kit.csp.mode in web/svelte.config.js and that "
+            "the app was built with adapter-static's prerendering."
+        )
+
+    def _spa_response_headers(request: Request, *, index_page: bool) -> dict[str, str]:
+        # Read per request, like /site's `_csp()`: `site_csp_extra` can
+        # change at runtime (a settings update), and combining it with the
+        # build's own hash here (rather than caching the merged header)
+        # keeps both current.
+        config = getattr(request.app.state, "pyrite_config", None)
+        site_extra = config.settings.site_csp_extra if config is not None else ""
+        if index_page:
+            return _spa_csp_headers(index_content, site_extra)
+        # A non-HTML file served from dist (JS/CSS/an image/robots.txt/a
+        # favicon): the SPA's CSP doesn't apply to it, but it must still not
+        # be sniffable into a different content type (P-B1, finding #1).
+        return {"X-Content-Type-Options": "nosniff"}
 
     # Mount the assets directory for hashed static files
     assets_dir = dist_dir / "_app"
@@ -232,10 +416,12 @@ def mount_static(app: FastAPI, dist_dir: Path) -> None:
         app.mount("/_app", StaticFiles(directory=str(assets_dir)), name="svelte-app")
 
     @app.get("/favicon.ico", include_in_schema=False)
-    async def favicon():
+    async def favicon(request: Request):
         favicon_path = dist_dir / "favicon.ico"
         if favicon_path.exists():
-            return FileResponse(str(favicon_path))
+            return FileResponse(
+                str(favicon_path), headers=_spa_response_headers(request, index_page=False)
+            )
         return HTMLResponse(status_code=404)
 
     # SPA fallback — catch all non-API, non-site, non-viewer routes
@@ -248,13 +434,29 @@ def mount_static(app: FastAPI, dist_dir: Path) -> None:
 
         file_path = dist_dir / path
         if file_path.is_file() and file_path.resolve().is_relative_to(dist_dir.resolve()):
-            return FileResponse(str(file_path))
+            # A direct request for a real file in dist -- including an
+            # explicit `GET /index.html`, which is this same branch, not
+            # the "no route matched" fallback below. Without headers here
+            # that request bypasses the CSP/frame-ancestors entirely and
+            # the page can be framed (finding #1).
+            is_index = file_path.resolve() == index_html.resolve()
+            return FileResponse(
+                str(file_path),
+                headers=_spa_response_headers(request, index_page=is_index),
+            )
 
         # SPA index.html must not be cached — it references hashed JS chunks
         # that change on each build. Stale index.html = mismatched chunk errors.
+        # It carries the same security headers as /site (P-B1): a CSP so
+        # stored-content script (a sanitizer bypass anywhere in the app)
+        # still can't run, and nosniff so a served file can't be reinterpreted
+        # as a different content type.
         return HTMLResponse(
             content=index_content,
-            headers={"Cache-Control": "no-cache"},
+            headers={
+                "Cache-Control": "no-cache",
+                **_spa_response_headers(request, index_page=True),
+            },
         )
 
 
@@ -369,7 +571,9 @@ def _serve_site_cached(
         /site/boyd      → cache_dir/boyd/index.html
         /site/boyd/ooda → cache_dir/boyd/ooda.html
 
-    Anything below the landing page is served only when the *resolved* file
+    The landing page is served only while every KB it was rendered with is
+    still public (`site_cache.landing_is_current`). Anything below it is
+    served only when the *resolved* file
     lies in a public KB's directory. ``path`` arrives percent-decoded, so
     ``%2e%2e`` and ``%2F`` are already ``..`` and ``/`` here: a path with a
     ``.``, ``..`` or empty segment is refused before it is joined, and the
@@ -377,7 +581,17 @@ def _serve_site_cached(
     first-segment check alone let ``public-kb/%2e%2e/private-kb/x`` through.
     """
     if not path:
+        from ..services.site_cache import landing_is_current
+
         cache_path = cache_dir / "index.html"
+        if not landing_is_current(cache_dir, public):
+            # Rendered with a KB that is not public now (or by a version with
+            # no manifest), and re-rendering it on this request failed:
+            # withheld, like a miss.
+            return HTMLResponse(
+                content=fallback_html,
+                headers={"X-Pyrite-Cache": "MISS", **SITE_SECURITY_HEADERS},
+            )
     else:
         parts = path.rstrip("/").split("/")
         if any(p in ("", ".", "..") or "\\" in p or "\x00" in p for p in parts):
@@ -411,6 +625,12 @@ def _serve_site_cached(
                 **SITE_SECURITY_HEADERS,
             },
         )
+
+    if path:
+        # Below the landing a miss is 404, whatever the reason: a missing
+        # entry, a deleted one, or a public one not rendered yet must not
+        # answer differently from a private one.
+        return _site_404()
 
     # Cache miss — return SPA fallback (client-side rendering)
     return HTMLResponse(

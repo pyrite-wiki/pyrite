@@ -98,7 +98,14 @@ def get_graph(
     graph_svc: GraphService = Depends(get_graph_service),
     scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
-    """Get graph data for knowledge graph visualization."""
+    """Get graph data for knowledge graph visualization.
+
+    `center_kb` is authorized like `kb` (it is in `KB_PARAM_NAMES`), so a
+    centre in a KB the caller cannot read answers `KB_NOT_FOUND`, the same
+    as a KB that does not exist. The walk itself is bounded by `scope` in
+    the query, so nodes, edges and each `link_count` are computed over
+    readable KBs only (P-R4, P-R5).
+    """
     data = graph_svc.get_graph(
         center=center,
         center_kb=center_kb,
@@ -106,17 +113,8 @@ def get_graph(
         entry_type=entry_type,
         depth=depth,
         limit=limit,
+        readable_kbs=scope.as_set(),
     )
-    if not scope.unscoped:
-        # Private KBs are absent from the graph, edges to them included.
-        data["nodes"] = [n for n in data["nodes"] if scope.permits(n.get("kb_name"))]
-        keep = {(n["id"], n["kb_name"]) for n in data["nodes"]}
-        data["edges"] = [
-            e
-            for e in data["edges"]
-            if (e.get("source"), e.get("source_kb")) in keep
-            and (e.get("target"), e.get("target_kb")) in keep
-        ]
 
     if include_centrality:
         bc = compute_betweenness_centrality(data["nodes"], data["edges"])

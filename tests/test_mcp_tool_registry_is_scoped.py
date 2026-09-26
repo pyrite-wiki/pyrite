@@ -91,16 +91,18 @@ CROSS_KB_TOOLS: dict[str, str] = {
         "-- the same scoping as REST's /api/stats, so a private KB adds "
         "neither its name nor its rows."
     ),
+    "social_reputation": (
+        "filters. Spans every KB: a user's score is summed from votes on "
+        "their entries and per-KB log adjustments, so a private KB's votes "
+        "are derived data from it; narrowed with kb_scope_clause, and log "
+        "rows with no KB count only for an unscoped caller."
+    ),
     # -- serves no KB content ----------------------------------------------
     "kb_index_job_status": "serves no KB content: background index job state, keyed by job id.",
     "kb_registry_add": "serves no KB content: admin-tier KB registration.",
     "kb_registry_remove": "serves no KB content: admin-tier KB registration.",
     "kb_registry_reindex": "serves no KB content: admin-tier reindex trigger.",
     "kb_registry_health": "serves no KB content: admin-tier registry health.",
-    "social_reputation": (
-        "serves no KB content: a reputation score for a user id, from the "
-        "social plugin's own tables. No KB rows."
-    ),
 }
 
 # Tools whose KB parameter is **optional**: they name a KB when given one

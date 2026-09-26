@@ -6,6 +6,7 @@ import pytest
 
 from pyrite.config import PyriteConfig
 from pyrite.services.qa_service import QAService
+from pyrite.services.access_policy import UNSCOPED
 
 
 @pytest.fixture
@@ -188,7 +189,7 @@ class TestStalenessQARule:
         old_date = datetime.now(UTC) - timedelta(days=200)
         _insert_entry(db, "old-note", kb, "note", "Old Note", old_date)
 
-        result = svc.validate_kb(kb, check_staleness=True, staleness_days=90)
+        result = svc.validate_kb(kb, check_staleness=True, staleness_days=90, readable_kbs=UNSCOPED)
         stale_issues = [i for i in result["issues"] if i["rule"] == "stale_entry"]
         assert len(stale_issues) == 1
         assert stale_issues[0]["severity"] == "info"
@@ -201,6 +202,6 @@ class TestStalenessQARule:
         old_date = datetime.now(UTC) - timedelta(days=200)
         _insert_entry(db, "old-note", kb, "note", "Old Note", old_date)
 
-        result = svc.validate_kb(kb)
+        result = svc.validate_kb(kb, readable_kbs=UNSCOPED)
         stale_issues = [i for i in result["issues"] if i["rule"] == "stale_entry"]
         assert len(stale_issues) == 0

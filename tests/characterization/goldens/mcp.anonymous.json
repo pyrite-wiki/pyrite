@@ -2741,6 +2741,30 @@
     "error_code": "FORBIDDEN",
     "retryable": false
   },
+  "social_reputation | anonymous | missing-kb": {
+    "from_adjustments": 0,
+    "from_votes": 0,
+    "reputation": 0,
+    "user_id": "characterization-author"
+  },
+  "social_reputation | anonymous | no-default-role-kb": {
+    "from_adjustments": 0,
+    "from_votes": 0,
+    "reputation": 0,
+    "user_id": "characterization-author"
+  },
+  "social_reputation | anonymous | private-kb": {
+    "from_adjustments": 0,
+    "from_votes": 0,
+    "reputation": 0,
+    "user_id": "characterization-author"
+  },
+  "social_reputation | anonymous | readable-kb": {
+    "from_adjustments": 0,
+    "from_votes": 0,
+    "reputation": 0,
+    "user_id": "characterization-author"
+  },
   "social_top | anonymous | missing-kb": {
     "error": "KB 'missing-kb' not found",
     "error_code": "NOT_FOUND",

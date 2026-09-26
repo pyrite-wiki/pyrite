@@ -4,6 +4,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from ..services.access_policy import UNSCOPED
 from .context import cli_context
 
 collections_app = typer.Typer(help="Collection management")
@@ -97,7 +98,7 @@ def query_entries(
                 error_code="VALIDATION_FAILED",
             )
 
-        entries, total = evaluate_query(query, db)
+        entries, total = evaluate_query(query, db, readable_kbs=UNSCOPED)
 
         if not entries:
             console.print("[yellow]No entries matched the query.[/yellow]")

@@ -12,6 +12,8 @@ export interface KBInfo {
 	last_indexed: string | null;
 	shortname: string | null;
 	default_role: string | null;
+	/** False when an operator set this KB's default role by hand in config.yaml. */
+	default_role_editable?: boolean;
 }
 
 export interface KBListResponse {

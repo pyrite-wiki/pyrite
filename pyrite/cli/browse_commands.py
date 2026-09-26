@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from ..exceptions import PyriteError
+from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_fields_param, project_fields
 from .context import cli_context
 
@@ -430,7 +431,7 @@ def register_browse_commands(app: typer.Typer) -> None:
             from ..services.graph_service import GraphService
 
             graph_svc = GraphService(db)
-            links = graph_svc.get_backlinks(entry_id, kb_name)
+            links = graph_svc.get_backlinks(entry_id, kb_name, readable_kbs=UNSCOPED)
 
             if not links:
                 console.print(f"[yellow]No backlinks found for '{entry_id}'.[/yellow]")

@@ -1016,10 +1016,10 @@ class SoftwareKBPlugin:
             epic_subtask_ids: set[str] | None = None
             if epic_filter:
                 epic_subtask_ids = set()
-                for link in db.get_outlinks(epic_filter, kb_name or ""):
+                for link in db.get_outlinks(epic_filter, kb_name or "", readable_kbs=readable_kbs):
                     if link.get("relation") == "has_subtask":
                         epic_subtask_ids.add(link["id"])
-                for link in db.get_backlinks(epic_filter, kb_name or ""):
+                for link in db.get_backlinks(epic_filter, kb_name or "", readable_kbs=readable_kbs):
                     if link.get("relation") == "subtask_of":
                         epic_subtask_ids.add(link["id"])
 
@@ -1097,7 +1097,9 @@ class SoftwareKBPlugin:
             # Group by epic if requested. Unbounded: the caller wants the
             # whole board shape, not a slice of it.
             if group_by == "epic":
-                grouped = self._group_items_by_epic(db, items, kb_name or "")
+                grouped = self._group_items_by_epic(
+                    db, items, kb_name or "", readable_kbs=readable_kbs
+                )
                 return {"count": len(items), "groups": grouped}
 
             total = len(items)
@@ -1116,18 +1118,30 @@ class SoftwareKBPlugin:
                 db.close()
 
     def _group_items_by_epic(
-        self, db, items: list[dict[str, Any]], kb_name: str
+        self,
+        db,
+        items: list[dict[str, Any]],
+        kb_name: str,
+        *,
+        readable_kbs: set[str] | None,
     ) -> list[dict[str, Any]]:
-        """Group backlog items by their parent epic."""
+        """Group backlog items by their parent epic.
+
+        An epic the caller cannot read is titled by its id, exactly as an
+        epic that does not exist is (P-R5).
+        """
         # Build item_id → epic_id mapping via subtask_of links
         item_to_epic: dict[str, str] = {}
         epic_titles: dict[str, str] = {}
         for item in items:
-            for link in db.get_outlinks(item["id"], item.get("kb_name", kb_name)):
+            for link in db.get_outlinks(
+                item["id"], item.get("kb_name", kb_name), readable_kbs=readable_kbs
+            ):
                 if link.get("relation") == "subtask_of":
                     item_to_epic[item["id"]] = link["id"]
                     if link["id"] not in epic_titles:
-                        epic_titles[link["id"]] = link.get("title", link["id"])
+                        # `or`: a target with no entry row has the key, as None.
+                        epic_titles[link["id"]] = link.get("title") or link["id"]
                     break
 
         # Group items
@@ -1194,7 +1208,9 @@ class SoftwareKBPlugin:
                 if status_filter and status != status_filter:
                     continue
 
-                progress = self._get_epic_progress(db, row["id"], row["kb_name"])
+                progress = self._get_epic_progress(
+                    db, row["id"], row["kb_name"], readable_kbs=readable_kbs
+                )
                 epics.append(
                     {
                         "id": row["id"],
@@ -1214,8 +1230,13 @@ class SoftwareKBPlugin:
             if should_close:
                 db.close()
 
-    def _mcp_epic_detail(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Show an epic's subtasks grouped by status with progress."""
+    def _mcp_epic_detail(
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any]:
+        """Show an epic's subtasks grouped by status with progress.
+
+        Subtasks in KBs the caller cannot read are not counted (P-R4).
+        """
         import json
 
         db, should_close = self._get_db()
@@ -1240,7 +1261,7 @@ class SoftwareKBPlugin:
             if meta.get("kind") != "epic":
                 return {"error": f"Item '{epic_id}' is not an epic (kind: {meta.get('kind', '')})"}
 
-            progress = self._get_epic_progress(db, epic_id, kb_name)
+            progress = self._get_epic_progress(db, epic_id, kb_name, readable_kbs=readable_kbs)
 
             return {
                 "id": epic_id,
@@ -1403,7 +1424,7 @@ class SoftwareKBPlugin:
                     continue
 
                 # Get linked backlog items via outlinks
-                linked = db.get_outlinks(row["id"], row["kb_name"])
+                linked = db.get_outlinks(row["id"], row["kb_name"], readable_kbs=readable_kbs)
                 total = 0
                 completed = 0
                 for link in linked:
@@ -1856,10 +1877,27 @@ class SoftwareKBPlugin:
 
     _RESOLVED_STATUSES = frozenset({"done", "retired", "wont_do"})
 
-    def _get_dependency_status(self, db, item_id: str, kb_name: str) -> dict[str, Any]:
+    @staticmethod
+    def _readable_entry(db, entry_id: str, kb_name: str, readable_kbs: set[str] | None):
+        """`db.get_entry`, or None for a KB outside the caller's readable set.
+
+        A link's far end can be in any KB. One the caller cannot read reads
+        as a missing entry -- a blocker's status "unknown", a subtask not
+        counted -- never as its title and status (P-R4, P-R5).
+        """
+        if readable_kbs is not None and kb_name not in readable_kbs:
+            return None
+        return db.get_entry(entry_id, kb_name)
+
+    def _get_dependency_status(
+        self, db, item_id: str, kb_name: str, *, readable_kbs: set[str] | None
+    ) -> dict[str, Any]:
         """Return dependency info for a backlog item.
 
-        Returns dict with blocked_by, blocks, and is_blocked.
+        Returns dict with blocked_by, blocks, and is_blocked. Within
+        `readable_kbs` (`None`: unscoped): a blocker the caller cannot read is
+        reported as a missing one is -- no title, status unknown, unresolved
+        -- and an item it cannot read that this one blocks is left out.
         """
         import json
 
@@ -1867,10 +1905,12 @@ class SoftwareKBPlugin:
         blocks: list[dict[str, Any]] = []
 
         # Outlinks with relation "blocked_by" → this item is blocked by those targets
-        for link in db.get_outlinks(item_id, kb_name):
+        for link in db.get_outlinks(item_id, kb_name, readable_kbs=readable_kbs):
             if link.get("relation") != "blocked_by":
                 continue
-            dep_entry = db.get_entry(link["id"], link.get("kb_name", kb_name))
+            dep_entry = self._readable_entry(
+                db, link["id"], link.get("kb_name", kb_name), readable_kbs=readable_kbs
+            )
             if dep_entry:
                 meta = {}
                 if dep_entry.get("metadata"):
@@ -1896,10 +1936,12 @@ class SoftwareKBPlugin:
 
         # Backlinks with relation "blocked_by" → the source item is blocked by *this* item,
         # meaning this item blocks that source.
-        for link in db.get_backlinks(item_id, kb_name):
+        for link in db.get_backlinks(item_id, kb_name, readable_kbs=readable_kbs):
             if link.get("relation") != "blocked_by":
                 continue
-            dep_entry = db.get_entry(link["id"], link.get("kb_name", kb_name))
+            dep_entry = self._readable_entry(
+                db, link["id"], link.get("kb_name", kb_name), readable_kbs=readable_kbs
+            )
             if dep_entry:
                 meta = {}
                 if dep_entry.get("metadata"):
@@ -1928,22 +1970,25 @@ class SoftwareKBPlugin:
             "is_blocked": any(not dep["resolved"] for dep in blocked_by),
         }
 
-    def _get_epic_progress(self, db, epic_id: str, kb_name: str) -> dict[str, Any]:
+    def _get_epic_progress(
+        self, db, epic_id: str, kb_name: str, *, readable_kbs: set[str] | None
+    ) -> dict[str, Any]:
         """Compute progress for an epic from its has_subtask links.
 
         Returns dict with subtasks list, total, done, in_progress, completion_pct,
-        and by_status grouping.
+        and by_status grouping. A subtask in a KB outside `readable_kbs` is
+        not counted, the same as one that does not exist (P-R4).
         """
         import json
 
         subtasks: list[dict[str, Any]] = []
 
-        for link in db.get_outlinks(epic_id, kb_name):
+        for link in db.get_outlinks(epic_id, kb_name, readable_kbs=readable_kbs):
             if link.get("relation") != "has_subtask":
                 continue
             target_id = link.get("id", "")
             target_kb = link.get("kb_name", kb_name)
-            dep_entry = db.get_entry(target_id, target_kb)
+            dep_entry = self._readable_entry(db, target_id, target_kb, readable_kbs=readable_kbs)
             if not dep_entry:
                 continue
             if dep_entry.get("entry_type") != "backlog_item":
@@ -1973,7 +2018,7 @@ class SoftwareKBPlugin:
 
         # Also check backlinks: items that link to this epic via subtask_of
         # get_backlinks returns the inverse_relation, so we look for "has_subtask"
-        for link in db.get_backlinks(epic_id, kb_name):
+        for link in db.get_backlinks(epic_id, kb_name, readable_kbs=readable_kbs):
             if link.get("relation") != "has_subtask":
                 continue
             target_id = link.get("id", "")
@@ -1981,7 +2026,7 @@ class SoftwareKBPlugin:
             if any(s["id"] == target_id for s in subtasks):
                 continue
             target_kb = link.get("kb_name", kb_name)
-            dep_entry = db.get_entry(target_id, target_kb)
+            dep_entry = self._readable_entry(db, target_id, target_kb, readable_kbs=readable_kbs)
             if not dep_entry:
                 continue
             if dep_entry.get("entry_type") != "backlog_item":
@@ -2027,9 +2072,11 @@ class SoftwareKBPlugin:
             "by_status": by_status,
         }
 
-    def _check_no_open_blockers(self, db, item_id: str, kb_name: str) -> dict[str, Any] | None:
+    def _check_no_open_blockers(
+        self, db, item_id: str, kb_name: str, *, readable_kbs: set[str] | None
+    ) -> dict[str, Any] | None:
         """Return a failure dict if the item has unresolved blockers, else None."""
-        dep_status = self._get_dependency_status(db, item_id, kb_name)
+        dep_status = self._get_dependency_status(db, item_id, kb_name, readable_kbs=readable_kbs)
         if dep_status["is_blocked"]:
             unresolved = [d for d in dep_status["blocked_by"] if not d["resolved"]]
             ids = ", ".join(d["id"] for d in unresolved)
@@ -2049,10 +2096,13 @@ class SoftwareKBPlugin:
         to_status: str,
         row,
         meta: dict[str, Any],
+        *,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any] | None:
         """Evaluate quality gate criteria for a status transition.
 
         Returns gate result dict or None if no gate is configured for this status.
+        `readable_kbs` bounds the blocker check (see `_get_dependency_status`).
         """
         gates = board_config.get("gates", {})
         gate_config = gates.get(to_status)
@@ -2086,7 +2136,9 @@ class SoftwareKBPlugin:
             if checker_name == "no_open_blockers":
                 item_id = row["id"] if isinstance(row, dict) else row["id"]
                 kb_name = row["kb_name"] if isinstance(row, dict) else row["kb_name"]
-                failure = self._check_no_open_blockers(db, item_id, kb_name)
+                failure = self._check_no_open_blockers(
+                    db, item_id, kb_name, readable_kbs=readable_kbs
+                )
                 passed = failure is None
                 result = {"text": text, "passed": passed, "type": "checker"}
                 if not passed:
@@ -2152,7 +2204,9 @@ class SoftwareKBPlugin:
         except Exception:
             return {"lanes": [], "wip_policy": "warn"}
 
-    def _mcp_check_ready(self, args: dict[str, Any]) -> dict[str, Any]:
+    def _mcp_check_ready(
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any]:
         """Check Definition of Ready for a backlog item without claiming it."""
         import json
 
@@ -2179,7 +2233,9 @@ class SoftwareKBPlugin:
             priority = row["priority"] or meta.get("priority", "medium")
 
             board_config = self._load_board_config_safe(kb_name)
-            gate_result = self._evaluate_gate(db, board_config, "in_progress", row, meta)
+            gate_result = self._evaluate_gate(
+                db, board_config, "in_progress", row, meta, readable_kbs=readable_kbs
+            )
 
             return {
                 "item_id": item_id,
@@ -2194,7 +2250,9 @@ class SoftwareKBPlugin:
             if should_close:
                 db.close()
 
-    def _mcp_refine(self, args: dict[str, Any]) -> dict[str, Any]:
+    def _mcp_refine(
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any]:
         """Scan backlog for DoR readiness gaps, sorted by priority."""
         import json
 
@@ -2232,7 +2290,9 @@ class SoftwareKBPlugin:
                     continue
 
                 priority = row["priority"] or meta.get("priority", "medium")
-                gate_result = self._evaluate_gate(db, board_config, "in_progress", row, meta)
+                gate_result = self._evaluate_gate(
+                    db, board_config, "in_progress", row, meta, readable_kbs=readable_kbs
+                )
                 is_ready = gate_result["passed"] if gate_result else True
 
                 item = {
@@ -2272,8 +2332,14 @@ class SoftwareKBPlugin:
             if should_close:
                 db.close()
 
-    def _mcp_context_for_item(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Assemble full context bundle for a backlog item."""
+    def _mcp_context_for_item(
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any]:
+        """Assemble full context bundle for a backlog item.
+
+        Its linked entries and dependencies come from any KB, so they are
+        read within the caller's readable set (P-R4, P-R5).
+        """
         import json
 
         db, should_close = self._get_db()
@@ -2307,11 +2373,13 @@ class SoftwareKBPlugin:
             }
 
             # Get linked entries (both directions)
-            outlinks = db.get_outlinks(item_id, kb_name)
-            backlinks = db.get_backlinks(item_id, kb_name)
+            outlinks = db.get_outlinks(item_id, kb_name, readable_kbs=readable_kbs)
+            backlinks = db.get_backlinks(item_id, kb_name, readable_kbs=readable_kbs)
 
             # Build dependency info from blocks/blocked_by links
-            dep_status = self._get_dependency_status(db, item_id, kb_name)
+            dep_status = self._get_dependency_status(
+                db, item_id, kb_name, readable_kbs=readable_kbs
+            )
             dep_link_ids = {d["id"] for d in dep_status["blocked_by"]} | {
                 d["id"] for d in dep_status["blocks"]
             }
@@ -2493,7 +2561,9 @@ class SoftwareKBPlugin:
             blocked_items = []
             top = None
             for candidate in candidates:
-                dep = self._get_dependency_status(db, candidate["id"], kb_name or "")
+                dep = self._get_dependency_status(
+                    db, candidate["id"], kb_name or "", readable_kbs=readable_kbs
+                )
                 if dep["is_blocked"]:
                     blocked_items.append(
                         {
@@ -2514,7 +2584,7 @@ class SoftwareKBPlugin:
                 }
 
             # Get context preview counts
-            outlinks = db.get_outlinks(top["id"], kb_name or "")
+            outlinks = db.get_outlinks(top["id"], kb_name or "", readable_kbs=readable_kbs)
             adr_count = sum(1 for l in outlinks if l.get("entry_type") == "adr")
             component_count = sum(1 for l in outlinks if l.get("entry_type") == "component")
             validation_count = sum(
@@ -2543,7 +2613,9 @@ class SoftwareKBPlugin:
             if should_close:
                 db.close()
 
-    def _mcp_claim(self, args: dict[str, Any]) -> dict[str, Any]:
+    def _mcp_claim(
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any]:
         """Claim a backlog item: transition to in_progress and set assignee."""
         import json
 
@@ -2575,8 +2647,11 @@ class SoftwareKBPlugin:
 
             current_status = row["status"] or meta.get("status", "proposed")
 
-            # Check dependencies before allowing claim
-            dep_status = self._get_dependency_status(db, item_id, kb_name)
+            # Check dependencies before allowing claim; a blocker the caller
+            # cannot read is unresolved and untitled, as a missing one is.
+            dep_status = self._get_dependency_status(
+                db, item_id, kb_name, readable_kbs=readable_kbs
+            )
             if dep_status["is_blocked"]:
                 unresolved = [d for d in dep_status["blocked_by"] if not d["resolved"]]
                 return {
@@ -2616,7 +2691,9 @@ class SoftwareKBPlugin:
             except Exception:
                 pass
 
-            gate_result = self._evaluate_gate(db, board_config, "in_progress", row, meta)
+            gate_result = self._evaluate_gate(
+                db, board_config, "in_progress", row, meta, readable_kbs=readable_kbs
+            )
             if gate_result and not gate_result["passed"] and gate_result["policy"] == "enforce":
                 return {"claimed": False, "error": "Gate check failed", "gate": gate_result}
 
@@ -2711,7 +2788,9 @@ class SoftwareKBPlugin:
             if should_close:
                 db.close()
 
-    def _mcp_transition(self, args: dict[str, Any]) -> dict[str, Any]:
+    def _mcp_transition(
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any]:
         """Transition a backlog item to a new status."""
         import json
 
@@ -2783,7 +2862,9 @@ class SoftwareKBPlugin:
             except Exception:
                 pass
 
-            gate_result = self._evaluate_gate(db, board_config, to_status, row, meta)
+            gate_result = self._evaluate_gate(
+                db, board_config, to_status, row, meta, readable_kbs=readable_kbs
+            )
             if gate_result and not gate_result["passed"] and gate_result["policy"] == "enforce":
                 return {
                     "transitioned": False,
@@ -2826,7 +2907,9 @@ class SoftwareKBPlugin:
             if should_close:
                 db.close()
 
-    def _mcp_review(self, args: dict[str, Any]) -> dict[str, Any]:
+    def _mcp_review(
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any]:
         """Record review outcome for a backlog item in review status."""
         import json
 
@@ -2890,7 +2973,9 @@ class SoftwareKBPlugin:
             gate_result = None
             if target == "done":
                 board_config = self._load_board_config_safe(kb_name)
-                gate_result = self._evaluate_gate(db, board_config, "done", row, meta)
+                gate_result = self._evaluate_gate(
+                    db, board_config, "done", row, meta, readable_kbs=readable_kbs
+                )
                 if gate_result and not gate_result["passed"] and gate_result["policy"] == "enforce":
                     return {
                         "reviewed": False,

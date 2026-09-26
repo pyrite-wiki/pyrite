@@ -3,6 +3,7 @@
 import pytest
 from pyrite_cascade.plugin import CascadePlugin
 
+from pyrite.services.access_policy import UNSCOPED
 from pyrite.storage.database import PyriteDB
 
 
@@ -74,7 +75,7 @@ class TestMcpNetworkDelegation:
         _insert_entry(db, "actor-2", "Actor Two", "actor", kb_name="test")
 
         cascade_result = plugin._mcp_network({"entry_id": "actor-2", "kb_name": "test"})
-        ji_result = query_network(db, "test", "actor-2")
+        ji_result = query_network(db, "test", "actor-2", readable_kbs=UNSCOPED)
 
         assert cascade_result == ji_result
 

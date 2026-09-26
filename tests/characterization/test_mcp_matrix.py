@@ -172,7 +172,8 @@ def test_mcp_tool_principal_matrix(world, write_world, principal_name):
     collector.assert_clean()
 
 
-PINNED_MCP_TOOL_COUNT = 106
+# 106 -> 107: social_reputation filters by the readable set (no longer content-free).
+PINNED_MCP_TOOL_COUNT = 107
 
 
 def test_no_golden_mcp_tool_is_orphaned(world):

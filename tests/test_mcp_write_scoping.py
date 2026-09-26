@@ -33,6 +33,7 @@ from pyrite.services.auth_service import AuthService
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
 from tests.auth_seed import seed_user
+from pyrite.services.access_policy import UNSCOPED
 
 PUB, TEAM = "pub", "team"
 
@@ -131,7 +132,7 @@ def _session_call(env, username: str, tool: str, arguments: dict) -> dict:
 
 
 def _body(env, kb: str, entry_id: str) -> str | None:
-    entry = env["svc"].get_entry(entry_id, kb_name=kb)
+    entry = env["svc"].get_entry(entry_id, kb_name=kb, readable_kbs=UNSCOPED)
     return entry.get("body") if entry else None
 
 
@@ -168,7 +169,7 @@ class TestReadOnlyKBRefusesWrites:
             {"kb_name": PUB, "entry_type": "note", "title": "Planted", "body": "x"},
         )
         assert out.get("error_code") == "FORBIDDEN", out
-        assert env["svc"].get_entry("planted", kb_name=PUB) is None
+        assert env["svc"].get_entry("planted", kb_name=PUB, readable_kbs=UNSCOPED) is None
 
     def test_kb_update_refused(self, env):
         out = _session_call(

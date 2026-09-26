@@ -10,9 +10,17 @@ from pathlib import Path
 from typing import Any
 
 from ..config import KBConfig, PyriteConfig
-from ..exceptions import ConfigError, KBAlreadyExistsError, KBNotFoundError, KBProtectedError
+from ..exceptions import (
+    ConfigError,
+    KBAlreadyExistsError,
+    KBDefinedInConfigError,
+    KBNotFoundError,
+    KBProtectedError,
+)
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
+from .credential_events import announce_kb_policy_change
+from .site_cache import drop_kb_site_pages
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +110,7 @@ class KBRegistryService:
                 "indexed": bool(r.get("last_indexed")),
                 "last_indexed": r.get("last_indexed"),
                 "default_role": r.get("default_role"),
+                "default_role_editable": self._yaml_origin(r["name"], r.get("repo_id")) != "hand",
             }
             if type_filter and kb_info["type"] != type_filter:
                 continue
@@ -128,6 +137,7 @@ class KBRegistryService:
             "indexed": bool(kb.last_indexed),
             "last_indexed": kb.last_indexed,
             "default_role": kb.default_role,
+            "default_role_editable": self._yaml_origin(name, kb.repo_id) != "hand",
         }
 
     def add_kb(
@@ -307,16 +317,37 @@ class KBRegistryService:
             )
 
         self.db.unregister_kb(name)
+        self.config.forget_db_kb(name)
+        announce_kb_policy_change(name)
+        drop_kb_site_pages(self.config, self.db, name)
         return True
 
     def update_kb(self, name: str, **updates: Any) -> dict[str, Any]:
-        """Update KB metadata (description, kb_type)."""
+        """Update KB metadata (description, kb_type, default_role).
+
+        The change is visible to this process's config -- and so to the
+        access policy and every anonymous surface -- when this returns.
+
+        ``default_role`` has one source of truth per KB. A registry KB's is
+        its row. A KB the server itself wrote into config.yaml (ephemeral,
+        repo-subscribed) has its entry there, which the server rewrites with
+        the row. A KB an operator wrote into config.yaml by hand is theirs:
+        the change is refused (`KBDefinedInConfigError`, naming the file)
+        rather than reported as done and overridden by the file.
+        """
+        from ..config import CONFIG_WRITE_LOCK, current_config_file, save_config
         from ..storage.models import KB
 
         kb = self.db.session.get(KB, name)
         if not kb:
             raise KBNotFoundError(f"KB '{name}' not found")
 
+        origin = self._yaml_origin(name, kb.repo_id)
+        if "default_role" in updates and origin == "hand":
+            raise KBDefinedInConfigError(
+                f"KB '{name}' is defined by hand in {current_config_file().name}, which sets "
+                "its default_role. Change default_role there and restart the server."
+            )
         allowed = {"description", "kb_type", "default_role"}
         if "default_role" in updates and (
             self.config.confined_default_role(updates["default_role"]) != updates["default_role"]
@@ -326,11 +357,70 @@ class KBRegistryService:
                 "server runs on an untrusted repo-local config, where a KB can only be closed. "
                 "Publish KBs from a trusted config (~/.pyrite or PYRITE_CONFIG_DIR)."
             )
-        for key, value in updates.items():
-            if key in allowed:
-                setattr(kb, key, value)
-        self.db.session.commit()
+        current = self.config.get_kb(name)
+        role_before = current.default_role if current is not None else kb.default_role
+        written = self.config.yaml_kb(name) if origin == "server" else None
+        # Mutate -> save -> commit as one step: no other save can write this
+        # change to the file while it may still be rolled back.
+        with CONFIG_WRITE_LOCK:
+            for key, value in updates.items():
+                if key in allowed:
+                    setattr(kb, key, value)
+            if "default_role" in updates and written is not None:
+                # The server's own config.yaml entry is this KB's policy:
+                # rewrite it first, so a refused save leaves neither changed.
+                previous = written.default_role
+                written.default_role = updates["default_role"]
+                try:
+                    save_config(self.config)
+                except BaseException:
+                    written.default_role = previous
+                    self.db.session.rollback()
+                    raise
+            self.db.session.commit()
+        self._refresh_config_view()
+        if "default_role" in updates and updates["default_role"] != role_before:
+            announce_kb_policy_change(name)
+            drop_kb_site_pages(self.config, self.db, name)
         return self.get_kb(name)  # type: ignore[return-value]
+
+    def _yaml_origin(self, name: str, repo_id: int | None) -> str:
+        """Who wrote KB `name`'s config.yaml entry: "none" (a registry KB,
+        no entry), "server" or "hand".
+
+        "server" only on evidence the server alone writes, never on a key
+        an operator could type: an ephemeral KB's directory inside the
+        server's ephemeral root, or a repo-subscribed KB whose registry row
+        is linked to the index's repository record of the same name.
+        Anything else in config.yaml is the operator's.
+        """
+        from ..storage.kb_ops import ephemeral_root, is_ephemeral_kb_path
+
+        kb = self.config.yaml_kb(name)
+        if kb is None:
+            return "none"
+        if kb.ephemeral:
+            try:
+                if is_ephemeral_kb_path(ephemeral_root(self.config), str(kb.path)):
+                    return "server"
+            except (OSError, RuntimeError, ValueError):
+                return "hand"
+        if kb.repo and repo_id is not None:
+            repo = self.db.get_repo(repo_id=repo_id)
+            if repo and repo.get("name") == kb.repo:
+                return "server"
+        return "hand"
+
+    def _refresh_config_view(self) -> None:
+        """Make the config's view of the registry KBs equal the rows.
+
+        Re-read through `merge_registered_kbs`, the one loader of registry
+        rows (it applies the untrusted-config confinement and the orphaned
+        ephemeral rule), which builds the new lookup aside and swaps it in:
+        a row the loader now refuses leaves it, and no reader sees the KB
+        missing while it is rebuilt.
+        """
+        self.db.merge_registered_kbs(self.config)
 
     def reindex_kb(self, name: str) -> dict[str, int]:
         """Reindex a specific KB. Works for both config and user KBs."""

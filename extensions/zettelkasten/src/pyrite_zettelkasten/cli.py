@@ -7,6 +7,7 @@ from rich.console import Console
 from rich.table import Table
 
 from pyrite.config import load_config
+from pyrite.services.access_policy import UNSCOPED
 from pyrite.storage.database import PyriteDB
 
 zettel_app = typer.Typer(help="Zettelkasten knowledge management")
@@ -157,7 +158,7 @@ def zettel_orphans(
     db = PyriteDB(config.settings.index_path)
 
     try:
-        orphans = db.get_orphans(kb_name=kb_name)
+        orphans = db.get_orphans(kb_name=kb_name, readable_kbs=UNSCOPED)
 
         if not orphans:
             console.print("[green]No orphan notes found.[/green]")

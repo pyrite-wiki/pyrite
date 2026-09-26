@@ -29,6 +29,7 @@ from pyrite.services.qa_service import QAService
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
 from pyrite.storage.repository import KBRepository
+from pyrite.services.access_policy import UNSCOPED
 
 
 # =========================================================================
@@ -203,7 +204,7 @@ class TestQAAssessmentEntryType:
 class TestAssessEntry:
     def test_assess_valid_entry_returns_pass(self, qa_env):
         """Assessing a valid entry produces qa_status='pass'."""
-        result = qa_env["qa"].assess_entry("good-note", "test-kb")
+        result = qa_env["qa"].assess_entry("good-note", "test-kb", readable_kbs=UNSCOPED)
         assert result["qa_status"] == "pass"
         assert result["target_entry"] == "good-note"
         assert "assessment_id" in result
@@ -211,7 +212,7 @@ class TestAssessEntry:
 
     def test_assess_entry_with_warnings_returns_warn(self, qa_env):
         """Entry with only warnings (e.g. empty body) → qa_status='warn'."""
-        result = qa_env["qa"].assess_entry("no-body-note", "test-kb")
+        result = qa_env["qa"].assess_entry("no-body-note", "test-kb", readable_kbs=UNSCOPED)
         assert result["qa_status"] == "warn"
         assert result["issues_found"] > 0
 
@@ -226,12 +227,12 @@ class TestAssessEntry:
         )
         db._raw_conn.commit()
 
-        result = qa_env["qa"].assess_entry("no-title", "test-kb")
+        result = qa_env["qa"].assess_entry("no-title", "test-kb", readable_kbs=UNSCOPED)
         assert result["qa_status"] == "fail"
 
     def test_assess_entry_creates_assessment_entry(self, qa_env):
         """assess_entry creates a qa_assessment entry in the DB."""
-        result = qa_env["qa"].assess_entry("good-note", "test-kb")
+        result = qa_env["qa"].assess_entry("good-note", "test-kb", readable_kbs=UNSCOPED)
         aid = result["assessment_id"]
 
         row = (
@@ -247,25 +248,25 @@ class TestAssessEntry:
 
     def test_two_assessments_create_separate_entries(self, qa_env):
         """Two assess_entry calls create two different assessment entries."""
-        r1 = qa_env["qa"].assess_entry("good-note", "test-kb")
-        r2 = qa_env["qa"].assess_entry("good-note", "test-kb")
+        r1 = qa_env["qa"].assess_entry("good-note", "test-kb", readable_kbs=UNSCOPED)
+        r2 = qa_env["qa"].assess_entry("good-note", "test-kb", readable_kbs=UNSCOPED)
         assert r1["assessment_id"] != r2["assessment_id"]
 
 
 class TestAssessKB:
     def test_assess_kb_creates_assessments_for_all_entries(self, qa_env):
         """assess_kb creates one assessment per non-assessment entry."""
-        result = qa_env["qa"].assess_kb("test-kb")
+        result = qa_env["qa"].assess_kb("test-kb", readable_kbs=UNSCOPED)
         assert result["assessed"] == 2  # good-note + no-body-note
         assert len(result["results"]) == 2
 
     def test_assess_kb_skips_assessment_entries(self, qa_env):
         """assess_kb does not assess qa_assessment entries."""
         # Create an assessment first
-        qa_env["qa"].assess_entry("good-note", "test-kb")
+        qa_env["qa"].assess_entry("good-note", "test-kb", readable_kbs=UNSCOPED)
 
         # Now assess KB — should skip the assessment entry itself
-        result = qa_env["qa"].assess_kb("test-kb", max_age_hours=0)
+        result = qa_env["qa"].assess_kb("test-kb", max_age_hours=0, readable_kbs=UNSCOPED)
         target_entries = [r["target_entry"] for r in result["results"]]
         assert "good-note" in target_entries
         assert "no-body-note" in target_entries
@@ -275,9 +276,9 @@ class TestAssessKB:
 
     def test_assess_kb_skips_recently_assessed(self, qa_env):
         """assess_kb with max_age_hours=24 skips entries assessed within 24h."""
-        qa_env["qa"].assess_entry("good-note", "test-kb")
+        qa_env["qa"].assess_entry("good-note", "test-kb", readable_kbs=UNSCOPED)
 
-        result = qa_env["qa"].assess_kb("test-kb", max_age_hours=24)
+        result = qa_env["qa"].assess_kb("test-kb", max_age_hours=24, readable_kbs=UNSCOPED)
         target_entries = [r["target_entry"] for r in result["results"]]
         # good-note was just assessed, should be skipped
         assert "good-note" not in target_entries
@@ -285,9 +286,9 @@ class TestAssessKB:
 
     def test_assess_kb_max_age_zero_reassesses_all(self, qa_env):
         """assess_kb with max_age_hours=0 re-assesses everything."""
-        qa_env["qa"].assess_entry("good-note", "test-kb")
+        qa_env["qa"].assess_entry("good-note", "test-kb", readable_kbs=UNSCOPED)
 
-        result = qa_env["qa"].assess_kb("test-kb", max_age_hours=0)
+        result = qa_env["qa"].assess_kb("test-kb", max_age_hours=0, readable_kbs=UNSCOPED)
         target_entries = [r["target_entry"] for r in result["results"]]
         assert "good-note" in target_entries
 
@@ -300,16 +301,16 @@ class TestAssessKB:
 class TestGetAssessments:
     def test_returns_all_assessments(self, qa_env):
         """get_assessments returns all assessment entries."""
-        qa_env["qa"].assess_entry("good-note", "test-kb")
-        qa_env["qa"].assess_entry("no-body-note", "test-kb")
+        qa_env["qa"].assess_entry("good-note", "test-kb", readable_kbs=UNSCOPED)
+        qa_env["qa"].assess_entry("no-body-note", "test-kb", readable_kbs=UNSCOPED)
 
         assessments = qa_env["qa"].get_assessments("test-kb")
         assert len(assessments) == 2
 
     def test_filter_by_target_entry(self, qa_env):
         """Filter assessments by target_entry."""
-        qa_env["qa"].assess_entry("good-note", "test-kb")
-        qa_env["qa"].assess_entry("no-body-note", "test-kb")
+        qa_env["qa"].assess_entry("good-note", "test-kb", readable_kbs=UNSCOPED)
+        qa_env["qa"].assess_entry("no-body-note", "test-kb", readable_kbs=UNSCOPED)
 
         assessments = qa_env["qa"].get_assessments("test-kb", target_entry="good-note")
         assert len(assessments) == 1
@@ -317,8 +318,8 @@ class TestGetAssessments:
 
     def test_filter_by_status(self, qa_env):
         """Filter assessments by qa_status."""
-        qa_env["qa"].assess_entry("good-note", "test-kb")
-        qa_env["qa"].assess_entry("no-body-note", "test-kb")
+        qa_env["qa"].assess_entry("good-note", "test-kb", readable_kbs=UNSCOPED)
+        qa_env["qa"].assess_entry("no-body-note", "test-kb", readable_kbs=UNSCOPED)
 
         pass_assessments = qa_env["qa"].get_assessments("test-kb", qa_status="pass")
         assert all(a["qa_status"] == "pass" for a in pass_assessments)
@@ -338,7 +339,7 @@ class TestGetUnassessed:
 
     def test_assessed_entries_excluded(self, qa_env):
         """After assessing, entry no longer in unassessed list."""
-        qa_env["qa"].assess_entry("good-note", "test-kb")
+        qa_env["qa"].assess_entry("good-note", "test-kb", readable_kbs=UNSCOPED)
 
         unassessed = qa_env["qa"].get_unassessed("test-kb")
         ids = [e["id"] for e in unassessed]
@@ -357,7 +358,7 @@ class TestGetCoverage:
 
     def test_coverage_after_assessments(self, qa_env):
         """Coverage reflects assessed entries."""
-        qa_env["qa"].assess_entry("good-note", "test-kb")
+        qa_env["qa"].assess_entry("good-note", "test-kb", readable_kbs=UNSCOPED)
 
         cov = qa_env["qa"].get_coverage("test-kb")
         assert cov["total"] == 2
@@ -367,8 +368,8 @@ class TestGetCoverage:
 
     def test_full_coverage(self, qa_env):
         """100% coverage when all entries assessed."""
-        qa_env["qa"].assess_entry("good-note", "test-kb")
-        qa_env["qa"].assess_entry("no-body-note", "test-kb")
+        qa_env["qa"].assess_entry("good-note", "test-kb", readable_kbs=UNSCOPED)
+        qa_env["qa"].assess_entry("no-body-note", "test-kb", readable_kbs=UNSCOPED)
 
         cov = qa_env["qa"].get_coverage("test-kb")
         assert cov["coverage_pct"] == 100.0
@@ -438,7 +439,9 @@ class TestTaskIntegration:
         """assess_entry completes when task plugin import fails."""
         with patch("pyrite.services.qa_service.QAService._maybe_create_task") as mock_create:
             # Even with create_task_on_fail=True, should not error
-            result = qa_env["qa"].assess_entry("good-note", "test-kb", create_task_on_fail=True)
+            result = qa_env["qa"].assess_entry(
+                "good-note", "test-kb", create_task_on_fail=True, readable_kbs=UNSCOPED
+            )
             assert result["qa_status"] == "pass"
             # No task for pass status — _maybe_create_task only called on fail
             mock_create.assert_not_called()
@@ -455,14 +458,18 @@ class TestTaskIntegration:
         db._raw_conn.commit()
 
         with patch.object(qa_env["qa"], "_maybe_create_task") as mock_task:
-            result = qa_env["qa"].assess_entry("fail-entry", "test-kb", create_task_on_fail=True)
+            result = qa_env["qa"].assess_entry(
+                "fail-entry", "test-kb", create_task_on_fail=True, readable_kbs=UNSCOPED
+            )
             assert result["qa_status"] == "fail"
             mock_task.assert_called_once()
 
     def test_no_task_on_pass(self, qa_env):
         """No task created when assessment passes."""
         with patch.object(qa_env["qa"], "_maybe_create_task") as mock_task:
-            result = qa_env["qa"].assess_entry("good-note", "test-kb", create_task_on_fail=True)
+            result = qa_env["qa"].assess_entry(
+                "good-note", "test-kb", create_task_on_fail=True, readable_kbs=UNSCOPED
+            )
             assert result["qa_status"] == "pass"
             mock_task.assert_not_called()
 
@@ -480,7 +487,9 @@ class TestTaskIntegration:
         # try/except behavior by simulating ImportError in the actual method
         with patch("pyrite.services.qa_service.QAService._maybe_create_task") as mock_task:
             mock_task.side_effect = None  # No-op, just verifying call doesn't break
-            result = qa_env["qa"].assess_entry("fail2", "test-kb", create_task_on_fail=True)
+            result = qa_env["qa"].assess_entry(
+                "fail2", "test-kb", create_task_on_fail=True, readable_kbs=UNSCOPED
+            )
             assert result["qa_status"] == "fail"
             assert "assessment_id" in result
 
@@ -605,7 +614,7 @@ class TestLLMRubricInAssessEntry:
         mock_llm = self._make_mock_llm(response=llm_response)
         qa = QAService(qa_env["config"], qa_env["db"], llm_service=mock_llm)
 
-        result = qa.assess_entry("good-note", "test-kb", tier=2)
+        result = qa.assess_entry("good-note", "test-kb", tier=2, readable_kbs=UNSCOPED)
         assert result["llm_available"] is True
         # Check that LLM issues are included (may or may not have judgment items
         # depending on rubric config, but llm_available flag should be set)
@@ -613,7 +622,7 @@ class TestLLMRubricInAssessEntry:
     def test_tier2_without_llm_returns_tier1_only(self, qa_env):
         """assess_entry(tier=2) without LLM returns tier-1 results, llm_available=false."""
         qa = QAService(qa_env["config"], qa_env["db"], llm_service=None)
-        result = qa.assess_entry("good-note", "test-kb", tier=2)
+        result = qa.assess_entry("good-note", "test-kb", tier=2, readable_kbs=UNSCOPED)
         assert result["llm_available"] is False
         # No LLM issues (no LLM configured)
         llm_issues = [i for i in result["issues"] if i.get("rule") == "llm_rubric_violation"]
@@ -623,14 +632,14 @@ class TestLLMRubricInAssessEntry:
         """assess_entry(tier=1) makes no LLM calls regardless of config."""
         mock_llm = self._make_mock_llm()
         qa = QAService(qa_env["config"], qa_env["db"], llm_service=mock_llm)
-        result = qa.assess_entry("good-note", "test-kb", tier=1)
+        result = qa.assess_entry("good-note", "test-kb", tier=1, readable_kbs=UNSCOPED)
         mock_llm.complete.assert_not_called()
         assert "llm_available" in result
 
     def test_llm_available_flag_in_response(self, qa_env):
         """llm_available flag present in response."""
         qa = QAService(qa_env["config"], qa_env["db"])
-        result = qa.assess_entry("good-note", "test-kb")
+        result = qa.assess_entry("good-note", "test-kb", readable_kbs=UNSCOPED)
         assert "llm_available" in result
         assert result["llm_available"] is False
 
@@ -648,7 +657,7 @@ class TestLLMRubricInAssessEntry:
         )
         mock_llm = self._make_mock_llm(response=llm_response)
         qa = QAService(qa_env["config"], qa_env["db"], llm_service=mock_llm)
-        result = qa.assess_entry("good-note", "test-kb", tier=2)
+        result = qa.assess_entry("good-note", "test-kb", tier=2, readable_kbs=UNSCOPED)
 
         for issue in result["issues"]:
             if issue.get("rubric_item") == "Entry body explains the why, not just the what":

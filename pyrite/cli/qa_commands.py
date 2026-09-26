@@ -8,6 +8,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from ..services.access_policy import UNSCOPED
 from .context import cli_context
 
 qa_app = typer.Typer(help="Quality assurance validation and assessment")
@@ -42,13 +43,13 @@ def qa_validate(
         qa = QAService(config, db)
 
         if entry and kb_name:
-            result = qa.validate_entry(entry, kb_name)
+            result = qa.validate_entry(entry, kb_name, readable_kbs=UNSCOPED)
             issues = result["issues"]
         elif kb_name:
-            result = qa.validate_kb(kb_name)
+            result = qa.validate_kb(kb_name, readable_kbs=UNSCOPED)
             issues = result["issues"]
         else:
-            result = qa.validate_all()
+            result = qa.validate_all(readable_kbs=UNSCOPED)
             issues = []
             for kb in result["kbs"]:
                 issues.extend(kb["issues"])
@@ -133,7 +134,13 @@ def qa_assess(
         qa = QAService(config, db)
 
         if entry:
-            result = qa.assess_entry(entry, kb_name, tier=tier, create_task_on_fail=create_tasks)
+            result = qa.assess_entry(
+                entry,
+                kb_name,
+                tier=tier,
+                create_task_on_fail=create_tasks,
+                readable_kbs=UNSCOPED,
+            )
             data = {
                 "assessment_id": result["assessment_id"],
                 "target_entry": result["target_entry"],
@@ -142,7 +149,11 @@ def qa_assess(
             }
         else:
             result = qa.assess_kb(
-                kb_name, tier=tier, max_age_hours=max_age, create_task_on_fail=create_tasks
+                kb_name,
+                tier=tier,
+                max_age_hours=max_age,
+                create_task_on_fail=create_tasks,
+                readable_kbs=UNSCOPED,
             )
             data = {
                 "kb_name": result["kb_name"],
@@ -210,7 +221,7 @@ def qa_status(
 
     with cli_context() as (config, db, svc):
         qa = QAService(config, db)
-        status = qa.get_status(kb_name=kb_name)
+        status = qa.get_status(kb_name=kb_name, readable_kbs=UNSCOPED)
 
         # Add coverage stats if a specific KB is given
         if kb_name:
@@ -542,7 +553,9 @@ def qa_fix(
 
     with cli_context() as (config, db, svc):
         qa = QAService(config, db)
-        result = qa.fix_kb(kb_name, dry_run=dry_run, fix_rules=fix_rule or None)
+        result = qa.fix_kb(
+            kb_name, dry_run=dry_run, fix_rules=fix_rule or None, readable_kbs=UNSCOPED
+        )
 
         if output_format == "json":
             typer.echo(json_mod.dumps(result, indent=2, default=str))

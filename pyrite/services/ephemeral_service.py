@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ..config import KBConfig, PyriteConfig, check_config_save, save_config
 from ..storage.database import PyriteDB
+from .credential_events import announce_kb_policy_change
 from .kb_names import PLAIN_KB_NAME_RULE, is_plain_kb_name, kb_name_in_use
 
 logger = logging.getLogger(__name__)
@@ -102,14 +103,19 @@ class EphemeralKBService:
             created_at_ts=time.time(),
             default_role=default_role,
         )
-        try:
-            self.config.add_kb(kb)
-            save_config(self.config)
-        except BaseException:
-            if self.config.get_kb(name) is kb:
-                self.config.remove_kb(name)
-            self.db.unregister_kb(name)
-            raise
+        from ..config import CONFIG_WRITE_LOCK
+
+        # Add -> save (-> undo) as one step, like a default-role change: no
+        # other save can write this KB to the file while it may be undone.
+        with CONFIG_WRITE_LOCK:
+            try:
+                self.config.add_kb(kb)
+                save_config(self.config)
+            except BaseException:
+                if self.config.get_kb(name) is kb:
+                    self.config.remove_kb(name)
+                self.db.unregister_kb(name)
+                raise
         return kb
 
     def _root(self) -> Path:
@@ -171,6 +177,10 @@ class EphemeralKBService:
         # never deleted outside the ephemeral root (see _remove_dir).
         self._remove_dir(kb)
         self.config.remove_kb(kb.name)
+        announce_kb_policy_change(kb.name)
+        from .site_cache import drop_kb_site_pages
+
+        drop_kb_site_pages(self.config, self.db, kb.name)
 
     def force_expire_kb(self, name: str) -> bool:
         """Force-expire a specific ephemeral KB. Returns True if removed."""

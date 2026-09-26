@@ -44,6 +44,7 @@ _EXPLICIT: dict[str, Callable[[World, str, str], dict[str, Any]]] = {
     "kb_list": lambda world, kb, call_key: {},
     "kb_timeline": lambda world, kb, call_key: {},
     "kb_stats": lambda world, kb, call_key: {},
+    "social_reputation": lambda world, kb, call_key: {"user_id": "characterization-author"},
     "kb_batch_read": lambda world, kb, call_key: {
         "entries": [{"entry_id": _entry_for(world, kb), "kb_name": kb}]
     },
@@ -128,7 +129,7 @@ def _disposable_entry(world: World, kb: str) -> str:
     from pyrite.services.kb_service import KBService
 
     svc = KBService(world.config, world.db)
-    if svc.get_entry(_DISPOSABLE_ENTRY_ID, kb_name=kb) is None:
+    if svc.get_entry(_DISPOSABLE_ENTRY_ID, kb_name=kb, readable_kbs=None) is None:
         try:
             svc.create_entry(
                 kb,

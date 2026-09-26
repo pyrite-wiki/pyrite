@@ -7,6 +7,7 @@ from pyrite_journalism_investigation.dedup import (
     merge_entity_view,
 )
 
+from pyrite.services.access_policy import UNSCOPED
 from pyrite.storage.database import PyriteDB
 
 
@@ -281,7 +282,7 @@ class TestCreateSameAsLinks:
         assert link["to_kb"] == "kb2"
 
         # Verify the link actually exists in the DB
-        outlinks = multi_kb_db.get_outlinks("person-a", "kb1")
+        outlinks = multi_kb_db.get_outlinks("person-a", "kb1", readable_kbs=UNSCOPED)
         same_as_links = [l for l in outlinks if l["relation"] == "same_as"]
         assert len(same_as_links) == 1
         assert same_as_links[0]["id"] == "person-b"
@@ -316,7 +317,7 @@ class TestCreateSameAsLinks:
         assert len(result["links"]) == 1
 
         # Verify NO link was actually created
-        outlinks = multi_kb_db.get_outlinks("org-a", "kb1")
+        outlinks = multi_kb_db.get_outlinks("org-a", "kb1", readable_kbs=UNSCOPED)
         same_as_links = [l for l in outlinks if l["relation"] == "same_as"]
         assert len(same_as_links) == 0
 
@@ -324,7 +325,8 @@ class TestCreateSameAsLinks:
 class TestMergeEntityView:
     """Merge entity view across KBs via same_as links."""
 
-    def test_merge_view(self, multi_kb_db):
+    @staticmethod
+    def _seed(multi_kb_db):
         multi_kb_db.upsert_entry(
             {
                 "id": "entity-a",
@@ -355,7 +357,9 @@ class TestMergeEntityView:
             [{"id": "entity-b", "kb_name": "kb2"}],
         )
 
-        view = merge_entity_view(multi_kb_db, "entity-a", "kb1")
+    def test_merge_view(self, multi_kb_db):
+        self._seed(multi_kb_db)
+        view = merge_entity_view(multi_kb_db, "entity-a", "kb1", readable_kbs=UNSCOPED)
         assert view["canonical"]["id"] == "entity-a"
         assert view["canonical"]["kb_name"] == "kb1"
         assert len(view["appearances"]) == 2
@@ -369,3 +373,17 @@ class TestMergeEntityView:
         assert "company" in view["merged_tags"]
         assert "target" in view["merged_tags"]
         assert "fraud" in view["merged_tags"]
+
+    def test_merge_view_stays_within_the_readable_kbs(self, multi_kb_db):
+        """The same_as walk crosses KBs; an appearance in a KB the caller
+        cannot read is neither followed nor merged (P-R4)."""
+        self._seed(multi_kb_db)
+        view = merge_entity_view(multi_kb_db, "entity-a", "kb1", readable_kbs={"kb1"})
+        assert {a["id"] for a in view["appearances"]} == {"entity-a"}
+        assert "Acme Co" not in view["merged_aliases"]
+        assert "fraud" not in view["merged_tags"]
+
+    def test_merge_view_from_an_unreadable_start_is_empty(self, multi_kb_db):
+        self._seed(multi_kb_db)
+        view = merge_entity_view(multi_kb_db, "entity-b", "kb2", readable_kbs={"kb1"})
+        assert view["appearances"] == [] and view["canonical"]["title"] == ""

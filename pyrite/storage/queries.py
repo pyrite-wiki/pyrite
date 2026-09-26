@@ -83,15 +83,25 @@ class QueryMixin:
         kb_name: str,
         limit: int = 0,
         offset: int = 0,
+        *,
+        readable_kbs: set[str] | None,
     ) -> list[dict[str, Any]]:
-        """Get entries that link TO this entry."""
+        """Get entries that link TO this entry, from KBs in ``readable_kbs``."""
         return self._backend.get_backlinks(
-            entry_id=entry_id, kb_name=kb_name, limit=limit, offset=offset
+            entry_id=entry_id,
+            kb_name=kb_name,
+            limit=limit,
+            offset=offset,
+            readable_kbs=readable_kbs,
         )
 
-    def get_outlinks(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
-        """Get entries that this entry links TO."""
-        return self._backend.get_outlinks(entry_id=entry_id, kb_name=kb_name)
+    def get_outlinks(
+        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None
+    ) -> list[dict[str, Any]]:
+        """Get entries this entry links TO; an unreadable target reads as missing."""
+        return self._backend.get_outlinks(
+            entry_id=entry_id, kb_name=kb_name, readable_kbs=readable_kbs
+        )
 
     def get_all_backlinks_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
         """Get ALL backlinks targeting entries in a KB (1 query, not N)."""
@@ -105,10 +115,12 @@ class QueryMixin:
         """Get ALL sources for entries in a KB (1 query, not N)."""
         return self._backend.get_all_sources_for_kb(kb_name)
 
-    def get_related(self, entry_id: str, kb_name: str, depth: int = 1) -> list[dict[str, Any]]:
-        """Get related entries (both directions) up to N hops."""
-        backlinks = self._backend.get_backlinks(entry_id, kb_name)
-        outlinks = self._backend.get_outlinks(entry_id, kb_name)
+    def get_related(
+        self, entry_id: str, kb_name: str, depth: int = 1, *, readable_kbs: set[str] | None
+    ) -> list[dict[str, Any]]:
+        """Get related entries (both directions) up to N hops, within ``readable_kbs``."""
+        backlinks = self._backend.get_backlinks(entry_id, kb_name, readable_kbs=readable_kbs)
+        outlinks = self._backend.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
 
         related = []
         seen = set()
@@ -127,8 +139,10 @@ class QueryMixin:
         entry_type: str | None = None,
         depth: int = 2,
         limit: int = 500,
+        *,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any]:
-        """Multi-hop BFS graph traversal returning nodes and edges."""
+        """Multi-hop BFS graph traversal returning nodes and edges, within ``readable_kbs``."""
         return self._backend.get_graph_data(
             center=center,
             center_kb=center_kb,
@@ -136,6 +150,7 @@ class QueryMixin:
             entry_type=entry_type,
             depth=depth,
             limit=limit,
+            readable_kbs=readable_kbs,
         )
 
     # =========================================================================
@@ -170,9 +185,11 @@ class QueryMixin:
         """Get entries with most incoming links (most referenced)."""
         return self._backend.get_most_linked(kb_name=kb_name, limit=limit)
 
-    def get_orphans(self, kb_name: str | None = None) -> list[dict[str, Any]]:
-        """Get entries with no links (neither incoming nor outgoing)."""
-        return self._backend.get_orphans(kb_name=kb_name)
+    def get_orphans(
+        self, kb_name: str | None = None, *, readable_kbs: set[str] | None
+    ) -> list[dict[str, Any]]:
+        """Get entries with no links (neither incoming nor outgoing) the caller can see."""
+        return self._backend.get_orphans(kb_name=kb_name, readable_kbs=readable_kbs)
 
     def get_timeline(
         self,

@@ -10,6 +10,7 @@ the importers all get it.
 import pytest
 
 from pyrite.exceptions import ValidationError
+from pyrite.services.access_policy import UNSCOPED
 
 
 @pytest.fixture
@@ -21,7 +22,10 @@ def test_second_create_with_same_id_is_refused(kb_service, kb_name):
     kb_service.create_entry(kb_name, "same-title", "Same Title", "note", "first body")
     with pytest.raises(ValidationError, match="already exists"):
         kb_service.create_entry(kb_name, "same-title", "Same Title", "note", "second body")
-    assert "first body" in kb_service.get_entry("same-title", kb_name=kb_name)["body"]
+    assert (
+        "first body"
+        in kb_service.get_entry("same-title", kb_name=kb_name, readable_kbs=UNSCOPED)["body"]
+    )
 
 
 def test_collision_is_detected_across_entry_types(kb_service, kb_name):
@@ -29,10 +33,13 @@ def test_collision_is_detected_across_entry_types(kb_service, kb_name):
     kb_service.create_entry(kb_name, "shared-id", "Shared", "note", "the note")
     with pytest.raises(ValidationError, match="already exists"):
         kb_service.create_entry(kb_name, "shared-id", "Shared", "person", "the person")
-    assert "the note" in kb_service.get_entry("shared-id", kb_name=kb_name)["body"]
+    assert (
+        "the note"
+        in kb_service.get_entry("shared-id", kb_name=kb_name, readable_kbs=UNSCOPED)["body"]
+    )
 
 
 def test_update_still_replaces_content(kb_service, kb_name):
     kb_service.create_entry(kb_name, "editable", "Editable", "note", "v1")
     kb_service.update_entry("editable", kb_name, body="v2")
-    assert "v2" in kb_service.get_entry("editable", kb_name=kb_name)["body"]
+    assert "v2" in kb_service.get_entry("editable", kb_name=kb_name, readable_kbs=UNSCOPED)["body"]

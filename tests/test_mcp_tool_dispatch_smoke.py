@@ -87,7 +87,7 @@ def test_every_tool_dispatches_without_an_unhandled_exception(server):
         if name in SKIP:
             continue
         args = _minimal_arguments(meta["inputSchema"])
-        result = server._dispatch_tool(name, args, client_id="stdio")
+        result = server._dispatch_tool(name, args, client_id="stdio", client_kind="local")
         if isinstance(result, dict) and result.get("error_code") == "INTERNAL":
             crashed.append(f"{name}({args}) -> {result.get('error')}")
     assert not crashed, "MCP tools raised an unhandled exception:\n  " + "\n  ".join(crashed)
@@ -106,9 +106,9 @@ def test_domain_errors_are_not_reported_as_retryable_internal_errors(server):
     succeed.
     """
     args = {"kb_name": "test-events", "title": "dispatch-collision-probe"}
-    first = server._dispatch_tool("task_create", args, client_id="stdio")
+    first = server._dispatch_tool("task_create", args, client_id="stdio", client_kind="local")
     assert "error" not in first, first
-    second = server._dispatch_tool("task_create", args, client_id="stdio")
+    second = server._dispatch_tool("task_create", args, client_id="stdio", client_kind="local")
     # An existing id is refused with its own code since #378.
     assert second.get("error_code") == "ENTRY_EXISTS", second
     assert second.get("retryable") is False

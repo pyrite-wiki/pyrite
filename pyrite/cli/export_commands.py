@@ -7,6 +7,7 @@ import typer
 from rich.console import Console
 
 from ..cli.context import cli_context
+from ..services.access_policy import UNSCOPED
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -89,7 +90,7 @@ def export_collection(
             query = parse_query(query_str)
             if kb:
                 query.kb_name = kb
-            results, total = evaluate_query(query, db)
+            results, total = evaluate_query(query, db, readable_kbs=UNSCOPED)
             console.print(f"Query matched {total} entries")
 
             # Load full Entry objects from disk
@@ -116,7 +117,7 @@ def export_collection(
                 query = parse_query(collection.query)
                 if kb:
                     query.kb_name = kb
-                results, total = evaluate_query(query, db)
+                results, total = evaluate_query(query, db, readable_kbs=UNSCOPED)
                 for result in results:
                     entry = _load_entry_from_result(result, svc, kb)
                     if entry:

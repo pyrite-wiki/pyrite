@@ -3536,6 +3536,30 @@
     "entry_id": "characterization-title-social-post-admin-key-readable-kb",
     "file_path": "<TMPDIR>/readable-kb/writeups/characterization-title-social-post-admin-key-readable-kb.md"
   },
+  "social_reputation | admin_key | missing-kb": {
+    "from_adjustments": 0,
+    "from_votes": 0,
+    "reputation": 0,
+    "user_id": "characterization-author"
+  },
+  "social_reputation | admin_key | no-default-role-kb": {
+    "from_adjustments": 0,
+    "from_votes": 0,
+    "reputation": 0,
+    "user_id": "characterization-author"
+  },
+  "social_reputation | admin_key | private-kb": {
+    "from_adjustments": 0,
+    "from_votes": 0,
+    "reputation": 0,
+    "user_id": "characterization-author"
+  },
+  "social_reputation | admin_key | readable-kb": {
+    "from_adjustments": 0,
+    "from_votes": 0,
+    "reputation": 0,
+    "user_id": "characterization-author"
+  },
   "social_top | admin_key | missing-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "top": []

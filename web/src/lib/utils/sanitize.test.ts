@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { marked } from 'marked';
-import { jsonForScriptTag, sanitizeHtml } from './sanitize';
+import { escapeHtml, jsonForScriptTag, sanitizeHtml } from './sanitize';
 
 const render = (md: string) => sanitizeHtml(marked.parse(md, { async: false }) as string);
 
@@ -24,6 +24,33 @@ describe('sanitizeHtml', () => {
 		expect(html).not.toContain('<object');
 	});
 
+	it('keeps a disabled task-list checkbox', () => {
+		const html = render('- [ ] todo\n- [x] done');
+		expect(html).toContain('type="checkbox"');
+		expect(html).toContain('disabled');
+	});
+
+	it('strips attributes other than type/checked/disabled from a checkbox input', () => {
+		const html = sanitizeHtml(
+			'<input type="checkbox" onfocus="alert(1)" name="x" value="y" checked>'
+		);
+		expect(html).toContain('type="checkbox"');
+		expect(html).not.toContain('onfocus');
+		expect(html).not.toContain('name=');
+		expect(html).not.toContain('value=');
+	});
+
+	it('strips a non-checkbox input entirely (a form-submission vector)', () => {
+		const html = sanitizeHtml('<input type="image" src="x" onerror="alert(1)" formaction="evil">');
+		expect(html).not.toContain('<input');
+	});
+
+	it('strips forms entirely', () => {
+		const html = sanitizeHtml('<form action="https://evil.example"><input type="submit"></form>');
+		expect(html).not.toContain('<form');
+		expect(html).not.toContain('<input');
+	});
+
 	it('keeps the markup the entry renderer depends on', () => {
 		const html = sanitizeHtml(
 			'<h2 id="my-heading">T</h2><p id="block-abc">x</p>' +
@@ -36,6 +63,16 @@ describe('sanitizeHtml', () => {
 		expect(html).toContain('class="wikilink"');
 		expect(html).toContain('callout-info');
 		expect(html).toContain('language-py');
+	});
+});
+
+describe('escapeHtml', () => {
+	it('escapes the five HTML/attribute-sensitive characters', () => {
+		expect(escapeHtml(`<>&"'`)).toBe('&lt;&gt;&amp;&quot;&#39;');
+	});
+
+	it('leaves ordinary text untouched', () => {
+		expect(escapeHtml('hello world')).toBe('hello world');
 	});
 });
 

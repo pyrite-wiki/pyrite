@@ -326,7 +326,7 @@ MCP_ACCESS_EXCLUSIONS: dict[str, str] = {
     ),
     "kb_registry_reindex": "admin tool tier only; no per-KB branch beyond KBNotFoundError.",
     "kb_registry_health": "admin tool tier only; no per-KB branch beyond KBNotFoundError.",
-    # Both already excluded from kb_bearing_mcp_tool_names's OWN output (it
+    # Already excluded from kb_bearing_mcp_tool_names's OWN output (it
     # subtracts NON_KB_CONTENT_TOOLS, mcp_server.py's own authoritative "no
     # KB content" list) -- added here too (#476 round-2 issue 2's
     # completeness sweep) so the reasoning is visible in the one place a
@@ -334,7 +334,6 @@ MCP_ACCESS_EXCLUSIONS: dict[str, str] = {
     "kb_index_job_status": (
         "NON_KB_CONTENT_TOOLS (mcp_server.py): background job state keyed by job id, not a KB."
     ),
-    "social_reputation": "NON_KB_CONTENT_TOOLS (mcp_server.py): a per-user score, no KB rows.",
 }
 MCP_ACCESS_EXCLUSIONS_COUNT = len(MCP_ACCESS_EXCLUSIONS)
 
@@ -374,18 +373,17 @@ TRANSPORT_ROUTE_EXCLUSIONS: dict[str, str] = {
         "by test_mcp_transport_auth.py's TestClient case."
     ),
     "POST /mcp/messages/": (
-        "A Starlette Mount (sse_transport.handle_post_message), not an "
-        "APIRoute. Today's behaviour, pinned: the session id in the "
-        "`?session_id=` query param IS the whole credential for this "
-        "relay -- the POST's own Authorization/X-API-Key/cookie header, if "
-        "any, is never read or checked by handle_post_message; the tier "
-        "and the readable/writable KB sets were fixed once, at /mcp/sse "
-        "connect time (_resolve_bearer_auth via _authenticate), and closed "
-        "over by that session's sdk.build_sdk_server(...) call. Pinned by "
-        "test_mcp_transport_auth.py's TestMCPMessagesSessionCredential "
-        "(unknown/missing/malformed session id) and "
-        "TestMCPMessagesScopeFixedAtConnect (the resolved scope is the "
-        "connect-time one, not re-derived per POST)."
+        "A Starlette Mount (mcp_routes.handle_messages, wrapping "
+        "sse_transport.handle_post_message), not an APIRoute. Each POST's "
+        "own credential is resolved and its principal placed in the ASGI "
+        "scope's `user`, where the SDK's same-owner check compares it with "
+        "the principal that opened the session: a message acts only for "
+        "that principal, and any other caller gets the unknown-session 404. "
+        "The tier and readable/writable KB sets are resolved once, at "
+        "/mcp/sse connect, and the session ends with that credential "
+        "(mcp_sessions). Pinned by test_mcp_transport_auth.py's "
+        "TestMCPMessagesSessionCredential and TestMCPMessagesScopeFixedAtConnect, "
+        "and end to end by tests/test_mcp_sse_session.py."
     ),
     "WS /ws": (
         "APIWebSocketRoute, not an APIRoute -- its handshake auth "

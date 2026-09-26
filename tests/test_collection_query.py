@@ -18,6 +18,7 @@ from pyrite.services.collection_query import (
     query_from_dict,
     validate_query,
 )
+from pyrite.services.access_policy import UNSCOPED
 
 
 # =============================================================================
@@ -363,29 +364,29 @@ class TestCollectionQueryEvaluation:
 
     def test_evaluate_basic(self, query_env):
         q = CollectionQuery(kb_name="test-kb")
-        entries, total = evaluate_query(q, query_env)
+        entries, total = evaluate_query(q, query_env, readable_kbs=UNSCOPED)
         assert total == 5
         assert len(entries) == 5
 
     def test_evaluate_with_type(self, query_env):
         q = CollectionQuery(kb_name="test-kb", entry_type="note")
-        entries, total = evaluate_query(q, query_env)
+        entries, total = evaluate_query(q, query_env, readable_kbs=UNSCOPED)
         assert total == 5
 
     def test_evaluate_with_tag(self, query_env):
         q = CollectionQuery(kb_name="test-kb", tags_any=["important"])
-        entries, total = evaluate_query(q, query_env)
+        entries, total = evaluate_query(q, query_env, readable_kbs=UNSCOPED)
         assert total == 3
 
     def test_evaluate_with_limit(self, query_env):
         q = CollectionQuery(kb_name="test-kb", limit=2)
-        entries, total = evaluate_query(q, query_env)
+        entries, total = evaluate_query(q, query_env, readable_kbs=UNSCOPED)
         assert len(entries) == 2
         assert total == 5
 
     def test_evaluate_with_offset(self, query_env):
         q = CollectionQuery(kb_name="test-kb", limit=2, offset=3)
-        entries, total = evaluate_query(q, query_env)
+        entries, total = evaluate_query(q, query_env, readable_kbs=UNSCOPED)
         assert len(entries) == 2
         assert total == 5
 
@@ -404,12 +405,12 @@ class TestQueryCaching:
     def test_cache_key_stable(self):
         q1 = CollectionQuery(entry_type="note", kb_name="test")
         q2 = CollectionQuery(entry_type="note", kb_name="test")
-        assert _cache_key(q1) == _cache_key(q2)
+        assert _cache_key(q1, readable_kbs=UNSCOPED) == _cache_key(q2, readable_kbs=UNSCOPED)
 
     def test_cache_key_differs(self):
         q1 = CollectionQuery(entry_type="note")
         q2 = CollectionQuery(entry_type="event")
-        assert _cache_key(q1) != _cache_key(q2)
+        assert _cache_key(q1, readable_kbs=UNSCOPED) != _cache_key(q2, readable_kbs=UNSCOPED)
 
     def test_cached_returns_same_result(self):
         """Test that cached version returns consistent results."""
@@ -419,8 +420,8 @@ class TestQueryCaching:
         ]
 
         q = CollectionQuery(kb_name="test")
-        result1, count1 = evaluate_query_cached(q, mock_db)
-        result2, count2 = evaluate_query_cached(q, mock_db)
+        result1, count1 = evaluate_query_cached(q, mock_db, readable_kbs=UNSCOPED)
+        result2, count2 = evaluate_query_cached(q, mock_db, readable_kbs=UNSCOPED)
 
         assert result1 == result2
         assert count1 == count2
@@ -432,9 +433,9 @@ class TestQueryCaching:
         mock_db.list_entries.return_value = []
 
         q = CollectionQuery(kb_name="test")
-        evaluate_query_cached(q, mock_db)
+        evaluate_query_cached(q, mock_db, readable_kbs=UNSCOPED)
         clear_cache()
-        evaluate_query_cached(q, mock_db)
+        evaluate_query_cached(q, mock_db, readable_kbs=UNSCOPED)
         # Should call DB twice since cache was cleared
         assert mock_db.list_entries.call_count == 2
 
@@ -501,14 +502,16 @@ class TestVirtualCollectionService:
 
     def test_virtual_collection_returns_entries(self, virtual_collection_env):
         svc, _ = virtual_collection_env
-        entries, total = svc.get_collection_entries("virtual-notes", "test-kb")
+        entries, total = svc.get_collection_entries(
+            "virtual-notes", "test-kb", readable_kbs=UNSCOPED
+        )
         assert total == 4
         assert len(entries) == 4
 
     def test_virtual_collection_with_sort(self, virtual_collection_env):
         svc, _ = virtual_collection_env
         entries, total = svc.get_collection_entries(
-            "virtual-notes", "test-kb", sort_by="title", sort_order="desc"
+            "virtual-notes", "test-kb", sort_by="title", sort_order="desc", readable_kbs=UNSCOPED
         )
         assert total == 4
         titles = [e["title"] for e in entries]

@@ -8,6 +8,7 @@ from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.plugins.registry import get_registry
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
+from pyrite.services.access_policy import UNSCOPED
 
 
 @pytest.fixture
@@ -146,7 +147,9 @@ def test_gate_evaluation_dor_all_pass(gate_setup):
     )
     row = db._raw_conn.execute("SELECT * FROM entry WHERE id = 'item-1'").fetchone()
 
-    result = plugin._evaluate_gate(db, BOARD_WITH_WARN_GATE, "in_progress", row, meta)
+    result = plugin._evaluate_gate(
+        db, BOARD_WITH_WARN_GATE, "in_progress", row, meta, readable_kbs=UNSCOPED
+    )
     assert result is not None
     assert result["passed"] is True
     assert result["gate_name"] == "Definition of Ready"
@@ -164,7 +167,9 @@ def test_gate_evaluation_dor_missing_effort(gate_setup):
     )
     row = db._raw_conn.execute("SELECT * FROM entry WHERE id = 'item-2'").fetchone()
 
-    result = plugin._evaluate_gate(db, BOARD_WITH_WARN_GATE, "in_progress", row, meta)
+    result = plugin._evaluate_gate(
+        db, BOARD_WITH_WARN_GATE, "in_progress", row, meta, readable_kbs=UNSCOPED
+    )
     assert result is not None
     assert result["passed"] is False
     # Find the effort criterion
@@ -184,7 +189,9 @@ def test_gate_evaluation_dor_oversized(gate_setup):
     )
     row = db._raw_conn.execute("SELECT * FROM entry WHERE id = 'item-3'").fetchone()
 
-    result = plugin._evaluate_gate(db, BOARD_WITH_WARN_GATE, "in_progress", row, meta)
+    result = plugin._evaluate_gate(
+        db, BOARD_WITH_WARN_GATE, "in_progress", row, meta, readable_kbs=UNSCOPED
+    )
     assert result["passed"] is False
     oversized_crit = [c for c in result["criteria"] if "oversized" in c["text"].lower()][0]
     assert oversized_crit["passed"] is False
@@ -217,7 +224,9 @@ def test_gate_evaluation_dor_blocked(gate_setup):
     conn.execute("PRAGMA foreign_keys = ON")
 
     row = db._raw_conn.execute("SELECT * FROM entry WHERE id = 'item-4'").fetchone()
-    result = plugin._evaluate_gate(db, BOARD_WITH_WARN_GATE, "in_progress", row, meta)
+    result = plugin._evaluate_gate(
+        db, BOARD_WITH_WARN_GATE, "in_progress", row, meta, readable_kbs=UNSCOPED
+    )
     assert result["passed"] is False
     blocker_crit = [c for c in result["criteria"] if "blocker" in c["text"].lower()][0]
     assert blocker_crit["passed"] is False
@@ -244,7 +253,9 @@ def test_gate_judgment_items_always_pass(gate_setup):
     _insert_entry(db, "item-5", "test-sw", "backlog_item", "Task", status="accepted", metadata=meta)
     row = db._raw_conn.execute("SELECT * FROM entry WHERE id = 'item-5'").fetchone()
 
-    result = plugin._evaluate_gate(db, board_config, "in_progress", row, meta)
+    result = plugin._evaluate_gate(
+        db, board_config, "in_progress", row, meta, readable_kbs=UNSCOPED
+    )
     assert result["passed"] is True
     assert all(c["passed"] for c in result["criteria"])
 

@@ -14,6 +14,7 @@ from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.exceptions import ValidationError
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
+from pyrite.services.access_policy import UNSCOPED
 
 KB_YAML = """\
 name: t
@@ -68,4 +69,4 @@ def test_create_refuses_an_off_enum_value(svc, tmp_path):
 def test_valid_values_still_write(svc):
     svc.create_entry("t", "item", "Item", "backlog_item", "body", kind="bug", priority="high")
     svc.update_entry("item", "t", status="done")
-    assert svc.get_entry("item", kb_name="t")["status"] == "done"
+    assert svc.get_entry("item", kb_name="t", readable_kbs=UNSCOPED)["status"] == "done"

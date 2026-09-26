@@ -252,18 +252,26 @@ class OverlaySearchBackend:
     # ── graph → merge ───────────────────────────────────────────────
 
     def get_backlinks(
-        self, entry_id: str, kb_name: str, limit: int = 0, offset: int = 0
+        self,
+        entry_id: str,
+        kb_name: str,
+        limit: int = 0,
+        offset: int = 0,
+        *,
+        readable_kbs: set[str] | None,
     ) -> list[dict[str, Any]]:
-        main = self._main.get_backlinks(entry_id, kb_name, limit=10000)
-        diff = self._diff.get_backlinks(entry_id, kb_name, limit=10000)
+        main = self._main.get_backlinks(entry_id, kb_name, limit=10000, readable_kbs=readable_kbs)
+        diff = self._diff.get_backlinks(entry_id, kb_name, limit=10000, readable_kbs=readable_kbs)
         merged = self._merge_entry_lists(main, diff)
         if limit:
             return merged[offset : offset + limit]
         return merged
 
-    def get_outlinks(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
-        main = self._main.get_outlinks(entry_id, kb_name)
-        diff = self._diff.get_outlinks(entry_id, kb_name)
+    def get_outlinks(
+        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None
+    ) -> list[dict[str, Any]]:
+        main = self._main.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
+        diff = self._diff.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
         return self._merge_entry_lists(main, diff)
 
     def get_graph_data(
@@ -274,6 +282,8 @@ class OverlaySearchBackend:
         entry_type: str | None = None,
         depth: int = 2,
         limit: int = 500,
+        *,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any]:
         # For V1, graph comes from main only — diff entries are few
         # and merging graph BFS is complex. User's new entries won't
@@ -285,13 +295,16 @@ class OverlaySearchBackend:
             entry_type=entry_type,
             depth=depth,
             limit=limit,
+            readable_kbs=readable_kbs,
         )
 
     def get_most_linked(self, kb_name: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
         return self._main.get_most_linked(kb_name, limit)
 
-    def get_orphans(self, kb_name: str | None = None) -> list[dict[str, Any]]:
-        return self._main.get_orphans(kb_name)
+    def get_orphans(
+        self, kb_name: str | None = None, *, readable_kbs: set[str] | None
+    ) -> list[dict[str, Any]]:
+        return self._main.get_orphans(kb_name, readable_kbs=readable_kbs)
 
     # ── tags → merge ────────────────────────────────────────────────
 
@@ -520,11 +533,23 @@ class WorktreeDB:
     def count_entries(self, **kwargs) -> int:
         return self._overlay.count_entries(**kwargs)
 
-    def get_backlinks(self, entry_id: str, kb_name: str, **kwargs) -> list[dict[str, Any]]:
-        return self._overlay.get_backlinks(entry_id, kb_name, **kwargs)
+    def get_backlinks(
+        self,
+        entry_id: str,
+        kb_name: str,
+        limit: int = 0,
+        offset: int = 0,
+        *,
+        readable_kbs: set[str] | None,
+    ) -> list[dict[str, Any]]:
+        return self._overlay.get_backlinks(
+            entry_id, kb_name, limit=limit, offset=offset, readable_kbs=readable_kbs
+        )
 
-    def get_outlinks(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
-        return self._overlay.get_outlinks(entry_id, kb_name)
+    def get_outlinks(
+        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None
+    ) -> list[dict[str, Any]]:
+        return self._overlay.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
 
     def get_all_tags(self, kb_name: str | None = None) -> list[tuple[str, int]]:
         return self._overlay.get_all_tags(kb_name)

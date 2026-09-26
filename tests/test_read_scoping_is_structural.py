@@ -21,12 +21,12 @@ compares each scoped route's declared KB-bearing parameters -- query
 names *and* aliases, path params, and `kb`/`kb_name` fields of a body
 model -- against `RESOLVED_KB_LOCATIONS`, the set
 `pyrite.server.api._resolve_kb_names` actually inspects. A route that
-takes a *secondary* KB under another name (`center_kb` on `/api/graph`)
-is listed in `SECONDARY_KB_PARAMETERS` with what is known about it. The
-two `links.py` entries that used to be listed there are resolved rather
-than recorded now: `source_kb` and `target_kb` joined `KB_PARAM_NAMES`
-in #186, and the service behind those routes takes the caller's readable
-set, so a candidate cannot come from a private KB.
+takes a *secondary* KB under a name the resolver does not read is listed
+in `SECONDARY_KB_PARAMETERS` with what is known about it. The entries that
+used to be listed there are resolved rather than recorded now: `source_kb`
+and `target_kb` (`links.py`) joined `KB_PARAM_NAMES` in #186, and
+`center_kb` (`/api/graph`) joined it when a private centre was found to
+answer differently from a missing one (private #57).
 
 **What the walk cannot see -- recorded, not reviewed.** It visits
 `APIRoute`s under `/api` only. Two surfaces are therefore absent rather
@@ -83,7 +83,7 @@ SCOPING_DEPENDENCIES = {
 # KB-bearing parameter outside this set reads its KB from somewhere the
 # resolver does not look -- which is exactly the hole that let a request
 # name two KBs and be checked against the wrong one.
-RESOLVED_KB_LOCATIONS = {"kb", "kb_name", "source_kb", "target_kb"}
+RESOLVED_KB_LOCATIONS = {"kb", "kb_name", "source_kb", "target_kb", "center_kb"}
 
 # A route's *primary* KB is the one the resolver checks. A route can also
 # take a **secondary** KB parameter -- "centre the graph there" -- which the
@@ -95,13 +95,6 @@ RESOLVED_KB_LOCATIONS = {"kb", "kb_name", "source_kb", "target_kb"}
 # The `links.py` pair (`target_kb`, `source_kb`) used to be here as part 2
 # of this work. They are gone because the resolver reads them now (#186).
 SECONDARY_KB_PARAMETERS: dict[tuple[str, str], dict[str, str]] = {
-    ("GET", "/api/graph"): {
-        "center_kb": (
-            "secondary, and harmless: get_graph filters nodes and edges by "
-            "`readable` after building the graph, so a KB named here that the "
-            "caller cannot read contributes nothing to the response."
-        ),
-    },
     ("GET", "/api/search"): {
         "group_by_kb": "not a KB name: a bool controlling result grouping.",
         "limit_per_kb": "not a KB name: an int cap per KB.",

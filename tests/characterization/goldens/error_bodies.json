@@ -315,6 +315,29 @@
       "status": 409
     }
   },
+  "KBDefinedInConfigError": {
+    "cli": {
+      "error": "characterization message for KBDefinedInConfigError",
+      "error_code": "ERROR",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for KBDefinedInConfigError",
+      "error_code": "KB_DEFINED_IN_CONFIG",
+      "legacy_error_code": "CONFIG_ERROR",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "KB_DEFINED_IN_CONFIG",
+          "message": "characterization message for KBDefinedInConfigError",
+          "retryable": false
+        }
+      },
+      "status": 409
+    }
+  },
   "KBNotFoundError": {
     "cli": {
       "error": "characterization message for KBNotFoundError",

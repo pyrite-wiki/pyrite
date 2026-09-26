@@ -15,6 +15,7 @@ import typer
 from rich.console import Console
 
 from ..exceptions import EntryNotFoundError, KBNotFoundError, PyriteError, ValidationError
+from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_fields_param, project_fields
 from .context import cli_context
 
@@ -120,7 +121,7 @@ def register_entry_commands(app: typer.Typer) -> None:
     ):
         """Get a specific entry by ID."""
         with cli_context() as (config, db, svc):
-            result = svc.get_entry(entry_id, kb_name=kb_name)
+            result = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
 
             if not result:
                 _cli_error(f"Entry '{entry_id}' not found", output_format, "NOT_FOUND")

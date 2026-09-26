@@ -2,6 +2,7 @@
 	import { aiChatStore } from '$lib/stores/ai.svelte';
 	import { uiStore } from '$lib/stores/ui.svelte';
 	import { tick } from 'svelte';
+	import { renderCitations } from './renderCitations';
 
 	let inputText = $state('');
 	let messagesContainer: HTMLDivElement | undefined = $state();
@@ -40,20 +41,6 @@
 		}
 	}
 
-	function escapeHtml(text: string): string {
-		const div = document.createElement('div');
-		div.textContent = text;
-		return div.innerHTML;
-	}
-
-	function renderCitations(text: string): string {
-		// Escape HTML first to prevent XSS, then convert [[entry-id]] to links
-		const escaped = escapeHtml(text);
-		return escaped.replace(
-			/\[\[([^\]]+)\]\]/g,
-			'<a href="/entries/$1" class="text-blue-600 hover:underline dark:text-blue-400">$1</a>'
-		);
-	}
 </script>
 
 <aside class="flex w-96 shrink-0 flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">

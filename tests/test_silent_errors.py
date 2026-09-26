@@ -5,11 +5,14 @@ import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # 1. pyrite/server/api.py — _resolve_kb_name body parse failure
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.control(reason="existing fail-closed pin; its mock gained real QueryParams")
 def test_resolve_kb_names_logs_warning_and_fails_closed_on_body_parse_failure(caplog):
     """A body that cannot be parsed logs a warning AND refuses to resolve.
 
@@ -21,12 +24,12 @@ def test_resolve_kb_names_logs_warning_and_fails_closed_on_body_parse_failure(ca
 
     from pyrite.server.api import _resolve_kb_names, _UnparseableBodyError
 
+    from starlette.datastructures import QueryParams
+
     request = AsyncMock()
-    request.query_params = {}
+    request.query_params = QueryParams("")
     request.path_params = {}
-    # A JSON body is the only kind the resolver reads at all; anything else
-    # (a multipart upload, a form post) is left alone, because it cannot
-    # name a KB the way this resolver understands.
+    # Every body but a form (a multipart upload, a form post) is read.
     request.headers = {"content-type": "application/json"}
     request.body = AsyncMock(side_effect=Exception("read error"))
 

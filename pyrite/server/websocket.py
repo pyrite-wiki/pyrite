@@ -9,8 +9,10 @@ only (KB name, entry id), and re-resolving per event would put a DB walk per
 socket per event on the loop. Instead a socket lives no longer than the
 credential that opened it (#411, ADR-0036): each socket records the user and
 session it was opened with, and the server closes it when that session ends
-(logout, eviction, expiry) or that user's role or KB grants change. The
-client then reconnects and is scoped afresh. ``AuthService`` announces each
+(logout, eviction, expiry) or that user's role or KB grants change, and
+every scoped socket -- anonymous ones too -- that could read a KB is closed
+when that KB's ``default_role`` changes or it is removed. The client then
+reconnects and is scoped afresh. ``AuthService`` announces each
 change through ``pyrite.services.credential_events``; ``on_credential_change``
 is the listener the app subscribes at startup. Expiry has no event: the
 recorded expiry is checked before every send and by a periodic sweep.
@@ -30,7 +32,7 @@ from ..config import PyriteConfig
 from ..services.access_policy import AccessPolicy, Principal, resolve_api_key_role
 from ..services.credential_events import CredentialChange
 from ..storage.database import PyriteDB
-from .request_guard import origin_permitted
+from .request_guard import request_origin_admitted
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +78,53 @@ class SocketScope:
         return self.user_id is not None or self.session_hash is not None
 
     def matches(self, change: CredentialChange) -> bool:
+        if change.kb_name is not None:
+            # A KB's own policy changed: every socket scoped with that KB in
+            # its readable set was scoped by the old policy, anonymous or not.
+            return self.readable is not None and change.kb_name in self.readable
         if change.session_hash is not None and change.session_hash == self.session_hash:
             return True
         return change.user_id is not None and change.user_id == self.user_id
 
     def expired(self, now: datetime) -> bool:
         return self.expires_at is not None and self.expires_at <= now
+
+
+@dataclass(frozen=True)
+class ScopeEpoch:
+    """How many credential changes and KB policy changes had been processed
+    when a handshake began resolving its scope (`ChangeEpochs.current`)."""
+
+    credential: int = 0
+    kb_policy: int = 0
+
+
+class ChangeEpochs:
+    """The handshake-race rule, one copy for every live transport (``/ws``
+    sockets, MCP SSE sessions).
+
+    A handshake reads `current` before resolving its scope; the registry
+    asks `stale` after registering it. A change processed in between may
+    have revoked the credential, or changed the KB policy, just resolved.
+    The two counts are kept apart so a user's logout does not refuse every
+    anonymous handshake under way. Not thread-safe: the caller serialises.
+    """
+
+    def __init__(self) -> None:
+        self.current = ScopeEpoch()
+
+    def record(self, change: CredentialChange) -> None:
+        c = self.current
+        if change.kb_name is not None:
+            self.current = ScopeEpoch(c.credential, c.kb_policy + 1)
+        else:
+            self.current = ScopeEpoch(c.credential + 1, c.kb_policy)
+
+    def stale(self, scope: SocketScope, seen: ScopeEpoch) -> bool:
+        """Could a change processed since `seen` have altered `scope`?"""
+        if seen.credential != self.current.credential and scope.revocable:
+            return True
+        return seen.kb_policy != self.current.kb_policy and scope.readable is not None
 
 
 class HandshakeRejectedError(Exception):
@@ -97,16 +140,15 @@ def origin_allowed(conn: HTTPConnection, config: PyriteConfig) -> bool:
     non-browser clients send whatever they like). Once the cookie
     authenticates the socket, this is the only cross-origin gate.
 
-    Absent ``Origin`` is allowed: browsers always send it on a WebSocket
-    handshake, so its absence means a non-browser client, which the
-    credential check alone governs. ``"*"`` in ``cors_origins`` is **not** a
+    The rule is REST's own (``request_guard.request_origin_admitted``), so
+    the two surfaces cannot drift. Absent ``Origin`` (and ``Referer``) is
+    allowed: browsers always send ``Origin`` on a WebSocket handshake, so its
+    absence means a non-browser client, which the credential check alone
+    governs. ``"*"`` in ``cors_origins`` is **not** a
     wildcard here: REST drops credentials for a wildcard origin, and this
     check exists precisely because a socket's credential is a cookie.
     """
-    origin = conn.headers.get("origin")
-    if origin is None:
-        return True
-    return origin_permitted(origin, conn.headers.get("host", ""), config.settings.cors_origins)
+    return request_origin_admitted(conn.headers, config.settings.cors_origins)
 
 
 def resolve_socket_scope(conn: HTTPConnection, config: PyriteConfig, db: PyriteDB) -> SocketScope:
@@ -172,29 +214,30 @@ class ConnectionManager:
 
     def __init__(self):
         self._connections: dict[WebSocket, SocketScope] = {}
-        # Bumped by every `revoke`. A handshake reads it before resolving its
-        # credential and `connect` compares it after `accept`: a change that
-        # landed in between may have revoked the credential just resolved.
-        self._epoch = 0
+        # Advanced by every `revoke`; `connect` checks a handshake against it.
+        self._epochs = ChangeEpochs()
         self._pending_closes: set[asyncio.Task] = set()
 
     @property
-    def epoch(self) -> int:
-        return self._epoch
+    def epoch(self) -> ScopeEpoch:
+        return self._epochs.current
 
-    async def connect(self, ws: WebSocket, scope: SocketScope, epoch: int | None = None) -> bool:
+    async def connect(
+        self, ws: WebSocket, scope: SocketScope, epoch: ScopeEpoch | None = None
+    ) -> bool:
         """Accept an *already authenticated* socket with its scope.
 
-        ``epoch`` is ``self.epoch`` as read before the credential was
-        resolved. If a credential change has been processed since, and this
-        socket's credential is revocable, the socket is closed at once
-        instead of registered (the client reconnects and is resolved afresh)
-        and False is returned. The check and the registration have no
-        ``await`` between them, so no change can slip past both.
+        ``epoch`` is ``self.epoch`` as read before the scope was resolved.
+        If a credential change has been processed since and this socket's
+        credential is revocable, or a KB policy change and this socket is
+        scoped, the socket is closed at once instead of registered (the
+        client reconnects and is resolved afresh) and False is returned. The
+        check and the registration have no ``await`` between them, so no
+        change can slip past both.
         """
         await ws.accept()
-        if epoch is not None and scope.revocable and epoch != self._epoch:
-            logger.info("Closed /ws: its credential changed during the handshake")
+        if epoch is not None and self._epochs.stale(scope, epoch):
+            logger.info("Closed /ws: its scope changed during the handshake")
             await self._close_quietly(ws)
             return False
         self._connections[ws] = scope
@@ -206,13 +249,14 @@ class ConnectionManager:
         logger.debug("WebSocket disconnected, total: %d", len(self._connections))
 
     def revoke(self, change: CredentialChange) -> int:
-        """Close every socket opened with the credential ``change`` names.
+        """Close every socket opened with the credential ``change`` names, or
+        scoped with the KB whose policy it says changed.
 
         Each socket leaves the manager *now*, before its close frame is sent,
         so no event broadcast after this call can reach it. Returns the
         number closed.
         """
-        self._epoch += 1
+        self._epochs.record(change)
         victims = [ws for ws, scope in self._connections.items() if scope.matches(change)]
         for ws in victims:
             self._close(ws)

@@ -32,6 +32,7 @@ from typer.testing import CliRunner
 from pyrite.exceptions import QuerySyntaxError, StorageError
 from pyrite.services.link_discovery_service import LinkDiscoveryService
 from pyrite.services.search_service import MAX_SEARCH_QUERY_LENGTH, SearchService
+from pyrite.services.access_policy import UNSCOPED
 
 ENGLISH = "how do pre-push hooks and CI interact?"
 
@@ -397,7 +398,9 @@ class TestSemanticLegText:
         KBService(config, db).create_entry(
             "test-events", "sem", "Border (policy", "note", body="x", summary="A summary"
         )
-        LinkDiscoveryService(config, db).discover_neighbors("sem", "test-events", mode="semantic")
+        LinkDiscoveryService(config, db).discover_neighbors(
+            "sem", "test-events", mode="semantic", readable_kbs=UNSCOPED
+        )
         assert fake_embeddings == ["Border (policy A summary"]
 
     def test_discover_neighbors_embeds_tags_as_text_when_there_is_no_title(
@@ -412,7 +415,7 @@ class TestSemanticLegText:
         entry = {"id": "tagged", "title": "", "summary": "", "tags": ["border", "asylum-policy"]}
         with patch.object(KBService, "get_entry", return_value=entry):
             LinkDiscoveryService(config, db).discover_neighbors(
-                "tagged", "test-events", mode="hybrid"
+                "tagged", "test-events", mode="hybrid", readable_kbs=UNSCOPED
             )
         assert fake_embeddings == ["border asylum-policy"]
 
@@ -424,7 +427,9 @@ class TestSemanticLegText:
         config, db = indexed_test_env["config"], indexed_test_env["db"]
         title = 'The "Big Lie and e-mail'
         KBService(config, db).create_entry("test-events", "big-lie", title, "note", body="x")
-        LinkDiscoveryService(config, db).discover_neighbors("big-lie", "test-events", mode="hybrid")
+        LinkDiscoveryService(config, db).discover_neighbors(
+            "big-lie", "test-events", mode="hybrid", readable_kbs=UNSCOPED
+        )
         assert fake_embeddings == [title]
 
 

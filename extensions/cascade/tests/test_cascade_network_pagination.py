@@ -16,10 +16,10 @@ class _FakeDB:
     def get_entry(self, entry_id, kb_name):
         return {"id": entry_id, "title": "Hub"}
 
-    def get_outlinks(self, entry_id, kb_name):
+    def get_outlinks(self, entry_id, kb_name, readable_kbs=None):
         return list(self._outlinks)
 
-    def get_backlinks(self, entry_id, kb_name, limit=0, offset=0):
+    def get_backlinks(self, entry_id, kb_name, limit=0, offset=0, readable_kbs=None):
         return list(self._backlinks)
 
 

@@ -16,6 +16,7 @@ from pyrite.models.core_types import PersonEntry
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
 from pyrite.storage.repository import KBRepository
+from pyrite.services.access_policy import UNSCOPED
 
 pytestmark = pytest.mark.core  # the local smoke set; see scripts/test-affected
 
@@ -283,12 +284,12 @@ class TestPyriteDB:
         )
 
         # Get outgoing links
-        outlinks = db.get_outlinks("source-entry", "test-kb")
+        outlinks = db.get_outlinks("source-entry", "test-kb", readable_kbs=UNSCOPED)
         assert len(outlinks) == 1
         assert outlinks[0]["relation"] == "advises"
 
         # Get backlinks
-        backlinks = db.get_backlinks("target-entry", "test-kb")
+        backlinks = db.get_backlinks("target-entry", "test-kb", readable_kbs=UNSCOPED)
         assert len(backlinks) == 1
         assert backlinks[0]["relation"] == "advised_by"
 
@@ -748,7 +749,7 @@ Article body referencing events.
         assert entry is not None
 
         # Get outlinks for this entry
-        outlinks = setup["db"].get_outlinks("article-1", "test-kb")
+        outlinks = setup["db"].get_outlinks("article-1", "test-kb", readable_kbs=UNSCOPED)
         target_ids = {ol["id"] for ol in outlinks}
 
         assert "target-event-1" in target_ids, (
