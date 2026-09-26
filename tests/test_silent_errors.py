@@ -21,12 +21,12 @@ def test_resolve_kb_names_logs_warning_and_fails_closed_on_body_parse_failure(ca
 
     from pyrite.server.api import _resolve_kb_names, _UnparseableBodyError
 
+    from starlette.datastructures import QueryParams
+
     request = AsyncMock()
-    request.query_params = {}
+    request.query_params = QueryParams("")
     request.path_params = {}
-    # A JSON body is the only kind the resolver reads at all; anything else
-    # (a multipart upload, a form post) is left alone, because it cannot
-    # name a KB the way this resolver understands.
+    # Every body but a form (a multipart upload, a form post) is read.
     request.headers = {"content-type": "application/json"}
     request.body = AsyncMock(side_effect=Exception("read error"))
 

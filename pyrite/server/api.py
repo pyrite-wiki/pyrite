@@ -998,9 +998,13 @@ def requires_kb_tier(tier: str, *, resolve_kb=None):
 
         if not kb_names:
             # A KB-scoped write that names no KB has nothing to be authorised
-            # against. It is refused -- never checked against the caller's
-            # global role, which says nothing about the KB the handler would
-            # then act on.
+            # against. It is refused -- never admitted on the caller's global
+            # role, which says nothing about the KB the handler would then act
+            # on. A caller with the same role on every KB (an operator key,
+            # auth disabled) whose role is too low still gets the 403 it
+            # always got: the global check here can only refuse.
+            if not principal.scoped:
+                _enforce_tier(principal, tier)
             raise HTTPException(
                 status_code=422,
                 detail={"code": "KB_REQUIRED", "message": "This write must name a knowledge base"},
