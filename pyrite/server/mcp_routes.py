@@ -21,6 +21,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 
 from ..config import PyriteConfig
+from ..services import credential_events
 from ..services.access_policy import ROLES, AccessPolicy, Principal, resolve_api_key_role
 from ..storage.database import PyriteDB
 
@@ -76,6 +77,21 @@ def _session_ctx(user: dict, session: dict) -> dict[str, Any]:
         "user_id": user["id"],
         "session_hash": session["token_hash"],
         "session_expires_at": session["expires_at"],
+        "principal_kind": "user",
+        "principal_id": str(user["id"]),
+    }
+
+
+def _key_ctx(key: str, role: str) -> dict[str, Any]:
+    """An operator key's ctx. ``principal_id`` is the key's whole hash:
+    ``username`` shows only a prefix, and is a name a user could register."""
+    digest = hashlib.sha256(key.encode()).hexdigest()
+    return {
+        "role": role,
+        "username": f"apikey-{digest[:8]}",
+        "user_id": None,
+        "principal_kind": "operator_key",
+        "principal_id": digest,
     }
 
 
@@ -105,8 +121,7 @@ def _resolve_credential(
         if token:
             role = _resolve_api_key_role(token, config)
             if role is not None:
-                key_id = hashlib.sha256(token.encode()).hexdigest()[:8]
-                return {"role": role, "username": f"apikey-{key_id}", "user_id": None}
+                return _key_ctx(token, role)
 
             # Check against session tokens (for web-authenticated users)
             if config.settings.auth.enabled:
@@ -119,8 +134,7 @@ def _resolve_credential(
     if api_key:
         role = _resolve_api_key_role(api_key, config)
         if role is not None:
-            key_id = hashlib.sha256(api_key.encode()).hexdigest()[:8]
-            return {"role": role, "username": f"apikey-{key_id}", "user_id": None}
+            return _key_ctx(api_key, role)
 
     # 3. Session cookie
     if config.settings.auth.enabled:
@@ -136,7 +150,13 @@ def _resolve_credential(
         and not config.settings.api_keys
         and not config.settings.auth.enabled
     ):
-        return {"role": "admin", "username": "anonymous", "user_id": None}
+        return {
+            "role": "admin",
+            "username": "anonymous",
+            "user_id": None,
+            "principal_kind": "operator_key",
+            "principal_id": "open-access",
+        }
 
     raise HTTPException(
         status_code=401,
@@ -171,6 +191,66 @@ async def _authenticate(request: Request, config: PyriteConfig, shared_db: Pyrit
     return await run_in_threadpool(_run)
 
 
+async def _identify(request: Request, config: PyriteConfig, shared_db: PyriteDB) -> dict | None:
+    """The credential half only (no KB scope), off the event loop; None when
+    the request carries no credential this server accepts."""
+    from starlette.concurrency import run_in_threadpool
+
+    def _run() -> dict | None:
+        with shared_db.request_handle() as db:
+            try:
+                return _resolve_credential(request, config, db)
+            except HTTPException:
+                return None
+
+    return await run_in_threadpool(_run)
+
+
+def _session_owner(ctx: dict[str, Any]):
+    """The principal a ctx resolves to, as the MCP SDK's transport sees an
+    owner: an ``AuthenticatedUser`` in the ASGI scope's ``user``.
+
+    ``SseServerTransport`` records the ``user`` of the ``/mcp/sse`` request
+    as the session's owner and answers a message POST whose ``user`` differs
+    exactly as an unknown session (P-M3; mcp >= 1.27.2). Identity is the
+    principal's kind plus id -- a user's id, an operator key's whole hash --
+    never a name a user can register.
+    """
+    from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
+    from mcp.server.auth.provider import AccessToken
+
+    identity = f"{ctx['principal_kind']}:{ctx['principal_id']}"
+    return AuthenticatedUser(AccessToken(token="", client_id=identity, scopes=[], subject=identity))
+
+
+class _TrackedSend:
+    """An ASGI ``send`` that remembers whether the response started and ended,
+    so a session cancelled mid-stream can still end its response cleanly."""
+
+    def __init__(self, send):
+        self._send = send
+        self.started = False
+        self.finished = False
+
+    async def __call__(self, message) -> None:
+        if message["type"] == "http.response.start":
+            self.started = True
+        elif message["type"] == "http.response.body" and not message.get("more_body", False):
+            self.finished = True
+        await self._send(message)
+
+    async def finish(self) -> None:
+        if self.started and not self.finished:
+            try:
+                await self({"type": "http.response.body", "body": b"", "more_body": False})
+            except Exception:
+                logger.debug("Could not end an MCP SSE response", exc_info=True)
+
+
+async def _already_sent(scope, receive, send) -> None:
+    """The response the SSE stream already was: nothing more to send."""
+
+
 def mount_mcp_routes(
     app: FastAPI,
     app_get_config: Callable[[], PyriteConfig],
@@ -185,6 +265,8 @@ def mount_mcp_routes(
     from mcp.server.sse import SseServerTransport
 
     from .mcp_server import PyriteMCPServer
+    from .mcp_sessions import sessions as sse_sessions
+    from .websocket import SocketScope
 
     # SseServerTransport prepends scope["root_path"] (which is "/mcp" here,
     # since this whole app is nested under Mount("/mcp", ...) below) to this
@@ -192,6 +274,10 @@ def mount_mcp_routes(
     # here double-prefixes it to "/mcp/mcp/messages/", which 404s — the
     # endpoint must be relative to the mount point, i.e. just "/messages/".
     sse_transport = SseServerTransport("/messages/")
+    # The characterization harness reaches the transport's session table here.
+    app.state.pyrite_mcp_sse_transport = sse_transport
+    # Idempotent: the listener is module-level, like the registry.
+    credential_events.subscribe(sse_sessions.on_credential_change)
 
     # Cache MCP server instances per tier to avoid repeated heavy init.
     _mcp_servers: dict[str, PyriteMCPServer] = {}
@@ -210,10 +296,15 @@ def mount_mcp_routes(
     async def handle_sse(request: Request) -> Response:
         """SSE endpoint for MCP client connections.
 
-        Authenticates via Bearer token, resolves the user's tier,
-        then hands off to the MCP SSE transport for the session lifetime.
+        Authenticates via Bearer token, resolves the user's tier, then hands
+        off to the MCP SSE transport for the session lifetime -- which is no
+        longer than the credential's (``mcp_sessions``, P-M4). The resolved
+        principal is the session's owner (``_session_owner``, P-M3).
         """
         config = app_get_config()
+        # Read before the credential is resolved; `sessions.hold` compares it
+        # after registering, so a change landing in between is not missed.
+        epoch = sse_sessions.epoch
         try:
             user_ctx = await _authenticate(request, config, app_get_db())
         except HTTPException as exc:
@@ -223,14 +314,13 @@ def mount_mcp_routes(
             )
 
         role = user_ctx["role"]
-        client_id = user_ctx["username"]
         tier = role if role in ROLES else "read"
         readable = user_ctx["readable_kbs"]
         writable = user_ctx["writable_kbs"]
 
         logger.info(
             "MCP SSE connection: user=%s tier=%s scoped=%s",
-            client_id,
+            user_ctx["username"],
             tier,
             readable is not None,
         )
@@ -242,22 +332,50 @@ def mount_mcp_routes(
         # still get correctly different answers (#201).
         mcp_server = _get_mcp_server(tier)
         sdk = mcp_server.build_sdk_server(
-            client_id=client_id, readable_kbs=readable, writable_kbs=writable
+            client_id=user_ctx["principal_id"],
+            client_kind=user_ctx["principal_kind"],
+            readable_kbs=readable,
+            writable_kbs=writable,
         )
 
-        async with sse_transport.connect_sse(request.scope, request.receive, request._send) as (
-            read_stream,
-            write_stream,
-        ):
-            await sdk.run(read_stream, write_stream, sdk.create_initialization_options())
+        request.scope["user"] = _session_owner(user_ctx)
+        record = SocketScope(
+            readable=readable,
+            user_id=user_ctx.get("user_id"),
+            session_hash=user_ctx.get("session_hash"),
+            expires_at=user_ctx.get("session_expires_at"),
+        )
+        send = _TrackedSend(request._send)
+        with sse_sessions.hold(record, epoch) as cancel_scope:
+            async with sse_transport.connect_sse(request.scope, request.receive, send) as (
+                read_stream,
+                write_stream,
+            ):
+                await sdk.run(read_stream, write_stream, sdk.create_initialization_options())
+        if cancel_scope.cancel_called:
+            logger.info("MCP SSE session ended with its credential: user=%s", user_ctx["username"])
+            await send.finish()
 
-        # Return empty Response to avoid "NoneType not callable" on disconnect
+        # The stream was the response. Starting a second one after it (the
+        # SDK example's `return Response()`) is a protocol error.
+        if send.started:
+            return _already_sent
         return Response()
 
     # -----------------------------------------------------------------
     # POST /mcp/messages/ — JSON-RPC message relay
     # -----------------------------------------------------------------
-    # handle_post_message is a raw ASGI app; mount it directly.
+    # The SDK's handle_post_message is a raw ASGI app. Every POST carries its
+    # own credential; `_session_owner` puts its principal where the SDK's
+    # same-owner check compares it with the session's (P-M3). A POST with no
+    # accepted credential has no owner, and is refused as an unknown session.
+
+    async def handle_messages(scope, receive, send) -> None:
+        if scope["type"] == "http":
+            ctx = await _identify(Request(scope), app_get_config(), app_get_db())
+            if ctx is not None:
+                scope["user"] = _session_owner(ctx)
+        await sse_transport.handle_post_message(scope, receive, send)
 
     # -----------------------------------------------------------------
     # GET /mcp/info — connection metadata (normal JSON endpoint)
@@ -300,7 +418,7 @@ def mount_mcp_routes(
             routes=[
                 Route("/sse", endpoint=handle_sse, methods=["GET"]),
                 Route("/info", endpoint=handle_info, methods=["GET"]),
-                Mount("/messages/", app=sse_transport.handle_post_message),
+                Mount("/messages/", app=handle_messages),
             ],
         ),
     )

@@ -327,65 +327,56 @@ def test_auth_disabled_but_keys_configured_refuses_no_credential(tmp_path):
 
 
 # =============================================================================
-# POST /mcp/messages/ (#504 cold read point 2): today's actual behaviour,
-# pinned so a change is visible. surfaces.py's TRANSPORT_ROUTE_EXCLUSIONS
-# entry for this route used to say it "relays JSON-RPC over a session
-# /mcp/sse already authenticated; it does not resolve a credential of its
-# own" -- true as far as it went, but the reason it doesn't resolve one is
-# the load-bearing fact: the `session_id` query param IS the whole
-# credential for this relay. `handle_post_message` (mcp.server.sse,
-# read directly) never reads this POST's own Authorization/X-API-Key/cookie
-# header at all; the only check against a stored identity
-# (`_session_owners`, keyed by the ASGI `scope["user"]`) never fires for a
-# Pyrite connection, because Pyrite's own `_authenticate` never sets
-# `scope["user"]` to begin with -- so that comparison is always `None ==
-# None` for every Pyrite-authenticated session, regardless of who calls
-# `/mcp/messages/` next. The tier and the readable/writable KB sets a real
-# SDK session runs with were fixed once, at `/mcp/sse` connect time
-# (`_resolve_bearer_auth` -> `build_sdk_server(readable_kbs=..., writable_kbs=...)`),
-# and closed over by that connection's `sdk.run()` loop; nothing on the
-# `/mcp/messages/` path re-derives them.
+# POST /mcp/messages/ (#504 cold read point 2; security batch 3b). Every POST
+# is identified by its own credential, and `mcp_routes._session_owner` puts
+# that principal in the ASGI scope's `user`, where the SDK's same-owner check
+# (`SseServerTransport._session_owners`) compares it with the principal that
+# opened the session. A POST from anyone else -- or with no accepted
+# credential -- is answered exactly as an unknown session (404).
+#
+# Changed goldens (intended): before batch 3b the session id alone was the
+# credential, and `TestMCPMessagesScopeFixedAtConnect` pinned a 202 for a
+# POST with no credential and for one with an unresolvable credential. Both
+# are now 404. The session's scope is still resolved once at connect; it
+# lives no longer than that credential (`pyrite/server/mcp_sessions.py`,
+# driven end to end by tests/test_mcp_sse_session.py).
 # =============================================================================
 
 
 def _sse_transport_of(app):
-    """The live `SseServerTransport` instance `mount_mcp_routes` builds --
-    not exposed on `app.state`, only reachable by walking to the `/mcp`
-    Mount's own `/messages/` sub-Mount and unwrapping its bound-method
-    `.app`. This is the lowest seam that holds a session's registration
-    (`_read_stream_writers`) and its resolved owner (`_session_owners`)
-    without negotiating a real, non-deterministic SSE handshake through
-    `TestClient` (which never returns from a GET to `/mcp/sse` at all --
-    see this module's own docstring, "Why `_resolve_bearer_auth` directly,
-    not a live SSE session")."""
-    for route in app.routes:
-        if type(route).__name__ == "Mount" and route.path == "/mcp":
-            for sub in route.routes:
-                if type(sub).__name__ == "Mount":
-                    return sub.app.__self__
-    raise AssertionError("sse_transport's /messages/ Mount not found under /mcp")
+    """The live `SseServerTransport` `mount_mcp_routes` builds, which it
+    exposes on `app.state` for exactly this: the lowest seam that holds a
+    session's registration (`_read_stream_writers`) and its owner
+    (`_session_owners`) without negotiating a real SSE handshake through
+    `TestClient` (which never returns from a GET to `/mcp/sse`)."""
+    return app.state.pyrite_mcp_sse_transport
 
 
-def _register_fake_session(app):
-    """Register a session id in the live transport's `_read_stream_writers`,
-    the same dict a real `/mcp/sse` connect populates -- without running a
-    real handshake. The paired `write_stream_reader` end is never read by
-    these tests (they assert on the HTTP response only), so it is dropped;
-    the memory stream still needs a bounded buffer so `writer.send(...)`
-    inside `_handle_post_message` does not block waiting for a reader."""
+def _register_fake_session(app, owner_ctx=None):
+    """Register a session id in the live transport, the same dicts a real
+    `/mcp/sse` connect populates, owned by `owner_ctx`'s principal (the
+    identity `_session_owner` builds from a resolved ctx). The paired read
+    end is never read; the buffer keeps `writer.send` from blocking."""
     import uuid
 
     import anyio
+    from mcp.server.auth.middleware.bearer_auth import authorization_context
+
+    from pyrite.server.mcp_routes import _session_owner
 
     transport = _sse_transport_of(app)
     session_id = uuid.uuid4()
     send_stream, _recv_stream = anyio.create_memory_object_stream(4)
     transport._read_stream_writers[session_id] = send_stream
+    if owner_ctx is not None:
+        transport._session_owners[session_id] = authorization_context(_session_owner(owner_ctx))
     return session_id
 
 
 def _drop_fake_session(app, session_id) -> None:
-    _sse_transport_of(app)._read_stream_writers.pop(session_id, None)
+    transport = _sse_transport_of(app)
+    transport._read_stream_writers.pop(session_id, None)
+    transport._session_owners.pop(session_id, None)
 
 
 def _rpc_body(msg_id: int) -> str:
@@ -395,14 +386,8 @@ def _rpc_body(msg_id: int) -> str:
 
 
 class TestMCPMessagesSessionCredential:
-    """(2a): the session id is the whole credential. An unknown id is
-    refused with 404; a missing or malformed id is refused with 400 --
-    already pinned once by `tests/test_mcp_routes.py`'s `TestMCPMessages`
-    (referenced there, not duplicated blindly); this characterization
-    module gets its own copy against `world`'s auth-ENABLED app, since
-    `test_mcp_routes.py`'s `_make_app` builds a bare, unauthenticated one
-    and the whole point here is that auth being configured changes
-    NOTHING about this route's own behaviour."""
+    """(2a): a missing or malformed session id is refused with 400, an
+    unknown one with 404 -- against `world`'s auth-ENABLED app."""
 
     def test_missing_session_id_is_400(self, world):
         resp = world.client.post("/mcp/messages/")
@@ -421,50 +406,62 @@ class TestMCPMessagesSessionCredential:
         assert resp.status_code == 404, resp.text
 
 
-class TestMCPMessagesScopeFixedAtConnect:
-    """(2b): the session's scope is the one resolved at `/mcp/sse` connect
-    time, not re-derived per POST. Pinned at the lowest seam that shows it
-    deterministically -- `SseServerTransport._read_stream_writers`, the
-    object `connect_sse` populates and `_handle_post_message` reads to
-    decide "does this session exist" -- rather than a live SSE handshake,
-    which `TestClient` cannot drive to completion (see this module's own
-    docstring)."""
+def _owner_ctx(world, principal_name):
+    return _resolve_bearer_auth(
+        _request_for(world.principals[principal_name]), world.config, world.db
+    )
 
-    def test_known_session_accepts_the_message_with_no_credential_at_all(self, world):
-        """Today's behaviour, pinned so a change is visible: once a session
-        is registered, `/mcp/messages/` accepts a POST carrying NO
-        Authorization, X-API-Key or cookie header whatsoever -- the
-        `session_id` alone is checked."""
-        session_id = _register_fake_session(world.app)
+
+def _post(world, session_id, msg_id, headers=None, cookies=None):
+    if cookies:
+        cookie = "; ".join(f"{k}={v}" for k, v in cookies.items())
+        headers = {**(headers or {}), "cookie": cookie}
+    return world.client.post(
+        f"/mcp/messages/?session_id={session_id.hex}",
+        content=_rpc_body(msg_id),
+        headers={"Content-Type": "application/json", **(headers or {})},
+    )
+
+
+class TestMCPMessagesScopeFixedAtConnect:
+    """(2b): a message acts only for the principal that opened the session.
+    Golden changed in batch 3b: the two "accepts" cases were 202."""
+
+    def test_known_session_refuses_a_message_with_no_credential_at_all(self, world):
+        session_id = _register_fake_session(world.app, _owner_ctx(world, "local_user"))
         try:
-            resp = world.client.post(
-                f"/mcp/messages/?session_id={session_id.hex}",
-                content=_rpc_body(2),
-                headers={"Content-Type": "application/json"},
-            )
-            assert resp.status_code == 202, resp.text
+            resp = _post(world, session_id, 2)
+            assert resp.status_code == 404, resp.text
         finally:
             _drop_fake_session(world.app, session_id)
 
-    def test_known_session_accepts_the_message_with_an_unresolvable_credential(self, world):
-        """Today's behaviour, pinned so a change is visible: a POST to a
-        known session carrying a Bearer token that would 401 at
-        `/mcp/sse` (not a real key, not a real session cookie) is still
-        accepted -- `_handle_post_message` never calls `_resolve_bearer_auth`
-        or anything like it; the credential in THIS request is not
-        consulted at all. The session's scope stays whatever `/mcp/sse`
-        resolved when the session was created, never this POST's own
-        (invalid) header."""
-        session_id = _register_fake_session(world.app)
+    def test_known_session_refuses_a_message_with_an_unresolvable_credential(self, world):
+        session_id = _register_fake_session(world.app, _owner_ctx(world, "local_user"))
         try:
-            resp = world.client.post(
-                f"/mcp/messages/?session_id={session_id.hex}",
-                content=_rpc_body(3),
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": "Bearer this-key-does-not-exist-anywhere",
-                },
+            resp = _post(
+                world,
+                session_id,
+                3,
+                headers={"Authorization": "Bearer this-key-does-not-exist-anywhere"},
             )
+            assert resp.status_code == 404, resp.text
+        finally:
+            _drop_fake_session(world.app, session_id)
+
+    def test_known_session_refuses_another_principals_credential(self, world):
+        session_id = _register_fake_session(world.app, _owner_ctx(world, "local_user"))
+        try:
+            other = world.principals["granted_user"]
+            resp = _post(world, session_id, 4, other.rest_headers, other.rest_cookies)
+            assert resp.status_code == 404, resp.text
+        finally:
+            _drop_fake_session(world.app, session_id)
+
+    def test_known_session_accepts_its_owners_credential(self, world):
+        session_id = _register_fake_session(world.app, _owner_ctx(world, "local_user"))
+        try:
+            owner = world.principals["local_user"]
+            resp = _post(world, session_id, 5, owner.rest_headers, owner.rest_cookies)
             assert resp.status_code == 202, resp.text
         finally:
             _drop_fake_session(world.app, session_id)

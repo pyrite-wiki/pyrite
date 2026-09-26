@@ -2210,10 +2210,18 @@ class PyriteMCPServer:
         arguments: dict[str, Any],
         *,
         client_id: str = "local",
+        client_kind: str | None = None,
         readable_kbs: set[str] | None = None,
         writable_kbs: set[str] | None = None,
     ) -> dict[str, Any]:
         """Execute a tool and return result.
+
+        `client_kind` is the caller's principal kind (`Principal.kind`) and
+        `client_id` its id within that kind; the rate-limit bucket is the
+        pair, so no name a user registers shares an operator key's bucket.
+        Only the `local` kind -- stdio, chosen by `run_stdio` on purpose --
+        may be exempt (`mcp_rate_limit_exempt_local`, P-L1); `client_id` is
+        never consulted for that.
 
         `readable_kbs` is the caller's readable set, or None for an unscoped
         caller (a global admin, an operator API key, auth disabled, or local
@@ -2240,10 +2248,10 @@ class PyriteMCPServer:
                 suggestion="Use list_tools to see available tools",
             )
 
-        # Rate limiting (skip for local stdio when configured)
-        if not (client_id == "stdio" and self.config.settings.mcp_rate_limit_exempt_local):
+        # Rate limiting (skip for the local principal kind when configured)
+        if not (client_kind == "local" and self.config.settings.mcp_rate_limit_exempt_local):
             tool_tier = self._tool_tiers.get(name, "read")
-            allowed, info = self.rate_limiter.check(client_id, tool_tier)
+            allowed, info = self.rate_limiter.check(f"{client_kind}:{client_id}", tool_tier)
             if not allowed:
                 return _error(
                     "RATE_LIMITED",
@@ -2336,6 +2344,7 @@ class PyriteMCPServer:
         self,
         *,
         client_id: str = "stdio",
+        client_kind: str | None = None,
         readable_kbs: set[str] | None = None,
         writable_kbs: set[str] | None = None,
     ):
@@ -2353,9 +2362,12 @@ class PyriteMCPServer:
         Parameters
         ----------
         client_id : str
-            Identifier for the connected client, used for rate limiting
-            and audit logging. Defaults to "stdio" for local CLI usage.
-            SSE transport passes the authenticated username.
+            The connected principal's id within its kind, for rate limiting.
+            SSE transport passes the user's id or the operator key's hash.
+        client_kind : str | None
+            The principal's kind (`Principal.kind`). Only "local" -- which
+            `run_stdio()` passes -- can be exempt from rate limits; the
+            default, None, never is (P-L1).
         readable_kbs : set[str] | None
             The KBs this connection's caller may read, as resolved by
             `api.readable_kbs_for_user`. None means unscoped -- a global
@@ -2385,6 +2397,7 @@ class PyriteMCPServer:
 
         mcp_server = self  # capture for closures
         _client_id = client_id  # capture for closures
+        _client_kind = client_kind
         _readable_kbs = readable_kbs  # capture for closures -- per connection, never on self
         _writable_kbs = writable_kbs
 
@@ -2405,6 +2418,7 @@ class PyriteMCPServer:
                 name,
                 arguments or {},
                 client_id=_client_id,
+                client_kind=_client_kind,
                 readable_kbs=_readable_kbs,
                 writable_kbs=_writable_kbs,
             )
@@ -2490,7 +2504,7 @@ class PyriteMCPServer:
         import anyio
         from mcp.server.stdio import stdio_server
 
-        sdk = self.build_sdk_server()
+        sdk = self.build_sdk_server(client_id="stdio", client_kind="local")
 
         async def _run():
             async with stdio_server() as (read_stream, write_stream):
