@@ -1,4 +1,3 @@
-- The web app's markdown-to-HTML conversion, chat citation links, graph
-  tooltips, and source/branding link rendering now consistently sanitise or
-  escape KB-derived content before it reaches the DOM. The single-page app's
-  responses now carry a Content-Security-Policy and `X-Content-Type-Options`.
+- HTML built from KB content is sanitised before display; the web app is
+  served with a Content-Security-Policy; only http(s) links are rendered as
+  links.

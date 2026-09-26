@@ -33,7 +33,11 @@ _SITE_CSP_DIRECTIVES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("script-src", ("'self'",)),
     ("style-src", ("'self'", "'unsafe-inline'", "https://fonts.googleapis.com")),
     ("font-src", ("'self'", "https://fonts.gstatic.com")),
-    ("img-src", ("'self'", "data:")),
+    # `https:` (any https host), not just `'self'`/`data:`: an entry body can
+    # embed `![](https://example.com/x.png)` and an operator's branding
+    # `logo_url`/`og_image_url` is commonly an external https URL. An image
+    # cannot execute script, so this widens what renders, not what runs.
+    ("img-src", ("'self'", "data:", "https:")),
     ("connect-src", ("'self'",)),
     ("object-src", ("'none'",)),
     ("base-uri", ("'self'",)),
@@ -119,19 +123,36 @@ SITE_SECURITY_HEADERS = {
 _BUILD_SCRIPT_HASH = re.compile(r"'sha256-[A-Za-z0-9+/]+=*'")
 
 
-def _spa_csp_headers(index_content: str) -> dict[str, str]:
+def _spa_script_hash_extra(index_content: str) -> str:
+    """The ``site_csp_extra``-style fragment adding the build's own inline
+    script hash(es) to ``script-src``, or ``""`` if none were found.
+
+    If this is ever empty for a real build (an adapter/config regression),
+    the header falls back to a bare ``script-src 'self'`` with no hash --
+    that blocks SvelteKit's own bootstrap script and the app loads to a
+    blank page with no visible error. ``mount_static`` warns at mount time
+    when this happens; see the call site.
+    """
+    hashes = _BUILD_SCRIPT_HASH.findall(index_content)
+    if not hashes:
+        return ""
+    return "script-src " + " ".join(hashes)
+
+
+def _spa_csp_headers(index_content: str, site_csp_extra: str = "") -> dict[str, str]:
     """Security headers for an SPA ``index.html`` response (P-B1).
 
     Same baseline as ``/site``, plus the build's own inline-script hash(es)
     added to ``script-src`` so the bootstrap SvelteKit itself emits still
     runs -- a header CSP and a page's ``<meta http-equiv>`` CSP combine with
     AND semantics, so a header ``script-src 'self'`` with no hash would block
-    it even though the meta tag allows it.
+    it even though the meta tag allows it. ``site_csp_extra`` is the same
+    per-request operator setting ``/site`` honours (``build_site_csp``);
+    both are merged into one ``script-src`` extra so an operator's directive
+    and the build's own hash don't clobber each other.
     """
-    hashes = _BUILD_SCRIPT_HASH.findall(index_content)
-    if not hashes:
-        return dict(SITE_SECURITY_HEADERS)
-    extra = "script-src " + " ".join(hashes)
+    parts = [p for p in (_spa_script_hash_extra(index_content), site_csp_extra) if p]
+    extra = "; ".join(parts)
     return {
         "Content-Security-Policy": build_site_csp(extra),
         "X-Content-Type-Options": "nosniff",
@@ -253,7 +274,30 @@ def mount_static(app: FastAPI, dist_dir: Path) -> None:
         return
 
     index_content = index_html.read_text()
-    spa_headers = _spa_csp_headers(index_content)
+    hash_extra = _spa_script_hash_extra(index_content)
+    if not hash_extra:
+        logger.warning(
+            "web/dist/index.html has no SvelteKit CSP script hash (no "
+            "'sha256-...' <meta http-equiv=\"content-security-policy\"> tag). "
+            "The served app's script-src 'self' will have no allowance for "
+            "the build's own inline bootstrap script, so it will load to a "
+            "blank page. Check kit.csp.mode in web/svelte.config.js and that "
+            "the app was built with adapter-static's prerendering."
+        )
+
+    def _spa_response_headers(request: Request, *, index_page: bool) -> dict[str, str]:
+        # Read per request, like /site's `_csp()`: `site_csp_extra` can
+        # change at runtime (a settings update), and combining it with the
+        # build's own hash here (rather than caching the merged header)
+        # keeps both current.
+        config = getattr(request.app.state, "pyrite_config", None)
+        site_extra = config.settings.site_csp_extra if config is not None else ""
+        if index_page:
+            return _spa_csp_headers(index_content, site_extra)
+        # A non-HTML file served from dist (JS/CSS/an image/robots.txt/a
+        # favicon): the SPA's CSP doesn't apply to it, but it must still not
+        # be sniffable into a different content type (P-B1, finding #1).
+        return {"X-Content-Type-Options": "nosniff"}
 
     # Mount the assets directory for hashed static files
     assets_dir = dist_dir / "_app"
@@ -261,10 +305,12 @@ def mount_static(app: FastAPI, dist_dir: Path) -> None:
         app.mount("/_app", StaticFiles(directory=str(assets_dir)), name="svelte-app")
 
     @app.get("/favicon.ico", include_in_schema=False)
-    async def favicon():
+    async def favicon(request: Request):
         favicon_path = dist_dir / "favicon.ico"
         if favicon_path.exists():
-            return FileResponse(str(favicon_path))
+            return FileResponse(
+                str(favicon_path), headers=_spa_response_headers(request, index_page=False)
+            )
         return HTMLResponse(status_code=404)
 
     # SPA fallback — catch all non-API, non-site, non-viewer routes
@@ -277,7 +323,16 @@ def mount_static(app: FastAPI, dist_dir: Path) -> None:
 
         file_path = dist_dir / path
         if file_path.is_file() and file_path.resolve().is_relative_to(dist_dir.resolve()):
-            return FileResponse(str(file_path))
+            # A direct request for a real file in dist -- including an
+            # explicit `GET /index.html`, which is this same branch, not
+            # the "no route matched" fallback below. Without headers here
+            # that request bypasses the CSP/frame-ancestors entirely and
+            # the page can be framed (finding #1).
+            is_index = file_path.resolve() == index_html.resolve()
+            return FileResponse(
+                str(file_path),
+                headers=_spa_response_headers(request, index_page=is_index),
+            )
 
         # SPA index.html must not be cached — it references hashed JS chunks
         # that change on each build. Stale index.html = mismatched chunk errors.
@@ -287,7 +342,10 @@ def mount_static(app: FastAPI, dist_dir: Path) -> None:
         # as a different content type.
         return HTMLResponse(
             content=index_content,
-            headers={"Cache-Control": "no-cache", **spa_headers},
+            headers={
+                "Cache-Control": "no-cache",
+                **_spa_response_headers(request, index_page=True),
+            },
         )
 
 

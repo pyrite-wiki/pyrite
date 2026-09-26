@@ -10,6 +10,19 @@ describe('isSafeLinkUrl', () => {
 		expect(isSafeLinkUrl('https://example.com/path?q=1')).toBe(true);
 	});
 
+	it('accepts a same-origin absolute path', () => {
+		expect(isSafeLinkUrl('/entries/foo')).toBe(true);
+	});
+
+	it('accepts a same-origin relative path', () => {
+		expect(isSafeLinkUrl('entries/foo')).toBe(true);
+	});
+
+	it('accepts a bare fragment or query string', () => {
+		expect(isSafeLinkUrl('#section')).toBe(true);
+		expect(isSafeLinkUrl('?q=1')).toBe(true);
+	});
+
 	it('rejects javascript: URLs', () => {
 		expect(isSafeLinkUrl('javascript:alert(document.domain)')).toBe(false);
 	});
@@ -26,9 +39,8 @@ describe('isSafeLinkUrl', () => {
 		expect(isSafeLinkUrl(' \n\tJaVaScRiPt:alert(1)')).toBe(false);
 	});
 
-	it('rejects protocol-relative and scheme-less strings', () => {
+	it('rejects a protocol-relative URL (it changes the host, unlike a relative path)', () => {
 		expect(isSafeLinkUrl('//evil.example/x')).toBe(false);
-		expect(isSafeLinkUrl('not a url')).toBe(false);
 	});
 
 	it('rejects an empty or missing value', () => {
