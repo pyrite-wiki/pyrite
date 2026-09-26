@@ -11,6 +11,7 @@
 	import { onMount } from 'svelte';
 	import { savedSearches, type SavedSearch } from '$lib/stores/saved-searches.svelte';
 	import SkeletonLoader from '$lib/components/common/SkeletonLoader.svelte';
+	import { escapeHtml } from '$lib/utils/sanitize';
 
 	let searchInput = $state<HTMLInputElement | null>(null);
 	let selectedKb = $state('');
@@ -22,14 +23,6 @@
 	let entryTypes = $state<string[]>([]);
 	let showSaveDialog = $state(false);
 	let saveName = $state('');
-
-	function escapeHtml(text: string): string {
-		return text
-			.replace(/&/g, '&amp;')
-			.replace(/</g, '&lt;')
-			.replace(/>/g, '&gt;')
-			.replace(/"/g, '&quot;');
-	}
 
 	function highlightSnippet(snippet: string, query: string): string {
 		// Escape HTML first to prevent XSS from snippet content
