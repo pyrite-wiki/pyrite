@@ -287,8 +287,13 @@ def create_same_as_links(
     return {"linked": linked, "skipped": skipped, "links": links}
 
 
-def merge_entity_view(db, entity_id: str, kb_name: str) -> dict:
+def merge_entity_view(db, entity_id: str, kb_name: str, *, readable_kbs: set[str] | None) -> dict:
     """Build a merged view of an entity across KBs via ``same_as`` links.
+
+    The walk crosses KBs, so it is bounded by ``readable_kbs`` (required;
+    ``UNSCOPED`` only for a caller with no caller identity): an appearance in
+    a KB outside it is neither followed nor merged, exactly as if the link
+    pointed at nothing (P-R4, P-R5).
 
     Parameters
     ----------
@@ -298,6 +303,8 @@ def merge_entity_view(db, entity_id: str, kb_name: str) -> dict:
         Entry ID to start from.
     kb_name:
         KB name of the starting entry.
+    readable_kbs:
+        The caller's readable set, or ``UNSCOPED``.
 
     Returns
     -------
@@ -307,7 +314,11 @@ def merge_entity_view(db, entity_id: str, kb_name: str) -> dict:
           "merged_aliases": [str],
           "merged_tags": [str]}``
     """
-    entry = db.get_entry(entity_id, kb_name)
+    entry = (
+        db.get_entry(entity_id, kb_name)
+        if readable_kbs is None or kb_name in readable_kbs
+        else None
+    )
     if entry is None:
         return {
             "canonical": {"id": entity_id, "kb_name": kb_name, "title": ""},
@@ -327,13 +338,15 @@ def merge_entity_view(db, entity_id: str, kb_name: str) -> dict:
             continue
         visited.add((eid, ekb))
 
+        if readable_kbs is not None and ekb not in readable_kbs:
+            continue
         e = db.get_entry(eid, ekb)
         if e is None:
             continue
         all_entries.append(e)
 
         # Follow same_as outlinks
-        outlinks = db.get_outlinks(eid, ekb, readable_kbs=UNSCOPED)
+        outlinks = db.get_outlinks(eid, ekb, readable_kbs=readable_kbs)
         for link in outlinks:
             if link.get("relation") == "same_as":
                 target = (link["id"], link.get("kb_name", ekb))
@@ -341,7 +354,7 @@ def merge_entity_view(db, entity_id: str, kb_name: str) -> dict:
                     queue.append(target)
 
         # Follow same_as backlinks
-        backlinks = db.get_backlinks(eid, ekb, readable_kbs=UNSCOPED)
+        backlinks = db.get_backlinks(eid, ekb, readable_kbs=readable_kbs)
         for bl in backlinks:
             if bl.get("relation") == "same_as":
                 target = (bl["id"], bl.get("kb_name", ekb))
