@@ -153,7 +153,6 @@ class TestHandshakeRace:
         """The readable set was resolved before the change landed: the
         session must not run with it."""
         from pyrite.server import mcp_routes
-        from pyrite.services.credential_events import announce_kb_policy_change
 
         client, w = env
         alice = _cookie(w.tokens["alice"])
@@ -161,7 +160,10 @@ class TestHandshakeRace:
 
         async def racing(request, config, db):
             ctx = await real(request, config, db)
-            announce_kb_policy_change(OPEN)
+            r = await w.http.put(
+                f"/api/kbs/{OPEN}/default-role", json={"role": "none"}, headers=ADMIN
+            )
+            assert r.status_code == 200, r.text
             return ctx
 
         monkeypatch.setattr(mcp_routes, "_authenticate", racing)
