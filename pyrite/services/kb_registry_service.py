@@ -110,7 +110,7 @@ class KBRegistryService:
                 "indexed": bool(r.get("last_indexed")),
                 "last_indexed": r.get("last_indexed"),
                 "default_role": r.get("default_role"),
-                "default_role_editable": not self.config.default_role_is_hand_written(r["name"]),
+                "default_role_editable": self._yaml_origin(r["name"], r.get("repo_id")) != "hand",
             }
             if type_filter and kb_info["type"] != type_filter:
                 continue
@@ -137,7 +137,7 @@ class KBRegistryService:
             "indexed": bool(kb.last_indexed),
             "last_indexed": kb.last_indexed,
             "default_role": kb.default_role,
-            "default_role_editable": not self.config.default_role_is_hand_written(name),
+            "default_role_editable": self._yaml_origin(name, kb.repo_id) != "hand",
         }
 
     def add_kb(
@@ -335,17 +335,18 @@ class KBRegistryService:
         the change is refused (`KBDefinedInConfigError`, naming the file)
         rather than reported as done and overridden by the file.
         """
-        from ..config import current_config_file, save_config
+        from ..config import CONFIG_WRITE_LOCK, current_config_file, save_config
         from ..storage.models import KB
 
         kb = self.db.session.get(KB, name)
         if not kb:
             raise KBNotFoundError(f"KB '{name}' not found")
 
-        if "default_role" in updates and self.config.default_role_is_hand_written(name):
+        origin = self._yaml_origin(name, kb.repo_id)
+        if "default_role" in updates and origin == "hand":
             raise KBDefinedInConfigError(
-                f"KB '{name}' is defined by hand in {current_config_file()}, which sets its "
-                "default_role. Change default_role there and restart the server."
+                f"KB '{name}' is defined by hand in {current_config_file().name}, which sets "
+                "its default_role. Change default_role there and restart the server."
             )
         allowed = {"description", "kb_type", "default_role"}
         if "default_role" in updates and (
@@ -358,27 +359,57 @@ class KBRegistryService:
             )
         current = self.config.get_kb(name)
         role_before = current.default_role if current is not None else kb.default_role
-        for key, value in updates.items():
-            if key in allowed:
-                setattr(kb, key, value)
-        written = self.config.server_written_kb(name)
-        if "default_role" in updates and written is not None:
-            # The server's own config.yaml entry is this KB's policy: rewrite
-            # it first, so a refused save leaves neither changed.
-            previous = written.default_role
-            written.default_role = updates["default_role"]
-            try:
-                save_config(self.config)
-            except BaseException:
-                written.default_role = previous
-                self.db.session.rollback()
-                raise
-        self.db.session.commit()
+        written = self.config.yaml_kb(name) if origin == "server" else None
+        # Mutate -> save -> commit as one step: no other save can write this
+        # change to the file while it may still be rolled back.
+        with CONFIG_WRITE_LOCK:
+            for key, value in updates.items():
+                if key in allowed:
+                    setattr(kb, key, value)
+            if "default_role" in updates and written is not None:
+                # The server's own config.yaml entry is this KB's policy:
+                # rewrite it first, so a refused save leaves neither changed.
+                previous = written.default_role
+                written.default_role = updates["default_role"]
+                try:
+                    save_config(self.config)
+                except BaseException:
+                    written.default_role = previous
+                    self.db.session.rollback()
+                    raise
+            self.db.session.commit()
         self._refresh_config_view()
         if "default_role" in updates and updates["default_role"] != role_before:
             announce_kb_policy_change(name)
             drop_kb_site_pages(self.config, self.db, name)
         return self.get_kb(name)  # type: ignore[return-value]
+
+    def _yaml_origin(self, name: str, repo_id: int | None) -> str:
+        """Who wrote KB `name`'s config.yaml entry: "none" (a registry KB,
+        no entry), "server" or "hand".
+
+        "server" only on evidence the server alone writes, never on a key
+        an operator could type: an ephemeral KB's directory inside the
+        server's ephemeral root, or a repo-subscribed KB whose registry row
+        is linked to the index's repository record of the same name.
+        Anything else in config.yaml is the operator's.
+        """
+        from ..storage.kb_ops import ephemeral_root, is_ephemeral_kb_path
+
+        kb = self.config.yaml_kb(name)
+        if kb is None:
+            return "none"
+        if kb.ephemeral:
+            try:
+                if is_ephemeral_kb_path(ephemeral_root(self.config), str(kb.path)):
+                    return "server"
+            except (OSError, RuntimeError, ValueError):
+                return "hand"
+        if kb.repo and repo_id is not None:
+            repo = self.db.get_repo(repo_id=repo_id)
+            if repo and repo.get("name") == kb.repo:
+                return "server"
+        return "hand"
 
     def _refresh_config_view(self) -> None:
         """Make the config's view of the registry KBs equal the rows.

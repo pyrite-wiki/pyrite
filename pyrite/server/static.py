@@ -168,6 +168,89 @@ def _site_404() -> HTMLResponse:
     return HTMLResponse(status_code=404, headers=SITE_SECURITY_HEADERS)
 
 
+class SiteRefresher:
+    """Re-renders a stale part of the /site cache on the visit that finds it.
+
+    One visit's worth of render per stale page, and failures do not amplify:
+
+    - one render at a time, and a visitor who finds one running is not made
+      to wait (nor to hold a threadpool thread): they get the withheld page;
+    - the render re-checks freshness under the lock, so visitors who all
+      saw the page stale produce one render, not one each;
+    - a render that fails is not tried again for `backoff_seconds` for that
+      page, whatever the traffic.
+    """
+
+    backoff_seconds = 60.0
+
+    def __init__(self, get_config, open_db, clock=None) -> None:
+        import threading
+        import time
+
+        self._get_config = get_config
+        self._open_db = open_db
+        self._clock = clock or time.monotonic
+        self.lock = threading.Lock()
+        self._failed_at: dict[tuple[str, str | None], float] = {}
+        self.renders = 0  # renders attempted; read by tests and diagnostics
+
+    def may_try(self, what: str, kb_name: str | None) -> bool:
+        """Cheap, on the event loop: is a render worth dispatching?"""
+        return not self.lock.locked() and self.may_try_after_failure((what, kb_name))
+
+    def refresh(self, served_dir: Path, what: str, kb_name: str | None) -> None:
+        """Render the stale part, if it is still stale and nobody else is.
+
+        Never raises: a failure is logged and remembered for the backoff."""
+        from ..services.public_kbs import public_kb_names
+        from ..services.site_cache import (
+            SiteCacheService,
+            kb_index_is_current,
+            landing_is_current,
+        )
+
+        if not self.lock.acquire(blocking=False):
+            return
+        key = (what, kb_name)
+        try:
+            if not self.may_try_after_failure(key):
+                return
+            config = self._get_config()
+            if what == "landing":
+                if landing_is_current(served_dir, set(public_kb_names(config))):
+                    return
+            elif what == "kb_index" and kb_name:
+                if kb_index_is_current(served_dir, kb_name):
+                    return
+            else:
+                return
+            with self._open_db().request_handle() as db:
+                svc = SiteCacheService(config, db)
+                if svc.cache_dir.resolve() != served_dir.resolve():
+                    return
+                self.renders += 1
+                if what == "landing":
+                    svc.render_landing()
+                else:
+                    svc.refresh_kb_index(kb_name)
+            self._failed_at.pop(key, None)
+        except Exception:
+            self._failed_at[key] = self._clock()
+            logger.warning(
+                "Could not re-render /site (%s %s); not retrying for %.0fs",
+                what,
+                kb_name or "",
+                self.backoff_seconds,
+                exc_info=True,
+            )
+        finally:
+            self.lock.release()
+
+    def may_try_after_failure(self, key: tuple[str, str | None]) -> bool:
+        failed = self._failed_at.get(key)
+        return failed is None or self._clock() - failed >= self.backoff_seconds
+
+
 def mount_site_routes(app: FastAPI) -> None:
     """Mount /site and /viewer routes. These work independent of the SPA dist."""
     data_dir = Path(os.environ.get("PYRITE_DATA_DIR", "."))
@@ -184,17 +267,15 @@ def mount_site_routes(app: FastAPI) -> None:
 
     async def _refresh(request: Request, what: str, kb_name: str | None) -> None:
         """Re-render a stale part of the cache through the app's
-        ``site_refresh`` hook (set by ``create_app``), off the event loop.
-        A failure is logged; the caller then serves what the checks allow."""
+        `SiteRefresher` (set by ``create_app``), off the event loop -- unless
+        a render is already running or failed recently, in which case this
+        visitor is answered at once with what the checks allow."""
         from starlette.concurrency import run_in_threadpool
 
-        hook = getattr(request.app.state, "site_refresh", None)
-        if hook is None:
+        refresher = getattr(request.app.state, "site_refresh", None)
+        if refresher is None or not refresher.may_try(what, kb_name):
             return
-        try:
-            await run_in_threadpool(hook, site_cache_dir, what, kb_name)
-        except Exception:
-            logger.warning("Could not re-render /site (%s %s)", what, kb_name or "", exc_info=True)
+        await run_in_threadpool(refresher.refresh, site_cache_dir, what, kb_name)
 
     def _csp(request: Request, response: Response) -> Response:
         # The built-in policy is already on the response; apply the

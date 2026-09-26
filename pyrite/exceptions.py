@@ -355,15 +355,16 @@ class KBAlreadyExistsError(ConfigError):
 
 class KBDefinedInConfigError(ConfigError):
     """`KBRegistryService.update_kb` refused to change the ``default_role`` of
-    a KB defined in config.yaml.
+    a KB an operator defined by hand in config.yaml.
 
-    config.yaml is the source of truth for such a KB's policy: the access
-    policy and every anonymous surface read it before the registry row, so a
-    registry write would be reported as done and change nothing. The server
-    does not rewrite the operator's config.yaml from a request; the operator
-    edits it and restarts.
+    That entry is the KB's policy: the access policy and every anonymous
+    surface read it before the registry row. The server rewrites config.yaml
+    entries only for KBs it wrote there itself (ephemeral and
+    repo-subscribed ones, on evidence only the server writes); an operator's
+    own entry is theirs to edit, followed by a restart.
 
-    The message names only the KB (caller-supplied), so it is safe to show.
+    The message names the KB (caller-supplied) and the config file by its
+    basename, never its path, so it is safe to show.
     """
 
     error_code = "KB_DEFINED_IN_CONFIG"

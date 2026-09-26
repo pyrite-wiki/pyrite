@@ -103,14 +103,19 @@ class EphemeralKBService:
             created_at_ts=time.time(),
             default_role=default_role,
         )
-        try:
-            self.config.add_kb(kb)
-            save_config(self.config)
-        except BaseException:
-            if self.config.get_kb(name) is kb:
-                self.config.remove_kb(name)
-            self.db.unregister_kb(name)
-            raise
+        from ..config import CONFIG_WRITE_LOCK
+
+        # Add -> save (-> undo) as one step, like a default-role change: no
+        # other save can write this KB to the file while it may be undone.
+        with CONFIG_WRITE_LOCK:
+            try:
+                self.config.add_kb(kb)
+                save_config(self.config)
+            except BaseException:
+                if self.config.get_kb(name) is kb:
+                    self.config.remove_kb(name)
+                self.db.unregister_kb(name)
+                raise
         return kb
 
     def _root(self) -> Path:
