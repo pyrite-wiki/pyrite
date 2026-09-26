@@ -151,6 +151,9 @@ class TestClosingARegistryKB:
         r = c.get("/site")
         assert USER_KB not in r.text
         assert "user kb description" not in r.text
+        # Re-rendered without it, not merely withheld: the site stays up.
+        assert r.headers["X-Pyrite-Cache"] == "HIT"
+        assert YAML_KB in r.text
 
     def test_the_closed_kbs_cached_pages_leave_the_disk(self, world):
         """P-F6: a closed KB's pages do not stay at rest in the site cache."""
@@ -309,6 +312,19 @@ class TestEveryRegistryWriteRefreshesTheConfigView:
         assert config.get_kb("k") is None
         assert "k" not in [kb.name for kb in config.all_kbs()]
         assert public_kb_names(config) == []
+
+    def test_a_row_the_loader_now_refuses_is_not_kept_in_its_old_form(self, reg):
+        """The refresh re-reads through the one registry loader; a row it
+        refuses (here a path that no longer resolves) must not leave the old
+        copy -- with its old, public, default_role -- behind."""
+        registry, config, tmp = reg
+        registry.add_kb("k", str(tmp / "k"))
+        registry.update_kb("k", default_role="read")
+        (tmp / "k").rmdir()
+        (tmp / "k").symlink_to(tmp / "k")  # a loop: unresolvable
+        registry.update_kb("k", default_role="none")
+        assert "k" not in public_kb_names(config)
+        assert config.get_kb("k") is None
 
     def test_a_removed_and_re_added_kb_is_not_public(self, reg):
         """The next KB under the same name must not inherit the old policy."""
