@@ -417,6 +417,30 @@ class TestCookieWritesAreOriginChecked:
         assert r.status_code == 403, r.text
         assert _entry_files(tmp_path) == []
 
+    @pytest.mark.parametrize("site", ["same-site", "cross-site"])
+    def test_no_origin_but_fetch_metadata_says_cross_origin_is_refused(self, make, tmp_path, site):
+        """With neither Origin nor Referer, ``Sec-Fetch-Site`` is the browser
+        saying where the request came from; ``same-site`` is still another
+        origin."""
+        r = _import(self._client(make), {"Sec-Fetch-Site": site})
+        assert r.status_code == 403, r.text
+        assert _entry_files(tmp_path) == []
+
+    @pytest.mark.control(
+        reason="same-origin and user-initiated requests are admitted before and after"
+    )
+    @pytest.mark.parametrize("site", ["same-origin", "none"])
+    def test_no_origin_and_fetch_metadata_same_origin_is_admitted(self, make, tmp_path, site):
+        r = _import(self._client(make), {"Sec-Fetch-Site": site})
+        assert r.status_code == 200, r.text
+        assert _entry_files(tmp_path)
+
+    @pytest.mark.control(reason="no browser signal at all: admitted before and after")
+    def test_no_origin_referer_or_fetch_metadata_is_admitted(self, make, tmp_path):
+        r = _import(self._client(make))
+        assert r.status_code == 200, r.text
+        assert _entry_files(tmp_path)
+
     def test_an_api_key_in_the_query_does_not_exempt_the_cookie(self, make, tmp_path):
         """A foreign page can put a key in a URL, and ``/mcp`` ignores it and
         uses the cookie, so only the ``X-API-Key`` header exempts."""

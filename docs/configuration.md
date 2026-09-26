@@ -158,7 +158,8 @@ the browser less:
 - A state-changing request (`POST`, `PUT`, `PATCH`, `DELETE`) from a browser
   must come from the server's own origin or one listed in `cors_origins`.
   Otherwise it gets `403`. Requests that send no `Origin` or `Referer`, such as
-  the CLI, `curl` and agents, are not affected.
+  the CLI, `curl` and agents, are not affected, unless a browser's
+  `Sec-Fetch-Site` header says the request came from another site.
 
 These rules cover the whole app, including `/mcp`, `/ws` and `/site`. If you serve a
 credential-free instance under another name, such as a LAN hostname or a reverse
@@ -174,6 +175,16 @@ settings:
 `pyrite serve --host <addr>` adds `<addr>` automatically. The Vite dev server
 (`npm run dev` on port 5173) is already in the default `cors_origins`. If you
 run it on another port, add `http://localhost:<port>`.
+
+**Web development with auth enabled.** The Vite proxy (`changeOrigin: true`)
+rewrites `Host` but keeps the browser's `Origin`, so every signed-in write is
+checked against `cors_origins`. If `npm run dev` gets `403 Cross-origin
+request refused` on writes (a non-default Vite port, or a `cors_origins` you
+set yourself), start the backend with the Vite origin included:
+
+```bash
+PYRITE_CORS_ORIGINS=http://localhost:5173 pyrite serve   # your Vite port; comma-separate several
+```
 
 Behind a reverse proxy, the browser sends `Origin: https://<public name>` on
 every write, including login, logout and registration. If the proxy rewrites

@@ -113,18 +113,22 @@ def request_origin(headers: Headers) -> str | None:
     return f"{parts.scheme}://{parts.netloc}"
 
 
+_FOREIGN_FETCH_SITES = frozenset({"same-site", "cross-site"})
+
+
 def request_origin_admitted(headers: Headers, cors_origins: list[str]) -> bool:
     """The one Origin rule, for REST, ``/mcp`` and ``/ws``.
 
     Admitted when the request's ``Origin`` (or, with none, its ``Referer``)
     is this server's own host or configured in ``cors_origins``. A request
-    with neither header is not a browser's cross-site request (a CLI, curl,
-    an agent) and is admitted: browsers send ``Origin`` on every
-    state-changing request and on every WebSocket handshake.
+    with neither header is admitted -- a CLI, curl, an agent -- unless the
+    browser's fetch metadata says it came from another origin
+    (``Sec-Fetch-Site: same-site`` or ``cross-site``): a browser that
+    withheld both headers still reports where the request started.
     """
     origin = request_origin(headers)
     if origin is None:
-        return True
+        return headers.get("sec-fetch-site", "").strip().lower() not in _FOREIGN_FETCH_SITES
     return origin_permitted(origin, headers.get("host", ""), cors_origins)
 
 
