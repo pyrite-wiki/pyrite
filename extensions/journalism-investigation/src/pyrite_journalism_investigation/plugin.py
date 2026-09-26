@@ -938,6 +938,7 @@ class JournalismInvestigationPlugin:
                 args["entry_id"],
                 limit=args.get("limit", 50),
                 offset=args.get("offset", 0),
+                readable_kbs=readable_kbs,
             )
         finally:
             if should_close:

@@ -190,8 +190,16 @@ class ZettelkastenPlugin:
             if should_close:
                 db.close()
 
-    def _mcp_graph(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Get link graph around a note."""
+    def _mcp_graph(
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any]:
+        """Get link graph around a note.
+
+        The chokepoint checks the named KB; the links lead anywhere, so they
+        are read within the caller's readable set (`None`: unscoped): a
+        private source is dropped and a private target reads as a missing
+        one (P-R4, P-R5).
+        """
         db, should_close = self._get_db()
         entry_id = args["entry_id"]
         kb_name = args["kb_name"]
@@ -202,8 +210,8 @@ class ZettelkastenPlugin:
             if not entry:
                 return {"error": f"Entry '{entry_id}' not found"}
 
-            outlinks = db.get_outlinks(entry_id, kb_name)
-            backlinks = db.get_backlinks(entry_id, kb_name)
+            outlinks = db.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
+            backlinks = db.get_backlinks(entry_id, kb_name, readable_kbs=readable_kbs)
 
             graph = {
                 "center": {"id": entry_id, "title": entry.get("title", "")},
@@ -219,8 +227,8 @@ class ZettelkastenPlugin:
                     nkb = link.get("target_kb") or link.get("source_kb", kb_name)
                     if nid and nid != entry_id:
                         neighbor_links[nid] = {
-                            "outlinks": db.get_outlinks(nid, nkb),
-                            "backlinks": db.get_backlinks(nid, nkb),
+                            "outlinks": db.get_outlinks(nid, nkb, readable_kbs=readable_kbs),
+                            "backlinks": db.get_backlinks(nid, nkb, readable_kbs=readable_kbs),
                         }
                 graph["neighbors"] = neighbor_links
 

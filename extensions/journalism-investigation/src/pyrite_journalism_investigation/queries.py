@@ -126,8 +126,14 @@ def query_network(
     entry_id: str,
     limit: int = 50,
     offset: int = 0,
+    readable_kbs: set[str] | None = None,
 ) -> dict[str, Any]:
     """Get connection network for an entity, paged in both directions.
+
+    `readable_kbs` is the caller's readable set (`None`: unscoped): a link
+    from a KB outside it is dropped, one into such a KB reads as a link to a
+    missing entry, and the totals count only what the caller can see
+    (P-R4, P-R5).
 
     `limit` and `offset` apply to each direction separately, and the response
     carries the true totals plus `truncated` so a caller can tell what it did
@@ -150,8 +156,8 @@ def query_network(
         # join and gets the same treatment.
         return sorted(links, key=lambda link: (link.get("title") or "", link.get("id") or ""))
 
-    outlinks = _ordered(db.get_outlinks(entry_id, kb_name))
-    backlinks = _ordered(db.get_backlinks(entry_id, kb_name))
+    outlinks = _ordered(db.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs))
+    backlinks = _ordered(db.get_backlinks(entry_id, kb_name, readable_kbs=readable_kbs))
 
     total_outlinks, total_backlinks = len(outlinks), len(backlinks)
     start = max(offset, 0)
