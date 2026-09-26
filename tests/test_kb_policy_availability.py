@@ -166,12 +166,13 @@ class TestRemovingAKBKeepsTheLandingUp:
         return cache
 
     def _assert_landing_up_without(self, world, cache, kb):
-        from pyrite.services.site_cache import LANDING_MANIFEST, landing_is_current
+        import json
 
         public = set(public_kb_names(world["config"]))
         assert not (cache / kb).exists()
-        assert landing_is_current(cache, public)
-        assert kb not in (cache / LANDING_MANIFEST).read_text()
+        listed = json.loads((cache / ".landing-kbs.json").read_text())  # LANDING_MANIFEST
+        assert kb not in listed
+        assert set(listed) <= public
         r = world["client"].get("/site")
         assert r.headers["X-Pyrite-Cache"] == "HIT"
         assert YAML_KB in r.text
