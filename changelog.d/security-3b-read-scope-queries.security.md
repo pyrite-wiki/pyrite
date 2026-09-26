@@ -5,6 +5,5 @@
   The social plugin now records the knowledge base on each reputation
   adjustment; adjustments recorded before this release, which carry none, count
   only for unscoped callers.
-- `POST /api/repos/{name}/sync` with an empty name now answers as an unknown
-  repository instead of syncing every repository. `pyrite repo sync` with no
-  name still syncs all of them.
+- A repository sync request over the API names exactly one repository.
+  `pyrite repo sync` with no name still syncs all of them.
