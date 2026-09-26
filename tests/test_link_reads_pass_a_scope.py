@@ -157,6 +157,10 @@ def test_transport_entry_points_are_not_stale():
     assert set(TRANSPORT_ENTRY_POINTS) <= live, sorted(set(TRANSPORT_ENTRY_POINTS) - live)
 
 
+@pytest.mark.control(
+    reason="on the base no read requires the scope, so there is nothing to check; it "
+    "guards the next call site, and test_no_scoped_read_defaults_to_unscoped is its red twin"
+)
 def test_every_call_to_a_scoped_read_passes_the_scope():
     scoped, _ambiguous = _scoped_names()
 

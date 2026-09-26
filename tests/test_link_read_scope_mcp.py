@@ -296,6 +296,10 @@ def test_task_lookup_unscoped_unchanged(w):
 # -- kb_qa_status counts (cold read) -----------------------------------------
 
 
+@pytest.mark.control(
+    reason="a consistency check: on the batch base neither tool was scoped, so they "
+    "agreed; after round 0 only validate was, and this failed -- it pins that they agree"
+)
 def test_qa_status_counts_match_scoped_validation(w, scope):
     status = _call(w, "kb_qa_status", {"kb_name": READABLE}, scope)
     validated = _call(
