@@ -386,6 +386,22 @@ def reconcile_env():
         adr.title = "Keep Pattern"
         adr_repo.save(adr, keep_filename=True, touch_updated_at=False)
 
+        # Static subdirectories preserve deliberate placement; reconcile must
+        # not flatten an archived ADR back into adrs/.
+        archived_adr = GenericEntry(
+            _entry_type="adr",
+            id="adr-10",
+            title="Archived ADR",
+            body="",
+            metadata={"adr_number": 10},
+        )
+        adr_repo.save(archived_adr, subdir="adrs/archive")
+
+        # Collections describe the directory that contains this YAML file.
+        collection_path = kb_path / "mydocs" / "__collection.yaml"
+        collection_path.parent.mkdir(parents=True)
+        collection_path.write_text("title: My Docs\n", encoding="utf-8")
+
         # Build the index
         db = PyriteDB(db_path)
         index_mgr = IndexManager(db, config)
@@ -440,6 +456,11 @@ class TestIndexReconcile:
                 "pyrite.cli.index_commands.get_config_and_db",
                 return_value=(reconcile_env["config"], reconcile_env["db"]),
             ),
+            patch.object(
+                reconcile_env["db"],
+                "register_kb",
+                wraps=reconcile_env["db"].register_kb,
+            ) as register_kb,
         ):
             dry_run = runner.invoke(app, ["index", "reconcile", "project"])
             assert dry_run.exit_code == 0, dry_run.output
@@ -450,6 +471,7 @@ class TestIndexReconcile:
             apply = runner.invoke(app, ["index", "reconcile", "project", "--apply"])
             assert apply.exit_code == 0, apply.output
             assert "Moved 1 file(s)." in apply.output
+            register_kb.assert_not_called()
 
         assert original_path.read_bytes() == original
         assert not recomputed_path.exists()
@@ -459,6 +481,78 @@ class TestIndexReconcile:
             "project"
         )
         assert Path(indexed["my-task"]["file_path"]).resolve() == task_target.resolve()
+
+    def test_reconcile_skips_static_subdirs_and_collection_files(self, reconcile_env):
+        kb_path = reconcile_env["kb_path"]
+        archived_adr = next((kb_path / "adrs" / "archive").glob("*.md"))
+        collection_path = kb_path / "mydocs" / "__collection.yaml"
+
+        with (
+            _patch_config(reconcile_env),
+            patch(
+                "pyrite.cli.index_commands.get_config_and_db",
+                return_value=(reconcile_env["config"], reconcile_env["db"]),
+            ),
+        ):
+            dry_run = runner.invoke(app, ["index", "reconcile", "project"])
+            assert dry_run.exit_code == 0, dry_run.output
+            assert "Total: 1 file(s) to move" in dry_run.output
+            assert "archive" not in dry_run.output
+            assert "__collection.yaml" not in dry_run.output
+
+            apply = runner.invoke(app, ["index", "reconcile", "project", "--apply"])
+            assert apply.exit_code == 0, apply.output
+            assert "Moved 1 file(s)." in apply.output
+
+        assert archived_adr.exists()
+        assert collection_path.exists()
+        assert (kb_path / "tasks" / "done" / "my-task.md").exists()
+
+    def test_reconcile_does_not_overwrite_racing_destination(self, reconcile_env):
+        kb_path = reconcile_env["kb_path"]
+        source = kb_path / "tasks" / "active" / "my-task.md"
+        destination = kb_path / "tasks" / "done" / "my-task.md"
+
+        def create_destination_after_precheck(_source, target):
+            Path(target).write_text("created by concurrent writer", encoding="utf-8")
+            raise FileExistsError("destination appeared after the existence check")
+
+        with (
+            _patch_config(reconcile_env),
+            patch(
+                "pyrite.cli.index_commands.get_config_and_db",
+                return_value=(reconcile_env["config"], reconcile_env["db"]),
+            ),
+            patch(
+                "pyrite.cli.index_commands.os.link",
+                side_effect=create_destination_after_precheck,
+            ),
+        ):
+            result = runner.invoke(app, ["index", "reconcile", "project", "--apply"])
+
+        assert result.exit_code == 0, result.output
+        assert "Failed to move my-task" in result.output
+        assert source.exists()
+        assert destination.read_text(encoding="utf-8") == "created by concurrent writer"
+
+    def test_reconcile_reports_bad_template_path_per_entry(self, reconcile_env):
+        with (
+            _patch_config(reconcile_env),
+            patch(
+                "pyrite.cli.index_commands.get_config_and_db",
+                return_value=(reconcile_env["config"], reconcile_env["db"]),
+            ),
+            patch(
+                "pyrite.storage.repository.KBRepository._get_file_path",
+                side_effect=ValueError("target resolves outside KB"),
+            ),
+        ):
+            result = runner.invoke(app, ["index", "reconcile", "project"])
+
+        assert result.exit_code == 0, result.output
+        assert "my-task" in result.output
+        assert "outside KB" in result.output
+        assert "Traceback" not in result.output
 
 
 # =========================================================================

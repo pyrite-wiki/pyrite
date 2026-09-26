@@ -5,6 +5,7 @@ Commands: build, sync, stats, embed, health
 """
 
 import logging
+import os
 
 import typer
 from rich.console import Console
@@ -567,13 +568,14 @@ def index_reconcile(
     kb_name: str = typer.Argument(..., help="KB to reconcile"),
     apply: bool = typer.Option(False, "--apply", help="Execute moves (default is dry-run)"),
 ):
-    """Move files into their resolved subdirectories.
+    """Move files to match their templated subdirectories.
 
-    Compare each current parent directory with the directory resolved from the
-    entry's subdirectory template. Preserve the filename fixed at creation,
-    even when a type declares a file pattern. By default this is a dry run.
-    Use --apply to execute moves.
+    Only types with a templated subdirectory are reconciled. Static subdirectories
+    preserve deliberate placement, and collection descriptors stay in their folders.
+    Filenames remain fixed at creation. By default this is a dry run; use --apply
+    to execute moves.
     """
+    from ..storage.document_manager import DocumentManager
     from ..storage.index import IndexManager
     from ..storage.repository import KBRepository
 
@@ -583,21 +585,39 @@ def index_reconcile(
         cli_error(
             f"KB '{kb_name}' not found",
             error_code="KB_NOT_FOUND",
-            suggestion="run `pyrite kb list` to see available KBs",
+            suggestion="run pyrite kb list to see available KBs",
         )
 
     repo = KBRepository(kb_config)
     moves = []
+    planning_errors = []
 
     for entry, current_path in repo.list_entries():
-        inferred_subdir = repo._infer_subdir(entry)
-        expected_dir = repo._get_file_path(entry.id, inferred_subdir).parent
-        expected_path = repo._contained(expected_dir / current_path.name)
-        if current_path.parent.resolve() != expected_dir.resolve():
-            moves.append((entry, current_path, expected_path))
+        if current_path.name == "__collection.yaml":
+            continue
+        try:
+            if not DocumentManager._uses_templated_subdir(repo, entry):
+                continue
+            inferred_subdir = repo._infer_subdir(entry)
+            expected_dir = repo._get_file_path(entry.id, inferred_subdir).parent
+            expected_path = repo._contained(expected_dir / current_path.name)
+            if current_path.parent.resolve() != expected_dir.resolve():
+                moves.append((entry, current_path, expected_path))
+        except Exception as e:
+            # A bad template (for example one that resolves through an external
+            # symlink) must not prevent other entries from being reconciled.
+            planning_errors.append((entry.id, e))
+
+    for entry_id, error in planning_errors:
+        console.print(f"[yellow]Could not plan a move for {entry_id}:[/yellow] {error}")
 
     if not moves:
-        console.print("[green]All files match their resolved subdirectories.[/green]")
+        if not planning_errors:
+            console.print("[green]All files match their templated subdirectories.[/green]")
+        else:
+            console.print(
+                f"[yellow]No moves planned; {len(planning_errors)} entry path(s) could not be checked.[/yellow]"
+            )
         return
 
     table = Table(title=f"{'[DRY RUN] ' if not apply else ''}Files to move")
@@ -626,24 +646,29 @@ def index_reconcile(
         return
 
     index_mgr = IndexManager(db, config)
-    db.register_kb(
-        name=kb_name,
-        kb_type=kb_config.kb_type,
-        path=str(kb_config.path),
-        description=kb_config.description,
-    )
     moved = 0
     for entry, current_path, target_path in moves:
         try:
             if target_path.exists():
                 raise FileExistsError(f"Target path already exists: {target_path}")
             target_path.parent.mkdir(parents=True, exist_ok=True)
-            current_path.rename(target_path)
+            # Hard-link creation is atomic and fails if another process created
+            # the destination after the check above; it cannot overwrite it.
+            os.link(current_path, target_path)
+            try:
+                current_path.unlink()
+            except Exception:
+                target_path.unlink(missing_ok=True)
+                raise
             try:
                 entry.file_path = target_path
                 index_mgr.index_entry(entry, kb_name, target_path)
             except Exception:
-                target_path.rename(current_path)
+                try:
+                    os.link(target_path, current_path)
+                    target_path.unlink()
+                except OSError:
+                    logger.exception("Could not roll back reconcile move for %s", entry.id)
                 entry.file_path = current_path
                 raise
             moved += 1
