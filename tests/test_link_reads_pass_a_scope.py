@@ -205,3 +205,21 @@ def test_ambiguous_scoped_names_are_pinned():
     _scoped, ambiguous = _scoped_names()
     assert {name for name, is_method in ambiguous if is_method} == set(AMBIGUOUS_SCOPED_METHODS)
     assert not {name for name, is_method in ambiguous if not is_method}
+
+
+def test_unscoped_is_never_spelled_where_there_is_a_caller():
+    """``UNSCOPED`` is for code with no caller identity at all (the CLI, the
+    local UI, a service's own walk inside one named KB). The server and the
+    plugins' MCP handlers always have a caller, and take its scope from the
+    policy -- never ``UNSCOPED`` (private #74: the three "named KB, authorized
+    by the route" lookups that spelled it were reachable with a blank KB)."""
+    places = sorted((REPO / "pyrite" / "server").rglob("*.py")) + sorted(
+        REPO.glob("extensions/*/src/*/plugin.py")
+    )
+    offenders = [
+        f"{p.relative_to(REPO)}:{node.lineno}"
+        for p in places
+        for node in ast.walk(ast.parse(p.read_text()))
+        if isinstance(node, ast.Name) and node.id == "UNSCOPED"
+    ]
+    assert not offenders, offenders

@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from ...config import PyriteConfig
 from ...exceptions import QuerySyntaxError
-from ...services.access_policy import KB, UNSCOPED, Action, ReadScope
+from ...services.access_policy import KB, Action, ReadScope
 from ...services.auth_service import AuthService
 from ...services.kb_service import KBService
 from ...services.link_discovery_service import LinkDiscoveryService
@@ -83,10 +83,16 @@ def _require_configured(llm: LLMService) -> None:
         )
 
 
-def _get_entry(svc: KBService, entry_id: str, kb_name: str) -> dict:
-    """Fetch an entry or raise 404."""
-    # Named KB, authorized by the route; only body, title and tags are used.
-    entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
+def _get_entry(
+    svc: KBService, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None
+) -> dict:
+    """Fetch an entry or raise 404.
+
+    Within the caller's scope: a blank ``kb_name`` names no KB (private #74),
+    and the lookup then walks only the KBs the caller can read, so a private
+    entry answers exactly as a missing one.
+    """
+    entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=readable_kbs)
     if not entry:
         raise HTTPException(
             status_code=404,
@@ -136,12 +142,13 @@ async def ai_summarize(
     config: PyriteConfig = Depends(get_config),
     auth_service: AuthService = Depends(get_auth_service),
     usage_svc: LLMUsageService = Depends(get_llm_usage_service),
+    scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
     """Generate an AI summary for an entry."""
     llm = _resolve_llm(llm, user_ctx)
     _require_configured(llm)
     _enforce_llm_quota(request, config, auth_service, usage_svc, kind="summarize")
-    entry = _get_entry(svc, req.entry_id, req.kb_name)
+    entry = _get_entry(svc, req.entry_id, req.kb_name, readable_kbs=scope.as_set())
 
     body = entry.get("body", "") or ""
     title = entry.get("title", "")
@@ -170,19 +177,24 @@ async def ai_auto_tag(
     config: PyriteConfig = Depends(get_config),
     auth_service: AuthService = Depends(get_auth_service),
     usage_svc: LLMUsageService = Depends(get_llm_usage_service),
+    scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
     """Suggest tags for an entry using AI."""
     llm = _resolve_llm(llm, user_ctx)
     _require_configured(llm)
     _enforce_llm_quota(request, config, auth_service, usage_svc, kind="auto-tag")
-    entry = _get_entry(svc, req.entry_id, req.kb_name)
+    entry = _get_entry(svc, req.entry_id, req.kb_name, readable_kbs=scope.as_set())
 
     body = entry.get("body", "") or ""
     title = entry.get("title", "")
     existing_tags = entry.get("tags", [])
 
     # Get the tag vocabulary
-    all_tags_raw = svc.get_tags(kb_name=req.kb_name)
+    # The vocabulary goes to the LLM provider: only the caller's readable KBs'
+    # tags, and a blank kb_name is no KB (private #74).
+    all_tags_raw = svc.get_tags(
+        kb_name=req.kb_name or None, kb_names=None if req.kb_name else scope.as_set()
+    )
     tag_vocab = [t["name"] for t in all_tags_raw][:200]  # limit to 200 tags
 
     system = """You are a knowledge management assistant. Suggest relevant tags for the entry.
@@ -240,7 +252,7 @@ async def ai_suggest_links(
     llm = _resolve_llm(llm, user_ctx)
     _require_configured(llm)
     _enforce_llm_quota(request, config, auth_service, usage_svc, kind="suggest-links")
-    entry = _get_entry(svc, req.entry_id, req.kb_name)
+    entry = _get_entry(svc, req.entry_id, req.kb_name, readable_kbs=scope.as_set())
 
     body = entry.get("body", "") or ""
     title = entry.get("title", "")

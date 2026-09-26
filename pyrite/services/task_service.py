@@ -11,7 +11,7 @@ from ..exceptions import EntryNotFoundError, KBNotFoundError, ValidationError
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
 from ..utils.metadata import parse_metadata
-from .access_policy import UNSCOPED
+from .access_policy import UNSCOPED, named_kb
 
 if TYPE_CHECKING:
     from ..models import Entry
@@ -259,6 +259,7 @@ class TaskService:
             "FROM entry WHERE entry_type = 'task' AND id = :id"
         )
         params: dict[str, Any] = {"id": task_id}
+        kb_name = named_kb(kb_name)
         if kb_name:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = kb_name

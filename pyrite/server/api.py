@@ -33,6 +33,7 @@ from ..services.access_policy import (
     Action,
     Principal,
     authorize_tier,
+    named_kb,
     resolve_api_key_role,
 )
 from ..services.block_service import BlockService
@@ -638,8 +639,11 @@ async def _resolve_kb_names(request: Request) -> list[str]:
     names: list[str] = []
 
     def add(value: object) -> None:
-        if isinstance(value, str) and value and value not in names:
-            names.append(value)
+        # A blank or whitespace-only name names no KB (private #74): see
+        # `access_policy.named_kb`, which the services read the same way.
+        name = named_kb(value)
+        if name and name not in names:
+            names.append(name)
 
     # Path first: it is the route's own identity, the one location a caller
     # cannot add or remove. Only `kb`/`kb_name`; `/plugins/{name}` and

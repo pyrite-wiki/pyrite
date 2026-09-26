@@ -6,16 +6,17 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from ...exceptions import EntryNotFoundError
 from ...plugins.registry import get_registry
-from ...services.access_policy import KB, UNSCOPED, Action, ReadScope
+from ...services.access_policy import KB, AccessPolicy, Action, ReadScope
 from ...services.kb_service import KBService
 from ...utils.metadata import parse_metadata
 from ..api import (
+    get_access_policy,
     get_kb_service,
     limiter,
     negotiate_response,
     requires_kb_tier,
 )
-from ..authz import authorize
+from ..authz import authorize, read_scope
 from ..schemas import (
     CollectionEntriesResponse,
     CollectionListResponse,
@@ -108,8 +109,15 @@ def create_collection(
     request: Request,
     body: CreateCollectionRequest = Body(...),
     svc: KBService = Depends(get_kb_service),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
-    """Create a new virtual collection."""
+    """Create a new virtual collection.
+
+    The write is decided by `requires_kb_tier("write")`; the slug check reads
+    within the caller's `ReadScope`, asked of the policy here because this
+    route has no read declaration to take it from.
+    """
+    readable = read_scope(request, policy).as_set()
     metadata = {
         "description": body.description or "",
         "source_type": "query",
@@ -129,8 +137,7 @@ def create_collection(
     counter = 1
     while True:
         try:
-            # Named KB on a write route; an existence check for the slug.
-            existing = svc.get_entry(slug, kb_name=body.kb, readable_kbs=UNSCOPED)
+            existing = svc.get_entry(slug, kb_name=body.kb, readable_kbs=readable)
             if existing:
                 counter += 1
                 slug = f"{base_slug}-{counter}"
@@ -166,7 +173,6 @@ def create_collection(
 @router.get(
     "/collections/{collection_id}",
     response_model=CollectionResponse,
-    dependencies=[Depends(authorize(Action.KB_READ, KB))],
 )
 @limiter.limit("100/minute")
 def get_collection(
@@ -174,10 +180,14 @@ def get_collection(
     collection_id: str,
     kb: str = Query(..., description="KB name"),
     svc: KBService = Depends(get_kb_service),
+    scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
-    """Get collection metadata."""
-    # Named KB, authorized by the route; only the collection metadata is used.
-    result = svc.get_entry(collection_id, kb_name=kb, readable_kbs=UNSCOPED)
+    """Get collection metadata.
+
+    A blank ``kb`` names no KB (private #74); the lookup is bounded by the
+    caller's scope either way.
+    """
+    result = svc.get_entry(collection_id, kb_name=kb, readable_kbs=scope.as_set())
     if not result or result.get("entry_type") != "collection":
         raise HTTPException(
             status_code=404,

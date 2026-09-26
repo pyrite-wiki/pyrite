@@ -31,7 +31,7 @@ from ..exceptions import (
     StorageError,
     ValidationError,
 )
-from ..services.access_policy import ROLES
+from ..services.access_policy import ROLES, named_kb
 from ..services.body_bounds import (
     MARKER_KEYS,
     BodyBounds,
@@ -315,10 +315,10 @@ def _kbs_named_in(arguments: dict[str, Any]) -> list[str]:
     for key in KB_ARGUMENT_NAMES:
         value = arguments.get(key)
         if isinstance(value, str):
-            if value:
+            if named_kb(value):
                 named.append(value)
         elif isinstance(value, list | tuple):
-            named.extend(v for v in value if isinstance(v, str) and v)
+            named.extend(v for v in value if named_kb(v))
     return named
 
 

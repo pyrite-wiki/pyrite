@@ -38,6 +38,7 @@ from ..storage.document_manager import DocumentManager
 from ..storage.index import IndexManager
 from ..storage.repository import KBRepository
 from ..utils.metadata import parse_metadata
+from .access_policy import named_kb
 from .body_bounds import MARKER_KEYS, ensure_not_truncated
 from .export_service import ExportService
 from .hook_runner import HookRunner
@@ -436,8 +437,10 @@ class KBService:
         so an entry in a KB the caller cannot read neither answers nor
         shadows a readable one with the same id (P-R5), and the links are
         computed over readable KBs only (P-R4). A named KB the caller
-        cannot read is the caller's to refuse; here it reads as a miss.
+        cannot read is the caller's to refuse; here it reads as a miss. A
+        blank ``kb_name`` names no KB (``access_policy.named_kb``).
         """
+        kb_name = named_kb(kb_name)
         if kb_name:
             if readable_kbs is not None and kb_name not in readable_kbs:
                 return None
