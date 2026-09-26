@@ -23,7 +23,6 @@ from ..api import (
     get_config,
     get_kb_service,
     get_worktree_resolver,
-    kb_not_found,
     limiter,
     negotiate_response,
     requires_kb_tier,
@@ -522,7 +521,7 @@ def resolve_entry(
 # =============================================================================
 
 
-@router.get("/entries/export", dependencies=[Depends(authorize(Action.KB_READ, KB))])
+@router.get("/entries/export")
 @limiter.limit("30/minute")
 def export_entries(
     request: Request,
@@ -532,6 +531,7 @@ def export_entries(
     tag: str | None = Query(None, description="Filter by tag"),
     limit: int = Query(10000, ge=1, le=50000),
     svc: KBService = Depends(get_kb_service),
+    scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
     """Export entries as JSON, Markdown, or CSV."""
     from ...formats import get_format_registry
@@ -547,7 +547,8 @@ def export_entries(
     # For full export, load bodies from disk
     full_entries = []
     for e in entries:
-        full = svc.get_entry(e["id"], kb_name=kb)
+        # Each entry carries its links: bounded by the caller's scope (P-R4).
+        full = svc.get_entry(e["id"], kb_name=kb, readable_kbs=scope.as_set())
         if full:
             # Apply tag filter if specified
             if tag and tag not in full.get("tags", []):
@@ -690,19 +691,21 @@ def get_entry(
         except ValueError:
             pass  # KB not in a git repo — fall back to main
 
+    # The lookup and its links are bounded by the caller's scope: without
+    # `kb` it walks only readable KBs, so an entry in a private one answers
+    # NOT_FOUND exactly as a missing id does and cannot shadow a readable
+    # twin (P-R5); its outlinks and backlinks cover readable KBs only (P-R4).
+    readable = scope.as_set()
     if with_links:
         # get_entry already includes outlinks/backlinks
-        result = svc.get_entry(entry_id, kb_name=kb)
+        result = svc.get_entry(entry_id, kb_name=kb, readable_kbs=readable)
     else:
         # For non-link requests, get entry without links
-        result = svc.get_entry(entry_id, kb_name=kb)
+        result = svc.get_entry(entry_id, kb_name=kb, readable_kbs=readable)
         if result:
             result.setdefault("outlinks", [])
             result.setdefault("backlinks", [])
 
-    if result and not scope.permits(result.get("kb_name")):
-        # kb was omitted and the lookup landed in a KB the caller may not read.
-        raise kb_not_found(result.get("kb_name", ""))
     if not result:
         raise HTTPException(
             status_code=404,

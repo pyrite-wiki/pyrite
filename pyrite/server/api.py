@@ -587,11 +587,11 @@ def _enforce_tier(principal: Principal | None, tier: str) -> None:
 # per-route allowlist: the rule is that naming two KBs gets both checked, so
 # the only thing a route-specific exception would buy is a request that names
 # a readable KB in one parameter and serves from a private one in the other
-# (#186). `center_kb` is deliberately absent -- `/api/graph` filters nodes and
-# edges by the readable set after building the graph, so a KB named there that
-# the caller cannot read contributes nothing to the response, and checking it
-# would turn a harmless name into a 404.
-KB_PARAM_NAMES = ("kb", "kb_name", "source_kb", "target_kb")
+# (#186). `center_kb` (`/api/graph`) is checked too: it was once left out on
+# the grounds that the graph was filtered after it was built, but a private
+# centre still answered differently from a missing one (private #57), so it is
+# refused the same way as any other unreadable KB -- and a missing one alike.
+KB_PARAM_NAMES = ("kb", "kb_name", "source_kb", "target_kb", "center_kb")
 
 
 class _UnparseableBodyError(Exception):

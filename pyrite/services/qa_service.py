@@ -18,6 +18,7 @@ from ..config import PyriteConfig
 from ..plugins.registry import get_registry
 from ..schema import validate_date, validate_importance
 from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata
+from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
 from ..utils.metadata import parse_metadata
 
@@ -76,8 +77,15 @@ class QAService:
     # Public API
     # =========================================================================
 
-    def validate_entry(self, entry_id: str, kb_name: str) -> dict[str, Any]:
-        """Validate a single entry. Returns {entry_id, kb_name, issues: [...]}."""
+    def validate_entry(
+        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any]:
+        """Validate a single entry. Returns {entry_id, kb_name, issues: [...]}.
+
+        ``readable_kbs`` is the caller's ``ReadScope`` set (``None``:
+        unscoped): link checks then treat a target the caller cannot read
+        exactly as a missing one (P-R5).
+        """
         issues: list[dict[str, Any]] = []
 
         rows = self.db.execute_sql(
@@ -104,7 +112,7 @@ class QAService:
 
         entry = rows[0]
         self._check_entry_fields(entry, issues)
-        self._check_entry_links(entry_id, kb_name, issues)
+        self._check_entry_links(entry_id, kb_name, issues, readable_kbs)
         self._check_schema_validation(entry, issues)
         self._check_rubric_evaluation(entry, issues)
 
@@ -115,8 +123,15 @@ class QAService:
         kb_name: str,
         check_staleness: bool = False,
         staleness_days: int = 90,
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> dict[str, Any]:
-        """Validate all entries in a KB. Returns {kb_name, total, checked, issues: [...]}."""
+        """Validate all entries in a KB. Returns {kb_name, total, checked, issues: [...]}.
+
+        ``readable_kbs`` bounds the link checks (P-R4, P-R5): a target the
+        caller cannot read is reported as a missing one, and a link from a
+        source it cannot read does not stop an entry being an orphan.
+        """
         issues: list[dict[str, Any]] = []
 
         # Count entries
@@ -131,8 +146,8 @@ class QAService:
         self._check_events_missing_dates(issues, kb_name)
         self._check_invalid_dates(issues, kb_name)
         self._check_importance_range(issues, kb_name)
-        self._check_broken_links(issues, kb_name)
-        self._check_orphans(issues, kb_name)
+        self._check_broken_links(issues, kb_name, readable_kbs)
+        self._check_orphans(issues, kb_name, readable_kbs)
 
         # Per-entry schema pass (only if kb.yaml exists)
         self._check_schema_all(issues, kb_name)
@@ -151,19 +166,25 @@ class QAService:
             "issues": issues,
         }
 
-    def validate_all(self, kb_names: set[str] | list[str] | None = None) -> dict[str, Any]:
+    def validate_all(
+        self,
+        kb_names: set[str] | list[str] | None = None,
+        *,
+        readable_kbs: set[str] | None = None,
+    ) -> dict[str, Any]:
         """Validate all KBs. Returns {kbs: [{kb_name, total, checked, issues}]}.
 
         ``kb_names`` restricts the sweep to those KBs -- the caller's
         readable set. A KB left out contributes neither issues nor its
         name, so the aggregate totals in ``get_status`` are computed over
-        readable rows only.
+        readable rows only. ``readable_kbs`` bounds each KB's link checks
+        (see `validate_kb`).
         """
         kbs = []
         for kb in self.config.all_kbs():
             if kb_names is not None and kb.name not in kb_names:
                 continue
-            result = self.validate_kb(kb.name)
+            result = self.validate_kb(kb.name, readable_kbs=readable_kbs)
             kbs.append(result)
         return {"kbs": kbs}
 
@@ -171,14 +192,16 @@ class QAService:
         self,
         kb_name: str | None = None,
         kb_names: set[str] | list[str] | None = None,
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> dict[str, Any]:
-        """Get QA status dashboard."""
+        """Get QA status dashboard; ``readable_kbs`` bounds the link checks."""
         if kb_name:
-            result = self.validate_kb(kb_name)
+            result = self.validate_kb(kb_name, readable_kbs=readable_kbs)
             issues = result["issues"]
             total_entries = result["total"]
         else:
-            all_result = self.validate_all(kb_names=kb_names)
+            all_result = self.validate_all(kb_names=kb_names, readable_kbs=readable_kbs)
             issues = []
             total_entries = 0
             for kb in all_result["kbs"]:
@@ -611,13 +634,22 @@ class QAService:
                     }
                 )
 
-    def _check_broken_links(self, issues: list[dict[str, Any]], kb_name: str | None = None) -> None:
+    def _check_broken_links(
+        self,
+        issues: list[dict[str, Any]],
+        kb_name: str | None = None,
+        readable_kbs: set[str] | None = None,
+    ) -> None:
+        # A target the caller cannot read joins to nothing, so it is
+        # reported exactly as a missing one (P-R5).
+        params: dict[str, Any] = {}
+        scope = kb_names_clause("e.kb_name", readable_kbs, params)
         sql = (
             "SELECT l.source_id, l.source_kb, l.target_id, l.target_kb, l.relation "
             "FROM link l LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name "
-            "WHERE e.id IS NULL"
+            + (f"AND {scope} " if scope else "")
+            + "WHERE e.id IS NULL"
         )
-        params: dict[str, Any] = {}
         if kb_name:
             sql += " AND l.source_kb = :kb_name"
             params["kb_name"] = kb_name
@@ -642,8 +674,13 @@ class QAService:
                 }
             )
 
-    def _check_orphans(self, issues: list[dict[str, Any]], kb_name: str | None = None) -> None:
-        orphans = self.db.get_orphans(kb_name=kb_name)
+    def _check_orphans(
+        self,
+        issues: list[dict[str, Any]],
+        kb_name: str | None = None,
+        readable_kbs: set[str] | None = None,
+    ) -> None:
+        orphans = self.db.get_orphans(kb_name=kb_name, readable_kbs=readable_kbs)
         for entry in orphans:
             issues.append(
                 {
@@ -733,9 +770,19 @@ class QAService:
                 }
             )
 
-    def _check_entry_links(self, entry_id: str, kb_name: str, issues: list[dict[str, Any]]) -> None:
-        """Check links from a single entry for broken targets."""
-        outlinks = self.db.get_outlinks(entry_id, kb_name)
+    def _check_entry_links(
+        self,
+        entry_id: str,
+        kb_name: str,
+        issues: list[dict[str, Any]],
+        readable_kbs: set[str] | None = None,
+    ) -> None:
+        """Check links from a single entry for broken targets.
+
+        An unreadable target comes back with a null title, like a missing
+        one, so both are reported the same way (P-R5).
+        """
+        outlinks = self.db.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
         for link in outlinks:
             if link.get("title") is None:
                 # LEFT JOIN returned NULL title = target doesn't exist.

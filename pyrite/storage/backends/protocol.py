@@ -252,8 +252,10 @@ class SearchBackend(Protocol):
         """Get entries with most incoming links."""
         ...
 
-    def get_orphans(self, kb_name: str | None = None) -> list[dict[str, Any]]:
-        """Get entries with no links (neither direction)."""
+    def get_orphans(
+        self, kb_name: str | None = None, *, readable_kbs: set[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Get entries with no links (neither direction); inbound from ``readable_kbs`` only."""
         ...
 
     # ── tags ─────────────────────────────────────────────────────────

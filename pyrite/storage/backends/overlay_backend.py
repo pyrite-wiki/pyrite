@@ -301,8 +301,10 @@ class OverlaySearchBackend:
     def get_most_linked(self, kb_name: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
         return self._main.get_most_linked(kb_name, limit)
 
-    def get_orphans(self, kb_name: str | None = None) -> list[dict[str, Any]]:
-        return self._main.get_orphans(kb_name)
+    def get_orphans(
+        self, kb_name: str | None = None, *, readable_kbs: set[str] | None = None
+    ) -> list[dict[str, Any]]:
+        return self._main.get_orphans(kb_name, readable_kbs=readable_kbs)
 
     # ── tags → merge ────────────────────────────────────────────────
 

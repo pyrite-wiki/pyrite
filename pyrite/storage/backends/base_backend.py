@@ -942,8 +942,18 @@ class BaseBackend(ABC):
         params["limit"] = limit
         return self._exec(sql, params)
 
-    def get_orphans(self, kb_name: str | None = None) -> list[dict[str, Any]]:
-        sql = """
+    def get_orphans(
+        self, kb_name: str | None = None, *, readable_kbs: set[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Entries with no links in either direction.
+
+        With ``readable_kbs`` (the caller's ``ReadScope`` set) an inbound
+        link counts only from a readable source: whether a private entry
+        links here is not the caller's to learn (P-R4).
+        """
+        params: dict[str, Any] = {}
+        inbound = kb_names_clause("source_kb", readable_kbs, params)
+        sql = f"""
             SELECT e.id, e.kb_name, e.title, e.entry_type
             FROM entry e
             WHERE e.id NOT IN (
@@ -951,9 +961,9 @@ class BaseBackend(ABC):
             )
             AND e.id NOT IN (
                 SELECT target_id FROM link WHERE target_kb = e.kb_name
+                {f"AND {inbound}" if inbound else ""}
             )
         """
-        params: dict[str, Any] = {}
         if kb_name:
             sql += " AND e.kb_name = :kb_name"
             params["kb_name"] = kb_name

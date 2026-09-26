@@ -183,9 +183,11 @@ class QueryMixin:
         """Get entries with most incoming links (most referenced)."""
         return self._backend.get_most_linked(kb_name=kb_name, limit=limit)
 
-    def get_orphans(self, kb_name: str | None = None) -> list[dict[str, Any]]:
-        """Get entries with no links (neither incoming nor outgoing)."""
-        return self._backend.get_orphans(kb_name=kb_name)
+    def get_orphans(
+        self, kb_name: str | None = None, *, readable_kbs: set[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Get entries with no links (neither incoming nor outgoing) the caller can see."""
+        return self._backend.get_orphans(kb_name=kb_name, readable_kbs=readable_kbs)
 
     def get_timeline(
         self,
