@@ -12,6 +12,7 @@ from typing import Any
 
 from ..config import PyriteConfig
 from ..storage.database import PyriteDB
+from .access_policy import UNSCOPED
 from .search_service import build_or_query, clip_semantic_text
 
 logger = logging.getLogger(__name__)
@@ -60,7 +61,8 @@ class LinkDiscoveryService:
         from .search_service import SearchService
 
         svc = KBService(self.config, self.db)
-        entry = svc.get_entry(entry_id, kb_name=kb_name)
+        # CLI-only (link_commands); reads one named entry's own title and tags.
+        entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
         if entry is None:
             return []
 
@@ -120,7 +122,8 @@ class LinkDiscoveryService:
         limit: int = 10,
         mode: str = "keyword",
         exclude_linked: bool = True,
-        readable_kbs: set[str] | None = None,
+        *,
+        readable_kbs: set[str] | None,
     ) -> list[dict]:
         """Find related entries in all KBs, including the source KB, unless narrowed.
 
@@ -137,7 +140,7 @@ class LinkDiscoveryService:
         from .search_service import SearchService
 
         svc = KBService(self.config, self.db)
-        entry = svc.get_entry(entry_id, kb_name=kb_name)
+        entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=readable_kbs)
         if entry is None:
             return []
 
@@ -198,7 +201,7 @@ class LinkDiscoveryService:
                 existing_targets.add(link.get("id", ""))
             for link in entry.get("links", []) or []:
                 existing_targets.add(link.get("target_id") or link.get("target", ""))
-            backlinks = self.db.get_backlinks(entry_id, kb_name)
+            backlinks = self.db.get_backlinks(entry_id, kb_name, readable_kbs=readable_kbs)
             for bl in backlinks:
                 existing_targets.add(bl.get("id", ""))
 
@@ -245,7 +248,8 @@ class LinkDiscoveryService:
         limit_per_entry: int = 3,
         mode: str = "keyword",
         exclude_linked: bool = True,
-        readable_kbs: set[str] | None = None,
+        *,
+        readable_kbs: set[str] | None,
     ) -> list[dict]:
         """Find all potential cross-KB links between two KBs.
 
@@ -327,8 +331,8 @@ class LinkDiscoveryService:
             eid = entry.get("id", "")
 
             # Count existing cross-KB links
-            outlinks = self.db.get_outlinks(eid, kb_name)
-            backlinks = self.db.get_backlinks(eid, kb_name)
+            outlinks = self.db.get_outlinks(eid, kb_name, readable_kbs=UNSCOPED)
+            backlinks = self.db.get_backlinks(eid, kb_name, readable_kbs=UNSCOPED)
             cross_kb_links = len(
                 [link for link in (outlinks + backlinks) if link.get("kb_name", kb_name) != kb_name]
             )
@@ -340,6 +344,7 @@ class LinkDiscoveryService:
                 target_kb=None,  # Search all KBs
                 limit=5,
                 mode="keyword",
+                readable_kbs=UNSCOPED,  # find_orphans is CLI-only
                 exclude_linked=True,
             )
             # Only count matches from OTHER KBs
@@ -387,7 +392,7 @@ class LinkDiscoveryService:
             links: dict[tuple[str, str], str] = {}
             for entry in entries:
                 source_id = entry["id"]
-                for outlink in self.db.get_outlinks(source_id, kb_a):
+                for outlink in self.db.get_outlinks(source_id, kb_a, readable_kbs=UNSCOPED):
                     target_id = outlink["id"]
                     if outlink.get("kb_name") == kb_a and target_id in entry_ids:
                         links[(source_id, target_id)] = outlink.get("relation", "related_to")
@@ -425,7 +430,7 @@ class LinkDiscoveryService:
         # A->B links
         for entry in entries_a:
             eid = entry["id"]
-            outlinks = self.db.get_outlinks(eid, kb_a)
+            outlinks = self.db.get_outlinks(eid, kb_a, readable_kbs=UNSCOPED)
             for ol in outlinks:
                 if ol.get("kb_name") == kb_b and ol["id"] in ids_b:
                     forward_links[(eid, ol["id"])] = ol.get("relation", "related_to")
@@ -433,7 +438,7 @@ class LinkDiscoveryService:
         # B->A links
         for entry in entries_b:
             eid = entry["id"]
-            outlinks = self.db.get_outlinks(eid, kb_b)
+            outlinks = self.db.get_outlinks(eid, kb_b, readable_kbs=UNSCOPED)
             for ol in outlinks:
                 if ol.get("kb_name") == kb_a and ol["id"] in ids_a:
                     reverse_links[(eid, ol["id"])] = ol.get("relation", "related_to")

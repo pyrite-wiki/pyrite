@@ -174,10 +174,6 @@ ALLOWLIST: dict[tuple[str, str], tuple[int, str]] = {
         2,
         "hands index_mgr.db to _drain_embed_queue and SiteCacheService; " + _FOLLOW,
     ),
-    ("pyrite/server/endpoints/collections.py::preview_collection_query", ".db"): (
-        1,
-        "hands svc.db to evaluate_query; " + _FOLLOW,
-    ),
     ("pyrite/server/worktree_resolver.py::<module>", "PyriteDB"): (
         1,
         "a service living in server/ (WorktreeDB overlays); " + _FOLLOW,
@@ -235,7 +231,7 @@ ALLOWLIST: dict[tuple[str, str], tuple[int, str]] = {
         "sqlite3 integrity check; " + _FOLLOW,
     ),
 }
-ALLOWLIST_SIZE = 38  # lower it with every entry removed; never raise it
+ALLOWLIST_SIZE = 37  # lower it with every entry removed; never raise it
 
 SURFACES = (
     "pyrite/server/",

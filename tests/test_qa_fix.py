@@ -20,6 +20,7 @@ from pyrite.services.qa_service import QAService
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
 from pyrite.storage.repository import KBRepository
+from pyrite.services.access_policy import UNSCOPED
 
 
 def _make_note(title, body="", importance=5, tags=None, date=None, links=None):
@@ -219,7 +220,7 @@ class TestFixDryRun:
 
     def test_dry_run_reports_date_fix(self, fix_setup):
         """Dry run should detect invalid date and report fix."""
-        result = fix_setup["qa"].fix_kb("test-kb", dry_run=True)
+        result = fix_setup["qa"].fix_kb("test-kb", dry_run=True, readable_kbs=UNSCOPED)
 
         assert result["dry_run"] is True
 
@@ -231,7 +232,7 @@ class TestFixDryRun:
 
     def test_dry_run_does_not_modify_entries(self, fix_setup):
         """Dry run should not change the actual entry date."""
-        fix_setup["qa"].fix_kb("test-kb", dry_run=True)
+        fix_setup["qa"].fix_kb("test-kb", dry_run=True, readable_kbs=UNSCOPED)
 
         # Verify the entry still has the bad date
         rows = fix_setup["db"].execute_sql(
@@ -242,7 +243,7 @@ class TestFixDryRun:
 
     def test_dry_run_reports_broken_link_fix(self, fix_setup):
         """Dry run should detect broken link and propose fix."""
-        result = fix_setup["qa"].fix_kb("test-kb", dry_run=True)
+        result = fix_setup["qa"].fix_kb("test-kb", dry_run=True, readable_kbs=UNSCOPED)
 
         link_fixes = [f for f in result["fixed"] if f["rule"] == "broken_link"]
         # Should find the broken link and propose fixing to the good entry
@@ -261,7 +262,9 @@ class TestFixRuleFiltering:
 
     def test_filter_to_date_only(self, fix_setup):
         """Only invalid_date fixes should be applied when filtered."""
-        result = fix_setup["qa"].fix_kb("test-kb", dry_run=True, fix_rules=["invalid_date"])
+        result = fix_setup["qa"].fix_kb(
+            "test-kb", dry_run=True, fix_rules=["invalid_date"], readable_kbs=UNSCOPED
+        )
 
         fixed_rules = {f["rule"] for f in result["fixed"]}
         assert "invalid_date" in fixed_rules or result["fixed_count"] >= 0
@@ -270,7 +273,9 @@ class TestFixRuleFiltering:
 
     def test_filter_to_broken_link(self, fix_setup):
         """Only broken_link fixes when filtered to that rule."""
-        result = fix_setup["qa"].fix_kb("test-kb", dry_run=True, fix_rules=["broken_link"])
+        result = fix_setup["qa"].fix_kb(
+            "test-kb", dry_run=True, fix_rules=["broken_link"], readable_kbs=UNSCOPED
+        )
 
         # Date fixes should be skipped
         assert not any(f["rule"] == "invalid_date" for f in result["fixed"])
@@ -376,7 +381,7 @@ class TestFixApplied:
 
     def test_date_fix_applied(self, fix_setup):
         """Running fix without dry_run should update the date."""
-        result = fix_setup["qa"].fix_kb("test-kb", dry_run=False)
+        result = fix_setup["qa"].fix_kb("test-kb", dry_run=False, readable_kbs=UNSCOPED)
 
         date_fixes = [f for f in result["fixed"] if f["rule"] == "invalid_date"]
         if date_fixes:
@@ -390,7 +395,7 @@ class TestFixApplied:
 
     def test_fix_result_structure(self, fix_setup):
         """fix_kb result should have the expected structure."""
-        result = fix_setup["qa"].fix_kb("test-kb", dry_run=True)
+        result = fix_setup["qa"].fix_kb("test-kb", dry_run=True, readable_kbs=UNSCOPED)
 
         assert "kb_name" in result
         assert "dry_run" in result

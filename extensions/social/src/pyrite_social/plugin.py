@@ -276,24 +276,36 @@ class SocialPlugin:
             if should_close:
                 db.close()
 
-    def _mcp_reputation(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Get user reputation."""
+    def _mcp_reputation(
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any]:
+        """Get user reputation, summed over the KBs the caller may read.
+
+        Both parts are KB-derived: votes on the user's entries, and log
+        adjustments recorded per KB. A scoped caller's sum covers only its
+        readable set; log rows recorded without a KB (before the hooks kept
+        one) cannot be placed, so they count only for an unscoped caller.
+        """
         db, should_close = self._get_db()
         user_id = args["user_id"]
 
         try:
+            vote_scope, vote_params = kb_scope_clause("v.kb_name", None, readable_kbs)
             row = db._raw_conn.execute(
                 """SELECT COALESCE(SUM(v.value), 0) as total
                    FROM social_vote v
                    JOIN entry e ON v.entry_id = e.id AND v.kb_name = e.kb_name
-                   WHERE json_extract(e.metadata, '$.author_id') = ?""",
-                (user_id,),
+                   WHERE json_extract(e.metadata, '$.author_id') = ?"""
+                + vote_scope,
+                (user_id, *vote_params),
             ).fetchone()
             vote_rep = row["total"] if row else 0
 
+            log_scope, log_params = kb_scope_clause("kb_name", None, readable_kbs)
             log_row = db._raw_conn.execute(
-                "SELECT COALESCE(SUM(delta), 0) as total FROM social_reputation_log WHERE user_id = ?",
-                (user_id,),
+                "SELECT COALESCE(SUM(delta), 0) as total FROM social_reputation_log WHERE user_id = ?"
+                + log_scope,
+                (user_id, *log_params),
             ).fetchone()
             log_rep = log_row["total"] if log_row else 0
 

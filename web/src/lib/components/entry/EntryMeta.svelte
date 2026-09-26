@@ -1,6 +1,7 @@
 <script lang="ts">
 	import TagBadge from '$lib/components/common/TagBadge.svelte';
 	import type { EntryResponse } from '$lib/api/types';
+	import { isSafeLinkUrl } from '$lib/utils/safe-url';
 
 	interface Props {
 		entry: EntryResponse;
@@ -69,9 +70,15 @@
 					<div class="rounded border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700">
 						<div class="font-medium">{source.title || 'Untitled'}</div>
 						{#if source.url}
-							<a href={String(source.url)} target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:underline">
-								{String(source.url).slice(0, 50)}{String(source.url).length > 50 ? '...' : ''}
-							</a>
+							{@const url = String(source.url)}
+							{@const label = url.slice(0, 50) + (url.length > 50 ? '...' : '')}
+							{#if isSafeLinkUrl(url)}
+								<a href={url} target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:underline">
+									{label}
+								</a>
+							{:else}
+								<span class="text-zinc-400">{label}</span>
+							{/if}
 						{/if}
 						{#if source.outlet || source.date}
 							<span class="text-zinc-400">

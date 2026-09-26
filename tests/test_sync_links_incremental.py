@@ -4,6 +4,7 @@ import pytest
 
 from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.storage.database import PyriteDB
+from pyrite.services.access_policy import UNSCOPED
 
 
 @pytest.fixture
@@ -56,7 +57,7 @@ class TestIncrementalLinkSync:
                 "links": [{"target": "target-0", "relation": "related_to", "kb": "test"}],
             }
         )
-        outlinks = db_with_entry.get_outlinks("source", "test")
+        outlinks = db_with_entry.get_outlinks("source", "test", readable_kbs=UNSCOPED)
         assert len(outlinks) == 1
         assert outlinks[0]["id"] == "target-0"
 
@@ -85,7 +86,7 @@ class TestIncrementalLinkSync:
                 ],
             }
         )
-        outlinks = db_with_entry.get_outlinks("source", "test")
+        outlinks = db_with_entry.get_outlinks("source", "test", readable_kbs=UNSCOPED)
         assert len(outlinks) == 2
         targets = {l["id"] for l in outlinks}
         assert targets == {"target-0", "target-1"}
@@ -117,7 +118,7 @@ class TestIncrementalLinkSync:
                 ],
             }
         )
-        outlinks = db_with_entry.get_outlinks("source", "test")
+        outlinks = db_with_entry.get_outlinks("source", "test", readable_kbs=UNSCOPED)
         assert len(outlinks) == 1
         assert outlinks[0]["id"] == "target-0"
 
@@ -141,7 +142,7 @@ class TestIncrementalLinkSync:
                 "links": [{"target": "target-0", "relation": "depends_on", "kb": "test"}],
             }
         )
-        outlinks = db_with_entry.get_outlinks("source", "test")
+        outlinks = db_with_entry.get_outlinks("source", "test", readable_kbs=UNSCOPED)
         assert len(outlinks) == 1
         assert outlinks[0]["relation"] == "depends_on"
 
@@ -168,7 +169,7 @@ class TestIncrementalLinkSync:
                 "links": [],
             }
         )
-        outlinks = db_with_entry.get_outlinks("source", "test")
+        outlinks = db_with_entry.get_outlinks("source", "test", readable_kbs=UNSCOPED)
         assert len(outlinks) == 0
 
     def test_no_change_is_idempotent(self, db_with_entry):
@@ -187,7 +188,7 @@ class TestIncrementalLinkSync:
                     "links": links,
                 }
             )
-        outlinks = db_with_entry.get_outlinks("source", "test")
+        outlinks = db_with_entry.get_outlinks("source", "test", readable_kbs=UNSCOPED)
         assert len(outlinks) == 2
 
     def test_many_links_add_one(self, db_with_entry):
@@ -229,7 +230,7 @@ class TestIncrementalLinkSync:
             }
         )
 
-        outlinks = db_with_entry.get_outlinks("source", "test")
+        outlinks = db_with_entry.get_outlinks("source", "test", readable_kbs=UNSCOPED)
         assert len(outlinks) == 51
 
     def test_inverse_relation_set(self, db_with_entry):
@@ -243,7 +244,7 @@ class TestIncrementalLinkSync:
                 "links": [{"target": "target-0", "relation": "depends_on", "kb": "test"}],
             }
         )
-        backlinks = db_with_entry.get_backlinks("target-0", "test")
+        backlinks = db_with_entry.get_backlinks("target-0", "test", readable_kbs=UNSCOPED)
         assert len(backlinks) == 1
         # Backlink should use inverse relation
         assert backlinks[0]["relation"] in ("depended_on_by", "blocks", "dependency_of")
@@ -285,6 +286,6 @@ class TestIncrementalLinkSync:
                 ],
             }
         )
-        outlinks = db_with_entry.get_outlinks("source", "test")
+        outlinks = db_with_entry.get_outlinks("source", "test", readable_kbs=UNSCOPED)
         noted = [l for l in outlinks if l.get("note") == "important"]
         assert len(noted) == 1

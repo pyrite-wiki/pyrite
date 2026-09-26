@@ -142,6 +142,8 @@ class TestRenderOnlyPublic:
             if p.is_file()
         )
         assert files == [
+            # The KBs the landing was rendered with (site_cache.LANDING_MANIFEST).
+            ".landing-kbs.json",
             "index.html",
             f"{PUBLIC}/index.html",
             f"{PUBLIC}/page/1.html",

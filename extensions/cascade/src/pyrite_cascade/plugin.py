@@ -384,10 +384,13 @@ class CascadePlugin:
             if should_close:
                 db.close()
 
-    def _mcp_network(self, args: dict[str, Any]) -> dict[str, Any]:
+    def _mcp_network(
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any]:
         """Get connection network for an entity.
 
-        Delegates to journalism-investigation query_network — identical logic.
+        Delegates to journalism-investigation query_network — identical logic,
+        including its bound on the links by the caller's readable set.
         """
         db, should_close = self._get_db()
         try:
@@ -397,6 +400,7 @@ class CascadePlugin:
                 args["entry_id"],
                 limit=args.get("limit", 50),
                 offset=args.get("offset", 0),
+                readable_kbs=readable_kbs,
             )
         finally:
             if should_close:

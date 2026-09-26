@@ -38,6 +38,7 @@ from ..storage.document_manager import DocumentManager
 from ..storage.index import IndexManager
 from ..storage.repository import KBRepository
 from ..utils.metadata import parse_metadata
+from .access_policy import named_kb
 from .body_bounds import MARKER_KEYS, ensure_not_truncated
 from .export_service import ExportService
 from .hook_runner import HookRunner
@@ -419,27 +420,54 @@ class KBService:
     # Entry Operations
     # =========================================================================
 
-    def get_entry(self, entry_id: str, kb_name: str | None = None) -> dict[str, Any] | None:
+    def get_entry(
+        self,
+        entry_id: str,
+        kb_name: str | None = None,
+        *,
+        readable_kbs: set[str] | None,
+    ) -> dict[str, Any] | None:
         """
-        Get entry by ID.
+        Get entry by ID, with its outlinks and backlinks.
 
-        If kb_name not specified, searches all KBs.
+        If kb_name not specified, searches all KBs in config order.
+
+        ``readable_kbs`` is the caller's ``ReadScope`` set (``None``:
+        unscoped). With it, a lookup without a KB walks only readable KBs,
+        so an entry in a KB the caller cannot read neither answers nor
+        shadows a readable one with the same id (P-R5), and the links are
+        computed over readable KBs only (P-R4). A named KB the caller
+        cannot read is the caller's to refuse; here it reads as a miss. A
+        blank ``kb_name`` names no KB (``access_policy.named_kb``).
         """
+        kb_name = named_kb(kb_name)
         if kb_name:
+            if readable_kbs is not None and kb_name not in readable_kbs:
+                return None
             result = self.db.get_entry(entry_id, kb_name)
             if result:
-                result["outlinks"] = self.db.get_outlinks(entry_id, kb_name)
-                result["backlinks"] = self.db.get_backlinks(entry_id, kb_name)
+                self._attach_links(result, entry_id, kb_name, readable_kbs)
             return result
 
-        # Search all KBs
+        # Search all KBs the caller can read
         for kb in self.config.all_kbs():
+            if readable_kbs is not None and kb.name not in readable_kbs:
+                continue
             result = self.db.get_entry(entry_id, kb.name)
             if result:
-                result["outlinks"] = self.db.get_outlinks(entry_id, kb.name)
-                result["backlinks"] = self.db.get_backlinks(entry_id, kb.name)
+                self._attach_links(result, entry_id, kb.name, readable_kbs)
                 return result
         return None
+
+    def _attach_links(
+        self,
+        result: dict[str, Any],
+        entry_id: str,
+        kb_name: str,
+        readable_kbs: set[str] | None,
+    ) -> None:
+        result["outlinks"] = self.db.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
+        result["backlinks"] = self.db.get_backlinks(entry_id, kb_name, readable_kbs=readable_kbs)
 
     def _resolve_entry_type(self, entry_type: str, kb_type: str = "") -> str:
         """Resolve a generic core type to a plugin subtype if one exists.
@@ -1187,7 +1215,23 @@ class KBService:
         if entry:
             self._run_hooks("after_delete", entry, hook_ctx)
 
+        if file_deleted:
+            self._drop_site_page(entry_id, kb_name)
         return file_deleted
+
+    def _drop_site_page(self, entry_id: str, kb_name: str) -> None:
+        """Take a deleted entry off the pre-rendered `/site` (P-S3): its page,
+        and its row in the KB's index pages. Only a cache that exists is
+        touched. Best effort: a failure is logged and never fails the delete;
+        the next render prunes what this missed."""
+        from .site_cache import SiteCacheService
+
+        try:
+            SiteCacheService(self.config, self.db).invalidate_entry(entry_id, kb_name)
+        except Exception:
+            logger.warning(
+                "Could not drop the /site page of %s/%s", kb_name, entry_id, exc_info=True
+            )
 
     def rename_entry(
         self,
@@ -1524,8 +1568,15 @@ class KBService:
         sort_order: str = "asc",
         limit: int = 200,
         offset: int = 0,
+        *,
+        readable_kbs: set[str] | None,
     ) -> tuple[list[dict[str, Any]], int]:
         """Get entries belonging to a collection (folder-based or query-based).
+
+        ``readable_kbs`` is the *viewer's* readable set (None: unscoped). A
+        stored query is evaluated with it, not with its author's: a query
+        naming a KB the viewer may not read returns what a KB that does not
+        exist returns -- nothing.
 
         Returns:
             Tuple of (entries, total_count). Each entry's ``metadata`` field
@@ -1536,7 +1587,7 @@ class KBService:
         Raises:
             EntryNotFoundError: If collection not found
         """
-        entry = self.get_entry(collection_id, kb_name)
+        entry = self.get_entry(collection_id, kb_name, readable_kbs=readable_kbs)
         if not entry or entry.get("entry_type") != "collection":
             raise EntryNotFoundError(f"Collection not found: {collection_id}")
         metadata = parse_metadata(entry.get("metadata", {}))
@@ -1546,7 +1597,7 @@ class KBService:
         # Virtual collection (query-based)
         if source_type == "query":
             entries, total = self._get_query_collection_entries(
-                metadata, kb_name, sort_by, sort_order, limit, offset
+                metadata, kb_name, sort_by, sort_order, limit, offset, readable_kbs=readable_kbs
             )
             return self._normalize_metadata_rows(entries), total
 
@@ -1572,8 +1623,10 @@ class KBService:
         sort_order: str,
         limit: int,
         offset: int,
+        *,
+        readable_kbs: set[str] | None,
     ) -> tuple[list[dict[str, Any]], int]:
-        """Evaluate a query-based virtual collection."""
+        """Evaluate a query-based virtual collection within ``readable_kbs``."""
         from .collection_query import (
             evaluate_query_cached,
             parse_query,
@@ -1600,7 +1653,19 @@ class KBService:
         if not query.kb_name:
             query.kb_name = kb_name
 
-        return evaluate_query_cached(query, self.db)
+        return evaluate_query_cached(query, self.db, readable_kbs=readable_kbs)
+
+    def evaluate_collection_query(
+        self, query: Any, *, readable_kbs: set[str] | None
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Evaluate a parsed collection query within the caller's readable set.
+
+        A KB the query names in its own text is authorized against the same
+        set (``collection_query.evaluate_query``); None is unscoped.
+        """
+        from .collection_query import evaluate_query
+
+        return evaluate_query(query, self.db, readable_kbs=readable_kbs)
 
     def count_entries(
         self,
@@ -1683,9 +1748,11 @@ class KBService:
         """Get most referenced entries."""
         return self.db.get_most_linked(kb_name, limit)
 
-    def get_orphans(self, kb_name: str | None = None) -> list[dict[str, Any]]:
-        """Get entries with no links."""
-        return self.db.get_orphans(kb_name)
+    def get_orphans(
+        self, kb_name: str | None = None, *, readable_kbs: set[str] | None
+    ) -> list[dict[str, Any]]:
+        """Get entries with no links a caller within ``readable_kbs`` can see."""
+        return self.db.get_orphans(kb_name, readable_kbs=readable_kbs)
 
     def get_tag_tree(
         self,
@@ -1890,23 +1957,37 @@ class KBService:
         kb_name: str | None = None,
         query: str | None = None,
         limit: int = 500,
+        *,
+        readable_kbs: set[str] | None,
     ) -> list[dict[str, Any]]:
         """Lightweight listing of entry IDs and titles for wikilink autocomplete."""
-        return self.wikilinks.list_entry_titles(kb_name=kb_name, query=query, limit=limit)
+        return self.wikilinks.list_entry_titles(
+            kb_name=kb_name, query=query, limit=limit, readable_kbs=readable_kbs
+        )
 
-    def resolve_entry(self, target: str, kb_name: str | None = None) -> dict[str, Any] | None:
+    def resolve_entry(
+        self, target: str, kb_name: str | None = None, *, readable_kbs: set[str] | None
+    ) -> dict[str, Any] | None:
         """Resolve a wikilink target to an entry. Supports kb:id format for cross-KB links."""
-        return self.wikilinks.resolve_entry(target, kb_name=kb_name)
+        return self.wikilinks.resolve_entry(target, kb_name=kb_name, readable_kbs=readable_kbs)
 
-    def resolve_batch(self, targets: list[str], kb_name: str | None = None) -> dict[str, bool]:
+    def resolve_batch(
+        self,
+        targets: list[str],
+        kb_name: str | None = None,
+        *,
+        readable_kbs: set[str] | None,
+    ) -> dict[str, bool]:
         """Batch-resolve wikilink targets. Supports kb:id format."""
-        return self.wikilinks.resolve_batch(targets, kb_name=kb_name)
+        return self.wikilinks.resolve_batch(targets, kb_name=kb_name, readable_kbs=readable_kbs)
 
     def get_wanted_pages(
-        self, kb_name: str | None = None, limit: int = 100
+        self, kb_name: str | None = None, limit: int = 100, *, readable_kbs: set[str] | None
     ) -> list[dict[str, Any]]:
         """Get link targets that don't exist as entries (wanted pages)."""
-        return self.wikilinks.get_wanted_pages(kb_name=kb_name, limit=limit)
+        return self.wikilinks.get_wanted_pages(
+            kb_name=kb_name, limit=limit, readable_kbs=readable_kbs
+        )
 
     def check_links(
         self,

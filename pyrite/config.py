@@ -8,9 +8,11 @@ Configuration is loaded from:
 3. Individual kb.yaml files in each KB root
 """
 
+import copy
 import errno
 import logging
 import os
+import threading
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -481,6 +483,12 @@ class PyriteConfig:
     # Set by load_config for an untrusted repo-local config: every KB, from
     # the yaml or from the index's registry, must resolve inside this tree.
     _confine_root: Path | None = field(default=None, repr=False)
+    # Set by load_config: `to_dict()` as loaded, environment overrides
+    # included. `save_config` writes the file's own content plus what
+    # changed in memory since, so a value the environment supplied (an API
+    # key, an OAuth secret, the port, a data-dir index path) is never
+    # persisted (#73).
+    _as_loaded: dict[str, Any] | None = field(default=None, repr=False)
 
     def get_kb(self, name: str) -> KBConfig | None:
         """Get a KB by name (config.yaml first, then DB-registered KBs)."""
@@ -562,9 +570,15 @@ class PyriteConfig:
         Config.yaml KBs always take precedence. DB KBs are available via get_kb()
         but don't appear in knowledge_bases (so seed_from_config won't re-register them).
 
+        A row the loader now refuses leaves the lookup. The new lookup is
+        built aside and swapped in with one assignment, so a reader on
+        another thread sees the old one or the new one -- never a KB missing
+        mid-update, never a dict changing size under ``all_kbs()``.
+
         Args:
             db_kbs: List of dicts with keys: name, path, kb_type, description
         """
+        new = dict(self._db_kb_cache)
         added = 0
         for kb_data in db_kbs:
             name = kb_data.get("name", "")
@@ -572,10 +586,26 @@ class PyriteConfig:
                 continue
             kb = self.kb_config_from_registry_row(kb_data)
             if kb is None:
+                new.pop(name, None)
                 continue
-            self._db_kb_cache[name] = kb
+            new[name] = kb
             added += 1
+        self._db_kb_cache = new
         return added
+
+    def forget_db_kb(self, name: str) -> None:
+        """Drop a registry KB from the fallback lookup (a removed KB).
+
+        Copy, then swap: see `register_db_kbs`.
+        """
+        if name in self._db_kb_cache:
+            new = dict(self._db_kb_cache)
+            del new[name]
+            self._db_kb_cache = new
+
+    def yaml_kb(self, name: str) -> KBConfig | None:
+        """The config.yaml entry of KB `name` (not a registry KB), or None."""
+        return self._kb_by_name.get(name)
 
     def get_kb_by_shortname(self, shortname: str) -> KBConfig | None:
         """Get a KB by its shortname alias."""
@@ -1234,6 +1264,7 @@ def load_config() -> PyriteConfig:
     for kb in config.knowledge_bases:
         kb.load_kb_yaml()
 
+    config._as_loaded = copy.deepcopy(config.to_dict())
     return config
 
 
@@ -1386,8 +1417,12 @@ def save_config(
     caller did not name in ``removed`` -- see check_config_save. #377: a
     config never loaded from the file replaced a ~50-KB registry, silently.
     """
-    check_config_save(config, removed=removed, allow_drop=allow_drop)
+    with CONFIG_WRITE_LOCK:
+        check_config_save(config, removed=removed, allow_drop=allow_drop)
+        _write_config(config)
 
+
+def _write_config(config: PyriteConfig) -> None:
     ensure_config_dir()
     config_file = current_config_file()
     config_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1395,11 +1430,86 @@ def save_config(
     if real_file != config_file.absolute():
         logger.warning("Writing Pyrite config %s through symlink %s", real_file, config_file)
     trusted = current_config_source()[1]
-    dump_yaml_file(
-        config.to_dict() if trusted else _untrusted_save_data(config, config_file),
-        config_file,
-        atomic=True,
-    )
+    with CONFIG_WRITE_LOCK:
+        current = config.to_dict()
+        if not trusted:
+            data = _untrusted_save_data(config, config_file)
+        elif config._as_loaded is None:
+            # Built in code, never loaded: nothing came from the environment
+            # through load_config, and there is no file content to keep.
+            data = current
+        else:
+            data = _file_plus_changes(_read_config_mapping(config_file), config._as_loaded, current)
+        dump_yaml_file(data, config_file, atomic=True)
+        if config._as_loaded is not None:
+            config._as_loaded = copy.deepcopy(current)
+
+
+#: Held by `save_config`, and by a caller across mutate -> save -> commit of
+#: one change, so no other save can write that change to the file while it
+#: may still be rolled back.
+CONFIG_WRITE_LOCK = threading.RLock()
+
+
+def _read_config_mapping(config_file: Path) -> dict[str, Any]:
+    """The file's own content, or {} when there is none yet."""
+    if not config_file.exists():
+        return {}
+    data = load_yaml_file(config_file)
+    return data if isinstance(data, dict) else {}
+
+
+def _file_plus_changes(
+    on_disk: dict[str, Any], as_loaded: dict[str, Any], current: dict[str, Any]
+) -> dict[str, Any]:
+    """The file's content with only the changes made in memory applied.
+
+    A key whose in-memory value still equals what was loaded -- environment
+    overrides included -- keeps the file's value (or stays absent). Nested
+    mappings are compared key by key; anything else (a list, a scalar) is
+    written whole when it changed, removed when it was dropped.
+    """
+    out = copy.deepcopy(on_disk)
+    for key in set(as_loaded) | set(current):
+        if key not in current:
+            out.pop(key, None)
+            continue
+        value = current[key]
+        before = as_loaded.get(key, _ABSENT)
+        if key == "knowledge_bases" and isinstance(value, list) and isinstance(before, list):
+            if before != value:
+                out[key] = _kb_entries_plus_changes(out.get(key), before, value)
+        elif isinstance(value, dict) and isinstance(before, dict):
+            below = out.get(key) if isinstance(out.get(key), dict) else {}
+            merged = _file_plus_changes(below, before, value)
+            if merged or key in out:
+                out[key] = merged
+        elif before != value:
+            out[key] = copy.deepcopy(value)
+    return out
+
+
+_ABSENT = object()
+
+
+def _kb_entries_plus_changes(on_disk: Any, as_loaded: list, current: list) -> list:
+    """The KB list in memory's order, where every entry memory did not
+    change is the file's own entry, verbatim: adding, removing or changing
+    one KB rewrites that KB's entry only."""
+    disk_by_name = {
+        e.get("name"): e
+        for e in (on_disk if isinstance(on_disk, list) else [])
+        if isinstance(e, dict)
+    }
+    loaded_by_name = {e.get("name"): e for e in as_loaded if isinstance(e, dict)}
+    out = []
+    for entry in current:
+        name = entry.get("name")
+        if loaded_by_name.get(name) == entry and name in disk_by_name:
+            out.append(copy.deepcopy(disk_by_name[name]))
+        else:
+            out.append(copy.deepcopy(entry))
+    return out
 
 
 def _untrusted_save_data(config: PyriteConfig, config_file: Path) -> dict[str, Any]:

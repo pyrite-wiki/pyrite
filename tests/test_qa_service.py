@@ -13,6 +13,7 @@ from pyrite.services.qa_service import QAService
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
 from pyrite.storage.repository import KBRepository
+from pyrite.services.access_policy import UNSCOPED
 
 
 @pytest.fixture
@@ -96,7 +97,7 @@ class TestValidateCleanKB:
 
     def test_validate_clean_kb_no_issues(self, qa_setup):
         """Seeded KB with valid entries returns no errors."""
-        result = qa_setup["qa"].validate_kb("test-events")
+        result = qa_setup["qa"].validate_kb("test-events", readable_kbs=UNSCOPED)
         errors = [i for i in result["issues"] if i["severity"] == "error"]
         assert errors == [], f"Unexpected errors: {errors}"
 
@@ -110,7 +111,7 @@ class TestValidateCleanKB:
         )
         db._raw_conn.commit()
 
-        result = qa_setup["qa"].validate_kb("test-events")
+        result = qa_setup["qa"].validate_kb("test-events", readable_kbs=UNSCOPED)
         body_issues = [i for i in result["issues"] if i["rule"] == "empty_body"]
         assert any(i["entry_id"] == "empty-body-entry" for i in body_issues)
         assert all(
@@ -127,7 +128,7 @@ class TestValidateCleanKB:
         )
         db._raw_conn.commit()
 
-        result = qa_setup["qa"].validate_kb("test-events")
+        result = qa_setup["qa"].validate_kb("test-events", readable_kbs=UNSCOPED)
         body_issues = [
             i
             for i in result["issues"]
@@ -145,7 +146,7 @@ class TestValidateCleanKB:
         )
         db._raw_conn.commit()
 
-        result = qa_setup["qa"].validate_kb("test-events")
+        result = qa_setup["qa"].validate_kb("test-events", readable_kbs=UNSCOPED)
         title_issues = [
             i
             for i in result["issues"]
@@ -164,7 +165,7 @@ class TestValidateCleanKB:
         )
         db._raw_conn.commit()
 
-        result = qa_setup["qa"].validate_kb("test-events")
+        result = qa_setup["qa"].validate_kb("test-events", readable_kbs=UNSCOPED)
         date_issues = [
             i
             for i in result["issues"]
@@ -191,7 +192,7 @@ class TestValidateCleanKB:
         )
         db._raw_conn.commit()
 
-        result = qa_setup["qa"].validate_kb("test-events")
+        result = qa_setup["qa"].validate_kb("test-events", readable_kbs=UNSCOPED)
         broken = [i for i in result["issues"] if i["rule"] == "broken_link"]
         assert len(broken) >= 1
         # Broken wikilinks represent wanted-but-not-yet-created pages in a
@@ -209,7 +210,7 @@ class TestValidateCleanKB:
         )
         db._raw_conn.commit()
 
-        result = qa_setup["qa"].validate_kb("test-events")
+        result = qa_setup["qa"].validate_kb("test-events", readable_kbs=UNSCOPED)
         date_issues = [
             i
             for i in result["issues"]
@@ -228,7 +229,7 @@ class TestValidateCleanKB:
         )
         db._raw_conn.commit()
 
-        result = qa_setup["qa"].validate_kb("test-events")
+        result = qa_setup["qa"].validate_kb("test-events", readable_kbs=UNSCOPED)
         imp_issues = [
             i
             for i in result["issues"]
@@ -272,7 +273,7 @@ class TestSchemaValidation:
         )
         db._raw_conn.commit()
 
-        result = qa_setup["qa"].validate_kb("test-events")
+        result = qa_setup["qa"].validate_kb("test-events", readable_kbs=UNSCOPED)
         schema_issues = [
             i
             for i in result["issues"]
@@ -282,7 +283,7 @@ class TestSchemaValidation:
 
     def test_validate_without_schema_skips_field_checks(self, qa_setup):
         """No kb.yaml means only bulk checks run, no schema violations."""
-        result = qa_setup["qa"].validate_kb("test-events")
+        result = qa_setup["qa"].validate_kb("test-events", readable_kbs=UNSCOPED)
         schema_issues = [i for i in result["issues"] if i["rule"] == "schema_violation"]
         assert schema_issues == []
 
@@ -303,7 +304,7 @@ class TestValidationScope:
         )
         db._raw_conn.commit()
 
-        result = qa_setup["qa"].validate_entry("single-test", "test-events")
+        result = qa_setup["qa"].validate_entry("single-test", "test-events", readable_kbs=UNSCOPED)
         assert result["entry_id"] == "single-test"
         assert result["kb_name"] == "test-events"
         assert any(i["rule"] == "missing_title" for i in result["issues"])
@@ -320,13 +321,13 @@ class TestValidationScope:
         db._raw_conn.commit()
 
         # Validate events KB — should not find research-bad
-        result = qa_setup["qa"].validate_kb("test-events")
+        result = qa_setup["qa"].validate_kb("test-events", readable_kbs=UNSCOPED)
         research_issues = [i for i in result["issues"] if i["entry_id"] == "research-bad"]
         assert research_issues == []
 
     def test_validate_all_checks_every_kb(self, qa_setup):
         """validate_all aggregates across KBs."""
-        result = qa_setup["qa"].validate_all()
+        result = qa_setup["qa"].validate_all(readable_kbs=UNSCOPED)
         assert "kbs" in result
         kb_names = [kb["kb_name"] for kb in result["kbs"]]
         assert "test-events" in kb_names
@@ -349,7 +350,7 @@ class TestValidationScope:
         db.merge_registered_kbs(config)
 
         qa = QAService(config, db)
-        result = qa.validate_all()
+        result = qa.validate_all(readable_kbs=UNSCOPED)
         db.close()
 
         kb_names = [kb["kb_name"] for kb in result["kbs"]]
@@ -373,7 +374,7 @@ class TestStatus:
         )
         db._raw_conn.commit()
 
-        status = qa_setup["qa"].get_status("test-events")
+        status = qa_setup["qa"].get_status("test-events", readable_kbs=UNSCOPED)
         assert "total_entries" in status
         assert "total_issues" in status
         assert "issues_by_severity" in status
@@ -389,6 +390,6 @@ class TestStatus:
         empty_kb = KBConfig(name="empty-kb", path=empty_path, kb_type="generic")
         qa_setup["config"].add_kb(empty_kb)
 
-        status = qa_setup["qa"].get_status("empty-kb")
+        status = qa_setup["qa"].get_status("empty-kb", readable_kbs=UNSCOPED)
         assert status["total_entries"] == 0
         assert status["total_issues"] == 0

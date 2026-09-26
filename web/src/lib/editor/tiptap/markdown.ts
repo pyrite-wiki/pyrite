@@ -7,6 +7,7 @@
  */
 
 import { marked } from 'marked';
+import { sanitizeHtml } from '$lib/utils/sanitize';
 
 /**
  * Convert Markdown to HTML for Tiptap consumption.
@@ -45,7 +46,11 @@ export function markdownToHtml(md: string): string {
 	);
 
 	const html = marked.parse(processed, { async: false }) as string;
-	return html;
+	// This output reaches `innerHTML` at every call site (the transclusion
+	// extension, the entry-detail transclusion preview) -- markdown bodies
+	// are written by other users and by agents ingesting untrusted web
+	// content, same as the read-only renderer's `sanitizeHtml` call (P-B1).
+	return sanitizeHtml(html);
 }
 
 /**

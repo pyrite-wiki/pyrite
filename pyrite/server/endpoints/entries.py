@@ -23,7 +23,6 @@ from ..api import (
     get_config,
     get_kb_service,
     get_worktree_resolver,
-    kb_not_found,
     limiter,
     negotiate_response,
     requires_kb_tier,
@@ -283,7 +282,6 @@ def _guess_field_type(field_name: str) -> str:
 @router.get(
     "/entries/titles",
     response_model=EntryTitlesResponse,
-    dependencies=[Depends(authorize(Action.KB_READ, KB))],
 )
 @limiter.limit("100/minute")
 def list_entry_titles(
@@ -292,9 +290,10 @@ def list_entry_titles(
     q: str | None = Query(None, description="Filter titles by search string"),
     limit: int = Query(500, ge=1, le=5000),
     svc: KBService = Depends(get_kb_service),
+    scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
     """Lightweight listing of entry IDs and titles for wikilink autocomplete."""
-    rows = svc.list_entry_titles(kb_name=kb, query=q, limit=limit)
+    rows = svc.list_entry_titles(kb_name=kb, query=q, limit=limit, readable_kbs=scope.as_set())
     entries = []
     for r in rows:
         aliases_raw = r.get("aliases")
@@ -324,16 +323,19 @@ def list_entry_titles(
 @router.post(
     "/entries/resolve-batch",
     response_model=ResolveBatchResponse,
-    dependencies=[Depends(authorize(Action.KB_READ, KB))],
 )
 @limiter.limit("100/minute")
 def resolve_batch(
     request: Request,
     req: ResolveBatchRequest,
     svc: KBService = Depends(get_kb_service),
+    scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
-    """Batch-resolve wikilink targets. Returns which targets exist."""
-    resolved = svc.resolve_batch(req.targets, kb_name=req.kb)
+    """Batch-resolve wikilink targets. Returns which targets exist.
+
+    Scoped like `resolve`: a `kb:` prefix inside a target is a named KB too.
+    """
+    resolved = svc.resolve_batch(req.targets, kb_name=req.kb, readable_kbs=scope.as_set())
     return ResolveBatchResponse(resolved=resolved)
 
 
@@ -432,7 +434,6 @@ def batch_read_entries(
 @router.get(
     "/entries/wanted",
     response_model=WantedPagesResponse,
-    dependencies=[Depends(authorize(Action.KB_READ, KB))],
 )
 @limiter.limit("100/minute")
 def list_wanted_pages(
@@ -440,9 +441,10 @@ def list_wanted_pages(
     kb: str | None = Query(None, description="Filter by KB name"),
     limit: int = Query(100, ge=1, le=500),
     svc: KBService = Depends(get_kb_service),
+    scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
     """List link targets that don't exist as entries (wanted pages)."""
-    pages = svc.get_wanted_pages(kb_name=kb, limit=limit)
+    pages = svc.get_wanted_pages(kb_name=kb, limit=limit, readable_kbs=scope.as_set())
     result = []
     for p in pages:
         refs = p.get("referenced_by", "") or ""
@@ -461,7 +463,6 @@ def list_wanted_pages(
 @router.get(
     "/entries/resolve",
     response_model=ResolveResponse,
-    dependencies=[Depends(authorize(Action.KB_READ, KB))],
 )
 @limiter.limit("100/minute")
 def resolve_entry(
@@ -470,9 +471,14 @@ def resolve_entry(
     kb: str | None = Query(None, description="Filter by KB name"),
     svc: KBService = Depends(get_kb_service),
     block_svc: BlockService = Depends(get_block_service),
+    scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
     """Resolve a wikilink target to an entry. Tries exact ID match first, then title match.
-    Supports fragment syntax: target#heading or target^block-id."""
+    Supports fragment syntax: target#heading or target^block-id.
+
+    Scoped: with no `kb` the lookup spans only readable KBs, and a `kb:` or
+    shortname prefix inside the target is authorized as a named KB -- an
+    unreadable one is treated as an unknown prefix, as a missing KB is."""
     # Parse fragment from target
     heading = None
     block_id = None
@@ -483,7 +489,7 @@ def resolve_entry(
     elif "^" in target:
         entry_target, block_id = target.split("^", 1)
 
-    result = svc.resolve_entry(entry_target, kb_name=kb)
+    result = svc.resolve_entry(entry_target, kb_name=kb, readable_kbs=scope.as_set())
 
     if result:
         block_content = None
@@ -515,7 +521,7 @@ def resolve_entry(
 # =============================================================================
 
 
-@router.get("/entries/export", dependencies=[Depends(authorize(Action.KB_READ, KB))])
+@router.get("/entries/export")
 @limiter.limit("30/minute")
 def export_entries(
     request: Request,
@@ -525,6 +531,7 @@ def export_entries(
     tag: str | None = Query(None, description="Filter by tag"),
     limit: int = Query(10000, ge=1, le=50000),
     svc: KBService = Depends(get_kb_service),
+    scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
     """Export entries as JSON, Markdown, or CSV."""
     from ...formats import get_format_registry
@@ -540,7 +547,8 @@ def export_entries(
     # For full export, load bodies from disk
     full_entries = []
     for e in entries:
-        full = svc.get_entry(e["id"], kb_name=kb)
+        # Each entry carries its links: bounded by the caller's scope (P-R4).
+        full = svc.get_entry(e["id"], kb_name=kb, readable_kbs=scope.as_set())
         if full:
             # Apply tag filter if specified
             if tag and tag not in full.get("tags", []):
@@ -683,19 +691,21 @@ def get_entry(
         except ValueError:
             pass  # KB not in a git repo — fall back to main
 
+    # The lookup and its links are bounded by the caller's scope: without
+    # `kb` it walks only readable KBs, so an entry in a private one answers
+    # NOT_FOUND exactly as a missing id does and cannot shadow a readable
+    # twin (P-R5); its outlinks and backlinks cover readable KBs only (P-R4).
+    readable = scope.as_set()
     if with_links:
         # get_entry already includes outlinks/backlinks
-        result = svc.get_entry(entry_id, kb_name=kb)
+        result = svc.get_entry(entry_id, kb_name=kb, readable_kbs=readable)
     else:
         # For non-link requests, get entry without links
-        result = svc.get_entry(entry_id, kb_name=kb)
+        result = svc.get_entry(entry_id, kb_name=kb, readable_kbs=readable)
         if result:
             result.setdefault("outlinks", [])
             result.setdefault("backlinks", [])
 
-    if result and not scope.permits(result.get("kb_name")):
-        # kb was omitted and the lookup landed in a KB the caller may not read.
-        raise kb_not_found(result.get("kb_name", ""))
     if not result:
         raise HTTPException(
             status_code=404,

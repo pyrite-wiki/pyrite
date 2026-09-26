@@ -48,6 +48,7 @@ def _kb_to_info(kb: dict) -> KBInfo:
         last_indexed=kb.get("last_indexed"),
         shortname=kb.get("shortname"),
         default_role=kb.get("default_role"),
+        default_role_editable=kb.get("default_role_editable", True),
     )
 
 

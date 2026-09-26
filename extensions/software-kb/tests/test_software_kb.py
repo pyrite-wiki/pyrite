@@ -41,6 +41,7 @@ from pyrite_software_kb.workflows import (
 )
 
 from pyrite.plugins.registry import PluginRegistry
+from pyrite.services.access_policy import UNSCOPED
 
 # =========================================================================
 # Plugin registration
@@ -3852,7 +3853,7 @@ class TestEpicProgress:
             )
             try:
                 plugin = _make_plugin_with_db(db)
-                progress = plugin._get_epic_progress(db, "epic-1", "test")
+                progress = plugin._get_epic_progress(db, "epic-1", "test", readable_kbs=UNSCOPED)
                 assert progress["total"] == 3
                 assert progress["done"] == 1
                 assert progress["in_progress"] == 1
@@ -3879,7 +3880,9 @@ class TestEpicProgress:
             )
             try:
                 plugin = _make_plugin_with_db(db)
-                progress = plugin._get_epic_progress(db, "epic-empty", "test")
+                progress = plugin._get_epic_progress(
+                    db, "epic-empty", "test", readable_kbs=UNSCOPED
+                )
                 assert progress["total"] == 0
                 assert progress["done"] == 0
                 assert progress["completion_pct"] == 0
@@ -3918,7 +3921,7 @@ class TestEpicProgress:
             )
             try:
                 plugin = _make_plugin_with_db(db)
-                progress = plugin._get_epic_progress(db, "epic-2", "test")
+                progress = plugin._get_epic_progress(db, "epic-2", "test", readable_kbs=UNSCOPED)
                 assert progress["total"] == 1
                 assert progress["done"] == 1
                 assert progress["completion_pct"] == 100

@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import MagicMock
 
 from pyrite.services.graph_service import GraphService
+from pyrite.services.access_policy import UNSCOPED
 
 
 @pytest.fixture
@@ -53,7 +54,7 @@ class TestMergedBacklinks:
                 "role": "target",
             }
         ]
-        result = graph_service.get_merged_backlinks("company-1", "test")
+        result = graph_service.get_merged_backlinks("company-1", "test", readable_kbs=UNSCOPED)
         assert len(result) == 2
         assert result[0]["source_type"] == "link"
         assert result[1]["source_type"] == "edge"
@@ -79,7 +80,7 @@ class TestMergedBacklinks:
                 "role": "target",
             }
         ]
-        result = graph_service.get_merged_backlinks("company-1", "test")
+        result = graph_service.get_merged_backlinks("company-1", "test", readable_kbs=UNSCOPED)
         assert len(result) == 1  # Deduplicated
         assert result[0]["source_type"] == "link"  # Link version preferred
 
@@ -95,7 +96,9 @@ class TestMergedBacklinks:
             for i in range(5)
         ]
         graph_service.db.get_edges_by_endpoint.return_value = []
-        result = graph_service.get_merged_backlinks("company-1", "test", limit=3)
+        result = graph_service.get_merged_backlinks(
+            "company-1", "test", limit=3, readable_kbs=UNSCOPED
+        )
         assert len(result) == 3
 
     def test_merged_backlinks_edge_dedup_multiple_endpoints(self, graph_service):
@@ -120,11 +123,11 @@ class TestMergedBacklinks:
                 "role": "target",
             },
         ]
-        result = graph_service.get_merged_backlinks("entity-1", "test")
+        result = graph_service.get_merged_backlinks("entity-1", "test", readable_kbs=UNSCOPED)
         assert len(result) == 1  # Same edge deduplicated
 
     def test_merged_backlinks_empty(self, graph_service):
         graph_service.db.get_backlinks.return_value = []
         graph_service.db.get_edges_by_endpoint.return_value = []
-        result = graph_service.get_merged_backlinks("entity-1", "test")
+        result = graph_service.get_merged_backlinks("entity-1", "test", readable_kbs=UNSCOPED)
         assert result == []

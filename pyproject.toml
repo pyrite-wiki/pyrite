@@ -42,12 +42,14 @@ dependencies = [
     # module and the class do not exist before 1.3.0rc1). An install pinned
     # below that has no such module to import and resources/read fails at
     # import time instead of at the call.
-    "mcp>=1.3.0,<2.0.0",
+    "mcp>=1.27.2,<2.0.0",  # 1.27.2: SSE same-owner check (mcp_routes._session_owner)
 ]
 
 [project.optional-dependencies]
 server = [
-    "fastapi>=0.111.0",
+    # 0.132.0: strict_content_type (default on) -- a body without a JSON
+    # Content-Type is not parsed as JSON for a handler.
+    "fastapi>=0.132.0",
     "uvicorn[standard]>=0.30.1",
     "slowapi>=0.1.9",
     # Used directly by pyrite/server/auth_rate_limit.py (slowapi depends on it too).

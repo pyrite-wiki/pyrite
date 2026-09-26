@@ -8,6 +8,7 @@ import pytest
 from pyrite_cascade.plugin import CascadePlugin
 
 from pyrite.config import KBConfig, PyriteConfig, Settings
+from pyrite.services.access_policy import UNSCOPED
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
 
@@ -49,7 +50,7 @@ class TestActorResolutionHook:
         )
 
         # The event should have an outlink to the actor
-        outlinks = setup["db"].get_outlinks("event-1", "test")
+        outlinks = setup["db"].get_outlinks("event-1", "test", readable_kbs=UNSCOPED)
         actor_links = [o for o in outlinks if o.get("id") == "donald-trump"]
         assert len(actor_links) >= 1
         assert any(o.get("relation") == "actor_reference" for o in actor_links)
@@ -68,7 +69,7 @@ class TestActorResolutionHook:
             actors=["[[elon-musk]]"],
         )
 
-        outlinks = setup["db"].get_outlinks("event-2", "test")
+        outlinks = setup["db"].get_outlinks("event-2", "test", readable_kbs=UNSCOPED)
         actor_links = [o for o in outlinks if o.get("id") == "elon-musk"]
         assert len(actor_links) >= 1
 
@@ -87,7 +88,7 @@ class TestActorResolutionHook:
             actors=["Donald Trump", "[[elon-musk]]"],
         )
 
-        outlinks = setup["db"].get_outlinks("event-3", "test")
+        outlinks = setup["db"].get_outlinks("event-3", "test", readable_kbs=UNSCOPED)
         linked_ids = {o.get("id") for o in outlinks}
         assert "donald-trump" in linked_ids
         assert "elon-musk" in linked_ids
@@ -113,7 +114,7 @@ class TestActorResolutionHook:
             actors=["FBI"],
         )
 
-        outlinks = setup["db"].get_outlinks("event-4", "test")
+        outlinks = setup["db"].get_outlinks("event-4", "test", readable_kbs=UNSCOPED)
         actor_links = [o for o in outlinks if o.get("id") == "federal-bureau-of-investigation"]
         assert len(actor_links) >= 1
 
@@ -131,7 +132,7 @@ class TestActorResolutionHook:
             actors=["Unknown Person"],
         )
 
-        outlinks = setup["db"].get_outlinks("event-5", "test")
+        outlinks = setup["db"].get_outlinks("event-5", "test", readable_kbs=UNSCOPED)
         # Should have no actor_reference links (the actor doesn't exist)
         actor_ref_links = [o for o in outlinks if o.get("relation") == "actor_reference"]
         assert len(actor_ref_links) == 0
@@ -150,7 +151,7 @@ class TestActorResolutionHook:
             actors=["Donald Trump", "[[donald-trump]]"],
         )
 
-        outlinks = setup["db"].get_outlinks("event-6", "test")
+        outlinks = setup["db"].get_outlinks("event-6", "test", readable_kbs=UNSCOPED)
         trump_links = [
             o
             for o in outlinks
@@ -172,7 +173,7 @@ class TestActorResolutionHook:
             actors=["ACLU"],
         )
 
-        outlinks = setup["db"].get_outlinks("sol-1", "test")
+        outlinks = setup["db"].get_outlinks("sol-1", "test", readable_kbs=UNSCOPED)
         aclu_links = [o for o in outlinks if o.get("id") == "aclu"]
         assert len(aclu_links) >= 1
 
@@ -198,7 +199,7 @@ class TestActorResolutionHook:
             actors=["Donald Trump"],
         )
 
-        backlinks = setup["db"].get_backlinks("donald-trump", "test")
+        backlinks = setup["db"].get_backlinks("donald-trump", "test", readable_kbs=UNSCOPED)
         backlink_ids = {b.get("id") for b in backlinks}
         assert "event-7" in backlink_ids
         assert "event-8" in backlink_ids
@@ -217,7 +218,7 @@ class TestActorResolutionHook:
             actors=["donald trump"],
         )
 
-        outlinks = setup["db"].get_outlinks("event-9", "test")
+        outlinks = setup["db"].get_outlinks("event-9", "test", readable_kbs=UNSCOPED)
         trump_links = [o for o in outlinks if o.get("id") == "donald-trump"]
         assert len(trump_links) >= 1
 

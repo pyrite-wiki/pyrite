@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.table import Table
 
 from pyrite.config import load_config
+from pyrite.services.access_policy import UNSCOPED
 from pyrite.storage.database import PyriteDB
 
 sw_app = typer.Typer(help="Software KB commands (ADRs, backlog, standards, components)")
@@ -757,7 +758,7 @@ def sw_milestones(
         results = []
         for row in rows:
             meta = row["_meta"]
-            linked = db.get_outlinks(row["id"], row.get("kb_name", ""))
+            linked = db.get_outlinks(row["id"], row.get("kb_name", ""), readable_kbs=UNSCOPED)
             total = 0
             completed = 0
             for link in linked:

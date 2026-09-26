@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 
 from pyrite.exceptions import QueryTooLongError, ValidationError
 from pyrite.services.search_service import MAX_SEARCH_QUERY_LENGTH, SearchService
+from pyrite.services.access_policy import UNSCOPED
 
 AT_CAP = "immigration".ljust(MAX_SEARCH_QUERY_LENGTH)
 OVER_CAP = "immigration".ljust(MAX_SEARCH_QUERY_LENGTH + 1)
@@ -230,7 +231,9 @@ class TestDerivedQueriesStayWithinTheCap:
         config, db = indexed_test_env["config"], indexed_test_env["db"]
         entry_id = _many_tagged_long_titled_entry(config, db)
         svc = LinkDiscoveryService(config, db)
-        svc.discover_neighbors(entry_id, "test-events", mode=mode)  # must not raise
+        svc.discover_neighbors(
+            entry_id, "test-events", mode=mode, readable_kbs=UNSCOPED
+        )  # must not raise
 
     def test_suggest_links_on_a_sprawling_entry(self, indexed_test_env):
         from pyrite.services.link_discovery_service import LinkDiscoveryService

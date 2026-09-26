@@ -21,6 +21,7 @@ from pyrite.services.kb_service import KBService
 from pyrite.services.link_discovery_service import LinkDiscoveryService
 from pyrite.storage.database import PyriteDB
 from tests.auth_seed import seed_and_sign_in
+from pyrite.services.access_policy import UNSCOPED
 
 PUBLIC, PRIVATE = "public-kb", "private-kb"
 
@@ -724,7 +725,9 @@ class TestLinkDiscoveryCandidatesAreReadableKBsOnly:
         happened to match nothing.
         """
         svc = LinkDiscoveryService(env["config"], env["db"])
-        unscoped = svc.discover_neighbors(entry_id="public-note", kb_name=PUBLIC, mode="keyword")
+        unscoped = svc.discover_neighbors(
+            entry_id="public-note", kb_name=PUBLIC, mode="keyword", readable_kbs=UNSCOPED
+        )
         assert PRIVATE in {c["kb_name"] for c in unscoped}, unscoped
 
         scoped = svc.discover_neighbors(

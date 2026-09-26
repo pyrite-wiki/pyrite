@@ -8,6 +8,7 @@ from rich.console import Console
 from rich.table import Table
 
 from ..exceptions import PyriteError
+from ..services.access_policy import UNSCOPED
 from ..services.task_service import TaskService
 from ..storage.database import PyriteDB
 
@@ -330,7 +331,7 @@ def _task_get_impl(task_id: str, kb_name: str | None, fmt: str):
     """Shared implementation for `task get` and the deprecated `task status`."""
     svc, db = _get_service()
     try:
-        task = svc.get_task(task_id, kb_name)
+        task = svc.get_task(task_id, kb_name, readable_kbs=UNSCOPED)
         if not task:
             from ..utils.errors import cli_error
 

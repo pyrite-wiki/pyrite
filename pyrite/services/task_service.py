@@ -8,8 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import PyriteConfig
 from ..exceptions import EntryNotFoundError, KBNotFoundError, ValidationError
+from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
 from ..utils.metadata import parse_metadata
+from .access_policy import UNSCOPED, named_kb
 
 if TYPE_CHECKING:
     from ..models import Entry
@@ -210,7 +212,7 @@ class TaskService:
                 continue
 
             # Load the entry to check the reason field.
-            entry = self.kb_svc.get_entry(row["id"], kb_name)
+            entry = self.kb_svc.get_entry(row["id"], kb_name, readable_kbs=UNSCOPED)
             if entry is None:
                 skipped += 1
                 continue
@@ -234,7 +236,9 @@ class TaskService:
             "dry_run": dry_run,
         }
 
-    def get_task(self, task_id: str, kb_name: str | None = None) -> dict[str, Any] | None:
+    def get_task(
+        self, task_id: str, kb_name: str | None = None, *, readable_kbs: set[str] | None
+    ) -> dict[str, Any] | None:
         """Get task details from the index.
 
         Reads via the SAME fresh SQL path as :meth:`list_tasks` rather than
@@ -244,15 +248,24 @@ class TaskService:
         data that diverged from the list view (the read-after-write window
         documented in the task-status read-inconsistency bug). Using one SQL
         read path for both makes that divergence structurally impossible.
+
+        ``readable_kbs`` (required; ``UNSCOPED`` for none) bounds the lookup:
+        without ``kb_name`` it takes the first match among the readable KBs
+        only, so a task in a KB the caller cannot read neither answers nor
+        hides a readable task with the same id (P-R5).
         """
         sql = (
             "SELECT id, title, kb_name, status, assignee, priority, metadata "
             "FROM entry WHERE entry_type = 'task' AND id = :id"
         )
-        params: dict[str, str] = {"id": task_id}
+        params: dict[str, Any] = {"id": task_id}
+        kb_name = named_kb(kb_name)
         if kb_name:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = kb_name
+        scope = kb_names_clause("kb_name", readable_kbs, params)
+        if scope:
+            sql += f" AND {scope}"
         sql += " LIMIT 1"
 
         rows = self._query(sql, params)
@@ -347,7 +360,7 @@ class TaskService:
                 if t["parked_awaiting"]:
                     continue
                 try:
-                    entry = self.kb_svc.get_entry(t["id"], t["kb_name"])
+                    entry = self.kb_svc.get_entry(t["id"], t["kb_name"], readable_kbs=UNSCOPED)
                 except Exception:
                     continue
                 if entry:
@@ -490,7 +503,7 @@ class TaskService:
         self, parent_id: str, kb_name: str, children: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Decompose a parent task into child tasks."""
-        parent = self.kb_svc.get_entry(parent_id, kb_name)
+        parent = self.kb_svc.get_entry(parent_id, kb_name, readable_kbs=UNSCOPED)
         if not parent:
             raise EntryNotFoundError(f"Parent task '{parent_id}' not found in KB '{kb_name}'")
 
@@ -665,7 +678,7 @@ class TaskService:
         When a child task accumulates evidence links, copy them to the parent
         so querying the parent shows all evidence from its subtree.
         """
-        task = self.get_task(task_id, kb_name)
+        task = self.get_task(task_id, kb_name, readable_kbs=UNSCOPED)
         if not task:
             return None
 
@@ -678,7 +691,7 @@ class TaskService:
         if not child_evidence:
             return None
 
-        parent = self.get_task(parent_id, kb_name)
+        parent = self.get_task(parent_id, kb_name, readable_kbs=UNSCOPED)
         if not parent:
             return None
 
@@ -725,7 +738,7 @@ class TaskService:
         When a QA agent creates an assessment entry, this links it
         to the corresponding task for traceability.
         """
-        task = self.get_task(task_id, kb_name)
+        task = self.get_task(task_id, kb_name, readable_kbs=UNSCOPED)
         if not task:
             return {"linked": False, "error": "Task not found"}
 
@@ -783,7 +796,7 @@ class TaskService:
                 break
             visited.add(current_id)
 
-            task = self.get_task(current_id, kb_name)
+            task = self.get_task(current_id, kb_name, readable_kbs=UNSCOPED)
             if not task:
                 break
 
@@ -792,7 +805,7 @@ class TaskService:
             if not parent_id:
                 break
 
-            parent = self.get_task(parent_id, kb_name)
+            parent = self.get_task(parent_id, kb_name, readable_kbs=UNSCOPED)
             if not parent:
                 break
 
@@ -818,7 +831,7 @@ class TaskService:
                 return
             visited.add(tid)
 
-            task = self.get_task(tid, kb_name)
+            task = self.get_task(tid, kb_name, readable_kbs=UNSCOPED)
             if not task:
                 return
 
@@ -828,7 +841,7 @@ class TaskService:
             for dep_id in deps:
                 if dep_id in visited:
                     continue
-                dep = self.get_task(dep_id, kb_name)
+                dep = self.get_task(dep_id, kb_name, readable_kbs=UNSCOPED)
                 if dep:
                     result.append(
                         {
@@ -856,7 +869,7 @@ class TaskService:
                 return []
             visited.add(tid)
 
-            task = self.get_task(tid, kb_name)
+            task = self.get_task(tid, kb_name, readable_kbs=UNSCOPED)
             if not task:
                 return []
 
@@ -868,7 +881,7 @@ class TaskService:
 
             best_chain: list[dict[str, Any]] = []
             for dep_id in deps:
-                dep = self.get_task(dep_id, kb_name)
+                dep = self.get_task(dep_id, kb_name, readable_kbs=UNSCOPED)
                 if not dep:
                     continue
                 sub_chain = _longest_chain(dep_id)

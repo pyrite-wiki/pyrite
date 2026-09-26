@@ -308,6 +308,157 @@ class TestCrossOriginWrites:
 
 
 # ---------------------------------------------------------------------------
+# Cookie-authenticated writes, in every mode (P-A3, P-B3)
+# ---------------------------------------------------------------------------
+
+
+class TestCookieWritesAreOriginChecked:
+    """With auth enabled and no anonymous writes the Host/Origin guard above
+    is off -- but a request carrying the session cookie is not a request a
+    foreign page cannot cause: ``SameSite=Lax`` still attaches the cookie to
+    a POST from a *same-site* page (another port on localhost, a sibling
+    subdomain). So a mutating request with a session cookie is refused unless
+    its Origin (or Referer) is this host or in ``cors_origins``, in every
+    mode. An API key is a header a foreign page cannot set without a
+    preflight, so a key-authenticated request is not cookie-bound."""
+
+    HOST = "wiki.example.org"
+    SIBLING = "https://other.example.org"  # same site, different origin
+
+    def _client(self, make, **settings) -> TestClient:
+        from tests.auth_seed import SESSION_COOKIE, app_db, seed_user, sign_in
+
+        settings.setdefault("auth", AuthConfig(enabled=True))
+        client = make(self.HOST, **settings)
+        seed_user(app_db(client.app), "cookie-admin", role="admin")
+        client.cookies.set(SESSION_COOKIE, sign_in(client.app, "cookie-admin"))
+        return client
+
+    @pytest.mark.control(reason="proves the cookie authenticates; holds without the fix")
+    def test_the_session_cookie_authenticates_this_client(self, make, tmp_path):
+        """Not vacuous: without Origin the cookie alone lets the import write."""
+        r = _import(self._client(make))
+        assert r.status_code == 200, r.text
+        assert _entry_files(tmp_path)
+
+    def test_same_site_foreign_origin_is_refused_and_writes_nothing(self, make, tmp_path):
+        r = _import(self._client(make), {"Origin": self.SIBLING})
+        assert r.status_code == 403, r.text
+        assert _entry_files(tmp_path) == []
+
+    def test_same_site_foreign_referer_is_refused(self, make, tmp_path):
+        r = _import(self._client(make), {"Referer": f"{self.SIBLING}/page"})
+        assert r.status_code == 403, r.text
+        assert _entry_files(tmp_path) == []
+
+    @pytest.mark.control(reason="allowed before and after the fix")
+    def test_same_origin_is_allowed(self, make, tmp_path):
+        r = _import(self._client(make), {"Origin": f"http://{self.HOST}"})
+        assert r.status_code == 200, r.text
+        assert _entry_files(tmp_path)
+
+    @pytest.mark.control(reason="allowed before and after the fix")
+    def test_configured_cors_origin_is_allowed(self, make, tmp_path):
+        client = self._client(make, cors_origins=[self.SIBLING])
+        r = _import(client, {"Origin": self.SIBLING})
+        assert r.status_code == 200, r.text
+        assert _entry_files(tmp_path)
+
+    def test_wildcard_cors_origin_does_not_admit_a_cookie_write(self, make, tmp_path):
+        r = _import(self._client(make, cors_origins=["*"]), {"Origin": self.SIBLING})
+        assert r.status_code == 403, r.text
+
+    def test_anonymous_read_tier_is_checked_too(self, make, tmp_path):
+        client = self._client(make, auth=AuthConfig(enabled=True, anonymous_tier="read"))
+        r = _import(client, {"Origin": self.SIBLING})
+        assert r.status_code == 403, r.text
+        assert _entry_files(tmp_path) == []
+
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("PUT", "/api/entries/nope?kb=notes"),
+            ("PATCH", "/api/entries/nope?kb=notes"),
+            ("DELETE", "/api/entries/nope?kb=notes"),
+            ("POST", "/auth/logout"),
+            ("POST", "/mcp/messages/?session_id=x"),
+        ],
+    )
+    def test_every_unsafe_method_and_surface_is_checked(self, make, method, path):
+        r = self._client(make).request(method, path, headers={"Origin": self.SIBLING})
+        assert r.status_code == 403, (method, path, r.status_code)
+
+    @pytest.mark.control(reason="reads were never origin-checked")
+    def test_safe_methods_are_not_origin_checked(self, make):
+        r = self._client(make).get("/api/kbs", headers={"Origin": self.SIBLING})
+        assert r.status_code == 200, r.text
+
+    @pytest.mark.control(reason="API-key requests are exempt before and after the fix")
+    @pytest.mark.parametrize("with_cookie", [False, True], ids=["key-only", "key-and-cookie"])
+    def test_api_key_request_is_unaffected(self, make, tmp_path, with_cookie):
+        import hashlib
+
+        keys = [{"key_hash": hashlib.sha256(KEY.encode()).hexdigest(), "role": "admin"}]
+        client = self._client(make, api_keys=keys)
+        if not with_cookie:
+            client.cookies.clear()
+        r = _import(client, {"X-API-Key": KEY, "Origin": self.SIBLING})
+        assert r.status_code == 200, r.text
+        assert _entry_files(tmp_path)
+
+    def test_a_rejected_api_key_does_not_exempt_the_cookie(self, make, tmp_path):
+        """An unknown key falls through to the cookie, so the request is
+        cookie-authenticated after all."""
+        import hashlib
+
+        keys = [{"key_hash": hashlib.sha256(KEY.encode()).hexdigest(), "role": "admin"}]
+        client = self._client(make, api_keys=keys)
+        r = _import(client, {"X-API-Key": "not-a-key", "Origin": self.SIBLING})
+        assert r.status_code == 403, r.text
+        assert _entry_files(tmp_path) == []
+
+    @pytest.mark.parametrize("site", ["same-site", "cross-site"])
+    def test_no_origin_but_fetch_metadata_says_cross_origin_is_refused(self, make, tmp_path, site):
+        """With neither Origin nor Referer, ``Sec-Fetch-Site`` is the browser
+        saying where the request came from; ``same-site`` is still another
+        origin."""
+        r = _import(self._client(make), {"Sec-Fetch-Site": site})
+        assert r.status_code == 403, r.text
+        assert _entry_files(tmp_path) == []
+
+    @pytest.mark.control(
+        reason="same-origin and user-initiated requests are admitted before and after"
+    )
+    @pytest.mark.parametrize("site", ["same-origin", "none"])
+    def test_no_origin_and_fetch_metadata_same_origin_is_admitted(self, make, tmp_path, site):
+        r = _import(self._client(make), {"Sec-Fetch-Site": site})
+        assert r.status_code == 200, r.text
+        assert _entry_files(tmp_path)
+
+    @pytest.mark.control(reason="no browser signal at all: admitted before and after")
+    def test_no_origin_referer_or_fetch_metadata_is_admitted(self, make, tmp_path):
+        r = _import(self._client(make))
+        assert r.status_code == 200, r.text
+        assert _entry_files(tmp_path)
+
+    def test_an_api_key_in_the_query_does_not_exempt_the_cookie(self, make, tmp_path):
+        """A foreign page can put a key in a URL, and ``/mcp`` ignores it and
+        uses the cookie, so only the ``X-API-Key`` header exempts."""
+        import hashlib
+
+        keys = [{"key_hash": hashlib.sha256(KEY.encode()).hexdigest(), "role": "admin"}]
+        client = self._client(make, api_keys=keys)
+        data = json.dumps([{"title": "Planted", "body": "planted body"}])
+        r = client.post(
+            f"/api/entries/import?kb=notes&format=json&api_key={KEY}",
+            files={"file": ("x.json", data, "application/json")},
+            headers={"Origin": self.SIBLING},
+        )
+        assert r.status_code == 403, r.text
+        assert _entry_files(tmp_path) == []
+
+
+# ---------------------------------------------------------------------------
 # /mcp and /ws
 # ---------------------------------------------------------------------------
 

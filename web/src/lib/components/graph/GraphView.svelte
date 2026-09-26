@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import type { GraphNode, GraphEdge } from '$lib/api/types';
 	import { typeColor } from '$lib/constants';
+	import { buildNodeTooltipLines, buildEdgeTooltipLines, type TooltipLine } from './tooltip';
 	import type cytoscape from 'cytoscape';
 
 	interface Props {
@@ -85,9 +86,19 @@
 		}
 	}
 
-	function showTooltip(x: number, y: number, html: string) {
+	function showTooltip(x: number, y: number, lines: TooltipLine[]) {
 		if (!tooltipEl) return;
-		tooltipEl.innerHTML = html;
+		// Entry-derived text (title, type, KB name, edge relation) is set as
+		// text, never as markup (P-B1) -- each line is its own element with
+		// `textContent`, not a string concatenated into `innerHTML`.
+		tooltipEl.replaceChildren(
+			...lines.map((line) => {
+				const el = document.createElement('div');
+				if (line.className) el.className = line.className;
+				el.textContent = line.text;
+				return el;
+			})
+		);
 		tooltipEl.style.left = `${x + 12}px`;
 		tooltipEl.style.top = `${y - 10}px`;
 		tooltipEl.style.display = 'block';
@@ -179,15 +190,7 @@
 				'underlay-padding': 8
 			});
 			const pos = evt.renderedPosition;
-			const centralityLine = data.centrality > 0
-				? `<div class="text-zinc-400">centrality: ${data.centrality.toFixed(3)}</div>`
-				: '';
-			showTooltip(pos.x, pos.y,
-				`<div class="font-semibold">${data.fullTitle}</div>` +
-				`<div class="text-zinc-400">${data.entryType} · ${data.kbName}</div>` +
-				`<div class="text-zinc-400">${data.linkCount} link${data.linkCount !== 1 ? 's' : ''}</div>` +
-				centralityLine
-			);
+			showTooltip(pos.x, pos.y, buildNodeTooltipLines(data));
 		});
 
 		cy.on('mouseout', 'node', (evt: cytoscape.EventObject) => {
@@ -206,9 +209,7 @@
 			const relation = evt.target.data('relation');
 			if (relation) {
 				const pos = evt.renderedPosition || evt.target.midpoint();
-				showTooltip(pos.x, pos.y,
-					`<div class="text-zinc-300">${relation}</div>`
-				);
+				showTooltip(pos.x, pos.y, buildEdgeTooltipLines(relation));
 			}
 		});
 

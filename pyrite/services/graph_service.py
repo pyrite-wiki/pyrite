@@ -23,8 +23,10 @@ class GraphService:
         entry_type: str | None = None,
         depth: int = 2,
         limit: int = 500,
+        *,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any]:
-        """Get graph data for visualization."""
+        """Get graph data for visualization, bounded by the caller's readable set."""
         return self.db.get_graph_data(
             center=center,
             center_kb=center_kb,
@@ -32,6 +34,7 @@ class GraphService:
             entry_type=entry_type,
             depth=depth,
             limit=limit,
+            readable_kbs=readable_kbs,
         )
 
     def get_refs_to(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
@@ -48,13 +51,19 @@ class GraphService:
         kb_name: str,
         limit: int = 0,
         offset: int = 0,
+        *,
+        readable_kbs: set[str] | None,
     ) -> list[dict[str, Any]]:
-        """Get entries that link TO this entry."""
-        return self.db.get_backlinks(entry_id, kb_name, limit=limit, offset=offset)
+        """Get entries that link TO this entry, from KBs the caller can read."""
+        return self.db.get_backlinks(
+            entry_id, kb_name, limit=limit, offset=offset, readable_kbs=readable_kbs
+        )
 
-    def get_outlinks(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
-        """Get entries that this entry links TO."""
-        return self.db.get_outlinks(entry_id, kb_name)
+    def get_outlinks(
+        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None
+    ) -> list[dict[str, Any]]:
+        """Get entries that this entry links TO; an unreadable target reads as missing."""
+        return self.db.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
 
     def get_edge_endpoints(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
         """Get endpoints of an edge-type entry."""
@@ -74,14 +83,22 @@ class GraphService:
         kb_name: str,
         limit: int = 0,
         offset: int = 0,
+        *,
+        readable_kbs: set[str] | None,
     ) -> list[dict[str, Any]]:
         """Get unified backlinks: link-derived + edge-derived, labeled by source type.
+
+        Link-derived backlinks are bounded by ``readable_kbs``; the
+        edge-derived ones (`get_edges_by_endpoint`) are not scoped yet, and
+        nothing on a server surface calls this method.
 
         Each result has a 'source_type' field: 'link' or 'edge'.
         Edge results include 'edge_type' and 'role' fields.
         """
         # Get link-derived backlinks
-        link_backlinks = self.db.get_backlinks(entry_id, kb_name, limit=0, offset=0)
+        link_backlinks = self.db.get_backlinks(
+            entry_id, kb_name, limit=0, offset=0, readable_kbs=readable_kbs
+        )
         for bl in link_backlinks:
             bl["source_type"] = "link"
 

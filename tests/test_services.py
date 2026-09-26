@@ -10,6 +10,7 @@ from pyrite.exceptions import KBReadOnlyError, QuerySyntaxError
 from pyrite.services import KBService, QueryExpansionService, SearchMode, SearchService
 from pyrite.services.query_expansion_service import is_available
 from pyrite.storage.database import PyriteDB
+from pyrite.services.access_policy import UNSCOPED
 
 
 @pytest.fixture
@@ -618,7 +619,7 @@ class TestKBService:
         )
 
         # Retrieve it
-        entry = service.get_entry("get-test", "test-research")
+        entry = service.get_entry("get-test", "test-research", readable_kbs=UNSCOPED)
 
         assert entry is not None
         assert entry["title"] == "Get Test"
@@ -644,7 +645,7 @@ class TestKBService:
             kind="bug",
         )
 
-        entry = service.get_entry("rank-projection-test", "test-research")
+        entry = service.get_entry("rank-projection-test", "test-research", readable_kbs=UNSCOPED)
 
         assert entry is not None
         # Lifted fields — primary regression assertions.
@@ -668,7 +669,7 @@ class TestKBService:
         )
 
         # Search without specifying KB
-        entry = service.get_entry("search-all-test")
+        entry = service.get_entry("search-all-test", readable_kbs=UNSCOPED)
 
         assert entry is not None
         assert entry["title"] == "Search All Test"
@@ -692,7 +693,7 @@ class TestKBService:
             entry_type="note",
         )
 
-        entry = service.get_entry("db-only-search-test")
+        entry = service.get_entry("db-only-search-test", readable_kbs=UNSCOPED)
 
         assert entry is not None, "expected the entry to be found via the all-KBs fallback"
         assert entry["title"] == "DB-only Search Test"
@@ -711,7 +712,7 @@ class TestKBService:
         result = service.delete_entry("delete-test", "test-research")
 
         assert result is True
-        assert service.get_entry("delete-test", "test-research") is None
+        assert service.get_entry("delete-test", "test-research", readable_kbs=UNSCOPED) is None
 
 
 class TestQueryExpansionService:

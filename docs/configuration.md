@@ -142,8 +142,14 @@ These rules apply when a request can change something without a credential:
 
 In API-key mode (auth disabled, keys configured), a request needs a key. With
 auth enabled and no anonymous writes, a request that changes anything needs
-a session. Neither mode is affected by these rules. In the two
-credential-free modes the server trusts the browser less:
+a session. Neither mode is affected by these rules, except that the
+`Origin` rule below applies in **every** mode to a state-changing request
+signed in with the session cookie: a browser attaches that cookie to a form
+post from a same-site page (another port on the same host, a sibling
+subdomain), so the cookie alone does not show the user meant the request.
+A request authenticated with an API key in the `X-API-Key` header is not
+affected. In the two credential-free modes the server trusts
+the browser less:
 
 - It answers only requests addressed to `localhost`, `127.0.0.1` or `[::1]`,
   to the bind `host` when that is not a wildcard (`0.0.0.0`, `::`), and to any
@@ -152,7 +158,8 @@ credential-free modes the server trusts the browser less:
 - A state-changing request (`POST`, `PUT`, `PATCH`, `DELETE`) from a browser
   must come from the server's own origin or one listed in `cors_origins`.
   Otherwise it gets `403`. Requests that send no `Origin` or `Referer`, such as
-  the CLI, `curl` and agents, are not affected.
+  the CLI, `curl` and agents, are not affected, unless a browser's
+  `Sec-Fetch-Site` header says the request came from another site.
 
 These rules cover the whole app, including `/mcp`, `/ws` and `/site`. If you serve a
 credential-free instance under another name, such as a LAN hostname or a reverse
@@ -169,6 +176,16 @@ settings:
 (`npm run dev` on port 5173) is already in the default `cors_origins`. If you
 run it on another port, add `http://localhost:<port>`.
 
+**Web development with auth enabled.** The Vite proxy (`changeOrigin: true`)
+rewrites `Host` but keeps the browser's `Origin`, so every signed-in write is
+checked against `cors_origins`. If `npm run dev` gets `403 Cross-origin
+request refused` on writes (a non-default Vite port, or a `cors_origins` you
+set yourself), start the backend with the Vite origin included:
+
+```bash
+PYRITE_CORS_ORIGINS=http://localhost:5173 pyrite serve   # your Vite port; comma-separate several
+```
+
 Behind a reverse proxy, the browser sends `Origin: https://<public name>` on
 every write, including login, logout and registration. If the proxy rewrites
 `Host` to the upstream address (nginx does unless you set
@@ -176,8 +193,9 @@ every write, including login, logout and registration. If the proxy rewrites
 own origin and every UI write gets 403. Either keep the public `Host`
 (`proxy_set_header Host $host`) and add the public name to `allowed_hosts`, or
 add the public origin (`https://<public name>`) to `cors_origins`. This applies
-to an auth-disabled instance without API keys and to one with
-`anonymous_tier: write`.
+to an auth-disabled instance without API keys, to one with
+`anonymous_tier: write`, and to every signed-in write on an auth-enabled
+instance.
 
 ## Authentication (multi-user)
 

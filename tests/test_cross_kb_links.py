@@ -3,6 +3,7 @@
 import pytest
 
 from pyrite.storage.index import _WIKILINK_RE
+from pyrite.services.access_policy import UNSCOPED
 
 
 class TestWikilinkRegex:
@@ -108,7 +109,7 @@ class TestCrossKBResolution:
         )
 
         # Resolve using shortname
-        result = svc.resolve_entry("dev:my-entry")
+        result = svc.resolve_entry("dev:my-entry", readable_kbs=UNSCOPED)
         assert result is not None
         assert result["id"] == "my-entry"
         assert result["kb_name"] == "dev-kb"
@@ -141,7 +142,7 @@ class TestCrossKBResolution:
         )
 
         # Resolve using full KB name
-        result = svc.resolve_entry("ops-kb:runbook")
+        result = svc.resolve_entry("ops-kb:runbook", readable_kbs=UNSCOPED)
         assert result is not None
         assert result["id"] == "runbook"
 
@@ -172,7 +173,9 @@ class TestCrossKBResolution:
             }
         )
 
-        result = svc.resolve_batch(["dev:entry-a", "dev:nonexistent", "entry-a"], kb_name="dev-kb")
+        result = svc.resolve_batch(
+            ["dev:entry-a", "dev:nonexistent", "entry-a"], kb_name="dev-kb", readable_kbs=UNSCOPED
+        )
         assert result["dev:entry-a"] is True
         assert result["dev:nonexistent"] is False
         assert result["entry-a"] is True

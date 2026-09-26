@@ -48,7 +48,14 @@ def test_reconciliation_preserves_data_and_persists(indexed_test_env):
     reopened = PyriteDB(config.settings.index_path)
     try:
         registry = make_registry(new_config, reopened)
-        assert registry.get_kb(name) == {**before, "source": "user"}
+        # No longer in config.yaml: user-managed, so its default_role is
+        # editable through the API now.
+        assert before["default_role_editable"] is False
+        assert registry.get_kb(name) == {
+            **before,
+            "source": "user",
+            "default_role_editable": True,
+        }
         assert reopened.get_kb_stats(name) == {**stats_before, "source": "user"}
         assert reopened.merge_registered_kbs(new_config) == 1
         assert new_config.get_kb(name).default_role == "none"

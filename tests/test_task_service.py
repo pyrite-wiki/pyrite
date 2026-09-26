@@ -11,6 +11,7 @@ from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.services.task_service import TaskService
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.repository import KBRepository
+from pyrite.services.access_policy import UNSCOPED
 
 
 @pytest.fixture(scope="class")
@@ -412,7 +413,7 @@ class TestGetTaskReadConsistency:
         entry_id = created["entry_id"]
 
         # Prime the session identity map with a pre-claim read.
-        first = svc.get_task(entry_id, "test-tasks")
+        first = svc.get_task(entry_id, "test-tasks", readable_kbs=UNSCOPED)
         assert first is not None
         assert (first.get("status") or "open") == "open"
 
@@ -421,7 +422,7 @@ class TestGetTaskReadConsistency:
         assert claim["claimed"] is True
 
         # Single-item read must now agree with the list view.
-        after = svc.get_task(entry_id, "test-tasks")
+        after = svc.get_task(entry_id, "test-tasks", readable_kbs=UNSCOPED)
         assert after is not None, "get_task returned empty after claim (read-path divergence)"
         listed = {t["id"]: t for t in svc.list_tasks(kb_name="test-tasks")}[entry_id]
         assert after.get("status") == listed["status"] == "claimed", (
@@ -779,7 +780,7 @@ class TestMigrateRelaxedMode:
 
         # Verify the reason actually landed on disk
         for tid in result["migrated_ids"]:
-            entry = svc.kb_svc.get_entry(tid, "migration-kb")
+            entry = svc.kb_svc.get_entry(tid, "migration-kb", readable_kbs=UNSCOPED)
             assert entry["status_reason"] == "pre-relaxed-mode"
 
     def test_dry_run_does_not_write(self, migration_env):
@@ -795,7 +796,7 @@ class TestMigrateRelaxedMode:
 
         # Confirm no write happened — entry still has empty reason
         tid = result["migrated_ids"][0]
-        entry = svc.kb_svc.get_entry(tid, "migration-kb")
+        entry = svc.kb_svc.get_entry(tid, "migration-kb", readable_kbs=UNSCOPED)
         assert (entry.get("status_reason") or "") == ""
 
     def test_idempotent_skips_tasks_with_existing_reason(self, migration_env):

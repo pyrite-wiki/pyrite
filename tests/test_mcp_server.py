@@ -1959,8 +1959,82 @@ class TestDispatchRateLimiting:
 
             # Stdio should be exempt — call many times without hitting limit
             for _ in range(10):
-                result = server._dispatch_tool("kb_list", {}, client_id="stdio")
+                result = server._dispatch_tool(
+                    "kb_list", {}, client_id="stdio", client_kind="local"
+                )
                 assert "error_code" not in result
+
+    def _limited(self, limit="1/minute", exempt=True):
+        kb_defs = [{"name": "rl", "kb_type": "generic"}]
+
+        def setup(cfg, _):
+            cfg.settings.rate_limit_read = limit
+            cfg.settings.mcp_rate_limit_exempt_local = exempt
+
+        return _make_mcp_server(kb_defs, tier="read", extra_setup=setup)
+
+    def test_the_name_stdio_is_not_the_exemption(self):
+        """P-L1: the exemption is the local principal kind, never a name a
+        user can register."""
+        from pyrite.server.mcp_rate_limiter import MCPRateLimiter
+
+        with self._limited() as ctx:
+            server = ctx["server"]
+            server.rate_limiter = MCPRateLimiter(server.config.settings)
+            for kind in ("user", None):
+                server._dispatch_tool("kb_list", {}, client_id="stdio", client_kind=kind)
+                result = server._dispatch_tool("kb_list", {}, client_id="stdio", client_kind=kind)
+                assert result.get("error_code") == "RATE_LIMITED", (kind, result)
+
+    def test_local_kind_is_limited_when_the_exemption_is_off(self):
+        from pyrite.server.mcp_rate_limiter import MCPRateLimiter
+
+        with self._limited(exempt=False) as ctx:
+            server = ctx["server"]
+            server.rate_limiter = MCPRateLimiter(server.config.settings)
+            server._dispatch_tool("kb_list", {}, client_id="stdio", client_kind="local")
+            result = server._dispatch_tool("kb_list", {}, client_id="stdio", client_kind="local")
+            assert result.get("error_code") == "RATE_LIMITED"
+
+    def test_run_stdio_is_the_local_kind_and_the_sdk_default_is_not(self, monkeypatch):
+        """The stdio entry point chooses the local principal on purpose; a
+        caller that names no kind (SSE forgetting to) is never exempt."""
+        import inspect
+
+        with self._limited() as ctx:
+            server = ctx["server"]
+            default = inspect.signature(server.build_sdk_server).parameters["client_kind"]
+            assert default.default is None
+
+            seen = {}
+
+            class _StopError(Exception):
+                pass
+
+            def capture(**kwargs):
+                seen.update(kwargs)
+                raise _StopError
+
+            monkeypatch.setattr(server, "build_sdk_server", capture)
+            with pytest.raises(_StopError):
+                server.run_stdio()
+            assert seen.get("client_kind") == "local"
+
+    def test_buckets_key_on_kind_and_id(self):
+        """One id under two kinds is two buckets."""
+        from pyrite.server.mcp_rate_limiter import MCPRateLimiter
+
+        with self._limited() as ctx:
+            server = ctx["server"]
+            server.rate_limiter = MCPRateLimiter(server.config.settings)
+            assert "error_code" not in server._dispatch_tool(
+                "kb_list", {}, client_id="7", client_kind="user"
+            )
+            assert "error_code" not in server._dispatch_tool(
+                "kb_list", {}, client_id="7", client_kind="operator_key"
+            )
+            limited = server._dispatch_tool("kb_list", {}, client_id="7", client_kind="user")
+            assert limited.get("error_code") == "RATE_LIMITED"
 
 
 # ---------------------------------------------------------------------------
