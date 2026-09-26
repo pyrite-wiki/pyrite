@@ -297,6 +297,10 @@ def test_qa_validate_all_and_status_are_scoped(w):
     assert scoped["orphan_entry"] >= unscoped.get("orphan_entry", 0) + 2
 
 
+@pytest.mark.control(
+    reason="a consistency guard: before the fix both were unscoped alike; it pins that "
+    "the all-KBs status passes the readable set on to the checks, as validate does"
+)
 def test_qa_status_without_kb_counts_like_validate(w):
     """The all-KBs status is the sum of the scoped all-KBs validation."""
     status = _local(w, "/api/qa/status").json()["issues_by_rule"]
