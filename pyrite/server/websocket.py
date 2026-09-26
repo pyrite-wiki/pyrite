@@ -86,15 +86,45 @@ class SocketScope:
             return True
         return change.user_id is not None and change.user_id == self.user_id
 
-    def stale_after(self, credential_changed: bool, kb_policy_changed: bool) -> bool:
-        """Could a change processed during this socket's handshake have
-        altered the scope it was resolved with?"""
-        if credential_changed and self.revocable:
-            return True
-        return kb_policy_changed and self.readable is not None
-
     def expired(self, now: datetime) -> bool:
         return self.expires_at is not None and self.expires_at <= now
+
+
+@dataclass(frozen=True)
+class ScopeEpoch:
+    """How many credential changes and KB policy changes had been processed
+    when a handshake began resolving its scope (`ChangeEpochs.current`)."""
+
+    credential: int = 0
+    kb_policy: int = 0
+
+
+class ChangeEpochs:
+    """The handshake-race rule, one copy for every live transport (``/ws``
+    sockets, MCP SSE sessions).
+
+    A handshake reads `current` before resolving its scope; the registry
+    asks `stale` after registering it. A change processed in between may
+    have revoked the credential, or changed the KB policy, just resolved.
+    The two counts are kept apart so a user's logout does not refuse every
+    anonymous handshake under way. Not thread-safe: the caller serialises.
+    """
+
+    def __init__(self) -> None:
+        self.current = ScopeEpoch()
+
+    def record(self, change: CredentialChange) -> None:
+        c = self.current
+        if change.kb_name is not None:
+            self.current = ScopeEpoch(c.credential, c.kb_policy + 1)
+        else:
+            self.current = ScopeEpoch(c.credential + 1, c.kb_policy)
+
+    def stale(self, scope: SocketScope, seen: ScopeEpoch) -> bool:
+        """Could a change processed since `seen` have altered `scope`?"""
+        if seen.credential != self.current.credential and scope.revocable:
+            return True
+        return seen.kb_policy != self.current.kb_policy and scope.readable is not None
 
 
 class HandshakeRejectedError(Exception):
@@ -184,22 +214,16 @@ class ConnectionManager:
 
     def __init__(self):
         self._connections: dict[WebSocket, SocketScope] = {}
-        # Bumped by every `revoke`: the first by a credential change, the
-        # second by a KB policy change. A handshake reads them before
-        # resolving its scope and `connect` compares them after `accept`: a
-        # change that landed in between may have revoked the credential, or
-        # changed the policy, just resolved. Kept apart so a user's logout
-        # does not refuse every anonymous handshake under way.
-        self._epoch = 0
-        self._kb_epoch = 0
+        # Advanced by every `revoke`; `connect` checks a handshake against it.
+        self._epochs = ChangeEpochs()
         self._pending_closes: set[asyncio.Task] = set()
 
     @property
-    def epoch(self) -> tuple[int, int]:
-        return (self._epoch, self._kb_epoch)
+    def epoch(self) -> ScopeEpoch:
+        return self._epochs.current
 
     async def connect(
-        self, ws: WebSocket, scope: SocketScope, epoch: tuple[int, int] | None = None
+        self, ws: WebSocket, scope: SocketScope, epoch: ScopeEpoch | None = None
     ) -> bool:
         """Accept an *already authenticated* socket with its scope.
 
@@ -212,10 +236,7 @@ class ConnectionManager:
         change can slip past both.
         """
         await ws.accept()
-        if epoch is not None and scope.stale_after(
-            credential_changed=epoch[0] != self._epoch,
-            kb_policy_changed=epoch[1] != self._kb_epoch,
-        ):
+        if epoch is not None and self._epochs.stale(scope, epoch):
             logger.info("Closed /ws: its scope changed during the handshake")
             await self._close_quietly(ws)
             return False
@@ -235,10 +256,7 @@ class ConnectionManager:
         so no event broadcast after this call can reach it. Returns the
         number closed.
         """
-        if change.kb_name is not None:
-            self._kb_epoch += 1
-        else:
-            self._epoch += 1
+        self._epochs.record(change)
         victims = [ws for ws, scope in self._connections.items() if scope.matches(change)]
         for ws in victims:
             self._close(ws)

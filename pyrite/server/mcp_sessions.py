@@ -9,7 +9,9 @@ when that credential does:
 - the opening session is logged out, evicted or expires (``session_hash``);
 - the user's role or KB grants change, or ``logout_all`` (``user_id``);
 - the session's own ``expires_at`` passes (a cancel-scope deadline: expiry
-  publishes no event unless something touches the session row).
+  publishes no event unless something touches the session row);
+- a KB in its readable set changes policy -- its ``default_role``, or it is
+  removed (``kb_name``; P-W3, the rule ``/ws`` follows too).
 
 ``AuthService`` announces the first two through
 ``pyrite.services.credential_events``; ``SSESessions.on_credential_change``
@@ -35,7 +37,7 @@ from datetime import UTC, datetime
 import anyio
 
 from ..services.credential_events import CredentialChange
-from .websocket import SocketScope
+from .websocket import ChangeEpochs, ScopeEpoch, SocketScope
 
 logger = logging.getLogger(__name__)
 
@@ -53,23 +55,23 @@ class SSESessions:
     def __init__(self) -> None:
         self._live: set[_Live] = set()
         self._lock = threading.Lock()
-        # Bumped by every change. A handshake reads it before resolving its
-        # credential and `hold` compares it after registering: a change that
-        # landed in between may have revoked the credential just resolved.
-        self._epoch = 0
+        # Advanced by every change; `hold` checks a handshake against it
+        # (the /ws rule, `websocket.ChangeEpochs`).
+        self._epochs = ChangeEpochs()
 
     @property
-    def epoch(self) -> int:
+    def epoch(self) -> ScopeEpoch:
         with self._lock:
-            return self._epoch
+            return self._epochs.current
 
     @contextmanager
-    def hold(self, scope: SocketScope, epoch: int) -> Iterator[anyio.CancelScope]:
+    def hold(self, scope: SocketScope, epoch: ScopeEpoch) -> Iterator[anyio.CancelScope]:
         """Run the body as a live session that ``scope``'s credential bounds.
 
-        The body is cancelled when a matching credential change arrives, when
-        ``scope.expires_at`` passes, or at once if the credential is revocable
-        and a change was processed since ``epoch`` was read.
+        The body is cancelled when a matching change arrives (its credential,
+        or the policy of a KB it reads), when ``scope.expires_at`` passes, or
+        at once if a change that could alter ``scope`` was processed since
+        ``epoch`` was read (`websocket.ChangeEpochs.stale`).
         """
         cancel_scope = anyio.CancelScope()
         if scope.expires_at is not None:
@@ -78,9 +80,9 @@ class SSESessions:
         live = _Live(scope, cancel_scope, asyncio.get_running_loop())
         with self._lock:
             self._live.add(live)
-            stale = scope.revocable and epoch != self._epoch
+            stale = self._epochs.stale(scope, epoch)
         if stale:
-            logger.info("Ended an MCP SSE session: its credential changed during the handshake")
+            logger.info("Ended an MCP SSE session: its scope changed during the handshake")
             cancel_scope.cancel()
         try:
             with cancel_scope:
@@ -90,9 +92,11 @@ class SSESessions:
                 self._live.discard(live)
 
     def on_credential_change(self, change: CredentialChange) -> None:
-        """The ``credential_events`` listener: end the sessions ``change`` names."""
+        """The ``credential_events`` listener: end the sessions ``change``
+        names -- by credential, or by a KB in their readable set
+        (`SocketScope.matches`, the same rule as ``/ws``)."""
         with self._lock:
-            self._epoch += 1
+            self._epochs.record(change)
             victims = [live for live in self._live if live.scope.matches(change)]
         for live in victims:
             self._cancel(live)
