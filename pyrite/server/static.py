@@ -109,6 +109,34 @@ SITE_SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
 }
 
+# The hash SvelteKit's build emits in its own <meta http-equiv> CSP tag for
+# the inline bootstrap script (`kit.csp.mode: 'hash'` in web/svelte.config.js).
+# A nonce is forbidden for prerendered pages (adapter-static prerenders
+# everything) and is unsafe there anyway; a hash changes on every build
+# because the bootstrap embeds a per-build-randomised `__sveltekit_<id>`
+# variable name, so it cannot be hardcoded here -- it is read out of the
+# build's own output instead.
+_BUILD_SCRIPT_HASH = re.compile(r"'sha256-[A-Za-z0-9+/]+=*'")
+
+
+def _spa_csp_headers(index_content: str) -> dict[str, str]:
+    """Security headers for an SPA ``index.html`` response (P-B1).
+
+    Same baseline as ``/site``, plus the build's own inline-script hash(es)
+    added to ``script-src`` so the bootstrap SvelteKit itself emits still
+    runs -- a header CSP and a page's ``<meta http-equiv>`` CSP combine with
+    AND semantics, so a header ``script-src 'self'`` with no hash would block
+    it even though the meta tag allows it.
+    """
+    hashes = _BUILD_SCRIPT_HASH.findall(index_content)
+    if not hashes:
+        return dict(SITE_SECURITY_HEADERS)
+    extra = "script-src " + " ".join(hashes)
+    return {
+        "Content-Security-Policy": build_site_csp(extra),
+        "X-Content-Type-Options": "nosniff",
+    }
+
 
 # The only files /site/_static serves: the /site pages' scripts.
 _SITE_STATIC_DIR = Path(__file__).parent / "templates"
@@ -225,6 +253,7 @@ def mount_static(app: FastAPI, dist_dir: Path) -> None:
         return
 
     index_content = index_html.read_text()
+    spa_headers = _spa_csp_headers(index_content)
 
     # Mount the assets directory for hashed static files
     assets_dir = dist_dir / "_app"
@@ -252,9 +281,13 @@ def mount_static(app: FastAPI, dist_dir: Path) -> None:
 
         # SPA index.html must not be cached — it references hashed JS chunks
         # that change on each build. Stale index.html = mismatched chunk errors.
+        # It carries the same security headers as /site (P-B1): a CSP so
+        # stored-content script (a sanitizer bypass anywhere in the app)
+        # still can't run, and nosniff so a served file can't be reinterpreted
+        # as a different content type.
         return HTMLResponse(
             content=index_content,
-            headers={"Cache-Control": "no-cache"},
+            headers={"Cache-Control": "no-cache", **spa_headers},
         )
 
 
