@@ -1097,7 +1097,9 @@ class SoftwareKBPlugin:
             # Group by epic if requested. Unbounded: the caller wants the
             # whole board shape, not a slice of it.
             if group_by == "epic":
-                grouped = self._group_items_by_epic(db, items, kb_name or "", readable_kbs)
+                grouped = self._group_items_by_epic(
+                    db, items, kb_name or "", readable_kbs=readable_kbs
+                )
                 return {"count": len(items), "groups": grouped}
 
             total = len(items)
@@ -1205,7 +1207,9 @@ class SoftwareKBPlugin:
                 if status_filter and status != status_filter:
                     continue
 
-                progress = self._get_epic_progress(db, row["id"], row["kb_name"], readable_kbs)
+                progress = self._get_epic_progress(
+                    db, row["id"], row["kb_name"], readable_kbs=readable_kbs
+                )
                 epics.append(
                     {
                         "id": row["id"],
@@ -1256,7 +1260,7 @@ class SoftwareKBPlugin:
             if meta.get("kind") != "epic":
                 return {"error": f"Item '{epic_id}' is not an epic (kind: {meta.get('kind', '')})"}
 
-            progress = self._get_epic_progress(db, epic_id, kb_name, readable_kbs)
+            progress = self._get_epic_progress(db, epic_id, kb_name, readable_kbs=readable_kbs)
 
             return {
                 "id": epic_id,
@@ -1904,7 +1908,7 @@ class SoftwareKBPlugin:
             if link.get("relation") != "blocked_by":
                 continue
             dep_entry = self._readable_entry(
-                db, link["id"], link.get("kb_name", kb_name), readable_kbs
+                db, link["id"], link.get("kb_name", kb_name), readable_kbs=readable_kbs
             )
             if dep_entry:
                 meta = {}
@@ -1935,7 +1939,7 @@ class SoftwareKBPlugin:
             if link.get("relation") != "blocked_by":
                 continue
             dep_entry = self._readable_entry(
-                db, link["id"], link.get("kb_name", kb_name), readable_kbs
+                db, link["id"], link.get("kb_name", kb_name), readable_kbs=readable_kbs
             )
             if dep_entry:
                 meta = {}
@@ -1983,7 +1987,7 @@ class SoftwareKBPlugin:
                 continue
             target_id = link.get("id", "")
             target_kb = link.get("kb_name", kb_name)
-            dep_entry = self._readable_entry(db, target_id, target_kb, readable_kbs)
+            dep_entry = self._readable_entry(db, target_id, target_kb, readable_kbs=readable_kbs)
             if not dep_entry:
                 continue
             if dep_entry.get("entry_type") != "backlog_item":
@@ -2021,7 +2025,7 @@ class SoftwareKBPlugin:
             if any(s["id"] == target_id for s in subtasks):
                 continue
             target_kb = link.get("kb_name", kb_name)
-            dep_entry = self._readable_entry(db, target_id, target_kb, readable_kbs)
+            dep_entry = self._readable_entry(db, target_id, target_kb, readable_kbs=readable_kbs)
             if not dep_entry:
                 continue
             if dep_entry.get("entry_type") != "backlog_item":
@@ -2071,7 +2075,7 @@ class SoftwareKBPlugin:
         self, db, item_id: str, kb_name: str, readable_kbs: set[str] | None = None
     ) -> dict[str, Any] | None:
         """Return a failure dict if the item has unresolved blockers, else None."""
-        dep_status = self._get_dependency_status(db, item_id, kb_name, readable_kbs)
+        dep_status = self._get_dependency_status(db, item_id, kb_name, readable_kbs=readable_kbs)
         if dep_status["is_blocked"]:
             unresolved = [d for d in dep_status["blocked_by"] if not d["resolved"]]
             ids = ", ".join(d["id"] for d in unresolved)
@@ -2130,7 +2134,9 @@ class SoftwareKBPlugin:
             if checker_name == "no_open_blockers":
                 item_id = row["id"] if isinstance(row, dict) else row["id"]
                 kb_name = row["kb_name"] if isinstance(row, dict) else row["kb_name"]
-                failure = self._check_no_open_blockers(db, item_id, kb_name, readable_kbs)
+                failure = self._check_no_open_blockers(
+                    db, item_id, kb_name, readable_kbs=readable_kbs
+                )
                 passed = failure is None
                 result = {"text": text, "passed": passed, "type": "checker"}
                 if not passed:
@@ -2226,7 +2232,7 @@ class SoftwareKBPlugin:
 
             board_config = self._load_board_config_safe(kb_name)
             gate_result = self._evaluate_gate(
-                db, board_config, "in_progress", row, meta, readable_kbs
+                db, board_config, "in_progress", row, meta, readable_kbs=readable_kbs
             )
 
             return {
@@ -2283,7 +2289,7 @@ class SoftwareKBPlugin:
 
                 priority = row["priority"] or meta.get("priority", "medium")
                 gate_result = self._evaluate_gate(
-                    db, board_config, "in_progress", row, meta, readable_kbs
+                    db, board_config, "in_progress", row, meta, readable_kbs=readable_kbs
                 )
                 is_ready = gate_result["passed"] if gate_result else True
 
@@ -2369,7 +2375,9 @@ class SoftwareKBPlugin:
             backlinks = db.get_backlinks(item_id, kb_name, readable_kbs=readable_kbs)
 
             # Build dependency info from blocks/blocked_by links
-            dep_status = self._get_dependency_status(db, item_id, kb_name, readable_kbs)
+            dep_status = self._get_dependency_status(
+                db, item_id, kb_name, readable_kbs=readable_kbs
+            )
             dep_link_ids = {d["id"] for d in dep_status["blocked_by"]} | {
                 d["id"] for d in dep_status["blocks"]
             }
@@ -2551,7 +2559,9 @@ class SoftwareKBPlugin:
             blocked_items = []
             top = None
             for candidate in candidates:
-                dep = self._get_dependency_status(db, candidate["id"], kb_name or "", readable_kbs)
+                dep = self._get_dependency_status(
+                    db, candidate["id"], kb_name or "", readable_kbs=readable_kbs
+                )
                 if dep["is_blocked"]:
                     blocked_items.append(
                         {
@@ -2637,7 +2647,9 @@ class SoftwareKBPlugin:
 
             # Check dependencies before allowing claim; a blocker the caller
             # cannot read is unresolved and untitled, as a missing one is.
-            dep_status = self._get_dependency_status(db, item_id, kb_name, readable_kbs)
+            dep_status = self._get_dependency_status(
+                db, item_id, kb_name, readable_kbs=readable_kbs
+            )
             if dep_status["is_blocked"]:
                 unresolved = [d for d in dep_status["blocked_by"] if not d["resolved"]]
                 return {
@@ -2678,7 +2690,7 @@ class SoftwareKBPlugin:
                 pass
 
             gate_result = self._evaluate_gate(
-                db, board_config, "in_progress", row, meta, readable_kbs
+                db, board_config, "in_progress", row, meta, readable_kbs=readable_kbs
             )
             if gate_result and not gate_result["passed"] and gate_result["policy"] == "enforce":
                 return {"claimed": False, "error": "Gate check failed", "gate": gate_result}
@@ -2848,7 +2860,9 @@ class SoftwareKBPlugin:
             except Exception:
                 pass
 
-            gate_result = self._evaluate_gate(db, board_config, to_status, row, meta, readable_kbs)
+            gate_result = self._evaluate_gate(
+                db, board_config, to_status, row, meta, readable_kbs=readable_kbs
+            )
             if gate_result and not gate_result["passed"] and gate_result["policy"] == "enforce":
                 return {
                     "transitioned": False,
@@ -2957,7 +2971,9 @@ class SoftwareKBPlugin:
             gate_result = None
             if target == "done":
                 board_config = self._load_board_config_safe(kb_name)
-                gate_result = self._evaluate_gate(db, board_config, "done", row, meta, readable_kbs)
+                gate_result = self._evaluate_gate(
+                    db, board_config, "done", row, meta, readable_kbs=readable_kbs
+                )
                 if gate_result and not gate_result["passed"] and gate_result["policy"] == "enforce":
                     return {
                         "reviewed": False,

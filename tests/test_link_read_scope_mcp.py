@@ -164,6 +164,15 @@ def test_qa_validate_kb_scopes_link_checks(w, scope):
     )
 
 
+def test_qa_validate_without_kb_scopes_link_checks(w, scope):
+    result = _call(w, "kb_qa_validate", {"severity": "info", "limit": 500}, scope)
+    text = json.dumps(result)
+    assert PRIVATE_ENTRY in text and MISSING_TARGET in text
+    assert any(
+        i["rule"] == "orphan_entry" and i["entry_id"] == READABLE_ENTRY for i in result["issues"]
+    )
+
+
 @pytest.mark.control(reason="unscoped QA: the private target exists, so it is not broken")
 def test_qa_validate_unscoped_unchanged(w):
     result = _call(w, "kb_qa_validate", {"entry_id": READABLE_POINTER, "kb_name": READABLE}, None)
@@ -224,6 +233,12 @@ def test_update_with_validate_reports_private_and_missing_targets_alike(w, scope
         scope,
     )
     assert _alike(_broken_link_messages(result["qa_issues"])), result
+
+
+def test_qa_assess_kb_reports_private_and_missing_targets_alike(w, scope):
+    result = _write(w, "kb_qa_assess", {"kb_name": READABLE, "max_age_hours": 0}, scope)
+    [pointer] = [r for r in result["results"] if r.get("target_entry") == READABLE_POINTER]
+    assert _alike(_broken_link_messages(pointer["issues"])), pointer
 
 
 @pytest.mark.control(reason="unscoped assessment: the private target exists, so not broken")

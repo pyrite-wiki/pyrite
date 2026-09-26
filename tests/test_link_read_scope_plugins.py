@@ -37,12 +37,12 @@ from tests.link_scope_seed import (
 PRIVATE_TITLE_MARK = "Private sw"
 
 
-def _insert(db, kb, entry_id, title, status, meta):
+def _insert(db, kb, entry_id, title, status, meta, entry_type="backlog_item"):
     db._raw_conn.execute(
         "INSERT INTO entry (id, kb_name, entry_type, title, body, status, priority, metadata,"
-        " created_at, updated_at) VALUES (?, ?, 'backlog_item', ?, '', ?, ?, ?,"
+        " created_at, updated_at) VALUES (?, ?, ?, ?, '', ?, ?, ?,"
         " '2026-01-01T00:00:00', '2026-01-01T00:00:00')",
-        (entry_id, kb, title, status, meta.get("priority"), json.dumps(meta)),
+        (entry_id, kb, entry_type, title, status, meta.get("priority"), json.dumps(meta)),
     )
 
 
@@ -86,6 +86,27 @@ def _seed_software(db):
     _link(db, "private-sub2", PRIVATE, "sw-epic", READABLE, "subtask_of", "has_subtask")
     # A readable item whose epic is private.
     _link(db, "sw-free", READABLE, "private-epic", PRIVATE, "subtask_of", "has_subtask")
+    # A readable milestone tracking a private item.
+    _insert(db, READABLE, "sw-milestone", "Readable milestone", "open", {}, "milestone")
+    _link(db, "sw-milestone", READABLE, "private-sub", PRIVATE, "tracks", "tracked_by")
+    # A readable item sharing its id with the private subtask that names
+    # sw-epic as its epic: not a subtask of sw-epic as far as the reader sees.
+    _insert(db, READABLE, "private-sub2", "Readable namesake", "accepted", feature)
+    # sw_backlog's epic filter reads a backlink whose relation reads
+    # "subtask_of" from the epic's side as membership; one from a private
+    # item must not pull in a readable item that shares its id.
+    _insert(db, PRIVATE, "private-sub3", f"{PRIVATE_TITLE_MARK} sub3", "accepted", feature)
+    _link(db, "private-sub3", PRIVATE, "sw-epic", READABLE, "has_subtask", "subtask_of")
+    _insert(db, READABLE, "private-sub3", "Readable namesake 3", "accepted", feature)
+    # A private item that says it blocks sw-item (the other spelling of the
+    # relation, which lands in sw-item's "blocks" list).
+    _insert(db, PRIVATE, "private-blocked", f"{PRIVATE_TITLE_MARK} blocked", "accepted", feature)
+    _link(db, "private-blocked", PRIVATE, "sw-item", READABLE, "blocks", "blocked_by")
+    # A private ADR every unblocked readable item links to: pull_next's
+    # context preview must not count it.
+    _insert(db, PRIVATE, "private-adr", f"{PRIVATE_TITLE_MARK} adr", "accepted", {}, "adr")
+    for item in ("sw-free", "private-sub2", "sw-epic"):
+        _link(db, item, READABLE, "private-adr", PRIVATE, "related_to", "related_to")
     db._raw_conn.commit()
 
 
@@ -221,6 +242,13 @@ def test_pull_next_treats_private_blocker_as_unresolved(w, scope):
     blocked = {b["id"] for b in result.get("blocked_items", [])}
     assert "sw-item2" in blocked
     assert result["recommendation"]["id"] != "sw-item2"
+    # Its only ADR link is to a private ADR: counted as a missing target.
+    assert result["context_preview"]["adr_count"] == 0
+
+
+def test_dependencies_leave_out_private_items_this_one_blocks(w, scope):
+    result = _call(w, "sw_context_for_item", {"item_id": "sw-item", "kb_name": READABLE}, scope)
+    assert "private-blocked" not in json.dumps(result)
 
 
 @pytest.mark.control(reason="unscoped pull_next knows the private blocker is done")
@@ -247,10 +275,23 @@ def test_backlog_grouped_by_epic_names_no_private_epic(w, scope):
     assert PRIVATE_TITLE_MARK not in json.dumps(result)
 
 
+def test_milestones_count_no_private_items(w, scope):
+    result = _call(w, "sw_milestones", {"kb_name": READABLE}, scope)
+    assert _by_id(result["milestones"], "sw-milestone")["total_items"] == 0
+
+
+def test_backlog_epic_filter_ignores_private_subtask_links(w, scope):
+    result = _call(w, "sw_backlog", {"kb_name": READABLE, "epic": "sw-epic"}, scope)
+    ids = {i["id"] for i in result["items"]}
+    assert "private-sub2" not in ids and "private-sub3" not in ids
+
+
 @pytest.mark.control(reason="unscoped epic rollups still count the private subtasks")
 def test_epics_unscoped_unchanged(w):
     result = _call(w, "sw_epic_detail", {"epic_id": "sw-epic", "kb_name": READABLE}, None)
     assert result["total"] == 2
+    milestones = _call(w, "sw_milestones", {"kb_name": READABLE}, None)["milestones"]
+    assert _by_id(milestones, "sw-milestone")["total_items"] == 1
 
 
 # -- software-kb: gates on transition and review ------------------------------

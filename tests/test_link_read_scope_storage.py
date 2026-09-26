@@ -40,6 +40,11 @@ from tests.link_scope_seed import (
 def w(tmp_path_factory):
     world = build_world(tmp_path_factory, label="link-scope-storage")
     seed_links(world)
+    # The private note links on into the readable KB. A missing target has
+    # no outlinks, so a walk that reaches the private note as a bare target
+    # must not follow its links either.
+    _raw_link(world.db, PRIVATE_ENTRY, PRIVATE, "readable-b", READABLE)
+    world.db._raw_conn.commit()
     try:
         yield world
     finally:
@@ -51,6 +56,26 @@ def scope(w):
     readable = set(w.principals["local_user"].readable_kbs)
     assert READABLE in readable and READ_ONLY in readable and PRIVATE not in readable
     return readable
+
+
+def _raw_link(db, source, source_kb, target, target_kb, relation="wikilink"):
+    db._raw_conn.execute(
+        "INSERT INTO link (source_id, source_kb, target_id, target_kb, relation,"
+        " inverse_relation) VALUES (?, ?, ?, ?, ?, 'wikilinked_by')",
+        (source, source_kb, target, target_kb, relation),
+    )
+
+
+def _raw_entry(db, entry_id, kb_name, title):
+    db._raw_conn.execute(
+        "INSERT OR IGNORE INTO kb (name, path, kb_type) VALUES (?, ?, 'generic')",
+        (kb_name, f"/test/{kb_name}"),
+    )
+    db._raw_conn.execute(
+        "INSERT INTO entry (id, kb_name, entry_type, title, body, created_at, updated_at)"
+        " VALUES (?, ?, 'note', ?, '', '2026-01-01T00:00:00', '2026-01-01T00:00:00')",
+        (entry_id, kb_name, title),
+    )
 
 
 def _without_id(row: dict) -> str:
@@ -110,6 +135,14 @@ def test_graph_walk_never_enters_unreadable_rows(w, scope):
     assert centre["link_count"] == 0
 
 
+def test_graph_does_not_follow_links_out_of_an_unreadable_target(w, scope):
+    data = w.db.get_graph_data(
+        center=READABLE_POINTER, center_kb=READABLE, depth=3, readable_kbs=scope
+    )
+    assert not [e for e in data["edges"] if e["source_kb"] == PRIVATE]
+    assert "readable-b" not in {n["id"] for n in data["nodes"]}
+
+
 def test_graph_private_outlink_target_node_reads_like_missing(w, scope):
     data = w.db.get_graph_data(center=READABLE_POINTER, center_kb=READABLE, readable_kbs=scope)
     nodes = {n["id"]: n for n in data["nodes"]}
@@ -143,6 +176,8 @@ def test_graph_service_passes_scope(w, scope):
     assert data == {"nodes": [], "edges": []}
     rows = GraphService(w.db).get_backlinks(READABLE_ENTRY, READABLE, readable_kbs=scope)
     assert PRIVATE_SPY not in {r["id"] for r in rows}
+    out = GraphService(w.db).get_outlinks(READABLE_POINTER, READABLE, readable_kbs=scope)
+    assert _without_id(_outlink(out, PRIVATE_ENTRY)) == _without_id(_outlink(out, MISSING_TARGET))
 
 
 # -- KBService.get_entry -----------------------------------------------------
@@ -156,6 +191,11 @@ def test_get_entry_without_kb_skips_unreadable_twin(w, scope):
 def test_get_entry_without_kb_private_only_is_a_miss(w, scope):
     svc = KBService(w.config, w.db)
     assert svc.get_entry(PRIVATE_SPY, readable_kbs=scope) is None
+
+
+def test_get_entry_in_a_named_unreadable_kb_is_a_miss(w, scope):
+    svc = KBService(w.config, w.db)
+    assert svc.get_entry(PRIVATE_SPY, kb_name=PRIVATE, readable_kbs=scope) is None
 
 
 def test_get_entry_links_are_scoped(w, scope):
@@ -179,7 +219,21 @@ def test_get_entry_unscoped_unchanged(w):
 
 @pytest.fixture
 def overlay(w, tmp_path):
+    """Main index plus a per-user diff that has cross-KB links of its own.
+
+    The diff is a real `PyriteDB`; rows are written to it directly so both
+    halves of the overlay carry a private source and a private target, and
+    each half's scoping shows on its own.
+    """
     diff = PyriteDB(tmp_path / "diff.db")
+    _raw_entry(diff, "diff-spy", PRIVATE, "Diff spy dossier")
+    _raw_link(diff, "diff-spy", PRIVATE, READABLE_ENTRY, READABLE)
+    _raw_entry(diff, READABLE_ENTRY, READABLE, "Readable note")
+    _raw_entry(diff, "diff-pointer", READABLE, "Diff pointer")
+    _raw_entry(diff, "diff-private-target", PRIVATE, "Diff private target")
+    _raw_link(diff, "diff-pointer", READABLE, "diff-private-target", PRIVATE)
+    _raw_link(diff, "diff-pointer", READABLE, "diff-missing-target", PRIVATE)
+    diff._raw_conn.commit()
     try:
         yield WorktreeDB(w.db, diff)
     finally:
@@ -193,6 +247,15 @@ def test_overlay_links_are_scoped(w, scope, overlay):
     assert _without_id(_outlink(out, PRIVATE_ENTRY)) == _without_id(_outlink(out, MISSING_TARGET))
 
 
+def test_overlay_diff_links_are_scoped(w, scope, overlay):
+    rows = overlay.get_backlinks(READABLE_ENTRY, READABLE, readable_kbs=scope)
+    assert "diff-spy" not in {r["id"] for r in rows}
+    out = overlay.get_outlinks("diff-pointer", READABLE, readable_kbs=scope)
+    assert _without_id(_outlink(out, "diff-private-target")) == _without_id(
+        _outlink(out, "diff-missing-target")
+    )
+
+
 def test_overlay_get_entry_links_are_scoped(w, scope, overlay):
     note = KBService(w.config, overlay).get_entry(
         READABLE_ENTRY, kb_name=READABLE, readable_kbs=scope
@@ -203,4 +266,6 @@ def test_overlay_get_entry_links_are_scoped(w, scope, overlay):
 @pytest.mark.control(reason="unscoped overlay read keeps private backlinks")
 def test_overlay_unscoped_unchanged(w, overlay):
     rows = overlay.get_backlinks(READABLE_ENTRY, READABLE)
-    assert PRIVATE_SPY in {r["id"] for r in rows}
+    assert {PRIVATE_SPY, "diff-spy"} <= {r["id"] for r in rows}
+    out = overlay.get_outlinks("diff-pointer", READABLE)
+    assert _outlink(out, "diff-private-target")["title"] == "Diff private target"

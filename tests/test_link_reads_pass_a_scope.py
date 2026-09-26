@@ -40,6 +40,12 @@ SCOPED_METHODS = {
     "validate_all",
     "assess_entry",
     "assess_kb",
+    # software-kb's helpers that follow links to a far end.
+    "_get_dependency_status",
+    "_get_epic_progress",
+    "_check_no_open_blockers",
+    "_evaluate_gate",
+    "_group_items_by_epic",
 }
 SERVICE_GET_ENTRY_RECEIVERS = {"svc", "self.svc", "kb_svc", "self.kb_svc"}
 

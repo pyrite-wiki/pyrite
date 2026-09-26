@@ -297,6 +297,16 @@ def test_qa_validate_all_and_status_are_scoped(w):
     assert scoped["orphan_entry"] >= unscoped.get("orphan_entry", 0) + 2
 
 
+def test_qa_status_without_kb_counts_like_validate(w):
+    """The all-KBs status is the sum of the scoped all-KBs validation."""
+    status = _local(w, "/api/qa/status").json()["issues_by_rule"]
+    swept = _local(w, "/api/qa/validate").json()["kbs"]
+    broken = sum(1 for kb in swept for i in kb["issues"] if i["rule"] == "broken_link")
+    orphans = sum(1 for kb in swept for i in kb["issues"] if i["rule"] == "orphan_entry")
+    assert status["broken_link"] == broken
+    assert status["orphan_entry"] == orphans
+
+
 @pytest.mark.control(reason="unscoped QA unchanged: private target is not broken, note not orphan")
 def test_qa_unscoped_unchanged(w):
     r = _admin(w, "/api/qa/validate", kb=READABLE)
