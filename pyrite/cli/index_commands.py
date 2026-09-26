@@ -567,12 +567,13 @@ def index_reconcile(
     kb_name: str = typer.Argument(..., help="KB to reconcile"),
     apply: bool = typer.Option(False, "--apply", help="Execute moves (default is dry-run)"),
 ):
-    """Move files to match their resolved subdirectory templates.
+    """Move files into their resolved subdirectories.
 
-    Compares each entry's current file location against its template-resolved
-    path. By default runs in dry-run mode. Use --apply to execute moves.
+    Compare each current parent directory with the directory resolved from the
+    entry's subdirectory template. Preserve the filename fixed at creation,
+    even when a type declares a file pattern. By default this is a dry run.
+    Use --apply to execute moves.
     """
-    from ..storage.document_manager import DocumentManager
     from ..storage.index import IndexManager
     from ..storage.repository import KBRepository
 
@@ -590,12 +591,13 @@ def index_reconcile(
 
     for entry, current_path in repo.list_entries():
         inferred_subdir = repo._infer_subdir(entry)
-        expected_path = repo._get_file_path(entry.id, inferred_subdir)
-        if current_path.resolve() != expected_path.resolve():
+        expected_dir = repo._get_file_path(entry.id, inferred_subdir).parent
+        expected_path = repo._contained(expected_dir / current_path.name)
+        if current_path.parent.resolve() != expected_dir.resolve():
             moves.append((entry, current_path, expected_path))
 
     if not moves:
-        console.print("[green]All files match their template paths.[/green]")
+        console.print("[green]All files match their resolved subdirectories.[/green]")
         return
 
     table = Table(title=f"{'[DRY RUN] ' if not apply else ''}Files to move")
@@ -619,20 +621,38 @@ def index_reconcile(
         console.print("\n[yellow]Dry run. Use --apply to execute moves.[/yellow]")
         return
 
-    # Execute moves by re-saving each entry (triggers DocumentManager move logic)
+    if kb_config.read_only:
+        console.print("[red]Cannot move files in a read-only KB.[/red]")
+        return
+
     index_mgr = IndexManager(db, config)
-    doc_mgr = DocumentManager(db, index_mgr)
+    db.register_kb(
+        name=kb_name,
+        kb_type=kb_config.kb_type,
+        path=str(kb_config.path),
+        description=kb_config.description,
+    )
     moved = 0
-    for entry, _current_path, _target_path in moves:
+    for entry, current_path, target_path in moves:
         try:
-            doc_mgr.save_entry(entry, kb_name, kb_config)
+            if target_path.exists():
+                raise FileExistsError(f"Target path already exists: {target_path}")
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            current_path.rename(target_path)
+            try:
+                entry.file_path = target_path
+                index_mgr.index_entry(entry, kb_name, target_path)
+            except Exception:
+                target_path.rename(current_path)
+                entry.file_path = current_path
+                raise
             moved += 1
         except Exception as e:
             # Per-entry failure inside a batch: warn and continue, do NOT exit.
             console.print(f"[red]Failed to move {entry.id}:[/red] {e}")
 
     console.print(f"\n[green]Moved {moved} file(s).[/green]")
-    console.print("Run 'pyrite index sync' to update the index.")
+    console.print("The index was updated for successfully moved files.")
 
 
 @index_app.command("jobs")
