@@ -13,6 +13,17 @@ asserts that `[Unreleased]` stays empty.
 
 ## [Unreleased]
 
+## [0.25.5] - 2026-09-26
+
+Security release, from the 0.26 multi-user security review. **Upgrade if you run Pyrite with auth enabled, serve `/site`, or connect MCP clients over HTTP.** An MCP session now acts only for the credential that opened it, and ends when that credential is revoked, logged out or expired. Cookie-authenticated writes must come from an allowed origin. Content from knowledge bases is sanitised in the web app, which now sends a content security policy. Changing a knowledge base's access takes effect everywhere at once. Reads of links, lookups, queries, the graph and QA stay within the knowledge bases the caller can read. Config saves no longer write environment-supplied secrets to disk. This release also carries ADR-0037's single authorization policy point and error contract, entry-identity fixes, crash-safe config saves, and five contributor fixes.
+
+**Upgrade notes:**
+- **Dependencies:** `fastapi>=0.132` and `mcp>=1.27.2,<2`. With an older MCP library, `/mcp` is not mounted and the server logs the required version.
+- **REST errors** from the central handler now use the `{"detail": {"code", "message", ...}}` shape that other endpoints already used. Read `body["detail"]["code"]`.
+- **Cookie-authenticated writes need an allowed `Origin`.** Behind a reverse proxy that rewrites `Host`, add the public origin to `cors_origins` (`PYRITE_CORS_ORIGINS`).
+- **Access changes on hand-written config KBs:** changing the default access of a KB defined in a hand-written `config.yaml` now returns 409, naming the file. Edit the file instead. KBs the server manages (repo-subscribed and ephemeral) remain editable.
+- **Extension authors:** link and lookup reads (`get_backlinks`, `get_outlinks` and related calls) now require `readable_kbs=`. Pass the caller's readable set, or `UNSCOPED` (from `pyrite.services.access_policy`) only when there is no caller.
+
 ## [0.25.4] - 2026-09-25
 
 Security release. **Upgrade if you run Pyrite with auth enabled, or if you open Pyrite in directories you did not create** (cloned or downloaded trees). With auth enabled, the instance now stays closed to strangers until its operator decides: sign-up waits for an admin created with `pyrite-admin user create`, self-registered users read only the KBs you open to them, and login and registration are rate-limited. A `.pyrite/config.yaml` found in a working tree is no longer trusted with anything beyond that tree's own KBs and index. See the operator actions below. This release also carries the write-path fixes the investigation workflow depends on, entry version history for server writes, search and site-cache robustness, and three contributor fixes.
