@@ -14,8 +14,34 @@ from ..storage.database import PyriteDB
 logger = logging.getLogger(__name__)
 
 
+def _scope_clause(
+    column: str, readable_kbs: set[str] | None, tag: str = "scope"
+) -> tuple[str, dict[str, Any]]:
+    """An ``AND column IN (...)`` narrowing to the readable set, as named
+    params ``:<tag>0``, ``:<tag>1``, ... (a distinct ``tag`` per clause when a
+    query has two).
+
+    None is the unscoped caller: no narrowing. An empty set matches nothing.
+    """
+    if readable_kbs is None:
+        return "", {}
+    if not readable_kbs:
+        return " AND 1 = 0", {}
+    names = sorted(readable_kbs)
+    params = {f"{tag}{i}": name for i, name in enumerate(names)}
+    placeholders = ",".join(f":{tag}{i}" for i in range(len(names)))
+    return f" AND {column} IN ({placeholders})", params
+
+
 class WikilinkService:
-    """Wikilink resolution, autocomplete titles, and wanted-page queries."""
+    """Wikilink resolution, autocomplete titles, and wanted-page queries.
+
+    Every method takes ``readable_kbs``, the caller's readable set (None:
+    unscoped), and pushes it into its SQL. A KB named inside a target's
+    ``kb:`` or shortname prefix is authorized against the same set: one the
+    caller cannot read is treated as an unknown prefix, which is how a KB
+    that does not exist is treated (P-R2, P-R5).
+    """
 
     def __init__(self, config: PyriteConfig, db: PyriteDB):
         self.config = config
@@ -26,6 +52,7 @@ class WikilinkService:
         kb_name: str | None = None,
         query: str | None = None,
         limit: int = 500,
+        readable_kbs: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Lightweight listing of entry IDs and titles for wikilink autocomplete."""
         sql = "SELECT id, kb_name, entry_type, title, json_extract(metadata, '$.aliases') as aliases FROM entry WHERE 1=1"
@@ -34,6 +61,9 @@ class WikilinkService:
         if kb_name:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = kb_name
+        scope_sql, scope_params = _scope_clause("kb_name", readable_kbs)
+        sql += scope_sql
+        params.update(scope_params)
         if query:
             sql += " AND (title LIKE :q1 OR json_extract(metadata, '$.aliases') LIKE :q2)"
             params["q1"] = f"%{query}%"
@@ -44,29 +74,41 @@ class WikilinkService:
 
         return self.db.execute_sql(sql, params)
 
-    def resolve_entry(self, target: str, kb_name: str | None = None) -> dict[str, Any] | None:
+    def _prefixed_kb(self, prefix: str, readable_kbs: set[str] | None) -> str | None:
+        """The KB a ``prefix:`` names -- a shortname or a KB name -- if the
+        caller may read it. An unreadable KB is answered as an unknown
+        prefix, which is what a KB that does not exist gets."""
+        kb_by_short = self.config.get_kb_by_shortname(prefix)
+        name = kb_by_short.name if kb_by_short else (prefix if self.config.get_kb(prefix) else None)
+        if name is None or (readable_kbs is not None and name not in readable_kbs):
+            return None
+        return name
+
+    def resolve_entry(
+        self,
+        target: str,
+        kb_name: str | None = None,
+        readable_kbs: set[str] | None = None,
+    ) -> dict[str, Any] | None:
         """Resolve a wikilink target to an entry. Supports kb:id format for cross-KB links."""
         # Parse cross-KB format
         actual_target = target
         actual_kb = kb_name
         if ":" in target and not target.startswith("http"):
             prefix, rest = target.split(":", 1)
-            # Look up KB by shortname
-            kb_by_short = self.config.get_kb_by_shortname(prefix)
-            if kb_by_short:
+            prefixed = self._prefixed_kb(prefix, readable_kbs)
+            if prefixed:
                 actual_target = rest
-                actual_kb = kb_by_short.name
-            elif self.config.get_kb(prefix):
-                actual_target = rest
-                actual_kb = prefix
+                actual_kb = prefixed
+        scope_sql, scope_params = _scope_clause("kb_name", readable_kbs)
 
         # First pass: exact ID match
         sql = "SELECT id, kb_name, entry_type, title FROM entry WHERE id = :target"
-        params: dict[str, Any] = {"target": actual_target}
+        params: dict[str, Any] = {"target": actual_target, **scope_params}
         if actual_kb:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = actual_kb
-        sql += " LIMIT 1"
+        sql += scope_sql + " LIMIT 1"
 
         rows = self.db.execute_sql(sql, params)
         if rows:
@@ -74,11 +116,11 @@ class WikilinkService:
 
         # Second pass: title match
         sql = "SELECT id, kb_name, entry_type, title FROM entry WHERE title LIKE :target"
-        params = {"target": actual_target}
+        params = {"target": actual_target, **scope_params}
         if actual_kb:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = actual_kb
-        sql += " LIMIT 1"
+        sql += scope_sql + " LIMIT 1"
 
         rows = self.db.execute_sql(sql, params)
         if rows:
@@ -89,16 +131,21 @@ class WikilinkService:
             SELECT id, kb_name, entry_type, title FROM entry
             WHERE json_extract(metadata, '$.aliases') LIKE :alias_pattern
         """
-        params = {"alias_pattern": f"%{actual_target}%"}
+        params = {"alias_pattern": f"%{actual_target}%", **scope_params}
         if actual_kb:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = actual_kb
-        sql += " LIMIT 1"
+        sql += scope_sql + " LIMIT 1"
 
         rows = self.db.execute_sql(sql, params)
         return rows[0] if rows else None
 
-    def resolve_batch(self, targets: list[str], kb_name: str | None = None) -> dict[str, bool]:
+    def resolve_batch(
+        self,
+        targets: list[str],
+        kb_name: str | None = None,
+        readable_kbs: set[str] | None = None,
+    ) -> dict[str, bool]:
         """Batch-resolve wikilink targets. Supports kb:id format."""
         if not targets:
             return {}
@@ -109,7 +156,7 @@ class WikilinkService:
         for t in targets:
             if ":" in t and not t.startswith("http"):
                 # Resolve cross-KB targets individually
-                resolved = self.resolve_entry(t, kb_name)
+                resolved = self.resolve_entry(t, kb_name, readable_kbs=readable_kbs)
                 result[t] = resolved is not None
             else:
                 simple_targets.append(t)
@@ -121,6 +168,9 @@ class WikilinkService:
             if kb_name:
                 sql += " AND kb_name = :kb_name"
                 params["kb_name"] = kb_name
+            scope_sql, scope_params = _scope_clause("kb_name", readable_kbs)
+            sql += scope_sql
+            params.update(scope_params)
             rows = self.db.execute_sql(sql, params)
             existing_ids = {r["id"] for r in rows}
             for t in simple_targets:
@@ -129,17 +179,28 @@ class WikilinkService:
         return result
 
     def get_wanted_pages(
-        self, kb_name: str | None = None, limit: int = 100
+        self,
+        kb_name: str | None = None,
+        limit: int = 100,
+        readable_kbs: set[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Get link targets that don't exist as entries (wanted pages)."""
-        sql = """
+        """Get link targets that don't exist as entries (wanted pages).
+
+        Scoped: only links from readable sources count, and an entry the
+        caller cannot read does not count as existing -- a link into an
+        unreadable KB is wanted exactly as a link into a missing KB is. The
+        target's KB and id are the readable source's own text.
+        """
+        source_scope, source_params = _scope_clause("l.source_kb", readable_kbs, "src")
+        target_scope, target_params = _scope_clause("e.kb_name", readable_kbs, "tgt")
+        sql = f"""
             SELECT l.target_id, l.target_kb, COUNT(*) as ref_count,
                    GROUP_CONCAT(DISTINCT l.source_id) as referenced_by
             FROM link l
-            LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
-            WHERE e.id IS NULL
+            LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name{target_scope}
+            WHERE e.id IS NULL{source_scope}
         """
-        params: dict[str, Any] = {}
+        params: dict[str, Any] = {**source_params, **target_params}
         if kb_name:
             sql += " AND l.target_kb = :kb_name"
             params["kb_name"] = kb_name

@@ -206,7 +206,6 @@ def get_collection(
 @router.get(
     "/collections/{collection_id}/entries",
     response_model=CollectionEntriesResponse,
-    dependencies=[Depends(authorize(Action.KB_READ, KB))],
 )
 @limiter.limit("100/minute")
 def get_collection_entries(
@@ -218,8 +217,14 @@ def get_collection_entries(
     limit: int = Query(200, ge=1, le=500),
     offset: int = Query(0, ge=0),
     svc: KBService = Depends(get_kb_service),
+    scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
-    """List entries within a collection."""
+    """List entries within a collection.
+
+    A stored query can name a KB of its own (``kb:`` in its text); it is
+    evaluated within the viewer's readable set, so one the viewer cannot
+    read returns what a missing KB returns.
+    """
     try:
         results, total = svc.get_collection_entries(
             collection_id,
@@ -228,6 +233,7 @@ def get_collection_entries(
             sort_order=sort_order,
             limit=limit,
             offset=offset,
+            readable_kbs=scope.as_set(),
         )
     except EntryNotFoundError as e:
         raise HTTPException(
@@ -265,15 +271,11 @@ def preview_collection_query(
     """Preview results for a collection query without saving.
 
     A read route despite the POST: it runs an arbitrary query and returns
-    the matching entries. With no ``kb`` in the body the query spans every
-    KB, so the readable set is pushed into the evaluation -- ``total``
-    counts the matched rows and must not count private ones.
+    the matching entries. With no ``kb`` in the body or the query the query
+    spans every KB, so the readable set is pushed into the evaluation --
+    ``total`` counts the matched rows and must not count private ones.
     """
-    from ...services.collection_query import (
-        evaluate_query,
-        parse_query,
-        validate_query,
-    )
+    from ...services.collection_query import parse_query, validate_query
 
     query = parse_query(body.query)
     if body.kb:
@@ -287,9 +289,9 @@ def preview_collection_query(
             detail={"code": "INVALID_QUERY", "message": "; ".join(errors)},
         )
 
-    results, total = evaluate_query(
-        query, svc.db, kb_names=None if query.kb_name else scope.as_set()
-    )
+    # The query's own `kb:` is authorized against the same set as the body's
+    # `kb` was: an unreadable one answers like a missing one (P-R2, P-R5).
+    results, total = svc.evaluate_collection_query(query, readable_kbs=scope.as_set())
 
     entries = []
     for r in results:

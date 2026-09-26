@@ -177,9 +177,14 @@ class RepoService:
         """
         Sync repo(s): pull, detect changes, re-index changed files with attribution.
 
+        ``repo_name=None`` -- and only None -- syncs every repo (the CLI's
+        "all if omitted"). Any string, the empty one included, names one
+        repo: an empty name from a request path is an unknown repo, never a
+        request to sync all of them (P-R7).
+
         Returns dict with sync results.
         """
-        if repo_name:
+        if repo_name is not None:
             repos = [self.db.get_repo(name=repo_name)]
             repos = [r for r in repos if r]
         else:

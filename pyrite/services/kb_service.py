@@ -1524,8 +1524,14 @@ class KBService:
         sort_order: str = "asc",
         limit: int = 200,
         offset: int = 0,
+        readable_kbs: set[str] | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """Get entries belonging to a collection (folder-based or query-based).
+
+        ``readable_kbs`` is the *viewer's* readable set (None: unscoped). A
+        stored query is evaluated with it, not with its author's: a query
+        naming a KB the viewer may not read returns what a KB that does not
+        exist returns -- nothing.
 
         Returns:
             Tuple of (entries, total_count). Each entry's ``metadata`` field
@@ -1546,7 +1552,7 @@ class KBService:
         # Virtual collection (query-based)
         if source_type == "query":
             entries, total = self._get_query_collection_entries(
-                metadata, kb_name, sort_by, sort_order, limit, offset
+                metadata, kb_name, sort_by, sort_order, limit, offset, readable_kbs
             )
             return self._normalize_metadata_rows(entries), total
 
@@ -1572,8 +1578,9 @@ class KBService:
         sort_order: str,
         limit: int,
         offset: int,
+        readable_kbs: set[str] | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
-        """Evaluate a query-based virtual collection."""
+        """Evaluate a query-based virtual collection within ``readable_kbs``."""
         from .collection_query import (
             evaluate_query_cached,
             parse_query,
@@ -1600,7 +1607,19 @@ class KBService:
         if not query.kb_name:
             query.kb_name = kb_name
 
-        return evaluate_query_cached(query, self.db)
+        return evaluate_query_cached(query, self.db, readable_kbs=readable_kbs)
+
+    def evaluate_collection_query(
+        self, query: Any, readable_kbs: set[str] | None = None
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Evaluate a parsed collection query within the caller's readable set.
+
+        A KB the query names in its own text is authorized against the same
+        set (``collection_query.evaluate_query``); None is unscoped.
+        """
+        from .collection_query import evaluate_query
+
+        return evaluate_query(query, self.db, kb_names=readable_kbs)
 
     def count_entries(
         self,
@@ -1890,23 +1909,35 @@ class KBService:
         kb_name: str | None = None,
         query: str | None = None,
         limit: int = 500,
+        readable_kbs: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Lightweight listing of entry IDs and titles for wikilink autocomplete."""
-        return self.wikilinks.list_entry_titles(kb_name=kb_name, query=query, limit=limit)
+        return self.wikilinks.list_entry_titles(
+            kb_name=kb_name, query=query, limit=limit, readable_kbs=readable_kbs
+        )
 
-    def resolve_entry(self, target: str, kb_name: str | None = None) -> dict[str, Any] | None:
+    def resolve_entry(
+        self, target: str, kb_name: str | None = None, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any] | None:
         """Resolve a wikilink target to an entry. Supports kb:id format for cross-KB links."""
-        return self.wikilinks.resolve_entry(target, kb_name=kb_name)
+        return self.wikilinks.resolve_entry(target, kb_name=kb_name, readable_kbs=readable_kbs)
 
-    def resolve_batch(self, targets: list[str], kb_name: str | None = None) -> dict[str, bool]:
+    def resolve_batch(
+        self,
+        targets: list[str],
+        kb_name: str | None = None,
+        readable_kbs: set[str] | None = None,
+    ) -> dict[str, bool]:
         """Batch-resolve wikilink targets. Supports kb:id format."""
-        return self.wikilinks.resolve_batch(targets, kb_name=kb_name)
+        return self.wikilinks.resolve_batch(targets, kb_name=kb_name, readable_kbs=readable_kbs)
 
     def get_wanted_pages(
-        self, kb_name: str | None = None, limit: int = 100
+        self, kb_name: str | None = None, limit: int = 100, readable_kbs: set[str] | None = None
     ) -> list[dict[str, Any]]:
         """Get link targets that don't exist as entries (wanted pages)."""
-        return self.wikilinks.get_wanted_pages(kb_name=kb_name, limit=limit)
+        return self.wikilinks.get_wanted_pages(
+            kb_name=kb_name, limit=limit, readable_kbs=readable_kbs
+        )
 
     def check_links(
         self,
