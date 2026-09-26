@@ -392,7 +392,7 @@ class LinkDiscoveryService:
             links: dict[tuple[str, str], str] = {}
             for entry in entries:
                 source_id = entry["id"]
-                for outlink in self.db.get_outlinks(source_id, kb_a):
+                for outlink in self.db.get_outlinks(source_id, kb_a, readable_kbs=UNSCOPED):
                     target_id = outlink["id"]
                     if outlink.get("kb_name") == kb_a and target_id in entry_ids:
                         links[(source_id, target_id)] = outlink.get("relation", "related_to")

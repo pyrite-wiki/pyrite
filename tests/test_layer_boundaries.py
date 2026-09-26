@@ -231,7 +231,7 @@ ALLOWLIST: dict[tuple[str, str], tuple[int, str]] = {
         "sqlite3 integrity check; " + _FOLLOW,
     ),
 }
-ALLOWLIST_SIZE = 38  # lower it with every entry removed; never raise it
+ALLOWLIST_SIZE = 37  # lower it with every entry removed; never raise it
 
 SURFACES = (
     "pyrite/server/",
