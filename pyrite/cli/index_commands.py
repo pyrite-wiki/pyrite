@@ -5,7 +5,6 @@ Commands: build, sync, stats, embed, health
 """
 
 import logging
-import os
 
 import typer
 from rich.console import Console
@@ -568,16 +567,8 @@ def index_reconcile(
     kb_name: str = typer.Argument(..., help="KB to reconcile"),
     apply: bool = typer.Option(False, "--apply", help="Execute moves (default is dry-run)"),
 ):
-    """Move files to match their templated subdirectories.
-
-    Only types with a templated subdirectory are reconciled. Static subdirectories
-    preserve deliberate placement, and collection descriptors stay in their folders.
-    Filenames remain fixed at creation. By default this is a dry run; use --apply
-    to execute moves.
-    """
-    from ..storage.document_manager import DocumentManager
-    from ..storage.index import IndexManager
-    from ..storage.repository import KBRepository
+    """Move files to match their templated subdirectories."""
+    from ..services.kb_service import KBService
 
     config, db = get_config_and_db()
     kb_config = config.get_kb(kb_name)
@@ -585,38 +576,19 @@ def index_reconcile(
         cli_error(
             f"KB '{kb_name}' not found",
             error_code="KB_NOT_FOUND",
-            suggestion="run pyrite kb list to see available KBs",
+            suggestion="run `pyrite kb list` to see available KBs",
         )
 
-    repo = KBRepository(kb_config)
-    moves = []
-    planning_errors = []
+    result = KBService(config, db).reconcile_templated_subdirectories(kb_name, apply=apply)
+    for entry_id, error in result.errors:
+        console.print(f"[yellow]Could not reconcile {entry_id}:[/yellow] {error}")
 
-    for entry, current_path in repo.list_entries():
-        if current_path.name == "__collection.yaml":
-            continue
-        try:
-            if not DocumentManager._uses_templated_subdir(repo, entry):
-                continue
-            inferred_subdir = repo._infer_subdir(entry)
-            expected_dir = repo._get_file_path(entry.id, inferred_subdir).parent
-            expected_path = repo._contained(expected_dir / current_path.name)
-            if current_path.parent.resolve() != expected_dir.resolve():
-                moves.append((entry, current_path, expected_path))
-        except Exception as e:
-            # A bad template (for example one that resolves through an external
-            # symlink) must not prevent other entries from being reconciled.
-            planning_errors.append((entry.id, e))
-
-    for entry_id, error in planning_errors:
-        console.print(f"[yellow]Could not plan a move for {entry_id}:[/yellow] {error}")
-
-    if not moves:
-        if not planning_errors:
-            console.print("[green]All files match their templated subdirectories.[/green]")
+    if not result.moves:
+        if not result.errors:
+            console.print("[green]All templated subdirectories match.[/green]")
         else:
             console.print(
-                f"[yellow]No moves planned; {len(planning_errors)} entry path(s) could not be checked.[/yellow]"
+                f"[yellow]No moves planned; {len(result.errors)} entry path(s) could not be checked.[/yellow]"
             )
         return
 
@@ -624,7 +596,7 @@ def index_reconcile(
     table.add_column("Entry ID", style="cyan")
     table.add_column("Current Path")
     table.add_column("Target Path")
-    for entry, current, target in moves:
+    for entry_id, current, target in result.moves:
         try:
             current_rel = str(current.relative_to(kb_config.path))
         except ValueError:
@@ -633,50 +605,19 @@ def index_reconcile(
             target_rel = str(target.relative_to(kb_config.path))
         except ValueError:
             target_rel = str(target)
-        table.add_row(entry.id, current_rel, target_rel)
+        table.add_row(entry_id, current_rel, target_rel)
     console.print(table)
-    console.print(f"\nTotal: {len(moves)} file(s) to move")
+    console.print(f"\nTotal: {len(result.moves)} file(s) to move")
 
     if not apply:
         console.print("\n[yellow]Dry run. Use --apply to execute moves.[/yellow]")
         return
 
-    if kb_config.read_only:
+    if result.read_only:
         console.print("[red]Cannot move files in a read-only KB.[/red]")
         return
 
-    index_mgr = IndexManager(db, config)
-    moved = 0
-    for entry, current_path, target_path in moves:
-        try:
-            if target_path.exists():
-                raise FileExistsError(f"Target path already exists: {target_path}")
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            # Hard-link creation is atomic and fails if another process created
-            # the destination after the check above; it cannot overwrite it.
-            os.link(current_path, target_path)
-            try:
-                current_path.unlink()
-            except Exception:
-                target_path.unlink(missing_ok=True)
-                raise
-            try:
-                entry.file_path = target_path
-                index_mgr.index_entry(entry, kb_name, target_path)
-            except Exception:
-                try:
-                    os.link(target_path, current_path)
-                    target_path.unlink()
-                except OSError:
-                    logger.exception("Could not roll back reconcile move for %s", entry.id)
-                entry.file_path = current_path
-                raise
-            moved += 1
-        except Exception as e:
-            # Per-entry failure inside a batch: warn and continue, do NOT exit.
-            console.print(f"[red]Failed to move {entry.id}:[/red] {e}")
-
-    console.print(f"\n[green]Moved {moved} file(s).[/green]")
+    console.print(f"\n[green]Moved {result.moved} file(s).[/green]")
     console.print("The index was updated for successfully moved files.")
 
 

@@ -524,14 +524,14 @@ class TestIndexReconcile:
                 return_value=(reconcile_env["config"], reconcile_env["db"]),
             ),
             patch(
-                "pyrite.cli.index_commands.os.link",
+                "pyrite.services.kb_service.os.link",
                 side_effect=create_destination_after_precheck,
             ),
         ):
             result = runner.invoke(app, ["index", "reconcile", "project", "--apply"])
 
         assert result.exit_code == 0, result.output
-        assert "Failed to move my-task" in result.output
+        assert "Could not reconcile my-task" in result.output
         assert source.exists()
         assert destination.read_text(encoding="utf-8") == "created by concurrent writer"
 

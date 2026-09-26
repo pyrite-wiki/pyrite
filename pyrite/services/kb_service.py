@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -101,6 +102,16 @@ class WriteResult:
 
     entry: Entry
     warnings: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class ReconcileResult:
+    """Planned directory moves and per-entry findings from index reconciliation."""
+
+    moves: list[tuple[str, Path, Path]] = field(default_factory=list)
+    errors: list[tuple[str, str]] = field(default_factory=list)
+    moved: int = 0
+    read_only: bool = False
 
 
 def _safe_message(exc: Exception) -> str:
@@ -2140,6 +2151,77 @@ class KBService:
     # =========================================================================
     # Index Operations
     # =========================================================================
+
+    def reconcile_templated_subdirectories(
+        self, kb_name: str, *, apply: bool = False
+    ) -> ReconcileResult:
+        """Reconcile misplaced files whose type uses a templated subdirectory.
+
+        Static subdirectories preserve deliberate placement, collection YAML files
+        describe their containing folders, and filenames remain fixed at creation.
+        """
+        kb_config = self.config.get_kb(kb_name)
+        if kb_config is None:
+            raise KBNotFoundError(f"KB not found: {kb_name}")
+
+        repo = KBRepository(kb_config)
+        planned: list[tuple[Entry, Path, Path]] = []
+        result = ReconcileResult()
+
+        for entry, current_path in repo.list_entries():
+            if current_path.name == "__collection.yaml":
+                continue
+            try:
+                if not DocumentManager._uses_templated_subdir(repo, entry):
+                    continue
+                inferred_subdir = repo._infer_subdir(entry)
+                expected_dir = repo._get_file_path(entry.id, inferred_subdir).parent
+                target_path = repo._contained(expected_dir / current_path.name)
+                if current_path.parent.resolve() != expected_dir.resolve():
+                    planned.append((entry, current_path, target_path))
+            except Exception as exc:
+                # A bad template (such as a directory symlink outside the KB)
+                # should be reported without preventing other entries from running.
+                result.errors.append((entry.id, str(exc)))
+
+        result.moves = [
+            (entry.id, current_path, target_path) for entry, current_path, target_path in planned
+        ]
+        if not apply:
+            return result
+        if kb_config.read_only:
+            result.read_only = True
+            return result
+
+        for entry, current_path, target_path in planned:
+            try:
+                if target_path.exists():
+                    raise FileExistsError(f"Target path already exists: {target_path}")
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                # Hard-link creation is atomic and fails if another process created
+                # the destination after the check above; it cannot overwrite it.
+                os.link(current_path, target_path)
+                try:
+                    current_path.unlink()
+                except Exception:
+                    target_path.unlink(missing_ok=True)
+                    raise
+                try:
+                    entry.file_path = target_path
+                    self._index_mgr.index_entry(entry, kb_name, target_path)
+                except Exception:
+                    try:
+                        os.link(target_path, current_path)
+                        target_path.unlink()
+                    except OSError:
+                        logger.exception("Could not roll back reconcile move for %s", entry.id)
+                    entry.file_path = current_path
+                    raise
+                result.moved += 1
+            except Exception as exc:
+                result.errors.append((entry.id, str(exc)))
+
+        return result
 
     def sync_index(self, kb_name: str | None = None) -> dict[str, Any]:
         """

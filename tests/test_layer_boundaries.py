@@ -199,10 +199,6 @@ ALLOWLIST: dict[tuple[str, str], tuple[int, str]] = {
     ("pyrite/cli/index_commands.py::index_health", "storage"): (2, _INDEX),
     ("pyrite/cli/index_commands.py::index_embed", "storage"): (2, _INDEX + " (is_empty, #380)"),
     ("pyrite/cli/index_commands.py::index_embed", "db."): (1, "db.vec_available; " + _FOLLOW),
-    ("pyrite/cli/index_commands.py::index_reconcile", "storage"): (
-        6,
-        "IndexManager, DocumentManager, KBRepository; " + _FOLLOW,
-    ),
     ("pyrite/cli/init_command.py::init_kb", "storage"): (2, _INDEX),
     ("pyrite/cli/schema_commands.py::schema_migrate", "storage"): (2, "KBRepository; " + _FOLLOW),
     ("pyrite/cli/search_commands.py::<module>", "storage"): (1, "KBRepository; " + _FOLLOW),
@@ -231,7 +227,7 @@ ALLOWLIST: dict[tuple[str, str], tuple[int, str]] = {
         "sqlite3 integrity check; " + _FOLLOW,
     ),
 }
-ALLOWLIST_SIZE = 37  # lower it with every entry removed; never raise it
+ALLOWLIST_SIZE = 36  # lower it with every entry removed; never raise it
 
 SURFACES = (
     "pyrite/server/",
