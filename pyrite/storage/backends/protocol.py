@@ -202,13 +202,13 @@ class SearchBackend(Protocol):
         limit: int = 0,
         offset: int = 0,
         *,
-        readable_kbs: set[str] | None = None,
+        readable_kbs: set[str] | None,
     ) -> list[dict[str, Any]]:
         """Get entries that link TO this entry; sources outside ``readable_kbs`` dropped."""
         ...
 
     def get_outlinks(
-        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None = None
+        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None
     ) -> list[dict[str, Any]]:
         """Get entries this entry links TO; a target outside ``readable_kbs`` reads as missing."""
         ...
@@ -243,7 +243,7 @@ class SearchBackend(Protocol):
         depth: int = 2,
         limit: int = 500,
         *,
-        readable_kbs: set[str] | None = None,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any]:
         """Multi-hop BFS graph traversal returning {nodes, edges}, within ``readable_kbs``."""
         ...
@@ -253,7 +253,7 @@ class SearchBackend(Protocol):
         ...
 
     def get_orphans(
-        self, kb_name: str | None = None, *, readable_kbs: set[str] | None = None
+        self, kb_name: str | None = None, *, readable_kbs: set[str] | None
     ) -> list[dict[str, Any]]:
         """Get entries with no links (neither direction); inbound from ``readable_kbs`` only."""
         ...

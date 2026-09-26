@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from ...services.access_policy import KB, Action
+from ...services.access_policy import KB, UNSCOPED, Action
 from ...services.block_service import BlockService
 from ...services.kb_service import KBService
 from ..api import get_block_service, get_kb_service, limiter, negotiate_response
@@ -29,7 +29,8 @@ def get_entry_blocks(
     block_svc: BlockService = Depends(get_block_service),
 ):
     """Get blocks extracted from an entry."""
-    entry = svc.get_entry(entry_id, kb_name=kb)
+    # Named KB, authorized by the route; used as an existence check only.
+    entry = svc.get_entry(entry_id, kb_name=kb, readable_kbs=UNSCOPED)
     if not entry:
         raise HTTPException(
             status_code=404,

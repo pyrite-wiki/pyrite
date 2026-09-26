@@ -52,7 +52,8 @@ class WikilinkService:
         kb_name: str | None = None,
         query: str | None = None,
         limit: int = 500,
-        readable_kbs: set[str] | None = None,
+        *,
+        readable_kbs: set[str] | None,
     ) -> list[dict[str, Any]]:
         """Lightweight listing of entry IDs and titles for wikilink autocomplete."""
         sql = "SELECT id, kb_name, entry_type, title, json_extract(metadata, '$.aliases') as aliases FROM entry WHERE 1=1"
@@ -88,7 +89,8 @@ class WikilinkService:
         self,
         target: str,
         kb_name: str | None = None,
-        readable_kbs: set[str] | None = None,
+        *,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any] | None:
         """Resolve a wikilink target to an entry. Supports kb:id format for cross-KB links."""
         # Parse cross-KB format
@@ -144,7 +146,8 @@ class WikilinkService:
         self,
         targets: list[str],
         kb_name: str | None = None,
-        readable_kbs: set[str] | None = None,
+        *,
+        readable_kbs: set[str] | None,
     ) -> dict[str, bool]:
         """Batch-resolve wikilink targets. Supports kb:id format."""
         if not targets:
@@ -182,7 +185,8 @@ class WikilinkService:
         self,
         kb_name: str | None = None,
         limit: int = 100,
-        readable_kbs: set[str] | None = None,
+        *,
+        readable_kbs: set[str] | None,
     ) -> list[dict[str, Any]]:
         """Get link targets that don't exist as entries (wanted pages).
 

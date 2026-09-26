@@ -195,14 +195,15 @@ def validate_query(query: CollectionQuery) -> list[str]:
 def evaluate_query(
     query: CollectionQuery,
     db: PyriteDB,
-    kb_names: set[str] | list[str] | None = None,
+    *,
+    readable_kbs: set[str] | list[str] | None,
 ) -> tuple[list[dict], int]:
     """Evaluate query against DB. Returns (entries, total_count).
 
     Uses db.list_entries() for the base query, then applies additional
     filters (date_from, date_to, status, tags_all, fields) in Python.
 
-    ``kb_names`` is the caller's readable set (None: unscoped). It goes
+    ``readable_kbs`` is the caller's readable set (``UNSCOPED``: none). It goes
     into ``list_entries`` rather than into ``_post_filter`` because
     ``total_count`` is computed from the filtered rows: a private row
     dropped after the fact would still be counted.
@@ -212,7 +213,7 @@ def evaluate_query(
     KB would be: one outside it answers exactly as a KB that does not
     exist does -- no rows (P-R2, P-R5).
     """
-    if query.kb_name and kb_names is not None and query.kb_name not in kb_names:
+    if query.kb_name and readable_kbs is not None and query.kb_name not in readable_kbs:
         return [], 0
     # Use the first tag from tags_any for the DB-level filter (it only supports one)
     db_tag = query.tags_any[0] if query.tags_any and len(query.tags_any) == 1 else None
@@ -221,7 +222,7 @@ def evaluate_query(
     fetch_limit = query.limit + query.offset + 500  # over-fetch for post-filtering
     base_results = db.list_entries(
         kb_name=query.kb_name,
-        kb_names=None if query.kb_name else kb_names,
+        kb_names=None if query.kb_name else readable_kbs,
         entry_type=query.entry_type,
         tag=db_tag,
         sort_by=query.sort_by
@@ -308,7 +309,7 @@ _query_cache: dict[str, tuple[float, list[dict], int]] = {}
 CACHE_TTL = 60  # seconds
 
 
-def _cache_key(query: CollectionQuery, readable_kbs: set[str] | list[str] | None = None) -> str:
+def _cache_key(query: CollectionQuery, *, readable_kbs: set[str] | list[str] | None) -> str:
     """A stable cache key from the query fields and the caller's scope.
 
     The scope is part of the key: the same query evaluated for two scopes
@@ -325,10 +326,10 @@ def evaluate_query_cached(
     db: PyriteDB,
     ttl: int = CACHE_TTL,
     *,
-    readable_kbs: set[str] | list[str] | None = None,
+    readable_kbs: set[str] | list[str] | None,
 ) -> tuple[list[dict], int]:
     """Cached version of evaluate_query, keyed by query and scope."""
-    key = _cache_key(query, readable_kbs)
+    key = _cache_key(query, readable_kbs=readable_kbs)
     now = time.time()
 
     if key in _query_cache:
@@ -336,7 +337,7 @@ def evaluate_query_cached(
         if now - cached_time < ttl:
             return cached_entries, cached_total
 
-    entries, total = evaluate_query(query, db, kb_names=readable_kbs)
+    entries, total = evaluate_query(query, db, readable_kbs=readable_kbs)
     _query_cache[key] = (now, entries, total)
 
     # Prune expired entries periodically

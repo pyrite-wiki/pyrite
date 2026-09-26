@@ -18,6 +18,7 @@ from pyrite.services.rubric_checkers import (
     check_has_field,
 )
 from pyrite.storage.database import PyriteDB
+from pyrite.services.access_policy import UNSCOPED
 
 
 # =========================================================================
@@ -285,7 +286,7 @@ class TestMixedFormatRubricEvaluation:
         person_id = self._get_person_id(named_rubric_setup)
 
         # Person entry without role should get flagged by named checker
-        result = qa.validate_entry(person_id, "test-kb")
+        result = qa.validate_entry(person_id, "test-kb", readable_kbs=UNSCOPED)
         rubric_issues = [i for i in result["issues"] if i["rule"] == "rubric_violation"]
         role_issues = [i for i in rubric_issues if "role" in (i.get("field") or "")]
         assert len(role_issues) >= 1
@@ -296,7 +297,7 @@ class TestMixedFormatRubricEvaluation:
         person_id = self._get_person_id(named_rubric_setup)
 
         # "Entry body is non-empty" is now covered_by: schema in SYSTEM_INTENT
-        result = qa.validate_entry(person_id, "test-kb")
+        result = qa.validate_entry(person_id, "test-kb", readable_kbs=UNSCOPED)
         body_rubric = [
             i
             for i in result["issues"]
@@ -319,7 +320,7 @@ class TestMixedFormatRubricEvaluation:
 
         qa._get_rubric_items = patched
 
-        result = qa.validate_entry(person_id, "test-kb")
+        result = qa.validate_entry(person_id, "test-kb", readable_kbs=UNSCOPED)
         config_errors = [i for i in result["issues"] if i["rule"] == "config_error"]
         assert len(config_errors) >= 1
         assert "nonexistent_checker" in config_errors[0]["message"]
@@ -381,7 +382,7 @@ class TestMixedFormatRubricEvaluation:
         )
         db._raw_conn.commit()
 
-        result = qa.validate_entry("generic-title", "test-kb")
+        result = qa.validate_entry("generic-title", "test-kb", readable_kbs=UNSCOPED)
         title_issues = [
             i
             for i in result["issues"]

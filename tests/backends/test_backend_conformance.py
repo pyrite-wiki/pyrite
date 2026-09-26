@@ -8,6 +8,7 @@ Every test here runs against every registered backend via the parametrized
 from typing import Any
 
 import pytest
+from pyrite.services.access_policy import UNSCOPED
 
 
 # ---------------------------------------------------------------------------
@@ -304,24 +305,24 @@ class TestGraph:
 
     def test_get_backlinks(self, backend):
         self._setup_linked_entries(backend)
-        backlinks = backend.get_backlinks("b", "test")
+        backlinks = backend.get_backlinks("b", "test", readable_kbs=UNSCOPED)
         assert len(backlinks) == 1
         assert backlinks[0]["id"] == "a"
 
     def test_get_backlinks_empty(self, backend):
         self._setup_linked_entries(backend)
-        backlinks = backend.get_backlinks("a", "test")
+        backlinks = backend.get_backlinks("a", "test", readable_kbs=UNSCOPED)
         assert len(backlinks) == 0
 
     def test_get_outlinks(self, backend):
         self._setup_linked_entries(backend)
-        outlinks = backend.get_outlinks("a", "test")
+        outlinks = backend.get_outlinks("a", "test", readable_kbs=UNSCOPED)
         assert len(outlinks) == 1
         assert outlinks[0]["id"] == "b"
 
     def test_get_outlinks_empty(self, backend):
         self._setup_linked_entries(backend)
-        outlinks = backend.get_outlinks("c", "test")
+        outlinks = backend.get_outlinks("c", "test", readable_kbs=UNSCOPED)
         assert len(outlinks) == 0
 
     def test_get_backlinks_with_limit(self, backend):
@@ -337,12 +338,12 @@ class TestGraph:
                 )
             )
         backend.upsert_entry(_make_entry("target", title="Target"))
-        backlinks = backend.get_backlinks("target", "test", limit=2)
+        backlinks = backend.get_backlinks("target", "test", limit=2, readable_kbs=UNSCOPED)
         assert len(backlinks) == 2
 
     def test_get_graph_data_centered(self, backend):
         self._setup_linked_entries(backend)
-        graph = backend.get_graph_data(center="b", center_kb="test", depth=1)
+        graph = backend.get_graph_data(center="b", center_kb="test", depth=1, readable_kbs=UNSCOPED)
         assert "nodes" in graph
         assert "edges" in graph
         node_ids = {n["id"] for n in graph["nodes"]}
@@ -353,7 +354,7 @@ class TestGraph:
 
     def test_get_graph_data_no_center(self, backend):
         self._setup_linked_entries(backend)
-        graph = backend.get_graph_data()
+        graph = backend.get_graph_data(readable_kbs=UNSCOPED)
         assert len(graph["nodes"]) >= 2
         assert len(graph["edges"]) >= 1
 
@@ -363,16 +364,16 @@ class TestGraph:
         self._setup_linked_entries(backend)  # a->b->c all in 'test'
 
         # Filter to 'test' — should get a, b, c (all linked)
-        graph = backend.get_graph_data(kb_name="test")
+        graph = backend.get_graph_data(kb_name="test", readable_kbs=UNSCOPED)
         node_kbs = {n["kb_name"] for n in graph["nodes"]}
         assert node_kbs == {"test"}, f"Expected only test nodes, got {node_kbs}"
 
         # Filter to nonexistent KB — should get nothing
-        graph2 = backend.get_graph_data(kb_name="nonexistent")
+        graph2 = backend.get_graph_data(kb_name="nonexistent", readable_kbs=UNSCOPED)
         assert len(graph2["nodes"]) == 0
 
         # Without filter — should get all linked entries
-        graph3 = backend.get_graph_data()
+        graph3 = backend.get_graph_data(readable_kbs=UNSCOPED)
         assert len(graph3["nodes"]) >= 2
 
     def test_get_most_linked(self, backend):
@@ -392,7 +393,7 @@ class TestGraph:
             )
         )
         backend.upsert_entry(_make_entry("other"))
-        orphans = backend.get_orphans(kb_name="test")
+        orphans = backend.get_orphans(kb_name="test", readable_kbs=UNSCOPED)
         orphan_ids = {o["id"] for o in orphans}
         assert "orphan" in orphan_ids
         assert "linked" not in orphan_ids

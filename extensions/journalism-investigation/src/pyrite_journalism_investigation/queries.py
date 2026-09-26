@@ -126,7 +126,8 @@ def query_network(
     entry_id: str,
     limit: int = 50,
     offset: int = 0,
-    readable_kbs: set[str] | None = None,
+    *,
+    readable_kbs: set[str] | None,
 ) -> dict[str, Any]:
     """Get connection network for an entity, paged in both directions.
 

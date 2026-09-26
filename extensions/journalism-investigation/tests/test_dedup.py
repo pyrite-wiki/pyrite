@@ -7,6 +7,7 @@ from pyrite_journalism_investigation.dedup import (
     merge_entity_view,
 )
 
+from pyrite.services.access_policy import UNSCOPED
 from pyrite.storage.database import PyriteDB
 
 
@@ -281,7 +282,7 @@ class TestCreateSameAsLinks:
         assert link["to_kb"] == "kb2"
 
         # Verify the link actually exists in the DB
-        outlinks = multi_kb_db.get_outlinks("person-a", "kb1")
+        outlinks = multi_kb_db.get_outlinks("person-a", "kb1", readable_kbs=UNSCOPED)
         same_as_links = [l for l in outlinks if l["relation"] == "same_as"]
         assert len(same_as_links) == 1
         assert same_as_links[0]["id"] == "person-b"
@@ -316,7 +317,7 @@ class TestCreateSameAsLinks:
         assert len(result["links"]) == 1
 
         # Verify NO link was actually created
-        outlinks = multi_kb_db.get_outlinks("org-a", "kb1")
+        outlinks = multi_kb_db.get_outlinks("org-a", "kb1", readable_kbs=UNSCOPED)
         same_as_links = [l for l in outlinks if l["relation"] == "same_as"]
         assert len(same_as_links) == 0
 

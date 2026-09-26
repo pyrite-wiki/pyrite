@@ -633,7 +633,7 @@ class BaseBackend(ABC):
         limit: int = 0,
         offset: int = 0,
         *,
-        readable_kbs: set[str] | None = None,
+        readable_kbs: set[str] | None,
     ) -> list[dict[str, Any]]:
         """Entries linking TO this one.
 
@@ -659,7 +659,7 @@ class BaseBackend(ABC):
         return self._exec(sql, params)
 
     def get_outlinks(
-        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None = None
+        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None
     ) -> list[dict[str, Any]]:
         """Entries this one links TO.
 
@@ -749,7 +749,7 @@ class BaseBackend(ABC):
         depth: int = 2,
         limit: int = 500,
         *,
-        readable_kbs: set[str] | None = None,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any]:
         """Nodes and edges around ``center``, or across the index without one.
 
@@ -943,7 +943,7 @@ class BaseBackend(ABC):
         return self._exec(sql, params)
 
     def get_orphans(
-        self, kb_name: str | None = None, *, readable_kbs: set[str] | None = None
+        self, kb_name: str | None = None, *, readable_kbs: set[str] | None
     ) -> list[dict[str, Any]]:
         """Entries with no links in either direction.
 

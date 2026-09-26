@@ -336,6 +336,18 @@ class PolicyDeniedError(Exception):
         self.code = decision.code
 
 
+#: What an unscoped caller passes as ``readable_kbs`` -- the value
+#: ``ReadScope.as_set()`` returns for an unscoped scope. The read methods
+#: that span KBs (link, lookup, graph, QA, wikilink, collection-query and
+#: task-resolution methods in the services and storage) take ``readable_kbs``
+#: as a *required* keyword with no default, so forgetting it is a
+#: ``TypeError``, never "see everything"; a caller with no scope to apply
+#: (the CLI, an admin or operator path, a lookup inside one already-named KB)
+#: writes ``readable_kbs=UNSCOPED`` and says so. It is the one scope value,
+#: spelled so the choice is visible at the call site -- not a second type.
+UNSCOPED: None = None
+
+
 @dataclass(frozen=True, init=False)
 class ReadScope:
     """The KBs a principal may reach: a set, or unscoped.

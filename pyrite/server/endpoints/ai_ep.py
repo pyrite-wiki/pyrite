@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from ...config import PyriteConfig
 from ...exceptions import QuerySyntaxError
-from ...services.access_policy import KB, Action, ReadScope
+from ...services.access_policy import KB, UNSCOPED, Action, ReadScope
 from ...services.auth_service import AuthService
 from ...services.kb_service import KBService
 from ...services.link_discovery_service import LinkDiscoveryService
@@ -85,7 +85,8 @@ def _require_configured(llm: LLMService) -> None:
 
 def _get_entry(svc: KBService, entry_id: str, kb_name: str) -> dict:
     """Fetch an entry or raise 404."""
-    entry = svc.get_entry(entry_id, kb_name=kb_name)
+    # Named KB, authorized by the route; only body, title and tags are used.
+    entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
     if not entry:
         raise HTTPException(
             status_code=404,
@@ -420,7 +421,7 @@ async def ai_chat(
                 }
             )
             # Fetch full entry for richer context
-            full = svc.get_entry(r["id"], kb_name=r.get("kb_name"))
+            full = svc.get_entry(r["id"], kb_name=r.get("kb_name"), readable_kbs=scope.as_set())
             if full:
                 body_preview = (full.get("body") or "")[:500]
                 context_text += f"\n---\n[[{r['id']}]] {r.get('title', '')}\n{body_preview}\n"
@@ -429,7 +430,7 @@ async def ai_chat(
 
     # If chatting about a specific entry, include it
     if req.entry_id and req.kb:
-        entry = svc.get_entry(req.entry_id, kb_name=req.kb)
+        entry = svc.get_entry(req.entry_id, kb_name=req.kb, readable_kbs=scope.as_set())
         if entry:
             entry_body = (entry.get("body") or "")[:1500]
             context_text = (

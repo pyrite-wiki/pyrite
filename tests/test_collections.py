@@ -9,6 +9,7 @@ from pyrite.models.collection import CollectionEntry
 from pyrite.models.core_types import ENTRY_TYPE_REGISTRY, get_entry_class
 from pyrite.models.factory import build_entry
 from pyrite.schema import CORE_TYPES
+from pyrite.services.access_policy import UNSCOPED
 
 
 # =============================================================================
@@ -263,7 +264,9 @@ class TestCollectionService:
 
     def test_get_collection_entries(self, svc_env):
         svc, _ = svc_env
-        entries, total = svc.get_collection_entries("collection-notes", "test-kb")
+        entries, total = svc.get_collection_entries(
+            "collection-notes", "test-kb", readable_kbs=UNSCOPED
+        )
         assert total == 3
         assert len(entries) == 3
 
@@ -277,7 +280,9 @@ class TestCollectionService:
         bug-collection-entries-endpoint-metadata-string-pydantic-rejection.
         """
         svc, _ = svc_env
-        entries, _ = svc.get_collection_entries("collection-notes", "test-kb")
+        entries, _ = svc.get_collection_entries(
+            "collection-notes", "test-kb", readable_kbs=UNSCOPED
+        )
         assert entries, "fixture must return entries for this test to be meaningful"
         for r in entries:
             assert isinstance(r.get("metadata"), dict), (
@@ -290,7 +295,7 @@ class TestCollectionService:
 
         svc, _ = svc_env
         with pytest.raises(EntryNotFoundError):
-            svc.get_collection_entries("collection-nonexistent", "test-kb")
+            svc.get_collection_entries("collection-nonexistent", "test-kb", readable_kbs=UNSCOPED)
 
 
 class TestCollectionAPI:

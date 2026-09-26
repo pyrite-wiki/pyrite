@@ -850,9 +850,13 @@ class PyriteMCPServer:
     ) -> dict[str, Any]:
         """Get QA status dashboard with coverage stats."""
         qa = self.qa_svc
+        # Counts over the readable set too: a private target counts as broken
+        # and a private linker does not keep an entry from being an orphan,
+        # exactly as kb_qa_validate reports them (P-R4, P-R5).
         status = qa.get_status(
             kb_name=args.get("kb_name"),
             kb_names=None if args.get("kb_name") else readable_kbs,
+            readable_kbs=readable_kbs,
         )
 
         # Add coverage stats if a specific KB is requested
@@ -1065,7 +1069,8 @@ class PyriteMCPServer:
         entry_id: str,
         kb_name: str,
         args: dict,
-        readable_kbs: set[str] | None = None,
+        *,
+        readable_kbs: set[str] | None,
     ) -> list[dict] | None:
         """Run post-save QA validation if requested or KB has qa_on_write.
 
@@ -1243,7 +1248,7 @@ class PyriteMCPServer:
         }
         if written.warnings:
             result["warnings"] = written.warnings
-        qa_issues = self._maybe_validate(entry.id, kb_name, args, readable_kbs)
+        qa_issues = self._maybe_validate(entry.id, kb_name, args, readable_kbs=readable_kbs)
         if qa_issues:
             result["qa_issues"] = qa_issues
         return result
@@ -1319,7 +1324,7 @@ class PyriteMCPServer:
         }
         if written.warnings:
             result["warnings"] = written.warnings
-        qa_issues = self._maybe_validate(entry.id, kb_name, args, readable_kbs)
+        qa_issues = self._maybe_validate(entry.id, kb_name, args, readable_kbs=readable_kbs)
         if qa_issues:
             result["qa_issues"] = qa_issues
         return result
@@ -1401,21 +1406,21 @@ class PyriteMCPServer:
         return {"count": len(tasks), "tasks": tasks}
 
     def _resolve_task_kb(
-        self, task_id: str, kb_name: str | None, readable_kbs: set[str] | None = None
+        self, task_id: str, kb_name: str | None, *, readable_kbs: set[str] | None
     ) -> tuple[str, dict[str, Any] | None]:
         """Resolve the KB a task lives in. Returns (kb_name, error).
 
         The task-graph service methods need a concrete kb_name, but the tool
         schemas make it optional, so look the task up when it is omitted.
 
-        That lookup spans every KB, so it is the shared chokepoint for the
-        four task-graph tools: a task resolved into a KB the caller may not
-        read is reported as a plain task miss, identical to a task id that
-        does not exist. Naming the KB would reveal where the task lives.
+        That lookup spans the KBs, so it is the shared chokepoint for the
+        four task-graph tools, and it is made within the caller's readable
+        set: a task in a KB the caller may not read is a plain task miss,
+        identical to a task id that does not exist, and never hides a
+        readable task with the same id (P-R5). Naming the KB would reveal
+        where the task lives.
         """
-        task = self.task_svc.get_task(task_id, kb_name)
-        if task and readable_kbs is not None and task.get("kb_name") not in readable_kbs:
-            task = None
+        task = self.task_svc.get_task(task_id, kb_name, readable_kbs=readable_kbs)
         if not task:
             return "", _error("NOT_FOUND", f"Task '{task_id}' not found")
         return kb_name or task.get("kb_name", ""), None
@@ -1427,7 +1432,9 @@ class PyriteMCPServer:
         task_id = args.get("task_id")
         if not task_id:
             return _error("MISSING_PARAMETER", "task_id is required")
-        kb_name, err = self._resolve_task_kb(task_id, args.get("kb_name"), readable_kbs)
+        kb_name, err = self._resolve_task_kb(
+            task_id, args.get("kb_name"), readable_kbs=readable_kbs
+        )
         if err:
             return err
         result = self.task_svc.get_subtree(task_id, kb_name)
@@ -1440,7 +1447,9 @@ class PyriteMCPServer:
         task_id = args.get("task_id")
         if not task_id:
             return _error("MISSING_PARAMETER", "task_id is required")
-        kb_name, err = self._resolve_task_kb(task_id, args.get("kb_name"), readable_kbs)
+        kb_name, err = self._resolve_task_kb(
+            task_id, args.get("kb_name"), readable_kbs=readable_kbs
+        )
         if err:
             return err
         result = self.task_svc.get_ancestors(task_id, kb_name)
@@ -1453,7 +1462,9 @@ class PyriteMCPServer:
         task_id = args.get("task_id")
         if not task_id:
             return _error("MISSING_PARAMETER", "task_id is required")
-        kb_name, err = self._resolve_task_kb(task_id, args.get("kb_name"), readable_kbs)
+        kb_name, err = self._resolve_task_kb(
+            task_id, args.get("kb_name"), readable_kbs=readable_kbs
+        )
         if err:
             return err
         result = self.task_svc.get_blocked_by(task_id, kb_name)
@@ -1466,7 +1477,9 @@ class PyriteMCPServer:
         task_id = args.get("task_id")
         if not task_id:
             return _error("MISSING_PARAMETER", "task_id is required")
-        kb_name, err = self._resolve_task_kb(task_id, args.get("kb_name"), readable_kbs)
+        kb_name, err = self._resolve_task_kb(
+            task_id, args.get("kb_name"), readable_kbs=readable_kbs
+        )
         if err:
             return err
         result = self.task_svc.critical_path(task_id, kb_name)
@@ -1481,9 +1494,7 @@ class PyriteMCPServer:
         task_id = args.get("task_id")
         kb_name = args.get("kb_name")
 
-        task = self.task_svc.get_task(task_id, kb_name)
-        if task and readable_kbs is not None and task.get("kb_name") not in readable_kbs:
-            task = None
+        task = self.task_svc.get_task(task_id, kb_name, readable_kbs=readable_kbs)
         if not task:
             return _error("NOT_FOUND", f"Task '{task_id}' not found")
 
@@ -1964,7 +1975,7 @@ class PyriteMCPServer:
         }
 
     def _prompt_summarize_entry(
-        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None
     ) -> dict[str, Any]:
         """Fetch an entry and generate a summary prompt."""
         entry_id = args.get("entry_id", "")
@@ -2003,7 +2014,7 @@ class PyriteMCPServer:
         }
 
     def _prompt_find_connections(
-        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None
     ) -> dict[str, Any]:
         """Fetch two entries and generate a connections analysis prompt."""
         entry_a_id = args.get("entry_a", "")
@@ -2044,7 +2055,7 @@ class PyriteMCPServer:
         }
 
     def _prompt_daily_briefing(
-        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None
     ) -> dict[str, Any]:
         """Generate a briefing prompt from recent timeline events."""
         from datetime import datetime, timedelta

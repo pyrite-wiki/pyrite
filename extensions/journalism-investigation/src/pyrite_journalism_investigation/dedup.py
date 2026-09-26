@@ -9,6 +9,8 @@ from __future__ import annotations
 from difflib import SequenceMatcher
 from typing import Any
 
+from pyrite.services.access_policy import UNSCOPED
+
 from .utils import parse_meta
 
 # Default entity types to scan for duplicates
@@ -237,7 +239,7 @@ def create_same_as_links(
         dup_kb = dup["kb_name"]
 
         # Check if link already exists
-        existing_outlinks = db.get_outlinks(canonical_id, canonical_kb)
+        existing_outlinks = db.get_outlinks(canonical_id, canonical_kb, readable_kbs=UNSCOPED)
         already_linked = any(
             l["id"] == dup_id and l.get("kb_name", "") == dup_kb and l["relation"] == "same_as"
             for l in existing_outlinks
@@ -331,7 +333,7 @@ def merge_entity_view(db, entity_id: str, kb_name: str) -> dict:
         all_entries.append(e)
 
         # Follow same_as outlinks
-        outlinks = db.get_outlinks(eid, ekb)
+        outlinks = db.get_outlinks(eid, ekb, readable_kbs=UNSCOPED)
         for link in outlinks:
             if link.get("relation") == "same_as":
                 target = (link["id"], link.get("kb_name", ekb))
@@ -339,7 +341,7 @@ def merge_entity_view(db, entity_id: str, kb_name: str) -> dict:
                     queue.append(target)
 
         # Follow same_as backlinks
-        backlinks = db.get_backlinks(eid, ekb)
+        backlinks = db.get_backlinks(eid, ekb, readable_kbs=UNSCOPED)
         for bl in backlinks:
             if bl.get("relation") == "same_as":
                 target = (bl["id"], bl.get("kb_name", ekb))

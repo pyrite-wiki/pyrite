@@ -16,6 +16,7 @@ from .cli.context import open_index_db
 from .cli.search_commands import register_search_command
 from .config import CONFIG_FILE, load_config
 from .exceptions import PyriteError
+from .services.access_policy import UNSCOPED
 from .services.kb_service import KBService
 
 app = typer.Typer(
@@ -76,7 +77,7 @@ def get_entry(
     """Get a specific entry by ID."""
     svc, db = _get_svc()
     try:
-        result = svc.get_entry(entry_id, kb_name=kb_name)
+        result = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
 
         if not result:
             _emit_error(f"Entry '{entry_id}' not found", output_format, error_code="NOT_FOUND")
@@ -288,7 +289,7 @@ def backlinks_cmd(
         from .services.graph_service import GraphService
 
         graph_svc = GraphService(db)
-        links = graph_svc.get_backlinks(entry_id, kb_name)
+        links = graph_svc.get_backlinks(entry_id, kb_name, readable_kbs=UNSCOPED)
 
         if not links:
             console.print(f"[yellow]No backlinks found for '{entry_id}'.[/yellow]")

@@ -35,6 +35,7 @@ import pytest
 from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
+from pyrite.services.access_policy import UNSCOPED
 
 
 def _config(tmp_path, **settings):
@@ -407,7 +408,7 @@ class TestAWriteNeverQueuesIntoADatabaseThatCannotSeeIt:
         entry = svc.create_entry("t", "kestrel", "Kestrel", "note", "falcons")
 
         assert entry.id == "kestrel"
-        assert svc.get_entry("kestrel", "t") is not None, (
+        assert svc.get_entry("kestrel", "t", readable_kbs=UNSCOPED) is not None, (
             "the write was refused a queue row and lost the entry with it"
         )
 

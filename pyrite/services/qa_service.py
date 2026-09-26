@@ -78,7 +78,7 @@ class QAService:
     # =========================================================================
 
     def validate_entry(
-        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None = None
+        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None
     ) -> dict[str, Any]:
         """Validate a single entry. Returns {entry_id, kb_name, issues: [...]}.
 
@@ -112,7 +112,7 @@ class QAService:
 
         entry = rows[0]
         self._check_entry_fields(entry, issues)
-        self._check_entry_links(entry_id, kb_name, issues, readable_kbs)
+        self._check_entry_links(entry_id, kb_name, issues, readable_kbs=readable_kbs)
         self._check_schema_validation(entry, issues)
         self._check_rubric_evaluation(entry, issues)
 
@@ -124,7 +124,7 @@ class QAService:
         check_staleness: bool = False,
         staleness_days: int = 90,
         *,
-        readable_kbs: set[str] | None = None,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any]:
         """Validate all entries in a KB. Returns {kb_name, total, checked, issues: [...]}.
 
@@ -146,8 +146,8 @@ class QAService:
         self._check_events_missing_dates(issues, kb_name)
         self._check_invalid_dates(issues, kb_name)
         self._check_importance_range(issues, kb_name)
-        self._check_broken_links(issues, kb_name, readable_kbs)
-        self._check_orphans(issues, kb_name, readable_kbs)
+        self._check_broken_links(issues, kb_name, readable_kbs=readable_kbs)
+        self._check_orphans(issues, kb_name, readable_kbs=readable_kbs)
 
         # Per-entry schema pass (only if kb.yaml exists)
         self._check_schema_all(issues, kb_name)
@@ -170,7 +170,7 @@ class QAService:
         self,
         kb_names: set[str] | list[str] | None = None,
         *,
-        readable_kbs: set[str] | None = None,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any]:
         """Validate all KBs. Returns {kbs: [{kb_name, total, checked, issues}]}.
 
@@ -193,7 +193,7 @@ class QAService:
         kb_name: str | None = None,
         kb_names: set[str] | list[str] | None = None,
         *,
-        readable_kbs: set[str] | None = None,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any]:
         """Get QA status dashboard; ``readable_kbs`` bounds the link checks."""
         if kb_name:
@@ -245,7 +245,7 @@ class QAService:
         tier: int = 1,
         create_task_on_fail: bool = False,
         *,
-        readable_kbs: set[str] | None = None,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any]:
         """Assess a single entry and create a qa_assessment entry.
 
@@ -319,7 +319,7 @@ class QAService:
         max_age_hours: int = 24,
         create_task_on_fail: bool = False,
         *,
-        readable_kbs: set[str] | None = None,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any]:
         """Assess all entries in a KB (skipping qa_assessment entries and recently assessed).
 
@@ -650,7 +650,8 @@ class QAService:
         self,
         issues: list[dict[str, Any]],
         kb_name: str | None = None,
-        readable_kbs: set[str] | None = None,
+        *,
+        readable_kbs: set[str] | None,
     ) -> None:
         # A target the caller cannot read joins to nothing, so it is
         # reported exactly as a missing one (P-R5).
@@ -690,7 +691,8 @@ class QAService:
         self,
         issues: list[dict[str, Any]],
         kb_name: str | None = None,
-        readable_kbs: set[str] | None = None,
+        *,
+        readable_kbs: set[str] | None,
     ) -> None:
         orphans = self.db.get_orphans(kb_name=kb_name, readable_kbs=readable_kbs)
         for entry in orphans:
@@ -787,7 +789,8 @@ class QAService:
         entry_id: str,
         kb_name: str,
         issues: list[dict[str, Any]],
-        readable_kbs: set[str] | None = None,
+        *,
+        readable_kbs: set[str] | None,
     ) -> None:
         """Check links from a single entry for broken targets.
 

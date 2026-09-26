@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 from pyrite.services.kb_service import KBService
 from pyrite.services.search_service import SearchService
+from pyrite.services.access_policy import UNSCOPED
 
 
 class TestSearchServiceRemovedMethods:
@@ -67,9 +68,9 @@ class TestKBServiceGetOrphans:
         svc = KBService.__new__(KBService)
         svc.db = db
 
-        result = svc.get_orphans("my-kb")
+        result = svc.get_orphans("my-kb", readable_kbs=UNSCOPED)
 
-        db.get_orphans.assert_called_once_with("my-kb")
+        db.get_orphans.assert_called_once_with("my-kb", readable_kbs=UNSCOPED)
         assert result == [{"id": "orphan1"}]
 
     def test_get_orphans_no_kb(self):
@@ -78,7 +79,7 @@ class TestKBServiceGetOrphans:
         svc = KBService.__new__(KBService)
         svc.db = db
 
-        result = svc.get_orphans()
+        result = svc.get_orphans(readable_kbs=UNSCOPED)
 
-        db.get_orphans.assert_called_once_with(None)
+        db.get_orphans.assert_called_once_with(None, readable_kbs=UNSCOPED)
         assert result == []

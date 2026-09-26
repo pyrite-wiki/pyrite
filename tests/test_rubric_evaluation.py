@@ -21,6 +21,7 @@ from pyrite.services.rubric_checkers import (
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
 from pyrite.storage.repository import KBRepository
+from pyrite.services.access_policy import UNSCOPED
 
 
 # =========================================================================
@@ -251,7 +252,9 @@ class TestRubricEvaluation:
         )
         db._raw_conn.commit()
 
-        result = rubric_setup["qa"].validate_entry("no-tags-entry", "test-kb")
+        result = rubric_setup["qa"].validate_entry(
+            "no-tags-entry", "test-kb", readable_kbs=UNSCOPED
+        )
         rubric_issues = [i for i in result["issues"] if i["rule"] == "rubric_violation"]
         tag_issues = [i for i in rubric_issues if i.get("field") == "tags"]
         assert len(tag_issues) >= 1
@@ -265,7 +268,9 @@ class TestRubricEvaluation:
         )
         db._raw_conn.commit()
 
-        result = rubric_setup["qa"].validate_entry("generic-title", "test-kb")
+        result = rubric_setup["qa"].validate_entry(
+            "generic-title", "test-kb", readable_kbs=UNSCOPED
+        )
         rubric_issues = [i for i in result["issues"] if i["rule"] == "rubric_violation"]
         title_issues = [i for i in rubric_issues if i.get("field") == "title"]
         assert len(title_issues) >= 1
@@ -281,7 +286,9 @@ class TestRubricEvaluation:
         )
         db._raw_conn.commit()
 
-        result = rubric_setup["qa"].validate_entry("no-role-person", "test-kb")
+        result = rubric_setup["qa"].validate_entry(
+            "no-role-person", "test-kb", readable_kbs=UNSCOPED
+        )
         rubric_issues = [i for i in result["issues"] if i["rule"] == "rubric_violation"]
         role_issues = [i for i in rubric_issues if "role" in (i.get("field") or "")]
         assert len(role_issues) >= 1
@@ -296,7 +303,9 @@ class TestRubricEvaluation:
         )
         db._raw_conn.commit()
 
-        result = rubric_setup["qa"].validate_entry("no-source-doc", "test-kb")
+        result = rubric_setup["qa"].validate_entry(
+            "no-source-doc", "test-kb", readable_kbs=UNSCOPED
+        )
         rubric_issues = [i for i in result["issues"] if i["rule"] == "rubric_violation"]
         source_issues = [
             i
@@ -315,7 +324,9 @@ class TestRubricEvaluation:
         )
         db._raw_conn.commit()
 
-        result = rubric_setup["qa"].validate_entry("empty-body-test", "test-kb")
+        result = rubric_setup["qa"].validate_entry(
+            "empty-body-test", "test-kb", readable_kbs=UNSCOPED
+        )
         # Should have empty_body rule
         body_rules = [i for i in result["issues"] if i["rule"] == "empty_body"]
         assert len(body_rules) >= 1
@@ -346,7 +357,7 @@ class TestRubricBulk:
         )
         db._raw_conn.commit()
 
-        result = rubric_setup["qa"].validate_kb("test-kb")
+        result = rubric_setup["qa"].validate_kb("test-kb", readable_kbs=UNSCOPED)
         rubric_issues = [i for i in result["issues"] if i["rule"] == "rubric_violation"]
         tag_issues = [
             i for i in rubric_issues if i.get("field") == "tags" and i["entry_id"] == "bulk-no-tags"
@@ -362,7 +373,7 @@ class TestRubricBulk:
         )
         db._raw_conn.commit()
 
-        result = rubric_setup["qa"].validate_kb("test-kb")
+        result = rubric_setup["qa"].validate_kb("test-kb", readable_kbs=UNSCOPED)
         rubric_issues = [i for i in result["issues"] if i["rule"] == "rubric_violation"]
         title_issues = [
             i
@@ -380,7 +391,7 @@ class TestRubricBulk:
         )
         db._raw_conn.commit()
 
-        result = rubric_setup["qa"].validate_kb("test-kb")
+        result = rubric_setup["qa"].validate_kb("test-kb", readable_kbs=UNSCOPED)
         rubric_issues = [i for i in result["issues"] if i["rule"] == "rubric_violation"]
         link_issues = [
             i
@@ -399,7 +410,7 @@ class TestRubricBulk:
         )
         db._raw_conn.commit()
 
-        result = rubric_setup["qa"].validate_kb("test-kb")
+        result = rubric_setup["qa"].validate_kb("test-kb", readable_kbs=UNSCOPED)
         rubric_issues = [i for i in result["issues"] if i["rule"] == "rubric_violation"]
         role_issues = [
             i
@@ -418,7 +429,7 @@ class TestRubricBulk:
         )
         db._raw_conn.commit()
 
-        result = rubric_setup["qa"].validate_kb("test-kb")
+        result = rubric_setup["qa"].validate_kb("test-kb", readable_kbs=UNSCOPED)
         rubric_issues = [i for i in result["issues"] if i["rule"] == "rubric_violation"]
         source_issues = [
             i
@@ -437,7 +448,7 @@ class TestRubricBulk:
         )
         db._raw_conn.commit()
 
-        result = rubric_setup["qa"].validate_kb("test-kb")
+        result = rubric_setup["qa"].validate_kb("test-kb", readable_kbs=UNSCOPED)
         rubric_issues = [i for i in result["issues"] if i["rule"] == "rubric_violation"]
         assert len(rubric_issues) > 0
         for issue in rubric_issues:

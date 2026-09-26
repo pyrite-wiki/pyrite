@@ -24,7 +24,7 @@ class GraphService:
         depth: int = 2,
         limit: int = 500,
         *,
-        readable_kbs: set[str] | None = None,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any]:
         """Get graph data for visualization, bounded by the caller's readable set."""
         return self.db.get_graph_data(
@@ -52,7 +52,7 @@ class GraphService:
         limit: int = 0,
         offset: int = 0,
         *,
-        readable_kbs: set[str] | None = None,
+        readable_kbs: set[str] | None,
     ) -> list[dict[str, Any]]:
         """Get entries that link TO this entry, from KBs the caller can read."""
         return self.db.get_backlinks(
@@ -60,7 +60,7 @@ class GraphService:
         )
 
     def get_outlinks(
-        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None = None
+        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None
     ) -> list[dict[str, Any]]:
         """Get entries that this entry links TO; an unreadable target reads as missing."""
         return self.db.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
@@ -83,14 +83,22 @@ class GraphService:
         kb_name: str,
         limit: int = 0,
         offset: int = 0,
+        *,
+        readable_kbs: set[str] | None,
     ) -> list[dict[str, Any]]:
         """Get unified backlinks: link-derived + edge-derived, labeled by source type.
+
+        Link-derived backlinks are bounded by ``readable_kbs``; the
+        edge-derived ones (`get_edges_by_endpoint`) are not scoped yet, and
+        nothing on a server surface calls this method.
 
         Each result has a 'source_type' field: 'link' or 'edge'.
         Edge results include 'edge_type' and 'role' fields.
         """
         # Get link-derived backlinks
-        link_backlinks = self.db.get_backlinks(entry_id, kb_name, limit=0, offset=0)
+        link_backlinks = self.db.get_backlinks(
+            entry_id, kb_name, limit=0, offset=0, readable_kbs=readable_kbs
+        )
         for bl in link_backlinks:
             bl["source_type"] = "link"
 

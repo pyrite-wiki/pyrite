@@ -12,6 +12,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from ..services.access_policy import UNSCOPED
 from .context import cli_context, get_config_and_db
 
 links_app = typer.Typer(help="Link validation and inspection")
@@ -316,7 +317,7 @@ def links_suggest(
     config, db = get_config_and_db()
     try:
         svc = KBService(config, db)
-        entry = svc.get_entry(entry_id, kb_name=kb_name)
+        entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
     finally:
         db.close()
 
@@ -402,6 +403,7 @@ def _discover_neighbors(
             limit=limit,
             mode=mode,
             exclude_linked=exclude_linked,
+            readable_kbs=UNSCOPED,
         )
     finally:
         if close_db:
@@ -444,7 +446,7 @@ def links_discover(
     config, db = get_config_and_db()
     try:
         svc = KBService(config, db)
-        entry = svc.get_entry(entry_id, kb_name=kb_name)
+        entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
     finally:
         db.close()
 
@@ -540,6 +542,7 @@ def _batch_suggest(
             limit_per_entry=limit_per_entry,
             mode=mode,
             exclude_linked=exclude_linked,
+            readable_kbs=UNSCOPED,
         )
     finally:
         if close_db:

@@ -34,10 +34,32 @@ from tests.link_scope_seed import (
 )
 
 
+TWIN_TASK = "twin-task"
+
+
+def _seed_task_twins(world):
+    """A task id in PRIVATE and again in READ_ONLY (after it in config order),
+    with a readable child, so a lookup without a KB must skip the private
+    twin -- the #40 flaw on the task-graph tools."""
+    from pyrite.services.kb_service import KBService
+
+    KBService(world.config, world.db).create_entry(
+        PRIVATE, TWIN_TASK, "Private twin task", "task", "private task body"
+    )
+    for task_id, extra in ((TWIN_TASK, ""), ("twin-child", f"parent: {TWIN_TASK}\n")):
+        (world.tmpdir / READ_ONLY / f"{task_id}.md").write_text(
+            f"---\nid: {task_id}\ntype: task\ntitle: Readable {task_id}\n"
+            f"status: open\n{extra}---\n\nreadable task body\n"
+        )
+    world.index_worker.submit_sync(READ_ONLY)
+    world.index_worker.wait_for_idle(timeout=10)
+
+
 @pytest.fixture(scope="module")
 def w(tmp_path_factory):
     world = build_world(tmp_path_factory, label="link-scope-mcp")
     seed_links(world)
+    _seed_task_twins(world)
     try:
         yield world
     finally:
@@ -245,3 +267,63 @@ def test_qa_assess_kb_reports_private_and_missing_targets_alike(w, scope):
 def test_qa_assess_unscoped_unchanged(w):
     result = _write(w, "kb_qa_assess", {"entry_id": READABLE_POINTER, "kb_name": READABLE}, None)
     assert not any(PRIVATE_ENTRY in m for m in _broken_link_messages(result["issues"]))
+
+
+# -- task-graph tools without a KB (#40 on the task resolver) ----------------
+
+
+@pytest.mark.parametrize(
+    "tool",
+    ["task_status", "task_subtree", "task_ancestors", "task_blocked_by", "task_critical_path"],
+)
+def test_task_lookup_without_kb_is_not_shadowed_by_a_private_twin(w, scope, tool):
+    result = _call(w, tool, {"task_id": TWIN_TASK}, scope)
+    assert "error" not in result, result
+    assert "Private twin task" not in json.dumps(result)
+
+
+def test_task_subtree_resolves_to_the_readable_twin(w, scope):
+    result = _call(w, "task_subtree", {"task_id": TWIN_TASK}, scope)
+    assert "twin-child" in json.dumps(result)
+
+
+@pytest.mark.control(reason="unscoped task lookup keeps config order: the private twin answers")
+def test_task_lookup_unscoped_unchanged(w):
+    result = _call(w, "task_status", {"task_id": TWIN_TASK}, None)
+    assert "Private twin task" in json.dumps(result)
+
+
+# -- kb_qa_status counts (cold read) -----------------------------------------
+
+
+def test_qa_status_counts_match_scoped_validation(w, scope):
+    status = _call(w, "kb_qa_status", {"kb_name": READABLE}, scope)
+    validated = _call(
+        w, "kb_qa_validate", {"kb_name": READABLE, "severity": "info", "limit": 10000}, scope
+    )
+    for rule in ("broken_link", "orphan_entry"):
+        counted = sum(1 for i in validated["issues"] if i["rule"] == rule)
+        assert status["issues_by_rule"].get(rule, 0) == counted, rule
+
+
+def test_qa_status_scoped_counts_differ_from_unscoped_by_the_private_rows(w, scope):
+    scoped = _call(w, "kb_qa_status", {"kb_name": READABLE}, scope)["issues_by_rule"]
+    unscoped = _call(w, "kb_qa_status", {"kb_name": READABLE}, None)["issues_by_rule"]
+    # Each link to the existing private note reads as broken (the pointer's,
+    # and the ones other tests in this module write); the readable note,
+    # linked only from the private KB, reads as an orphan.
+    assert scoped["broken_link"] >= unscoped["broken_link"] + 1
+    assert scoped.get("orphan_entry", 0) >= unscoped.get("orphan_entry", 0) + 1
+
+
+# -- byte equality: kb_qa_validate, private vs missing target ----------------
+
+
+def test_qa_validate_private_and_missing_target_issues_are_byte_identical(w, scope):
+    result = _call(w, "kb_qa_validate", {"entry_id": READABLE_POINTER, "kb_name": READABLE}, scope)
+    broken = [i for i in result["issues"] if i["rule"] == "broken_link"]
+    [private] = [i for i in broken if PRIVATE_ENTRY in i["message"]]
+    [missing] = [i for i in broken if MISSING_TARGET in i["message"]]
+    assert json.dumps(private, sort_keys=True).replace(PRIVATE_ENTRY, "X") == json.dumps(
+        missing, sort_keys=True
+    ).replace(MISSING_TARGET, "X")

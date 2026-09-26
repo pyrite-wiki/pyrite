@@ -34,6 +34,7 @@ from ..exceptions import (
     ValidationError,
 )
 from ..logging import configure_logging
+from ..services.access_policy import UNSCOPED
 from ..services.kb_service import KBService
 from ..utils.errors import PyriteCLIGroup, cli_error
 from .browse_commands import register_browse_commands
@@ -243,9 +244,9 @@ def ci_command(
         qa = QAService(config, db, llm_service=llm_service)
 
         if kb:
-            result = {"kbs": [qa.validate_kb(kb)]}
+            result = {"kbs": [qa.validate_kb(kb, readable_kbs=UNSCOPED)]}
         else:
-            result = qa.validate_all()
+            result = qa.validate_all(readable_kbs=UNSCOPED)
 
         # Aggregate results
         severity_order = {"error": 0, "warning": 1, "info": 2}

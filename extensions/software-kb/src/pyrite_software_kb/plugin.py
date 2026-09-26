@@ -1122,7 +1122,8 @@ class SoftwareKBPlugin:
         db,
         items: list[dict[str, Any]],
         kb_name: str,
-        readable_kbs: set[str] | None = None,
+        *,
+        readable_kbs: set[str] | None,
     ) -> list[dict[str, Any]]:
         """Group backlog items by their parent epic.
 
@@ -1889,7 +1890,7 @@ class SoftwareKBPlugin:
         return db.get_entry(entry_id, kb_name)
 
     def _get_dependency_status(
-        self, db, item_id: str, kb_name: str, readable_kbs: set[str] | None = None
+        self, db, item_id: str, kb_name: str, *, readable_kbs: set[str] | None
     ) -> dict[str, Any]:
         """Return dependency info for a backlog item.
 
@@ -1970,7 +1971,7 @@ class SoftwareKBPlugin:
         }
 
     def _get_epic_progress(
-        self, db, epic_id: str, kb_name: str, readable_kbs: set[str] | None = None
+        self, db, epic_id: str, kb_name: str, *, readable_kbs: set[str] | None
     ) -> dict[str, Any]:
         """Compute progress for an epic from its has_subtask links.
 
@@ -2072,7 +2073,7 @@ class SoftwareKBPlugin:
         }
 
     def _check_no_open_blockers(
-        self, db, item_id: str, kb_name: str, readable_kbs: set[str] | None = None
+        self, db, item_id: str, kb_name: str, *, readable_kbs: set[str] | None
     ) -> dict[str, Any] | None:
         """Return a failure dict if the item has unresolved blockers, else None."""
         dep_status = self._get_dependency_status(db, item_id, kb_name, readable_kbs=readable_kbs)
@@ -2095,7 +2096,8 @@ class SoftwareKBPlugin:
         to_status: str,
         row,
         meta: dict[str, Any],
-        readable_kbs: set[str] | None = None,
+        *,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any] | None:
         """Evaluate quality gate criteria for a status transition.
 

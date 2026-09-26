@@ -323,11 +323,13 @@ class SiteCacheService:
         if not entry:
             return False
         backlinks = [
-            bl for bl in self.db.get_backlinks(entry_id, kb_name) if bl.get("kb_name") in public
+            bl
+            for bl in self.db.get_backlinks(entry_id, kb_name, readable_kbs=public)
+            if bl.get("kb_name") in public
         ]
         outlinks = [
             ol
-            for ol in self.db.get_outlinks(entry_id, kb_name)
+            for ol in self.db.get_outlinks(entry_id, kb_name, readable_kbs=public)
             if ol.get("kb_name", kb_name) in public
         ]
         self._render_entry(kb_name, entry, backlinks, outlinks)

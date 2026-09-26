@@ -8,6 +8,8 @@ from typing import Any
 
 import streamlit as st
 
+from ..services.access_policy import UNSCOPED
+
 # Try to import from pyrite, fall back to API calls
 try:
     from pyrite.config import load_config
@@ -163,9 +165,9 @@ def get_entry(entry_id: str, kb_name: str | None = None) -> dict[str, Any] | Non
     # the UI looks only in config.yaml's KBs (not DB-registered ones), so it
     # walks them itself rather than using get_entry's all-KB search.
     if kb_name and kb_name != "All KBs":
-        return svc.get_entry(entry_id, kb_name)
+        return svc.get_entry(entry_id, kb_name, readable_kbs=UNSCOPED)
     for kb in config.knowledge_bases:
-        result = svc.get_entry(entry_id, kb.name)
+        result = svc.get_entry(entry_id, kb.name, readable_kbs=UNSCOPED)
         if result:
             return result
     return None
@@ -178,7 +180,9 @@ def get_entry_graph(entry_id: str, kb_name: str) -> dict[str, Any]:
     if not svc:
         return {"nodes": [], "edges": []}
 
-    center = svc.get_entry(entry_id, kb_name)  # carries outlinks and backlinks
+    center = svc.get_entry(
+        entry_id, kb_name, readable_kbs=UNSCOPED
+    )  # carries outlinks and backlinks
     if not center:
         return {"nodes": [], "edges": []}
 

@@ -424,7 +424,7 @@ class KBService:
         entry_id: str,
         kb_name: str | None = None,
         *,
-        readable_kbs: set[str] | None = None,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any] | None:
         """
         Get entry by ID, with its outlinks and backlinks.
@@ -1565,7 +1565,8 @@ class KBService:
         sort_order: str = "asc",
         limit: int = 200,
         offset: int = 0,
-        readable_kbs: set[str] | None = None,
+        *,
+        readable_kbs: set[str] | None,
     ) -> tuple[list[dict[str, Any]], int]:
         """Get entries belonging to a collection (folder-based or query-based).
 
@@ -1583,7 +1584,7 @@ class KBService:
         Raises:
             EntryNotFoundError: If collection not found
         """
-        entry = self.get_entry(collection_id, kb_name)
+        entry = self.get_entry(collection_id, kb_name, readable_kbs=readable_kbs)
         if not entry or entry.get("entry_type") != "collection":
             raise EntryNotFoundError(f"Collection not found: {collection_id}")
         metadata = parse_metadata(entry.get("metadata", {}))
@@ -1593,7 +1594,7 @@ class KBService:
         # Virtual collection (query-based)
         if source_type == "query":
             entries, total = self._get_query_collection_entries(
-                metadata, kb_name, sort_by, sort_order, limit, offset, readable_kbs
+                metadata, kb_name, sort_by, sort_order, limit, offset, readable_kbs=readable_kbs
             )
             return self._normalize_metadata_rows(entries), total
 
@@ -1619,7 +1620,8 @@ class KBService:
         sort_order: str,
         limit: int,
         offset: int,
-        readable_kbs: set[str] | None = None,
+        *,
+        readable_kbs: set[str] | None,
     ) -> tuple[list[dict[str, Any]], int]:
         """Evaluate a query-based virtual collection within ``readable_kbs``."""
         from .collection_query import (
@@ -1651,7 +1653,7 @@ class KBService:
         return evaluate_query_cached(query, self.db, readable_kbs=readable_kbs)
 
     def evaluate_collection_query(
-        self, query: Any, readable_kbs: set[str] | None = None
+        self, query: Any, *, readable_kbs: set[str] | None
     ) -> tuple[list[dict[str, Any]], int]:
         """Evaluate a parsed collection query within the caller's readable set.
 
@@ -1660,7 +1662,7 @@ class KBService:
         """
         from .collection_query import evaluate_query
 
-        return evaluate_query(query, self.db, kb_names=readable_kbs)
+        return evaluate_query(query, self.db, readable_kbs=readable_kbs)
 
     def count_entries(
         self,
@@ -1743,9 +1745,11 @@ class KBService:
         """Get most referenced entries."""
         return self.db.get_most_linked(kb_name, limit)
 
-    def get_orphans(self, kb_name: str | None = None) -> list[dict[str, Any]]:
-        """Get entries with no links."""
-        return self.db.get_orphans(kb_name)
+    def get_orphans(
+        self, kb_name: str | None = None, *, readable_kbs: set[str] | None
+    ) -> list[dict[str, Any]]:
+        """Get entries with no links a caller within ``readable_kbs`` can see."""
+        return self.db.get_orphans(kb_name, readable_kbs=readable_kbs)
 
     def get_tag_tree(
         self,
@@ -1950,7 +1954,8 @@ class KBService:
         kb_name: str | None = None,
         query: str | None = None,
         limit: int = 500,
-        readable_kbs: set[str] | None = None,
+        *,
+        readable_kbs: set[str] | None,
     ) -> list[dict[str, Any]]:
         """Lightweight listing of entry IDs and titles for wikilink autocomplete."""
         return self.wikilinks.list_entry_titles(
@@ -1958,7 +1963,7 @@ class KBService:
         )
 
     def resolve_entry(
-        self, target: str, kb_name: str | None = None, readable_kbs: set[str] | None = None
+        self, target: str, kb_name: str | None = None, *, readable_kbs: set[str] | None
     ) -> dict[str, Any] | None:
         """Resolve a wikilink target to an entry. Supports kb:id format for cross-KB links."""
         return self.wikilinks.resolve_entry(target, kb_name=kb_name, readable_kbs=readable_kbs)
@@ -1967,13 +1972,14 @@ class KBService:
         self,
         targets: list[str],
         kb_name: str | None = None,
-        readable_kbs: set[str] | None = None,
+        *,
+        readable_kbs: set[str] | None,
     ) -> dict[str, bool]:
         """Batch-resolve wikilink targets. Supports kb:id format."""
         return self.wikilinks.resolve_batch(targets, kb_name=kb_name, readable_kbs=readable_kbs)
 
     def get_wanted_pages(
-        self, kb_name: str | None = None, limit: int = 100, readable_kbs: set[str] | None = None
+        self, kb_name: str | None = None, limit: int = 100, *, readable_kbs: set[str] | None
     ) -> list[dict[str, Any]]:
         """Get link targets that don't exist as entries (wanted pages)."""
         return self.wikilinks.get_wanted_pages(

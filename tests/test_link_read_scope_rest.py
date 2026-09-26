@@ -53,6 +53,16 @@ def w(tmp_path_factory):
         "note",
         f"[[{READABLE}:{DAILY_ID}]] and [[{READABLE}:daily-{WANTED_DAILY_DATE}]]",
     )
+    # discover-neighbors: a readable candidate that shares its id with a
+    # private entry linking to the hub. The exclude list must not be built
+    # from that private backlink.
+    svc.create_entry(READABLE, "aardvark-hub", "Aardvark telescope", "note", "hub")
+    svc.create_entry(
+        READABLE, "shared-id", "Aardvark telescope notes", "note", "aardvark telescope"
+    )
+    svc.create_entry(
+        PRIVATE, "shared-id", "Private aardvark", "note", f"[[{READABLE}:aardvark-hub]]"
+    )
     world.index_worker.wait_for_idle(timeout=10)
     try:
         yield world
@@ -318,3 +328,43 @@ def test_qa_unscoped_unchanged(w):
     assert not any(PRIVATE_ENTRY in m for m in broken)
     orphans = {i["entry_id"] for i in r.json()["issues"] if i["rule"] == "orphan_entry"}
     assert READABLE_ENTRY not in orphans
+
+
+# -- discover-neighbors exclude list (cold read) -----------------------------
+
+
+def test_discover_neighbors_exclusions_ignore_private_backlinks(w):
+    r = _local(
+        w,
+        "/api/links/discover-neighbors",
+        entry_id="aardvark-hub",
+        kb=READABLE,
+        mode="keyword",
+    )
+    assert r.status_code == 200, r.text
+    found = {(d["id"], d["kb_name"]) for d in r.json()["discoveries"]}
+    assert ("shared-id", READABLE) in found
+
+
+@pytest.mark.control(reason="unscoped caller: the private backlink excludes the id, as before")
+def test_discover_neighbors_unscoped_unchanged(w):
+    r = _admin(
+        w,
+        "/api/links/discover-neighbors",
+        entry_id="aardvark-hub",
+        kb=READABLE,
+        mode="keyword",
+    )
+    found = {(d["id"], d["kb_name"]) for d in r.json()["discoveries"]}
+    assert ("shared-id", READABLE) not in found
+
+
+# -- byte equality: the graph node for a private vs a missing target ---------
+
+
+def test_graph_node_for_private_target_is_byte_identical_to_a_missing_one(w):
+    r = _local(w, "/api/graph", center=READABLE_POINTER, center_kb=READABLE)
+    nodes = {n["id"]: n for n in r.json()["nodes"]}
+    private = json.dumps(nodes[PRIVATE_ENTRY], sort_keys=True).replace(PRIVATE_ENTRY, "X")
+    missing = json.dumps(nodes[MISSING_TARGET], sort_keys=True).replace(MISSING_TARGET, "X")
+    assert private == missing

@@ -3,6 +3,7 @@
 import pytest
 
 from pyrite.config import KBConfig, PyriteConfig, Settings
+from pyrite.services.access_policy import UNSCOPED
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
 
@@ -53,7 +54,7 @@ class TestOwnershipAutoLinks:
             asset="[[shell-corp]]",
         )
         # Check outlinks from the ownership entry
-        outlinks = db.get_outlinks("ownership-doe-shell", "test")
+        outlinks = db.get_outlinks("ownership-doe-shell", "test", readable_kbs=UNSCOPED)
         outlink_ids = {o["id"] for o in outlinks}
         assert "john-doe" in outlink_ids
         assert "shell-corp" in outlink_ids

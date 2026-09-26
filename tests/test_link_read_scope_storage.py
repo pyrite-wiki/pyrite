@@ -34,6 +34,7 @@ from tests.link_scope_seed import (
     SHADOWED,
     seed_links,
 )
+from pyrite.services.access_policy import UNSCOPED
 
 
 @pytest.fixture(scope="module")
@@ -209,8 +210,8 @@ def test_get_entry_links_are_scoped(w, scope):
 @pytest.mark.control(reason="unscoped lookup keeps config order and unfiltered links")
 def test_get_entry_unscoped_unchanged(w):
     svc = KBService(w.config, w.db)
-    assert svc.get_entry(SHADOWED)["kb_name"] == PRIVATE
-    note = svc.get_entry(READABLE_ENTRY, kb_name=READABLE)
+    assert svc.get_entry(SHADOWED, readable_kbs=UNSCOPED)["kb_name"] == PRIVATE
+    note = svc.get_entry(READABLE_ENTRY, kb_name=READABLE, readable_kbs=UNSCOPED)
     assert PRIVATE_SPY in {r["id"] for r in note["backlinks"]}
 
 
@@ -265,7 +266,7 @@ def test_overlay_get_entry_links_are_scoped(w, scope, overlay):
 
 @pytest.mark.control(reason="unscoped overlay read keeps private backlinks")
 def test_overlay_unscoped_unchanged(w, overlay):
-    rows = overlay.get_backlinks(READABLE_ENTRY, READABLE)
+    rows = overlay.get_backlinks(READABLE_ENTRY, READABLE, readable_kbs=UNSCOPED)
     assert {PRIVATE_SPY, "diff-spy"} <= {r["id"] for r in rows}
-    out = overlay.get_outlinks("diff-pointer", READABLE)
+    out = overlay.get_outlinks("diff-pointer", READABLE, readable_kbs=UNSCOPED)
     assert _outlink(out, "diff-private-target")["title"] == "Diff private target"

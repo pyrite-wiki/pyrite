@@ -6,7 +6,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from ...exceptions import EntryNotFoundError
 from ...plugins.registry import get_registry
-from ...services.access_policy import KB, Action, ReadScope
+from ...services.access_policy import KB, UNSCOPED, Action, ReadScope
 from ...services.kb_service import KBService
 from ...utils.metadata import parse_metadata
 from ..api import (
@@ -129,7 +129,8 @@ def create_collection(
     counter = 1
     while True:
         try:
-            existing = svc.get_entry(slug, kb_name=body.kb)
+            # Named KB on a write route; an existence check for the slug.
+            existing = svc.get_entry(slug, kb_name=body.kb, readable_kbs=UNSCOPED)
             if existing:
                 counter += 1
                 slug = f"{base_slug}-{counter}"
@@ -175,7 +176,8 @@ def get_collection(
     svc: KBService = Depends(get_kb_service),
 ):
     """Get collection metadata."""
-    result = svc.get_entry(collection_id, kb_name=kb)
+    # Named KB, authorized by the route; only the collection metadata is used.
+    result = svc.get_entry(collection_id, kb_name=kb, readable_kbs=UNSCOPED)
     if not result or result.get("entry_type") != "collection":
         raise HTTPException(
             status_code=404,

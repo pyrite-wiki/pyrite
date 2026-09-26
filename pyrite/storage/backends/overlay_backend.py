@@ -258,7 +258,7 @@ class OverlaySearchBackend:
         limit: int = 0,
         offset: int = 0,
         *,
-        readable_kbs: set[str] | None = None,
+        readable_kbs: set[str] | None,
     ) -> list[dict[str, Any]]:
         main = self._main.get_backlinks(entry_id, kb_name, limit=10000, readable_kbs=readable_kbs)
         diff = self._diff.get_backlinks(entry_id, kb_name, limit=10000, readable_kbs=readable_kbs)
@@ -268,7 +268,7 @@ class OverlaySearchBackend:
         return merged
 
     def get_outlinks(
-        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None = None
+        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None
     ) -> list[dict[str, Any]]:
         main = self._main.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
         diff = self._diff.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
@@ -283,7 +283,7 @@ class OverlaySearchBackend:
         depth: int = 2,
         limit: int = 500,
         *,
-        readable_kbs: set[str] | None = None,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any]:
         # For V1, graph comes from main only — diff entries are few
         # and merging graph BFS is complex. User's new entries won't
@@ -302,7 +302,7 @@ class OverlaySearchBackend:
         return self._main.get_most_linked(kb_name, limit)
 
     def get_orphans(
-        self, kb_name: str | None = None, *, readable_kbs: set[str] | None = None
+        self, kb_name: str | None = None, *, readable_kbs: set[str] | None
     ) -> list[dict[str, Any]]:
         return self._main.get_orphans(kb_name, readable_kbs=readable_kbs)
 
@@ -533,11 +533,21 @@ class WorktreeDB:
     def count_entries(self, **kwargs) -> int:
         return self._overlay.count_entries(**kwargs)
 
-    def get_backlinks(self, entry_id: str, kb_name: str, **kwargs) -> list[dict[str, Any]]:
-        return self._overlay.get_backlinks(entry_id, kb_name, **kwargs)
+    def get_backlinks(
+        self,
+        entry_id: str,
+        kb_name: str,
+        limit: int = 0,
+        offset: int = 0,
+        *,
+        readable_kbs: set[str] | None,
+    ) -> list[dict[str, Any]]:
+        return self._overlay.get_backlinks(
+            entry_id, kb_name, limit=limit, offset=offset, readable_kbs=readable_kbs
+        )
 
     def get_outlinks(
-        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None = None
+        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None
     ) -> list[dict[str, Any]]:
         return self._overlay.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
 
