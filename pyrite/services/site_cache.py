@@ -4,8 +4,7 @@ import json
 import logging
 import shutil
 from pathlib import Path
-
-from jinja2 import Environment, FileSystemLoader
+from typing import TYPE_CHECKING
 
 from ..config import PyriteConfig
 from ..storage.database import PyriteDB
@@ -13,19 +12,37 @@ from ..utils.metadata import parse_metadata
 from ..utils.sanitize import sanitize_filename
 from .public_kbs import public_kb_names
 
+if TYPE_CHECKING:
+    from jinja2 import Environment
+
 logger = logging.getLogger(__name__)
 
-# Jinja2 template environment — loads from pyrite/server/templates/
+# Jinja2 template environment — loads from pyrite/server/templates/. Jinja2
+# is in the `server` extra only (pyproject.toml), not a core dependency: a
+# module-level `from jinja2 import ...` here made every core import path
+# that reaches this module (e.g. `pyrite.cli` -> `kb_registry_service` ->
+# `drop_kb_site_pages`, which never renders) require it, breaking a plain
+# `pip install pyrite` CLI-only install (#533 CI). Built lazily, on first
+# render, so importing this module costs nothing without jinja2 installed.
 _TEMPLATE_DIR = Path(__file__).parent.parent / "server" / "templates"
-_jinja_env = Environment(
-    loader=FileSystemLoader(str(_TEMPLATE_DIR)),
-    autoescape=False,  # We handle escaping explicitly via _esc()
-)
+_jinja_env: "Environment | None" = None
+
+
+def _get_jinja_env() -> "Environment":
+    global _jinja_env
+    if _jinja_env is None:
+        from jinja2 import Environment, FileSystemLoader
+
+        _jinja_env = Environment(
+            loader=FileSystemLoader(str(_TEMPLATE_DIR)),
+            autoescape=False,  # We handle escaping explicitly via _esc()
+        )
+    return _jinja_env
 
 
 def _render_template(template_name: str, **kwargs: object) -> str:
     """Render a Jinja2 template with the given context."""
-    tmpl = _jinja_env.get_template(template_name)
+    tmpl = _get_jinja_env().get_template(template_name)
     return tmpl.render(**kwargs)
 
 
