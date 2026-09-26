@@ -142,8 +142,14 @@ These rules apply when a request can change something without a credential:
 
 In API-key mode (auth disabled, keys configured), a request needs a key. With
 auth enabled and no anonymous writes, a request that changes anything needs
-a session. Neither mode is affected by these rules. In the two
-credential-free modes the server trusts the browser less:
+a session. Neither mode is affected by these rules, except that the
+`Origin` rule below applies in **every** mode to a state-changing request
+signed in with the session cookie: a browser attaches that cookie to a form
+post from a same-site page (another port on the same host, a sibling
+subdomain), so the cookie alone does not show the user meant the request.
+A request authenticated with an API key in the `X-API-Key` header is not
+affected. In the two credential-free modes the server trusts
+the browser less:
 
 - It answers only requests addressed to `localhost`, `127.0.0.1` or `[::1]`,
   to the bind `host` when that is not a wildcard (`0.0.0.0`, `::`), and to any
@@ -176,8 +182,9 @@ every write, including login, logout and registration. If the proxy rewrites
 own origin and every UI write gets 403. Either keep the public `Host`
 (`proxy_set_header Host $host`) and add the public name to `allowed_hosts`, or
 add the public origin (`https://<public name>`) to `cors_origins`. This applies
-to an auth-disabled instance without API keys and to one with
-`anonymous_tier: write`.
+to an auth-disabled instance without API keys, to one with
+`anonymous_tier: write`, and to every signed-in write on an auth-enabled
+instance.
 
 ## Authentication (multi-user)
 

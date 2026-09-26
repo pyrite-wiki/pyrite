@@ -17,14 +17,18 @@ do not hold on their own:
   403. Requests with neither header are not browser-initiated cross-site
   requests (CLI, curl, agents) and are unaffected.
 
-The middleware applies only while a request can act without a credential
+Both rules apply while a request can act without a credential
 (``acts_without_credential``): auth disabled with no API keys, or auth enabled
-with ``anonymous_tier: write``. In API-key mode, or with auth enabled and no
-anonymous writes, every request that acts carries a credential a foreign page
-cannot supply (the session cookie is ``SameSite=Lax``), and such servers
-usually sit behind a proxy with a public hostname.
+with ``anonymous_tier: write``. Otherwise the Host rule is off -- such servers
+usually sit behind a proxy with a public hostname -- but the **Origin rule
+still applies to every request authenticated by the session cookie**, in
+every mode. The cookie is ``SameSite=Lax``, which a *same-site* page (another
+port on the same host, a sibling subdomain) still gets attached to its simple
+POSTs, so the cookie alone is not proof the user meant the request. A request
+authenticated by an API key is not cookie-bound: a page cannot set that
+header on a cross-origin request without a CORS preflight.
 
-``origin_permitted`` is the one Origin rule; ``/ws`` uses it too.
+``request_origin_admitted`` is the one Origin rule; ``/ws`` uses it too.
 """
 
 from __future__ import annotations
@@ -34,6 +38,8 @@ import logging
 from collections.abc import Callable
 from urllib.parse import urlsplit
 
+from starlette.datastructures import Headers
+from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ..config import PyriteConfig, Settings
@@ -95,23 +101,55 @@ def origin_permitted(origin: str, host: str, cors_origins: list[str]) -> bool:
     return bool(host) and netloc.lower() == host.lower()
 
 
-def _header(scope: Scope, name: bytes) -> str | None:
-    for key, value in scope.get("headers", []):
-        if key == name:
-            return value.decode("latin-1")
-    return None
-
-
-def _request_origin(scope: Scope) -> str | None:
+def request_origin(headers: Headers) -> str | None:
     """The request's ``Origin``, or the origin part of its ``Referer``."""
-    origin = _header(scope, b"origin")
+    origin = headers.get("origin")
     if origin is not None:
         return origin
-    referer = _header(scope, b"referer")
+    referer = headers.get("referer")
     if referer is None:
         return None
     parts = urlsplit(referer)
     return f"{parts.scheme}://{parts.netloc}"
+
+
+def request_origin_admitted(headers: Headers, cors_origins: list[str]) -> bool:
+    """The one Origin rule, for REST, ``/mcp`` and ``/ws``.
+
+    Admitted when the request's ``Origin`` (or, with none, its ``Referer``)
+    is this server's own host or configured in ``cors_origins``. A request
+    with neither header is not a browser's cross-site request (a CLI, curl,
+    an agent) and is admitted: browsers send ``Origin`` on every
+    state-changing request and on every WebSocket handshake.
+    """
+    origin = request_origin(headers)
+    if origin is None:
+        return True
+    return origin_permitted(origin, headers.get("host", ""), cors_origins)
+
+
+SESSION_COOKIE = "pyrite_session"
+
+
+def cookie_authenticated(conn: HTTPConnection, config: PyriteConfig) -> bool:
+    """Could this request be authenticated by the session cookie?
+
+    True when it carries the session cookie, unless an ``X-API-Key`` header
+    authenticates it first -- REST and ``/mcp`` both try that header before
+    the cookie, and a page cannot set it on a cross-origin request without a
+    CORS preflight. A key that does not resolve falls through to the cookie,
+    so it exempts nothing. Other key locations do not exempt: the
+    ``api_key`` query parameter is one a foreign page can put in a URL, and
+    ``/mcp`` would still authenticate such a request by its cookie. The
+    cookie itself is not verified here: a request that carries one is
+    refused cross-origin whether or not it is still valid.
+    """
+    if not conn.cookies.get(SESSION_COOKIE):
+        return False
+    from ..services.access_policy import resolve_api_key_role
+
+    key = conn.headers.get("x-api-key")
+    return not (key and resolve_api_key_role(key, config) is not None)
 
 
 class RequestGuardMiddleware:
@@ -130,30 +168,37 @@ class RequestGuardMiddleware:
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
-        settings = self.get_config().settings
-        if not acts_without_credential(settings):
-            await self.app(scope, receive, send)
-            return
+        config = self.get_config()
+        settings = config.settings
+        conn = HTTPConnection(scope)
+        without_credential = acts_without_credential(settings)
 
-        host = _header(scope, b"host") or ""
-        if _hostname(host) not in allowed_hosts(settings):
-            logger.warning(
-                "Refused request to %s: Host %r is not an allowed host "
-                "(add it to settings.allowed_hosts to serve on that name)",
-                scope.get("path"),
-                host,
-            )
-            await _refuse(scope, send, 421, "Misdirected request: host not allowed")
-            return
-
-        if scope["type"] == "http" and scope["method"] not in _SAFE_METHODS:
-            origin = _request_origin(scope)
-            if origin is not None and not origin_permitted(origin, host, settings.cors_origins):
+        if without_credential:
+            host = conn.headers.get("host", "")
+            if _hostname(host) not in allowed_hosts(settings):
                 logger.warning(
-                    "Refused cross-origin %s %s from %r", scope["method"], scope.get("path"), origin
+                    "Refused request to %s: Host %r is not an allowed host "
+                    "(add it to settings.allowed_hosts to serve on that name)",
+                    scope.get("path"),
+                    host,
                 )
-                await _refuse(scope, send, 403, "Cross-origin request refused")
+                await _refuse(scope, send, 421, "Misdirected request: host not allowed")
                 return
+
+        if (
+            scope["type"] == "http"
+            and scope["method"] not in _SAFE_METHODS
+            and (without_credential or cookie_authenticated(conn, config))
+            and not request_origin_admitted(conn.headers, settings.cors_origins)
+        ):
+            logger.warning(
+                "Refused cross-origin %s %s from %r",
+                scope["method"],
+                scope.get("path"),
+                request_origin(conn.headers),
+            )
+            await _refuse(scope, send, 403, "Cross-origin request refused")
+            return
 
         await self.app(scope, receive, send)
 

@@ -30,7 +30,7 @@ from ..config import PyriteConfig
 from ..services.access_policy import AccessPolicy, Principal, resolve_api_key_role
 from ..services.credential_events import CredentialChange
 from ..storage.database import PyriteDB
-from .request_guard import origin_permitted
+from .request_guard import request_origin_admitted
 
 logger = logging.getLogger(__name__)
 
@@ -97,16 +97,15 @@ def origin_allowed(conn: HTTPConnection, config: PyriteConfig) -> bool:
     non-browser clients send whatever they like). Once the cookie
     authenticates the socket, this is the only cross-origin gate.
 
-    Absent ``Origin`` is allowed: browsers always send it on a WebSocket
-    handshake, so its absence means a non-browser client, which the
-    credential check alone governs. ``"*"`` in ``cors_origins`` is **not** a
+    The rule is REST's own (``request_guard.request_origin_admitted``), so
+    the two surfaces cannot drift. Absent ``Origin`` (and ``Referer``) is
+    allowed: browsers always send ``Origin`` on a WebSocket handshake, so its
+    absence means a non-browser client, which the credential check alone
+    governs. ``"*"`` in ``cors_origins`` is **not** a
     wildcard here: REST drops credentials for a wildcard origin, and this
     check exists precisely because a socket's credential is a cookie.
     """
-    origin = conn.headers.get("origin")
-    if origin is None:
-        return True
-    return origin_permitted(origin, conn.headers.get("host", ""), config.settings.cors_origins)
+    return request_origin_admitted(conn.headers, config.settings.cors_origins)
 
 
 def resolve_socket_scope(conn: HTTPConnection, config: PyriteConfig, db: PyriteDB) -> SocketScope:

@@ -129,7 +129,11 @@ export const AUTH_E2E_ENV: Record<string, string> = {
 	RATELIMIT_ENABLED: 'false',
 	PYRITE_AUTH_LOGIN_RATE_LIMIT: '10000/minute',
 	PYRITE_AUTH_LOGIN_RATE_LIMIT_PER_USERNAME: '10000/minute',
-	PYRITE_AUTH_REGISTER_RATE_LIMIT: '10000/minute'
+	PYRITE_AUTH_REGISTER_RATE_LIMIT: '10000/minute',
+	// The Vite dev server proxies with changeOrigin, so the backend sees its own
+	// Host but the browser's Origin. A write authenticated by the session cookie
+	// is refused from an origin that is neither (pyrite/server/request_guard.py).
+	PYRITE_CORS_ORIGINS: `http://localhost:${AUTH_WEB_PORT}`
 };
 
 const PYRITE_BIN = join(REPO_ROOT, '.venv', 'bin', 'pyrite');
