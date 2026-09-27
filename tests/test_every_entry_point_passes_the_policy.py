@@ -97,8 +97,13 @@ PUBLIC_ENTRY_POINTS: dict[str, str] = {
     "GET /site/_static/{name}": "the static site's assets",
     "GET /viewer": "the SPA's static files; the API calls it makes are guarded",
     "GET /viewer/{path:path}": "the SPA's static files; the API calls it makes are guarded",
+    "GET /favicon.ico": "the SPA's static favicon; mounted unconditionally (#538)",
+    "GET /{path:path}": (
+        "the SPA catch-all for client-side routing; mounted unconditionally (#538) -- "
+        "404s itself for /api, /mcp, /auth, /ws instead of serving the SPA shell"
+    ),
 }
-PUBLIC_ENTRY_POINTS_SIZE = 18  # lower it with every entry removed; never raise it
+PUBLIC_ENTRY_POINTS_SIZE = 20  # lower it with every entry removed; never raise it
 
 #: The `/api` operations allowed in `PUBLIC_ENTRY_POINTS`, each with its reason.
 #: None today: everything under `/api` sits behind `verify_api_key`, so a public

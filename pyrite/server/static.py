@@ -373,28 +373,65 @@ def mount_site_routes(app: FastAPI) -> None:
         )
 
 
+#: API-shaped prefixes (a client sending JSON expects a JSON answer, not the
+#: SPA's HTML shell) that must 404 -- for any HTTP method, not just GET --
+#: rather than fall through to the SPA when no route serves them: an
+#: unmounted /mcp (the SDK owner-check missing, P-M3) or an unrecognised
+#: /api, /auth or /ws path. `web/src/routes`'s top-level route names must
+#: never start with one of these (tests/test_static_routes_with_a_built_dist.py
+#: checks it), or a real client-side route would 404 instead of loading the
+#: SPA. Mounted as a `Mount`, not an `APIRoute`: `tests/_surface_inventory.py`
+#: (the access-policy completeness guard's inventory) only walks `APIRoute`s,
+#: so this never becomes a REST operation the guard must classify, and a
+#: `Mount` -- unlike a route -- matches every method without one being
+#: registered for each, so a POST to e.g. /mcp/messages 404s exactly like a
+#: GET would rather than falling through to Starlette's path-matches/
+#: method-doesn't 405.
+_API_SHAPED_PREFIXES: tuple[str, ...] = ("/api", "/mcp", "/auth", "/ws")
+
+
+async def _always_404(scope, receive, send) -> None:
+    response = Response(status_code=404, media_type="application/json", content="{}")
+    await response(scope, receive, send)
+
+
+def _mount_api_shaped_404s(app: FastAPI) -> None:
+    """A catch-all 404 under each API-shaped prefix. Any route registered
+    earlier under the same prefix is tried first (Starlette walks
+    ``app.routes`` in registration order and stops at the first full
+    match) -- so a real ``/api/...`` route, or a legitimately-mounted
+    ``/mcp``, still wins; this only answers what nothing else did.
+    """
+    for prefix in _API_SHAPED_PREFIXES:
+        app.mount(prefix, _always_404, name=f"reserved-404{prefix.replace('/', '-')}")
+
+
 def mount_static(app: FastAPI, dist_dir: Path) -> None:
     """Mount SPA static file serving with fallback.
+
+    Mounted unconditionally -- the route table (``GET /favicon.ico``, the
+    ``GET /{path:path}`` SPA catch-all) must be the same whether or not
+    ``web/dist`` has been built, so the access-policy completeness guard
+    classifies the same routes either way (#538). When ``dist_dir`` has no
+    ``index.html`` (no build), both routes answer 404 for everything.
 
     Args:
         app: The FastAPI application instance.
         dist_dir: Path to web/dist/ directory containing built SvelteKit output.
     """
     index_html = dist_dir / "index.html"
-    if not index_html.exists():
-        return
-
-    index_content = index_html.read_text()
-    hash_extra = _spa_script_hash_extra(index_content)
-    if not hash_extra:
-        logger.warning(
-            "web/dist/index.html has no SvelteKit CSP script hash (no "
-            "'sha256-...' <meta http-equiv=\"content-security-policy\"> tag). "
-            "The served app's script-src 'self' will have no allowance for "
-            "the build's own inline bootstrap script, so it will load to a "
-            "blank page. Check kit.csp.mode in web/svelte.config.js and that "
-            "the app was built with adapter-static's prerendering."
-        )
+    index_content = index_html.read_text() if index_html.exists() else None
+    if index_content is not None:
+        hash_extra = _spa_script_hash_extra(index_content)
+        if not hash_extra:
+            logger.warning(
+                "web/dist/index.html has no SvelteKit CSP script hash (no "
+                "'sha256-...' <meta http-equiv=\"content-security-policy\"> tag). "
+                "The served app's script-src 'self' will have no allowance for "
+                "the build's own inline bootstrap script, so it will load to a "
+                "blank page. Check kit.csp.mode in web/svelte.config.js and that "
+                "the app was built with adapter-static's prerendering."
+            )
 
     def _spa_response_headers(request: Request, *, index_page: bool) -> dict[str, str]:
         # Read per request, like /site's `_csp()`: `site_csp_extra` can
@@ -415,6 +452,10 @@ def mount_static(app: FastAPI, dist_dir: Path) -> None:
     if assets_dir.is_dir():
         app.mount("/_app", StaticFiles(directory=str(assets_dir)), name="svelte-app")
 
+    # Before the SPA fallback below, so a request under an API-shaped prefix
+    # is answered by this 404 rather than the SPA's HTML shell (#538).
+    _mount_api_shaped_404s(app)
+
     @app.get("/favicon.ico", include_in_schema=False)
     async def favicon(request: Request):
         favicon_path = dist_dir / "favicon.ico"
@@ -424,12 +465,14 @@ def mount_static(app: FastAPI, dist_dir: Path) -> None:
             )
         return HTMLResponse(status_code=404)
 
-    # SPA fallback — catch all non-API, non-site, non-viewer routes
+    # SPA fallback — catch all remaining non-API, non-site, non-viewer
+    # routes. Everything API-shaped is already answered above, so this
+    # never needs to check for it; docs/redoc/openapi.json/health/site/
+    # viewer are real routes mounted elsewhere and matched before this one.
     @app.get("/{path:path}", include_in_schema=False)
     async def spa_fallback(request: Request, path: str):
-        if path.startswith(
-            ("api/", "docs", "redoc", "openapi.json", "health", "auth/", "site", "viewer")
-        ):
+        if index_content is None:
+            # No build: nothing to serve for client-side routing either.
             return HTMLResponse(status_code=404)
 
         file_path = dist_dir / path

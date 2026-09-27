@@ -37,7 +37,7 @@ from tests.characterization.surfaces import (
     non_apiroute_transport_routes,
 )
 
-PINNED_REST_TOTAL_ROUTE_COUNT = 143
+PINNED_REST_TOTAL_ROUTE_COUNT = 145  # +2 (#538): favicon.ico, the SPA catch-all, now unconditional
 PINNED_MCP_TOTAL_TOOL_COUNT = 112
 
 
@@ -128,10 +128,11 @@ def test_exclusion_counts_are_pinned():
     excluded, or a new one arrived, and a reviewer should see that as a
     diff to a constant, not discover it by reading a diff to a dict.
     """
-    assert REST_ACCESS_EXCLUSIONS_COUNT == len(REST_ACCESS_EXCLUSIONS) == 69, (
+    assert REST_ACCESS_EXCLUSIONS_COUNT == len(REST_ACCESS_EXCLUSIONS) == 71, (
         f"REST_ACCESS_EXCLUSIONS now has {len(REST_ACCESS_EXCLUSIONS)} entries, "
-        f"pinned at 69 -- update this assert deliberately, with a reason, rather "
-        f"than letting it drift."
+        f"pinned at 71 -- update this assert deliberately, with a reason, rather "
+        f"than letting it drift. (69 -> 71, #538: GET /favicon.ico and the SPA "
+        f"catch-all GET /{{path:path}} are now mounted unconditionally.)"
     )
     # 6 -> 5: social_reputation filters by the readable set now (it sums
     # votes from every KB), so it is characterized, not excluded.
@@ -145,10 +146,11 @@ def test_exclusion_counts_are_pinned():
         f"pinned at 4 -- update this assert deliberately, with a reason, rather "
         f"than letting it drift."
     )
-    assert NON_TRANSPORT_ROUTE_EXCLUSIONS_COUNT == len(NON_TRANSPORT_ROUTE_EXCLUSIONS) == 4, (
+    assert NON_TRANSPORT_ROUTE_EXCLUSIONS_COUNT == len(NON_TRANSPORT_ROUTE_EXCLUSIONS) == 8, (
         f"NON_TRANSPORT_ROUTE_EXCLUSIONS now has {len(NON_TRANSPORT_ROUTE_EXCLUSIONS)} "
-        f"entries, pinned at 4 -- update this assert deliberately, with a reason, "
-        f"rather than letting it drift."
+        f"entries, pinned at 8 -- update this assert deliberately, with a reason, "
+        f"rather than letting it drift. (4 -> 8, #538: MOUNT /api, /auth, /mcp, /ws, "
+        f"the always-on catch-all 404 for API-shaped prefixes.)"
     )
 
 
