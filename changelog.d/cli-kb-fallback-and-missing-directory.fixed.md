@@ -1,1 +1,0 @@
-- **KB validation and schema writes handle missing index data safely (#458).** `pyrite kb validate` warns and validates YAML-configured KBs when the index database cannot be read, and its structured output reports `drift_checked: false` when content-drift checks are skipped. Schema writes through the CLI and MCP now clearly refuse a missing KB directory instead of recreating it.

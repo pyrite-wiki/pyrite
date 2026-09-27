@@ -24,6 +24,207 @@ Security release, from the 0.26 multi-user security review. **Upgrade if you run
 - **Access changes on hand-written config KBs:** changing the default access of a KB defined in a hand-written `config.yaml` now returns 409, naming the file. Edit the file instead. KBs the server manages (repo-subscribed and ephemeral) remain editable.
 - **Extension authors:** link and lookup reads (`get_backlinks`, `get_outlinks` and related calls) now require `readable_kbs=`. Pass the caller's readable set, or `UNSCOPED` (from `pyrite.services.access_policy`) only when there is no caller.
 
+### Added
+
+- `pyrite links asymmetric -k <kb>` now finds one-way links within a single knowledge base. Passing the same KB with `--kb-a` and `--kb-b` also returns each link once; two-KB checks are unchanged (#465).
+
+### Changed
+
+- `pyrite rename X X` (and `KBRepository.rename`) now refuses a rename to the same id with a validation error instead of silently doing nothing, which left an unindexed entry invisible (#493).
+
+- Error codes now live on the exception classes (`pyrite/exceptions.py`)
+  instead of being decided separately per transport, closing the gap where
+  the same exception answered a different code on different surfaces.
+
+  **REST.** A `PyriteError` that reaches the central handler now answers
+  in the same `{"detail": {"code", "message", "retryable", "hint"?}}` shape
+  every `HTTPException(detail={...})` site already used. **Before this
+  release the central handler answered a flat `{"code", "message"}` body**,
+  so a client reading `body["code"]` from those responses must now read
+  `body["detail"]["code"]`. Status codes are unchanged. Most responses are
+  unaffected: 91 of 124 `HTTPException` sites already answer their own
+  code in the `detail` shape and are untouched. The code string changes
+  for these classes when the central handler answers them:
+  - `UndeclaredTypeError`, `EntryExistsError`, `SchemaViolationError` and
+    `InvalidGitRefError` now answer their own codes (`UNDECLARED_TYPE`,
+    `ENTRY_EXISTS`, `SCHEMA_VIOLATION`, `INVALID_REF`) where the central
+    handler previously answered the generic `VALIDATION_ERROR` for all
+    four (their status codes are unchanged).
+  - `ClipperBlockedHostError` now answers `CLIPPER_BLOCKED_HOST` where the
+    central handler previously answered `INTERNAL_ERROR` (both 500).
+  - A bare `ValidationError` (and any subclass without its own code, e.g.
+    `TruncatedBodyError`) answered by the central handler now answers
+    `VALIDATION_FAILED` where it previously answered `VALIDATION_ERROR`.
+    `VALIDATION_FAILED` is the spelling REST's write pipeline
+    (`server/endpoints/write_refusal.py`, bulk per-item results) and MCP
+    already used; the central handler's disagreeing second spelling is
+    gone.
+
+  **MCP.** Where MCP's code used to differ from REST's (`NOT_FOUND` vs
+  `ENTRY_NOT_FOUND`/`KB_NOT_FOUND`, `READ_ONLY` vs `KB_READ_ONLY`,
+  `CONFIG_ERROR` vs `CONFIG_CONFLICT`/`CONFIG_SAVE_REFUSED`,
+  `REQUEST_REFUSED` vs `STORAGE_ERROR`/`PLUGIN_ERROR`, and
+  `VALIDATION_FAILED` vs `INVALID_FRONTMATTER` for `FrontmatterError`
+  specifically), MCP now reports REST's code and carries its own previous
+  code for one release in a new `legacy_error_code` field, so an existing
+  MCP caller matching on the old string keeps working through the
+  transition. The next release removes `legacy_error_code` and MCP's code
+  becomes the same string REST reports. `kb_bulk_create`'s and
+  `POST /api/entries/import`'s per-item results, and every extension's
+  `CREATE_FAILED` fallback, now emit the exception class's own code the
+  same way — for the common case (a bare `ValidationError`, e.g. a missing
+  title) that code is `VALIDATION_FAILED`, unchanged.
+
+  **CLI.** Core CLI write commands have not adopted the class-level codes
+  yet (`cli_error_from`, added by this release, has no call site), so their
+  output is unchanged; wiring them will emit the exception's own code (e.g.
+  `ENTRY_NOT_FOUND`) where several commands today emit the generic `ERROR`
+  (`#481`). The **extension** CLI create commands (zettelkasten,
+  software-kb) do change: they read the exception's `error_code` and fell
+  back to `CREATE_FAILED`, and since every `PyriteError` now carries a code
+  (the base's is `INTERNAL_ERROR`), a failed create there now reports the
+  exception's own code instead of `CREATE_FAILED`.
+
+  **Server log.** The central handler's Python logger name changed from
+  `pyrite.server.api` to `pyrite.server.errors` (the handler moved to its
+  own module); anything grepping or filtering server logs by logger name
+  for this handler's lines needs to match the new name.
+
+  **`StorageError`, `PluginError` and `ConfigError`** now have a fixed,
+  safe `public_message` (ADR-0037 §3) shown over REST and MCP instead of
+  `str(exc)`, which could carry server-side detail (a database driver's
+  own text, a plugin's traceback fragment, a real filesystem path) at some
+  raise sites; the real detail still reaches the server log. Their
+  subclasses that already had their own `public_message`
+  (`ConfigSaveRefusedError`/`ConfigFileUnreadableError`, #377) are
+  unaffected. The fixed message replaces the raw text wherever these
+  classes reach a caller:
+  - MCP: the `error` of `kb_orient`, `kb_create`, `kb_bulk_create` (whole
+    call and each item), `kb_update`, `kb_delete`, `kb_link`,
+    `task_decompose`, `task_checkpoint`, schema set, `kb_commit`,
+    `kb_push` and `kb_registry_add`; the social create tool, the
+    journalism-investigation create/log-source/promote tools, and the
+    software-kb reorder and backlog-create tools.
+  - REST: each item of `POST /api/entries/import`, publish's
+    `push_error`, the batch link write-back's per-position error, and the
+    index job `error` field (admin `GET /index/jobs`, MCP
+    `kb_index_job_status`).
+  - CLI: bulk create (`pyrite import`) prints the fixed message for a bare
+    `StorageError`/`PluginError`/`ConfigError`; the raw text still reaches
+    the terminal through the log on stderr. `zettel new` and `sw new-adr`
+    print `str(e)` unconditionally (#506 -- there is no transport boundary
+    to protect on the operator's own terminal, so this release never ships
+    with those two masked).
+
+  (ADR-0037 theme 2)
+
+- Web: the New-entry form and the Web Clipper now offer only a KB's declared
+  types when it declares any, requiring an explicit choice (auto-selected
+  only when the KB declares exactly one) rather than an arbitrary default,
+  with an explicit "use a type this KB does not declare" control as the only
+  way to reach the rest; the web client no longer sends
+  `allow_undeclared: true` unconditionally on every create, clip or import.
+  `GET /api/entries/type-schemas` reports the KB's declared types as an
+  additive `declared` field. (#392)
+
+### Fixed
+
+- **Extension writes go through the write pipeline (#391).** MCP `social_post` and `pyrite zettel new` used to write entries directly via `KBRepository.save`, bypassing `KBService`'s create pipeline: an existing id was silently overwritten, no validators or before/after-save hooks ran, and neither surface indexed the new entry until a separate `pyrite index sync`. Both now go through `KBService.create_entry`, so an existing id is refused with `ENTRY_EXISTS` (the file is left byte-identical), hooks run, and the new entry is searchable immediately.
+
+- **`sw new-adr` goes through the write pipeline, and `file_pattern` gains entry-field placeholders (#391).** `sw new-adr` used to write the ADR file directly, bypassing `KBService`: an existing ADR number or id was silently overwritten, no validators or before/after-save hooks ran, the new ADR wasn't indexed until a separate `pyrite index sync`, and a KB that failed to resolve silently fell back to writing `./adrs` under the current directory. It now creates through `KBService.create_entry`: an existing id, or a **different** id that would resolve to the same on-disk path (e.g. two ADRs given the same `adr_number`, or two without one at all), is refused with `ENTRY_EXISTS` and the existing file is left byte-identical; no KB resolved refuses with `KB_NOT_FOUND` instead of writing anywhere. `TypeSchema.resolve_filename` (`file_pattern`) now supports the entry's own fields as placeholders, with an optional Python format spec (e.g. `{adr_number:04d}`), alongside the existing `{id}`/`{slug}`/`{date}`/`{title}`/`{type}`; a field the entry doesn't have, or one that is empty/whitespace/`None`/starts with `.`, falls back to the type's default filename rather than refusing the create, while a pattern or data bug (a format-spec mismatch, a positional or attribute/index placeholder, a NUL byte, an over-long resolved name, or a value that would escape the type's folder with a path separator or a `..` path component) is refused with a `ValidationError`. The software-kb `adr` type declares `file_pattern: "{adr_number:04d}-{title}.md"` so new ADRs keep their existing `NNNN-slug.md` filename and `adr-NNNN` id. Updating an existing entry never re-resolves its filename -- only create does -- so a `file_pattern` type's title or field edit no longer renames the file on every save.
+- **ADR numbering can still race, but the losing side never overwrites.** `sw new-adr` allocates the next `adr_number` by reading the index's current max, same as before this fix; two concurrent runs can still compute the same number. The resolved-path check above and the write that follows it are two different moments, so the check alone could not close the race -- the create pipeline's actual file write (`KBRepository.save`, `Entry.save`) is now exclusive for a brand-new entry: it refuses with `ENTRY_EXISTS` instead of silently overwriting if another process's write lands first, at the one point a filesystem call can enforce it atomically. It does not retry with the next number -- the losing run must be re-run.
+- **Renaming an entry of a `file_pattern` type no longer deletes its file.** `KBRepository.rename` re-resolved the filename after changing the id; a pattern with no `{id}`/`{slug}` placeholder (e.g. the software-kb `adr` type's `{adr_number:04d}-{title}.md`) re-resolved to the SAME path as the source, since neither field changes on a plain rename, and the rename's own `src.unlink()` then deleted the file it had just written -- `renamed: true`, zero files left. A file's name is fixed at creation, so rename now keeps a `file_pattern` type's existing filename (only the frontmatter `id:` changes), matching how an update already keeps the file where it is; the unlink is also now refused whenever the destination and source resolve to the same path, as defense in depth. `IndexManager.sync_incremental` is fixed to match: a file whose id changed without its path changing now retires the old id's index row instead of leaving a stale duplicate, and only when that row still points at the file being processed -- two files swapping ids, or a new file taking over an id an old file gave up, both end with the same rows a full reindex would produce.
+- **An entry whose type declares `file_pattern` keeps its filename on rename.** Only the `id:` frontmatter field changes; the on-disk filename never does, for any `file_pattern` type, not just ones without `{id}`/`{slug}`.
+- **The exclusive create-time write now falls back on filesystems without hard links.** `os.link` (used to make a create's publish step refuse a concurrent collision instead of silently overwriting) raises a plain `OSError` -- not the collision error -- on FAT/exFAT and some SMB/FUSE mounts, which would have failed every create there. The publish now falls back to claiming the filename with `O_CREAT|O_EXCL` (still exclusive) when hard links are unavailable, and to an ordinary write (guarded only by the write pipeline's own existence check) if neither mechanism is supported.
+
+- Saving `config.yaml` is crash-safe: Pyrite writes a temp file, fsyncs it, renames it over the old one and fsyncs the directory, so a crash can no longer leave a truncated registry. The saved file keeps its mode and owner (a root save restores the original owner). When the directory is not writable, the file has hard links, or the owner cannot be restored, Pyrite writes in place and logs a warning. A symlinked `config.yaml` stays a symlink. A config file whose `knowledge_bases` is `null`/`false`, or that has an entry with no `path`, is now reported as unreadable instead of being overwritten (#405).
+
+- **A login, registration or GitHub sign-in no longer stalls every other request while it waits for a busy database (#440).** These handlers ran their database work inline on the server's event loop; a write blocked behind another connection's write lock (a long index sync, a concurrent login) could stall unrelated requests for up to the busy timeout. Their database calls now run off the event loop. SQLite's write-lock timeout is also now set explicitly in one place (4 s) rather than relying on the driver's own unstated default, and a storage test pins the transaction mode (a read starts no transaction; a write opens a deferred one) that the session-cap fix (#435) depends on.
+
+- **Some safe, useful error messages hidden by ADR-0037 theme 2's fixed `StorageError`/`PluginError`/`ConfigError` messages are unmasked again, without unmasking the whole class (#506).** Each affected raise site now has its own narrow exception subclass (`KBAlreadyExistsError`, `IndexSyncRecoveryHintError`, `DroppedHookRefusedError`, `MissingOptionalDependencyError`), safe by construction, with `public_message = None` so its real text reaches every caller unchanged:
+  - `kb_registry_add` over MCP now names a duplicate KB the same way REST already did ("KB 'x' already exists", code `CONFLICT`), instead of the generic "The configuration is invalid...". `CONFLICT` maps to REST status 409 -- both from `server/errors.py`'s `_STATUS_BY_CODE` table directly now (not only via `ConfigError`'s fallback row, which happened to agree) and from `POST /api/kbs`'s own hand-coded `except ConfigError` catch, which already answered 409 before this change. Every current caller of `KBAlreadyExistsError` (REST, MCP) already answers `CONFLICT`/409; nothing else changes status.
+  - The "Run `pyrite index sync` to recover" hint after a rename whose index sync failed or left the new id unresolved, the dropped-before-hook write refusal (a plugin's `before_save`/`before_delete` hook was dropped at registration for not matching the `(entry, ctx)` contract), and the `pip install 'pyrite[ai]'` hint for a missing Anthropic/OpenAI SDK all reach REST, MCP and the CLI again instead of only the server log.
+  - The two CLI create commands that print an exception's message on the operator's own terminal (`zettel new`, `sw new-adr`) show `str(e)` unconditionally now -- there is no transport boundary to protect on a local terminal, so masking there was pure information loss.
+
+  `pyrite import`'s per-item results are unchanged code: they go through `KBService._refusal_result`/`_safe_message`, the same shared function REST's `POST /api/entries/import` and MCP's `kb_bulk_create` use, which can't tell which transport is asking and so keeps masking a bare `StorageError`/`PluginError`/`ConfigError` there too. The dropped-before-hook refusal above is the one case in a bulk import that's unmasked now, because its raise site itself changed; any other masked error in a bulk import still shows the fixed sentence on the terminal, with the real text reaching only the server's stderr log.
+
+  Every other `StorageError`/`PluginError`/`ConfigError` raise site is unaffected: the base classes still show their fixed, safe sentence for detail that is genuinely unsafe to return (a database driver's text, a plugin's traceback fragment, a real filesystem path).
+
+- **Entries are found by the id their file holds, not by its filename (#483, #484; ADR-0038 step 1).** A file named `alpha.md` that holds id `beta` is no longer returned for `alpha`, so `delete alpha` can no longer remove entry `beta`. An entry with no `id:` line (its id derived from the title) is now findable by `update`, `rename` and `delete`, and a create with that id is refused instead of writing a second file. Lookup now walks the same files as `pyrite index sync` (it used to skip `_`-prefixed folders). **Changed for vaults without `id:` lines:** looking a note up by its *filename* no longer finds it when its title gives a different id. Use the title-derived id (the one `pyrite index sync` indexes), or add an `id:` line; the "not found" error now names the file and the id it holds. Delete removes only files it is certain are the entry: every file whose `id:` states the id among the indexed file and the files named like it. When the id is derived from a title and more than one file derives it (two notes titled "Draft", or untitled notes), delete refuses and lists the files, so you can add an `id:` line to the one you mean. A scalar id (`id: true`, `id: 123`) is now read the way the index stores it (`'1'`, `'123'`).
+
+- CLI create, update, delete, and link errors now retain `NOT_FOUND` and `KB_NOT_FOUND` codes.
+
+- **KB validation and schema writes handle missing index data safely (#458).** `pyrite kb validate` warns and validates YAML-configured KBs when the index database cannot be read, and its structured output reports `drift_checked: false` when content-drift checks are skipped. Schema writes through the CLI and MCP now clearly refuse a missing KB directory instead of recreating it.
+
+- Web: an expired session is now noticed. A 401 on an authenticated request
+  clears the signed-in user, which moves the live-update socket's identity
+  to anonymous or none as appropriate; the existing `/login` redirect then
+  takes over. A 401 from `login`/`getMe` or while already signed out does not
+  trigger this, and a 403 never clears the user. (#420)
+- Web: `npm run dev`'s Vite proxy now forwards `/ws` to the backend, so the
+  live-update socket works under the dev server the way it already did in
+  production and in the auth e2e world. (#421)
+
+### Security
+
+- `GET /api/entries/types` and `GET /api/entries/type-schemas` now require read
+  access to any `kb` they are asked about, refusing an unreadable KB exactly as
+  every other entries route does; with no `kb` named, `/api/entries/types`
+  reports only the entry types found in the caller's own readable KBs.
+
+- A change to a KB's access setting now applies on the next request everywhere it is read -- the API, MCP, the public site, its sitemaps and live-update connections -- and removing an entry or a KB now removes it from the public site. The setting of a KB defined by hand in `config.yaml` can no longer be changed through the API or the web UI (the API answers 409 naming the file; the settings page shows the control disabled): edit `config.yaml` and restart. Ephemeral and repository KBs, which the server writes into `config.yaml` itself, stay editable.
+- The public site's landing page and a KB's index pages are now re-rendered on the first visit after they go stale, including the first visit after upgrading; no manual re-render is needed. A page below the landing that is not in the cache now answers 404 rather than "not yet rendered".
+- Saving `config.yaml` (creating an ephemeral KB, subscribing to a repository, changing a server-managed KB's access setting, `pyrite config set`) now writes back only the file's own content plus the change made; values supplied by environment variables are no longer written into the file, and KB entries that did not change keep the operator's own text.
+
+- A KB-scoped REST write is now authorised against exactly the knowledge bases
+  the handler acts on, whatever the request's `Content-Type`; a write that
+  names no knowledge base is refused rather than checked against the caller's
+  global role. The server extra now requires FastAPI 0.132.0 or later.
+- A state-changing request authenticated by the session cookie is now refused
+  unless its `Origin` (or `Referer`) is the server's own origin or listed in
+  `cors_origins`, in every authentication mode. Requests authenticated with an
+  API key in the `X-API-Key` header are unaffected.
+
+- An MCP SSE session now acts only for the principal that opened it: each message is checked against that principal, and one from any other caller is answered as an unknown session. A session also ends when its credential does (logout, a role or KB grant change, or session expiry), so a reconnecting client is served at its current tier and scope. The local rate-limit exemption now applies only to the local stdio transport, and rate-limit buckets key on the principal's kind and id. Requires `mcp` 1.27.2 or later.
+
+- Reads that follow links between knowledge bases now stay within the KBs the
+  caller can read, on the REST API and MCP, plugin tools included:
+  - backlinks and outlinks;
+  - the graph and its link counts;
+  - QA validation, assessment and status;
+  - link-discovery exclusions;
+  - entry and task lookups made without naming a KB.
+  A link to an entry the caller cannot read is shown as a link to a missing
+  entry, and an entry or task in such a KB is reported as not found. Callers
+  without KB-level restrictions see no change.
+- An empty or whitespace-only KB name is treated as naming no knowledge base,
+  everywhere. A request that sends one is answered within the caller's own
+  readable KBs, including the AI summarize, auto-tag and suggest-links
+  requests, a collection's metadata, and an entry's blocks.
+- For extension authors, a breaking change: the storage and service reads
+  that can cross knowledge bases now require a `readable_kbs` keyword and
+  raise `TypeError` without it. These include `PyriteDB.get_backlinks`,
+  `get_outlinks`, `get_graph_data`, `get_orphans` and `get_related`, and
+  `KBService.get_entry`, plus the graph, QA, wikilink, collection-query,
+  link-discovery and task-lookup methods. Pass the caller's readable set.
+  Pass `pyrite.services.access_policy.UNSCOPED` only from code that has no
+  caller identity at all, such as a command-line tool; never from a request
+  or tool handler.
+
+- Collection queries, stored query collections, title and wikilink lookups,
+  wanted pages and the social reputation score now stay within the knowledge
+  bases the caller can read, including a knowledge base named inside the query
+  or link text; one the caller cannot read answers as one that does not exist.
+  The social plugin now records the knowledge base on each reputation
+  adjustment; adjustments recorded before this release, which carry none, count
+  only for unscoped callers.
+- A repository sync request over the API names exactly one repository.
+  `pyrite repo sync` with no name still syncs all of them.
+
+- HTML built from KB content is sanitised before display; the web app is
+  served with a Content-Security-Policy; only http(s) links are rendered as
+  links.
+
 ## [0.25.4] - 2026-09-25
 
 Security release. **Upgrade if you run Pyrite with auth enabled, or if you open Pyrite in directories you did not create** (cloned or downloaded trees). With auth enabled, the instance now stays closed to strangers until its operator decides: sign-up waits for an admin created with `pyrite-admin user create`, self-registered users read only the KBs you open to them, and login and registration are rate-limited. A `.pyrite/config.yaml` found in a working tree is no longer trusted with anything beyond that tree's own KBs and index. See the operator actions below. This release also carries the write-path fixes the investigation workflow depends on, entry version history for server writes, search and site-cache robustness, and three contributor fixes.

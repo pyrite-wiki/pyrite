@@ -1,1 +1,0 @@
-- `pyrite links asymmetric -k <kb>` now finds one-way links within a single knowledge base. Passing the same KB with `--kb-a` and `--kb-b` also returns each link once; two-KB checks are unchanged (#465).

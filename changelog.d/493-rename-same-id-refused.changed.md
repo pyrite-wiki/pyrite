@@ -1,1 +1,0 @@
-- `pyrite rename X X` (and `KBRepository.rename`) now refuses a rename to the same id with a validation error instead of silently doing nothing, which left an unindexed entry invisible (#493).

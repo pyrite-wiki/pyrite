@@ -1,1 +1,0 @@
-- CLI create, update, delete, and link errors now retain `NOT_FOUND` and `KB_NOT_FOUND` codes.
