@@ -54,6 +54,14 @@ def stub_dist(tmp_path, monkeypatch):
     return dist
 
 
+@pytest.mark.control(
+    reason="the fix here that verify-red can see is the two PUBLIC_ENTRY_POINTS entries "
+    "(a test-side file, present either way) -- the old, conditionally-mounted "
+    "mount_static already mounted both routes whenever dist_dir.is_dir() (true for this "
+    "stub), so this passes against the pre-fix code too; the code fix it depends on "
+    "(mounting unconditionally) only matters in the NO-dist regime, covered instead by "
+    "test_every_entry_point_passes_the_policy.py::test_the_lists_hold_only_what_is_still_owed"
+)
 def test_the_completeness_guard_passes_with_a_built_dist(stub_dist):
     """The policy guard classifies the static routes explicitly, so a built
     dist does not surface them as unclassified REST operations."""
@@ -105,6 +113,11 @@ def test_unknown_api_shaped_paths_are_404_not_the_spa(stub_dist):
             assert resp.headers.get("content-type", "").startswith("application/json"), path
 
 
+@pytest.mark.control(
+    reason="a 'still works' guard: an ordinary path already reached the SPA fallback "
+    "before this fix (the bug was only API-shaped prefixes falling through to it), so "
+    "this passes with or without the code change"
+)
 def test_a_client_route_still_gets_the_spa_shell(stub_dist):
     """Client-side routing must keep working: an ordinary app path (not
     shaped like an API prefix) still gets the SPA's index.html."""
@@ -114,6 +127,12 @@ def test_a_client_route_still_gets_the_spa_shell(stub_dist):
     assert "stub spa" in resp.text
 
 
+@pytest.mark.control(
+    reason="a static check of web/src/routes' current contents, unrelated to any "
+    "server code change -- true regardless of the fix; it is a tripwire against a "
+    "future SvelteKit route colliding with a reserved prefix, not a red/green test of "
+    "this PR's behaviour"
+)
 def test_top_level_sveltekit_routes_do_not_collide_with_api_prefixes():
     """The guard's API-shaped prefixes (api, mcp, auth, ws) must not shadow
     a real client-side route. If SvelteKit ever grows a top-level route

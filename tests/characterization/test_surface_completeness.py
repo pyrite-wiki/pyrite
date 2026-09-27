@@ -20,6 +20,7 @@ or shrinking, is a reviewed diff to a constant, never a silent drift.
 
 from __future__ import annotations
 
+import pytest
 from fastapi.routing import APIRoute
 
 from tests._surface_inventory import _walk_routes
@@ -120,6 +121,11 @@ def test_every_mcp_tool_is_covered(world):
     )
 
 
+@pytest.mark.control(
+    reason="a self-test of surfaces.py's own dict-literal/count-constant bookkeeping "
+    "(#538 only changed the numeric literals here alongside the dicts they count) -- "
+    "true whenever the two agree, independent of any app code fix"
+)
 def test_exclusion_counts_are_pinned():
     """`surfaces.py`'s module docstring used to CLAIM a count with nothing
     behind it (#476 round-2 issue 2's "the comment claims one that doesn't
