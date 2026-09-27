@@ -520,3 +520,49 @@ assurance here.
   reasons (`orphan_entry … not_auto_fixable`) rather than guessing. All entries parsed afterward.
 - **`pyrite init` is friction-free.** One command, zero prompts, registered and indexed, usable
   sandbox in seconds. The reason this session could test destructive commands at all.
+
+---
+
+## 2026-09-27 · a CLI and agents writing decision records and notes into a KB through `pyrite update -f` · claude-opus-5-5
+
+Wrote free-text fields (a decision, a note, a reason, a one-line question with options) onto task and note entries from a script and from agents, against 0.25.5. Every value with a comma in it came back as a list, silently.
+
+**Command:**
+```
+pyrite update <id> -k <kb> -f 'note=narrow the scope, then expand' -f 'size=1,600 words' -f 'q="a, b"' -f 'j=["a, b"]'
+pyrite task create "…" -k <kb> --field 'why_me=a login, a payment'
+pyrite create -k <kb> -t note --title "…" -f 'summary=one, two'
+```
+
+**Expected:** a string field stays a string. A list is something I ask for.
+
+**Got:**
+```yaml
+note: [narrow the scope, then expand]    # two items
+size: ['1', 600 words]                   # a thousands separator split a number
+q: ['"a', 'b"']                          # quoting doesn't help; the quotes are kept inside the items
+j: [a, b]                                # a JSON array is the only way to keep the comma, and it's a list
+why_me: [a login, a payment]             # task create --field does the same
+summary: [one, two]                      # and so does create -f
+```
+The JSON result says `{"updated": true}`, with no hint that a value changed type.
+
+**Friction 1: there is no way to store a plain string containing a comma through the CLI.** `_parse_field_value` (cli/entry_commands.py) tries JSON arrays and objects, then numbers and booleans, then splits on any comma. There's no escape, a quoted string isn't read as JSON, and there's no string-only flag. Free text (prose, questions, numbers like 1,600, quotes, place names like "Portland, OR") is exactly where commas occur.
+
+**Friction 2: it's silent.** The value round-trips as a list, and `update -f`'s result doesn't show the parsed type. I found it only because a rendered field looked broken. A reader expecting a string gets a list: some templates render `['narrow the scope', ' then expand']`, others join without the comma.
+
+**Had to figure out:** where the split happens (by reading the source), and that the MCP and REST paths behave differently (they take typed JSON). The workarounds were:
+- rewriting commas as semicolons before calling the CLI, which is lossy;
+- writing the YAML file directly and running `index sync`, which skips the write path, validation and the audit log.
+
+**Would have helped, in order of preference:**
+1. **Split on commas only when the schema declares the field a list or multi-select.** An undeclared field, or a declared string, is stored as given.
+2. **Read a JSON string literal as a string:** `-f 'k="a, b"'` → `k: a, b`. That's the obvious escape, and it's what I tried first.
+3. **A string-only option** such as `--field-str k=v` or `--set k=v`, and a JSON one such as `--field-json k=<json>`.
+4. **At minimum, report the parsed type** in the JSON result (`"applied": {"note": ["…", "…"]}`), and warn when a comma split turns a value into a list for a field the schema doesn't declare as one.
+
+**Related:** #231 (closed) fixed `tags=a,b` read back as characters. That's the list direction; this is the string direction.
+
+**Worked well:** JSON arrays and objects in `-f` (`-f 'options=[{"label": "A", …}]'`) become clean structured YAML. That made structured records easy once I knew the rule.
+
+**Severity:** slowed, plus silent corruption of free text. Anything an agent writes in prose through `-f` is at risk.
