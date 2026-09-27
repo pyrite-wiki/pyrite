@@ -19,7 +19,17 @@ Instead, use GitHub's private vulnerability reporting feature:
 2. Click "Report a vulnerability"
 3. Provide a detailed description of the vulnerability
 
-We will acknowledge receipt within 48 hours and aim to provide a fix within 7 days for critical issues.
+We will acknowledge receipt within 48 hours. For the supported configurations below, we aim to fix critical issues within 7 days.
+
+## Multi-user is experimental
+
+Pyrite's supported security boundary today is **one operator**: you, your agents (with the MCP read/write/admin tiers), and people you trust with everything on the instance.
+
+Running Pyrite for people who should not see each other's data — accounts with per-KB permissions, anonymous readers, the public `/site`, a shared server on the internet — is **experimental**. Those features exist and are being hardened release by release, and there are known open issues in how access between users and KBs is enforced. Until this notice is removed:
+
+- Treat every KB on a shared instance as readable by every user of that instance.
+- Keep genuinely private KBs on a separate instance, or local.
+- Reports about isolation between users or KBs are welcome through the private channel above. They are fixed in regular releases, batched, rather than as emergency patch releases.
 
 ## Scope
 

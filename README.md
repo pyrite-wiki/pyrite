@@ -22,6 +22,8 @@ Your AI agents have no memory. Your knowledge is trapped in platform silos. Ever
 - **Plugin system with 19 extension points** — custom entry types, MCP tools, CLI commands, validators, lifecycle hooks, relationship semantics, schema migrations.
 - **Zero running cost locally** — markdown files + SQLite index on your disk. No cloud dependency, no subscription, no vendor lock-in. Your data is plain text files you can read in any editor.
 
+> **Multi-user is experimental. Here be dragons.** Pyrite is solid for one person, their agents, and a team that trusts each other. Accounts, per-KB permissions and the public `/site` work, and each release closes more gaps, but they have not had the review a system holding other people's private data needs. Don't put knowledge on a shared or internet-facing instance that you couldn't live with every user of that instance reading. See [SECURITY.md](SECURITY.md#multi-user-is-experimental).
+
 ## Quick Start
 
 ```bash
@@ -256,6 +258,8 @@ kb/                  # Pyrite's own KB (ADRs, backlog, components, standards)
 
 ## Deploy
 
+> Hosting an instance for other people is experimental: read the [multi-user warning](SECURITY.md#multi-user-is-experimental) first.
+
 ### One-Click Deploy
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/new?repo=pyrite-wiki/pyrite&referralCode=pyrite)
@@ -276,7 +280,7 @@ The container image binds `0.0.0.0` (`PYRITE_HOST`) and honours the platform `$P
 
 ### Self-Hosted VPS
 
-Run your own Pyrite instance on any VPS ($6/month, unlimited users, you own your data):
+Run your own Pyrite instance on any VPS ($6/month, you own your data):
 
 ```bash
 git clone https://github.com/pyrite-wiki/pyrite.git && cd pyrite

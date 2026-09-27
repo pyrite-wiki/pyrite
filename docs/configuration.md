@@ -199,6 +199,8 @@ instance.
 
 ## Authentication (multi-user)
 
+> **Experimental.** Accounts and per-KB permissions are not yet a boundary to rely on between users who should not see each other's data. See [SECURITY.md](../SECURITY.md#multi-user-is-experimental).
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `PYRITE_AUTH_ENABLED` | `false` | Turn on user accounts and per-KB permissions |
