@@ -573,3 +573,18 @@ Two traps met on the way:
 - Newer FastAPI wraps `include_router` in `_IncludedRouter`, so
   `app.routes` shows 10 `APIRoute`s, not ~140. Walk the wrappers
   (`tests/_surface_inventory.rest_operations`) rather than `app.routes`.
+
+## A model that reads a key lossily must not write it back (#557)
+
+`Entry._base_kwargs` and every `from_frontmatter` parse some keys into
+Pyrite's own shapes: `provenance` into `Provenance` (ten known sub-keys),
+`sources`/`links` into dataclasses, `importance` through `safe_int`, plugin
+fields through their coercions. A file whose value does not fit (a KB's own
+`provenance:` block, `importance: high`) used to lose it on the next save of
+any kind. `capture_extra_frontmatter` now records such keys in
+`_unrepresented_keys` with the value the model serialized at load, and
+`_frontmatter_for_file` puts the file's node back while the model still
+serializes that value. To change such a field, **assign it** (`entry.x = ...`
+clears the key in `__setattr__`) or change it in place so its serialization
+differs; a writer that sets the attribute via `object.__setattr__` bypasses
+the first rule and keeps the file's value if the new one serializes the same.

@@ -69,6 +69,13 @@ _BASE_CONSUMED_KEYS = frozenset(
 # the key, or by an explicit assignment (see `__setattr__`).
 _TIMESTAMP_KEYS = ("created_at", "updated_at")
 
+# Attributes, never frontmatter (see `_BASE_CONSUMED_KEYS`): a source key of one
+# of these names is not a value the model re-serializes, so it is never "kept".
+_NEVER_FRONTMATTER_KEYS = frozenset({"body", "file_path", "kb_name", "extra_frontmatter"})
+
+# Stands for "the serialized model has no such key" in the kept-key comparison.
+_ABSENT = object()
+
 
 def _default_valued_keys_absent_from(entry: "Entry", meta: dict[str, Any]) -> frozenset[str]:
     """Keys a pristine instance of ``entry``'s class writes, that ``meta`` lacks.
@@ -175,6 +182,22 @@ def capture_extra_frontmatter(entry: "Entry", meta: dict[str, Any]) -> None:
     }
     if extras:
         entry.extra_frontmatter = extras
+    # #557: a key the model reads but cannot write back as the file had it --
+    # `provenance:` with sub-keys `Provenance` does not know, `sources: a book`,
+    # `importance: high`, a `links: [a, b]` shorthand. Recorded with the value
+    # the model serialized at load, so the write path can tell "nobody changed
+    # this field" (write the file's node back) from a real change.
+    unrepresented = {
+        k: _plain(emitted.get(k, _ABSENT))
+        for k, v in meta.items()
+        if k not in extras
+        and k not in _TIMESTAMP_KEYS
+        and k not in _NEVER_FRONTMATTER_KEYS
+        and k not in entry.FRONTMATTER_ALIASES
+        and _plain(v) != _plain(emitted.get(k, _ABSENT))
+    }
+    if unrepresented:
+        entry._unrepresented_keys = unrepresented
 
 
 def _plain(value: Any) -> Any:
@@ -375,6 +398,17 @@ class Entry(ABC):
         default=frozenset(), init=False, repr=False, compare=False
     )
 
+    # Source keys whose value the model cannot write back as the file had it
+    # (#557), mapped to what the model serialized for them at load. The write
+    # path puts the file's own node back while the model still serializes the
+    # load-time value; an assignment removes the key (see `__setattr__`), so
+    # a value a caller names always reaches the file. ``None`` when there are
+    # none: a dict default would need a factory, and `__setattr__` reads this
+    # before the dataclass `__init__` has assigned it.
+    _unrepresented_keys: dict[str, Any] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+
     def __setattr__(self, name: str, value: Any) -> None:
         """Assigning a field makes it explicit, whatever value it is given.
 
@@ -397,6 +431,12 @@ class Entry(ABC):
             # Same rule for a timestamp the source carried but did not parse:
             # the assignment is the user's value and must reach the file.
             super().__setattr__("_unparsed_timestamp_keys", self._unparsed_timestamp_keys - {name})
+        kept = self._unrepresented_keys
+        if kept and name in kept:
+            # #557: the file's own value is kept only while nobody sets the
+            # field; an assignment is the caller's value, even one equal to
+            # what the model read (`importance = 5` over `importance: high`).
+            super().__setattr__("_unrepresented_keys", {k: v for k, v in kept.items() if k != name})
         super().__setattr__(name, value)
 
     def touch_updated_at(self) -> None:
@@ -611,6 +651,13 @@ class Entry(ABC):
             for ts_key in self._unparsed_timestamp_keys:
                 if ts_key in meta and ts_key in self._source_frontmatter:
                     meta[ts_key] = self._source_frontmatter[ts_key]
+            # #557: a key the model could not represent goes back as the file
+            # had it, unless the field changed since load -- by assignment
+            # (cleared in `__setattr__`) or in place (`links.append`, caught
+            # by the value no longer serializing as it did at load).
+            for key, loaded in (self._unrepresented_keys or {}).items():
+                if key in self._source_frontmatter and _plain(meta.get(key, _ABSENT)) == loaded:
+                    meta[key] = self._source_frontmatter[key]
         absent = self._absent_default_keys
         if not absent:
             return meta
@@ -620,6 +667,20 @@ class Entry(ABC):
             for k, v in meta.items()
             if not (k in absent and k in pristine and _plain(pristine[k]) == _plain(v))
         }
+
+    def unrepresented_frontmatter(self) -> dict[str, Any]:
+        """The file's keys whose value this entry's model does not reproduce.
+
+        Maps each such key to the value as the file has it: a `provenance:`
+        block of the KB's own shape, `importance: high`, a `links: [a, b]`
+        shorthand. The write path keeps these as they are (#557); `qa
+        validate` uses them to report a reserved key a KB uses for a field of
+        its own. Empty for an entry not loaded from a file.
+        """
+        source = self._source_frontmatter
+        if not isinstance(source, Mapping):
+            return {}
+        return {k: source[k] for k in (self._unrepresented_keys or {}) if k in source}
 
     def to_markdown(self) -> str:
         """Convert to markdown string with YAML frontmatter."""

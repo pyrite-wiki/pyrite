@@ -67,6 +67,24 @@ _MANAGED_FIELDS = frozenset(
 #: result carries them and an agent echoing it back would freeze them.
 _TIMESTAMP_FIELDS = frozenset({"created_at", "updated_at"})
 
+#: Keys a read result (`kb_get`, `GET /api/entries/{id}`) carries that are the
+#: index's, not the entry's: an update never writes them. With the managed
+#: fields, the timestamps and the type, they are what
+#: :meth:`KBService.split_echoed_update` sets aside when a caller sends a whole
+#: read result back (#455).
+_INDEX_ONLY_KEYS = frozenset(
+    {
+        "entry_type",
+        "type",
+        "indexed_at",
+        "content_hash",
+        "created_by",
+        "modified_by",
+        "outlinks",
+        "backlinks",
+    }
+)
+
 #: Two different spellings of "no relation was ever named" that must compare
 #: equal in a link's duplicate key. Every write surface (CLI `link`, MCP
 #: `kb_link`, `add_link`'s own default, `add_links`' bulk path) defaults an
@@ -1022,6 +1040,40 @@ class KBService:
             return frozenset()
         return self._field_sets(entry_type, kb_config)[0]
 
+    def split_echoed_update(
+        self, entry_id: str, kb_name: str, fields: dict[str, Any]
+    ) -> tuple[dict[str, Any], list[str]]:
+        """``(updates, ignored)`` for a caller that may send a read result back.
+
+        MCP ``kb_update`` takes the entry's fields as top-level arguments, and
+        an agent commonly edits what ``kb_get`` returned and sends all of it.
+        That result carries keys no update may set -- the id, the path, the
+        timestamps, the type's managed fields, index columns -- and ``null``
+        for every index column the entry does not use. Those are set aside
+        and named in ``ignored``, so the caller can see what was not written.
+        Every other key goes to :meth:`update`, which stores one the type does
+        not declare the way CLI ``update -f`` and REST PATCH do (#407, #455):
+        before this, MCP kept only the declared fields and dropped the rest
+        with ``updated: true``.
+        """
+        updatable = self.updatable_fields(entry_id, kb_name)
+        row = self.db.get_entry(entry_id, kb_name)
+        entry_type = row.get("entry_type") if row else None
+        managed = (
+            self._field_sets(entry_type, self.config.get_kb(kb_name))[2]
+            if entry_type
+            else _MANAGED_FIELDS
+        )
+        not_written = managed | _TIMESTAMP_FIELDS | _INDEX_ONLY_KEYS
+        updates: dict[str, Any] = {}
+        ignored: list[str] = []
+        for key, value in fields.items():
+            if key in not_written or (value is None and key not in updatable):
+                ignored.append(key)
+            else:
+                updates[key] = value
+        return updates, sorted(ignored)
+
     def update(self, entry_id: str, kb_name: str, updates: dict[str, Any]) -> WriteResult:
         """Update an existing entry for a caller, returning it and its warnings.
 
@@ -1096,9 +1148,15 @@ class KBService:
         if restrict:
             refused = sorted(k for k in updates if k in managed)
             if refused:
+                # #557: the usual way to arrive here is a KB using one of these
+                # names for a field of its own (`provenance:` on a draft), so
+                # the refusal says how to keep that field.
                 raise ValidationError(
                     f"Cannot set {', '.join(refused)} on {entry.entry_type} "
-                    f"'{entry_id}' with an update: Pyrite maintains these fields."
+                    f"'{entry_id}' with an update: Pyrite maintains these fields. "
+                    f"To keep a field of your own under that name, rename it in "
+                    f"the file (for example `{entry.entry_type}_{refused[0]}`) "
+                    "and update the new name."
                 )
 
         # Capture old_status before applying updates (for workflow hooks)

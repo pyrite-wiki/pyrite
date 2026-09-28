@@ -52,6 +52,8 @@ URI_SCHEME = "pyrite://"
 MAX_BATCH_READ_ENTRIES = 50
 #: Arguments of kb_create / kb_update that steer the tool, never entry fields.
 _CREATE_CONTROL_KEYS = frozenset({"kb_name", "validate", "allow_undeclared"})
+#: Arguments of kb_update that name the entry or steer the tool.
+_UPDATE_CONTROL_KEYS = frozenset({"entry_id", "kb_name", "validate"})
 
 
 # Identity fields every `fields` projection keeps. Agents key on these to
@@ -1290,10 +1292,12 @@ class PyriteMCPServer:
     ) -> dict[str, Any]:
         """Update an existing entry.
 
-        Only the entry type's own fields are passed on -- the set comes from
-        the type registry and the KB schema (``KBService.updatable_fields``),
-        so an agent that echoes a whole read result back cannot rewrite the
-        id, path, timestamps or a type's managed fields.
+        Every argument other than the tool's own goes to ``KBService.update``,
+        so a key the type does not declare is stored the way CLI and REST
+        store it (#455). An agent that echoes a whole read result back still
+        cannot rewrite the id, path, timestamps, a type's managed fields or
+        index columns: ``KBService.split_echoed_update`` sets those aside,
+        and the result names them in ``ignored``.
         """
         entry_id = args.get("entry_id")
         kb_name = args.get("kb_name")
@@ -1306,8 +1310,11 @@ class PyriteMCPServer:
         except ValidationError as e:
             return _refusal(e)
 
-        fields = self.svc.updatable_fields(entry_id, kb_name)
-        updates = {k: v for k, v in args.items() if k in fields}
+        updates, ignored = self.svc.split_echoed_update(
+            entry_id,
+            kb_name,
+            {k: v for k, v in args.items() if k not in _UPDATE_CONTROL_KEYS},
+        )
 
         try:
             written = self.svc.update(entry_id, kb_name, updates)
@@ -1322,6 +1329,8 @@ class PyriteMCPServer:
             "entry_id": entry.id,
             "file_path": str(entry.file_path) if entry.file_path else "",
         }
+        if ignored:
+            result["ignored"] = ignored
         if written.warnings:
             result["warnings"] = written.warnings
         qa_issues = self._maybe_validate(entry.id, kb_name, args, readable_kbs=readable_kbs)

@@ -112,6 +112,7 @@ class QAService:
 
         entry = rows[0]
         self._check_entry_fields(entry, issues)
+        self._check_reserved_key_collisions(issues, kb_name, entry_id=entry_id)
         self._check_entry_links(entry_id, kb_name, issues, readable_kbs=readable_kbs)
         self._check_schema_validation(entry, issues)
         self._check_rubric_evaluation(entry, issues)
@@ -148,6 +149,9 @@ class QAService:
         self._check_importance_range(issues, kb_name)
         self._check_broken_links(issues, kb_name, readable_kbs=readable_kbs)
         self._check_orphans(issues, kb_name, readable_kbs=readable_kbs)
+
+        # Per-file pass: reserved keys the KB uses for fields of its own (#557)
+        self._check_reserved_key_collisions(issues, kb_name)
 
         # Per-entry schema pass (only if kb.yaml exists)
         self._check_schema_all(issues, kb_name)
@@ -888,6 +892,83 @@ class QAService:
             )
 
     # =========================================================================
+    # Reserved-key pass (reads the files)
+    # =========================================================================
+
+    def _check_reserved_key_collisions(
+        self, issues: list[dict[str, Any]], kb_name: str, *, entry_id: str | None = None
+    ) -> None:
+        """Report a file that uses a Pyrite-reserved key for a field of its own.
+
+        `provenance`, `sources`, `importance`... are read into Pyrite's own
+        model. A file whose value under one of those names does not fit that
+        model (`provenance: {source: ..}`, `importance: high`) is kept as it
+        is on every update (#557), but Pyrite reads it wrongly: the index,
+        search and the API see Pyrite's reading, not the file's. The rule
+        names the file and the key so the KB can rename it. A value Pyrite
+        only normalizes, losing nothing (`links: [a, b]`), is not reported.
+
+        Reads files, not the index: the index keeps only Pyrite's reading.
+        """
+        from pathlib import Path
+
+        from ..schema.reserved import RESERVED_FIELD_NAMES
+        from ..storage.repository import KBRepository
+
+        kb_config = self.config.get_kb(kb_name)
+        if kb_config is None:
+            return
+        repo = KBRepository(kb_config)
+        if entry_id is None:
+            entries = repo.list_entries()
+        else:
+            row = self.db.get_entry(entry_id, kb_name)
+            path = row.get("file_path") if row else None
+            if not path or not Path(path).is_file():
+                return
+            try:
+                entries = [(repo.load_entry_from_file(Path(path)), Path(path))]
+            except Exception:
+                logger.debug("reserved-key check: cannot load %s", path, exc_info=True)
+                return
+
+        for entry, file_path in entries:
+            kept = entry.unrepresented_frontmatter()
+            if not kept:
+                continue
+            emitted = entry.to_frontmatter()
+            for key, value in kept.items():
+                if key not in RESERVED_FIELD_NAMES:
+                    continue
+                read_as = emitted[key] if key in emitted else getattr(entry, key, None)
+                if hasattr(read_as, "to_dict"):
+                    read_as = read_as.to_dict()
+                lost = _leaves(value) - _leaves(read_as)
+                if not lost:
+                    continue
+                try:
+                    shown = file_path.relative_to(kb_config.path)
+                except ValueError:
+                    shown = file_path
+                issues.append(
+                    {
+                        "entry_id": entry.id,
+                        "kb_name": kb_name,
+                        "rule": "reserved_key_collision",
+                        "severity": "warning",
+                        "field": key,
+                        "message": (
+                            f"{shown}: '{key}' is a key Pyrite reserves, and this "
+                            f"file's value does not fit it (Pyrite cannot read "
+                            f"{', '.join(sorted(lost)[:3])}). Updates keep the "
+                            f"file's value, but search and the API see Pyrite's "
+                            f"reading. Rename the key (for example "
+                            f"'{entry.entry_type}_{key.lstrip('_')}')."
+                        ),
+                    }
+                )
+
+    # =========================================================================
     # Schema pass (all entries)
     # =========================================================================
 
@@ -1409,3 +1490,26 @@ class QAService:
         from .qa_analytics_service import QAAnalyticsService
 
         return QAAnalyticsService._days_since(iso_str, now)
+
+
+def _leaves(value: Any) -> set[str]:
+    """Every mapping key and non-empty scalar in ``value``, as strings.
+
+    Used to ask whether Pyrite's reading of a reserved key kept everything
+    the file said: a leaf of the file's value missing from the reading's
+    leaves is information Pyrite does not represent.
+    """
+    if isinstance(value, dict) or hasattr(value, "items"):
+        out: set[str] = set()
+        for k, v in value.items():
+            out.add(str(k))
+            out |= _leaves(v)
+        return out
+    if isinstance(value, (list, tuple)):
+        out = set()
+        for v in value:
+            out |= _leaves(v)
+        return out
+    if value is None or value == "":
+        return set()
+    return {str(value)}
