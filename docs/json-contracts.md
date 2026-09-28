@@ -123,15 +123,20 @@ findings (an unknown select value when the KB does not enforce). MCP
 each `kb_bulk_create` result as `warnings`, and REST `POST`/`PUT`/`PATCH
 /api/entries` as `warnings: []` in the response body.
 
-**Update fields.** An update applies the fields of the entry's own type —
-its model's fields and every field its `kb.yaml` names for the type
-(`fields`, `optional`, `required`). Fields Pyrite maintains are never set by
+**Update fields.** An update applies the fields it names: the entry type's
+own fields (its model's fields and every field its `kb.yaml` names for the
+type) and, on every surface, keys the type does not declare, which are
+stored as custom fields. Keys the request does not name keep the file's
+value as written, including values Pyrite reads differently (#557). Fields Pyrite maintains are never set by
 an update: `id`, `file_path`, `kb_name`, `links`, `sources`, `provenance`,
 plus a type's own `managed_fields` (a task's `status_change_log`,
 `evidence`, `agent_context`, `assigned_at`; an ADR's `adr_number`). REST
 `PUT`/`PATCH` and `pyrite update --field` refuse them with
-`VALIDATION_FAILED`; MCP `kb_update` ignores them, and also ignores
-`created_at`/`updated_at`, so a read result echoed back cannot rewrite them.
+`VALIDATION_FAILED`; MCP `kb_update` sets them aside, along with
+`created_at`/`updated_at`, index columns and `null`s for undeclared keys,
+and lists them in the result's `ignored` field, so a read result echoed
+back cannot rewrite them. Echoing a whole read result still writes
+Pyrite's reading of every field it names; send only what changes (#561).
 A body marked `body_truncated` is refused at any depth of the request on
 every update surface.
 
