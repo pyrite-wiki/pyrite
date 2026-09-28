@@ -1,0 +1,1 @@
+- **`pyrite index reconcile` no longer proposes moving every file whose type sets a `file_pattern` (#474).** It now moves only entries whose type has a templated subdirectory (such as `backlog/{status}`), keeps each file's name, and leaves static placements and `__collection.yaml` files where they are. A bad template path is reported for that entry instead of stopping the run.
