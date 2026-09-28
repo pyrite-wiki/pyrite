@@ -655,9 +655,10 @@ class Entry(ABC):
             # had it, unless the field changed since load -- by assignment
             # (cleared in `__setattr__`) or in place (`links.append`, caught
             # by the value no longer serializing as it did at load).
-            for key, loaded in (self._unrepresented_keys or {}).items():
-                if key in self._source_frontmatter and _plain(meta.get(key, _ABSENT)) == loaded:
-                    meta[key] = self._source_frontmatter[key]
+            loaded = self._unrepresented_keys or {}
+            for key, value in self.unrepresented_frontmatter().items():
+                if _plain(meta.get(key, _ABSENT)) == loaded[key]:
+                    meta[key] = value
         absent = self._absent_default_keys
         if not absent:
             return meta

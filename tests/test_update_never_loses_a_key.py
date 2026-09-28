@@ -34,6 +34,7 @@ from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
 from pyrite.storage.repository import KBRepository
+from pyrite.utils.yaml import load_yaml
 
 KB = "drafts"
 
@@ -240,6 +241,70 @@ def test_an_in_place_change_of_a_kept_key_still_lands(tmp_path):
     assert "- alpha" not in (kb_path / "notes" / "d.md").read_text(encoding="utf-8")
 
 
+@pytest.mark.control(
+    reason="a legacy alias was always rewritten under its canonical name; this "
+    "pins that keeping unrepresented keys does not write it back as well"
+)
+def test_a_legacy_alias_key_is_not_written_back_beside_its_canonical_key(tmp_path):
+    """`participants:` on an event is read as `actors` and written as
+    `actors`. The model does not reproduce `participants`, but it is not lost:
+    keeping it too would write the same list twice."""
+    text = (
+        "---\nid: e\ntitle: E\ntype: event\ndate: '2025-01-01'\n"
+        "participants:\n- alice\n---\n\nBody.\n"
+    )
+    config, kb_path = _env(tmp_path, {"events/e.md": text})
+
+    _with_service(config, lambda svc: svc.update("e", KB, {"title": "E2"}))
+
+    fm = load_yaml((kb_path / "events" / "e.md").read_text(encoding="utf-8").split("---")[1])
+    assert fm["title"] == "E2"
+    assert not ("participants" in fm and "actors" in fm), fm
+
+
+@pytest.mark.control(
+    reason="a `body:`/`file_path:` frontmatter key (the #87 fold) was always "
+    "dropped on save (#150's cleanup); this pins that it still is"
+)
+def test_a_folded_body_key_is_still_dropped(tmp_path):
+    """`body` and `file_path` are entry attributes, never frontmatter. A file
+    that carries them as keys is the #87 corruption, which a save cleans up;
+    keeping unrepresented keys must not undo that."""
+    text = (
+        "---\nid: d\ntitle: D\ntype: draft\ndraft_status: brief\n"
+        "body: a stale folded copy\nfile_path: /somewhere/d.md\n---\n\nBody.\n"
+    )
+    config, kb_path = _env(tmp_path, {"d.md": text})
+
+    _with_service(config, lambda svc: svc.update("d", KB, {"draft_status": "ready"}))
+
+    after = (kb_path / "d.md").read_text(encoding="utf-8")
+    assert "draft_status: ready" in after
+    assert "stale folded copy" not in after
+    assert "file_path:" not in after
+
+
+def test_unrepresented_frontmatter_names_only_what_the_model_cannot_write(tmp_path):
+    """The kept set is exactly the keys the model reads but cannot write back:
+    not an undeclared key (kept through `extra_frontmatter`), not a
+    timestamp (#151 keeps its own node), not a key it reproduces."""
+    text = DRAFT.replace("type: draft\n", "type: draft\ncreated_at: 2026-01-15\n")
+    config, _ = _env(tmp_path, {"drafts/my-draft.md": text})
+
+    entry = KBRepository(config.get_kb(KB)).load("my-draft")
+
+    assert set(entry.unrepresented_frontmatter()) == {"provenance"}
+
+    # A typed class keeps an undeclared key in `extra_frontmatter` (a draft is
+    # generic and promotes it instead), so that is where it must not count.
+    event = "---\nid: ev\ntitle: Ev\ntype: event\ndate: '2025-01-01'\ncustom_key: 1\n---\n\nB.\n"
+    (tmp_path / "typed").mkdir()
+    config, _ = _env(tmp_path / "typed", {"events/ev.md": event})
+    loaded = KBRepository(config.get_kb(KB)).load("ev")
+    assert loaded.extra_frontmatter == {"custom_key": 1}
+    assert loaded.unrepresented_frontmatter() == {}
+
+
 def test_naming_a_managed_key_is_refused_before_anything_is_written(tmp_path):
     """`-f provenance=x` is refused, the file byte-identical, and the message
     names the key and says how to keep a key of one's own under that name."""
@@ -300,7 +365,7 @@ def test_mcp_kb_update_echoing_a_read_result_writes_only_what_it_can_and_says_so
         got = server._dispatch_tool("kb_get", {"entry_id": "my-draft", "kb_name": KB})["entry"]
         # An echoed `importance: 5` is a real field set to its default, and
         # was written before this change too (it was always in the declared
-        # set): the file grows the line. Not this theme's; see the PR.
+        # set): the file grows the line. Not this theme's: #561.
         got.pop("importance")
         res = server._dispatch_tool(
             "kb_update", {**got, "entry_id": "my-draft", "draft_status": "ready"}
@@ -379,9 +444,12 @@ def test_qa_validate_reports_a_scalar_and_an_unparseable_reserved_value(tmp_path
 def test_qa_validate_does_not_report_a_lossless_shorthand_or_a_real_provenance(tmp_path):
     real = (
         "---\nid: real\ntitle: Real\ntype: note\ntags: [a]\nlifecycle: active\n"
-        "provenance:\n  created_by: mark\n---\n\nB.\n"
+        "created_at: 2026-01-15\nprovenance:\n  created_by: mark\n---\n\nB.\n"
     )
-    config, _ = _env(tmp_path, {"plain.md": LINKS_SHORTHAND, "real.md": real})
+    # Not reserved: a type's own field read lossily is the type's business
+    # (and #555's), not a collision with a name Pyrite reserves.
+    typed = "---\nid: qa\ntitle: QA\ntype: qa_assessment\ntier: high\n---\n\nB.\n"
+    config, _ = _env(tmp_path, {"plain.md": LINKS_SHORTHAND, "real.md": real, "qa.md": typed})
     assert [i for i in _qa_issues(config) if i["rule"] == "reserved_key_collision"] == []
 
 

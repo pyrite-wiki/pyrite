@@ -3,9 +3,10 @@
 Loading every entry in a KB and saving it back with no edit should change
 nothing on disk. Before PR #69 this rewrote 768 of 768 real `kb/` files;
 #69 brought that down, and this test measured the remainder directly: 52 of
-770 files as of this branch, split across two distinct causes (see
-`KNOWN_RESIDUAL_IDS` below -- each group is a separate, precisely-identified
-finding, not one blob). Two groups are gone: the block-indented `links:` set
+770 files, split across two distinct causes (see `KNOWN_RESIDUAL_IDS` below --
+each group is a separate, precisely-identified finding, not one blob). 8
+remain, all trailing-blank-line normalization: the 46 bare-string `links:`
+files round-trip since #557. Two more groups are gone: the block-indented `links:` set
 (11 ids, issue #148 -- `pyrite/utils/yaml.py` now reads a source document's own
 sequence indentation out of the parsed tree's line/column records and hands the
 emitter those numbers, so a no-op save leaves those files byte-identical) and
@@ -63,66 +64,15 @@ FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "roundtrip"
 # tracked by a GitHub issue (or, for the residual named in #146's own spec,
 # fixed or explicitly deferred there) so the set only shrinks on purpose.
 #
-# 1. BARE-STRING LINKS (#146's own design notes): a bare YAML string under
-#    `links:` parses into `Link(target=..., relation="related")`, and
-#    `Link.to_dict()` always emits a mapping -- str -> dict is a genuine
-#    shape change `_restyle_like_source` cannot undo (it only preserves
-#    sequence FLOW style, not per-item scalar-vs-mapping shape). Fixing this
-#    means either giving `Link`/`parse_links` shape-memory or teaching
-#    `_restyle_like_source` to reuse unchanged list ITEMS by reference the
-#    way it already does whole mapping values -- both real design changes,
-#    not the "small and provable" fix #146 asks for, so deferred rather than
-#    taken in this theme (see the worker report on this branch).
-LINKS_BARE_STRING_IDS: frozenset[str] = frozenset(
-    {
-        "adr-0014",
-        "adr-0015",
-        "architecture-hardening",
-        "async-index-rebuild",
-        "bug-mcp-kb-create-places-entries-at-kb-root-instead-of-type-directory",
-        "building-an-extension",
-        "docs-kb-fixes",
-        "epic-task-dag-queries-and-orchestrator-support",
-        "epic-task-system-integration-with-qa-agent",
-        "event-bus-webhooks",
-        "fork-conflict-resolution-ui",
-        "fork-divergence-indicators",
-        "intent-layer",
-        "intent-layer-guidelines-and-goals",
-        "kb-orchestrator-skill",
-        "launch-channels",
-        "launch-messaging",
-        "launch-plan",
-        "launch-staging",
-        "launch-user-types",
-        "launch-web-presence",
-        "mcp-body-truncation-docs",
-        "mcp-rate-limiting",
-        "mcp-submission-update",
-        "obsidian-migration",
-        "odm-layer",
-        "per-user-fork-directories",
-        "permissions-model",
-        "pkm-capture-plugin",
-        "protocol-versioning-implementation",
-        "schema-versioning",
-        "test-infrastructure",
-        "ux-accessibility-fixes",
-        "web-ui-accessibility-fixes",
-        "web-ui-auth",
-        "web-ui-collections-save",
-        "web-ui-dead-code-cleanup",
-        "web-ui-first-run-experience",
-        "web-ui-loading-states",
-        "web-ui-logout-button",
-        "web-ui-mobile-responsive",
-        "web-ui-page-titles",
-        "web-ui-review-hardening",
-        "web-ui-starred-entries",
-        "web-ui-type-colors-consolidation",
-        "web-ui-version-history-fix",
-    }
-)
+# 1. FIXED (#557): BARE-STRING LINKS. A bare YAML string under `links:`
+#    parses into `Link(target=..., relation="related")`, and `Link.to_dict()`
+#    always emits a mapping, so a no-op save rewrote 46 files' `links:`
+#    shorthand into dicts. #557 made the write path keep any key the model
+#    cannot reproduce as the file had it, until the field itself changes
+#    (`capture_extra_frontmatter` records it; `_frontmatter_for_file` puts
+#    the source node back), so this group is empty. Kept as a named set so
+#    the count test still records which class of finding it was.
+LINKS_BARE_STRING_IDS: frozenset[str] = frozenset()
 
 # 3. FIXED (issue #149): `GenericEntry` (pyrite/models/generic.py, backs
 #    `type: design`/`note`/any kb.yaml custom type) promoted undeclared
@@ -153,6 +103,10 @@ TRAILING_BLANK_LINE_NORMALIZE_IDS: frozenset[str] = frozenset(
         "daily-2026-03-03",
         "daily-2026-03-04",
         "daily-2026-03-05",
+        # These two also changed `links:` shape, which hid this cause until
+        # #557 fixed that one.
+        "epic-task-dag-queries-and-orchestrator-support",
+        "epic-task-system-integration-with-qa-agent",
     }
 )
 
@@ -315,20 +269,25 @@ class TestRealKBRoundTrip:
             "and a GitHub issue"
         )
 
-    def test_known_residual_count_is_52(self):
+    @pytest.mark.control(
+        reason="bookkeeping: counts this module's own residual sets, so it "
+        "passes on any code; renamed from _is_52 when #557 emptied the links group"
+    )
+    def test_known_residual_count_is_8(self):
         """The count, recorded here per #146 acceptance criterion 4 ("the
 
         count in the test's docstring and in the report") as well as in the
-        module docstring: 52 ids as of this branch -- 46 bare-string links +
-        6 trailing-blank-line normalization. Three groups are accounted for:
-        the `GenericEntry` metadata duplication group is empty (fixed in
-        #149), and the block-indented `links:` group (fixed in #148) and the
-        `body:` fold group (cleaned in #150) are gone.
+        module docstring: 8 ids as of this branch, all trailing-blank-line
+        normalization (two of them hidden behind the links group until it was
+        fixed). The bare-string `links:` group is empty (fixed in
+        #557), the `GenericEntry` metadata duplication group is empty (fixed
+        in #149), and the block-indented `links:` group (fixed in #148) and
+        the `body:` fold group (cleaned in #150) are gone.
         """
-        assert len(LINKS_BARE_STRING_IDS) == 46
+        assert len(LINKS_BARE_STRING_IDS) == 0
         assert len(GENERIC_METADATA_DUP_IDS) == 0
-        assert len(TRAILING_BLANK_LINE_NORMALIZE_IDS) == 6
-        assert len(KNOWN_RESIDUAL_IDS) == 52
+        assert len(TRAILING_BLANK_LINE_NORMALIZE_IDS) == 8
+        assert len(KNOWN_RESIDUAL_IDS) == 8
 
     # #146 acceptance criterion 4: "xfail(strict=True) on exactly the failing
     # ids with the count in the test's docstring and in the report, so the
@@ -359,8 +318,8 @@ class TestAdversarialFixtures:
 
     # Fixtures with their own dedicated test below, not the blanket identity
     # assertion:
-    #   - bare_string_links.md: reproduces the known links residual (group 1
-    #     above) -- pinned as a positive assertion, not xfail.
+    #   - bare_string_links.md used to reproduce the links residual (group 1
+    #     above); since #557 it is part of the blanket byte-identity assertion.
     #   - anchors_and_merge_keys.md: no real kb/ file uses YAML anchors or
     #     merge keys (checked). Round-tripping a merge key through a
     #     dict-based from_frontmatter/to_frontmatter pipeline resolves it
@@ -384,7 +343,6 @@ class TestAdversarialFixtures:
     # idempotently below.
     _DEDICATED_TEST_FIXTURES = frozenset(
         {
-            "bare_string_links.md",
             "anchors_and_merge_keys.md",
         }
     )
@@ -408,29 +366,6 @@ class TestAdversarialFixtures:
         after = dest.read_text(encoding="utf-8")
 
         assert before == after, _format_diffs([(entry.id, dest, before, after)])
-
-    def test_bare_string_links_fixture_reproduces_the_residual(self, tmp_path):
-        """Pins that the known residual is real and lives exactly where the
-
-        docstring says: a bare-string `links:` item becomes a mapping.
-        Not xfail -- this is a positive assertion that the residual exists
-        and has this shape, so a fix to the mechanism is caught here too (as
-        "this assumption changed"), distinct from the corpus-level xfail
-        above.
-        """
-        src = FIXTURES_DIR / "bare_string_links.md"
-        dest = tmp_path / "bare_string_links.md"
-        shutil.copyfile(src, dest)
-        repo = _repo_for(tmp_path)
-
-        entry = repo.load_entry_from_file(dest)
-        before = dest.read_text(encoding="utf-8")
-        entry.save(dest)
-        after = dest.read_text(encoding="utf-8")
-
-        assert before != after
-        assert "- some-other-entry" in before
-        assert "target: some-other-entry" in after
 
     _TRAILING_NEWLINE_FRONTMATTER = (
         "---\n"

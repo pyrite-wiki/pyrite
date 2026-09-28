@@ -940,9 +940,9 @@ class QAService:
             for key, value in kept.items():
                 if key not in RESERVED_FIELD_NAMES:
                     continue
+                # A key the model leaves out at its default (`lifecycle:
+                # active`) is read, not lost: fall back to the attribute.
                 read_as = emitted[key] if key in emitted else getattr(entry, key, None)
-                if hasattr(read_as, "to_dict"):
-                    read_as = read_as.to_dict()
                 lost = _leaves(value) - _leaves(read_as)
                 if not lost:
                     continue
