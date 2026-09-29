@@ -1297,7 +1297,9 @@ class PyriteMCPServer:
         store it (#455). An agent that echoes a whole read result back still
         cannot rewrite the id, path, timestamps, a type's managed fields or
         index columns: ``KBService.split_echoed_update`` sets those aside,
-        and the result names them in ``ignored``.
+        and the result names them in ``ignored``. A field an echo carries at
+        the value the read returned is not written either; the result names
+        it in ``unchanged`` (#561).
         """
         entry_id = args.get("entry_id")
         kb_name = args.get("kb_name")
@@ -1310,7 +1312,7 @@ class PyriteMCPServer:
         except ValidationError as e:
             return _refusal(e)
 
-        updates, ignored = self.svc.split_echoed_update(
+        updates, ignored, unchanged = self.svc.split_echoed_update(
             entry_id,
             kb_name,
             {k: v for k, v in args.items() if k not in _UPDATE_CONTROL_KEYS},
@@ -1331,6 +1333,8 @@ class PyriteMCPServer:
         }
         if ignored:
             result["ignored"] = ignored
+        if unchanged:
+            result["unchanged"] = unchanged
         if written.warnings:
             result["warnings"] = written.warnings
         qa_issues = self._maybe_validate(entry.id, kb_name, args, readable_kbs=readable_kbs)

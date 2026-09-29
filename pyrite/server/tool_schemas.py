@@ -799,7 +799,7 @@ WRITE_TOOLS = {
         },
     },
     "kb_update": {
-        "description": "Update an existing entry. Only provided fields are updated; a field the entry type does not declare is stored as a custom field, as the CLI and REST do. Keys a kb_get result carries that no update writes (id, file_path, timestamps, links, index columns, nulls) are not written and are listed in the result's `ignored`; so, when the request echoes a kb_get result, is every field still at the value kb_get returned. Runs schema validation and returns warnings for unknown select/multi-select values. Refuses a body carrying body_truncated: true (a partial read from kb_get/kb_batch_read); assemble the whole body with kb_read_body first.",
+        "description": "Update an existing entry. Only provided fields are updated; a field the entry type does not declare is stored as a custom field, as the CLI and REST do. Keys a kb_get result carries that no update writes (id, file_path, timestamps, links, index columns, nulls) are not written and are listed in the result's `ignored`. When the request is a kb_get result sent back, a field still at the value kb_get returned is not written either, and is listed in the result's `unchanged`; a request that names fields on its own writes each one as sent. Runs schema validation and returns warnings for unknown select/multi-select values. Refuses a body carrying body_truncated: true (a partial read from kb_get/kb_batch_read); assemble the whole body with kb_read_body first.",
         "inputSchema": {
             "type": "object",
             "properties": {

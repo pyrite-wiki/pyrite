@@ -68,6 +68,25 @@ DEFAULT_TASK_PRIORITY = 5
 TASK_PRIORITY_WORDS = {"low": 3, "medium": 5, "high": 7, "critical": 9}
 
 
+def _whole_number(value: Any) -> int | None:
+    """``value`` as an int when it is a whole number (`7`, `'7'`, `7.0`,
+    `'7.0'`), else None. A bool is not a number here."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        number = float(text)
+    except ValueError:
+        return None
+    return int(number) if number.is_integer() else None
+
+
 def coerce_task_priority(value: Any, entry_id: str = "") -> int:
     """A task's ``priority`` as the integer the task model and services use.
 
@@ -81,14 +100,10 @@ def coerce_task_priority(value: Any, entry_id: str = "") -> int:
     """
     if value is None or value == "":
         return DEFAULT_TASK_PRIORITY
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    text = str(value).strip()
-    try:
-        return int(text)
-    except ValueError:
-        pass
-    word = TASK_PRIORITY_WORDS.get(text.lower())
+    number = _whole_number(value)
+    if number is not None:
+        return number
+    word = TASK_PRIORITY_WORDS.get(str(value).strip().lower())
     if word is not None:
         logger.warning(
             "task %r: priority %r is a word; read as %d (1-10, higher is more urgent)",
@@ -109,18 +124,14 @@ def coerce_task_priority(value: Any, entry_id: str = "") -> int:
 def task_priority_problem(value: Any) -> str | None:
     """Why a task file's ``priority`` value is not an integer 1-10, or None.
 
-    ``None`` for a missing key (the default applies) and for an integer in
-    range, including one written as a string (``'7'``).
+    ``None`` for a missing key (the default applies) and for a whole number
+    in range, however written (``7``, ``'7'``, ``7.0``).
     """
     if value is None:
         return None
-    if isinstance(value, int) and not isinstance(value, bool):
-        number = value
-    else:
-        try:
-            number = int(str(value).strip())
-        except ValueError:
-            return "is not an integer"
+    number = _whole_number(value)
+    if number is None:
+        return "is not an integer"
     if number not in TASK_PRIORITIES:
         return "is out of range"
     return None

@@ -125,6 +125,8 @@ MIXED = {
     "tasks/t-urgent.md": _task("t-urgent", "urgent"),
     "tasks/t-none.md": _task("t-none"),
     "tasks/t-quoted.md": _task("t-quoted", "'8'"),
+    "tasks/t-float.md": _task("t-float", "7.0"),
+    "tasks/t-float-quoted.md": _task("t-float-quoted", "'6.0'"),
 }
 EXPECTED = {
     "t-int": 2,
@@ -135,6 +137,8 @@ EXPECTED = {
     "t-urgent": 5,
     "t-none": 5,
     "t-quoted": 8,
+    "t-float": 7,
+    "t-float-quoted": 6,
 }
 
 
@@ -225,6 +229,7 @@ def test_qa_validate_reports_a_task_priority_that_is_not_an_integer_1_to_10(tmp_
     files = {
         "tasks/t-ok.md": _task("t-ok", 7),
         "tasks/t-ok-quoted.md": _task("t-ok-quoted", "'3'"),
+        "tasks/t-ok-float.md": _task("t-ok-float", "7.0"),
         "tasks/t-word.md": _task("t-word", "medium"),
         "tasks/t-float.md": _task("t-float", "7.5"),
         "tasks/t-big.md": _task("t-big", 42),
@@ -276,6 +281,45 @@ def test_qa_validate_does_not_read_an_empty_typed_column_as_a_value(tmp_path):
         assert [i for i in issues if i["field"] == "assignee"] == [], issues
 
 
+@pytest.mark.control(
+    reason="dev never selected the typed columns, so it cannot fail there; this "
+    "pins that selecting them does not replace the value validation checks"
+)
+def test_qa_validate_checks_a_protocol_field_against_the_files_value(tmp_path):
+    """A kb.yaml type with `protocols:` keeps each protocol field in metadata
+    AND copies it, lossily, into the typed column (`[Paris, Lyon]` as a str,
+    `2` as '2'). Validation must check the value the file holds, not the copy
+    (round-1 review of #566)."""
+    yaml = (
+        "name: work\nkb_type: generic\ntypes:\n  site:\n    description: place\n"
+        "    protocols: [locatable, prioritizable, temporal]\n    fields:\n"
+        "      location: {type: multi-select, options: [Paris, Lyon]}\n"
+        "      priority: {type: select, options: [1, 2, 3]}\n"
+    )
+    site = "---\nid: s1\ntitle: S1\ntype: site\nlocation: [Paris, Lyon]\npriority: 2\n---\n\nx\n"
+    config, _ = _env(tmp_path, {"sites/s1.md": site}, yaml)
+
+    for issues in (_qa(config), _qa(config, "s1")):
+        assert [i for i in issues if i["rule"] == "schema_violation"] == [], issues
+
+
+@pytest.mark.control(
+    reason="dev never selected the typed columns, so it cannot fail there; this "
+    "pins that selecting them does not replace the value validation checks"
+)
+def test_qa_validate_compares_a_task_priority_as_an_integer(tmp_path):
+    """The index column is text, so a task's `priority: 7` comes back as '7';
+    a schema declaring priority a select of integers must still accept it."""
+    yaml = (
+        "name: work\nkb_type: generic\nvalidation:\n  enforce: true\ntypes:\n  task:\n"
+        "    fields:\n      priority: {type: select, options: [1, 3, 5, 7, 9]}\n"
+    )
+    config, _ = _env(tmp_path, {"tasks/t.md": _task("t", 7)}, yaml)
+
+    for issues in (_qa(config), _qa(config, "t")):
+        assert [i for i in issues if i["field"] == "priority"] == [], issues
+
+
 # ---------------------------------------------------------------------------
 # #561: an echoed read result changes only the field that changed
 # ---------------------------------------------------------------------------
@@ -294,8 +338,13 @@ def test_an_echo_keeps_a_word_importance_and_a_string_tag(tmp_path):
 
     assert res.get("updated") is True, res
     assert path.read_text(encoding="utf-8") == DRAFT.replace("brief", "ready")
-    assert {"importance", "tags"} <= set(res.get("ignored", [])), res
-    assert "draft_status" not in res.get("ignored", [])
+    # Still at the value kb_get returned: reported apart from the keys no
+    # update ever writes, so the caller can tell the two apart.
+    unchanged = set(res.get("unchanged", []))
+    assert {"importance", "tags", "title", "body", "metadata"} <= unchanged, res
+    assert not unchanged & set(res.get("ignored", [])), res
+    assert {"id", "file_path", "indexed_at"} <= set(res.get("ignored", [])), res
+    assert "draft_status" not in unchanged | set(res.get("ignored", []))
 
 
 def test_an_echo_of_a_task_adds_no_key_the_file_lacked(tmp_path):
@@ -307,7 +356,7 @@ def test_an_echo_of_a_task_adds_no_key_the_file_lacked(tmp_path):
 
     assert res.get("updated") is True, res
     assert path.read_text(encoding="utf-8") == text.replace("Task t", "Renamed")
-    assert {"importance", "priority"} <= set(res.get("ignored", [])), res
+    assert {"importance", "priority"} <= set(res.get("unchanged", [])), res
 
 
 def test_an_echo_of_an_event_changes_only_its_title(tmp_path):
@@ -334,7 +383,7 @@ def test_a_deliberate_mcp_set_equal_to_the_reading_still_lands(tmp_path):
     res = _call(config, "kb_update", {"entry_id": "d", "kb_name": KB, "importance": 5})
 
     assert res.get("updated") is True, res
-    assert "importance" not in res.get("ignored", [])
+    assert "importance" not in res.get("ignored", []) + res.get("unchanged", [])
     assert path.read_text(encoding="utf-8") == DRAFT.replace("importance: high", "importance: 5")
 
 

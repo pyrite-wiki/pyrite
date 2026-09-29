@@ -1048,8 +1048,8 @@ class KBService:
 
     def split_echoed_update(
         self, entry_id: str, kb_name: str, fields: dict[str, Any]
-    ) -> tuple[dict[str, Any], list[str]]:
-        """``(updates, ignored)`` for a caller that may send a read result back.
+    ) -> tuple[dict[str, Any], list[str], list[str]]:
+        """``(updates, ignored, unchanged)`` for a caller that may send a read result back.
 
         MCP ``kb_update`` takes the entry's fields as top-level arguments, and
         an agent commonly edits what ``kb_get`` returned and sends all of it.
@@ -1064,8 +1064,10 @@ class KBService:
 
         In an echo (the request carries a key only a read result has, such as
         ``id`` or ``indexed_at``), a key whose value is still Pyrite's reading
-        -- what the same read returns for it -- is not a change either, and is
-        set aside the same way (#561). Assigning it would rewrite the file:
+        -- what the same read returns for it -- is not a change either: it is
+        set aside too, and named in ``unchanged`` rather than ``ignored`` so a
+        caller can tell "left as it is" from "never written by an update"
+        (#561). Assigning it would rewrite the file:
         ``importance: high`` read as 5 became ``importance: 5``, and a task
         grew the ``importance``/``priority`` defaults it never had. A request
         naming fields on its own (``{importance: 5}``) is the caller's values,
@@ -1083,14 +1085,15 @@ class KBService:
         reading = row if row and not _READ_RESULT_MARKERS.isdisjoint(fields) else {}
         updates: dict[str, Any] = {}
         ignored: list[str] = []
+        unchanged: list[str] = []
         for key, value in fields.items():
             if key in not_written or (value is None and key not in updatable):
                 ignored.append(key)
             elif key in reading and reading[key] == value:
-                ignored.append(key)
+                unchanged.append(key)
             else:
                 updates[key] = value
-        return updates, sorted(ignored)
+        return updates, sorted(ignored), sorted(unchanged)
 
     def update(self, entry_id: str, kb_name: str, updates: dict[str, Any]) -> WriteResult:
         """Update an existing entry for a caller, returning it and its warnings.

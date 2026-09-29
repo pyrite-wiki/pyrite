@@ -1544,16 +1544,24 @@ def _validation_fields(entry: dict[str, Any]) -> tuple[dict[str, Any], int]:
 
     The row's own columns, then the custom fields kept in the metadata JSON
     (writing_type, source_type...), which the validator needs to check
-    required fields. A typed column the entry leaves empty is not a value:
-    the column exists for every type, and an empty `assignee` on a note is
-    not the note's field.
+    required fields. For a typed column, metadata wins when it has the key:
+    a kb.yaml type with `protocols:` keeps the file's value there and copies
+    it into the column lossily (`[Paris, Lyon]` as a str, `2` as '2'), so
+    only a core type that keeps the field as an attribute (a task's
+    `priority`) is read from the column. A typed column the entry leaves
+    empty is not a value: an empty `assignee` on a note is not its field.
+    The `priority` column is text; an integer there is compared as one.
     """
-    fields = {
-        k: v
-        for k, v in entry.items()
-        if v is not None and k not in ("id", "kb_name") and not (k in _TYPED_COLUMNS and v == "")
-    }
     meta_dict = parse_metadata(entry.get("metadata"))
+    fields = {k: v for k, v in entry.items() if v is not None and k not in ("id", "kb_name")}
+    for k in _TYPED_COLUMNS:
+        if k in meta_dict or fields.get(k) == "":
+            fields.pop(k, None)
+    if isinstance(fields.get("priority"), str):
+        try:
+            fields["priority"] = int(fields["priority"])
+        except ValueError:
+            pass
     schema_version = int(meta_dict.get("_schema_version", 0))
     for k, v in meta_dict.items():
         if k not in fields and k != "_schema_version" and v is not None:
