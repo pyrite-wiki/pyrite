@@ -518,8 +518,8 @@ class Entry(ABC):
             "body": body,
             "summary": meta.get("summary", ""),
             "importance": safe_int(meta.get("importance"), 5),
-            "tags": meta.get("tags", []) or [],
-            "aliases": meta.get("aliases", []) or [],
+            "tags": _as_list(meta.get("tags")),
+            "aliases": _as_list(meta.get("aliases")),
             "sources": parse_sources(meta.get("sources")),
             "links": parse_links(meta.get("links")),
             "provenance": provenance,
@@ -907,13 +907,40 @@ def parse_datetime(s: Any) -> datetime:
     return _utcnow()
 
 
+def _as_list(value: Any) -> list[Any]:
+    """A list-valued key (``tags``, ``aliases``) as a list.
+
+    ``tags: Foo`` is one tag. Taken as it was, the str reached the index,
+    which iterates it: the entry was tagged `F`, `o` and `kb_get` returned
+    ``['F', 'o']``, which an echoed update then wrote to the file (#561).
+    The write path keeps the file's own ``tags: Foo`` while the field is
+    unchanged (#557).
+    """
+    if value is None or value == "":
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _is_url(text: str) -> bool:
+    return text.startswith(("http://", "https://"))
+
+
 def parse_sources(sources_data: Any) -> list[Source]:
-    """Parse sources from various formats."""
+    """Parse sources from various formats.
+
+    A bare string item is a title (`a book`), or, when it is a URL, the
+    source's URL too: read as a title only, `sources: [https://x.org]` lost
+    its URL (`url: ''`) in the index and the API (#561).
+    """
     if not sources_data:
         return []
     if isinstance(sources_data, list):
         return [
-            Source.from_dict(s) if isinstance(s, dict) else Source(title=str(s), url="")
+            Source.from_dict(s)
+            if isinstance(s, dict)
+            else Source(title=str(s), url=str(s) if _is_url(str(s)) else "")
             for s in sources_data
         ]
     return []

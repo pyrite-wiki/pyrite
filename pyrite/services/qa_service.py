@@ -89,7 +89,8 @@ class QAService:
         issues: list[dict[str, Any]] = []
 
         rows = self.db.execute_sql(
-            "SELECT id, kb_name, entry_type, title, date, importance, body, status, metadata "
+            "SELECT id, kb_name, entry_type, title, date, importance, body, status, metadata, "
+            f"{_TYPED_COLUMNS_SQL} "
             "FROM entry WHERE id = :entry_id AND kb_name = :kb_name",
             {"entry_id": entry_id, "kb_name": kb_name},
         )
@@ -112,7 +113,7 @@ class QAService:
 
         entry = rows[0]
         self._check_entry_fields(entry, issues)
-        self._check_reserved_key_collisions(issues, kb_name, entry_id=entry_id)
+        self._check_file_values(issues, kb_name, entry_id=entry_id)
         self._check_entry_links(entry_id, kb_name, issues, readable_kbs=readable_kbs)
         self._check_schema_validation(entry, issues)
         self._check_rubric_evaluation(entry, issues)
@@ -150,8 +151,10 @@ class QAService:
         self._check_broken_links(issues, kb_name, readable_kbs=readable_kbs)
         self._check_orphans(issues, kb_name, readable_kbs=readable_kbs)
 
-        # Per-file pass: reserved keys the KB uses for fields of its own (#557)
-        self._check_reserved_key_collisions(issues, kb_name)
+        # Per-file pass: what the index cannot show, because it keeps only
+        # Pyrite's reading -- reserved keys the KB uses for fields of its own
+        # (#557), a task priority read from a word (#554)
+        self._check_file_values(issues, kb_name)
 
         # Per-entry schema pass (only if kb.yaml exists)
         self._check_schema_all(issues, kb_name)
@@ -833,21 +836,7 @@ class QAService:
         schema = kb_config.kb_schema
         entry_type = entry.get("entry_type", "")
 
-        # Build fields dict for validation
-        fields = {k: v for k, v in entry.items() if v is not None and k not in ("id", "kb_name")}
-
-        # Extract _schema_version and merge custom fields from metadata
-        # Custom type-specific fields (e.g. writing_type, source_type, date_range)
-        # are stored in the metadata JSON blob, not as top-level entry attributes.
-        # The validator needs them in the fields dict to check required fields.
-        meta_dict = parse_metadata(entry.get("metadata"))
-        schema_version = int(meta_dict.get("_schema_version", 0))
-        if meta_dict:
-            # Merge metadata fields into fields dict so custom type fields
-            # are visible to the schema validator
-            for k, v in meta_dict.items():
-                if k not in fields and k != "_schema_version" and v is not None:
-                    fields[k] = v
+        fields, schema_version = _validation_fields(entry)
 
         result = schema.validate_entry(
             entry_type,
@@ -895,24 +884,16 @@ class QAService:
     # Reserved-key pass (reads the files)
     # =========================================================================
 
-    def _check_reserved_key_collisions(
+    def _check_file_values(
         self, issues: list[dict[str, Any]], kb_name: str, *, entry_id: str | None = None
     ) -> None:
-        """Report a file that uses a Pyrite-reserved key for a field of its own.
+        """Checks that need the file's own values, not the index's reading.
 
-        `provenance`, `sources`, `importance`... are read into Pyrite's own
-        model. A file whose value under one of those names does not fit that
-        model (`provenance: {source: ..}`, `importance: high`) is kept as it
-        is on every update (#557), but Pyrite reads it wrongly: the index,
-        search and the API see Pyrite's reading, not the file's. The rule
-        names the file and the key so the KB can rename it. A value Pyrite
-        only normalizes, losing nothing (`links: [a, b]`), is not reported.
-
-        Reads files, not the index: the index keeps only Pyrite's reading.
+        Loads each file once (one entry with ``entry_id``) and runs the
+        reserved-key check (#557) and the task-priority check (#554) on it.
         """
         from pathlib import Path
 
-        from ..schema.reserved import RESERVED_FIELD_NAMES
         from ..storage.repository import KBRepository
 
         kb_config = self.config.get_kb(kb_name)
@@ -929,44 +910,102 @@ class QAService:
             try:
                 entries = [(repo.load_entry_from_file(Path(path)), Path(path))]
             except Exception:
-                logger.debug("reserved-key check: cannot load %s", path, exc_info=True)
+                logger.debug("file-value checks: cannot load %s", path, exc_info=True)
                 return
 
         for entry, file_path in entries:
-            kept = entry.unrepresented_frontmatter()
-            if not kept:
+            try:
+                shown = file_path.relative_to(kb_config.path)
+            except ValueError:
+                shown = file_path
+            self._check_reserved_key_collisions(issues, kb_name, entry, shown)
+            self._check_task_priority(issues, kb_name, entry, shown)
+
+    @staticmethod
+    def _check_task_priority(
+        issues: list[dict[str, Any]], kb_name: str, entry: Any, shown: Any
+    ) -> None:
+        """Report a task whose file ``priority`` is not an integer from 1 to 10.
+
+        The task model reads a word (`medium`) or any other non-integer as a
+        number so that one bad value cannot fail a listing (#554); the index
+        then holds that number, so only the file shows what was written.
+        """
+        from ..models.task import task_priority_problem
+
+        if entry.entry_type != "task":
+            return
+        source = entry._source_frontmatter or {}
+        if "priority" not in source:
+            return
+        value = source["priority"]
+        problem = task_priority_problem(value)
+        if problem is None:
+            return
+        issues.append(
+            {
+                "entry_id": entry.id,
+                "kb_name": kb_name,
+                "rule": "task_priority",
+                "severity": "error",
+                "field": "priority",
+                "message": (
+                    f"{shown}: task priority {value!r} {problem}; a task's priority "
+                    f"is an integer from 1 to 10 (higher is more urgent). Pyrite "
+                    f"reads it as {getattr(entry, 'priority', '')}."
+                ),
+            }
+        )
+
+    @staticmethod
+    def _check_reserved_key_collisions(
+        issues: list[dict[str, Any]], kb_name: str, entry: Any, shown: Any
+    ) -> None:
+        """Report a file that uses a Pyrite-reserved key for a field of its own.
+
+        `provenance`, `sources`, `importance`... are read into Pyrite's own
+        model. A file whose value under one of those names does not fit that
+        model (`provenance: {source: ..}`, `importance: high`) is kept as it
+        is on every update (#557), but Pyrite reads it wrongly: the index,
+        search and the API see Pyrite's reading, not the file's. The rule
+        names the file and the key so the KB can rename it. A value Pyrite
+        only normalizes, losing nothing (`links: [a, b]`, `tags: Foo`), is
+        not reported.
+
+        Reads files, not the index: the index keeps only Pyrite's reading.
+        """
+        from ..schema.reserved import RESERVED_FIELD_NAMES
+
+        kept = entry.unrepresented_frontmatter()
+        if not kept:
+            return
+        emitted = entry.to_frontmatter()
+        for key, value in kept.items():
+            if key not in RESERVED_FIELD_NAMES:
                 continue
-            emitted = entry.to_frontmatter()
-            for key, value in kept.items():
-                if key not in RESERVED_FIELD_NAMES:
-                    continue
-                # A key the model leaves out at its default (`lifecycle:
-                # active`) is read, not lost: fall back to the attribute.
-                read_as = emitted[key] if key in emitted else getattr(entry, key, None)
-                lost = _leaves(value) - _leaves(read_as)
-                if not lost:
-                    continue
-                try:
-                    shown = file_path.relative_to(kb_config.path)
-                except ValueError:
-                    shown = file_path
-                issues.append(
-                    {
-                        "entry_id": entry.id,
-                        "kb_name": kb_name,
-                        "rule": "reserved_key_collision",
-                        "severity": "warning",
-                        "field": key,
-                        "message": (
-                            f"{shown}: '{key}' is a key Pyrite reserves, and this "
-                            f"file's value does not fit it (Pyrite cannot read "
-                            f"{', '.join(sorted(lost)[:3])}). Updates keep the "
-                            f"file's value, but search and the API see Pyrite's "
-                            f"reading. Rename the key (for example "
-                            f"'{entry.entry_type}_{key.lstrip('_')}')."
-                        ),
-                    }
-                )
+            # A key the model leaves out at its default (`lifecycle:
+            # active`) is read, not lost: fall back to the attribute.
+            read_as = emitted[key] if key in emitted else getattr(entry, key, None)
+            lost = _leaves(value) - _leaves(read_as)
+            if not lost:
+                continue
+            issues.append(
+                {
+                    "entry_id": entry.id,
+                    "kb_name": kb_name,
+                    "rule": "reserved_key_collision",
+                    "severity": "warning",
+                    "field": key,
+                    "message": (
+                        f"{shown}: '{key}' is a key Pyrite reserves, and this "
+                        f"file's value does not fit it (Pyrite cannot read "
+                        f"{', '.join(sorted(lost)[:3])}). Updates keep the "
+                        f"file's value, but search and the API see Pyrite's "
+                        f"reading. Rename the key (for example "
+                        f"'{entry.entry_type}_{key.lstrip('_')}')."
+                    ),
+                }
+            )
 
     # =========================================================================
     # Schema pass (all entries)
@@ -984,7 +1023,8 @@ class QAService:
         schema = kb_config.kb_schema
 
         rows = self.db.execute_sql(
-            "SELECT id, kb_name, entry_type, title, date, importance, status, metadata "
+            "SELECT id, kb_name, entry_type, title, date, importance, status, metadata, "
+            f"{_TYPED_COLUMNS_SQL} "
             "FROM entry WHERE kb_name = :kb_name",
             {"kb_name": kb_name},
         )
@@ -992,18 +1032,7 @@ class QAService:
         for row in rows:
             entry = dict(row)
             entry_type = entry.get("entry_type", "")
-            fields = {
-                k: v for k, v in entry.items() if v is not None and k not in ("id", "kb_name")
-            }
-
-            # Extract _schema_version and merge custom fields from metadata
-            meta_dict = parse_metadata(entry.get("metadata"))
-            schema_version = int(meta_dict.get("_schema_version", 0))
-            # Merge metadata fields into fields dict so custom type fields
-            # are visible to the schema validator
-            for k, v in meta_dict.items():
-                if k not in fields and k != "_schema_version" and v is not None:
-                    fields[k] = v
+            fields, schema_version = _validation_fields(entry)
 
             result = schema.validate_entry(
                 entry_type,
@@ -1490,6 +1519,46 @@ class QAService:
         from .qa_analytics_service import QAAnalyticsService
 
         return QAAnalyticsService._days_since(iso_str, now)
+
+
+#: Index columns a core entry fills from typed attributes it keeps outside
+#: `metadata` (a task's `priority`, `assignee`, `due_date`...). The schema
+#: passes select them so a kb.yaml rule on one of these fields sees the entry's
+#: value: without them `required: [priority]` reported every task as
+#: "got None", `priority: 5` included (#554).
+_TYPED_COLUMNS = (
+    "location",
+    "assignee",
+    "assigned_at",
+    "priority",
+    "due_date",
+    "start_date",
+    "end_date",
+    "coordinates",
+)
+_TYPED_COLUMNS_SQL = ", ".join(_TYPED_COLUMNS)
+
+
+def _validation_fields(entry: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    """The fields a schema validates for an index row, and its schema version.
+
+    The row's own columns, then the custom fields kept in the metadata JSON
+    (writing_type, source_type...), which the validator needs to check
+    required fields. A typed column the entry leaves empty is not a value:
+    the column exists for every type, and an empty `assignee` on a note is
+    not the note's field.
+    """
+    fields = {
+        k: v
+        for k, v in entry.items()
+        if v is not None and k not in ("id", "kb_name") and not (k in _TYPED_COLUMNS and v == "")
+    }
+    meta_dict = parse_metadata(entry.get("metadata"))
+    schema_version = int(meta_dict.get("_schema_version", 0))
+    for k, v in meta_dict.items():
+        if k not in fields and k != "_schema_version" and v is not None:
+            fields[k] = v
+    return fields, schema_version
 
 
 def _leaves(value: Any) -> set[str]:

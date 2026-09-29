@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import PyriteConfig
 from ..exceptions import EntryNotFoundError, KBNotFoundError, ValidationError
+from ..models.task import coerce_task_priority
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
 from ..utils.metadata import parse_metadata
@@ -330,7 +331,12 @@ class TaskService:
                     "title": row["title"],
                     "status": row.get("status") or meta.get("status", "open"),
                     "assignee": row.get("assignee") or meta.get("assignee", ""),
-                    "priority": int(row.get("priority") or meta.get("priority", 5)),
+                    # The model's reading, not int(): an index row written
+                    # before TaskEntry coerced a word still holds `medium`,
+                    # and one such row ended the whole listing (#554).
+                    "priority": coerce_task_priority(
+                        row.get("priority") or meta.get("priority"), row["id"]
+                    ),
                     "parent": meta.get("parent", ""),
                     "kb_name": row["kb_name"],
                     # Why a task is parked. Drives the human worklist board's

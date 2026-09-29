@@ -363,10 +363,6 @@ def test_mcp_kb_update_echoing_a_read_result_writes_only_what_it_can_and_says_so
     server = _mcp(config)
     try:
         got = server._dispatch_tool("kb_get", {"entry_id": "my-draft", "kb_name": KB})["entry"]
-        # An echoed `importance: 5` is a real field set to its default, and
-        # was written before this change too (it was always in the declared
-        # set): the file grows the line. Not this theme's: #561.
-        got.pop("importance")
         res = server._dispatch_tool(
             "kb_update", {**got, "entry_id": "my-draft", "draft_status": "ready"}
         )
