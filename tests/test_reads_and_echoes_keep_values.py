@@ -259,6 +259,10 @@ def test_qa_validate_sees_the_priority_a_task_keeps_as_an_attribute(tmp_path):
         assert required == [], required
 
 
+@pytest.mark.control(
+    reason="dev never selected the typed columns, so it cannot fail there; this "
+    "pins that selecting them does not turn an empty column into a value"
+)
 def test_qa_validate_does_not_read_an_empty_typed_column_as_a_value(tmp_path):
     """The typed columns exist for every entry; a task with no assignee has
     `assignee = ''` there, which is not a value a kb.yaml select must allow."""
