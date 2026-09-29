@@ -588,3 +588,14 @@ serializes that value. To change such a field, **assign it** (`entry.x = ...`
 clears the key in `__setattr__`) or change it in place so its serialization
 differs; a writer that sets the attribute via `object.__setattr__` bypasses
 the first rule and keeps the file's value if the new one serializes the same.
+
+The flip side (#561): because an assignment always wins, a caller that sends
+back a whole read result assigns Pyrite's *reading* of every field, and the
+reading is what reaches the file. `KBService.split_echoed_update` is where
+that is stopped: in a request carrying a read-result-only key (`id`,
+`file_path`, an index column), a key equal to what `db.get_entry` returns
+for it is set aside and listed in `ignored`. A request without those keys is
+taken as deliberate. Reading a field more leniently (a task's word
+`priority`, `tags: Foo` as `['Foo']`) is safe for the file for the same
+reason: the kept-key rule writes the file's own value back until the field
+is assigned.

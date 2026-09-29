@@ -135,8 +135,12 @@ plus a type's own `managed_fields` (a task's `status_change_log`,
 `VALIDATION_FAILED`; MCP `kb_update` sets them aside, along with
 `created_at`/`updated_at`, index columns and `null`s for undeclared keys,
 and lists them in the result's `ignored` field, so a read result echoed
-back cannot rewrite them. Echoing a whole read result still writes
-Pyrite's reading of every field it names; send only what changes (#561).
+back cannot rewrite them. In a request that echoes a read result (it
+carries `id`, `file_path` or an index column), a field whose value is still
+what the read returned is not a change: it is set aside and listed in
+`ignored` too, so the file keeps `importance: high` rather than Pyrite's
+reading `5` (#561). A request that names fields on its own writes each one
+as sent, even a value equal to the reading.
 A body marked `body_truncated` is refused at any depth of the request on
 every update surface.
 
