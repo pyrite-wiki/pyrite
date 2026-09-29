@@ -94,7 +94,7 @@ shape as `create`: Rich text only, `Added: <id>` / `Type: <type>`, no
 | Surface | Call | Success shape |
 |---|---|---|
 | CLI | `pyrite update <id> -k <kb> --title <t> --format json` | **Has `--format`, defaulting to `json`.** With `--format json` (or any non-`rich` value): `{"updated": true, "entry_id": "<id>"}`. With `--format rich`: `Updated: <id>`. |
-| MCP | `kb_update` | `{"updated": true, "entry_id": "<id>", "file_path": "<absolute path>"}`, plus `"warnings"` when any, and `"ignored"` listing any keys it did not write. |
+| MCP | `kb_update` | `{"updated": true, "entry_id": "<id>", "file_path": "<absolute path>"}`, plus `"warnings"` when any, `"ignored"` listing keys no update writes, and `"unchanged"` listing fields an echoed read result carried at the value the read returned (not written). |
 | REST | `PUT /api/entries/{id}` (body carries `kb`, not a query param) or `PATCH /api/entries/{id}` (body: `kb`, `field`, `value` — single field, `value` must be a string) | Both return the same `UpdateResponse`: `{"updated": true, "id": "<id>", "warnings": []}`. |
 
 An update only ever sets fields that surface's request shape exposes, plus
