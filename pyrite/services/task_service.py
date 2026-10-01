@@ -92,15 +92,15 @@ class TaskService:
         if fields:
             kwargs.update(fields)
 
-        entry = self.kb_svc.create_entry(
-            kb_name=kb_name,
-            entry_id=entry_id,
-            title=title,
-            entry_type="task",
-            body=body,
-            **kwargs,
+        # `create`, not `create_entry`: the write's schema warnings (an
+        # off-list value in a KB with `enforce_enums: false`, #555) are part
+        # of the answer, not dropped.
+        written = self.kb_svc.create(
+            kb_name,
+            {**kwargs, "id": entry_id, "title": title, "entry_type": "task", "body": body},
         )
-        return {
+        entry = written.entry
+        result: dict[str, Any] = {
             "created": True,
             "entry_id": entry.id,
             "title": entry.title,
@@ -110,6 +110,9 @@ class TaskService:
             "assignee": getattr(entry, "assignee", ""),
             "kb_name": kb_name,
         }
+        if written.warnings:
+            result["warnings"] = written.warnings
+        return result
 
     def update_task(self, task_id: str, kb_name: str, **updates) -> dict[str, Any]:
         """Update task fields.

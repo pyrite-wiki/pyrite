@@ -247,6 +247,8 @@ def task_create(
             console.print(f"  Parent: {parent}")
         if assignee:
             console.print(f"  Assignee: {assignee}")
+        for warning in result.get("warnings", []):
+            console.print("[yellow]Warning:[/yellow]", json.dumps(warning, default=str))
     except (PyriteError, ValueError) as e:
         _task_error(e, fmt)
     finally:

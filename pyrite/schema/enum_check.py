@@ -25,10 +25,37 @@ if TYPE_CHECKING:
 #: The field types whose declared options constrain the value.
 ENUM_FIELD_TYPES = frozenset({"select", "multi-select", "list"})
 
-#: Every rule identifier that means "a value is not on its declared list":
-#: the kb.yaml ones made here, and a plugin validator's ``enum``. The write
-#: path's exception for values already on disk applies to these only.
-ENUM_RULES = frozenset({"field_select", "field_multi_select", "field_list", "rule_enum", "enum"})
+#: Rule identifiers whose finding is about each element of a list value.
+_PER_ELEMENT_RULES = frozenset({"field_list", "field_multi_select"})
+
+
+def is_off_list(finding: dict[str, Any]) -> bool:
+    """Whether ``finding`` says a value is not on its declared list.
+
+    True for a finding :func:`enum_findings` made (it carries ``origin``) and
+    for a plugin validator's ``rule: "enum"``. False for everything else --
+    including a type error that shares a rule identifier, such as
+    ``field_multi_select``'s "expected list" from ``_validate_field_value``,
+    which is governed by ``validation.enforce``. The write path's exception
+    for values already on disk applies to off-list findings only.
+    """
+    return finding.get("origin") in ("field", "rule") or finding.get("rule") == "enum"
+
+
+def is_per_element(finding: dict[str, Any], old: Any, new: Any) -> bool:
+    """Whether an off-list finding is judged element by element.
+
+    A ``list`` / ``multi-select`` field always is; a ``select`` never is (its
+    value is one value, and a list in a select is off-list as a whole). For a
+    rule or plugin enum the declaration does not say, so it is per element
+    only when the value was a list on disk and still is.
+    """
+    rule = finding.get("rule")
+    if rule in _PER_ELEMENT_RULES:
+        return True
+    if rule == "field_select":
+        return False
+    return isinstance(old, list) and isinstance(new, list)
 
 
 def enforce_enums(kb_schema: KBSchema) -> bool:
@@ -125,17 +152,32 @@ def enum_findings(
 def schema_enum_warnings(kb_schema: KBSchema) -> list[dict[str, str]]:
     """Schema-level problems with the declared enums themselves.
 
-    Today: a field that gives both ``options:`` and ``values:`` with different
-    lists. ``options`` wins; this says so, naming the type and field.
+    A ``validation.enforce_enums`` that is not a YAML boolean (``no``,
+    ``off``, ``0``, ``"false"``): only ``false`` turns enforcement off, so it
+    stays on (fail closed), and this says so, naming the value. And a field
+    that gives both ``options:`` and ``values:`` with different lists:
+    ``options`` wins; this says so, naming the type and field. Each item is
+    ``{where, message}``.
     """
     out = []
+    validation = kb_schema.validation or {}
+    if "enforce_enums" in validation and not isinstance(validation["enforce_enums"], bool):
+        raw = validation["enforce_enums"]
+        out.append(
+            {
+                "where": "<kb.yaml validation>",
+                "message": (
+                    f"validation.enforce_enums is {raw!r}, not a boolean; enum enforcement "
+                    "stays on. Write `enforce_enums: false` to turn it off."
+                ),
+            }
+        )
     for type_name, ts in kb_schema.types.items():
         for name, fs in ts.fields.items():
             if fs.options_conflict:
                 out.append(
                     {
-                        "type": type_name,
-                        "field": name,
+                        "where": f"<type:{type_name}>",
                         "message": (
                             f"Type '{type_name}' field '{name}' declares both `options:` and "
                             f"`values:` with different lists; `options` is used: {fs.options}"

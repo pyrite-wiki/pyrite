@@ -302,6 +302,73 @@ class TestValidateEntrySwitch:
 
 
 class TestWritePath:
+    def test_a_type_error_on_disk_is_not_excepted(self, svc_factory):
+        """Round 1, should-fix 1: a multi-select holding a scalar is a type
+        error under `enforce`, not an off-list value. It keeps its rule id
+        `field_multi_select`, but the on-disk exception must not apply to it:
+        like an out-of-range number, it still refuses an unrelated update."""
+        svc, kb, _ = svc_factory(enforce_enums=True, enforce=True)
+        path = _write_org(kb, "acme", labels="a")
+        before = path.read_text()
+        with pytest.raises(SchemaViolationError, match="labels"):
+            svc.update("acme", "t", {"tags": ["x"]})
+        assert path.read_text() == before
+
+    def test_a_select_cannot_become_a_list_through_the_exception(self, svc_factory):
+        """Round 1, should-fix 2: the per-element exception is for list-valued
+        fields. A select whose on-disk value is off-list keeps it only by
+        sending the same value; wrapping it in a list is refused, as create
+        would refuse it."""
+        svc, kb, _ = svc_factory(enforce_enums=True)
+        path = _write_org(kb, "acme", org_type="bad")
+        before = path.read_text()
+        with pytest.raises(SchemaViolationError, match="org_type"):
+            svc.update("acme", "t", {"org_type": ["bad"]})
+        assert path.read_text() == before
+        with pytest.raises(SchemaViolationError) as exc:
+            svc.update("acme", "t", {"org_type": ["bad", "ngo"]})
+        assert "['ngo'] is not one of" not in str(exc.value), "an allowed value named as offender"
+        assert path.read_text() == before
+
+    def test_a_list_field_holding_a_scalar_keeps_it_as_an_element(self, svc_factory):
+        """A list field is per element even when the file wrote one scalar:
+        `codes: z` is the element `z`, kept when the update extends the list."""
+        svc, kb, _ = svc_factory(enforce_enums=True)
+        path = _write_org(kb, "acme", codes="z")
+        written = svc.update("acme", "t", {"codes": ["z", "x"]})
+        assert _fm(path)["codes"] == ["z", "x"]
+        assert any(w["field"] == "codes" and w["got"] == ["z"] for w in written.warnings)
+
+    def test_a_select_holding_a_list_is_never_judged_per_element(self, svc_factory):
+        """A select's value is one value, even when the file already holds a
+        list there: adding an allowed element must not be reported as that
+        element being off-list (round 1, should-fix 2)."""
+        svc, kb, _ = svc_factory(enforce_enums=True)
+        path = _write_org(kb, "acme", org_type=["bad"])
+        before = path.read_text()
+        with pytest.raises(SchemaViolationError) as exc:
+            svc.update("acme", "t", {"org_type": ["bad", "ngo"]})
+        assert "['ngo'] is not one of" not in str(exc.value)
+        assert path.read_text() == before
+
+    def test_a_rule_enum_scalar_cannot_become_a_list_through_the_exception(self, svc_factory):
+        svc, kb, _ = svc_factory(enforce_enums=True)
+        _write_org(kb, "acme", region="east")
+        with pytest.raises(SchemaViolationError, match="region"):
+            svc.update("acme", "t", {"region": ["east"]})
+
+    @pytest.mark.control(
+        reason="pins that should-fix 2 keeps per-element for a rule enum on a list"
+    )
+    def test_a_rule_enum_list_keeps_its_existing_elements(self, svc_factory):
+        svc, kb, _ = svc_factory(enforce_enums=True)
+        path = _write_org(kb, "acme", region=["north", "east"])
+        written = svc.update("acme", "t", {"region": ["east", "north", "south"]})
+        assert _fm(path)["region"] == ["east", "north", "south"]
+        assert any(w["field"] == "region" and w["got"] == ["east"] for w in written.warnings)
+        with pytest.raises(SchemaViolationError, match="west"):
+            svc.update("acme", "t", {"region": ["east", "west"]})
+
     def test_create_off_list_refused_when_on_written_with_warning_when_off(self, svc_factory, mode):
         svc, kb, _ = svc_factory(enforce_enums=mode)
         if mode:
@@ -522,6 +589,68 @@ class TestIssue47:
         assert out["status"] == "warning"
         assert result.exit_code == 0
         assert any(r["value"] == "chore" for r in out["off_list_values"])
+
+
+class TestCliCreateWarnings:
+    """Round 1, should-fix 3: with the switch off, a create with an off-list
+    value succeeds; the CLI must say so, as `update` does."""
+
+    @pytest.mark.control(reason="`pyrite create` already printed the write's warnings")
+    def test_create_prints_the_off_list_warning(self, tmp_path):
+        config, kb = _make_config(tmp_path, kb_yaml(False))
+        PyriteDB(config.settings.index_path).close()
+        result = _cli(
+            config,
+            "create",
+            "-k",
+            "t",
+            "-t",
+            "org",
+            "--title",
+            "Acme",
+            "-b",
+            "b",
+            "--field",
+            "org_type=charity",
+        )
+        assert result.exit_code == 0, result.output
+        assert "charity" in result.output
+        assert "Warning" in result.output or "warnings" in result.output
+
+    def test_import_prints_each_created_records_warnings(self, tmp_path):
+        config, kb = _make_config(tmp_path, kb_yaml(False))
+        PyriteDB(config.settings.index_path).close()
+        src = tmp_path / "in.json"
+        src.write_text(
+            json.dumps(
+                [
+                    {"entry_type": "org", "title": "Acme", "org_type": "charity"},
+                    {"entry_type": "org", "title": "Beta", "org_type": "ngo"},
+                ]
+            )
+        )
+        result = _cli(config, "import", str(src), "-k", "t")
+        assert result.exit_code == 0, result.output
+        assert "Imported 2" in result.output
+        assert "charity" in result.output
+        assert result.output.count("Warning") == 1, result.output
+
+    @pytest.mark.parametrize("fmt", ["json", "rich"])
+    def test_task_create_reports_the_off_list_warning(self, tmp_path, fmt):
+        yaml_text = (
+            "name: t\nkb_type: generic\nvalidation:\n  enforce_enums: false\n  rules:\n"
+            "    - field: kind\n      enum: [merge, decide]\n"
+        )
+        config, kb = _make_config(tmp_path, yaml_text)
+        PyriteDB(config.settings.index_path).close()
+        result = _cli(
+            config, "task", "create", "Odd", "-k", "t", "--field", "kind=bogus", "--format", fmt
+        )
+        assert result.exit_code == 0, result.output
+        assert "bogus" in result.output, result.output
+        if fmt == "json":
+            out = _payload(result.output)
+            assert [w["got"] for w in out["warnings"]] == ["bogus"]
 
 
 # ==========================================================================
@@ -784,6 +913,28 @@ class TestSchemaValidate:
         _write_org(kb, "acme", org_type="charity")
         result = self._run(config, kb)
         assert result.output.count("charity") == 1, result.output
+
+    @pytest.mark.parametrize("raw", ["no", "off", "0", '"false"', "maybe"])
+    def test_a_non_boolean_switch_is_reported_and_fails_closed(self, tmp_path, raw):
+        """Round 1, should-fix 4: only a YAML boolean turns the switch off. Any
+        other value leaves enforcement on (fail closed), and `schema validate`
+        says so, naming the value."""
+        yaml_text = kb_yaml(None).replace("validation:\n", f"validation:\n  enforce_enums: {raw}\n")
+        config, kb = _make_config(tmp_path, yaml_text)
+        _write_org(kb, "acme", org_type="charity")
+        result = self._run(config, kb)
+        assert result.exit_code == 1, result.output  # still enforced
+        assert "enforce_enums" in result.output
+        assert "boolean" in result.output, result.output
+
+    @pytest.mark.control(reason="a real boolean is never reported")
+    @pytest.mark.parametrize("raw", ["true", "false"])
+    def test_a_boolean_switch_is_not_reported(self, tmp_path, raw):
+        yaml_text = kb_yaml(None).replace("validation:\n", f"validation:\n  enforce_enums: {raw}\n")
+        config, kb = _make_config(tmp_path, yaml_text)
+        _write_org(kb, "acme", org_type="ngo")
+        result = self._run(config, kb)
+        assert "enforce_enums" not in result.output, result.output
 
     def test_options_values_conflict_is_a_schema_level_warning(self, tmp_path):
         yaml_text = kb_yaml(True).replace(

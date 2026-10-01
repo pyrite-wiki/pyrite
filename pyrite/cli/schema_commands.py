@@ -535,14 +535,15 @@ def schema_validate(
     collision_errors = detect_id_collisions(parsed_entries)
     all_errors.extend(collision_errors)
 
-    # Schema-level: a field declaring both `options:` and `values:` (#555).
+    # Schema-level: a non-boolean `enforce_enums`, a field declaring both
+    # `options:` and `values:` (#555).
     if schema:
         from ..schema.enum_check import schema_enum_warnings
 
         for w in schema_enum_warnings(schema):
             all_errors.append(
                 {
-                    "file": f"<type:{w['type']}>",
+                    "file": w["where"],
                     "check": "schema_enum",
                     "message": w["message"],
                     "severity": "warning",

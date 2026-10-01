@@ -909,6 +909,12 @@ def import_entries(
             if r.get("created"):
                 created += 1
                 console.print(f"  [green]Created:[/green] {r['entry_id']}")
+                # The record's schema warnings (e.g. an off-list value in a KB
+                # with `validation.enforce_enums: false`, #555).
+                for warning in r.get("warnings", []):
+                    console.print(
+                        "    [yellow]Warning:[/yellow]", _json.dumps(warning, default=str)
+                    )
             else:
                 failed += 1
                 console.print(_refusal_line("Failed", record, r))

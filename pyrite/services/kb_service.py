@@ -36,7 +36,7 @@ from ..models import Entry
 from ..models.base import parse_datetime
 from ..models.factory import build_entry
 from ..plugins.context import PluginContext
-from ..schema.enum_check import ENUM_RULES
+from ..schema.enum_check import is_off_list, is_per_element
 from ..storage.database import PyriteDB
 from ..storage.document_manager import DocumentManager
 from ..storage.index import IndexManager
@@ -260,20 +260,22 @@ class KBService:
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """``(errors, warnings)`` after excepting enum values already on disk (#47, #555).
 
-        An enum-class error (a kb.yaml enum or a plugin's ``rule: enum``) on a
-        field whose value is the same after the update as before is a value
-        the file already had: reported, not re-validated, so an update that
-        does not change it succeeds. The comparison is by value, so a caller
-        echoing a whole read back is covered. For a list it is per element:
-        elements already present stay allowed, an added off-list element is
-        still refused. Every other error is left as it is.
+        An off-list error (a kb.yaml enum or a plugin's ``rule: enum``; never
+        a type error, see ``enum_check.is_off_list``) on a field whose value
+        is the same after the update as before is a value the file already
+        had: reported, not re-validated, so an update that does not change it
+        succeeds. The comparison is by value, so a caller echoing a whole read
+        back is covered. For a list-valued field (``enum_check.is_per_element``)
+        it is per element: elements already present stay allowed, an added
+        off-list element is still refused. A select keeps its off-list value
+        only by sending the same value. Every other error is left as it is.
         """
         kept: list[dict[str, Any]] = []
         excepted: list[dict[str, Any]] = []
         note = "value already on disk; kept, not re-validated"
         for err in errors:
             name = err.get("field")
-            if err.get("rule") not in ENUM_RULES or name not in before:
+            if not is_off_list(err) or name not in before:
                 kept.append(err)
                 continue
             old, new = before.get(name), after.get(name)
@@ -281,7 +283,7 @@ class KBService:
                 excepted.append({**err, "severity": "warning", "note": note})
                 continue
             got = err.get("got")
-            if isinstance(new, list) and isinstance(got, list):
+            if is_per_element(err, old, new) and isinstance(new, list) and isinstance(got, list):
                 had = old if isinstance(old, list) else [old]
                 existing = [v for v in got if v in had]
                 added = [v for v in got if v not in had]
@@ -343,7 +345,7 @@ class KBService:
             got = e.get("got")
             expected = e.get("expected")
             message = e.get("message")
-            if rule in ENUM_RULES and isinstance(expected, list):
+            if is_off_list(e) and isinstance(expected, list):
                 # Every declared-enum refusal reads the same way, naming the
                 # field, the value and the allowed list (#555); the rule
                 # identifiers themselves are unchanged.
