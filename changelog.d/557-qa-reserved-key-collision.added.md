@@ -1,1 +1,0 @@
-- **`pyrite qa validate` reports a file that uses a Pyrite-reserved key for a field of its own** (#557): rule `reserved_key_collision` (warning), naming the file and the key, when the value does not fit Pyrite's model (`provenance: {source: ...}`, `importance: high`) and suggesting a rename.

@@ -1,1 +1,0 @@
-- **Unknown CLI output formats now return a usage error instead of a traceback (#529).** `pyrite get` and `pyrite search` reject unsupported `--format` values during argument parsing with exit code 2.
