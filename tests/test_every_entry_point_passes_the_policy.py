@@ -384,9 +384,6 @@ def _authorize_declarations(dependant) -> set:
     return found
 
 
-_SPA_STATIC_OPERATIONS = {"GET /favicon.ico", "GET /{path:path}"}
-
-
 def _operations(app=None) -> dict[str, APIRoute]:
     """name -> route for every REST operation (HEAD/OPTIONS are the framework's)."""
     from pyrite.server.api import create_app
@@ -397,9 +394,8 @@ def _operations(app=None) -> dict[str, APIRoute]:
     out = {}
     for path, route in _walk_routes(app.routes):
         for method in sorted(route.methods or ()):
-            name = f"{method} {path}"
-            if method not in ("HEAD", "OPTIONS") and name not in _SPA_STATIC_OPERATIONS:
-                out[name] = route
+            if method not in ("HEAD", "OPTIONS"):
+                out[f"{method} {path}"] = route
     return out
 
 
@@ -582,11 +578,7 @@ def test_the_walk_sees_the_whole_app():
     assert len(ops) > 130
     assert any(name.startswith("GET /api/") for name in ops)
     assert any(name.startswith("POST /auth/") for name in ops)
-    inventory = {
-        ep.name
-        for ep in rest_operations()
-        if ep.name.split()[0] != "HEAD" and ep.name not in _SPA_STATIC_OPERATIONS
-    }
+    inventory = {ep.name for ep in rest_operations() if ep.name.split()[0] not in ("HEAD",)}
     assert set(ops) == inventory
 
 
