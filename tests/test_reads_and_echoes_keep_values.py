@@ -166,10 +166,23 @@ def test_task_list_cli_lists_every_task_when_one_has_a_word_priority(tmp_path):
     with patch("pyrite.cli.context.load_config", return_value=config):
         result = CliRunner().invoke(app, ["task", "list", "-k", KB, "--format", "json"])
     assert result.exit_code == 0, result.output
-    text = result.output
-    listed = json.loads(text[text.index("{") :] if text.lstrip().startswith("{") else text)
-    rows = listed["tasks"] if isinstance(listed, dict) else listed
-    assert {t["id"]: t["priority"] for t in rows} == EXPECTED
+    # stdout is the JSON document and nothing else: the word-priority warnings
+    # go to logging (stderr), never into what a script parses.
+    listed = json.loads(result.stdout)
+    assert {t["id"]: t["priority"] for t in listed["tasks"]} == EXPECTED
+
+
+def test_update_json_output_is_only_json_when_the_task_has_a_word_priority(tmp_path):
+    """Loading a word-priority task logs a warning on every load; under
+    `--format json` that warning must not reach stdout."""
+    config, kb_path = _env(tmp_path, {"tasks/t.md": _task("t", "medium")})
+    with patch("pyrite.cli.context.load_config", return_value=config):
+        result = CliRunner().invoke(
+            app, ["update", "t", "-k", KB, "-f", "title=Renamed", "--format", "json"]
+        )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["updated"] is True
+    assert "priority: medium" in (kb_path / "tasks" / "t.md").read_text(encoding="utf-8")
 
 
 def test_an_index_row_written_before_the_fix_still_lists(tmp_path, caplog):
@@ -264,9 +277,65 @@ def test_qa_validate_sees_the_priority_a_task_keeps_as_an_attribute(tmp_path):
         assert required == [], required
 
 
+def test_qa_validate_reports_a_required_priority_the_task_file_lacks(tmp_path):
+    """The index's `priority` column holds the model's default (5) for a task
+    whose file has none; `required: [priority]` must still report it missing
+    (round-2 review of #566)."""
+    yaml = "name: work\nkb_type: generic\ntypes:\n  task:\n    required: [priority]\n"
+    config, _ = _env(tmp_path, {"tasks/t.md": _task("t"), "tasks/u.md": _task("u", 3)}, yaml)
+
+    for entry_id in (None, "t"):
+        missing = {
+            i["entry_id"]
+            for i in _qa(config, entry_id)
+            if i["rule"] == "schema_violation" and i["field"] == "priority"
+        }
+        assert missing == {"t"}, missing
+
+
+def test_qa_validate_checks_a_word_priority_as_the_file_wrote_it(tmp_path):
+    """The #554 schema retypes priority as words; the file says `medium`.
+    The index holds Pyrite's reading (5); a select check against it reported
+    `got 5`, contradicting the task_priority rule. The select sees `medium`."""
+    config, _ = _env(tmp_path, {"tasks/t.md": _task("t", "medium")})
+
+    for entry_id in (None, "t"):
+        issues = _qa(config, entry_id)
+        schema = [i for i in issues if i["rule"] == "schema_violation"]
+        assert schema == [], schema
+        assert [i["entry_id"] for i in issues if i["rule"] == "task_priority"] == ["t"]
+
+
+def test_qa_validate_reports_once_a_kb_yaml_that_retypes_task_priority(tmp_path):
+    """#554's first finding: the kb.yaml itself contradicts the core task
+    model. qa names the kb.yaml and the field once, not only per entry."""
+    files = {f"tasks/t{n}.md": _task(f"t{n}", "high") for n in range(3)}
+    config, _ = _env(tmp_path, files)
+
+    retyped = [i for i in _qa(config) if i["rule"] == "schema_retypes_core_field"]
+    assert len(retyped) == 1, retyped
+    issue = retyped[0]
+    assert issue["field"] == "priority"
+    assert "kb.yaml" in issue["message"] and "task" in issue["message"], issue
+    assert "1 to 10" in issue["message"], issue
+
+
+@pytest.mark.parametrize(
+    "field_yaml",
+    ["{type: number}", "{type: select, options: [1, 2, 3, 4, 5]}", "{type: number, min: 1}"],
+)
+def test_qa_validate_accepts_a_kb_yaml_that_keeps_task_priority_a_number(tmp_path, field_yaml):
+    yaml = (
+        "name: work\nkb_type: generic\ntypes:\n  task:\n    fields:\n"
+        f"      priority: {field_yaml}\n"
+    )
+    config, _ = _env(tmp_path, {"tasks/t.md": _task("t", 3)}, yaml)
+    assert [i for i in _qa(config) if i["rule"] == "schema_retypes_core_field"] == []
+
+
 @pytest.mark.control(
-    reason="dev never selected the typed columns, so it cannot fail there; this "
-    "pins that selecting them does not turn an empty column into a value"
+    reason="dev never read the typed fields, so it cannot fail there; this "
+    "pins that reading them does not turn an unset attribute into a value"
 )
 def test_qa_validate_does_not_read_an_empty_typed_column_as_a_value(tmp_path):
     """The typed columns exist for every entry; a task with no assignee has
@@ -282,8 +351,8 @@ def test_qa_validate_does_not_read_an_empty_typed_column_as_a_value(tmp_path):
 
 
 @pytest.mark.control(
-    reason="dev never selected the typed columns, so it cannot fail there; this "
-    "pins that selecting them does not replace the value validation checks"
+    reason="dev never read the typed fields, so it cannot fail there; this "
+    "pins that reading them does not replace the value validation checks"
 )
 def test_qa_validate_checks_a_protocol_field_against_the_files_value(tmp_path):
     """A kb.yaml type with `protocols:` keeps each protocol field in metadata
@@ -304,8 +373,8 @@ def test_qa_validate_checks_a_protocol_field_against_the_files_value(tmp_path):
 
 
 @pytest.mark.control(
-    reason="dev never selected the typed columns, so it cannot fail there; this "
-    "pins that selecting them does not replace the value validation checks"
+    reason="dev never read the typed fields, so it cannot fail there; this "
+    "pins that reading them does not replace the value validation checks"
 )
 def test_qa_validate_compares_a_task_priority_as_an_integer(tmp_path):
     """The index column is text, so a task's `priority: 7` comes back as '7';
@@ -403,6 +472,29 @@ def test_a_deliberate_event_status_lands_and_an_unknown_one_is_refused(tmp_path)
     assert res.get("updated") is not True, res
     assert res.get("error_code") != "INTERNAL", res
     assert "confirmed" in json.dumps(res), res
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_cli_update_sets_an_event_status_and_refuses_an_unknown_one(tmp_path):
+    """`pyrite update -f status=...` reaches the same Enum conversion as MCP:
+    a known status lands, an unknown one is refused before anything is written."""
+    text = "---\nid: e\ntitle: E\ntype: event\ndate: 2026-01-02\n---\n\nBody.\n"
+    config, kb_path = _env(tmp_path, {"events/e.md": text})
+    path = kb_path / "events" / "e.md"
+
+    def update(status: str):
+        with patch("pyrite.cli.context.load_config", return_value=config):
+            return CliRunner().invoke(app, ["update", "e", "-k", KB, "-f", f"status={status}"])
+
+    result = update("disputed")
+    assert result.exit_code == 0, result.output
+    assert "status: disputed" in path.read_text(encoding="utf-8")
+
+    before = path.read_text(encoding="utf-8")
+    result = update("bogus")
+    assert result.exit_code != 0, result.output
+    assert "confirmed" in result.output, result.output
+    assert "has no attribute" not in result.output, result.output
     assert path.read_text(encoding="utf-8") == before
 
 
