@@ -55,39 +55,71 @@ def _is_yaml11_ambiguous(value: str) -> bool:
     """Would PyYAML's `safe_load` (YAML 1.1) resolve this *string* scalar to
     something other than a string, written bare?
 
-    #568's acceptance list also names bare ``y``/``Y``/``n``/``N`` (the full
-    YAML 1.1 spec treats them as booleans), but PyYAML's own bool resolver
-    does not -- ``yaml.safe_load("y")`` is the string ``'y'`` -- and quoting
-    them regressed an existing single-letter list item
-    (``TestBlockSequenceIndentRoundTrip``). This stays driven by PyYAML's
-    actual resolver tables so it matches what `safe_load` really does and
-    can't drift from it; see the pyrite-dev report's "Unsure" for the
-    tradeoff.
+    Two deliberate differences from #568's acceptance list, both because
+    this stays driven by PyYAML's actual resolver tables rather than a
+    hand-typed list, so it can't drift from what `safe_load` really does:
+
+    - Bare ``y``/``Y``/``n``/``N`` are NOT treated as ambiguous. The full
+      YAML 1.1 spec treats them as booleans, but PyYAML's own bool resolver
+      does not (``yaml.safe_load("y")`` is the string ``'y'``), and quoting
+      them regressed an existing single-letter list item
+      (``TestBlockSequenceIndentRoundTrip``). A stricter YAML 1.1 reader
+      than PyYAML -- Go's ``yaml.v2``, for one -- does read bare ``y``/``n``
+      as booleans; a Pyrite string with exactly that value still round-trips
+      through PyYAML, just not through every YAML 1.1 implementation.
+    - The empty string is excluded here even though PyYAML's null resolver
+      matches it: ruamel's own representer already quotes an empty string
+      (``''``) on its own account, unconditionally, for an unrelated reason
+      (an empty bare scalar is otherwise ambiguous with "key with no
+      value"). Matching it here too would just change `''` to `""` for no
+      behavioural gain -- a formatting change with no reader it fixes.
     """
-    return any(rgx.fullmatch(value) for rgx in _PYYAML11_NONSTRING_REGEXES)
+    return value != "" and any(rgx.fullmatch(value) for rgx in _PYYAML11_NONSTRING_REGEXES)
 
 
 def _quote_yaml11_ambiguous_strings(node: Any) -> None:
     """Recursively wrap plain string scalars a YAML 1.1 reader would misread.
 
-    Mutates ``node`` in place, at any depth and inside list items: a bare
-    Python ``str`` (``type(value) is str`` -- not a quoted/styled ruamel
-    scalar subclass, and not a real bool/int/float) that
+    Mutates ``node`` in place, at any depth and inside list items, and on
+    mapping KEYS as well as values -- an undeclared frontmatter key is
+    stored as the caller wrote it (#407), so ``on: x`` is exactly as
+    reader-ambiguous as a value would be, and two keys that differ only in
+    a form PyYAML conflates (``yes`` and ``on``, both the bool ``True``)
+    collide, losing an entry.
+
+    A bare Python ``str`` (``type(value) is str`` -- not a quoted/styled
+    ruamel scalar subclass, and not a real bool/int/float) that
     ``_is_yaml11_ambiguous`` matches is replaced with a
     ``DoubleQuotedScalarString``, so the emitter writes explicit quotes. A
-    value already quoted in the source (loaded with ``preserve_quotes``,
-    so it is already a ``ScalarString`` subclass, not plain ``str``) is left
+    value already quoted in the source (loaded with ``preserve_quotes``, so
+    it is already a ``ScalarString`` subclass, not plain ``str``) is left
     exactly as it is -- its existing quote style is kept, not changed to
     double quotes.
+
+    Renaming a key rebuilds the mapping (clear, then re-set every item in
+    its original order) rather than deleting and re-adding just that one
+    key, which would move it to the end. A ``DoubleQuotedScalarString``
+    compares equal to (and hashes the same as) the plain ``str`` it wraps,
+    so a comment ruamel attached to the original key (keyed by equality, in
+    ``CommentedMap.ca``, untouched by ``clear()``) still finds it.
     """
     if isinstance(node, MutableMapping):
-        items: Iterable[Any] = list(node.keys())
-        for key in items:
-            value = node[key]
+        new_items: list[tuple[Any, Any]] = []
+        changed = False
+        for key, value in list(node.items()):
             if type(value) is str and _is_yaml11_ambiguous(value):
-                node[key] = DoubleQuotedScalarString(value)
+                value = DoubleQuotedScalarString(value)
+                changed = True
             else:
                 _quote_yaml11_ambiguous_strings(value)
+            if type(key) is str and _is_yaml11_ambiguous(key):
+                key = DoubleQuotedScalarString(key)
+                changed = True
+            new_items.append((key, value))
+        if changed:
+            node.clear()
+            for k, v in new_items:
+                node[k] = v
     elif isinstance(node, MutableSequence):
         for i, value in enumerate(node):
             if type(value) is str and _is_yaml11_ambiguous(value):
