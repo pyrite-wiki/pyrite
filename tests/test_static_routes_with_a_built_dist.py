@@ -259,6 +259,11 @@ def test_paths_the_old_fallback_check_refused_are_still_not_the_spa(tmp_path, mo
             assert "stub spa" not in resp.text, path
 
 
+@pytest.mark.control(
+    reason="pins 'same as dev' for websocket upgrades: dev already closes these with "
+    "1000, so it passes without the fix; it fails only against the first draft of the "
+    "404 mount, which answered a websocket scope with an HTTP response"
+)
 @pytest.mark.parametrize("auth", [False, True], ids=["auth-off", "auth-on"])
 @pytest.mark.parametrize("dist", [True, False], ids=["dist", "no-dist"])
 def test_websocket_upgrades_answer_as_they_did_on_dev(tmp_path, monkeypatch, dist, auth):
