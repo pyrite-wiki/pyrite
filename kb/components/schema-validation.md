@@ -20,7 +20,7 @@ tags: [core, validation]
 | `provenance.py` | `Source`, `Link`, `Provenance`, `RELATIONSHIP_TYPES`, `get_inverse_relation` |
 | `core_types.py` | `CORE_TYPES`, `CORE_TYPE_METADATA`, `resolve_type_metadata` |
 | `field_schema.py` | `FieldSchema`, `TypeSchema`, `_validate_field_value` |
-| `enum_check.py` | `enum_findings` (the one source of declared-enum findings), `ENUM_RULES`, `enforce_enums` |
+| `enum_check.py` | `enum_findings` (the one source of declared-enum findings), `is_off_list`, `is_per_element`, `enforce_enums` |
 | `kb_schema.py` | `KBSchema` class |
 | `reserved.py` | Reserved field name validation |
 | `__init__.py` | Re-exports all public symbols for backward compatibility |
@@ -46,7 +46,7 @@ Two independent switches in kb.yaml's `validation:` block:
 - **`enforce_enums`** (default `true`) governs declared-enum findings only. On, an off-list value is an error and the write is refused (`SCHEMA_VIOLATION`, naming field, value and allowed list); off, a warning. `allow_other: true` on a field makes its finding a warning either way. Plugin enum vocabularies are code-owned and not governed by it.
 - **`enforce`** (default `false`) governs everything else (unknown type, range, format, date, number, checkbox): advisory warnings by default, errors that block saves when `true`.
 
-**Values already on disk** (#47): on update, an enum-class error (a kb.yaml enum or a plugin's `rule: "enum"`) whose field has the same value after the update as before is downgraded to a warning and returned in `WriteResult.warnings` (`KBService._keep_on_disk_enum_values`). Per element for lists: an added off-list element is still refused. Create is always strict. `required`, range and format findings on untouched fields are not excepted.
+**Values already on disk** (#47): on update, an off-list error (a kb.yaml enum finding, which carries `origin`, or a plugin's `rule: "enum"`; never a type error such as a multi-select holding a scalar) whose field has the same value after the update as before is downgraded to a warning and returned in `WriteResult.warnings` (`KBService._keep_on_disk_enum_values`). Per element for list-valued fields: an added off-list element is still refused. A select keeps its off-list value only by sending the same value, never by wrapping it in a list. Create is always strict. `required`, range and format findings on untouched fields are not excepted.
 
 The same `enum_findings` feeds `pyrite schema validate` (the pre-commit hook; severity by the switch) and `pyrite index health` (`off_list_values`, built from the index row plus its metadata JSON, protocol columns from the file).
 

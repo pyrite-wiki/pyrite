@@ -123,9 +123,12 @@ findings (an off-list select value when the KB sets
 `kb_create`/`kb_update` return them as `warnings` (omitted when empty),
 each `kb_bulk_create` result as `warnings`, REST `POST`/`PUT`/`PATCH
 /api/entries` as `warnings: []` in the response body, and CLI `pyrite
-update` as `warnings` in its JSON (omitted when empty). An update whose
+update` and `pyrite task create --format json` as `warnings` in their JSON
+(omitted when empty), and `pyrite create` / `pyrite import` as `Warning:`
+lines. An update whose
 entry already holds an off-list enum value it does not change -- compared
-by value, so an echoed read counts; per element for a list -- succeeds and
+by value, so an echoed read counts; per element for a list-valued field;
+never for a type error -- succeeds and
 reports that value here (`severity: "warning"`, `note: "value already on
 disk; ..."`) rather than being refused (#47, #555). This covers a plugin
 validator's `rule: "enum"` too. Changing the field to another off-list

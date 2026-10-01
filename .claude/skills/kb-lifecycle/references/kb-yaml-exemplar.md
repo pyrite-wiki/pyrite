@@ -160,7 +160,10 @@ policies:
 Declared enums (`options:` on a `select`, `multi-select` or `list` field, and
 `enum:` in `validation.rules`) are enforced by default: a write with an
 off-list value is refused (`validation.enforce_enums`, default `true`). Write
-`options:`; `values:` is an accepted alias. When adopting a schema over
+`options:`; `values:` is an accepted alias. A `validation.rules` enum applies
+to every entry with that field, whatever its type, so when two types share a
+field name with different vocabularies, constrain it on each type with
+`options:` instead. When adopting a schema over
 existing entries that drift from it, set this while you clean up, guided by
 `pyrite qa validate` and `pyrite index health` (`off_list_values`), then
 remove the line:
