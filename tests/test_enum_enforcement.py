@@ -302,6 +302,9 @@ class TestValidateEntrySwitch:
 
 
 class TestWritePath:
+    @pytest.mark.control(
+        reason="passes on dev (no exception existed); red on a3ac865f, whose exception took type errors"
+    )
     def test_a_type_error_on_disk_is_not_excepted(self, svc_factory):
         """Round 1, should-fix 1: a multi-select holding a scalar is a type
         error under `enforce`, not an off-list value. It keeps its rule id

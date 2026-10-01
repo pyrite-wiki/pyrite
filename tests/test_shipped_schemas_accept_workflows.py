@@ -78,6 +78,9 @@ def desk(tmp_path):
     db.close()
 
 
+@pytest.mark.control(
+    reason="passes on dev (rule enums unenforced); red on a3ac865f, which enforced them before the shipped schemas were fixed"
+)
 def test_the_desk_created_by_init_runs_the_whole_task_workflow(desk):
     from pyrite.services.task_service import TaskService
 
@@ -93,6 +96,9 @@ def test_the_desk_created_by_init_runs_the_whole_task_workflow(desk):
     assert svc.get_task(tid, "proj-desk", readable_kbs=UNSCOPED)["status"] == "done"
 
 
+@pytest.mark.control(
+    reason="passes on dev (rule enums unenforced); red on a3ac865f, which enforced them before the shipped schemas were fixed"
+)
 @pytest.mark.parametrize("terminal", ["failed", "cancelled"])
 def test_the_desk_accepts_every_closing_state(desk, terminal):
     from pyrite.services.task_service import TaskService
@@ -182,6 +188,7 @@ def _conflicts() -> list[str]:
     return out
 
 
+@pytest.mark.control(reason="checks the guard itself, not a behaviour change")
 def test_the_guard_sees_the_shipped_schemas():
     names = [name for name, _ in _shipped_schemas()]
     assert "docs/desk-schema.yaml" in names
@@ -192,6 +199,7 @@ def test_no_shipped_rule_enum_refuses_a_declared_types_own_values():
     assert _conflicts() == []
 
 
+@pytest.mark.control(reason="checks the guard itself, not a behaviour change")
 def test_the_guard_catches_a_status_rule_missing_a_task_state(tmp_path):
     """The guard is live: a desk schema without `claimed` is reported."""
     text = DESK_SCHEMA.read_text()
