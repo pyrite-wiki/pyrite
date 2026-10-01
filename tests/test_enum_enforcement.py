@@ -240,6 +240,15 @@ class TestValidateEntrySwitch:
         )
         assert r == {"valid": True, "errors": [], "warnings": []}
 
+    def test_an_empty_value_is_not_an_off_list_value(self):
+        """A form that sends `null`/`""` for an unset select must not be refused:
+        absence is `required`'s business, not the enum's."""
+        for empty in (None, "", []):
+            r = schema(enforce_enums=True).validate_entry(
+                "org", {"title": "T", "org_type": empty, "region": empty, "codes": empty}
+            )
+            assert not r["errors"], (empty, r)
+
     def test_finding_names_field_value_allowed_list_and_origin(self):
         r = schema().validate_entry("org", {"title": "T", "sectors": ["energy", "mining"]})
         (f,) = r["errors"]
@@ -248,13 +257,17 @@ class TestValidateEntrySwitch:
         assert f["origin"] == "field"
         (g,) = schema().validate_entry("org", {"title": "T", "region": "east"})["errors"]
         assert g["origin"] == "rule" and g["expected"] == ["north", "south"]
+        assert g["got"] == "east"
+        (h,) = schema().validate_entry("org", {"title": "T", "region": ["north", "east"]})["errors"]
+        assert h["got"] == ["east"], "a list is checked per element"
 
     def test_multi_select_non_list_stays_under_enforce(self):
-        r = schema(enforce_enums=True, enforce=False).validate_entry(
-            "org", {"title": "T", "labels": "a"}
-        )
-        assert not r["errors"]
-        assert [f["field"] for f in r["warnings"]] == ["labels"]
+        for scalar in ("a", "z"):
+            r = schema(enforce_enums=True, enforce=False).validate_entry(
+                "org", {"title": "T", "labels": scalar}
+            )
+            assert not r["errors"], r
+            assert [(f["field"], f["expected"]) for f in r["warnings"]] == [("labels", "list")]
 
     def test_one_function_makes_the_findings(self):
         from pyrite.schema.enum_check import enum_findings
@@ -353,6 +366,14 @@ class TestWritePath:
         assert _fm(path)["org_type"] == "trust"
         assert any(w["field"] == "org_type" for w in written.warnings)
 
+    def test_enum_error_on_a_field_absent_before_is_not_excepted(self):
+        """The exception is for a value the file already had: an enum error on
+        a field the entry did not have before (a validator checking a default,
+        say) stays an error even though it is "unchanged" (absent both times)."""
+        err = {"field": "kind", "rule": "enum", "expected": ["a"], "got": None}
+        kept, excepted = KBService._keep_on_disk_enum_values([err], {}, {})
+        assert kept == [err] and excepted == []
+
     def test_untouched_non_enum_errors_are_not_excepted(self, svc_factory):
         """The exception covers enum findings only: an out-of-range number on
         disk still refuses an unrelated update when `enforce` is on."""
@@ -376,9 +397,16 @@ def software_kb(tmp_path):
     (kb / "backlog" / "done").mkdir(parents=True)
     shutil.copy(REPO / "kb" / "kb.yaml", kb / "kb.yaml")
     shutil.copy(LIVE_ENTRY, kb / "backlog" / LIVE_ENTRY.name)
-    # A conforming entry, and an off-list one in a subdirectory.
+    # An entry with no off-list value (its `rank: -1` draws a plugin
+    # `min_value` finding, which is not an enum), and an off-list one in a
+    # subdirectory.
     (kb / "backlog" / "fine.md").write_text(
-        "---\nid: fine\ntype: backlog_item\ntitle: Fine\nkind: bug\nstatus: proposed\n---\n\nB.\n"
+        "---\nid: fine\ntype: backlog_item\ntitle: Fine\nkind: bug\nstatus: proposed\nrank: -1\n"
+        "---\n\nB.\n"
+    )
+    (kb / "backlog" / "bad-status.md").write_text(
+        "---\nid: bad-status\ntype: backlog_item\ntitle: S\nkind: bug\nstatus: completed\n"
+        "---\n\nB.\n"
     )
     (kb / "backlog" / "done" / "old-chore.md").write_text(
         "---\nid: old-chore\ntype: backlog_item\ntitle: Old\nkind: chore\nstatus: done\n---\n\nB.\n"
@@ -459,6 +487,7 @@ class TestIssue47:
         assert ("old-chore", "kind", "chore") in rows  # a subdirectory changes nothing
         assert not any(r["id"] == "fine" for r in health["off_list_values"])
         assert not any(r["field"] == "status" for r in health["off_list_values"])
+        assert [r["id"] for r in health["invalid_statuses"]] == ["bad-status"]
         row = next(r for r in health["off_list_values"] if r["id"] == "old-chore")
         assert row["origin"] == "plugin" and row["severity"] == "warning"
         assert "bug" in row["allowed"]
@@ -526,6 +555,46 @@ class TestIndexHealth:
             assert r["kb"] == "t" and r["type"] == "org"
             assert r["severity"] == ("error" if mode else "warning")
         assert next(r for r in rows if r["field"] == "org_type")["allowed"] == ["ngo", "company"]
+
+    def test_a_value_flagged_by_field_options_and_a_rule_is_one_row(self, tmp_path):
+        yaml_text = kb_yaml(True).replace(
+            "    - field: region\n",
+            "    - field: org_type\n      enum: [ngo, company]\n    - field: region\n",
+        )
+        config, kb = _make_config(tmp_path, yaml_text)
+        _write_org(kb, "acme", org_type="charity")
+        db = PyriteDB(config.settings.index_path)
+        IndexManager(db, config).index_all()
+        db.close()
+        rows = _health(config)["off_list_values"]
+        assert [(r["id"], r["field"], r["value"]) for r in rows] == [
+            ("acme", "org_type", "charity")
+        ]
+
+    def test_kb_yaml_status_enum_is_not_reported_twice(self, tmp_path):
+        """A kb.yaml rule enum on `status` reports here, unless the plugin's
+        status check already put the entry in `invalid_statuses`."""
+        pytest.importorskip("pyrite_software_kb")
+        yaml_text = (
+            "name: sw\nkb_type: software\nvalidation:\n  rules:\n"
+            "    - field: status\n      enum: [proposed, done, wontfix]\n"
+            "types:\n  backlog_item:\n    description: d\n    subdirectory: backlog\n"
+        )
+        config, kb = _make_config(tmp_path, yaml_text, kb_type="software", name="sw")
+        (kb / "backlog").mkdir()
+        for eid, status in (("both", "completed"), ("rule-only", "in_progress")):
+            (kb / "backlog" / f"{eid}.md").write_text(
+                f"---\nid: {eid}\ntype: backlog_item\ntitle: {eid}\nkind: bug\n"
+                f"status: {status}\n---\n\nB.\n"
+            )
+        db = PyriteDB(config.settings.index_path)
+        IndexManager(db, config).index_all()
+        db.close()
+        health = _health(config, "sw")
+        assert [r["id"] for r in health["invalid_statuses"]] == ["both"]
+        assert [(r["id"], r["field"], r["origin"]) for r in health["off_list_values"]] == [
+            ("rule-only", "status", "rule")
+        ]
 
     def test_allow_other_rows_are_info(self, health_env):
         config = health_env(True, {"acme": {"loose": "z"}})
