@@ -448,7 +448,63 @@ neighbour at once (#63), and block-sequence indentation lost on a round trip
 
 ---
 
-## 0.26 — Multi-user you can trust (next; still alpha)
+## 0.25.7 to 0.25.9 — Agents in the terminal (next; weekly patch releases)
+
+**Decided 2026-10-01 (maintainer).** The work a new user tests first comes before the
+multi-user review: Claude Code and terminal integration, and MCP on a local install.
+Three weekly patch releases, each a train: what is done by the date ships, the rest rolls.
+This moves "Meet agents where they are" ahead of 0.26; it was listed under 0.27.
+
+The backlog is sorted into three buckets: (1) terminal, Claude Code and local MCP;
+(2) multi-user security and multi-user bugs (0.26); (3) everything else (0.27).
+
+### 0.25.7 — The first hour works (target 2026-10-08)
+
+**Done when:** someone follows the README and getting-started on a clean machine,
+connects Claude Code or Claude Desktop with `pyrite mcp-setup`, and finishes the
+tutorial without meeting a false statement. The release layer checks it: the tutorial
+run, plus an `mcp-setup` read-back.
+
+- `mcp-setup` writes the config each client reads, write tier by default (#582).
+- First-hour docs say what happens; `KNOWN-ISSUES.md` is honest (#583).
+- Quiet default output; semantic search says when its extra is missing (#584, #43).
+- Local Docker is local (private tracker).
+- The contributor door: #541 (#538), #548 (#244), root clutter (#585).
+- The agent's first call: `kb_orient` (#66, #232); #574.
+- Release, demo redeploy, pyrite.wiki.
+
+The alpha announcement goes on this release. It claims the single-user agent workflow
+and does not claim multi-user.
+
+### 0.25.8 — The CLI contract for agents (target 2026-10-15)
+
+**Done when:** one contract test runs across commands: JSON is valid in a pipe, a
+requested effect that did not happen exits non-zero, an ambiguous id is an error.
+
+- Exit codes and ambiguity (#526, #528); one format contract (#547, #553, #303).
+- Search output for agents (#54; lean by default, decided 2026-09-30).
+- Creates and schema (#86, #572, #468, #569, #51, #8).
+- MCP answers (#64, #68, #62, #124, #200); #52; #527.
+- The journalism-investigation MCP tools write through the pipeline (#92, #93, #94,
+  #98): fixed here, not marked experimental (maintainer, 2026-10-01). #94 needs the
+  `PluginContext` half of #384.
+- Needs design first: #303, #200, #22, #59.
+
+### 0.25.9 — The index tells the truth (target 2026-10-22 to 10-29)
+
+**Done when:** after any change made outside Pyrite (an edit that keeps its mtime, a
+time-preserving copy, a `git mv`, a delete, a duplicate id), one command makes the
+index match the files and reports duplicates, pinned by invariant tests.
+
+- The single reconcile of ADR-0038: #6, #7, #484, #485, #486, #487, #495.
+- Storage-touching: every theme gets a cold read. It may need both weeks.
+
+## 0.26 — Multi-user you can trust (after 0.25.9; still alpha)
+
+**Sequencing (2026-10-01):** grooming for the review starts in parallel with the 0.25.x
+releases, at a low rate; the build starts after 0.25.9. Target November, no fixed date.
+Tracking issues: #586 (the review), #587 (G1). The public multi-user bugs are in the
+`0.26` milestone; 40 items are open in the private tracker.
 
 **Theme:** the multi-user path gets the security review and the manual testing
 it has never had. Decided 2026-09-23, after one day turned up three separate
@@ -616,7 +672,8 @@ maintainer.
 - **Plugins out of tree.** The plugin contract becomes the public API.
   Journalism-investigation is the pilot, and software-kb stays in tree. An
   import-inventory spike and a proposed ADR come first.
-- **Meet agents where they are.** The CLI is the core of the terminal agent
+- **Meet agents where they are** *(pulled forward to 0.25.7–0.25.9, 2026-10-01; what is
+  left of it stays here).* The CLI is the core of the terminal agent
   interface: pi and Claude Code use `pyrite` commands with pipes and `--json`
   as shared memory. MCP serves Claude Desktop and Cowork agents; the web UI
   serves people. The output and error contract and the index freshness the
