@@ -192,6 +192,45 @@ def test_a_service_update_writes_an_ambiguous_key_pyyaml_reads_back_identically(
 
 
 # ---------------------------------------------------------------------------
+# A YAML merge key (`<<: *anchor`) exposes the anchor's keys through the
+# mapping's ordinary interface as if they were the mapping's own (conductor
+# round 2 on #571): the clear-and-rebuild key-rename path must never copy
+# one in as a real, explicit key on the child.
+# ---------------------------------------------------------------------------
+
+
+def test_a_merge_key_child_stays_byte_identical_apart_from_its_own_quoting():
+    src = "base: &b\n  x: 1\nchild:\n  <<: *b\n  flag: no\n"
+    want = 'base: &b\n  x: 1\nchild:\n  <<: *b\n  flag: "no"\n'
+    assert dump_yaml(load_yaml(src)) + "\n" == want
+
+
+def test_an_ambiguous_value_in_an_anchored_base_is_quoted_once_at_the_base():
+    src = "base: &b {x: yes}\nchild:\n  <<: *b\n"
+    data = load_yaml(src)
+    dumped = dump_yaml(data)
+    reloaded = pyyaml.safe_load(dumped)
+    assert reloaded["base"]["x"] == "yes", dumped
+    assert reloaded["child"]["x"] == "yes", dumped
+    # `child` gains no key of its own -- `x` only ever came from the merge,
+    # and quoting it must not copy it in as a real, explicit key on `child`.
+    assert list(data["child"].non_merged_items()) == [], dumped
+    assert "x" not in dumped.split("child:")[1], dumped
+
+
+def test_a_merge_key_childs_own_ambiguous_key_is_renamed_without_copying_the_merge():
+    """A child with a merge AND its own key that needs quoting exercises the
+    clear-and-rebuild rename path specifically -- it must rebuild from the
+    mapping's own items only, never the merge-expanded view."""
+    src = "base: &b\n  x: 1\nchild:\n  <<: *b\n  on: yes\n  z: 3\n"
+    data = load_yaml(src)
+    dumped = dump_yaml(data)
+    reloaded = pyyaml.safe_load(dumped)
+    assert reloaded == {"base": {"x": 1}, "child": {"x": 1, "on": "yes", "z": 3}}, dumped
+    assert list(data["child"].non_merged_items()) == [("on", "yes"), ("z", 3)], dumped
+
+
+# ---------------------------------------------------------------------------
 # Empty string: ruamel already quotes it (its own resolver, not #568's YAML
 # 1.1 pass) -- excluded from this pass so its existing quote style is kept
 # ---------------------------------------------------------------------------

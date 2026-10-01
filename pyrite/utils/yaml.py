@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ruamel.yaml import YAML
+from ruamel.yaml.comments import merge_attrib
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString
 from yaml.resolver import Resolver as _PyYAMLResolver
@@ -77,6 +78,27 @@ def _is_yaml11_ambiguous(value: str) -> bool:
     return value != "" and any(rgx.fullmatch(value) for rgx in _PYYAML11_NONSTRING_REGEXES)
 
 
+def _own_items(node: MutableMapping) -> list[tuple[Any, Any]]:
+    """``node``'s own key/value pairs, excluding any merged in via a YAML
+    merge key (``<<: *anchor``).
+
+    A ``CommentedMap`` with a merge exposes the anchor's keys through the
+    ordinary mapping interface (``items()``, ``__getitem__``,
+    ``__setitem__``) as if they were the map's own -- so reading OR writing
+    through that interface, including a plain ``node[k] = v``, silently
+    turns a merged-in key into a real, explicit one on the child (#571
+    round 2). ``non_merged_items()`` is what ruamel's own representer calls
+    to decide what a mapping with a merge should literally write
+    (``RoundTripRepresenter.represent_mapping``); used the same way here,
+    nothing merged in is ever touched. There is nothing to quote in it
+    that recursing into the anchor's own definition -- wherever it sits in
+    the document -- does not already reach.
+    """
+    if getattr(node, merge_attrib, None) and hasattr(node, "non_merged_items"):
+        return list(node.non_merged_items())
+    return list(node.items())
+
+
 def _quote_yaml11_ambiguous_strings(node: Any) -> None:
     """Recursively wrap plain string scalars a YAML 1.1 reader would misread.
 
@@ -85,7 +107,8 @@ def _quote_yaml11_ambiguous_strings(node: Any) -> None:
     stored as the caller wrote it (#407), so ``on: x`` is exactly as
     reader-ambiguous as a value would be, and two keys that differ only in
     a form PyYAML conflates (``yes`` and ``on``, both the bool ``True``)
-    collide, losing an entry.
+    collide, losing an entry. Only a mapping's own keys are ever visited --
+    see ``_own_items``.
 
     A bare Python ``str`` (``type(value) is str`` -- not a quoted/styled
     ruamel scalar subclass, and not a real bool/int/float) that
@@ -94,32 +117,30 @@ def _quote_yaml11_ambiguous_strings(node: Any) -> None:
     value already quoted in the source (loaded with ``preserve_quotes``, so
     it is already a ``ScalarString`` subclass, not plain ``str``) is left
     exactly as it is -- its existing quote style is kept, not changed to
-    double quotes.
+    double quotes. A value-only change is assigned in place
+    (``node[key] = ...``); the mapping itself is not rebuilt.
 
-    Renaming a key rebuilds the mapping (clear, then re-set every item in
-    its original order) rather than deleting and re-adding just that one
-    key, which would move it to the end. A ``DoubleQuotedScalarString``
+    Renaming a key DOES rebuild the mapping (clear, then re-set every own
+    item in its original order) rather than deleting and re-adding just
+    that one key, which would move it to the end. A ``DoubleQuotedScalarString``
     compares equal to (and hashes the same as) the plain ``str`` it wraps,
     so a comment ruamel attached to the original key (keyed by equality, in
     ``CommentedMap.ca``, untouched by ``clear()``) still finds it.
     """
     if isinstance(node, MutableMapping):
-        new_items: list[tuple[Any, Any]] = []
-        changed = False
-        for key, value in list(node.items()):
+        renamed: dict[Any, Any] = {}
+        for key, value in _own_items(node):
             if type(value) is str and _is_yaml11_ambiguous(value):
-                value = DoubleQuotedScalarString(value)
-                changed = True
+                node[key] = DoubleQuotedScalarString(value)
             else:
                 _quote_yaml11_ambiguous_strings(value)
             if type(key) is str and _is_yaml11_ambiguous(key):
-                key = DoubleQuotedScalarString(key)
-                changed = True
-            new_items.append((key, value))
-        if changed:
+                renamed[key] = DoubleQuotedScalarString(key)
+        if renamed:
+            current = _own_items(node)  # re-read: values above may have changed
             node.clear()
-            for k, v in new_items:
-                node[k] = v
+            for k, v in current:
+                node[renamed.get(k, k)] = v
     elif isinstance(node, MutableSequence):
         for i, value in enumerate(node):
             if type(value) is str and _is_yaml11_ambiguous(value):
