@@ -93,6 +93,8 @@ def test_task_create_with_field_satisfies_required_schema_fields(desk_env):
 
 @pytest.mark.cli
 def test_task_create_with_field_creates_the_task(desk_env):
+    # `kind` must be one the desk schema's rule `enum:` declares: rule enums
+    # are enforced since #555 (this used `kind=note`, which is off-list).
     result = runner.invoke(
         app,
         [
@@ -106,7 +108,7 @@ def test_task_create_with_field_creates_the_task(desk_env):
             "--field",
             "project=demo",
             "--field",
-            "kind=note",
+            "kind=chore",
             "--format",
             "json",
         ],
@@ -115,7 +117,7 @@ def test_task_create_with_field_creates_the_task(desk_env):
     data = json.loads(result.output)
     fm = _task_frontmatter(desk_env["config"], "test-desk", data["entry_id"], "tasks")
     assert fm["project"] == "demo"
-    assert fm["kind"] == "note"
+    assert fm["kind"] == "chore"
 
 
 @pytest.mark.cli
