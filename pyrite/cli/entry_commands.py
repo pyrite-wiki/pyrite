@@ -460,7 +460,7 @@ def register_entry_commands(app: typer.Typer) -> None:
             # ADR-0034 rule 2 and schema validation are the service's (#378):
             # `updates` goes through as given, marker keys included.
             try:
-                entry = svc.update(entry_id, kb_name, updates).entry
+                written = svc.update(entry_id, kb_name, updates)
             except ValidationError as e:
                 _refusal_exit(e, output_format)
             except EntryNotFoundError as e:
@@ -469,10 +469,19 @@ def register_entry_commands(app: typer.Typer) -> None:
                 _cli_error(str(e), output_format, "KB_NOT_FOUND")
             except (PyriteError, ValueError) as e:
                 _cli_error(str(e), output_format)
+            entry = written.entry
+            # The write's schema warnings -- e.g. an off-list value already on
+            # disk that the update kept (#47, #555) -- the way REST and MCP
+            # already return them.
             if output_format != "rich":
-                typer.echo(_json.dumps({"updated": True, "entry_id": entry.id}))
+                payload: dict[str, Any] = {"updated": True, "entry_id": entry.id}
+                if written.warnings:
+                    payload["warnings"] = written.warnings
+                typer.echo(_json.dumps(payload, default=str))
             else:
                 console.print(f"[green]Updated:[/green] {entry.id}")
+                for warning in written.warnings:
+                    console.print("[yellow]Warning:[/yellow]", _json.dumps(warning, default=str))
 
     @app.command("delete")
     def delete_entry(

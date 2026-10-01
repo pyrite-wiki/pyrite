@@ -6,6 +6,7 @@ Unified KB operations used by API, CLI, and UI layers.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import logging
 import os
@@ -35,6 +36,7 @@ from ..models import Entry
 from ..models.base import parse_datetime
 from ..models.factory import build_entry
 from ..plugins.context import PluginContext
+from ..schema.enum_check import ENUM_RULES
 from ..storage.database import PyriteDB
 from ..storage.document_manager import DocumentManager
 from ..storage.index import IndexManager
@@ -237,8 +239,66 @@ class KBService:
             logger.warning("Embedding service initialization failed", exc_info=True)
         return self._embedding_svc
 
+    @staticmethod
+    def _validated_fields(entry: Entry) -> dict[str, Any]:
+        """The field set a write is validated on.
+
+        A typed entry keeps fields its model does not declare under a nested
+        `metadata:` block, which is where build_entry puts a caller's extra
+        kwargs. The schema declares them for the type all the same, so they
+        are validated as the fields they are; a top-level key wins a clash.
+        """
+        fields = entry.to_frontmatter()
+        nested = fields.get("metadata")
+        if isinstance(nested, dict):
+            fields = {**nested, **fields}
+        return fields
+
+    @staticmethod
+    def _keep_on_disk_enum_values(
+        errors: list[dict[str, Any]], before: dict[str, Any], after: dict[str, Any]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """``(errors, warnings)`` after excepting enum values already on disk (#47, #555).
+
+        An enum-class error (a kb.yaml enum or a plugin's ``rule: enum``) on a
+        field whose value is the same after the update as before is a value
+        the file already had: reported, not re-validated, so an update that
+        does not change it succeeds. The comparison is by value, so a caller
+        echoing a whole read back is covered. For a list it is per element:
+        elements already present stay allowed, an added off-list element is
+        still refused. Every other error is left as it is.
+        """
+        kept: list[dict[str, Any]] = []
+        excepted: list[dict[str, Any]] = []
+        note = "value already on disk; kept, not re-validated"
+        for err in errors:
+            name = err.get("field")
+            if err.get("rule") not in ENUM_RULES or name not in before:
+                kept.append(err)
+                continue
+            old, new = before.get(name), after.get(name)
+            if old == new:
+                excepted.append({**err, "severity": "warning", "note": note})
+                continue
+            got = err.get("got")
+            if isinstance(new, list) and isinstance(got, list):
+                had = old if isinstance(old, list) else [old]
+                existing = [v for v in got if v in had]
+                added = [v for v in got if v not in had]
+                if existing:
+                    excepted.append({**err, "got": existing, "severity": "warning", "note": note})
+                if added:
+                    kept.append({**err, "got": added})
+                continue
+            kept.append(err)
+        return kept, excepted
+
     def _validate_write(
-        self, entry: Entry, kb_name: str, kb_config: KBConfig
+        self,
+        entry: Entry,
+        kb_name: str,
+        kb_config: KBConfig,
+        before: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Refuse a write the KB schema or a plugin validator rejects.
 
@@ -248,15 +308,14 @@ class KBService:
         succeeded and drifted the board (75 items once sat on an undeclared
         status). No kb.yaml means no schema to enforce; plugin validators for
         the KB type still run through validate_entry.
+
+        ``before`` is an update's field set as loaded, before the update was
+        applied (:meth:`_validated_fields` of the loaded entry); with it, an
+        off-list enum value the update leaves unchanged is a warning, not a
+        refusal (:meth:`_keep_on_disk_enum_values`). Create passes none and
+        is always strict.
         """
-        # A typed entry keeps fields its model does not declare under a nested
-        # `metadata:` block, which is where build_entry puts a caller's extra
-        # kwargs. The schema declares them for the type all the same, so they
-        # are validated as the fields they are; a top-level key wins a clash.
-        fields = entry.to_frontmatter()
-        nested = fields.get("metadata")
-        if isinstance(nested, dict):
-            fields = {**nested, **fields}
+        fields = self._validated_fields(entry)
         try:
             result = kb_config.kb_schema.validate_entry(
                 entry.entry_type,
@@ -271,8 +330,12 @@ class KBService:
             logger.warning("Schema validation skipped for %s/%s", kb_name, entry.id, exc_info=True)
             return []
         errors = result.get("errors") or []
+        warnings = list(result.get("warnings") or [])
+        if before is not None and errors:
+            errors, excepted = self._keep_on_disk_enum_values(errors, before, fields)
+            warnings.extend(excepted)
         if not errors:
-            return list(result.get("warnings") or [])
+            return warnings
         parts = []
         for e in errors:
             field = e.get("field", "?")
@@ -280,7 +343,10 @@ class KBService:
             got = e.get("got")
             expected = e.get("expected")
             message = e.get("message")
-            if rule == "enum":
+            if rule in ENUM_RULES and isinstance(expected, list):
+                # Every declared-enum refusal reads the same way, naming the
+                # field, the value and the allowed list (#555); the rule
+                # identifiers themselves are unchanged.
                 rendered = f"{field}: {got!r} is not one of {expected}"
                 # A validator's `message` can say more than the generic
                 # "Invalid <field>: <got>" (e.g. explaining why an enum only
@@ -1182,6 +1248,10 @@ class KBService:
 
         # Capture old_status before applying updates (for workflow hooks)
         old_status = getattr(entry, "status", None)
+        # The field set as loaded, for the exception that keeps an off-list
+        # enum value the update does not change (#47, #555). Deep-copied: the
+        # updates below must not reach into it.
+        before = copy.deepcopy(self._validated_fields(entry))
 
         # A timestamp may arrive as a string: REST `PATCH /entries/{id}` sends
         # `value: str` and the CLI passes `--field updated_at=…`. Coerce it
@@ -1230,7 +1300,7 @@ class KBService:
             entry.touch_updated_at()
 
         # Refuse before anything is written: the file must stay exactly as it was.
-        warnings = self._validate_write(entry, kb_name, kb_config)
+        warnings = self._validate_write(entry, kb_name, kb_config, before=before)
 
         # Run before_save hooks
         extra = {"old_status": old_status} if old_status else {}

@@ -25,6 +25,7 @@ from ..models.protocols import (
     Statusable,
     Temporal,
 )
+from ..utils.metadata import parse_metadata
 from .database import PyriteDB
 from .repository import KBRepository
 
@@ -740,6 +741,10 @@ class IndexManager:
           the `subdirectory:` the type declares. `subdirectory:` is a
           writer hint, not a reader constraint, so this is surfaced as a
           warning, not an error. KBs without a `kb.yaml` are skipped.
+        - invalid_statuses: entries whose `status` a plugin validator's enum
+          rejects.
+        - off_list_values: one row per off-list value of a declared enum
+          (#555, #47) -- see `_check_off_list_values`.
         """
         health = {
             "missing_files": [],
@@ -752,7 +757,34 @@ class IndexManager:
             "subdirectory_mismatches": [],
             "malformed_frontmatter": [],
             "invalid_statuses": [],
+            "off_list_values": [],
         }
+
+        # The file's own value of each protocol column, per (kb, id), read
+        # while every file is loaded below anyway: a typed column holds
+        # Pyrite's reading (a task's `priority` is 5 for a file with none),
+        # so the off-list check takes these from the file (#554, #555).
+        file_values: dict[tuple[str, str], dict[str, Any]] = {}
+
+        # Plugin validators per KB, looked up ONCE per KB however many checks
+        # and rows use them (coordinator blocker 3).
+        validators_by_kb: dict[str, list] = {}
+
+        def validators_for(kb) -> list:
+            if kb.name not in validators_by_kb:
+                try:
+                    from ..plugins import get_registry
+
+                    validators_by_kb[kb.name] = get_registry().get_validators_for_kb(kb.kb_type)
+                except Exception:
+                    logger.warning(
+                        "Could not load validators for KB %r; the invalid-status and "
+                        "plugin off-list checks are disabled for this KB this pass",
+                        kb.name,
+                        exc_info=True,
+                    )
+                    validators_by_kb[kb.name] = []
+            return validators_by_kb[kb.name]
 
         # One scoped list drives every check below, so `-k` cannot scope some
         # of the report and leave the rest global.
@@ -771,6 +803,10 @@ class IndexManager:
                 try:
                     entry = repo._load_entry(file_path)
                     seen_ids.add(entry.id)
+                    source = entry._source_frontmatter or {}
+                    file_values[(kb.name, entry.id)] = {
+                        k: source[k] for k in PROTOCOL_COLUMN_KEYS if source.get(k) is not None
+                    }
 
                     if entry.id not in indexed:
                         health["unindexed_files"].append(
@@ -881,18 +917,7 @@ class IndexManager:
             # -- a KB with N entries meant N lookups). A KB with none
             # registered short-circuits the per-row status check below
             # entirely: `run_validators` is never called for that KB's rows.
-            try:
-                from ..plugins import get_registry
-
-                kb_validators = get_registry().get_validators_for_kb(kb.kb_type)
-            except Exception:
-                logger.warning(
-                    "Could not load status validators for KB %r; invalid-status "
-                    "check is disabled for this KB this pass",
-                    kb.name,
-                    exc_info=True,
-                )
-                kb_validators = []
+            kb_validators = validators_for(kb)
 
             entry_rows = self.db.execute_sql(
                 "SELECT id, entry_type, title, body, summary, file_path, "
@@ -952,7 +977,134 @@ class IndexManager:
                                 }
                             )
 
+        for kb in kbs:
+            if kb.path.exists():
+                self._check_off_list_values(kb, health, file_values, validators_for(kb))
+
         return health
+
+    #: Index columns that are never an enum-constrained field value.
+    _NOT_FIELD_COLUMNS = frozenset(
+        {"id", "kb_name", "metadata", "body", "summary", "file_path", "indexed_at", "content_hash"}
+    )
+
+    def _check_off_list_values(
+        self,
+        kb,
+        health: dict,
+        file_values: dict[tuple[str, str], dict[str, Any]],
+        validators: list,
+    ) -> None:
+        """Report every off-list value of a declared enum in ``kb`` (#555, #47).
+
+        Each row is ``{kb, id, type, field, value, allowed, origin, severity}``,
+        one per offending value (a list contributes one row per element), and
+        is built from the index row plus its ``metadata`` JSON, so a custom
+        field such as ``org_type`` is seen, not only the columns. A protocol
+        column (``priority``, ``status``, dates...) is taken from
+        ``file_values`` -- the file's own value, absent when the file has none
+        or did not load -- never from the column, which holds Pyrite's reading.
+
+        Sources, by ``origin``:
+        - ``field`` / ``rule``: the kb.yaml enums, through the same
+          ``enum_findings`` the write path and ``schema validate`` use.
+          ``severity`` follows ``validation.enforce_enums`` (``error`` on,
+          ``warning`` off); an ``allow_other`` field's rows are ``info``.
+        - ``plugin``: a plugin validator's ``rule: enum`` on any field but
+          ``status``, which stays in ``invalid_statuses``. Plugin
+          vocabularies are code-owned and the switch does not govern them,
+          so their rows are ``warning`` -- as ``invalid_statuses`` rolls up.
+
+        A kb.yaml enum on ``status`` is reported here unless the entry is
+        already in ``invalid_statuses``. Runs for any KB with a kb.yaml enum
+        or a plugin validator, not only KBs whose kb.yaml declares types.
+        """
+        from ..schema.enum_check import enum_findings
+
+        kb_schema = kb.kb_schema if kb.kb_yaml_path.exists() else None
+        declares_enums = kb_schema is not None and (
+            any(fs.allowed_values() for ts in kb_schema.types.values() for fs in ts.fields.values())
+            or any(
+                isinstance(r, dict) and "enum" in r for r in kb_schema.validation.get("rules") or []
+            )
+        )
+        if not declares_enums and not validators:
+            return
+
+        bad_status = {r["id"] for r in health["invalid_statuses"] if r.get("kb") == kb.name}
+        rows = self.db.execute_sql(
+            "SELECT * FROM entry WHERE kb_name = :kb_name", {"kb_name": kb.name}
+        )
+        seen: set[tuple] = set()
+        out = health["off_list_values"]
+
+        def add(row, field_name, values, allowed, origin, severity):
+            for value in values if isinstance(values, list) else [values]:
+                key = (row["id"], field_name, repr(value))
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(
+                    {
+                        "kb": kb.name,
+                        "id": row["id"],
+                        "type": row["entry_type"],
+                        "field": field_name,
+                        "value": value,
+                        "allowed": allowed,
+                        "origin": origin,
+                        "severity": severity,
+                    }
+                )
+
+        for row in rows:
+            fields = {
+                k: v
+                for k, v in row.items()
+                if v is not None
+                and k not in self._NOT_FIELD_COLUMNS
+                and k not in PROTOCOL_COLUMN_KEYS
+            }
+            fields.pop("entry_type", None)
+            fields.update(file_values.get((kb.name, row["id"]), {}))
+            for k, v in parse_metadata(row.get("metadata")).items():
+                if k not in fields and v is not None:
+                    fields[k] = v
+
+            if declares_enums:
+                for f in enum_findings(kb_schema, row["entry_type"], fields):
+                    if f["field"] == "status" and row["id"] in bad_status:
+                        continue
+                    severity = "info" if f.get("allow_other") else f["severity"]
+                    add(row, f["field"], f["got"], f["expected"], f["origin"], severity)
+
+            ctx = {"kb_type": kb.kb_type, "kb_name": kb.name}
+            for validator in validators:
+                try:
+                    results = validator(row["entry_type"], fields, ctx)
+                except Exception:
+                    logger.warning(
+                        "Validator %r raised for %s/%s; off-list check skipped for "
+                        "this entry from this validator",
+                        getattr(validator, "__name__", validator),
+                        kb.name,
+                        row["id"],
+                        exc_info=True,
+                    )
+                    continue
+                for item in results or []:
+                    if not isinstance(item, dict) or item.get("rule") != "enum":
+                        continue
+                    if item.get("field") in (None, "status"):
+                        continue
+                    add(
+                        row,
+                        item["field"],
+                        item.get("got"),
+                        list(item.get("expected") or []),
+                        "plugin",
+                        "warning",
+                    )
 
     @staticmethod
     def _check_invalid_status(kb, row: dict, validators: list, health: dict) -> None:

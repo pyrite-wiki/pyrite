@@ -168,25 +168,24 @@ def validate_entry(
                         }
                     )
 
-            # Check typed fields from schema
-            for field_name, field_schema in type_schema.fields.items():
-                if field_name in fm:
-                    value = fm[field_name]
-                    # select type: check against options
-                    if field_schema.field_type == "select" and field_schema.options:
-                        if value not in field_schema.options:
-                            sev = "warning" if field_schema.allow_other else "error"
-                            errors.append(
-                                {
-                                    "file": path_str,
-                                    "check": "field_value",
-                                    "message": (
-                                        f"Field '{field_name}' value '{value}' "
-                                        f"not in options: {field_schema.options}"
-                                    ),
-                                    "severity": sev,
-                                }
-                            )
+        # Declared enums: the same function the write path and `index health`
+        # use, with the same severity (`validation.enforce_enums`), so the
+        # pre-commit hook agrees with what a write would do (#555).
+        from ..schema.enum_check import enum_findings
+
+        for finding in enum_findings(schema, entry_type, fm):
+            errors.append(
+                {
+                    "file": path_str,
+                    "check": "field_value",
+                    "message": (
+                        f"Field '{finding['field']}' value {finding['got']!r} not in "
+                        f"{'options' if finding['origin'] == 'field' else 'rule enum'}: "
+                        f"{finding['expected']}"
+                    ),
+                    "severity": finding["severity"],
+                }
+            )
 
     # Protocol field type checks
     for field_name, expected_type in _PROTOCOL_FIELD_TYPES.items():
@@ -535,6 +534,20 @@ def schema_validate(
     # Phase 2: ID collision detection
     collision_errors = detect_id_collisions(parsed_entries)
     all_errors.extend(collision_errors)
+
+    # Schema-level: a field declaring both `options:` and `values:` (#555).
+    if schema:
+        from ..schema.enum_check import schema_enum_warnings
+
+        for w in schema_enum_warnings(schema):
+            all_errors.append(
+                {
+                    "file": f"<type:{w['type']}>",
+                    "check": "schema_enum",
+                    "message": w["message"],
+                    "severity": "warning",
+                }
+            )
 
     # Phase 3: Protocol satisfaction checking
     if schema:

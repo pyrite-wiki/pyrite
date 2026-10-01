@@ -68,6 +68,9 @@ class FieldSchema:
     items: dict[str, Any] = field(default_factory=dict)  # for list type
     constraints: dict[str, Any] = field(default_factory=dict)  # min, max, format, target_type
     since_version: int | None = None
+    #: kb.yaml gave both ``options:`` and its alias ``values:`` with different
+    #: lists; ``options`` won. Not serialized: `schema validate` reports it (#555).
+    options_conflict: bool = field(default=False, compare=False, repr=False)
 
     VALID_TYPES = frozenset(
         [
@@ -92,18 +95,40 @@ class FieldSchema:
             if key in data:
                 constraints[key] = data[key]
 
+        # `values:` is a permanent alias of `options:` (#555): the kb-lifecycle
+        # skill taught it and real KBs use it, and the parser used to drop it,
+        # so a declared enum constrained nothing. `options:` is canonical and
+        # wins when both are given.
+        options, conflict = _options_or_values(data)
+        items = data.get("items") or {}
+        if isinstance(items, dict) and "options" not in items and "values" in items:
+            items = {
+                **{k: v for k, v in items.items() if k != "values"},
+                "options": items["values"],
+            }
+
         return cls(
             name=name,
             field_type=data.get("type", "text"),
             required=data.get("required", False),
             default=data.get("default"),
             description=data.get("description", ""),
-            options=data.get("options", []),
+            options=options,
             allow_other=data.get("allow_other", False),
-            items=data.get("items", {}),
+            items=items,
             constraints=constraints,
             since_version=data.get("since_version"),
+            options_conflict=conflict,
         )
+
+    def allowed_values(self) -> list[Any]:
+        """The declared enum for this field: ``options`` (or ``values``), else
+        ``items.options`` (or ``items.values``) for a list; empty when none."""
+        if self.options:
+            return list(self.options)
+        if isinstance(self.items, dict):
+            return list(self.items.get("options") or [])
+        return []
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary for agent schema and API responses."""
@@ -124,6 +149,15 @@ class FieldSchema:
             result["since_version"] = self.since_version
         result.update(self.constraints)
         return result
+
+
+def _options_or_values(data: dict[str, Any]) -> tuple[list[Any], bool]:
+    """``(options, conflict)`` for a field definition, reading the ``values`` alias."""
+    options = data.get("options")
+    values = data.get("values")
+    if options is None:
+        return list(values or []), False
+    return list(options), values is not None and list(values) != list(options)
 
 
 @dataclass
@@ -442,32 +476,12 @@ def _validate_field_value(
                 }
             )
 
-    elif ft == "select":
-        if field_schema.options and value not in field_schema.options:
-            err = {
-                "field": field_name,
-                "rule": "field_select",
-                "expected": field_schema.options,
-                "got": value,
-            }
-            if field_schema.allow_other:
-                err["severity"] = "warning"
-            errors.append(err)
-
     elif ft == "multi-select":
-        if isinstance(value, list) and field_schema.options:
-            invalid = [v for v in value if v not in field_schema.options]
-            if invalid:
-                err = {
-                    "field": field_name,
-                    "rule": "field_multi_select",
-                    "expected": field_schema.options,
-                    "got": invalid,
-                }
-                if field_schema.allow_other:
-                    err["severity"] = "warning"
-                errors.append(err)
-        elif not isinstance(value, list):
+        # Whether each element is on the declared list is an enum finding,
+        # made by `enum_check.enum_findings` under `validation.enforce_enums`
+        # (#555). A value that is not a list at all is a type error, governed
+        # by `validation.enforce` like every other one.
+        if not isinstance(value, list):
             errors.append(
                 {
                     "field": field_name,
@@ -477,6 +491,7 @@ def _validate_field_value(
                 }
             )
 
-    # text, object-ref, list, tags -- no validation beyond presence (for now)
+    # select / list / multi-select membership: see enum_check.enum_findings.
+    # text, object-ref, tags -- no validation beyond presence (for now)
 
     return errors

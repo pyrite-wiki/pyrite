@@ -384,11 +384,18 @@ def index_health(
     subdirectory_mismatches = health.get("subdirectory_mismatches", [])
     malformed_frontmatter = health.get("malformed_frontmatter", [])
     invalid_statuses = health.get("invalid_statuses", [])
+    off_list_values = health.get("off_list_values", [])
+    # Off-list enum values roll up by row severity (#555): `error` (a kb.yaml
+    # enum in a KB with `validation.enforce_enums` on -- writes refuse it) is
+    # unhealthy; `warning` (switch off, or a plugin enum) is a warning; `info`
+    # (an `allow_other` field) does not move the status.
+    off_list_severities = {row.get("severity") for row in off_list_values}
     is_unhealthy = (
         health["missing_files"]
         or health["unindexed_files"]
         or health["stale_entries"]
         or health.get("content_changed")
+        or "error" in off_list_severities
     )
     has_warning = (
         bool(broken_links)
@@ -397,6 +404,7 @@ def index_health(
         or bool(subdirectory_mismatches)
         or bool(malformed_frontmatter)
         or bool(invalid_statuses)
+        or "warning" in off_list_severities
     )
     status = "unhealthy" if is_unhealthy else ("warning" if has_warning else "healthy")
 
@@ -413,6 +421,7 @@ def index_health(
             "subdirectory_mismatches": subdirectory_mismatches,
             "malformed_frontmatter": malformed_frontmatter,
             "invalid_statuses": invalid_statuses,
+            "off_list_values": off_list_values,
             "checks": health,
         },
         output_format,
@@ -430,6 +439,7 @@ def index_health(
         subdirectory_mismatches=subdirectory_mismatches,
         malformed_frontmatter=malformed_frontmatter,
         invalid_statuses=invalid_statuses,
+        off_list_values=off_list_values,
         health=health,
     )
     if is_unhealthy and fail:
@@ -447,6 +457,7 @@ def _report_health(
     subdirectory_mismatches,
     malformed_frontmatter,
     invalid_statuses,
+    off_list_values,
     health,
 ):
     """Print the health report. Returns nothing; the caller sets the exit code."""
@@ -527,6 +538,20 @@ def _report_health(
             )
         if len(invalid_statuses) > 10:
             console.print(f"  ... and {len(invalid_statuses) - 10} more")
+
+    if off_list_values:
+        console.print(
+            f"[yellow]⚠ {len(off_list_values)} off-list value(s)"
+            " (not in the field's declared enum):[/yellow]"
+        )
+        for row in off_list_values[:10]:
+            allowed = ", ".join(str(a) for a in row.get("allowed", [])) or "(see schema)"
+            console.print(
+                f"  • {row['kb']}/{row['id']} ({row['type']}):"
+                f" {row['field']}={row['value']!r} [{row['severity']}] — allowed: {allowed}"
+            )
+        if len(off_list_values) > 10:
+            console.print(f"  ... and {len(off_list_values) - 10} more")
 
     if health["missing_files"]:
         console.print(f"[red]Missing files ({len(health['missing_files'])}):[/red]")

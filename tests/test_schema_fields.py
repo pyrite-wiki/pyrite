@@ -419,29 +419,39 @@ class TestFieldValidation:
         assert result["valid"] is True
 
     def test_fields_not_enforced_when_enforce_false(self):
-        """When enforce=False, field validation produces warnings not errors."""
-        schema = KBSchema.from_dict(
-            {
-                "name": "test",
-                "kb_type": "generic",
-                "validation": {"enforce": False},
-                "types": {
-                    "task": {
-                        "description": "A task",
-                        "fields": {
-                            "status": {
-                                "type": "select",
-                                "options": ["todo", "done"],
-                            },
-                        },
-                    }
-                },
-            }
+        """When enforce=False, field validation produces warnings not errors.
+
+        A declared enum's severity is `validation.enforce_enums`'s, not
+        `enforce`'s (#555), so the select case needs `enforce_enums: false`
+        to be a warning; `enforce: false` alone keeps it an error.
+        """
+        data = {
+            "name": "test",
+            "kb_type": "generic",
+            "validation": {"enforce": False, "enforce_enums": False},
+            "types": {
+                "task": {
+                    "description": "A task",
+                    "fields": {
+                        "status": {"type": "select", "options": ["todo", "done"]},
+                        "points": {"type": "number", "max": 10},
+                    },
+                }
+            },
+        }
+        result = KBSchema.from_dict(data).validate_entry(
+            "task", {"title": "Test", "status": "invalid", "points": 99}
         )
-        result = schema.validate_entry("task", {"title": "Test", "status": "invalid"})
-        # With enforce=False, field violations are warnings
+        # With enforce=False (and enforce_enums=False), field violations are warnings
         assert result["valid"] is True
-        assert len(result["warnings"]) > 0
+        assert {w["field"] for w in result["warnings"]} == {"status", "points"}
+
+        data["validation"] = {"enforce": False}
+        result = KBSchema.from_dict(data).validate_entry(
+            "task", {"title": "Test", "status": "invalid", "points": 99}
+        )
+        assert [e["field"] for e in result["errors"]] == ["status"]
+        assert [w["field"] for w in result["warnings"]] == ["points"]
 
 
 # =============================================================================

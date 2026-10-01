@@ -8,6 +8,7 @@ from typing import Any
 from pyrite.utils.yaml import load_yaml_file
 
 from .core_types import CORE_TYPES, SYSTEM_INTENT, resolve_type_metadata
+from .enum_check import enum_findings
 from .field_schema import EndpointSpec, FieldSchema, TypeSchema, _validate_field_value
 from .provenance import get_all_relationship_types
 from .reserved import RESERVED_FIELD_NAMES
@@ -325,6 +326,12 @@ class KBSchema:
                                 "got": ep_value,
                             }
                         )
+
+        # Declared enums (field options/values/items and rule `enum:`), one
+        # function for every reader; severity is `validation.enforce_enums`'s,
+        # not `enforce`'s (#555).
+        for item in enum_findings(self, entry_type, fields):
+            (errors if item["severity"] == "error" else warnings).append(item)
 
         # Check validation rules
         for rule in self.validation.get("rules", []):
