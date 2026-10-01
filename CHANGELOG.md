@@ -25,7 +25,6 @@ Fix release for frontmatter integrity. **Upgrade if you run `pyrite update`, `ta
 
 ### Changed
 
-### Changed
 - The README, SECURITY.md and the configuration docs now say plainly that multi-user use (accounts, per-KB permissions, anonymous readers, the public `/site`, shared servers) is experimental: treat every KB on a shared instance as readable by every user of it. Isolation reports are fixed in regular releases rather than emergency patches.
 
 - **Enums declared in `kb.yaml` are now enforced: a write with an off-list value is refused by default (#555).** Before, a `values:` list was silently ignored, `validation.rules` entries with `enum:` were never evaluated, and `list` fields were never checked, so validators reported clean over real drift. Now `options:` (canonical) and its alias `values:` on `select`, `multi-select` and `list` fields, list `items: {options: [...]}`, and rule-level `enum:` are all checked, the same way by writes, `qa validate`, `ci`, `schema validate` (the pre-commit hook) and `index health`. A new switch, `validation.enforce_enums` (default `true`), decides whether an off-list value is an error that refuses the write (naming the field, the value and the allowed list) or a warning. It is independent of `validation.enforce`, which still governs every other check. `allow_other: true` still makes a field's finding a warning.
