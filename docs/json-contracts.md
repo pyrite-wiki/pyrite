@@ -93,7 +93,7 @@ so the same entry is refused with the same `error_code` on every surface:
 |---|---|
 | `UNDECLARED_TYPE` | the KB's `kb.yaml` declares types and this is not one of them. Core types (`note`, `person`, …) are **not** exempt. Override with `allow_undeclared` (MCP, REST body or import query) / `--allow-undeclared` (CLI). The error carries `declared_types` on MCP and REST. |
 | `ENTRY_EXISTS` | the id (given, or derived from the title) already exists. Create never replaces; use update. REST answers `409`. |
-| `SCHEMA_VIOLATION` | the KB schema (with `validation.enforce`) or a plugin validator rejected a field: enum, required, range, format. |
+| `SCHEMA_VIOLATION` | the KB schema or a plugin validator rejected a field: enum, required, range, format. A kb.yaml enum (`options:`/`values:`, list `items:`, rule `enum:`) is refused when `validation.enforce_enums` is on (the default); every other kb.yaml finding when `validation.enforce` is on. The message names the field, the value and the allowed list (`kind: 'chore' is not one of [...]`). An update that leaves an off-list value as it was is not refused (see **Warnings**). |
 | `VALIDATION_FAILED` | anything else the entry model refuses (an event without a date, a missing title), and the ADR-0034 truncated-body refusal below. Unchanged by ADR-0037 theme 2 (2026-09-25): REST, MCP and the CLI already agreed on this code before that theme, and continue to — no `legacy_error_code`. |
 
 All are `retryable: false`. REST reports them as
@@ -118,10 +118,29 @@ including for a record whose id an earlier record of the same file would
 create, and writes nothing.
 
 **Warnings.** A write that succeeds may still draw non-blocking schema
-findings (an unknown select value when the KB does not enforce). MCP
+findings (an off-list select value when the KB sets
+`validation.enforce_enums: false`, or an `allow_other` field). MCP
 `kb_create`/`kb_update` return them as `warnings` (omitted when empty),
-each `kb_bulk_create` result as `warnings`, and REST `POST`/`PUT`/`PATCH
-/api/entries` as `warnings: []` in the response body.
+each `kb_bulk_create` result as `warnings`, REST `POST`/`PUT`/`PATCH
+/api/entries` as `warnings: []` in the response body, and CLI `pyrite
+update` as `warnings` in its JSON (omitted when empty). An update whose
+entry already holds an off-list enum value it does not change -- compared
+by value, so an echoed read counts; per element for a list -- succeeds and
+reports that value here (`severity: "warning"`, `note: "value already on
+disk; ..."`) rather than being refused (#47, #555). This covers a plugin
+validator's `rule: "enum"` too. Changing the field to another off-list
+value, or adding an off-list list element, is still refused; create is
+always strict.
+
+**`index health` → `off_list_values`.** One row per off-list value of a
+declared enum: `{kb, id, type, field, value, allowed, origin, severity}`.
+`origin` is `field` or `rule` (kb.yaml) or `plugin` (a plugin validator's
+`rule: "enum"` on any field but `status`, which stays in
+`invalid_statuses`). `severity` is `error` for a kb.yaml enum in a KB with
+`enforce_enums` on (status `unhealthy`, exit `1`), `warning` with it off
+and for every plugin row (status `warning`), and `info` for an
+`allow_other` field (does not change the status). Empty for a KB without
+drift.
 
 **Update fields.** An update applies the fields it names: the entry type's
 own fields (its model's fields and every field its `kb.yaml` names for the

@@ -53,7 +53,7 @@ Every type needs:
 fields:
   writing_type:
     type: select
-    values: [book, paper, talk, blog-post, report, briefing]
+    options: [book, paper, talk, blog-post, report, briefing]
     description: "Type of writing"
   date:
     type: date
@@ -87,7 +87,7 @@ concept:
       description: "Related concepts (entry IDs)"
     research_status:
       type: select
-      values: [stub, partial, draft, complete]
+      options: [stub, partial, draft, complete]
       description: "How thoroughly this entry has been researched"
   ai_instructions: >
     <Subject-specific instructions for concept entries>
@@ -155,6 +155,19 @@ Always enable:
 ```yaml
 policies:
   qa_on_write: true
+```
+
+Declared enums (`options:` on a `select`, `multi-select` or `list` field, and
+`enum:` in `validation.rules`) are enforced by default: a write with an
+off-list value is refused (`validation.enforce_enums`, default `true`). Write
+`options:`; `values:` is an accepted alias. When adopting a schema over
+existing entries that drift from it, set this while you clean up, guided by
+`pyrite qa validate` and `pyrite index health` (`off_list_values`), then
+remove the line:
+
+```yaml
+validation:
+  enforce_enums: false
 ```
 
 ## Common Mistakes

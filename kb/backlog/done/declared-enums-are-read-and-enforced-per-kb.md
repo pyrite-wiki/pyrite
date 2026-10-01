@@ -7,7 +7,7 @@ tags:
 - enhancement
 importance: 5
 kind: feature
-status: in_progress
+status: done
 priority: high
 assignee: agent:pyrite-worker-opus
 effort: L

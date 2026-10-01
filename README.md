@@ -171,6 +171,8 @@ Entries track their schema version in `_schema_version` frontmatter. `pyrite sch
 
 Field types: `text`, `number`, `date`, `datetime`, `checkbox`, `select`, `multi-select`, `object-ref`, `list`, `tags`.
 
+Declared enums are enforced: `options:` on a `select`, `multi-select` or `list` field (`values:` is an accepted alias; `items: {options: [...]}` constrains a list's elements) and `enum:` in `validation.rules`. A write with an off-list value is refused by default; `validation.enforce_enums: false` makes it a warning instead, separately from `validation.enforce`, which governs every other check. An update that leaves a value already off-list unchanged still succeeds and reports it, and `pyrite index health` lists every off-list value under `off_list_values`.
+
 Eleven built-in entry types: `note`, `person`, `organization`, `event`, `document`, `topic`, `relationship`, `timeline`, `collection`, `qa_assessment`, `task`. Entries support `aliases` for alternate names that resolve in wikilinks and autocomplete.
 
 ## Plugin Protocol

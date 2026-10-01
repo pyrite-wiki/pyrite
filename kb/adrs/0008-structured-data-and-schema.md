@@ -130,7 +130,7 @@ Replace PyYAML with `ruamel.yaml` for round-trip-safe YAML serialization:
 When a type has field schemas (from config or plugin), core validation automatically:
 - Checks required fields are present and non-empty
 - Validates field values match declared types
-- Validates select/multi-select values are in the options list
+- Validates select/multi-select/list values are in the options list (see the 2026-10-01 amendment)
 - Validates object-ref targets exist (soft warning, not hard error — targets may be in another KB)
 
 Plugin validators remain for domain-specific rules beyond what the type system expresses.
@@ -169,6 +169,18 @@ Plugin validators remain for domain-specific rules beyond what the type system e
 - Schema migration: if field type definitions change, existing kb.yaml files may need updates
 - Performance: validating object-ref targets requires DB lookups (mitigated by soft warnings)
 - Scope creep: temptation to add computed fields, rollups, formulas before basics are solid
+
+## Amendment 2026-10-01: declared enums are read, checked once, and enforced per KB (#555, #47)
+
+Measured before this amendment: a `values:` list was silently dropped by the parser, `validation.rules[].enum` was never evaluated, `list` fields were never checked, `schema validate` kept its own select-only copy of the check, and `index health` looked only at `status`. One research KB had 70+ off-list values on one field with every validator reporting clean. The maintainer's decision (2026-09-28): fix, warn, clean up, then enforce, with enforcement a per-KB option that is on by default.
+
+1. **Forms read.** `options:` is canonical. `values:` is a permanent alias with no runtime warning (the kb-lifecycle skill taught it to real KBs). If both are given and differ, `options` wins and `schema validate` reports a schema-level warning naming the type and field. A `list` field is constrained by its own `options`/`values` or by `items: {options|values: [...]}`, checked per element. `validation.rules` entries with `enum: [...]` apply to any entry that has the field, per element for a list.
+2. **One function.** `pyrite/schema/enum_check.enum_findings` makes every declared-enum finding (`field`, `rule`, `expected`, `got`, `origin`). `KBSchema.validate_entry` (the write path, `qa validate`, `ci`), `schema validate` and `index health` all call it.
+3. **The switch.** `validation.enforce_enums` defaults to `true` and governs enum findings only: an off-list value is an error (write refused) when on, a warning when off. `validation.enforce` keeps governing everything else, so `enforce: false` (every `pyrite init` template) does not turn enums off. `allow_other: true` still makes a field's finding a warning. The switch does not extend to plugin validators' enums: plugin vocabularies stay code-owned.
+4. **Values already on disk.** On update, an enum-class error (kb.yaml or a plugin's `rule: "enum"`) on a field whose value is the same after the update as before is returned as a warning, not re-validated, so an entry that is already off-list can still be updated (#47). The comparison is by value, so an echoed read counts; for lists it is per element, and an added off-list element is refused. Create has no before-state and is always strict. Non-enum findings on untouched fields behave as before.
+5. **Health.** `index health` reports `off_list_values` rows from the index row plus its metadata JSON. kb.yaml rows roll up as `unhealthy` with the switch on and `warning` with it off. Plugin rows always roll up as `warning`, consistent with `invalid_statuses` and with point 3. `allow_other` rows are `info` and do not change the status. `status` stays in `invalid_statuses` and is never reported twice.
+
+Upgrade: a KB whose data drifts from its declared enums starts refusing off-list writes and its `index health` goes `unhealthy`. Set `validation.enforce_enums: false`, clean up guided by `qa validate` / `index health`, then remove the line.
 
 ## Related
 
