@@ -221,11 +221,17 @@ class TestValidateEntrySwitch:
         assert [f["field"] for f in r["errors"]] == ["score"]
         assert [f["field"] for f in r["warnings"]] == ["org_type"]
 
+    @pytest.mark.control(
+        reason="allow_other was already a warning; pins that the switch does not override it"
+    )
     def test_allow_other_is_a_warning_in_both_modes(self, mode):
         r = schema(enforce_enums=mode).validate_entry("org", {"title": "T", "loose": "z"})
         assert not r["errors"]
         assert [f["field"] for f in r["warnings"]] == ["loose"]
 
+    @pytest.mark.control(
+        reason="negative case: on-list values never drew a finding, before or after"
+    )
     def test_on_list_and_absent_values_produce_no_finding(self, mode):
         r = schema(enforce_enums=mode).validate_entry(
             "org",
@@ -240,6 +246,9 @@ class TestValidateEntrySwitch:
         )
         assert r == {"valid": True, "errors": [], "warnings": []}
 
+    @pytest.mark.control(
+        reason="negative case: empty values were never refused; pins that the new list/rule checks keep that"
+    )
     def test_an_empty_value_is_not_an_off_list_value(self):
         """A form that sends `null`/`""` for an unset select must not be refused:
         absence is `required`'s business, not the enum's."""
@@ -261,6 +270,9 @@ class TestValidateEntrySwitch:
         (h,) = schema().validate_entry("org", {"title": "T", "region": ["north", "east"]})["errors"]
         assert h["got"] == ["east"], "a list is checked per element"
 
+    @pytest.mark.control(
+        reason="invariant: the multi-select type error stays under validation.enforce, as before"
+    )
     def test_multi_select_non_list_stays_under_enforce(self):
         for scalar in ("a", "z"):
             r = schema(enforce_enums=True, enforce=False).validate_entry(
@@ -319,6 +331,7 @@ class TestWritePath:
             svc.update("acme", "t", {"org_type": "trust"})
         assert path.read_text() == before
 
+    @pytest.mark.control(reason="negative case: moving onto the list always succeeded")
     def test_update_to_an_on_list_value_succeeds(self, svc_factory):
         svc, kb, _ = svc_factory(enforce_enums=True)
         path = _write_org(kb, "acme", org_type="charity")
@@ -374,6 +387,9 @@ class TestWritePath:
         kept, excepted = KBService._keep_on_disk_enum_values([err], {}, {})
         assert kept == [err] and excepted == []
 
+    @pytest.mark.control(
+        reason="invariant: non-enum findings on untouched fields still refuse, as before"
+    )
     def test_untouched_non_enum_errors_are_not_excepted(self, svc_factory):
         """The exception covers enum findings only: an out-of-range number on
         disk still refuses an unrelated update when `enforce` is on."""
@@ -435,6 +451,9 @@ def _payload(output: str) -> dict:
 
 
 class TestIssue47:
+    @pytest.mark.control(
+        reason="guards the fixture: the live #47 entry must still be off-list for the other tests to mean anything"
+    )
     def test_the_fixture_still_carries_the_live_drift(self):
         assert "kind: chore" in LIVE_ENTRY.read_text()
 
@@ -453,6 +472,9 @@ class TestIssue47:
         assert _fm(path)["kind"] == "chore"
         assert LIVE_ENTRY.read_text().count("probe") == 0, "the live file is never touched"
 
+    @pytest.mark.control(
+        reason="invariant: changing a plugin enum to another off-list value was refused and still is"
+    )
     def test_changing_kind_to_another_off_list_value_is_refused(self, software_kb):
         config, _ = software_kb
         db = PyriteDB(config.settings.index_path)
@@ -464,6 +486,7 @@ class TestIssue47:
         finally:
             db.close()
 
+    @pytest.mark.control(reason="invariant: create stays strict for plugin enums")
     def test_create_with_a_plugin_off_list_value_is_still_refused(self, software_kb):
         config, _ = software_kb
         db = PyriteDB(config.settings.index_path)
@@ -746,6 +769,9 @@ class TestSchemaValidate:
             assert result.exit_code == 0, result.output
             assert "0 errors" in result.output
 
+    @pytest.mark.control(
+        reason="schema validate already reported allow_other as a warning; pins it through the shared function"
+    )
     def test_allow_other_is_a_warning(self, tmp_path):
         config, kb = _make_config(tmp_path, kb_yaml(True))
         _write_org(kb, "acme", loose="z")

@@ -92,6 +92,9 @@ def test_task_create_with_field_satisfies_required_schema_fields(desk_env):
 
 
 @pytest.mark.cli
+@pytest.mark.control(
+    reason="pre-existing test; only its kind value changed to one the desk schema declares"
+)
 def test_task_create_with_field_creates_the_task(desk_env):
     # `kind` must be one the desk schema's rule `enum:` declares: rule enums
     # are enforced since #555 (this used `kind=note`, which is off-list).
