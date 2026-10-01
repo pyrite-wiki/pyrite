@@ -636,11 +636,11 @@ def qa_stale(
     Reports entries older than --max-age days. Historical types (ADR, event,
     timeline) are exempt since they represent past records.
     """
-    ctx = cli_context()
     from ..services.qa_service import QAService
 
-    svc = QAService(ctx.config, ctx.db)
-    results = svc.find_stale(kb_name, max_age_days=max_age)
+    with cli_context() as (config, db, _svc):
+        svc = QAService(config, db)
+        results = svc.find_stale(kb_name, max_age_days=max_age)
 
     data = {
         "kb_name": kb_name,
@@ -688,11 +688,11 @@ def qa_compact(
 
     This is a dry-run report — no entries are modified.
     """
-    ctx = cli_context()
     from ..services.qa_service import QAService
 
-    svc = QAService(ctx.config, ctx.db)
-    results = svc.find_archival_candidates(kb_name, min_age_days=min_age)
+    with cli_context() as (config, db, _svc):
+        svc = QAService(config, db)
+        results = svc.find_archival_candidates(kb_name, min_age_days=min_age)
 
     data = {
         "kb_name": kb_name,

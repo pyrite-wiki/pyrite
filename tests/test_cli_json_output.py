@@ -13,6 +13,7 @@ from click import unstyle
 from typer.testing import CliRunner
 
 from pyrite.cli import app
+from pyrite.cli import context as cli_context_module
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models import EventEntry
 from pyrite.storage.database import PyriteDB
@@ -213,6 +214,21 @@ def test_qa_status_json(cli_env):
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
     assert "total_entries" in data or "total_issues" in data
+
+
+@pytest.mark.cli
+@pytest.mark.parametrize(
+    ("command", "count_key"),
+    [("stale", "stale_count"), ("compact", "candidate_count")],
+)
+def test_qa_reports_use_real_context(cli_env, monkeypatch, command, count_key):
+    """Sibling QA reports use the same context-manager contract."""
+    monkeypatch.setattr(cli_context_module, "load_config", lambda: cli_env["config"])
+
+    result = runner.invoke(app, ["qa", command, "test-events", "--format", "json"])
+
+    assert result.exit_code == 0, result.output
+    assert isinstance(json.loads(result.output)[count_key], int)
 
 
 @pytest.mark.cli
