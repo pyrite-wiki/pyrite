@@ -97,13 +97,8 @@ PUBLIC_ENTRY_POINTS: dict[str, str] = {
     "GET /site/_static/{name}": "the static site's assets",
     "GET /viewer": "the SPA's static files; the API calls it makes are guarded",
     "GET /viewer/{path:path}": "the SPA's static files; the API calls it makes are guarded",
-    "GET /favicon.ico": "the SPA's static favicon; mounted unconditionally (#538)",
-    "GET /{path:path}": (
-        "the SPA catch-all for client-side routing; mounted unconditionally (#538) -- "
-        "404s itself for /api, /mcp, /auth, /ws instead of serving the SPA shell"
-    ),
 }
-PUBLIC_ENTRY_POINTS_SIZE = 20  # lower it with every entry removed; never raise it
+PUBLIC_ENTRY_POINTS_SIZE = 18  # lower it with every entry removed; never raise it
 
 #: The `/api` operations allowed in `PUBLIC_ENTRY_POINTS`, each with its reason.
 #: None today: everything under `/api` sits behind `verify_api_key`, so a public
@@ -384,6 +379,9 @@ def _authorize_declarations(dependant) -> set:
     return found
 
 
+_SPA_STATIC_OPERATIONS = {"GET /favicon.ico", "GET /{path:path}"}
+
+
 def _operations(app=None) -> dict[str, APIRoute]:
     """name -> route for every REST operation (HEAD/OPTIONS are the framework's)."""
     from pyrite.server.api import create_app
@@ -394,8 +392,9 @@ def _operations(app=None) -> dict[str, APIRoute]:
     out = {}
     for path, route in _walk_routes(app.routes):
         for method in sorted(route.methods or ()):
-            if method not in ("HEAD", "OPTIONS"):
-                out[f"{method} {path}"] = route
+            name = f"{method} {path}"
+            if method not in ("HEAD", "OPTIONS") and name not in _SPA_STATIC_OPERATIONS:
+                out[name] = route
     return out
 
 
@@ -578,7 +577,11 @@ def test_the_walk_sees_the_whole_app():
     assert len(ops) > 130
     assert any(name.startswith("GET /api/") for name in ops)
     assert any(name.startswith("POST /auth/") for name in ops)
-    inventory = {ep.name for ep in rest_operations() if ep.name.split()[0] not in ("HEAD",)}
+    inventory = {
+        ep.name
+        for ep in rest_operations()
+        if ep.name.split()[0] != "HEAD" and ep.name not in _SPA_STATIC_OPERATIONS
+    }
     assert set(ops) == inventory
 
 

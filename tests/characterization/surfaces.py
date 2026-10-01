@@ -301,18 +301,6 @@ REST_ACCESS_EXCLUSIONS: dict[tuple[str, str], str] = {
     ("GET", "/viewer/{path:path}"): (
         "static SPA file serving, include_in_schema=False, no auth dependency."
     ),
-    ("GET", "/favicon.ico"): (
-        "static SPA file serving, include_in_schema=False, no auth dependency. Mounted "
-        "unconditionally since #538 -- the route table (and so what this harness and the "
-        "access-policy completeness guard see) must not depend on whether web/dist has "
-        "been built; see world.py's _create_app_with_empty_static for why an always-empty "
-        "PYRITE_STATIC_DIR is still used here rather than skipping the mount."
-    ),
-    ("GET", "/{path:path}"): (
-        "the SPA catch-all, include_in_schema=False, no auth dependency (#538). 404s "
-        "itself for /api, /mcp, /auth, /ws instead of serving the SPA shell; see the "
-        "`MOUNT /api` etc. entries in NON_TRANSPORT_ROUTE_EXCLUSIONS."
-    ),
     ("GET", "/branding/{filename}"): (
         "mounted outside /api (no auth) so the login page can fetch branding "
         "before the caller is authenticated, per branding_endpoints.py's own "
@@ -410,27 +398,22 @@ TRANSPORT_ROUTE_EXCLUSIONS_COUNT = len(TRANSPORT_ROUTE_EXCLUSIONS)
 # REST walk misses these too). Each read, not assumed, the same discipline
 # REST_ACCESS_EXCLUSIONS uses.
 #
-# NOT listed here: mount_static's `app.mount("/_app", StaticFiles(...))`.
-# `GET /favicon.ico` and the `GET /{path:path}` SPA fallback are `APIRoute`s
-# now (REST_ACCESS_EXCLUSIONS, above) -- #538 made `mount_static` mount them
-# unconditionally, so this harness's own always-empty `PYRITE_STATIC_DIR`
-# (world.py's `_create_app_with_empty_static`) no longer makes them a no-op;
-# they are covered there instead. `/_app` (StaticFiles) still mounts only
-# when `dist_dir / "_app"` is a real directory, which the harness's empty
-# dir never is, so it remains uncovered-because-absent here, same as before
-# #504 round 2's fix.
-#
-# The four `MOUNT /api|/auth|/mcp|/ws` entries are #538's always-on
-# catch-all 404 (pyrite/server/static.py's `_mount_api_shaped_404s`): a bare
-# ASGI app with no `.routes` to recurse into, so `_walk_non_apiroutes` names
-# it by the Mount itself rather than a method+path. `/mcp` and `/ws` also
-# have a real, differently-shaped mount/route when the SDK owner-check
-# passes / when the app is fully configured (`TRANSPORT_ROUTE_EXCLUSIONS`,
-# above) -- both this harness's `world.app` (no MCP SDK owner-check bypassed)
-# and the real running server register the real one FIRST, so it is tried
-# first and wins for anything it actually serves; this Mount only ever
-# answers what nothing else did (an unmounted /mcp, or any path under /api,
-# /auth, /ws that no real route claims).
+# NOT listed here: mount_static's `app.mount("/_app", StaticFiles(...))`,
+# `GET /favicon.ico` and the `GET /{path:path}` SPA fallback
+# (pyrite/server/static.py) -- all three mount only when `web/dist/index.html`
+# exists on disk, which it does on the main checkout and on any contributor's
+# tree after `npm run build`. #504 round 2: a first version of this fix
+# listed `/_app` here on the reasoning "this harness's create_app() never has
+# a built web/dist" -- true only by accident of which tree happened to run
+# the tests, and false the moment someone ran the frontend build first
+# (three completeness tests went red with no code change at all: the two
+# static APIRoutes were newly uncovered REST routes, and `/_app` was a newly
+# uncovered transport-completeness Mount). The real fix is in `world.py`:
+# `_create_app_with_empty_static` points `PYRITE_STATIC_DIR` at an
+# always-empty directory this harness itself creates, so `mount_static`'s own
+# `if not index_html.exists(): return` guard makes it -- and the two static
+# APIRoutes -- a no-op in `world.app` regardless of whether the real repo's
+# `web/dist` exists. Nothing to exclude here because nothing is ever mounted.
 NON_TRANSPORT_ROUTE_EXCLUSIONS: dict[str, str] = {
     "GET /openapi.json": (
         "FastAPI's own schema route, a plain Starlette Route (not an "
@@ -447,23 +430,6 @@ NON_TRANSPORT_ROUTE_EXCLUSIONS: dict[str, str] = {
     ),
     "GET /redoc": (
         "FastAPI's own ReDoc route, a plain Starlette Route -- no auth dependency, no KB param."
-    ),
-    "MOUNT /api": (
-        "#538's always-on catch-all 404 under /api (pyrite/server/static.py's "
-        "_mount_api_shaped_404s) -- a bare ASGI app, answers only what no real "
-        "/api route claims; every real /api route is registered earlier and wins."
-    ),
-    "MOUNT /auth": ("#538's always-on catch-all 404 under /auth, same shape as MOUNT /api."),
-    "MOUNT /mcp": (
-        "#538's always-on catch-all 404 under /mcp -- answers only when the real "
-        "/mcp Mount (TRANSPORT_ROUTE_EXCLUSIONS, above) is not mounted at all "
-        "(the SDK owner-check missing); registered after it, so the real Mount "
-        "wins whenever it exists."
-    ),
-    "MOUNT /ws": (
-        "#538's always-on catch-all 404 under /ws/* -- does not match the bare "
-        "`/ws` websocket route itself (Mount('/ws', ...) only matches /ws/<path>), "
-        "so it never shadows it."
     ),
 }
 NON_TRANSPORT_ROUTE_EXCLUSIONS_COUNT = len(NON_TRANSPORT_ROUTE_EXCLUSIONS)

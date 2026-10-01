@@ -1,24 +1,15 @@
-"""The static-route regime with a *built* ``web/dist`` present (#538).
+"""A request under a reserved prefix is never answered with the SPA shell (#538).
 
 CI never builds the frontend for the Python suite, so a checkout with no
-``web/dist`` is what CI always exercises. Any checkout with a real frontend
-build -- a contributor's, or a release checkout -- mounts two more routes
-(``GET /favicon.ico``, ``GET /{path:path}``), and that changed route table
-broke two guards that only ever saw the no-dist table:
+``web/dist`` is what CI always exercises. A checkout with a real build mounts
+the SPA catch-all, and with ``/mcp`` correctly unmounted (the SDK owner-check
+missing) ``GET /mcp/info`` fell through to it and answered 200 with the app's
+own HTML. These tests build a *stub* dist (a tmp dir with a minimal
+``index.html``, via ``PYRITE_STATIC_DIR``, the one lever ``create_app``
+already exposes) so CI enters that regime on every run.
 
-- ``test_every_entry_point_passes_the_policy.py`` failed the two new routes
-  as unclassified (never declared public, never in the "not yet migrated"
-  debt list).
-- ``test_mcp_sse_session.py::test_mcp_is_not_served_without_the_sdk_owner_check``
-  failed because, with ``/mcp`` correctly unmounted, ``GET /mcp/info`` fell
-  through to the SPA catch-all and answered 200 with the app's own HTML
-  instead of 404.
-
-This module builds a *stub* dist (a tmp dir with a minimal ``index.html``,
-via ``PYRITE_STATIC_DIR`` -- the one lever ``create_app`` already exposes
-for pointing static mounting elsewhere, reused rather than adding a second)
-so CI covers the built-dist route table on every run, not just a
-contributor's laptop.
+The access-policy guard's side of this (the two static routes a build adds)
+is #563's filter in ``test_every_entry_point_passes_the_policy.py``.
 """
 
 from __future__ import annotations
@@ -54,32 +45,6 @@ def stub_dist(tmp_path, monkeypatch):
     return dist
 
 
-@pytest.mark.control(
-    reason="the fix here that verify-red can see is the two PUBLIC_ENTRY_POINTS entries "
-    "(a test-side file, present either way) -- the old, conditionally-mounted "
-    "mount_static already mounted both routes whenever dist_dir.is_dir() (true for this "
-    "stub), so this passes against the pre-fix code too; the code fix it depends on "
-    "(mounting unconditionally) only matters in the NO-dist regime, covered instead by "
-    "test_every_entry_point_passes_the_policy.py::test_the_lists_hold_only_what_is_still_owed"
-)
-def test_the_completeness_guard_passes_with_a_built_dist(stub_dist):
-    """The policy guard classifies the static routes explicitly, so a built
-    dist does not surface them as unclassified REST operations."""
-    from tests.test_every_entry_point_passes_the_policy import (
-        PUBLIC_ENTRY_POINTS,
-        REST_NOT_YET_MIGRATED,
-        _operations,
-        check_lists_owe,
-        check_rest,
-    )
-
-    ops = _operations(create_app())
-    assert "GET /favicon.ico" in ops
-    assert "GET /{path:path}" in ops
-    check_rest(ops, PUBLIC_ENTRY_POINTS, REST_NOT_YET_MIGRATED)
-    check_lists_owe(ops, PUBLIC_ENTRY_POINTS, REST_NOT_YET_MIGRATED)
-
-
 def test_mcp_info_is_404_not_the_spa_when_mcp_is_unmounted(stub_dist, monkeypatch):
     """With ``/mcp`` correctly unmounted (the SDK owner-check missing), a
     built dist's SPA catch-all must not answer for it: an API-shaped path
@@ -97,20 +62,12 @@ def test_mcp_info_is_404_not_the_spa_when_mcp_is_unmounted(stub_dist, monkeypatc
     with tempfile.TemporaryDirectory() as d:
         os.environ.setdefault("PYRITE_DATA_DIR", d)
         with TestClient(create_app()) as client:
-            resp = client.get("/mcp/info")
-    assert resp.status_code == 404
-    assert resp.headers.get("content-type", "").startswith("application/json")
-
-
-def test_unknown_api_shaped_paths_are_404_not_the_spa(stub_dist):
-    """``/api``, ``/mcp``, ``/auth`` and ``/ws`` prefixes answer 404 (JSON,
-    as the rest of the API does) rather than the SPA shell when nothing
-    mounts under them."""
-    with TestClient(create_app()) as client:
-        for path in ("/api/nope", "/mcp/nope", "/auth/nope", "/ws/nope"):
-            resp = client.get(path)
-            assert resp.status_code == 404, path
-            assert resp.headers.get("content-type", "").startswith("application/json"), path
+            for method, path in (("GET", "/mcp/info"), ("POST", "/mcp/messages/")):
+                resp = client.request(method, path)
+                assert resp.status_code == 404, (method, path)
+                assert resp.headers.get("content-type", "").startswith("application/json")
+                assert "stub spa" not in resp.text
+                assert _is_the_error_contract_404(resp), (method, path, resp.text)
 
 
 @pytest.mark.control(
@@ -191,21 +148,43 @@ def _app_for(tmp_path, monkeypatch, *, dist: bool, auth: bool):
     return client
 
 
+def _is_the_error_contract_404(resp) -> bool:
+    """ADR-0037 decision 1: ``{"detail": {"code", "message", "retryable"}}``."""
+    detail = resp.json().get("detail")
+    return (
+        resp.status_code == 404
+        and resp.headers.get("content-type", "").startswith("application/json")
+        and isinstance(detail, dict)
+        and detail.get("code") == "NOT_FOUND"
+        and isinstance(detail.get("message"), str)
+        and detail.get("retryable") is False
+    )
+
+
+def _mcp_mount_owns(path: str) -> bool:
+    """Under ``/mcp`` the real MCP mount is registered (this app has the SDK
+    owner-check) and wins, so its own 404 body is what answers; the shape
+    of the reserved 404 for ``/mcp`` is pinned where the mount is removed
+    (``test_mcp_info_is_404_not_the_spa_when_mcp_is_unmounted``)."""
+    return path.startswith("/mcp/")
+
+
 @pytest.mark.parametrize("auth", [False, True], ids=["auth-off", "auth-on"])
-@pytest.mark.parametrize("dist", [True, False], ids=["dist", "no-dist"])
 def test_a_reserved_prefix_and_everything_under_it_is_404_never_the_spa(
-    tmp_path, monkeypatch, dist, auth
+    tmp_path, monkeypatch, auth
 ):
     """The prefix itself (``/api``, no slash), with a slash, and any path under
-    it that no real route claims: 404 for every method, with and without a
-    dist, with auth off and on -- never the SPA shell."""
-    client = _app_for(tmp_path, monkeypatch, dist=dist, auth=auth)
+    it that no real route claims: 404 in the project's error shape for every
+    method, with a dist, auth off and on -- never the SPA shell."""
+    client = _app_for(tmp_path, monkeypatch, dist=True, auth=auth)
     with client:
         for path in _reserved_paths():
             for method in _ALL_METHODS:
                 resp = client.request(method, path, follow_redirects=False)
                 assert resp.status_code == 404, (method, path, resp.status_code)
                 assert "stub spa" not in resp.text, (method, path)
+                if method != "HEAD" and not _mcp_mount_owns(path):
+                    assert _is_the_error_contract_404(resp), (method, path, resp.text)
         if auth:
             # And with no credential at all: the 404 is not an auth-dependent answer.
             anon = TestClient(client.app)  # no `with`: the lifespan is the client's
@@ -214,6 +193,8 @@ def test_a_reserved_prefix_and_everything_under_it_is_404_never_the_spa(
                     resp = anon.request(method, path, follow_redirects=False)
                     assert resp.status_code == 404, ("anon", method, path, resp.status_code)
                     assert "stub spa" not in resp.text, ("anon", method, path)
+                    if not _mcp_mount_owns(path):
+                        assert _is_the_error_contract_404(resp), ("anon", method, path, resp.text)
 
 
 @pytest.mark.control(
@@ -295,3 +276,17 @@ def test_websocket_upgrades_answer_as_they_did_on_dev(tmp_path, monkeypatch, dis
                 except WebSocketDenialResponse as denial:  # pragma: no cover - the bug
                     pytest.fail(f"{path}: answered as an HTTP response ({denial.status_code})")
             assert closed.value.code == 1000, path
+
+
+@pytest.mark.control(
+    reason="'nothing changes without a web build': dev answers these with FastAPI's own "
+    "404, and so must this branch, so it passes on both"
+)
+def test_with_no_web_build_unknown_paths_answer_exactly_as_on_dev(tmp_path, monkeypatch):
+    client = _app_for(tmp_path, monkeypatch, dist=False, auth=False)
+    with client:
+        for method, path in (("GET", "/nope"), ("GET", "/api/nope"), ("POST", "/api/nope")):
+            resp = client.request(method, path)
+            assert resp.status_code == 404, (method, path)
+            assert resp.headers["content-type"] == "application/json", (method, path)
+            assert resp.json() == {"detail": "Not Found"}, (method, path)

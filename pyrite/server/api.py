@@ -1455,9 +1455,9 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
         except WebSocketDisconnect:
             manager.disconnect(ws)
 
-    # Where the built SPA (web/dist/) lives. Check env override first (for
-    # containerised deploys where the package is installed as a site-package
-    # and the relative path won't resolve).
+    # Mount static files if dist directory exists
+    # Check env override first (for containerised deploys where the package is
+    # installed as a site-package and the relative path won't resolve).
     dist_dir = (
         Path(os.environ.get("PYRITE_STATIC_DIR", ""))
         if os.environ.get("PYRITE_STATIC_DIR")
@@ -1474,14 +1474,11 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
     )
     mount_site_routes(application)
 
-    # Always mount the static/SPA routes (favicon, the SPA catch-all): their
-    # route table -- and so what the access-policy completeness guard sees --
-    # must not depend on whether web/dist has been built (#538). mount_static
-    # itself serves 404 for anything it has no built file for when dist_dir
-    # has no index.html.
-    from .static import mount_static
+    # Mount SPA static files if dist directory exists
+    if dist_dir.is_dir():
+        from .static import mount_static
 
-    mount_static(application, dist_dir)
+        mount_static(application, dist_dir)
 
     return application
 
