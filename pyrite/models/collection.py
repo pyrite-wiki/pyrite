@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..schema import generate_entry_id
-from .base import Entry, parse_datetime, parse_links, parse_sources
+from .base import Entry, _as_list, parse_datetime, parse_links, parse_sources
 
 
 @dataclass
@@ -82,8 +82,8 @@ class CollectionEntry(Entry):
             entry_filter=yaml_data.get("entry_filter", {}) or {},
             folder_path=folder_path,
             collection_type=yaml_data.get("collection_type", "generic"),
-            tags=yaml_data.get("tags", []) or [],
-            aliases=yaml_data.get("aliases", []) or [],
+            tags=_as_list(yaml_data.get("tags")),
+            aliases=_as_list(yaml_data.get("aliases")),
             sources=parse_sources(yaml_data.get("sources")),
             links=parse_links(yaml_data.get("links")),
             metadata=yaml_data.get("metadata", {}),

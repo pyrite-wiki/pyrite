@@ -74,6 +74,14 @@ class TestCollectionEntryModel:
         assert entry.folder_path == "notes"
         assert entry.source_type == "folder"
 
+    @pytest.mark.parametrize(("field", "value"), [("tags", "Foo"), ("aliases", "Bar")])
+    def test_collection_from_yaml_wraps_scalar_list_fields(self, field, value):
+        entry = CollectionEntry.from_collection_yaml(
+            {"title": "Notes Collection", field: value}, "notes"
+        )
+
+        assert getattr(entry, field) == [value]
+
     def test_collection_id_generation(self):
         yaml_data = {"title": "My Research"}
         entry = CollectionEntry.from_collection_yaml(yaml_data, "my-research")
