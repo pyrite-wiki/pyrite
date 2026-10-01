@@ -836,9 +836,10 @@ def update_entry(
     # every PUT through the same reading-comparison MCP gets for an echo:
     # `importance`/`tags` sent back unchanged from a GET are left alone
     # instead of rewriting `importance: high` as `5` or `tags: Foo` as
-    # `['Foo']` (#561, #569 item 1). `id` itself always lands in `ignored`
-    # (it is a managed field update may never set) -- harmless, and correct:
-    # a PUT can never change the id.
+    # `['Foo']` (#561, #569 item 1). `split_echoed_update` always puts `id`
+    # in `ignored` (it is a managed field update may never set), which is
+    # stripped back out below before the response is built: the client
+    # never sent `id`, so `ignored` must not claim it did.
     fields: dict[str, Any] = {"id": entry_id}
     if req.title is not None:
         fields["title"] = req.title
@@ -852,6 +853,10 @@ def update_entry(
         fields["metadata"] = req.metadata
 
     updates, ignored, unchanged = svc.split_echoed_update(entry_id, req.kb, fields)
+    # `id` is never something the client sent (see the comment above) -- a
+    # detail of how this endpoint drives the echo comparison, not something
+    # `ignored` should report back to a caller who never named it.
+    ignored = [k for k in ignored if k != "id"]
 
     try:
         written = svc.update(entry_id, req.kb, updates)
@@ -869,16 +874,13 @@ def update_entry(
 
     broadcast_event("entry_updated", entry_id=entry_id, kb_name=req.kb)
 
-    response_kwargs: dict[str, Any] = {
-        "updated": True,
-        "id": entry_id,
-        "warnings": written.warnings,
-    }
-    if ignored:
-        response_kwargs["ignored"] = ignored
-    if unchanged:
-        response_kwargs["unchanged"] = unchanged
-    return UpdateResponse(**response_kwargs)
+    return UpdateResponse(
+        updated=True,
+        id=entry_id,
+        warnings=written.warnings,
+        ignored=ignored,
+        unchanged=unchanged,
+    )
 
 
 @router.patch(

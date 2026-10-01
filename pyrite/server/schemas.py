@@ -344,9 +344,10 @@ class UpdateResponse(BaseModel):
     #: `ignored` for a key an update may never set (id, timestamps, a
     #: type's managed fields, index columns), `unchanged` for a key sent at
     #: the value Pyrite's own reading already has (an echoed read result,
-    #: #561/#569 item 1) -- same split MCP `kb_update` reports. Optional and
-    #: present only when non-empty, so an existing caller's response shape
-    #: is unchanged.
+    #: #561/#569 item 1) -- same split MCP `kb_update` reports. New fields
+    #: with a default (`[]`, like `warnings`), so they always serialize --
+    #: empty when nothing was set aside -- and an existing caller reading
+    #: the response by field name sees no shape change.
     ignored: list[str] = []
     unchanged: list[str] = []
 

@@ -72,6 +72,30 @@ def test_a_scalar_sources_value_reads_as_a_one_item_list(tmp_path, value, want_t
     assert [(s["title"], s["url"]) for s in result["sources"]] == [(want_title, want_url)]
 
 
+def test_a_mapping_sources_value_reads_as_a_one_item_list(tmp_path):
+    """`sources:` holding a single mapping (not a list, not a string) is one
+    source too, parsed the same way a dict list item is: `Source.from_dict`."""
+    text = (
+        "---\nid: n\ntitle: N\ntype: note\n"
+        "sources:\n  title: A Report\n  url: https://x.org/r\n"
+        "---\n\nBody.\n"
+    )
+    config, _ = _env(tmp_path, text)
+
+    entry = KBRepository(config.get_kb(KB)).load("n")
+    assert [(s.title, s.url) for s in entry.sources] == [("A Report", "https://x.org/r")]
+
+
+def test_a_non_string_scalar_sources_value_reads_as_a_title(tmp_path):
+    """A bare non-string scalar (e.g. a year typed as a number) is still one
+    source, read as a title the way any other non-URL scalar would be."""
+    text = "---\nid: n\ntitle: N\ntype: note\nsources: 1999\n---\n\nBody.\n"
+    config, _ = _env(tmp_path, text)
+
+    entry = KBRepository(config.get_kb(KB)).load("n")
+    assert [(s.title, s.url) for s in entry.sources] == [("1999", "")]
+
+
 def test_an_unrelated_update_does_not_rewrite_the_files_scalar_sources_line(tmp_path):
     """#557's rule: an update never loses or reshapes a key it wasn't asked
     to change -- a scalar `sources:` line stays a scalar, not reshaped into

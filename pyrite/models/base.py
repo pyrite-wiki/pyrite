@@ -938,10 +938,12 @@ def _scalar_source(s: Any) -> Source:
 def parse_sources(sources_data: Any) -> list[Source]:
     """Parse sources from various formats.
 
-    A bare scalar `sources:` value -- not a list at all, e.g.
-    `sources: https://x.org` or `sources: a book` -- is one source, same as
-    a one-item list would be: a URL becomes a source with `url`, any other
-    text a source with `title` (#569). Read as `[]` before this, a scalar
+    A bare scalar `sources:` value -- not a list at all -- is one source,
+    same as a one-item list would be (#569): a mapping (`sources: {title:
+    x, url: y}`) the way a dict list item already was (`Source.from_dict`);
+    any other scalar (`sources: https://x.org`, `sources: a book`, even a
+    non-string such as `sources: 1999`) a URL becomes a source with `url`,
+    anything else a source with `title`. Read as `[]` before this, a scalar
     source silently disappeared from the index, search and the API.
     """
     if not sources_data:
@@ -950,9 +952,9 @@ def parse_sources(sources_data: Any) -> list[Source]:
         return [
             Source.from_dict(s) if isinstance(s, dict) else _scalar_source(s) for s in sources_data
         ]
-    if isinstance(sources_data, str):
-        return [_scalar_source(sources_data)]
-    return []
+    if isinstance(sources_data, dict):
+        return [Source.from_dict(sources_data)]
+    return [_scalar_source(sources_data)]
 
 
 def parse_links(links_data: Any) -> list[Link]:

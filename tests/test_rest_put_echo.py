@@ -111,3 +111,32 @@ def test_put_response_reports_echoed_fields_as_unchanged(rest_env):
     assert res.status_code == 200, res.text
     body = res.json()
     assert set(body.get("unchanged", [])) >= {"importance", "tags"}, body
+
+
+def test_put_response_never_reports_id_as_ignored(rest_env):
+    """`id` is added internally (not a field `UpdateEntryRequest` can carry)
+    to trigger the same echo comparison MCP gets from a caller that includes
+    `id` -- an implementation detail the client never sent, so `ignored`
+    (and `unchanged`) must only ever name keys the client actually sent."""
+    client = rest_env["client"]
+
+    res = client.put("/api/entries/d", json={"kb": KB, "importance": 9})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert "id" not in body.get("ignored", []), body
+    assert "id" not in body.get("unchanged", []), body
+
+
+def test_put_response_lists_empty_when_nothing_was_set_aside(rest_env):
+    """A PUT that sends only a genuinely new value has nothing to report:
+    `ignored`/`unchanged` are always in the response body (they default to
+    `[]`, like `warnings`), and are empty here -- not holding `id`, which
+    was added internally to drive the echo comparison, never sent by the
+    client."""
+    client = rest_env["client"]
+
+    res = client.put("/api/entries/d", json={"kb": KB, "importance": 9})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["ignored"] == [], body
+    assert body["unchanged"] == [], body
