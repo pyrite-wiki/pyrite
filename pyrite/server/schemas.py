@@ -340,6 +340,15 @@ class UpdateResponse(BaseModel):
     id: str
     #: Non-blocking schema findings from the write pipeline (#378).
     warnings: list[dict[str, Any]] = []
+    #: Fields `KBService.split_echoed_update` set aside rather than wrote:
+    #: `ignored` for a key an update may never set (id, timestamps, a
+    #: type's managed fields, index columns), `unchanged` for a key sent at
+    #: the value Pyrite's own reading already has (an echoed read result,
+    #: #561/#569 item 1) -- same split MCP `kb_update` reports. Optional and
+    #: present only when non-empty, so an existing caller's response shape
+    #: is unchanged.
+    ignored: list[str] = []
+    unchanged: list[str] = []
 
 
 class DeleteResponse(BaseModel):

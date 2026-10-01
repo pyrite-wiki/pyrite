@@ -927,22 +927,31 @@ def _is_url(text: str) -> bool:
     return text.startswith(("http://", "https://"))
 
 
+def _scalar_source(s: Any) -> Source:
+    """A bare (non-dict) source item: a title (`a book`), or, when it is a
+    URL, the source's URL too -- read as a title only,
+    `sources: [https://x.org]` lost its URL (`url: ''`) in the index and the
+    API (#561)."""
+    return Source(title=str(s), url=str(s) if _is_url(str(s)) else "")
+
+
 def parse_sources(sources_data: Any) -> list[Source]:
     """Parse sources from various formats.
 
-    A bare string item is a title (`a book`), or, when it is a URL, the
-    source's URL too: read as a title only, `sources: [https://x.org]` lost
-    its URL (`url: ''`) in the index and the API (#561).
+    A bare scalar `sources:` value -- not a list at all, e.g.
+    `sources: https://x.org` or `sources: a book` -- is one source, same as
+    a one-item list would be: a URL becomes a source with `url`, any other
+    text a source with `title` (#569). Read as `[]` before this, a scalar
+    source silently disappeared from the index, search and the API.
     """
     if not sources_data:
         return []
     if isinstance(sources_data, list):
         return [
-            Source.from_dict(s)
-            if isinstance(s, dict)
-            else Source(title=str(s), url=str(s) if _is_url(str(s)) else "")
-            for s in sources_data
+            Source.from_dict(s) if isinstance(s, dict) else _scalar_source(s) for s in sources_data
         ]
+    if isinstance(sources_data, str):
+        return [_scalar_source(sources_data)]
     return []
 
 

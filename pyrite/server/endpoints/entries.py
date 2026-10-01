@@ -2,6 +2,7 @@
 
 import io
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -825,17 +826,32 @@ def update_entry(
         except ValueError:
             pass  # KB not in a git repo — fall back to main
 
-    updates = {}
+    # `id` is not a field `UpdateEntryRequest` can carry (FastAPI drops an
+    # unknown key before this handler sees it, Pydantic's default
+    # extra="ignore"), so a client that reads an entry and PUTs it straight
+    # back cannot trip `split_echoed_update`'s own "this looks like an
+    # echoed read" heuristic (`id`/`file_path`/index-only keys) the way MCP
+    # `kb_update` does. A REST PUT to `/entries/{id}` is always that
+    # caller's current view of the resource, so `id` is added here to put
+    # every PUT through the same reading-comparison MCP gets for an echo:
+    # `importance`/`tags` sent back unchanged from a GET are left alone
+    # instead of rewriting `importance: high` as `5` or `tags: Foo` as
+    # `['Foo']` (#561, #569 item 1). `id` itself always lands in `ignored`
+    # (it is a managed field update may never set) -- harmless, and correct:
+    # a PUT can never change the id.
+    fields: dict[str, Any] = {"id": entry_id}
     if req.title is not None:
-        updates["title"] = req.title
+        fields["title"] = req.title
     if req.body is not None:
-        updates["body"] = req.body
+        fields["body"] = req.body
     if req.importance is not None:
-        updates["importance"] = req.importance
+        fields["importance"] = req.importance
     if req.tags is not None:
-        updates["tags"] = req.tags
+        fields["tags"] = req.tags
     if req.metadata is not None:
-        updates["metadata"] = req.metadata
+        fields["metadata"] = req.metadata
+
+    updates, ignored, unchanged = svc.split_echoed_update(entry_id, req.kb, fields)
 
     try:
         written = svc.update(entry_id, req.kb, updates)
@@ -853,7 +869,16 @@ def update_entry(
 
     broadcast_event("entry_updated", entry_id=entry_id, kb_name=req.kb)
 
-    return UpdateResponse(updated=True, id=entry_id, warnings=written.warnings)
+    response_kwargs: dict[str, Any] = {
+        "updated": True,
+        "id": entry_id,
+        "warnings": written.warnings,
+    }
+    if ignored:
+        response_kwargs["ignored"] = ignored
+    if unchanged:
+        response_kwargs["unchanged"] = unchanged
+    return UpdateResponse(**response_kwargs)
 
 
 @router.patch(
