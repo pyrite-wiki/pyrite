@@ -172,6 +172,10 @@ def test_task_list_cli_lists_every_task_when_one_has_a_word_priority(tmp_path):
     assert {t["id"]: t["priority"] for t in listed["tasks"]} == EXPECTED
 
 
+@pytest.mark.control(
+    reason="dev already logged to stderr; this pins that the per-load "
+    "word-priority warning this PR adds never reaches --format json stdout"
+)
 def test_update_json_output_is_only_json_when_the_task_has_a_word_priority(tmp_path):
     """Loading a word-priority task logs a warning on every load; under
     `--format json` that warning must not reach stdout."""
@@ -320,6 +324,10 @@ def test_qa_validate_reports_once_a_kb_yaml_that_retypes_task_priority(tmp_path)
     assert "1 to 10" in issue["message"], issue
 
 
+@pytest.mark.control(
+    reason="dev has no schema_retypes_core_field rule, so it cannot fire there; "
+    "this pins that the rule leaves a kb.yaml keeping priority a number alone"
+)
 @pytest.mark.parametrize(
     "field_yaml",
     ["{type: number}", "{type: select, options: [1, 2, 3, 4, 5]}", "{type: number, min: 1}"],
