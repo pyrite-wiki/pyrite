@@ -98,7 +98,10 @@ validation:
   rules:
   - field: kind
     enum: [merge, decide, accept-adr, release, reply, review, chore, read]
+  # A rule enum applies to every entry with the field, not one type, so it
+  # lists every state the task workflow (pyrite/models/task.py) moves through,
+  # plus the desk's own `dropped` (#555 round 1).
   - field: status
-    enum: [open, in_progress, blocked, done, dropped]
+    enum: [open, claimed, in_progress, blocked, review, done, dropped, cancelled, failed]
 policies:
   qa_on_write: false

@@ -65,11 +65,12 @@ BUILTIN_TEMPLATES = {
             },
         },
         "policies": {"team_owned": True, "require_adr_number": True},
+        # No rule enum on `status`: a rule applies to every type with the
+        # field, and each type here has its own statuses, which the
+        # software-kb validator checks per type (#555 round 1).
         "validation": {
             "enforce": True,
-            "rules": [
-                {"field": "status", "enum": ["proposed", "accepted", "deprecated", "superseded"]},
-            ],
+            "rules": [],
         },
         "directories": ["adrs", "designs", "standards", "components", "backlog", "runbooks"],
     },
@@ -259,6 +260,11 @@ BUILTIN_TEMPLATES = {
                 "required": ["title"],
                 "optional": ["origin", "status"],
                 "subdirectory": "practices/",
+                # A field enum, not a rule: a rule applies to every type with
+                # the field, and an event's `status` is `confirmed` (#555).
+                "fields": {
+                    "status": {"type": "select", "options": ["active", "deprecated", "evolved"]},
+                },
             },
         },
         "policies": {},
@@ -272,10 +278,6 @@ BUILTIN_TEMPLATES = {
                 {
                     "field": "source_type",
                     "enum": ["book", "paper", "article", "documentary", "interview"],
-                },
-                {
-                    "field": "status",
-                    "enum": ["active", "deprecated", "evolved"],
                 },
             ],
         },

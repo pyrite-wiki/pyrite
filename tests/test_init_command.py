@@ -241,10 +241,10 @@ class TestInitCommand:
         assert practice["description"] == "Method, framework, or technique"
         assert "origin" in practice["optional"]
         assert "status" in practice["optional"]
-        # Check status validation rule exists
-        status_rules = [r for r in template["validation"]["rules"] if r["field"] == "status"]
-        assert len(status_rules) == 1
-        assert set(status_rules[0]["enum"]) == {"active", "deprecated", "evolved"}
+        # Status is constrained on `practice` itself, not by a KB-wide rule,
+        # which would also refuse an event's `status: confirmed` (#555).
+        assert set(practice["fields"]["status"]["options"]) == {"active", "deprecated", "evolved"}
+        assert not [r for r in template["validation"]["rules"] if r["field"] == "status"]
 
     def test_init_movement_json_output(self, init_env):
         """Movement JSON output includes all types."""
