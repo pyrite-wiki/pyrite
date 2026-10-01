@@ -20,6 +20,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.websockets import WebSocketClose
 
 logger = logging.getLogger(__name__)
 
@@ -390,7 +391,22 @@ def mount_site_routes(app: FastAPI) -> None:
 _API_SHAPED_PREFIXES: tuple[str, ...] = ("/api", "/mcp", "/auth", "/ws")
 
 
+_SPA_FALLBACK_REFUSED_PREFIXES = ("docs", "redoc", "openapi.json", "health", "site", "viewer")
+
+_ALL_METHODS = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+
+
+async def _bare_prefix_404(request: Request) -> Response:
+    return Response(status_code=404, media_type="application/json", content="{}")
+
+
 async def _always_404(scope, receive, send) -> None:
+    if scope["type"] == "websocket":
+        # What Starlette's own "no such websocket route" does, as on `dev`: close
+        # before accept. An HTTP response on a websocket scope is not something
+        # every ASGI server accepts.
+        await WebSocketClose()(scope, receive, send)
+        return
     response = Response(status_code=404, media_type="application/json", content="{}")
     await response(scope, receive, send)
 
@@ -403,6 +419,16 @@ def _mount_api_shaped_404s(app: FastAPI) -> None:
     ``/mcp``, still wins; this only answers what nothing else did.
     """
     for prefix in _API_SHAPED_PREFIXES:
+        # A Mount at "/api" matches "/api/..." but not "/api" itself, so the
+        # bare prefix needs its own route -- for every method, or a POST
+        # would 405 against a GET-only route instead of answering 404.
+        app.add_route(
+            prefix,
+            _bare_prefix_404,
+            methods=list(_ALL_METHODS),
+            name=f"reserved-404-bare{prefix.replace('/', '-')}",
+            include_in_schema=False,
+        )
         app.mount(prefix, _always_404, name=f"reserved-404{prefix.replace('/', '-')}")
 
 
@@ -466,11 +492,15 @@ def mount_static(app: FastAPI, dist_dir: Path) -> None:
         return HTMLResponse(status_code=404)
 
     # SPA fallback — catch all remaining non-API, non-site, non-viewer
-    # routes. Everything API-shaped is already answered above, so this
-    # never needs to check for it; docs/redoc/openapi.json/health/site/
-    # viewer are real routes mounted elsewhere and matched before this one.
+    # routes. Everything API-shaped is already answered above. The names
+    # below are real routes mounted elsewhere, but this check is a *string*
+    # prefix and also refuses their lookalikes (/docs-old, /healthz): kept
+    # exactly as it was on `dev` (#538).
     @app.get("/{path:path}", include_in_schema=False)
     async def spa_fallback(request: Request, path: str):
+        if path.startswith(_SPA_FALLBACK_REFUSED_PREFIXES):
+            return HTMLResponse(status_code=404)
+
         if index_content is None:
             # No build: nothing to serve for client-side routing either.
             return HTMLResponse(status_code=404)

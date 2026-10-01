@@ -149,3 +149,140 @@ def test_top_level_sveltekit_routes_do_not_collide_with_api_prefixes():
         f"top-level SvelteKit route(s) {colliding} start with an API-shaped prefix "
         "the static fallback 404s -- rename the route or the prefix list"
     )
+
+
+# -- the reserved prefixes themselves, and what the old fallback check did ----------
+
+_RESERVED = ("/api", "/mcp", "/auth", "/ws")
+_ALL_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
+
+
+def _reserved_paths() -> list[str]:
+    out = []
+    for prefix in _RESERVED:
+        out += [prefix, prefix + "/", prefix + "/nope", prefix + "/nope/deeper"]
+    return out
+
+
+def _app_for(tmp_path, monkeypatch, *, dist: bool, auth: bool):
+    """An app with or without a built dist, auth off or on (signed in as admin)."""
+    from pyrite.config import AuthConfig, PyriteConfig, Settings
+    from tests.auth_seed import seed_and_sign_in
+
+    if dist:
+        d = tmp_path / "stub-dist"
+        d.mkdir()
+        (d / "index.html").write_text(_MINIMAL_INDEX_HTML)
+    else:
+        d = tmp_path / "no-dist"
+        d.mkdir()
+    monkeypatch.setenv("PYRITE_STATIC_DIR", str(d))
+    config = PyriteConfig(
+        knowledge_bases=[],
+        settings=Settings(
+            index_path=tmp_path / "index.db",
+            auth=AuthConfig(enabled=auth, allow_registration=True),
+        ),
+    )
+    app = create_app(config=config)
+    client = TestClient(app)
+    if auth:
+        seed_and_sign_in(client, "admin-user", "password123", role="admin")
+    return client
+
+
+@pytest.mark.parametrize("auth", [False, True], ids=["auth-off", "auth-on"])
+@pytest.mark.parametrize("dist", [True, False], ids=["dist", "no-dist"])
+def test_a_reserved_prefix_and_everything_under_it_is_404_never_the_spa(
+    tmp_path, monkeypatch, dist, auth
+):
+    """The prefix itself (``/api``, no slash), with a slash, and any path under
+    it that no real route claims: 404 for every method, with and without a
+    dist, with auth off and on -- never the SPA shell."""
+    client = _app_for(tmp_path, monkeypatch, dist=dist, auth=auth)
+    with client:
+        for path in _reserved_paths():
+            for method in _ALL_METHODS:
+                resp = client.request(method, path, follow_redirects=False)
+                assert resp.status_code == 404, (method, path, resp.status_code)
+                assert "stub spa" not in resp.text, (method, path)
+        if auth:
+            # And with no credential at all: the 404 is not an auth-dependent answer.
+            anon = TestClient(client.app)  # no `with`: the lifespan is the client's
+            for path in _reserved_paths():
+                for method in _ALL_METHODS:
+                    resp = anon.request(method, path, follow_redirects=False)
+                    assert resp.status_code == 404, ("anon", method, path, resp.status_code)
+                    assert "stub spa" not in resp.text, ("anon", method, path)
+
+
+@pytest.mark.control(
+    reason="a 'real route still wins' guard: the real routes answered before this "
+    "fix, so it passes with or without it"
+)
+@pytest.mark.parametrize("auth", [False, True], ids=["auth-off", "auth-on"])
+def test_real_routes_under_the_reserved_prefixes_still_win(tmp_path, monkeypatch, auth):
+    client = _app_for(tmp_path, monkeypatch, dist=True, auth=auth)
+    with client:
+        assert client.get("/api/kbs").status_code == 200
+        assert client.get("/health").status_code == 200
+        assert "stub spa" not in client.get("/api/kbs").text
+        assert "stub spa" in client.get("/some/client/route").text
+
+
+# Paths that only START with a name the SPA fallback used to refuse. On `dev` the
+# fallback answered 404 for any path beginning "docs", "redoc", "openapi.json",
+# "health", "site" or "viewer" (a string prefix, not a path segment), so a
+# sibling like /docs-old or /healthz never reached the SPA shell. Kept as-is.
+_OLD_FALLBACK_REFUSALS = (
+    "/docs-old",
+    "/docs/nope",
+    "/redoc-old",
+    "/openapi.json.bak",
+    "/healthz",
+    "/health/nope",
+    "/sitemap-old",
+    "/siteX",
+    "/site/unknown",
+    "/viewerX",
+    "/viewer/x",
+)
+
+
+@pytest.mark.parametrize("auth", [False, True], ids=["auth-off", "auth-on"])
+def test_paths_the_old_fallback_check_refused_are_still_not_the_spa(tmp_path, monkeypatch, auth):
+    client = _app_for(tmp_path, monkeypatch, dist=True, auth=auth)
+    with client:
+        for path in _OLD_FALLBACK_REFUSALS:
+            resp = client.get(path, follow_redirects=False)
+            assert resp.status_code == 404, (path, resp.status_code)
+            assert "stub spa" not in resp.text, path
+
+
+@pytest.mark.parametrize("auth", [False, True], ids=["auth-off", "auth-on"])
+@pytest.mark.parametrize("dist", [True, False], ids=["dist", "no-dist"])
+def test_websocket_upgrades_answer_as_they_did_on_dev(tmp_path, monkeypatch, dist, auth):
+    """A handshake the request guard admits (Host ``localhost``, own Origin; with
+    auth on, an admin's session cookie), so it reaches routing rather than
+    the guard's 1008: the real ``/ws`` accepts; an unknown path under ``/ws`` or
+    any other prefix is closed before accept with code 1000, the same as on
+    ``dev``. It is not answered with an HTTP 404 response: a real ASGI server
+    does not accept ``http.response.start`` on a websocket scope."""
+    from starlette.testclient import WebSocketDenialResponse
+    from starlette.websockets import WebSocketDisconnect
+
+    client = _app_for(tmp_path, monkeypatch, dist=dist, auth=auth)
+    headers = {"host": "localhost", "origin": "http://localhost"}
+    if auth:
+        headers["cookie"] = f"pyrite_session={client.cookies['pyrite_session']}"
+    with client:
+        with client.websocket_connect("/ws", headers=headers) as ws:
+            assert ws is not None  # accepted
+        for path in ("/ws/nope", "/ws/", "/api/nope", "/mcp/nope", "/auth/nope", "/wsx"):
+            with pytest.raises(WebSocketDisconnect) as closed:
+                try:
+                    with client.websocket_connect(path, headers=headers):
+                        pass
+                except WebSocketDenialResponse as denial:  # pragma: no cover - the bug
+                    pytest.fail(f"{path}: answered as an HTTP response ({denial.status_code})")
+            assert closed.value.code == 1000, path
