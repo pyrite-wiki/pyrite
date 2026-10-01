@@ -2,6 +2,8 @@
 
 Things that look right but will bite you. Read this before your first extension or before debugging a confusing issue.
 
+**What belongs here:** a trap with no closer home. A finding goes first into a test, a comment at the line, the component doc or the ticket (SKILL.md, "Capture what you learned"); add an entry here only when none of those is where the next person would meet it.
+
 ## Hooks: DB Access via PluginContext
 
 **Status:** Resolved via PluginContext dependency injection.
@@ -322,6 +324,8 @@ Two traps in one command:
 **Always pass `-k pyrite`.** If you forget, `mv ./adrs/<file> kb/adrs/`, remove the stray
 `./adrs/`, then `pyrite index sync`.
 
+**Status:** ticketed — backlog item `new-adr-writes-to-cwd-without-kb-flag`.
+
 ## A `from ... import X` Anywhere Inside a Function Makes `X` Local for the Whole Function
 
 Hit while fixing `search-query-syntax-error-contract`: added `from ..utils.errors import
@@ -345,8 +349,6 @@ site too. Don't mix module-level and local imports of the same name within one f
 **How to catch this:** if you add a module-level import and a function that already does
 local (lazy) imports starts raising `UnboundLocalError` on a name you just imported, search
 the whole function body (not just nearby) for another `import` of that name.
-
-**Status:** ticketed — backlog item `new-adr-writes-to-cwd-without-kb-flag`.
 
 ## `pre-commit run --all-files` Is Repo-Wide, Not Scoped to a Backlog Item's Files
 

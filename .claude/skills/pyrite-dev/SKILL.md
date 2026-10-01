@@ -7,12 +7,14 @@ description: "This skill should be used by an agent developing Pyrite code — f
 
 **Announce at start:** "I'm using the pyrite-dev skill."
 
-You develop Pyrite code on **one branch, in one worktree, on one theme**. You
-do not pick the theme, you do not review, ready or merge the pull request,
-and you never touch `dev`. Those belong to [pyrite-conductor](../pyrite-conductor/SKILL.md). If
-you are the only agent in the session — nobody dispatched you — you are also
-the conductor: finish the work here, then load pyrite-conductor for the review
-and PR steps.
+You develop Pyrite on **one branch, in one worktree, on one theme**. Picking the
+theme, and reviewing, readying or merging the PR, belong to
+[pyrite-conductor](../pyrite-conductor/SKILL.md); you never touch `dev`. If
+nobody dispatched you, you are also the conductor: finish here, then load
+pyrite-conductor for review and the PR.
+
+A theme produces code and what was learned building it; record both. Why each
+rule exists: [history.md](history.md).
 
 ## The Iron Laws
 
@@ -23,225 +25,147 @@ and PR steps.
 4. NO BACKLOG CHANGES WITHOUT USING THE CLI (`pyrite update`, `pyrite create`)
 ```
 
-Thinking "skip this just once"? That's rationalization. These exist because
-skipping them always costs more time than following them.
-
----
-
 ## Where you are
 
 ```bash
-git branch --show-current     # a feature/*, fix/*, kb/* branch -- never dev
+git branch --show-current     # feature/*, fix/*, kb/* or process/* -- never dev
 pwd                           # a worktree under ../pyrite-wt/, with its own .venv
 .venv/bin/pyrite kb list      # the `pyrite` KB path must be THIS worktree's kb/
 ```
 
-The last line matters: `pyrite -k pyrite` resolves through a config, and
-without the worktree's own `.pyrite/config.yaml` it resolves through
-`~/.pyrite` to the *main* checkout -- every ticket update you make lands in
-the wrong tree. `scripts/new-worktree.sh` writes the local config; if `kb
-list` shows `/Users/markr/pyrite/kb`, stop and create it before any KB
-command.
+- Any of them wrong: stop, and run `scripts/new-worktree.sh <branch>` from the
+  main checkout (ADR-0032).
+- Use the worktree's `.venv/bin/...`; the main checkout's venv imports the main
+  checkout's code.
+- Sub-agents share your branch and worktree: give them disjoint files, never
+  `isolation: "worktree"`.
+- Stage explicit paths, never `git add -A`.
 
-If either is wrong, stop: `scripts/new-worktree.sh <branch>` from the main
-checkout creates the right place (ADR-0032). Use `.venv/bin/...` from the
-worktree; the main checkout's venv imports the main checkout's code.
+## Before you build
 
-Sub-agents you spawn share **your** branch and worktree. Do not give them
-`isolation: "worktree"`; give them disjoint files (see the conductor's
-[dispatch.md](../pyrite-conductor/dispatch.md) for footprint rules).
+1. Read the ticket and its `## Groom` (`gh issue view N`, `pyrite get <id> -k
+   pyrite`), then the contracts and pointers it names. With no groom, find
+   them: `pyrite search "<topic>" -k pyrite`, `pyrite sw adrs`,
+   [architecture.md](architecture.md).
+2. **Test the groom's riskiest assumption first**: its "this groom is wrong
+   if" line, then its out-of-scope list. Use one command or one failing test,
+   and post the result on the draft PR. If it changes the scope, stop.
+3. **A mission brief (a goal state and invariants, not steps) gets a plan
+   before code**: one page on the draft PR, led by the result of step 2. It
+   states the goal as properties, the surfaces and callers found by grep, what
+   must not change, the tests (negative, environment and concurrency cases
+   included), what is out of scope, and open questions. Wait for the answer.
+4. The groom's open questions are yours to explore; overturn its
+   recommendation when the evidence says so.
 
-## Before writing code
+Bugs and user requests live in GitHub Issues, the roadmap (epics, backlog
+items, ADRs) in `kb/`, never both (ADR-0033). A bug you fix here needs no
+issue. A bug you find and do not fix:
+`gh issue create --label bug --label <area>`, with placeholders for anything
+private. A security finding goes to the conductor, not a public issue.
 
-```
-- [ ] Read the ticket: the GitHub issue (`gh issue view N`) or the backlog item
-      (`pyrite get <id> -k pyrite`), and its acceptance criteria
-- [ ] `pyrite search "<topic>" -k pyrite` -- ADRs and designs that constrain the change
-- [ ] Check kb/adrs/ for relevant architecture decisions
-- [ ] Identify which files need to change (see [architecture.md](architecture.md))
-- [ ] Check existing tests for the area; `gh issue list --label <area>` for known bugs
-- [ ] If multi-step: create tasks with TaskCreate, set dependencies
-```
+Editing a function on the `tests/test_layer_boundaries.py` allowlist? Remove
+its entry: move the storage access behind a service.
 
-Two trackers, one rule (ADR-0033): **bugs and user requests live in GitHub
-Issues; the roadmap (epics, backlog items, ADRs) lives in `kb/`.** A bug you
-fix in the same PR that found it needs no issue; the commit says `Fixes #N`.
-A bug you find and do not fix: `gh issue create --label bug --label <area>`,
-with placeholders for anything private. New roadmap work: a backlog item via
-the CLI. Never both.
+## Test-driven development
 
-### When the brief is a mission, plan first
+RED, verify RED (it fails for the right reason), GREEN (the minimal code),
+verify GREEN, REFACTOR, commit with a conventional prefix. Code written before
+its test is deleted and started over. Patterns: [tdd.md](tdd.md).
 
-A brief that gives you a goal state and invariants, rather than steps,
-expects you to work out the approach. That is the usual form for Opus and
-Fable on design-shaped themes. Your first deliverable then is a **plan**, not
-code: one page at most, posted as a comment on the draft PR (the claim
-branch already exists). The plan states:
-- the goal state as properties;
-- the surfaces and callers the change reaches, found with grep rather than guessed;
-- what must not change;
-- the tests you will write, including negative, environment and concurrency cases;
-- what is out of scope;
-- your open questions.
+## Debugging
 
-Then wait for the conductor's answer before you build. Every property you
-name in the plan is one a reviewer does not have to send back later.
+Find the root cause before any fix: reproduce, trace the bad value to its
+origin, test one hypothesis at a time ([debugging.md](debugging.md)). After
+three failed fixes, stop and question the design in your report.
 
-A theme that touches a function on the `tests/test_layer_boundaries.py`
-allowlist removes that function's entry: move the storage or SQL access
-behind a service. The ratchet only goes down, and the theme that passes
-through is the one that knows the code best.
+## Verification
 
-## Test-Driven Development
-
-**RED → GREEN → REFACTOR. No exceptions.** Detailed patterns: [tdd.md](tdd.md).
-
-1. **RED** — one failing test showing the desired behaviour
-2. **Verify RED** — run it; confirm it fails for the right reason
-3. **GREEN** — the minimal code that passes. Nothing more.
-4. **Verify GREEN** — run it, and the tests around it
-5. **REFACTOR** — clean up while staying green
-6. **Commit** — small, focused, conventional-commit prefix; `Fixes #N` for a bug
-
-Wrote code before the test? Delete it and start over.
-
-| Rationalization | Reality |
-|---|---|
-| "Too simple to test" | Simple code breaks. The test takes 30 seconds. |
-| "I'll test after" | Tests passing immediately prove nothing. |
-| "Manual test faster" | Manual doesn't prove edge cases. Can't re-run. |
-
-## Systematic Debugging
-
-**Investigate root cause before attempting fixes.** Full process:
-[debugging.md](debugging.md).
-
-1. Read the error carefully — stack trace, line numbers, exact message
-2. Reproduce consistently
-3. Check recent changes (`git log`, `git diff`)
-4. Trace the data flow backward to where the bad value originates
-5. Form a hypothesis, test one variable at a time
-6. Fix at the root cause, not the symptom
-
-**If 3+ fix attempts fail:** stop, question the architecture, say so in your
-report.
-
-## Verification Before Completion
-
-**Evidence before claims. Always.** Identify the command that proves the
-claim, run it in full, read the output, then claim.
+Run the command that proves the claim, read its output, then claim. "Should
+work" is not evidence.
 
 | Claim | Run | Look for |
 |---|---|---|
-| Backend tests pass (local) | `scripts/test-affected --run` (core + tests importing what you changed, `-n 4`) | `N passed, 0 failed` |
+| Backend tests pass (local) | `scripts/test-affected --run` | `N passed, 0 failed` |
 | Backend tests pass (all) | the draft PR's CI: `gh pr checks <n>` | `test (3.12)` and `gate` pass |
-| The fix is real | `scripts/verify-red.sh`, **once**, before reporting (a throwaway worktree of the merge base: your tree is never touched, uncommitted work included) | `verify-red: N red · 0 import-only · 0 unexpected pass · 0 n/a`; paste its summary line into the report |
-| Each guard is tested | delete **that guard alone** (one condition, one early return, one check) and run the tests | at least one test fails -- for every guard you added |
+| The fix is real | `scripts/verify-red.sh`, once (CI's `verify-red` job runs the same code) | `verify-red: N red · 0 import-only · 0 unexpected pass · 0 n/a`; paste its summary line into the report |
+| Each guard is tested | delete that guard alone, run the tests | a test fails, for every guard you added |
 | Frontend passes | `cd web && npm run check && npm run test:unit && npm run build` | all green |
 | Lint passes | `.venv/bin/ruff check . && .venv/bin/ruff format --check .` | clean |
-| KB content findable | `.venv/bin/pyrite search "<feature>" -k pyrite` | it appears |
 
-Why guard by guard (retro 9, 2026-09-24): reverting the whole fix proves
-*some* test goes red, not that *each* check is pinned. In one window, 6 of 11
-cold reads found a guard or a test that stayed green with its target removed
-(a resolved-path check, loop-lifetime guards, refusal tests matching any
-error, a tier test that held under the bug). Each cost a send-back and a full
-push cycle. Deleting one guard at a time before you report is minutes.
+- A test meant to pass without the fix gets `@pytest.mark.control(reason="...")`;
+  a bare marker is rejected.
+- A `fix:` branch whose line shows **0 red, or only import-only reds, is not
+  done**: write a test that fails on the bug's behaviour, or say why none can.
+- Open a draft PR right after your first push (`gh pr create --draft --base dev
+  --fill`, `Fixes #N` in the body). Its CI is the authority.
+- Test each tree once: run `scripts/test-affected --run` in the foreground on a
+  committed tree, and the pre-push hook reuses the pass.
+- After a failure that looks load-caused, re-run only the failures
+  (`scripts/test-affected --run -- --lf`); never start a second suite while
+  one is running.
+- A test that passes alone and fails in parallel is a bug in that test.
 
-`scripts/verify-red.sh` is the same code as CI's `verify-red` job, which the
-conductor reads instead of re-running it: run it once and paste its summary
-line. A test you add on purpose to pass without the fix too (a "still works"
-guard) gets `@pytest.mark.control(reason="...")` (or a docstring saying why),
-so it counts as a control rather than an unexpected pass; a bare marker is
-rejected. A `fix:` branch whose line shows **0 red, or only import-only
-reds, is not done**: write a test that fails on the bug's behaviour, or state
-in the report why none can (an environment-only bug) -- the conductor sends
-it back otherwise.
+## Capture what you learned
 
-Forbidden without evidence: "should work", "looks correct", "probably
-passes", "I'm confident".
+Put each finding where the next person will meet it, the first that fits:
 
-**Run `scripts/test-affected --run` while you work** (`--explain` says why
-each test was chosen); the full suite locally is optional. CI on the pull
-request is the authority, so **open a draft PR right after your first push**
-(`gh pr create --draft --base dev --fill`, `Fixes #N` in the body) and let it
-run while you keep working; every later push re-runs it (#356).
+- behaviour the code must keep: a test named for the property;
+- code that looks wrong and is right, or the reverse: a comment at that line;
+- how a component works, where its doc is silent or wrong: `kb/components/`;
+- the groom was wrong: a comment on the ticket, with file:line;
+- a decision that could have gone another way: `pyrite sw new-adr "Title" -k
+  pyrite --status proposed` (accepting it is the maintainer's);
+- a trap with no closer home: [gotchas.md](gotchas.md).
 
-**Test each tree once.** Run `scripts/test-affected --run` once, in the
-foreground, on a committed tree; a pass stamps that tree and the pre-push
-hook reuses it instead of running the same tests on the same code again
-(about 45 minutes under load). After a failure that looks load-caused, re-run
-only the failures with `scripts/test-affected --run -- --lf`, not the whole
-selection; a `--lf` pass does not stamp, so the push then runs the selection
-once. Never start a second run while one is going: two suites on a loaded
-machine make both slower and the failures load, not signal.
+## KB bookkeeping
 
-The suite runs in parallel. A test that passes alone and fails under
-`-n auto` is a bug in that test (shared state, a fixed timeout, an unclosed
-database), not a reason to run serially.
+Use the CLI on your branch; never hand-edit frontmatter.
 
-## KB bookkeeping for your theme
-
-Use the CLI, never hand-edit frontmatter. Do this on your branch; the
-conductor reviews it with the code.
-
-- Closed a backlog item?
-  `pyrite update <id> -k pyrite -f status=done && git mv kb/backlog/<id>.md kb/backlog/done/`
-  (`done`, never `completed` — off-enum; see [gotchas.md](gotchas.md))
-- Changed architecture or added a component? `pyrite create -k pyrite -t component ...`
-  or `pyrite sw new-adr "Title" -k pyrite --status proposed`
-- Hit a surprising behaviour? Append to [gotchas.md](gotchas.md).
-- Then `.venv/bin/pyrite index sync` and check `pyrite search` finds it.
-- One user-visible change, one **changelog fragment**: a new file
-  `changelog.d/<slug>.<section>.md` (sections: `added changed deprecated
-  removed fixed security`) holding the bullet as it should read in the release
-  notes. **Never edit `CHANGELOG.md`** — `[Unreleased]` is empty on `dev` and a
-  test asserts it. Every branch appending to one file is why five PRs
-  conflicted in a session (#243); a fragment's path is yours alone, so a rebase
-  has nothing to resolve. See `changelog.d/README.md`.
+- Closed a backlog item: `pyrite update <id> -k pyrite -f status=done && git mv
+  kb/backlog/<id>.md kb/backlog/done/` (`done`, never `completed`).
+- New component: `pyrite create -k pyrite -t component ...`.
+- Then `.venv/bin/pyrite index sync`, and check `pyrite search "<feature>" -k
+  pyrite` finds it.
+- One user-visible change, one fragment `changelog.d/<slug>.<section>.md`
+  (`added changed deprecated removed fixed security`). Never edit
+  `CHANGELOG.md`; a test asserts `[Unreleased]` is empty.
 
 ## Finishing: the report
 
-You are done when the theme is complete — not a fragment of it — and every
-claim below has evidence. Your last three acts, in order: **diff your
-footprint against the theme's out-of-scope list** (`git diff --name-only
-origin/dev...HEAD`; anything on that list means something entered your
-branch that is not yours — on 2026-09-18 a worker found 18 foreign commits
-this way, one push from the wrong PR, #119); **push** (`git push -u origin
-<branch>`; a red pre-push in a test your change touches is a stop -- fix it;
-a failure in a test it does not touch: re-run that test alone, and if it passes
-alone push with `--no-verify` and name that test in the report -- PR CI and the
-merge queue are the authority, not this laptop; if CI fails the same test, your
-change caused it, untouched or not, and it is yours to fix); **report with the
-pushed SHA** — a conductor reviews only what is on the remote. The PR stays a
-draft: the conductor flips it ready after review. Report:
+Done means the whole theme, with evidence for every claim. Then, in order:
+
+1. **Diff your footprint**: `git diff --name-only origin/dev...HEAD`. A file on
+   the out-of-scope list is not yours: find how it got in.
+2. **Push**: `git push -u origin <branch>`. A red pre-push in a test your change
+   touches: fix it. In a test it does not touch: re-run that test alone, and if
+   it passes, push with `--no-verify` and name the test in the report. If CI
+   then fails the same test, it is yours to fix.
+3. **Report with the pushed SHA.** The PR stays a draft.
 
 ```
-Branch:   fix/what-it-fixes      Worktree: ../pyrite-wt/fix-what-it-fixes
-Pushed:   <sha> == origin/<branch>
-Commits:  <n>, listed with one line each
-Closes:   #N, #M  (or the backlog item ids)
-Evidence: test-affected output line; the draft PR's CI result on the pushed
-          SHA; the `verify-red: ...` summary line (not prose like "RED before
-          each fix"), with a reason for each non-red test; lint
-Guards:   each check you added -> the test that fails when that check alone
-          is removed (a guard no test catches is not done)
-Changed:  files touched, new vs existing
-Unsure:   anything a reviewer should look at twice, or a decision that could
-          have gone another way
-Left:     anything in the theme you did not finish, and why
+Branch:      fix/what-it-fixes      Worktree: ../pyrite-wt/fix-what-it-fixes
+Pushed:      <sha> == origin/<branch>
+Commits:     <n>, one line each
+Closes:      #N, #M  (or backlog item ids)
+Evidence:    the test-affected line; the draft PR's CI on the pushed SHA; the
+             `verify-red: ...` line, with a reason for each non-red test; lint;
+             Regimes, one line each
+Guards:      each check you added -> the test that fails when it alone is removed
+Changed:     files, new vs existing; the count against the groom's prediction
+Learned:     the riskiest-assumption result, then what the groom got wrong,
+             what the code turned out to do, contracts you found; one line
+             each, with file:line
+Captured in: per Learned line, the test, doc path or commented line holding it
+Tokens:      as the harness reports them, or "not reported"
+Unsure:      what a reviewer should look at twice
+Left:        anything in the theme you did not finish, and why
 ```
 
-A conductor will read the diff and check the PR's CI before flipping it
-ready; make that cheap by keeping commits focused and the report honest.
-
----
+A `Learned` line with nothing in `Captured in` is not captured yet.
 
 ## References
 
-- [architecture.md](architecture.md) — where things live
-- [tdd.md](tdd.md), [testing.md](testing.md), [debugging.md](debugging.md)
-- [data-pipelines.md](data-pipelines.md) — the entry lifecycle
-- [extensions.md](extensions.md) — building a plugin
-- [gotchas.md](gotchas.md) — known pitfalls; read before touching hooks, DB access, entry ids
-- `kb/adrs/` — run `pyrite sw adrs`; ADR-0032 (branch flow) and ADR-0033 (where work is tracked) govern process
+[testing.md](testing.md); [data-pipelines.md](data-pipelines.md) (the entry
+lifecycle); [extensions.md](extensions.md) (building a plugin);
+[gotchas.md](gotchas.md) (read before touching hooks, DB access or entry ids).

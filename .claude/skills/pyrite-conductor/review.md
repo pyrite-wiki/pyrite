@@ -76,6 +76,9 @@ code nobody had pushed).
       were both 3.11-vs-3.13 artefacts) — or the number is struck from the PR
 - [ ] ruff check . && ruff format --check .
 - [ ] theme complete? nothing in "Left:" that belongs to this PR
+- [ ] learning is captured: every `Learned` line has a `Captured in` entry, and that test, comment or
+      doc is in the diff; where the worker found the groom wrong, the ticket carries a comment saying so
+- [ ] footprint: files changed against the groom's prediction, and `Tokens`, go in the tick entry
 - [ ] a changelog fragment `changelog.d/<slug>.<section>.md` per user-visible change, and CHANGELOG.md
       NOT edited (a bullet under [Unreleased] is the conflict #243 removed; tests/test_changelog_fragments.py
       fails on one); KB updated via CLI where the theme touched it
@@ -197,6 +200,8 @@ Body template:
 <Numbered list, one item per commit or per closed ticket: what and why, one or two lines each. "Fixes #N" on each that closes an issue.>
 
 <Evidence: the full-suite line; anything run beyond the suite (a live server check, an install from tag).>
+
+<Learned: the worker's Learned lines, each with where it is captured.>
 
 <Known trade-offs or "Unsure" items the reviewer should look at, if any.>
 

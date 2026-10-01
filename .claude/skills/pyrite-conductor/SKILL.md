@@ -76,10 +76,12 @@ if workers are still running, groom and review still have work.
 
 **Groom lane.** Dispatch the **architect** (`pyrite-architect`, strongest
 model, read-only) on the open issues, `pyrite sw backlog`, the roadmap's next
-release section and the last tick's report. It writes the breakdown **into the
+release section and the last tick's report. It writes the groom **into the
 tickets** — a `## Groom <date>` section on the backlog item or the GitHub
-issue with acceptance, touches, sequence, model, `heavy`, cold read and out
-of scope — and returns an index of what it groomed; the board, not the
+issue, in the form `.claude/agents/pyrite-architect.md` defines: contracts,
+what the code does today, the invariant and its surfaces, options, open
+questions, pointers, checked versus assumed with a predicted footprint, then
+the dispatch fields — and returns an index of what it groomed; the board, not the
 architect's reply, is the source of truth for what is dispatchable
 (maintainer, 2026-09-18). Point it at the log-branch worktree so its item
 edits are committed and pushed in the same tick. **Dispatch it on any tick where the ready queue —
@@ -306,7 +308,9 @@ touch. Themes that overlap in files run in sequence, not in parallel
 
 Order by the value chain (ADR-0032 §3a): fix what blocks other themes first
 (a red `dev`, a data-loss bug, a security gap), then what the release's
-definition of done requires, then the rest. **Every ~fifth theme, the oldest open
+definition of done requires, then the rest. **A change the previous retro
+proposed and the maintainer approved, still not landed, is the first theme of
+the next run**, behind only a red `dev`. **Every ~fifth theme, the oldest open
 `quality` theme** (`pyrite sw backlog --status proposed` filtered on the
 `quality` tag; written by the retro, [pyrite-meta-conductor](../pyrite-meta-conductor/SKILL.md))
 goes ahead of new feature themes. Refactoring, test refactoring and code
@@ -389,6 +393,11 @@ What merged (PR numbers, what they closed), what is in review and why it is
 waiting, what was dispatched (theme, worker, model), what is blocked and on
 whom. If the bottleneck has moved to the maintainer's desk (a decision, a
 setting only they can change), say so and stop rather than ticking idle.
+
+**Per theme, the tick entry records tokens and learning**: the tokens the
+worker's Agent result reports (or "not reported"), the report's first
+`Learned` line, and, once merged, files changed over the groom's predicted
+footprint. The retro reads these three to score the speed of learning.
 
 **Read the tick log by timestamp, not by position.** Entries are appended
 by whichever conductor finishes first, so the newest tick can sit above an

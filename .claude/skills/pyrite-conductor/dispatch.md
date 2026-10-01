@@ -27,7 +27,8 @@ Write each theme down before dispatching, as the worker's spec:
 ```
 Theme:       write-path correctness
 Closes:      #15, #14, #16, #17
-Acceptance:  (copied from each ticket, verbatim)
+Groom:       <ticket or item with the `## Groom` section>; its "wrong if" line
+Acceptance:  (from the groom: observable properties, and the test that fails today)
 Regimes:     the boundaries the tests must enter — an index above the backend's
              hard limit; the retry after a half-finished run; empty, None and
              oversized inputs; the case where every candidate is filtered out
@@ -151,9 +152,11 @@ Agent(
   description="theme: write-path correctness",
   prompt=<the spec above, plus:>
     "Work in /Users/markr/pyrite-wt/fix-<slug> on branch fix/<slug>. Use its
-     .venv. Load the pyrite-dev skill and follow it. Open a draft PR to dev
-     right after your first push so CI starts; do not mark it ready. When
-     the theme is complete, reply with the report format from pyrite-dev."
+     .venv. Load the pyrite-dev skill and follow it. Test the groom's
+     riskiest assumption first and post the result on the draft PR. Open a
+     draft PR to dev right after your first push so CI starts; do not mark
+     it ready. When the theme is complete, reply with the report
+     format from pyrite-dev, Learned, Captured in and Tokens included."
 )
 ```
 
@@ -195,7 +198,7 @@ Leave out which helper to call, what to monkeypatch, and which line to edit. Tho
 
 ### Plan before build (Opus-shaped themes)
 
-For a design-shaped or cross-cutting theme, the worker's first deliverable is a plan, not code. The plan is at most one page, posted as a comment on the draft PR, and covers:
+For a design-shaped or cross-cutting theme, the worker's first deliverable is a plan, not code. The plan is at most one page, posted as a comment on the draft PR, led by the result of testing the groom's riskiest assumption, and covers:
 - the goal state restated as properties;
 - the surfaces and callers affected;
 - what must not change;
