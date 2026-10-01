@@ -249,6 +249,10 @@ _OLD_FALLBACK_REFUSALS = (
 )
 
 
+@pytest.mark.control(
+    reason="pins dev's behaviour, so it passes on the merge base; it fails only on this "
+    "branch's earlier draft, which dropped the fallback's prefix check"
+)
 @pytest.mark.parametrize("auth", [False, True], ids=["auth-off", "auth-on"])
 def test_paths_the_old_fallback_check_refused_are_still_not_the_spa(tmp_path, monkeypatch, auth):
     client = _app_for(tmp_path, monkeypatch, dist=True, auth=auth)
