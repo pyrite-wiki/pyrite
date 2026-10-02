@@ -30,6 +30,12 @@ evidence, not the plan. Before you groom, answer these in the ticket:
 - **Is it one of several?** Search open issues for the same root cause. If
   three tickets are instances of one missing rule, groom the rule and its
   single enforcement point, and list the tickets it closes.
+- **A bug report stays a bug report.** A simple bug with a simple fix remains
+  an open bug as filed; groom it as that. When a report points to a systemic
+  or larger problem, do not rewrite or close it: the larger solution gets its
+  own tracking issue (the property, the two models, the one enforcement
+  point, the reports it resolves), and each report gets a short note linking
+  to it and saying whether it is still fixed first on its own.
 
 - **Does the request break the architecture while the user's problem is
   real?** This is where the architect matters most, and it goes to the
