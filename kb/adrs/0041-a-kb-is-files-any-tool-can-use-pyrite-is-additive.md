@@ -129,6 +129,18 @@ tools, not by Pyrite:
   registry; it is not implemented. A KB that exists only as a row cannot be
   seen in a clone, diffed or reviewed. The config file is itself the user's
   file, so decisions 4 to 6 apply to writing it.
+  - **Setting up the registry is an admin task.** Adding, removing or
+    re-pointing a KB in the config file is an instance-admin action on every
+    surface, whatever route reaches it (create, add, subscribe, fork).
+  - **One file per library, not one per machine.** This amends ADR-0029 §1,
+    which says `~/.pyrite/` owns the registry and other config files are
+    migrated in and retired. A machine may hold several libraries, each with
+    its own config file and its own derived database (ADR-0029 §2).
+  - **Not decided, noted as a possible direction:** the file may later be
+    decomposed, so that a KB a user is permitted to promote out of ephemeral
+    is listed in a config file specific to that user. Nothing here should
+    make that harder: code asks "which files define this library", not
+    "where is the config file".
 - **State that exists only in the database is a defect against decision 3**
   where it is the user's work: reviews, stars, KBs registered by a user.
   ADR-0029 §4 already requires a declared list of such state; this makes
