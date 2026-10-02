@@ -16,9 +16,10 @@ rank: 0
 ## Handled by #585 (PR #592)
 
 Done there: `claude_desktop_config.json` and `ui_streamlit.py` deleted; the
-`ZK_STREAMLIT_PORT` line removed from `.env.example`; `MCP_SUBMISSION.md` and
-`KnowledgeClaw-Spec.md` moved to `kb/designs/` (`mcp-submission.md`,
-`knowledgeclaw-spec.md`; deleting the spec is still the maintainer's call).
+`ZK_STREAMLIT_PORT` line removed from `.env.example`; `MCP_SUBMISSION.md`
+moved to `kb/designs/mcp-submission.md`. `KnowledgeClaw-Spec.md` was moved
+there too, then deleted on 2026-10-02 (maintainer: it would need rewriting
+anyway).
 `pyrite-mcp/` stays: `publish.yml` builds it.
 
 **Remaining:** `KNOWN-ISSUES.md` (#583), `deploy/start.sh`, the four scraper
