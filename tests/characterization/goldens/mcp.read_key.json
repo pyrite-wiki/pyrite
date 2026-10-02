@@ -3476,17 +3476,17 @@
   "kb_update | read_key | no-default-role-kb": {
     "entry_id": "characterization-disposable-mutation-target",
     "file_path": "<TMPDIR>/no-default-role-kb/notes/characterization-disposable-mutation-target.md",
-    "updated": true
+    "updated": false
   },
   "kb_update | read_key | private-kb": {
     "entry_id": "characterization-disposable-mutation-target",
     "file_path": "<TMPDIR>/private-kb/notes/characterization-disposable-mutation-target.md",
-    "updated": true
+    "updated": false
   },
   "kb_update | read_key | readable-kb": {
     "entry_id": "characterization-disposable-mutation-target",
     "file_path": "<TMPDIR>/readable-kb/notes/characterization-disposable-mutation-target.md",
-    "updated": true
+    "updated": false
   },
   "list_edge_types | read_key | missing-kb": {
     "edge_types": [],
