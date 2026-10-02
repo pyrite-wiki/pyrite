@@ -76,7 +76,8 @@ contracts are alpha.
 
 ## What Pyrite is not
 
-- Not a site generator. Publishing is an export.
+- Not a site generator. Publishing is an export. The built-in `/site`
+  ([[adr-0023]]) is experimental.
 - Not a formatter. It does not normalise or repair files unless asked to.
 - Not the owner of your repository, your config, or another program's files.
 - Not yet a service for many users who do not trust each other.
