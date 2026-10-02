@@ -122,6 +122,13 @@ tools, not by Pyrite:
 - **The local operator is the owner.** Whoever holds the files holds the KB;
   the CLI and a local MCP server act as that person. Multi-user access
   control is a layer over this, not its foundation.
+- **Every KB that is not ephemeral is listed in the config file**
+  (maintainer, 2026-10-02). The registry is the one part of Pyrite still
+  split between a file and the database: `add_kb` registers a KB as a
+  database row only. ADR-0029 §1 already decided that the config file is the
+  registry; it is not implemented. A KB that exists only as a row cannot be
+  seen in a clone, diffed or reviewed. The config file is itself the user's
+  file, so decisions 4 to 6 apply to writing it.
 - **State that exists only in the database is a defect against decision 3**
   where it is the user's work: reviews, stars, KBs registered by a user.
   ADR-0029 §4 already requires a declared list of such state; this makes
