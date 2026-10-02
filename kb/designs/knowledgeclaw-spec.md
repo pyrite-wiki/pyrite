@@ -1,3 +1,15 @@
+---
+id: knowledgeclaw-spec
+title: "KnowledgeClaw: Project Specification"
+type: note
+tags:
+- design
+- speculative
+---
+
+> A speculative spin-off spec (March 2026): a Pyrite-powered NanoClaw agent. Moved
+> here from the repository root (#585); whether to keep it is the maintainer's call.
+
 # KnowledgeClaw: Project Specification
 
 **A Pyrite-Powered NanoClaw Agent for the OpenClaw Ecosystem**

@@ -7,12 +7,24 @@ tags:
 - public-repo
 importance: 5
 kind: improvement
-status: in_progress
+status: proposed
 priority: medium
 effort: S
 rank: 0
-assignee: agent:pyrite-worker-sonnet
 ---
+
+## Handled by #585 (PR #592)
+
+Done there: `claude_desktop_config.json` and `ui_streamlit.py` deleted; the
+`ZK_STREAMLIT_PORT` line removed from `.env.example`; `MCP_SUBMISSION.md` and
+`KnowledgeClaw-Spec.md` moved to `kb/designs/` (`mcp-submission.md`,
+`knowledgeclaw-spec.md`; deleting the spec is still the maintainer's call).
+`pyrite-mcp/` stays: `publish.yml` builds it.
+
+**Remaining:** `KNOWN-ISSUES.md` (#583), `deploy/start.sh`, the four scraper
+scripts, `pyrite/models/task_validators.py`, the `pyrite/ui/` decision,
+`FEEDBACK.md` / `UPSTREAM_CHANGES.md` placement, stale branches, `adapter-node`.
+The table below is the original list; rows for the files above are done.
 
 ## Problem
 

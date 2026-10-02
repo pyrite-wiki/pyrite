@@ -49,7 +49,7 @@ See [[launch-channels]] for detailed content specs per channel. See [[launch-mes
 - [ ] Prepare social media assets (GIFs from demo videos, knowledge graph screenshots)
 
 **Content (week 1-2, not launch-blocking):**
-- [ ] Update MCP_SUBMISSION.md, submit to directory
+- [ ] Update [[mcp-submission]] (`kb/designs/mcp-submission.md`), submit to directory
 - [ ] Set up YouTube channel, upload launch-day videos
 - [ ] Seed the extension registry KB and public KB directory
 - [ ] Record Deploy Your Own video (Docker compose demo for r/selfhosted)

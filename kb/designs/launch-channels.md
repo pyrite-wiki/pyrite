@@ -179,7 +179,7 @@ Detailed content specs for each distribution channel. See [[launch-messaging]] f
 **Audience:** Claude Desktop users browsing for MCP integrations.
 
 **Content needed:**
-- [ ] Updated MCP_SUBMISSION.md (accurate tool count, test count, config examples)
+- [ ] Updated [[mcp-submission]] (`kb/designs/mcp-submission.md`) (accurate tool count, test count, config examples)
 - [ ] Submission to Anthropic's MCP directory (timing: before launch)
 - [ ] Clear install instructions in the listing
 
