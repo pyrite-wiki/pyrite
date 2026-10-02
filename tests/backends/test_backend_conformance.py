@@ -309,6 +309,79 @@ class TestGraph:
         assert len(backlinks) == 1
         assert backlinks[0]["id"] == "a"
 
+    def test_backlink_relation_fields_match_contract(self, backend, monkeypatch):
+        """#622: Keep documented backlink relation fields consistent per backend."""
+        from pyrite.schema import provenance
+
+        backend.upsert_entry(_make_entry("target"))
+        backend.upsert_entry(
+            _make_entry(
+                "declared-source",
+                links=[{"target": "target", "relation": "supports"}],
+            )
+        )
+        backend.upsert_entry(
+            _make_entry(
+                "custom-source",
+                links=[{"target": "target", "relation": "informs"}],
+            )
+        )
+        # This type is still unknown when the link is indexed, so its stored
+        # inverse remains the fallback after the type is registered below.
+        backend.upsert_entry(
+            _make_entry(
+                "stale-source",
+                links=[{"target": "target", "relation": "transclusion"}],
+            )
+        )
+
+        declared_types = dict(provenance.get_all_relationship_types())
+        assert "transclusion" not in declared_types
+        monkeypatch.setattr(
+            provenance,
+            "get_all_relationship_types",
+            lambda: {
+                **declared_types,
+                "transclusion": {
+                    "inverse": "transcluded_by",
+                    "description": "Declared after the link was indexed",
+                },
+            },
+        )
+
+        expected = {
+            "declared-source": {
+                "forward_relation": "supports",
+                "relation": "supported_by",
+                "inverse_relation": "supported_by",
+            },
+            "custom-source": {
+                "forward_relation": "informs",
+                "relation": "related_to",
+                "inverse_relation": None,
+            },
+            "stale-source": {
+                "forward_relation": "transclusion",
+                "relation": "related_to",
+                "inverse_relation": "transcluded_by",
+            },
+        }
+
+        def relation_fields(rows):
+            return {
+                row["id"]: {
+                    field: row[field]
+                    for field in ("forward_relation", "relation", "inverse_relation")
+                }
+                for row in rows
+            }
+
+        backlinks = backend.get_backlinks("target", "test", readable_kbs=UNSCOPED)
+        assert relation_fields(backlinks) == expected
+
+        all_backlinks = backend.get_all_backlinks_for_kb("test")["target"]
+        assert relation_fields(all_backlinks) == expected
+
     def test_get_backlinks_empty(self, backend):
         self._setup_linked_entries(backend)
         backlinks = backend.get_backlinks("a", "test", readable_kbs=UNSCOPED)
