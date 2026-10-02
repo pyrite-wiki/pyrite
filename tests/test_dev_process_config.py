@@ -494,6 +494,87 @@ class TestSessionSetupScript:
         # removed; the script must install from the main checkout's venv.
         assert '"$repo_root/.venv/bin/pre-commit"' in text
 
+    def test_new_worktree_installs_through_the_shared_setup_script(self):
+        # One install path for a laptop worktree and a cloud session: a
+        # second copy of the venv/extensions/config steps drifts.
+        text = (REPO / "scripts" / "new-worktree.sh").read_text()
+        assert "scripts/setup-checkout.sh" in text
+        assert "pip install" not in text, "installs belong in setup-checkout.sh"
+
+
+class TestCloudSessionSetup:
+    """Claude Code on the web: a cloud session sets itself up from the repo.
+
+    A SessionStart hook in the checked-in .claude/settings.json runs
+    scripts/cloud-session-start.sh, which does nothing outside a cloud
+    session (CLAUDE_CODE_REMOTE unset) and otherwise sets up the checkout
+    through scripts/setup-checkout.sh -- the same script new-worktree.sh uses.
+    """
+
+    SETUP = REPO / "scripts" / "setup-checkout.sh"
+    START = REPO / "scripts" / "cloud-session-start.sh"
+
+    @pytest.mark.parametrize("name", ["setup-checkout.sh", "cloud-session-start.sh"])
+    def test_script_is_present_executable_and_parses(self, name):
+        import os
+        import subprocess
+
+        script = REPO / "scripts" / name
+        assert script.exists()
+        assert os.access(script, os.X_OK), "must be executable"
+        subprocess.run(["bash", "-n", str(script)], check=True)
+
+    def test_setup_installs_pyrite_every_extension_and_a_local_config(self):
+        text = self.SETUP.read_text()
+        assert "extensions/*/" in text
+        assert ".pyrite/config.yaml" in text
+        assert "index sync" in text
+
+    def test_session_start_is_wired_into_checked_in_settings(self):
+        import json
+
+        settings = json.loads((REPO / ".claude" / "settings.json").read_text())
+        commands = [hook for group in settings["hooks"]["SessionStart"] for hook in group["hooks"]]
+        wired = [h for h in commands if "scripts/cloud-session-start.sh" in h["command"]]
+        assert wired, "SessionStart must run scripts/cloud-session-start.sh"
+        # Relative to the project, not to whatever directory the session is in.
+        assert "$CLAUDE_PROJECT_DIR" in wired[0]["command"]
+        # The default 60s hook timeout is shorter than a cold venv install.
+        assert wired[0].get("timeout", 0) >= 600
+
+    def test_session_start_is_a_no_op_outside_the_cloud(self, tmp_path):
+        import os
+        import subprocess
+
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_REMOTE"}
+        env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+        result = subprocess.run(
+            ["bash", str(self.START)], env=env, capture_output=True, text=True, timeout=30
+        )
+        assert result.returncode == 0, result.stderr
+        assert list(tmp_path.iterdir()) == [], "a laptop session must not be touched"
+
+    def test_session_start_puts_the_venv_on_path_for_the_session(self):
+        # A SessionStart hook's environment dies with it; CLAUDE_ENV_FILE is
+        # how it reaches the session's Bash tool.
+        text = self.START.read_text()
+        assert "CLAUDE_ENV_FILE" in text and ".venv/bin" in text
+
+    def test_skills_and_agents_carry_no_machine_specific_paths(self):
+        # A cloud session's (or a contributor's) checkout is not one
+        # maintainer's home directory. (A bare "/Users/" grep pattern is fine.)
+        import re
+
+        home = re.compile(r"/(Users|home)/[A-Za-z]")
+        offenders = [
+            f"{path.relative_to(REPO)}:{n}"
+            for base in (REPO / ".claude" / "skills", REPO / ".claude" / "agents")
+            for path in base.rglob("*.md")
+            for n, line in enumerate(path.read_text().splitlines(), 1)
+            if home.search(line)
+        ]
+        assert offenders == []
+
 
 class TestGateJob:
     """One required check that always reports (ADR-0032 §2).

@@ -264,11 +264,12 @@ class TestUntrustedKeysAreRefused:
 
 
 def _worktree_config(wt_dir: Path, branch: str) -> str:
-    """The config scripts/new-worktree.sh writes, rendered for `wt_dir`."""
-    script = (REPO_ROOT / "scripts" / "new-worktree.sh").read_text()
+    """The config scripts/setup-checkout.sh writes (for new-worktree.sh and a
+    cloud session alike), rendered for `wt_dir`."""
+    script = (REPO_ROOT / "scripts" / "setup-checkout.sh").read_text()
     body = re.search(r"cat > \.pyrite/config\.yaml <<CFG\n(.*?)\nCFG\n", script, re.S)
-    assert body, "new-worktree.sh no longer writes .pyrite/config.yaml with a heredoc"
-    return body.group(1).replace("$wt_dir", str(wt_dir)).replace("$branch", branch)
+    assert body, "setup-checkout.sh no longer writes .pyrite/config.yaml with a heredoc"
+    return body.group(1).replace("$wt_dir", str(wt_dir)).replace("${label:-detached}", branch)
 
 
 class TestWorktreeFlow:

@@ -28,8 +28,9 @@ web/build/
 *.swo
 *~
 
-# Claude Code local settings
-.claude/settings.json
+# Claude Code personal settings (.claude/settings.json is shared: the cloud
+# SessionStart hook and the plugins the agents need)
+.claude/settings.local.json
 
 # Test artifacts
 web/test-results/

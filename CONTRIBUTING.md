@@ -43,6 +43,30 @@ they change as the project and extensions grow.
 
 See [Setting Up the Development Environment](kb/runbooks/setting-up-dev-environment.md) for troubleshooting.
 
+`scripts/setup-checkout.sh` does the venv, the extensions and a repo-local
+`.pyrite/config.yaml` (so `pyrite -k pyrite` means this checkout's `kb/`) in
+one step; `scripts/new-worktree.sh <branch>` creates a worktree and runs it.
+
+### Developing in Claude Code on the web
+
+A cloud session at [claude.ai/code](https://claude.ai/code) sets itself up:
+the checked-in `.claude/settings.json` runs `scripts/cloud-session-start.sh`
+at session start, which installs pyrite and every extension into `.venv`,
+writes the KB config, syncs the index, installs the git hooks and puts
+`.venv/bin` on the session's `PATH`. It does nothing in a local session.
+The repo's skills (`pyrite-dev`, `kb`, `software-kb`, ...) and agents load
+as they do locally.
+
+- **Network:** the default "Trusted" level is enough (PyPI and npm are on it).
+- **Embeddings are off by default**: `sentence-transformers` pulls torch, and
+  its model host is not on the default allowlist; the tests that need it skip.
+  For the full install, set `PYRITE_SETUP_EXTRAS=all` in the cloud
+  environment's variables and add `huggingface.co` to its allowed domains.
+- **Frontend:** run `npm ci` in `web/` when your change touches it.
+- **Branches:** the session's own branch is fine for a PR to `dev`; name it
+  `fix/*` or `feature/*` if you create one yourself. One session is one
+  checkout, so there is no worktree to make.
+
 ## Code Standards
 
 ### Style
