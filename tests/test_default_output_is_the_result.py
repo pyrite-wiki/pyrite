@@ -194,6 +194,9 @@ def test_double_dash_ends_the_scan_so_a_dash_v_argument_is_data(tmp_path):
 class TestServersAndStdioMcp:
     """The maintainer's decision: HTTP servers keep INFO; stdio mcp goes quiet."""
 
+    @pytest.mark.control(
+        reason="dev logged INFO everywhere; pins that the HTTP server still does after the default moved to WARNING"
+    )
     def test_pyrite_serve_keeps_info(self, tmp_path):
         proc = _probe(tmp_path, CLI, "pyrite.cli.app", "serve")
         assert "INFO-LINE" in proc.stderr and "DEBUG-LINE" not in proc.stderr
@@ -220,6 +223,9 @@ class TestServersAndStdioMcp:
         assert "DEBUG-LINE" not in proc.stderr
         assert proc.stdout == ""
 
+    @pytest.mark.control(
+        reason="stdout was already clean on dev (the INFO lines went to stderr); pins stdout stays the protocol's, and the stderr half is covered by the init/search tests"
+    )
     def test_stdio_mcp_writes_nothing_to_stdout_and_no_info_to_stderr(self, tmp_path):
         """Real server, stdin at EOF: the protocol stream stays empty and the
         client's server log gets no INFO chatter."""
@@ -297,11 +303,17 @@ class TestSemanticWithoutTheExtraSaysSo:
         assert "did not load" in warnings[0]
         assert "pip install" not in warnings[0]
 
+    @pytest.mark.control(
+        reason="keyword mode never warned on dev; pins that the new semantic warning does not leak into it"
+    )
     def test_keyword_mode_stays_silent(self, indexed, no_extra):
         warnings: list[str] = []
         _search(indexed[1], "keyword", warnings)
         assert warnings == []
 
+    @pytest.mark.control(
+        reason="dev already returned before encoding when the extra is missing; pins that the new warning keeps that order"
+    )
     def test_no_model_is_loaded_to_find_out(self, indexed, no_extra, monkeypatch):
         """The leg is skipped before the query is encoded (the groom's question)."""
         from pyrite.services.embedding_service import EmbeddingService
@@ -320,6 +332,9 @@ class TestSemanticWithoutTheExtraSaysSo:
         assert any("pyrite index embed" in w for w in warnings), warnings
         assert not any("keyword leg ran" in w for w in warnings)
 
+    @pytest.mark.control(
+        reason="dev did not warn here; pins that the new warning is not raised for a plain empty result"
+    )
     def test_vectors_present_and_no_hit_is_not_a_degraded_answer(self, indexed, monkeypatch):
         """No warning when the leg ran and simply found nothing."""
         config, db = indexed
@@ -474,6 +489,9 @@ class TestIndexEmbedReportsTheVectorsItAdded:
         assert "Embedded: 3" in result.output and "Skipped: 0" in result.output, result.output
         assert _vector_count(db) == 3
 
+    @pytest.mark.control(
+        reason="on dev force re-embeds everything and counted correctly; pins that crediting the queue drain leaves --force alone"
+    )
     def test_force_does_not_double_count(self, tmp_path, monkeypatch):
         from typer.testing import CliRunner
 
@@ -483,6 +501,9 @@ class TestIndexEmbedReportsTheVectorsItAdded:
         result = CliRunner().invoke(app, ["index", "embed", "--force"])
         assert "Embedded: 2" in result.output, result.output
 
+    @pytest.mark.control(
+        reason="dev exited 0 with Errors named; pins that exit codes are unchanged here (0.25.8 owns them)"
+    )
     def test_model_unreachable_still_exits_zero_with_errors_named(self, tmp_path, monkeypatch):
         """Regime: model unreachable. Exit codes are 0.25.8's contract and
         scripts/release.py asserts exit 0 here, so this pins the *report* only."""
