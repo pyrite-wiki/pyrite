@@ -10,9 +10,9 @@ from pyrite.config import load_config
 from pyrite.exceptions import QueryTooLongError
 from pyrite.storage.database import PyriteDB
 
-from .plugin import JournalismInvestigationPlugin
+from .plugin import _EXPERIMENTAL_NOTICE, JournalismInvestigationPlugin
 
-investigation_app = typer.Typer(help="Journalism investigation commands")
+investigation_app = typer.Typer(help=f"{_EXPERIMENTAL_NOTICE}\n\nJournalism investigation commands")
 console = Console()
 
 

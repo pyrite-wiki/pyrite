@@ -239,6 +239,9 @@ class TestHelpText:
     def test_help(self):
         result = runner.invoke(investigation_app, ["--help"])
         assert result.exit_code == 0
+        assert (
+            "EXPERIMENTAL: Unsupported until the 0.28 alpha plugin/API contract." in result.output
+        )
         assert "timeline" in result.output
         assert "entities" in result.output
         assert "sources" in result.output
