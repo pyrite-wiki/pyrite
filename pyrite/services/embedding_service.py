@@ -30,6 +30,33 @@ def is_available() -> bool:
         return False
 
 
+def _extension_loading_refused(error: Exception) -> bool:
+    """Is this the failure of a sqlite3 that cannot load *any* extension?
+
+    Matched on what ``ConnectionMixin._load_extensions`` records, not on the
+    type name alone: a dlopen failure is an ``OperationalError`` too, and an
+    ``AttributeError`` can come from anywhere.
+
+    - ``enable_load_extension`` / ``load_extension`` absent: CPython built
+      without ``--enable-loadable-sqlite-extensions`` has no such methods, so
+      the ``AttributeError`` names one of them.
+    - SQLite refuses: CPython raises ``OperationalError("Error enabling load
+      extension")`` from ``enable_load_extension`` and ``OperationalError("not
+      authorized")`` from ``load_extension`` when loading is off. A driver that
+      reports it as ``NotSupportedError`` means the same thing.
+    """
+    import sqlite3
+
+    if isinstance(error, AttributeError):
+        missing = getattr(error, "name", None) or str(error)
+        return "load_extension" in missing
+    if isinstance(error, sqlite3.NotSupportedError):
+        return True
+    if isinstance(error, sqlite3.OperationalError):
+        return str(error).strip().lower() in ("error enabling load extension", "not authorized")
+    return False
+
+
 def semantic_unavailable(
     vec_available: bool, vec_load_error: Exception | None = None
 ) -> tuple[str, str, str] | None:
@@ -59,11 +86,20 @@ def semantic_unavailable(
             "install with `pip install pyrite[semantic]`",
         )
     if vec_load_error is not None:
-        return (
-            "sqlite_vec_not_loaded",
-            f"the sqlite-vec extension failed to load ({type(vec_load_error).__name__}: {vec_load_error})",
-            "resolve the sqlite-vec load error and try again",
+        cause = (
+            "the sqlite-vec extension failed to load "
+            f"({type(vec_load_error).__name__}: {vec_load_error})"
         )
+        if _extension_loading_refused(vec_load_error):
+            # The one load failure a different interpreter fixes (#606): say
+            # so, beside the exception, instead of "resolve the error".
+            return (
+                "sqlite_vec_not_loaded",
+                cause,
+                "this Python's sqlite3 does not allow loadable extensions; "
+                "use a Python whose sqlite3 allows extensions",
+            )
+        return ("sqlite_vec_not_loaded", cause, "resolve the sqlite-vec load error and try again")
     return (
         "sqlite_vec_not_loaded",
         "the sqlite-vec extension is installed but did not load",

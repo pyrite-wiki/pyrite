@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from unittest.mock import MagicMock
@@ -636,6 +637,107 @@ class TestTheTraceAndTheWarningAgree:
         assert trace["reason"] == "semantic_sqlite_vec_not_loaded", trace
         assert "RuntimeError: simulated sqlite-vec loader failure" in warnings[0]
         assert "probably built without" not in warnings[0]
+
+    @staticmethod
+    def _installed_sqlite_vec(monkeypatch, load):
+        """A `sqlite_vec` that imports and is found, whose `load` is ``load``.
+
+        Injected rather than patched, so the tests below enter the same regime
+        whether or not the real package is installed.
+        """
+        from importlib.machinery import ModuleSpec
+        from types import ModuleType
+
+        module = ModuleType("sqlite_vec")
+        module.__spec__ = ModuleSpec("sqlite_vec", None)
+        module.load = load
+        monkeypatch.setitem(sys.modules, "sqlite_vec", module)
+        monkeypatch.setattr("pyrite.services.embedding_service.is_available", lambda: True)
+
+    def test_a_load_that_raises_reaches_the_warning_from_a_real_db(self, tmp_path, monkeypatch):
+        """#606's "fails today": nothing here sets `vec_load_error` by hand. The
+        loader raises while a real `PyriteDB` opens, and the text has to travel
+        connection -> search service -> the warning a user reads."""
+
+        def load(_conn):
+            raise RuntimeError("dlopen(vec0.dylib): incompatible architecture")
+
+        self._installed_sqlite_vec(monkeypatch, load)
+        db = PyriteDB(tmp_path / "second.db")
+        try:
+            assert db.vec_available is False
+            trace, warnings = self._trace(db, "semantic")
+        finally:
+            db.close()
+        assert trace["reason"] == "semantic_sqlite_vec_not_loaded", trace
+        assert "RuntimeError: dlopen(vec0.dylib): incompatible architecture" in warnings[0]
+        assert "use a Python whose sqlite3 allows extensions" not in warnings[0]
+
+    def test_a_sqlite3_without_enable_load_extension_keeps_its_remedy(self, tmp_path, monkeypatch):
+        """The one failure a different Python fixes still says so (#606's
+        acceptance), beside the exception that proves it. The real loader runs
+        against a connection that has no `enable_load_extension`, as on a
+        Python built without `--enable-loadable-sqlite-extensions`."""
+        from pyrite.storage.connection import ConnectionMixin
+
+        class NoLoadableExtensions:
+            def __init__(self, conn):
+                self._conn = conn
+
+            def __getattr__(self, name):
+                if name == "enable_load_extension":
+                    return object.__getattribute__(self, name)  # the genuine AttributeError
+                return getattr(self._conn, name)
+
+        real_load_extensions = ConnectionMixin._load_extensions
+
+        def load_extensions(self):
+            real_conn = self._raw_conn
+            self._raw_conn = NoLoadableExtensions(real_conn)
+            try:
+                real_load_extensions(self)
+            finally:
+                self._raw_conn = real_conn
+
+        monkeypatch.setattr(ConnectionMixin, "_load_extensions", load_extensions)
+        self._installed_sqlite_vec(monkeypatch, lambda conn: conn.load_extension("vec0"))
+        db = PyriteDB(tmp_path / "second.db")
+        try:
+            assert isinstance(db.vec_load_error, AttributeError), db.vec_load_error
+            trace, warnings = self._trace(db, "semantic")
+        finally:
+            db.close()
+        assert trace["reason"] == "semantic_sqlite_vec_not_loaded", trace
+        assert "AttributeError" in warnings[0] and "enable_load_extension" in warnings[0]
+        assert "use a Python whose sqlite3 allows extensions" in warnings[0]
+
+    @pytest.mark.parametrize(
+        ("error", "names_the_python"),
+        [
+            # What CPython raises when SQLite refuses: `enable_load_extension`
+            # ("Error enabling load extension") and `load_extension` on a
+            # connection where loading is off ("not authorized").
+            (sqlite3.OperationalError("Error enabling load extension"), True),
+            (sqlite3.OperationalError("not authorized"), True),
+            (sqlite3.NotSupportedError("extension loading is not supported"), True),
+            (AttributeError("no load_extension", name="load_extension"), True),
+            # The same types for another reason are not that failure: the type
+            # name alone does not earn the remedy.
+            (sqlite3.OperationalError("dlopen(vec0.dylib): no such file"), False),
+            (AttributeError("module has no attribute 'load'", name="load"), False),
+            (OSError("vec0.dll is not a valid Win32 application"), False),
+        ],
+    )
+    def test_only_a_refused_extension_load_names_the_python(
+        self, monkeypatch, error, names_the_python
+    ):
+        from pyrite.services.embedding_service import semantic_unavailable
+
+        self._installed_sqlite_vec(monkeypatch, lambda conn: None)
+        code, cause, remedy = semantic_unavailable(False, error)
+        assert code == "sqlite_vec_not_loaded"
+        assert f"{type(error).__name__}: {error}" in cause
+        assert ("use a Python whose sqlite3 allows extensions" in remedy) is names_the_python
 
     def test_package_missing(self, indexed, monkeypatch):
         db = indexed[1]
