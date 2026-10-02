@@ -12,9 +12,10 @@ status: proposed
 priority: high
 effort: L
 rank: 0
+milestone: "0.25.9"
 ---
 
-Proposed. The condition is met: the full-corpus results of the spike `spike-which-embedding-setup-finds-the-links-people-already-made` confirm its interim finding (2026-10-02). Not yet in a milestone; that is the maintainer's call.
+Proposed. The condition is met: the full-corpus results of the spike `spike-which-embedding-setup-finds-the-links-people-already-made` confirm its interim finding (2026-10-02). Milestone 0.25.9 (maintainer, 2026-10-02).
 
 ## Problem
 

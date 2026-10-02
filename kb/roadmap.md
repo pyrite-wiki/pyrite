@@ -498,6 +498,9 @@ index match the files and reports duplicates, pinned by invariant tests.
 
 - The single reconcile of ADR-0038: #6, #7, #484, #485, #486, #487, #495.
 - Storage-touching: every theme gets a cold read. It may need both weeks.
+- Embed the whole entry in passages by default (added 2026-10-02, maintainer): backlog item
+  `embed-the-whole-entry-in-passages-by-default`, on the evidence of the embedding spike.
+  It changes the index, so it needs a groom and probably an ADR first.
 
 ## 0.26 — Multi-user you can trust (after 0.25.9; still alpha)
 
