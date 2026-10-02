@@ -622,13 +622,20 @@ class TestTheTraceAndTheWarningAgree:
         import importlib.util
 
         db = indexed[1]
-        if importlib.util.find_spec("sqlite_vec") is None:
-            pytest.skip("sqlite-vec package not installed")
+        load_error = RuntimeError("simulated sqlite-vec loader failure")
         monkeypatch.setattr("pyrite.services.embedding_service.is_available", lambda: True)
         monkeypatch.setattr(db, "vec_available", False, raising=False)
+
+        real_find_spec = importlib.util.find_spec
+        monkeypatch.setattr(
+            "importlib.util.find_spec",
+            lambda name, *args: object() if name == "sqlite_vec" else real_find_spec(name, *args),
+        )
+        monkeypatch.setattr(db, "vec_load_error", load_error, raising=False)
         trace, warnings = self._trace(db, "semantic")
         assert trace["reason"] == "semantic_sqlite_vec_not_loaded", trace
-        assert "did not load" in warnings[0]
+        assert "RuntimeError: simulated sqlite-vec loader failure" in warnings[0]
+        assert "probably built without" not in warnings[0]
 
     def test_package_missing(self, indexed, monkeypatch):
         db = indexed[1]
@@ -706,21 +713,31 @@ class TestIndexEmbedAccounting:
         assert "2 entries in other KBs" in out, out
         assert _vector_count(db) == 4
 
-    def test_sqlite_vec_that_will_not_load_gets_the_search_wording(self, tmp_path, monkeypatch):
+    def test_sqlite_vec_that_will_not_load_gets_the_search_wording(self, monkeypatch):
         import importlib.util
 
         from typer.testing import CliRunner
 
-        from pyrite.cli import app
+        from pyrite.cli import app, index_commands
 
-        if importlib.util.find_spec("sqlite_vec") is None:
-            pytest.skip("sqlite-vec package not installed")
-        _, db = _embed_env(tmp_path, monkeypatch, 1)
+        load_error = OSError("simulated loadable-extension failure")
+        db = type(
+            "UnavailableDB",
+            (),
+            {"vec_available": False, "vec_load_error": load_error},
+        )()
+        real_find_spec = importlib.util.find_spec
+        monkeypatch.setattr(
+            importlib.util,
+            "find_spec",
+            lambda name, *args: object() if name == "sqlite_vec" else real_find_spec(name, *args),
+        )
         monkeypatch.setattr("pyrite.services.embedding_service.is_available", lambda: True)
-        monkeypatch.setattr(db, "vec_available", False, raising=False)
+        monkeypatch.setattr(index_commands, "get_config_and_db", lambda: (None, db))
         out = CliRunner().invoke(app, ["index", "embed"]).output
-        flat = " ".join(out.split())  # the error wraps at the terminal width
-        assert "did not load" in flat, out
+        flat = " ".join(out.split())
+        assert "OSError: simulated loadable-extension failure" in flat, out
+        assert "probably built without" not in flat, out
         assert "pip install" not in flat, out
 
 

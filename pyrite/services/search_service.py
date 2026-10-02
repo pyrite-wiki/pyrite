@@ -710,7 +710,9 @@ class SearchService:
         # that can only come back empty. Without the extra or the sqlite-vec
         # extension the leg cannot run, and that is a degraded answer, so it is
         # named (#43), not returned as a silent [].
-        if unavailable := semantic_unavailable(self.db.vec_available):
+        if unavailable := semantic_unavailable(
+            self.db.vec_available, getattr(self.db, "vec_load_error", None)
+        ):
             code, cause, remedy = unavailable
             if trace is not None:
                 trace["semantic_skip"] = code

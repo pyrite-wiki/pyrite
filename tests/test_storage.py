@@ -2381,5 +2381,75 @@ class TestTransactionMode:
             db.close()
 
 
+class TestVecExtensionLoadFailure:
+    def test_load_error_is_preserved_and_extension_loading_is_disabled(self, monkeypatch, caplog):
+        import sys
+        from types import ModuleType
+
+        from pyrite.storage.connection import ConnectionMixin
+
+        load_error = OSError("simulated sqlite-vec load failure")
+        sqlite_vec = ModuleType("sqlite_vec")
+
+        def fail_load(_connection):
+            raise load_error
+
+        sqlite_vec.load = fail_load
+
+        class RawConnection:
+            def __init__(self):
+                self.extension_loading = []
+
+            def enable_load_extension(self, enabled):
+                self.extension_loading.append(enabled)
+                if not enabled:
+                    raise RuntimeError("simulated cleanup failure")
+
+        class TestConnection(ConnectionMixin):
+            pass
+
+        connection = TestConnection()
+        connection._raw_conn = RawConnection()
+        monkeypatch.setitem(sys.modules, "sqlite_vec", sqlite_vec)
+
+        with caplog.at_level(logging.INFO, logger="pyrite.storage.connection"):
+            connection._load_extensions()
+
+        assert connection.vec_available is False
+        assert connection._raw_conn.extension_loading == [True, False]
+        assert connection.vec_load_error is load_error
+        assert "OSError" in caplog.text
+        assert str(load_error) in caplog.text
+
+    def test_success_clears_error_and_disables_extension_loading(self, monkeypatch):
+        import sys
+        from types import ModuleType
+
+        from pyrite.storage.connection import ConnectionMixin
+
+        sqlite_vec = ModuleType("sqlite_vec")
+        sqlite_vec.load = lambda _connection: None
+
+        class RawConnection:
+            def __init__(self):
+                self.extension_loading = []
+
+            def enable_load_extension(self, enabled):
+                self.extension_loading.append(enabled)
+
+        class TestConnection(ConnectionMixin):
+            pass
+
+        connection = TestConnection()
+        connection._raw_conn = RawConnection()
+        monkeypatch.setitem(sys.modules, "sqlite_vec", sqlite_vec)
+
+        connection._load_extensions()
+
+        assert connection.vec_available is True
+        assert connection.vec_load_error is None
+        assert connection._raw_conn.extension_loading == [True, False]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

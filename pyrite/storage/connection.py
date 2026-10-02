@@ -287,15 +287,43 @@ class ConnectionMixin:
     def _load_extensions(self):
         """Try to load sqlite-vec extension for vector search."""
         self.vec_available = False
+        self.vec_load_error: Exception | None = None
         try:
             import sqlite_vec
+        except Exception as exc:
+            self.vec_load_error = exc
+            logger.info(
+                "sqlite-vec extension not available: %s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            return
 
+        load_error = None
+        try:
             self._raw_conn.enable_load_extension(True)
             sqlite_vec.load(self._raw_conn)
-            self._raw_conn.enable_load_extension(False)
-            self.vec_available = True
-        except (ImportError, Exception):
-            logger.info("sqlite-vec extension not available")
+        except Exception as exc:
+            load_error = exc
+        finally:
+            try:
+                self._raw_conn.enable_load_extension(False)
+            except Exception as exc:
+                # Keep the load failure: it explains why vector search is
+                # unavailable, while this cleanup failure is secondary.
+                if load_error is None:
+                    load_error = exc
+
+        if load_error is not None:
+            self.vec_load_error = load_error
+            logger.info(
+                "sqlite-vec extension not available: %s: %s",
+                type(load_error).__name__,
+                load_error,
+            )
+            return
+
+        self.vec_available = True
 
     def _run_migrations(self):
         """Run any pending database migrations using legacy MigrationManager."""

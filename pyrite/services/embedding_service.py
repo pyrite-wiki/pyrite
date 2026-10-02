@@ -30,13 +30,17 @@ def is_available() -> bool:
         return False
 
 
-def semantic_unavailable(vec_available: bool) -> tuple[str, str, str] | None:
+def semantic_unavailable(
+    vec_available: bool, vec_load_error: Exception | None = None
+) -> tuple[str, str, str] | None:
     """Why semantic search cannot run here, or None when it can.
 
     Returns ``(code, cause, remedy)``. The one source of this wording: `search`
     puts it in a warning and in the trace's ``reason``, `index embed` in its
     error, so the three never disagree. The install line only fits a missing
-    package, not an extension that is installed but would not load.
+    package, not an extension that is installed but would not load. When the
+    SQLite connection supplies the loader exception, use it instead of guessing
+    at a local SQLite build limitation.
     """
     import importlib.util
 
@@ -53,6 +57,12 @@ def semantic_unavailable(vec_available: bool) -> tuple[str, str, str] | None:
             "sqlite_vec_missing",
             "the sqlite-vec package is not installed",
             "install with `pip install pyrite[semantic]`",
+        )
+    if vec_load_error is not None:
+        return (
+            "sqlite_vec_not_loaded",
+            f"the sqlite-vec extension failed to load ({type(vec_load_error).__name__}: {vec_load_error})",
+            "resolve the sqlite-vec load error and try again",
         )
     return (
         "sqlite_vec_not_loaded",

@@ -309,7 +309,7 @@ def index_embed(
 
     config, db = get_config_and_db()
 
-    if unavailable := semantic_unavailable(db.vec_available):
+    if unavailable := semantic_unavailable(db.vec_available, getattr(db, "vec_load_error", None)):
         # The same cause and remedy `search` gives (one function), not an
         # install hint for an extension that is installed but would not load.
         _, cause, remedy = unavailable
