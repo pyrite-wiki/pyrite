@@ -1069,3 +1069,25 @@ def test_an_explicit_created_at_assignment_still_reaches_the_file(tmp_path):
     assert "2030-01-02 03:04:05+00:00" in out.read_text(encoding="utf-8"), (
         "an explicit created_at assignment was swallowed by the verbatim rule"
     )
+
+
+def test_repository_save_preserves_body_line_matching_frontmatter_key(tmp_path):
+    """A body line can look like frontmatter without being duplicate metadata."""
+    from pyrite.storage.repository import KBRepository
+
+    kb_path = tmp_path / "body-line"
+    events_path = kb_path / "events"
+    events_path.mkdir(parents=True)
+    body = "title: An intentional first body line\nThis text must survive a save."
+    path = events_path / "body-first-line.md"
+    path.write_text(
+        "---\nid: body-first-line\ntype: event\ntitle: Meeting\n---\n\n" + body + "\n",
+        encoding="utf-8",
+    )
+    repo = KBRepository(KBConfig(name="body-line", path=kb_path))
+
+    entry = repo.load_entry_from_file(path)
+    saved_path = repo.save(entry, keep_filename=True)
+    saved_entry = repo.load_entry_from_file(saved_path)
+
+    assert saved_entry.body == body
