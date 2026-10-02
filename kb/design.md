@@ -10,9 +10,8 @@ tags:
 
 # Pyrite's design, on one page
 
-> Draft for the maintainer's approval (2026-10-02). It states the design as
-> decided that day. Where the code does not match yet, the last section says
-> so. Read this before a ticket, a groom or a review; judge the work against
+> Approved by the maintainer, 2026-10-02. Where the code does not match yet,
+> the last section says so. Read this before a ticket, a groom or a review; judge the work against
 > it.
 
 ## What Pyrite is
@@ -95,6 +94,30 @@ contracts are alpha.
 | Review of changes | ADR-0044 (proposed) |
 | What the alpha supports | `alpha-supported-surface` (proposed) |
 | Releases | [[roadmap]], "The release line" |
+
+### Topic maps
+
+One short page per area: the design today, invariants a test could check, the
+ADRs in reading order, where the code starts, the tests that pin it, and the
+known gaps. Cite one in a groom's "contracts that apply". For the lessons
+behind the principles, and one row per ADR, see [[adr-learnings]].
+
+| Question | Map |
+|---|---|
+| How is an entry written, read, identified? May a hook change it? | [[map-write-read-path-and-identity]] |
+| What can I delete and rebuild? What is derived? | [[map-index-database-and-derived-state]] |
+| Who can add a KB? Where does config, a secret, state live? | [[map-registry-config-and-state]] |
+| Who can do what? What does a refusal look like? | [[map-who-can-do-what]] |
+| Where does a user's write land? How does it reach main? | [[map-collaboration-and-review-of-changes]] |
+| How do I declare a type, a field, an enum, a state machine? | [[map-types-and-schema]] |
+| How do plugins add a type? What is the plugin contract? | [[map-plugins-protocols-and-extensions]] |
+| What does search accept? Does a write wait for embedding? | [[map-search-and-embeddings]] |
+| What do the CLI, MCP, REST and web return? How large? | [[map-surfaces-and-output-contracts]] |
+| How are entries linked? What is a collection or an edge? | [[map-links-blocks-collections-and-formats]] |
+| Which LLM providers? Who enforces a rule when another agent runs the work? | [[map-ai-integration-and-agent-runs]] |
+| How does an agent claim work? Tasks, kanban, gates? | [[map-work-coordination-and-agent-teams]] |
+| What test fails if code goes around this rule? | [[map-validation-qa-and-pinning-tests]] |
+| How does a change reach `dev` and `main`? Where do I file it? | [[map-development-process-and-releases]] |
 
 Working in a guest file: [[pyrite-is-a-guest-in-state-it-does-not-own]].
 `pyrite sw adrs` lists every ADR; `pyrite sw components` maps the code.
