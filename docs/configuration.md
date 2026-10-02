@@ -13,6 +13,9 @@ config file at all.
 | `PYRITE_DATA_DIR` | `~/.pyrite` | Directory for the index (`index.db`) and cloned repos (`repos/`); overrides `settings.index_path` in `config.yaml`. When set it is also where `config.yaml` is read from, ahead of `PYRITE_CONFIG_DIR`. Set this in containers and point a volume at it. |
 | `PYRITE_STATIC_DIR` | `<checkout>/web/dist` | Built web UI to serve at `/`. Needed when the package is installed into site-packages rather than run from a checkout. |
 | `PYRITE_BRANDING_DIR` | built-in | Folder of white-label branding assets (see `deploy/branding-examples/`) |
+| `PYRITE_LOG_LEVEL` | `WARNING` (`INFO` for `pyrite serve` and `pyrite-server`) | Level of the log lines on stderr: `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`. `-v` (INFO) and `-vv` (DEBUG) on the command line, in any position, beat it. |
+
+A command prints its result and nothing else by default; `-v` or `-vv` (or `PYRITE_LOG_LEVEL`) adds progress lines on stderr, never on stdout. A `-v` that is an option's value, as in `pyrite create -b -v`, is the value; `--` ends the scan.
 
 **Which directory holds `config.yaml`**, first match wins:
 

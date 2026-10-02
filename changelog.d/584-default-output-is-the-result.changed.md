@@ -18,3 +18,11 @@
 - `pyrite index embed` counts the entries it settled from the embed queue as
   embedded instead of skipped: after writes it printed `Embedded: 0, Skipped: 4`
   for a run that added four vectors. (#584)
+- A `-v` that is an option's value (`pyrite create -b -v`) stays the value, as
+  before; it is not read as the verbosity flag. `pyrite search --debug` now
+  reports the same skip cause as the warning (`reason=semantic_extra_missing`,
+  and `actual=none` for a semantic search that did not run). `pyrite index
+  embed --kb A` says how many entries in other KBs the queue drain also
+  embedded, and its sqlite-vec message no longer suggests installing a package
+  that is already installed. `PYRITE_LOG_LEVEL` and `-v` are in
+  `docs/configuration.md`. (#584)
