@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import KBConfig, PyriteConfig, load_config
+from ..exceptions import FrontmatterError
 from ..models import Entry
 from ..models.core_types import id_text
 from ..models.protocols import (
@@ -276,6 +277,10 @@ class ReconcilePlan:
     duplicates: list[dict[str, Any]] = field(default_factory=list)
     malformed: list[dict[str, str]] = field(default_factory=list)
     holders: dict[str, list[_Claim]] = field(default_factory=dict)
+    # path -> "ExcType: detail" for the ``malformed`` files that failed for a
+    # reason other than their frontmatter (undecodable, unreadable): health
+    # reports these as ``unreadable_files`` (#593). Still listed in ``malformed``.
+    unreadable: dict[str, str] = field(default_factory=dict)
     walked: int = 0
 
 
@@ -774,6 +779,11 @@ class IndexManager:
                     # An unparseable file is content drift, not a Pyrite bug:
                     # reported in the result, one log line, and it holds no id.
                     plan.malformed.append({"path": str(file_path), "error": str(e)})
+                    if (
+                        not isinstance(e, FrontmatterError)
+                        and file_path.name != "__collection.yaml"
+                    ):
+                        plan.unreadable[str(file_path)] = f"{type(e).__name__}: {e}"
                     logger.warning("Could not parse %s: %s", file_path, e)
                     continue
                 claim = _Claim(rel, file_path, id_text(entry.id), stat, entry)
@@ -1100,6 +1110,11 @@ class IndexManager:
 
         Returns dict with:
         - missing_files: entries in DB but file not found
+        - unreadable_files: files that exist but could not be loaded for a
+          non-frontmatter error, with path and exception detail
+        - orphaned_entries: indexed IDs absent from readable files even though
+          their indexed path still exists; replacement_id identifies an ID
+          now found at that same path
         - unindexed_files: files not in DB
         - stale_entries: entries whose file's mtime or size differs from the
           values recorded when it was indexed (``_file_changed``, the
@@ -1135,6 +1150,8 @@ class IndexManager:
         """
         health = {
             "missing_files": [],
+            "unreadable_files": [],
+            "orphaned_entries": [],
             "unindexed_files": [],
             "stale_entries": [],
             "content_changed": [],
@@ -1189,7 +1206,23 @@ class IndexManager:
             plan = self.plan_reconcile(kb, force=True, indexed=indexed)
             health["duplicates"].extend(plan.duplicates)
             for bad in plan.malformed:
-                health["malformed_frontmatter"].append({"kb": kb.name, **bad})
+                if bad["path"] in plan.unreadable:
+                    # A present file that cannot be decoded/read is neither
+                    # missing nor malformed frontmatter: report its actual
+                    # failure so health cannot silently pass (#593).
+                    health["unreadable_files"].append(
+                        {"kb": kb.name, "path": bad["path"], "error": plan.unreadable[bad["path"]]}
+                    )
+                else:
+                    health["malformed_frontmatter"].append({"kb": kb.name, **bad})
+            # Ids the files hold this pass tell an indexed id replaced in place
+            # from a file that simply moved. A file whose id could not be read
+            # is not an orphan. Same file set as sync (list_all_files).
+            loaded_ids = set(plan.holders)
+            loaded_ids_by_path = {
+                str(c.path): entry_id for entry_id, cs in plan.holders.items() for c in cs
+            }
+            uninspectable_paths = {bad["path"] for bad in plan.malformed}
 
             for entry_id, claim in sorted(plan.winners.items()):
                 file_path = claim.path
@@ -1225,12 +1258,19 @@ class IndexManager:
                             {"kb": kb.name, "id": entry_id, "path": str(file_path)}
                         )
 
-            # Check for missing files
+            # Check for missing files and IDs superseded at an existing path.
             for entry_id, info in indexed.items():
-                if not Path(info["file_path"]).exists():
+                indexed_path = Path(info["file_path"])
+                if not indexed_path.exists():
                     health["missing_files"].append(
                         {"kb": kb.name, "id": entry_id, "path": info["file_path"]}
                     )
+                elif entry_id not in loaded_ids and str(indexed_path) not in uninspectable_paths:
+                    orphan = {"kb": kb.name, "id": entry_id, "path": info["file_path"]}
+                    replacement_id = loaded_ids_by_path.get(str(indexed_path))
+                    if replacement_id and replacement_id != entry_id:
+                        orphan["replacement_id"] = replacement_id
+                    health["orphaned_entries"].append(orphan)
 
         # Count broken links (targets that don't resolve to entries)
         broken_sql = """
