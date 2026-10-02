@@ -269,8 +269,16 @@ This amends ADR-0038 (below). The rest follows:
   file with no `id:`. The release notes and the upgrade doc give the steps:
   list the files, and pin each one's current id by adding an `id:` line
   before upgrading, so nothing that links to it changes. This is a task an
-  agent can do. Most KBs have no such files. The warning is advice, not a
-  requirement: a file with no `id:` still works, by its path.
+  agent can do. Most KBs have no such files.
+- **An `id:` is part of Pyrite's contract with a file** (maintainer,
+  2026-10-02: "pyrite does have a contract with your files, but most of that
+  contract is explicit. I think an ID is worth having in the contract"). The
+  contract is written down and small: YAML frontmatter, and an `id:`. A file
+  with no `id:` is outside the contract: it is still read and addressed by
+  its path, so nothing breaks, and it is reported as missing an id until one
+  is added. Pyrite does not add the id as a side effect of another write;
+  adding it is an explicit command or a hand edit. What else the contract
+  names (`type`, `title`) is a question for the maintainer.
 - `rename` of an entry that has an `id:` changes the pin; of one that has none
   is a move of the file (the path is the identity). Both rewrite inbound links
   by decision 12.
