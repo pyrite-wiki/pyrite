@@ -124,7 +124,7 @@ that process, not authorization.
 | REST: 135 operations (111 under `/api`, 19 under `/auth`; measured 2026-09-25) in 24 endpoint modules | experimental. The web UI is its client | `tests/test_api_*`, the characterization goldens, `tests/e2e/test_rest_flow.py`. Not covered by the audit beyond `GET`s |
 | Web UI, single-user parts: entry browse and edit, search, graph, timeline, tags, daily, QA | experimental (**question 2**) | 11 Playwright specs in `web/e2e`; the audit built it from a clone: it needs `npm run build`, and is not in the tag install. Open: "New collection" returns 500 (#480), no delete in the UI (#117), light mode unreadable (#12), "which KB am I in" (#10) |
 | Web UI, multi-user parts: login, register, changes, merge queue, settings for accounts | experimental | the multi-user issue cluster (#544, #517, #518, #516, #539, #540, #521, #565, #404, #572) belongs to 0.26 |
-| `/site` static HTML cache and the sitemap | experimental | `tests/test_site_*` and the site-cache tests |
+| `/site` static HTML cache and the sitemap (the built-in site generator, [[adr-0023]]) | experimental (decided by the maintainer, 2026-10-02: publishing is an export; the built-in site is not part of the supported alpha) | `tests/test_site_*` and the site-cache tests |
 | AI endpoints (`/api/ai/*`, bring your own key) | experimental | `tests/test_ai_endpoints.py` |
 | Live updates (`/ws`) | experimental | `tests/test_websocket_*` |
 | Streamlit (`ui_streamlit.py`, `pyrite/ui`) | unsupported | root-level clutter in the audit |
