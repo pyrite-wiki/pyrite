@@ -73,17 +73,40 @@ When triggered, the `_maybe_validate()` helper runs structural QA and appends `q
 
 ## Configuration and Startup
 
-- CLI: `pyrite mcp --tier write` or `pyrite-admin mcp`
-- Entry point: `main()` in `mcp_server.py` parses `--tier` flag
-- Default tier: `read`
+- CLI: `pyrite mcp --tier <tier>` or `pyrite-admin mcp --tier <tier>`; both default to `write` (ADR-0006) and reject an unknown tier with `INVALID_TIER`. `pyrite-admin mcp` defaulted to `admin` until #582.
+- Entry point: `main()` in `mcp_server.py` (`python -m pyrite.server.mcp_server`, no installed script) parses `--tier`, default `write` since #582; so does the separately published `pyrite-mcp serve` (`pyrite-mcp/`). The `PyriteMCPServer(tier="read")` constructor default is library API, and every caller passes a tier.
 - The server creates its own `PyriteDB` and `KBService` instances
 - `close()` must be called to release the DB connection
 
 ## Consumers
 
-- Claude Code via `.claude-plugin/plugin.json` MCP server config
-- Claude Desktop / Cline via manual MCP server setup
-- Any MCP-compatible client over stdio
+`pyrite mcp-setup` (`pyrite/cli/mcp_setup_command.py`, #582) points the `pyrite` entry at this install where each client reads it:
+
+- Claude Code, user scope: `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`). Claude Code rewrites that file continually, so Pyrite reads it to decide and changes it only through `claude mcp add -s user` / `claude mcp remove -s user`. There is no update subcommand: a change is `remove` then `add`.
+- Claude Code, project scope (`--project`): `./.mcp.json`.
+- Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS), `%APPDATA%\Claude\claude_desktop_config.json` (Windows). There is no official Linux build; `$XDG_CONFIG_HOME/Claude/` (default `~/.config/Claude/`) is the path unofficial builds use.
+- Any MCP-compatible client over stdio: `--config <file>`, or the snippet the command prints when it finds no client.
+
+**The rule** (maintainer, 2026-10-02; see [[pyrite-is-a-guest-in-state-it-does-not-own]]): do what was asked, lose nothing, report it. What to do is decided from the file as it is. Nothing records what Pyrite wrote, and nothing is inferred from what an entry looks like.
+
+| The client has | `mcp-setup` does |
+|---|---|
+| no `pyrite` entry | writes the default one: this install's `pyrite` by absolute path (the interpreter's scripts directory, never `PATH`), `mcp --tier <tier>`, default `write` |
+| an entry equal in what was asked (the command path; the tier when `--tier` is given) | nothing: no write, no `claude` call |
+| an entry that differs in what was asked | changes that field; the report holds old and new |
+| an entry carrying env, extra args, a tier nobody asked to change, unknown keys | keeps them |
+| an entry whose args do not begin with `mcp`, or that is not an object with a string `command` and string `args` | stops (`ENTRY_NOT_MCP`, `ENTRY_MALFORMED`) and names `--force` |
+| other servers and keys, `pyrite-read`/`pyrite-write`/`pyrite-admin` | never touched; the trio is reported |
+
+`--force` discards the entry and writes the default one; the report names what was discarded. Env values are never printed, only keys.
+
+Env: a new Desktop or `--config` entry pins `PYRITE_CONFIG_DIR`/`PYRITE_DATA_DIR` when the shell sets them explicitly, because a GUI-launched server gets no shell environment and an undefined cwd and would load `~/.pyrite`. A repo-local `.pyrite/` is never pinned (an explicit config dir is trusted). Env is never added to an entry that exists: the report names the mismatch and the line to add. Claude Code entries carry no env; Claude Code inherits the shell.
+
+Files Pyrite writes (`.mcp.json`, Desktop, `--config`): parsed strictly (invalid JSON, comments, NaN, a duplicate key anywhere, a non-object `mcpServers` are `CONFIG_INVALID`), changed in the one entry, and written back in the file's own indent unit, line ending, BOM, surrounding whitespace and ASCII-only-ness. Before the replace the output is parsed again with numbers as `Decimal` and compared with the original outside the entry, in order; a difference is `CONFIG_NOT_PRESERVED` and nothing is written. The file is re-read right before the replace (`CONFIG_CHANGED` if it moved). The write is `pyrite/utils/atomic_write.py`; where that helper would write in place (a hard-linked file, a directory it cannot write, another user's file) or the file is read-only, the run stops with `CONFIG_NOT_WRITABLE`. A symlink is written through. A file a client wrote comes back byte for byte outside the entry. A hand-formatted file keeps its values, but one-line arrays open out, mixed indentation becomes uniform, and escapes and numbers may be respelled (`\/`, `\uXXXX`, `1.10`).
+
+Claude Code user scope: `claude` is never run when `~/.claude.json` exists and is empty or unparseable (`CLIENT_CONFIG_UNSAFE`; the client would replace the file). An entry with env or unknown keys whose path must change stops before any call (`CLIENT_ENTRY_NEEDS_HAND_EDIT`) with the commands to run by hand, because `add` cannot write those back. The entry is re-read before the first call. A call is judged by its exit code and, when that is not 0 (a failure, a timeout, a `claude` that cannot be run), by reading the file back, never by message text. If `add` fails after `remove`, the old entry is added back. If that fails too the client is `failed`, and `removed` and `by_hand` hold what was there and the command that restores it.
+
+Each client is all or nothing on its own, and any exception is that client's report line (`INTERNAL_ERROR`), so one client stopping never hides what happened to another. Output is one JSON document by default (`--format rich` or `PYRITE_FORMAT=rich` for text; no `-f`): per client `status` (`created`, `unchanged`, `changed`, `stopped`, `failed`), `changes`, `kept`, `discarded`, `stale`, `notes` and, when stopped, `error_code`, `error`, `suggestion`. Exit 1 unless every client ended up pointing at this install; 2 for an unknown `--client` or options that contradict. Tests: `tests/test_mcp_setup_reads_back.py` (hand-written fixtures, byte comparisons, a stub `claude` that can fail, hang and vanish, and one test against the real `claude` in a temp `HOME`).
 
 ## Related
 
