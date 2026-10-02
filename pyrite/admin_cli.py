@@ -21,6 +21,7 @@ from .config import (
     load_config,
     save_config,
 )
+from .logging import configure_entry_point_logging, logging_epilog
 from .utils.errors import PyriteCLIGroup
 
 app = typer.Typer(
@@ -28,6 +29,7 @@ app = typer.Typer(
     name="pyrite-admin",
     help="Pyrite admin CLI — KB management, indexing, repos, auth, config",
     no_args_is_help=True,
+    epilog=logging_epilog("pyrite-admin"),
 )
 console = Console()
 
@@ -666,8 +668,6 @@ def user_create(
 
 
 def main():
-    from .logging import configure_entry_point_logging
-
     configure_entry_point_logging()
     app()
 

@@ -16,6 +16,7 @@ from .cli.context import open_index_db
 from .cli.search_commands import register_search_command
 from .config import CONFIG_FILE, load_config
 from .exceptions import PyriteError
+from .logging import configure_entry_point_logging, logging_epilog
 from .services.access_policy import UNSCOPED
 from .services.kb_service import KBService
 
@@ -23,6 +24,7 @@ app = typer.Typer(
     name="pyrite-read",
     help="Pyrite read-only CLI — search, browse, retrieve (safe for AI agents)",
     no_args_is_help=True,
+    epilog=logging_epilog("pyrite-read"),
 )
 console = Console()
 # Errors/status print here so machine formats keep stdout clean and parseable.
@@ -343,8 +345,6 @@ def show_config():
 
 
 def main():
-    from .logging import configure_entry_point_logging
-
     configure_entry_point_logging()
     app()
 

@@ -69,11 +69,24 @@ def settle_embed_queue(db: PyriteDB, *, label: str = "") -> int:
 
     Returns the number of entries embedded.
     """
+    return sum(settle_embed_queue_by_kb(db, label=label).values())
+
+
+def settle_embed_queue_by_kb(db: PyriteDB, *, label: str = "") -> dict[str, int]:
+    """`settle_embed_queue`, returning the entries embedded per KB (``{kb: n}``).
+
+    The count is what the worker reports it wrote, not an inference from the
+    vector table: `upsert_embedding` reuses an entry's rowid, so a re-embedded
+    edit is invisible to a before/after diff, and backends do not share a rowid
+    space. `pyrite index embed` needs the per-KB split to credit the drain to
+    the KB in scope (#584). Never raises.
+    """
     try:
         worker = EmbeddingWorker(db)
         if not worker.has_pending():
-            return 0
+            return {}
         embedded = worker.drain()
+        by_kb = dict(worker.embedded_by_kb)
         if embedded:
             logger.info(
                 "Embedded %d queued entr%s%s",
@@ -89,26 +102,10 @@ def settle_embed_queue(db: PyriteDB, *, label: str = "") -> int:
                 remaining["pending"],
                 remaining["failed"],
             )
-        return embedded
+        return by_kb
     except Exception:
         logger.warning("Embed queue drain failed; entries stay queued", exc_info=True)
-        return 0
-
-
-def settle_embed_queue_in_scope(db: PyriteDB, kb_name: str | None = None) -> tuple[int, int]:
-    """`settle_embed_queue`, also saying how many of the new vectors are in ``kb_name``.
-
-    Returns ``(embedded, embedded_in_scope)``. `pyrite index embed` needs the
-    second number: its sweep (`embed_all`) counts a vector the drain just added
-    as *skipped*, so the report credits the drain to Embedded (#584).
-    """
-    before = db.backend.get_embedded_rowids()
-    embedded = settle_embed_queue(db)
-    if not embedded:
-        return 0, 0
-    added = db.backend.get_embedded_rowids() - before
-    in_scope = {r["rowid"] for r in db.backend.get_entries_for_embedding(kb_name)}
-    return embedded, len(added & in_scope)
+        return {}
 
 
 class EmbeddingWorker:
@@ -124,6 +121,8 @@ class EmbeddingWorker:
         self.db = db
         self.max_attempts = max_attempts
         self._embedding_svc = None
+        #: Entries embedded by the last `drain`, per KB (see `settle_embed_queue_by_kb`).
+        self.embedded_by_kb: dict[str, int] = {}
         self._ensure_table()
 
     def _ensure_table(self):
@@ -214,6 +213,7 @@ class EmbeddingWorker:
                     (entry_id, kb_name),
                 )
                 success_count += 1
+                self.embedded_by_kb[kb_name] = self.embedded_by_kb.get(kb_name, 0) + 1
             except Exception as e:
                 new_attempts = attempts + 1
                 new_status = "failed" if new_attempts >= self.max_attempts else "pending"
@@ -260,6 +260,7 @@ class EmbeddingWorker:
         Returns the number of entries successfully embedded.
         """
         total = 0
+        self.embedded_by_kb = {}
         for _ in range(max_batches):
             processed = self.process_batch(batch_size=batch_size)
             if processed == 0:

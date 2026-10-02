@@ -118,6 +118,15 @@ def split_verbosity(argv: list[str]) -> tuple[int, list[str]]:
     return count, rest
 
 
+def logging_epilog(prog: str) -> str:
+    """Help text for an entry point whose parser has no `-v` option of its own."""
+    return (
+        f"Logging: warnings only by default. `-v` (INFO) or `-vv` (DEBUG), in any position, "
+        f"shows progress on stderr; {LOG_LEVEL_ENV}=INFO does the same without a flag. "
+        f"Use `{prog} ... -- -v` to pass a literal -v."
+    )
+
+
 def configure_entry_point_logging(default: LogLevel = "WARNING") -> None:
     """The one place a command-line entry point decides what reaches the terminal.
 

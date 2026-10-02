@@ -5,6 +5,7 @@ Unified search operations with FTS5 query sanitization and hybrid search.
 Used by API, CLI, and UI layers.
 """
 
+import importlib.util
 import logging
 import re
 import sqlite3
@@ -696,16 +697,22 @@ class SearchService:
         # named (#43), not returned as a silent [].
         if not is_available() or not self.db.vec_available:
             if warnings is not None:
-                cause = (
-                    "sentence-transformers is not installed"
-                    if not is_available()
-                    else "the sqlite-vec extension did not load"
-                )
                 outcome = "only the keyword leg ran" if keyword_leg_ran else "it returned nothing"
-                warnings.append(
-                    f"semantic leg skipped: {cause}, so {outcome}; "
-                    "install with `pip install pyrite[semantic]`"
-                )
+                # Each cause names its own remedy: the install line only fits
+                # a missing package, not an extension that failed to load.
+                if not is_available():
+                    cause = "sentence-transformers is not installed"
+                    remedy = "install with `pip install pyrite[semantic]`"
+                elif importlib.util.find_spec("sqlite_vec") is None:
+                    cause = "the sqlite-vec package is not installed"
+                    remedy = "install with `pip install pyrite[semantic]`"
+                else:
+                    cause = "the sqlite-vec extension is installed but did not load"
+                    remedy = (
+                        "this Python's sqlite3 is probably built without loadable-extension "
+                        "support; use a Python whose sqlite3 allows extensions"
+                    )
+                warnings.append(f"semantic leg skipped: {cause}, so {outcome}; {remedy}")
             return []
 
         svc = EmbeddingService(self.db)

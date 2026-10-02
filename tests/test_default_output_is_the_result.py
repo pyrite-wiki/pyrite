@@ -279,6 +279,24 @@ class TestSemanticWithoutTheExtraSaysSo:
         assert "pip install pyrite[semantic]" in warnings[0]
         assert "only the keyword leg ran" in warnings[0]
 
+    def test_an_extension_that_will_not_load_does_not_get_the_install_line(
+        self, indexed, monkeypatch
+    ):
+        """sqlite-vec is installed but the interpreter cannot load extensions:
+        `pip install pyrite[semantic]` would not help, so it is not the advice."""
+        import importlib.util
+
+        db = indexed[1]
+        if importlib.util.find_spec("sqlite_vec") is None:
+            pytest.skip("sqlite-vec package not installed")
+        monkeypatch.setattr("pyrite.services.embedding_service.is_available", lambda: True)
+        monkeypatch.setattr(db, "vec_available", False, raising=False)
+        warnings: list[str] = []
+        _search(db, "semantic", warnings)
+        assert len(warnings) == 1
+        assert "did not load" in warnings[0]
+        assert "pip install" not in warnings[0]
+
     def test_keyword_mode_stays_silent(self, indexed, no_extra):
         warnings: list[str] = []
         _search(indexed[1], "keyword", warnings)
@@ -437,8 +455,23 @@ class TestIndexEmbedReportsTheVectorsItAdded:
 
         _, db = _embed_env(tmp_path, monkeypatch, 3)
         db.backend.upsert_embedding("e0", "t", [0.5] * 384)  # already current
+        db._raw_conn.execute("DELETE FROM embed_queue WHERE entry_id = 'e0'")
         result = CliRunner().invoke(app, ["index", "embed"])
         assert "Embedded: 2" in result.output and "Skipped: 1" in result.output, result.output
+        assert _vector_count(db) == 3
+
+    def test_a_re_embedded_edit_counts_though_it_adds_no_vector(self, tmp_path, monkeypatch):
+        """An edit re-embeds an entry that already has a vector (same rowid), so
+        a before/after diff of the vector table sees nothing; the worker's own
+        count does."""
+        from typer.testing import CliRunner
+
+        from pyrite.cli import app
+
+        _, db = _embed_env(tmp_path, monkeypatch, 3)
+        db.backend.upsert_embedding("e0", "t", [0.5] * 384)  # stale vector, row still queued
+        result = CliRunner().invoke(app, ["index", "embed"])
+        assert "Embedded: 3" in result.output and "Skipped: 0" in result.output, result.output
         assert _vector_count(db) == 3
 
     def test_force_does_not_double_count(self, tmp_path, monkeypatch):

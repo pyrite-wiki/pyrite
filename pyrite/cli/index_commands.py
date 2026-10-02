@@ -321,9 +321,10 @@ def index_embed(
     # Before embed_all, not after: a queued row marks an entry whose body
     # changed, and only the drain re-embeds it. embed_all(force=False) skips
     # anything that already has a vector, stale or not.
-    from ..services.embedding_worker import settle_embed_queue_in_scope
+    from ..services.embedding_worker import settle_embed_queue_by_kb
 
-    drained, from_queue = settle_embed_queue_in_scope(db, kb_name)
+    by_kb = settle_embed_queue_by_kb(db)
+    from_queue = sum(by_kb.values()) if kb_name is None else by_kb.get(kb_name, 0)
 
     svc = EmbeddingService(db, model_name=config.settings.embedding_model)
 
@@ -349,12 +350,8 @@ def index_embed(
     console.print("\n[green]Embedding complete.[/green]")
     console.print(f"  Embedded: {embedded}")
     console.print(f"  Skipped: {skipped}")
-    if drained and not force:
-        console.print(
-            f"  [dim]Of the embedded, {from_queue} came from the embed queue"
-            + (f"; {drained - from_queue} more in other KBs" if drained > from_queue else "")
-            + "[/dim]"
-        )
+    if from_queue and not force:
+        console.print(f"  [dim]Of the embedded, {from_queue} came from the embed queue[/dim]")
     if stats.get("truncated"):
         # Surface silent body-truncation count so operators know
         # how many entries had only a prefix embedded (Tier A r2100).
