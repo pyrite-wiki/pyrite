@@ -29,6 +29,12 @@ that discriminates between the answers, not the cleanest.
   `RATELIMIT_ENABLED`? can a subagent dispatch a subagent?) — verify it
   with a five-line experiment and record the answer where the next agent will
   look.
+- **The scope or approach is risky**, though criteria exist (`mcp-setup`
+  writing other programs' config files, #612: groomed at 5 files, built at
+  15, two failed cold reads) — build each candidate quick and dirty against
+  real inputs, not fixtures you wrote, and put on the ticket which survived
+  and why, the footprint you measured, the surprises, and every place the
+  invariant must hold.
 - **Feasibility is in doubt** ("can the release script wait on CI for a SHA
   from `gh`?") — the answer "no, because X" is a complete deliverable.
 

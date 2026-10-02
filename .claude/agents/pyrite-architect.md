@@ -57,7 +57,11 @@ Write these sections, in this order, into the ticket.
    docs, tests to model on.
 7. **Checked versus assumed.** What you ran and what you inferred; one line
    "this groom is wrong if ..."; a predicted footprint (files and rough size),
-   scored after merge.
+   scored after merge. If you cannot state the footprint with confidence, or
+   the change writes state Pyrite does not own, changes a storage or index
+   format, or rests on a tool's unverified behaviour, name a spike even
+   though you can write criteria: say which candidates it should build and
+   on what real inputs.
 
 Then one block per theme. A theme is one coherent change, complete on its own.
 

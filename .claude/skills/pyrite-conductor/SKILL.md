@@ -110,7 +110,21 @@ unverified — it names a **spike** instead: dispatch `pyrite-spike` (one
 tick, its own throwaway worktree, no PR) and its only deliverable is the
 ticket changed: acceptance criteria that did not exist, an ADR draft marked
 `proposed`, or "not feasible, because". A spike that returns prose and no
-changed ticket is redispatched with the question sharpened, once. The conductor supplies the ordering itself from the
+changed ticket is redispatched with the question sharpened, once.
+
+A spike is also the answer to **risk**, when criteria can be written but the
+scope or the approach is uncertain: the change writes state Pyrite does not
+own, changes a storage or index format, has two plausible designs, depends on
+a tool nobody has verified, or has a footprint the architect cannot state
+with confidence. The spike builds each candidate quick and dirty against real
+inputs and the ticket gains what it learned: which candidate survived and
+why, the measured footprint, the surprises, the places the invariant must
+hold. The code is discarded; a worker starts from the ticket, not from the
+spike's branch. A PR sent back to the architect for its footprint can get the
+same answer. (#612, 2026-10-02: criteria existed, so it went straight to a
+worker; the risk surfaced in two cold reads at seven times the groomed size.)
+
+The conductor supplies the ordering itself from the
 roadmap's definition of done (what unblocks what, what the release owes) and
 turns the result into specs ([dispatch.md](dispatch.md)). Add a separate PM
 read only when a tick demonstrably chose the wrong thing; until then it is
