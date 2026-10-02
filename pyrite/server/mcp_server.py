@@ -1383,7 +1383,7 @@ class PyriteMCPServer:
 
         entry = written.entry
         result: dict[str, Any] = {
-            "updated": True,
+            "updated": written.changed,
             "entry_id": entry.id,
             "file_path": str(entry.file_path) if entry.file_path else "",
         }
