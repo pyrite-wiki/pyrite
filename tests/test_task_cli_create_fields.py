@@ -462,3 +462,24 @@ def test_task_create_field_refuses_timestamps(task_cli_env, key):
     )
     assert result.exit_code != 0
     assert key in result.output.lower()
+
+
+@pytest.mark.cli
+def test_task_create_validation_error_lists_only_declared_types(task_cli_env):
+    """An enforced KB reports its own type vocabulary for task create."""
+    kb_config = task_cli_env["config"].get_kb("test-tasks")
+    kb_config.kb_yaml_path.write_text(
+        "name: test-tasks\ntypes:\n  note:\n    description: Notes\nvalidation:\n  enforce: true\n",
+        encoding="utf-8",
+    )
+    kb_config.invalidate_schema_cache()
+
+    result = runner.invoke(
+        app,
+        ["task", "create", "Bad type", "-k", "test-tasks", "--format", "json"],
+    )
+
+    assert result.exit_code != 0
+    error = json.loads(result.output)["error"]
+    assert "expected ['note']" in error
+    assert "'document'" not in error

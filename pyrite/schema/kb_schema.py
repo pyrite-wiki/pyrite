@@ -267,11 +267,14 @@ class KBSchema:
         if not type_schema:
             # Unknown type is OK if validation isn't enforced
             if self.validation.get("enforce", False):
+                expected_types = self.declared_types()
+                if not expected_types:
+                    expected_types = list(CORE_TYPES.keys()) + list(self.types.keys())
                 errors.append(
                     {
                         "field": "entry_type",
                         "rule": "known_type",
-                        "expected": list(CORE_TYPES.keys()) + list(self.types.keys()),
+                        "expected": expected_types,
                         "got": entry_type,
                     }
                 )
