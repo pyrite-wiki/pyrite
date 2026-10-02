@@ -127,10 +127,17 @@ def test_a_terminal_sees_the_same_quiet_as_a_pipe(tmp_path):
         os.close(slave)
         slave = None
         os.set_blocking(master, False)
-        try:
-            seen = os.read(master, 65536)
-        except BlockingIOError:
-            seen = b""
+        seen = b""
+        while True:
+            try:
+                chunk = os.read(master, 65536)
+            except BlockingIOError:
+                break  # nothing more buffered (macOS)
+            except OSError:
+                break  # EIO: the slave is closed and the buffer is drained (Linux)
+            if not chunk:
+                break
+            seen += chunk
     finally:
         os.close(master)
         if slave is not None:
