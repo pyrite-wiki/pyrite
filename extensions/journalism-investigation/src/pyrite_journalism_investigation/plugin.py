@@ -34,6 +34,8 @@ from .validators import validate_investigation_entry
 
 logger = logging.getLogger(__name__)
 
+_EXPERIMENTAL_NOTICE = "EXPERIMENTAL: Unsupported until the 0.28 alpha plugin/API contract."
+
 
 def _safe_error(e: Exception) -> str:
     """The message an MCP create tool may show for ``e``.
@@ -878,6 +880,8 @@ class JournalismInvestigationPlugin:
                 },
                 "handler": self._mcp_ftm_import,
             }
+        for tool in tools.values():
+            tool["description"] = f"{_EXPERIMENTAL_NOTICE} {tool['description']}"
         return tools
 
     # =========================================================================

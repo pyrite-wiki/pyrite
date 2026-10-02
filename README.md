@@ -212,13 +212,18 @@ Six extensions ship:
 | **zettelkasten** *(example plugin)* | CEQRC maturity workflow | Notes with maturity progression |
 | **encyclopedia** *(example plugin)* | Articles with review workflow | Articles, reviews, voting |
 | **social** *(example plugin)* | Engagement tracking | Social interactions |
-| **journalism-investigation** | Investigative research | Sources, claims, actors, evidence chains |
+| **journalism-investigation** *(experimental; unsupported)* | Investigative research | Sources, claims, actors, evidence chains |
 | **cascade** | Timeline research | Timeline events, actors, capture lanes |
 
 `zettelkasten`, `encyclopedia` and `social` are example plugins: reference
 code showing how a Pyrite plugin adds entry types, CLI commands, MCP tools
 and a preset, not supported products. See each extension's `README.md` for
 what it demonstrates.
+
+**EXPERIMENTAL: Unsupported until the 0.28 alpha plugin/API contract.**
+The journalism-investigation MCP tools are not a supported product surface.
+
+Tracked issues: [#92](https://github.com/pyrite-wiki/pyrite/issues/92), [#93](https://github.com/pyrite-wiki/pyrite/issues/93), [#94](https://github.com/pyrite-wiki/pyrite/issues/94), and [#98](https://github.com/pyrite-wiki/pyrite/issues/98).
 
 ## Web UI
 
