@@ -40,23 +40,41 @@ Three KBs: about 3,600 long-form notes (median body about 9,000 characters, mean
 
 On the notes, today's default covers about 3% of the body text; 2% of notes fit whole.
 
-## Interim findings (2026-10-02, a 300-entry sample: indicative only)
+## Findings, full corpus (2026-10-02; final for `all-MiniLM-L6-v2`, keyword and hybrid)
 
-| Task | Whole entry in passages, same small model (MRR) | Keyword (MRR) | Today's default (MRR) |
+9,876 entries. Task A: article to the events it covers (92 queries). B: event to its article (218). C: note to the notes it links (500 sampled). Cells are recall@10 / MRR.
+
+| Setup | A | B | C |
 |---|---|---|---|
-| Article to events | 0.66 | 0.57 | 0.52 |
-| Event to article | 0.71 | 0.70 | 0.44 |
+| Today's default: title + summary + 500 characters, one vector | 0.301 / 0.405 | 0.566 / 0.467 | 0.223 / 0.406 |
+| Whole entry, one vector (the model stops at 256 tokens) | 0.330 / 0.431 | 0.622 / 0.505 | 0.260 / 0.456 |
+| 200-word passages, mean-pooled to one vector | 0.367 / 0.441 | 0.755 / 0.585 | 0.345 / 0.493 |
+| **200-word passages, best passage** | **0.460 / 0.524** | **0.819 / 0.716** | **0.437 / 0.595** |
+| Keyword (BM25) over the full text | 0.441 / 0.580 | 0.788 / 0.688 | 0.483 / 0.649 |
+| Hybrid: reciprocal-rank fusion of keyword and best passage | 0.456 / 0.519 | 0.829 / 0.716 | 0.491 / 0.642 |
 
-1. **Today's default came last on both tasks.**
-2. **The same small model over the whole entry beat it clearly,** with no change of model.
-3. **Keyword search is a hard baseline** on text full of names, case numbers and figures. Hybrid is the row to watch.
+1. **The same small model, given the whole entry in passages and scored by its best passage, beats today's default on every task.** MRR rises by +0.119, +0.249 and +0.190 (paired bootstrap 95% intervals all exclude zero); recall@10 roughly doubles on C.
+2. **One vector over more text does not.** `all-MiniLM-L6-v2` reads 256 tokens, so a whole-entry vector is still a truncated one: +0.026, +0.038 and +0.050 MRR, within noise on A and B. Raising `_MODEL_MAX_BODY_CHARS` for this model changes little.
+3. **Averaging the passages into one vector gives most of the gain away.** Best passage beats mean-pooling by +0.083, +0.131 and +0.102 MRR, all significant. The index has to hold several vectors per entry.
+4. **Keyword search alone beats today's default** by +0.175 to +0.244 MRR, and beats the best small-model setup at the top of the ranking on C (+0.054, significant). Embeddings find more at depth: recall@50 is higher than keyword's by 0.101 on A and 0.036 on B.
+5. **Hybrid ranks best overall.** It keeps keyword's top ranks on B and C and lifts recall@50 over keyword alone by +0.115, +0.021 and +0.051. On A its MRR is below keyword's (−0.061).
+6. **Details that matter less.** 100-word passages: within noise of 200, for 1.8 times the vectors. 400-word passages: truncated by this model, worse on B. Title prepended: consistently a little better, free. Splitting on headings first: a little better (significant on C) for 18% more vectors.
+7. **"Short" entries are not short for this model.** The events have a median body of about 2,000 characters, past its window, and passages beat one vector on them too. An entry fits in one vector only under about 190 words.
 
-Cost on that machine, seconds per 1,000 passages: `all-MiniLM-L6-v2` 22; `bge-small-en-v1.5` 60; `all-mpnet-base-v2` about 220; `modernbert-embed-base` about 430. The small model covers the whole test corpus in roughly half an hour on four CPUs; the largest would take most of a working day. A default has to run on a contributor's laptop.
+### Cost (4 vCPU, no GPU, OpenVINO backend)
+
+| | Today | 200-word passages |
+|---|---|---|
+| Vectors stored | 9,876 | 73,638 (7.5 per entry; 14.6 per long note, 95th percentile 44) |
+| Index size, float32 x 384 | 15 MB | 113 MB |
+| Time to embed the corpus | 2.5 min | 27 min |
+
+Cost follows words, not entries: about 22 seconds per 1,000 passages. The torch backend Pyrite ships measured 1.3 to 2 times slower on the same CPU, so expect 35 to 55 minutes for a KB this size. A KB of short entries pays almost nothing extra.
 
 ## Still to come
 
-- The full-corpus scorecard, with the larger models on a stratified sample.
-- Phase 2: the winning setup inside Pyrite itself, on SQLite and on Postgres with pgvector: whether Pyrite's own search reproduces the measured result, and index build time, index size, query time and peak memory at this scale, which Pyrite has not been run at.
+- Rows for `bge-small-en-v1.5`, `all-mpnet-base-v2` and `modernbert-embed-base` (running), which decide whether there is a long-form option worth its cost. Measured seconds per 1,000 passages: 64, 174 and about 430.
+- Phase 2: the recommended setup inside Pyrite itself, on SQLite and on Postgres with pgvector: whether Pyrite's own search reproduces the measured result, and index build time, index size, query time and peak memory at this scale, which Pyrite has not been run at.
 
 ## Deliverables
 
@@ -66,4 +84,4 @@ Cost on that machine, seconds per 1,000 passages: `all-MiniLM-L6-v2` 22; `bge-sm
 
 ## Limits of the evidence
 
-One corpus, one domain (legal, procurement and local-government text), English, CPU only. The interim numbers are from a small sample.
+One corpus, one domain (legal, procurement and local-government text), English, CPU only. Unlinked pairs are not known to be unrelated, so every setup is under-credited. Link ids that are also ordinary words could not be stripped (1.7% of held-out pairs), which favours keyword search slightly. Query time and index build inside Pyrite are not measured yet.
