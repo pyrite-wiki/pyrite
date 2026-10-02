@@ -1,0 +1,1 @@
+- **`pyrite qa stale` and `pyrite qa compact` no longer crash on start (#574).** Both used the database context manager as if it were the database. They now run inside `with cli_context()`, so the database is open for the report and closed afterwards.

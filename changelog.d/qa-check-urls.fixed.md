@@ -1,1 +1,0 @@
-- **`pyrite qa check-urls`, `qa stale`, and `qa compact` enter their CLI database context correctly (#574).** These reports previously treated a context manager as the yielded configuration and database, so they crashed before running. They now use the shared context manager and close the database after collecting results.

@@ -208,14 +208,6 @@ ALLOWLIST: dict[tuple[str, str], tuple[int, str]] = {
         2,
         _INDEX + " (is_empty / index_all, #380)",
     ),
-    ("pyrite/cli/qa_commands.py::qa_compact", ".db"): (
-        1,
-        "QAService(ctx.config, ctx.db); " + _FOLLOW,
-    ),
-    ("pyrite/cli/qa_commands.py::qa_stale", ".db"): (
-        1,
-        "QAService(ctx.config, ctx.db); " + _FOLLOW,
-    ),
     ("pyrite/cli/db_commands.py::<module>", "sqlite3"): (
         1,
         "backup/restore of the index file; " + _FOLLOW,
@@ -226,7 +218,7 @@ ALLOWLIST: dict[tuple[str, str], tuple[int, str]] = {
         "sqlite3 integrity check; " + _FOLLOW,
     ),
 }
-ALLOWLIST_SIZE = 35  # lower it with every entry removed; never raise it
+ALLOWLIST_SIZE = 33  # lower it with every entry removed; never raise it
 
 SURFACES = (
     "pyrite/server/",
