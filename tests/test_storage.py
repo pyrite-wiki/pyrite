@@ -716,7 +716,9 @@ class TestIndexManager:
         health = setup["index_mgr"].check_health()
 
         assert health["missing_files"] == []
-        assert [item["path"] for item in health["malformed_frontmatter"]] == [str(target)]
+        # KBConfig resolves its path, so reported paths are resolved; the
+        # fixture's tmp path may sit under a symlink (/var -> /private/var).
+        assert [item["path"] for item in health["malformed_frontmatter"]] == [str(target.resolve())]
 
     def test_check_health_reports_only_deleted_file_as_missing(self, setup):
         setup["index_mgr"].index_kb("test-kb")
@@ -726,8 +728,42 @@ class TestIndexManager:
 
         health = setup["index_mgr"].check_health()
 
-        assert [item["path"] for item in health["missing_files"]] == [str(deleted)]
-        assert [item["path"] for item in health["malformed_frontmatter"]] == [str(malformed)]
+        assert [item["path"] for item in health["missing_files"]] == [str(deleted.resolve())]
+        assert [item["path"] for item in health["malformed_frontmatter"]] == [
+            str(malformed.resolve())
+        ]
+
+    def test_check_health_names_the_right_files_under_a_symlinked_kb_path(self, tmp_path):
+        """A KB configured through a symlink (as /var -> /private/var on macOS)
+        reports each file once, in the right list, by its resolved path."""
+        real = tmp_path / "real"
+        real.mkdir()
+        link = tmp_path / "link"
+        link.symlink_to(real, target_is_directory=True)
+        kb_config = KBConfig(name="sym-kb", path=link / "kb", kb_type="events", description="")
+        kb_config.path.mkdir()
+        repo = KBRepository(kb_config)
+        for i in range(3):
+            repo.save(EventEntry.create(date=f"2025-01-{10 + i:02d}", title=f"E {i}", body="b"))
+        db_path = tmp_path / "index.db"
+        db = PyriteDB(db_path)
+        config = PyriteConfig(knowledge_bases=[kb_config], settings=Settings(index_path=db_path))
+        mgr = IndexManager(db, config)
+        try:
+            mgr.index_kb("sym-kb")
+            malformed, deleted, _ = sorted(kb_config.path.rglob("*.md"))
+            malformed.write_text('---\ntitle: "unterminated\n---\n', encoding="utf-8")
+            deleted.unlink()
+
+            health = mgr.check_health()
+
+            assert [i["path"] for i in health["missing_files"]] == [str(deleted)]
+            assert [i["path"] for i in health["malformed_frontmatter"]] == [str(malformed)]
+            assert Path(health["missing_files"][0]["path"]).name == deleted.name
+            assert Path(health["malformed_frontmatter"][0]["path"]).name == malformed.name
+            assert not str(deleted).startswith(str(link))  # the symlink was resolved away
+        finally:
+            db.close()
 
     def test_check_health_does_not_call_unreadable_file_missing(self, setup, monkeypatch):
         setup["index_mgr"].index_kb("test-kb")
