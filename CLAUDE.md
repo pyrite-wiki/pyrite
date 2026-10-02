@@ -2,6 +2,10 @@
 
 Pyrite is a knowledge infrastructure platform — Knowledge-as-Code for humans and AI agents.
 
+## Read the design first
+
+`kb/design.md` is Pyrite's design on one page: nine principles, the questions to ask of any ticket or change, and where the code does not match yet. Read it before a ticket, a groom or a review, and judge the work against it. Its topic maps lead to the ADRs.
+
 ## Using the KB for Project Context
 
 This project has a comprehensive knowledge base in `kb/` indexed by Pyrite's own tools. **Use the CLI to get context before and during work** — it's faster and cheaper than reading files manually.

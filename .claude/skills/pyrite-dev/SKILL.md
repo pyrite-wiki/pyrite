@@ -43,6 +43,9 @@ pwd                           # a worktree under ../pyrite-wt/, with its own .ve
 
 ## Before you build
 
+0. Read `kb/design.md`. A ticket's suggested fix is evidence, not the plan: if
+   the work as described runs against a principle there, stop and say so on
+   the ticket.
 1. Read the ticket and its `## Groom` (`gh issue view N`, `pyrite get <id> -k
    pyrite`), then the contracts and pointers it names. With no groom, find
    them: `pyrite search "<topic>" -k pyrite`, `pyrite sw adrs`,
