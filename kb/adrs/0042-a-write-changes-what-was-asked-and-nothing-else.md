@@ -263,7 +263,14 @@ This amends ADR-0038 (below). The rest follows:
   every entry or database row that referred to the old one (links, stars,
   reviews, `entry_version` rows). A command applies the rewrite on request:
   links in files by decision 12; database rows by re-keying. Nothing is
-  rewritten silently. Old ids do not keep resolving (**question 5**).
+  rewritten silently. Old ids do not keep resolving (decided 2026-10-02).
+- **Files with no `id:` are warned about, and the upgrade notes say how to
+  migrate them** (maintainer, 2026-10-02). `index health` and `qa` list every
+  file with no `id:`. The release notes and the upgrade doc give the steps:
+  list the files, and pin each one's current id by adding an `id:` line
+  before upgrading, so nothing that links to it changes. This is a task an
+  agent can do. Most KBs have no such files. The warning is advice, not a
+  requirement: a file with no `id:` still works, by its path.
 - `rename` of an entry that has an `id:` changes the pin; of one that has none
   is a move of the file (the path is the identity). Both rewrite inbound links
   by decision 12.
@@ -722,6 +729,12 @@ are in this ADR's scope and spike 2's list.
 ## Questions for the maintainer
 
 Ranked by what they block.
+
+**Decided by the maintainer, 2026-10-02** (the items are kept below for
+their reasoning): question 4, the id is the path without `.md`, with `/`
+separators (`posts/intro`); question 5, old title-derived ids do not keep
+resolving, files with no `id:` are warned about, and the upgrade notes give
+the migration steps (decision 5).
 
 1. **`updated_at`.** Keep stamping it where the file already has the key and
    something was written, never stamp it, or stamp only on request?

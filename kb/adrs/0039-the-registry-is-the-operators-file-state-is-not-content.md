@@ -143,7 +143,12 @@ database on purpose: a star file would tell every reader of a shared
 repository what an investigator is watching; a review changes the blob hash it
 is keyed by.
 
-**8. A change reaches every reader the next time it decides.** Each process
+**8. Edit and restart** (decided by the maintainer, 2026-10-02). A process
+reads the config file once, at start, and builds one immutable snapshot; the
+operator restarts the server and any running MCP process to apply an edit,
+and the docs say so. Hot reload is not built now; the paragraph below
+describes it and is kept as the design to return to if restarting proves a
+burden. *Not decided for now:* each process
 stats the file (`mtime_ns`, size) at the start of a decision and re-reads it
 when it changed, building one immutable snapshot. When the snapshot changes,
 the process diffs old against new and publishes one `KBRegistryChanged` per KB
@@ -352,6 +357,11 @@ that harder.
 ## Questions for the maintainer
 
 Ranked by what they block.
+
+**Decided by the maintainer, 2026-10-02** (the item is kept below for its
+reasoning): question 1, edit and restart. Editing the config is a documented
+operator task; no change detection is built now (decision 8). R5's
+"no restart" clause does not apply.
 
 1. **Hot reload or restart.** Does a running server and a running MCP process
    pick up an edit of the file's KB list, policy and grants (decision 8), or is

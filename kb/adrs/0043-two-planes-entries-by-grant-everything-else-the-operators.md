@@ -321,6 +321,10 @@ accepted.
 
 Ranked by what they block.
 
+**Decided by the maintainer, 2026-10-02** (the item is kept below for its
+reasoning): question 1, both. The holder of the operator credential is the
+operator, and so is an account the operator's file lists as an operator.
+
 1. **Which HTTP principals are the operator.** The holder of the operator
    credential, and also an instance-admin account (an account the operator's
    file lists as an operator)? *Recommended: both*, so the web's administration

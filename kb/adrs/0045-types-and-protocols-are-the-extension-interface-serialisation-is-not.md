@@ -369,6 +369,11 @@ line and no other.
 
 Ranked by what they block.
 
+**Decided by the maintainer, 2026-10-02** (the item is kept below for its
+reasoning): question 1, ADR-0014 governs. Protocols are structural and the
+schema is the authority, so a type defined only in `kb.yaml` is a full
+citizen; the mixins stay as in-Python conveniences.
+
 1. **Reconciling ADR-0014 and ADR-0017.** Does ADR-0014 govern (structural;
    the schema tier is the authority; protocols defined as data and documented
    as `protocol` entries; mixins kept as in-Python conveniences), or ADR-0017
