@@ -3,8 +3,13 @@
 # extension installed, a repo-local .pyrite/config.yaml so `pyrite -k pyrite`
 # means THIS checkout's kb/, the index, and the e2e ports.
 #
-#   scripts/setup-checkout.sh [dir]        # default: the checkout this script is in
+#   scripts/setup-checkout.sh [--if-changed] [dir]   # default: the checkout this script is in
 #   PYRITE_SETUP_EXTRAS=cli,dev scripts/setup-checkout.sh
+#
+# --if-changed skips the installs when .venv already holds an install made from
+# the same pyproject.toml files, lockfile and extras (a stamp inside .venv
+# records them); the config and index steps always run. The cloud session
+# hook uses it to start fast from a cached environment.
 #
 # Shared by scripts/new-worktree.sh (a laptop worktree) and
 # scripts/cloud-session-start.sh (a Claude Code on the web session), so the
@@ -12,6 +17,8 @@
 # Git hooks are the caller's job -- where they install from differs.
 set -euo pipefail
 
+if_changed=0
+if [ "${1:-}" = "--if-changed" ]; then if_changed=1; shift; fi
 wt_dir="$(cd "${1:-$(dirname "$0")/..}" && git rev-parse --show-toplevel)"
 extras="${PYRITE_SETUP_EXTRAS:-all}"
 label="$(git -C "$wt_dir" branch --show-current 2>/dev/null || true)"
@@ -30,7 +37,13 @@ cd "$wt_dir"
 #
 # The cost that IS real is worktree *count*. The conductor's health step reaps
 # a worktree once its PR merges.
-if command -v uv >/dev/null 2>&1; then
+# What an install is made from. cksum is POSIX, so it exists on a laptop and a VM.
+stamp="$( { cat pyproject.toml extensions/*/pyproject.toml uv.lock 2>/dev/null; echo "$extras"; } | cksum)"
+if [ "$if_changed" = 1 ] && [ -x .venv/bin/python ] \
+   && [ "$(cat .venv/.pyrite-install-stamp 2>/dev/null)" = "$stamp" ]; then
+  echo "setup-checkout: .venv matches pyproject/lock/extras; skipping installs"
+  stamp=""
+elif command -v uv >/dev/null 2>&1; then
   [ -x .venv/bin/python ] || uv venv -q .venv
   uv pip install -q --python .venv/bin/python -e ".[$extras]"
   for ext in extensions/*/; do
@@ -43,6 +56,9 @@ else
     [ -f "$ext/pyproject.toml" ] && .venv/bin/pip install -q -e "$ext"
   done
 fi
+# Written only after every install above succeeded (set -e): a half-finished
+# install leaves no stamp, so the next --if-changed run repeats it.
+[ -z "$stamp" ] || echo "$stamp" > .venv/.pyrite-install-stamp
 
 # A repo-local config so `pyrite -k pyrite` in this worktree means THIS
 # worktree's kb/, not the main checkout's (which is what ~/.pyrite registers).

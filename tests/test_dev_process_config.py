@@ -600,6 +600,282 @@ class TestCloudSessionSetup:
         assert ".pyrite-conductor/" in ignored, "the default log dir must be gitignored"
 
 
+class TestCloudEnvironment:
+    """The cloud environment is two halves (see scripts/cloud-env-setup.sh):
+
+    a setup script, pasted once into the environment, does the slow cacheable
+    install; the SessionStart hook does the cheap per-session step and starts
+    the Postgres container, so the Postgres conformance tests (skipped unless
+    PYRITE_TEST_PG_URL is set) run in cloud sessions with the image, user,
+    password and database CI uses. Everything here runs with a stubbed uv and
+    docker: no network, no Docker.
+    """
+
+    SETUP = REPO / "scripts" / "cloud-env-setup.sh"
+    PG = REPO / "scripts" / "cloud-postgres.sh"
+
+    @pytest.mark.parametrize("name", ["cloud-env-setup.sh", "cloud-postgres.sh"])
+    def test_script_is_present_executable_and_parses(self, name):
+        import os
+        import subprocess
+
+        script = REPO / "scripts" / name
+        assert script.exists()
+        assert os.access(script, os.X_OK), "must be executable"
+        subprocess.run(["bash", "-n", str(script)], check=True)
+
+    def test_postgres_image_and_credentials_match_ci(self, ci):
+        import re
+
+        service = ci["jobs"]["test"]["services"]["postgres"]
+        text = self.PG.read_text()
+
+        def value(name):
+            return re.search(rf'^{name}="([^"]*)"', text, re.M).group(1)
+
+        assert value("IMAGE") == service["image"]
+        assert value("PG_PASSWORD") == service["env"]["POSTGRES_PASSWORD"]
+        assert value("PG_DB") == service["env"]["POSTGRES_DB"]
+        # CI's URL is the one the tests read; the scripts must build the same one.
+        step_env = {
+            k: v
+            for step in ci["jobs"]["test"]["steps"]
+            for k, v in (step.get("env") or {}).items()
+            if k == "PYRITE_TEST_PG_URL"
+        }
+        ci_url = step_env["PYRITE_TEST_PG_URL"]
+        built = f"postgresql://{value('PG_USER')}:{value('PG_PASSWORD')}@localhost:5432/{value('PG_DB')}"
+        assert built == ci_url
+
+    # -- stubs ---------------------------------------------------------
+
+    @pytest.fixture
+    def fake_docker(self, tmp_path):
+        """A docker that records its calls; FAKE_PG_READY=1 makes pg_isready succeed."""
+        import stat
+
+        calls = tmp_path / "docker-calls.log"
+        path = tmp_path / "bin" / "docker"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(
+            "#!/usr/bin/env bash\n"
+            f'echo "$*" >> "{calls}"\n'
+            'case "$1" in\n'
+            "  info|pull|start|run) exit 0 ;;\n"
+            "  image) exit 1 ;;\n"
+            '  ps) [ "${FAKE_RUNNING:-0}" = 1 ] && echo abc123; exit 0 ;;\n'
+            '  exec) [ "${FAKE_PG_READY:-0}" = 1 ] ;;\n'
+            "esac\n"
+        )
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+        return path, calls
+
+    @pytest.fixture
+    def listener(self):
+        """Something listening on a free local port, standing in for Postgres."""
+        import socket
+
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(5)
+        yield sock.getsockname()[1]
+        sock.close()
+
+    def _start(self, fake_docker, port, **extra):
+        import os
+        import subprocess
+
+        docker, _ = fake_docker
+        env = {k: v for k, v in os.environ.items() if not k.startswith("PYRITE_")}
+        env.update(PYRITE_DOCKER=str(docker), PYRITE_PG_PORT=str(port), PYRITE_PG_WAIT="3")
+        env.update(extra)
+        return subprocess.run(
+            ["bash", str(self.PG), "start"], env=env, capture_output=True, text=True, timeout=60
+        )
+
+    def test_postgres_url_is_exported_only_when_the_database_is_reachable(
+        self, fake_docker, listener
+    ):
+        result = self._start(fake_docker, listener, FAKE_PG_READY="1")
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == (
+            f"export PYRITE_TEST_PG_URL=postgresql://postgres:postgres@localhost:{listener}/pyrite_test"
+        )
+
+    def test_postgres_that_never_comes_up_warns_and_exports_nothing(self, fake_docker, listener):
+        result = self._start(fake_docker, listener, FAKE_PG_READY="0")
+        assert result.returncode == 0, "a session must not fail to start because Postgres did"
+        assert result.stdout == ""
+        assert "postgres tests off" in result.stderr
+
+    def test_missing_docker_warns_and_exports_nothing(self, fake_docker, listener, tmp_path):
+        result = self._start(fake_docker, listener, PYRITE_DOCKER=str(tmp_path / "no-docker"))
+        assert result.returncode == 0
+        assert result.stdout == ""
+        assert "no docker" in result.stderr
+
+    def test_a_running_container_is_reused_not_started_again(self, fake_docker, listener):
+        _, calls = fake_docker
+        result = self._start(fake_docker, listener, FAKE_PG_READY="1", FAKE_RUNNING="1")
+        assert "PYRITE_TEST_PG_URL" in result.stdout
+        assert not any(line.startswith("run ") for line in calls.read_text().splitlines())
+
+    def test_opt_out_never_touches_docker(self, fake_docker, listener):
+        _, calls = fake_docker
+        result = self._start(fake_docker, listener, PYRITE_SETUP_POSTGRES="0", FAKE_PG_READY="1")
+        assert result.returncode == 0
+        assert result.stdout == ""
+        assert not calls.exists(), "opted out: not even `docker info`"
+
+    # -- the setup script, run twice in a scratch checkout ---------------
+
+    @pytest.fixture
+    def scratch_checkout(self, tmp_path, fake_docker):
+        """A tiny git checkout holding the real scripts, with a stub uv."""
+        import os
+        import shutil
+        import stat
+        import subprocess
+
+        repo = tmp_path / "checkout"
+        (repo / "scripts").mkdir(parents=True)
+        for name in ("cloud-env-setup.sh", "setup-checkout.sh", "cloud-postgres.sh"):
+            shutil.copy(REPO / "scripts" / name, repo / "scripts" / name)
+        (repo / "pyproject.toml").write_text("[project]\nname='x'\n")
+        (repo / "extensions" / "ext").mkdir(parents=True)
+        (repo / "extensions" / "ext" / "pyproject.toml").write_text("[project]\nname='e'\n")
+        (repo / "kb").mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+
+        uv_log = tmp_path / "uv-calls.log"
+        uv = fake_docker[0].parent / "uv"
+        uv.write_text(
+            "#!/usr/bin/env bash\n"
+            f'echo "$*" >> "{uv_log}"\n'
+            'if [ "$1" = venv ]; then\n'
+            "  mkdir -p .venv/bin\n"
+            "  for t in python pyrite pre-commit; do printf '#!/bin/sh\\nexit 0\\n' > .venv/bin/$t; chmod +x .venv/bin/$t; done\n"
+            "fi\n"
+            '[ "${FAKE_UV_FAIL:-0}" = 1 ] && [ "$1" = pip ] && exit 1\n'
+            "exit 0\n"
+        )
+        uv.chmod(uv.stat().st_mode | stat.S_IXUSR)
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("PYRITE_", "CLAUDE"))}
+        env["PATH"] = f"{uv.parent}:{env['PATH']}"
+        env["PYRITE_DOCKER"] = str(fake_docker[0])
+        env["PYRITE_REPO_DIR"] = str(repo)
+        return repo, env, uv_log
+
+    def _run_setup(self, repo, env, **extra):
+        import subprocess
+
+        return subprocess.run(
+            ["bash", str(repo / "scripts" / "cloud-env-setup.sh")],
+            cwd=repo,
+            env={**env, **extra},
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+    def test_setup_script_is_idempotent(self, scratch_checkout, fake_docker):
+        repo, env, uv_log = scratch_checkout
+        first = self._run_setup(repo, env)
+        assert first.returncode == 0, first.stderr
+        calls_after_first = uv_log.read_text().splitlines()
+        assert sum(c.startswith("venv") for c in calls_after_first) == 1
+        assert any("-e .[server,cli,ai,dev,postgres]" in c for c in calls_after_first)
+        assert any("extensions/ext/" in c for c in calls_after_first), "in-repo extensions"
+        assert (repo / ".venv" / ".pyrite-install-stamp").exists()
+        pulls = [c for c in fake_docker[1].read_text().splitlines() if c.startswith("pull")]
+        assert pulls == ["pull -q pgvector/pgvector:pg16"]
+
+        second = self._run_setup(repo, env)
+        assert second.returncode == 0, second.stderr
+        calls = uv_log.read_text().splitlines()
+        assert sum(c.startswith("venv") for c in calls) == 1, "the venv is reused, not rebuilt"
+        assert (repo / ".pyrite" / "config.yaml").exists()
+
+    def test_setup_script_exits_zero_when_an_install_fails(self, scratch_checkout):
+        # A non-zero exit fails the cloud session; the hook retries instead.
+        repo, env, _ = scratch_checkout
+        result = self._run_setup(repo, env, FAKE_UV_FAIL="1")
+        assert result.returncode == 0
+        assert "install failed" in result.stderr
+        assert not (repo / ".venv" / ".pyrite-install-stamp").exists(), (
+            "a failed install must not be stamped as done"
+        )
+
+    def test_setup_script_honours_the_postgres_opt_out(self, scratch_checkout, fake_docker):
+        repo, env, _ = scratch_checkout
+        result = self._run_setup(repo, env, PYRITE_SETUP_POSTGRES="0")
+        assert result.returncode == 0
+        assert not fake_docker[1].exists(), "opted out: no image pull"
+
+    def test_session_hook_reinstalls_only_when_the_install_inputs_changed(self, scratch_checkout):
+        import subprocess
+
+        repo, env, uv_log = scratch_checkout
+        self._run_setup(repo, env)
+        before = len(uv_log.read_text().splitlines())
+        hook_env = {**env, "CLAUDE_CODE_REMOTE": "true", "CLAUDE_PROJECT_DIR": str(repo)}
+        hook_env["PYRITE_SETUP_POSTGRES"] = "0"
+
+        def run_hook():
+            return subprocess.run(
+                ["bash", str(REPO / "scripts" / "cloud-session-start.sh")],
+                env=hook_env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+
+        result = run_hook()
+        assert result.returncode == 0, result.stderr
+        assert len(uv_log.read_text().splitlines()) == before, "nothing changed: no reinstall"
+        (repo / "pyproject.toml").write_text("[project]\nname='x'\ndependencies=['y']\n")
+        assert run_hook().returncode == 0
+        assert len(uv_log.read_text().splitlines()) > before, "pyproject changed: reinstall"
+
+    def test_session_hook_exports_the_url_through_the_env_file(
+        self, scratch_checkout, fake_docker, listener, tmp_path
+    ):
+        import subprocess
+
+        repo, env, _ = scratch_checkout
+        env_file = tmp_path / "claude-env"
+        hook_env = {
+            **env,
+            "CLAUDE_CODE_REMOTE": "true",
+            "CLAUDE_PROJECT_DIR": str(repo),
+            "CLAUDE_ENV_FILE": str(env_file),
+            "PYRITE_PG_PORT": str(listener),
+            "PYRITE_PG_WAIT": "3",
+            "FAKE_PG_READY": "1",
+        }
+        result = subprocess.run(
+            ["bash", str(REPO / "scripts" / "cloud-session-start.sh")],
+            env=hook_env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        lines = env_file.read_text().splitlines()
+        assert any(l.startswith('export PATH="') and ".venv/bin" in l for l in lines)
+        assert any("PYRITE_TEST_PG_URL=" in l and f":{listener}/pyrite_test" in l for l in lines)
+
+    def test_contributing_pastes_the_line_the_script_documents_and_names_the_opt_out(self):
+        line = "curl -fsSL https://raw.githubusercontent.com/pyrite-wiki/pyrite/dev/scripts/cloud-env-setup.sh | bash"
+        assert line in (REPO / "CONTRIBUTING.md").read_text()
+        assert line in self.SETUP.read_text()
+        assert "PYRITE_SETUP_POSTGRES=0" in (REPO / "CONTRIBUTING.md").read_text()
+
+    def test_session_hook_header_says_it_works_without_the_setup_script(self):
+        header = (REPO / "scripts" / "cloud-session-start.sh").read_text().split("set -euo")[0]
+        assert "no setup script ran" in header
+
+
 class TestGateJob:
     """One required check that always reports (ADR-0032 §2).
 

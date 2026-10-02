@@ -49,19 +49,40 @@ one step; `scripts/new-worktree.sh <branch>` creates a worktree and runs it.
 
 ### Developing in Claude Code on the web
 
-A cloud session at [claude.ai/code](https://claude.ai/code) sets itself up:
-the checked-in `.claude/settings.json` runs `scripts/cloud-session-start.sh`
-at session start, which installs pyrite and every extension into `.venv`,
-writes the KB config, syncs the index, installs the git hooks and puts
-`.venv/bin` on the session's `PATH`. It does nothing in a local session.
-The repo's skills (`pyrite-dev`, `kb`, `software-kb`, ...) and agents load
-as they do locally.
+A cloud session at [claude.ai/code](https://claude.ai/code) comes in two
+halves: a **setup script** you paste into the environment once (the slow part,
+cached as a snapshot), and a **SessionStart hook** in the checked-in
+`.claude/settings.json` (the cheap part, every session).
 
-- **Network:** the default "Trusted" level is enough (PyPI and npm are on it).
-- **Embeddings are off by default**: `sentence-transformers` pulls torch, and
-  its model host is not on the default allowlist; the tests that need it skip.
-  For the full install, set `PYRITE_SETUP_EXTRAS=all` in the cloud
-  environment's variables and add `huggingface.co` to its allowed domains.
+**Create the environment** (environment settings at claude.ai/code): keep the
+default "Trusted" network level, and paste this one line as the setup script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pyrite-wiki/pyrite/dev/scripts/cloud-env-setup.sh | bash
+```
+
+It builds `.venv` (pyrite and every in-repo extension), the pre-commit hook
+environments and pulls the Postgres image, in parallel (9 s on a laptop with a
+fast network), far inside Anthropic's five-minute cache limit. Skip it and sessions still work, only
+slower: the hook then does the install itself.
+
+**What the hook does** (`scripts/cloud-session-start.sh`; nothing outside a
+cloud session): reinstalls only if a `pyproject.toml` changed since the
+snapshot, writes `.pyrite/config.yaml` so `pyrite -k pyrite` means this
+checkout's `kb/`, syncs the index, installs the git hooks, puts `.venv/bin` on
+`PATH`, and starts Postgres.
+
+- **Postgres tests run here.** The hook starts a `pgvector/pgvector:pg16`
+  container (the image, user, password and database CI uses, so a cloud pass
+  predicts a CI pass) and exports `PYRITE_TEST_PG_URL` once it accepts
+  connections. If Docker or the container fails, the session starts anyway
+  with one warning and those tests skip. Set `PYRITE_SETUP_POSTGRES=0` in the
+  environment's variables to opt out. Details: `scripts/cloud-postgres.sh`.
+- **Embeddings are off by default**: `sentence-transformers` pulls torch; the
+  tests that need it skip. For them, set `PYRITE_SETUP_EXTRAS=all,postgres`
+  and add `huggingface.co` to the environment's allowed domains.
+- **The VM has 4 vCPUs and 16 GB RAM:** run one test suite at a time, with
+  `-n 4` (the pre-push hook already does).
 - **Frontend:** run `npm ci` in `web/` when your change touches it.
 - **Branches:** the session's own branch is fine for a PR to `dev`; name it
   `fix/*` or `feature/*` if you create one yourself. One session is one
