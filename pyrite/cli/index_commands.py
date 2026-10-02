@@ -334,7 +334,25 @@ def index_embed(
     # Before embed_all, not after: a queued row marks an entry whose body
     # changed, and only the drain re-embeds it. embed_all(force=False) skips
     # anything that already has a vector, stale or not.
-    from ..services.embedding_worker import settle_embed_queue_by_kb
+    from ..services.embedding_worker import EmbeddingWorker, settle_embed_queue_by_kb
+
+    queue_worker = EmbeddingWorker(db)
+    if queue_worker.has_pending():
+        queue_svc = queue_worker._get_embedding_svc()
+        if queue_svc is None:
+            typer.echo(
+                "Embedding service is unavailable. Check the semantic dependencies and "
+                "vector backend; queued entries remain pending without spending attempts."
+            )
+            return
+        if not queue_svc.prewarm(log_failure=False):
+            typer.echo(
+                f"Could not load the embedding model {queue_svc.model_name!r}. "
+                "Check the configured model and Hugging Face cache/network access. "
+                "Queued entries remain pending and no attempts were spent; rerun "
+                "pyrite index embed after restoring access."
+            )
+            return
 
     by_kb = settle_embed_queue_by_kb(db)
     from_queue = sum(by_kb.values()) if kb_name is None else by_kb.get(kb_name, 0)
