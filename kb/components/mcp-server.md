@@ -23,6 +23,14 @@ Each server instance runs at a single tier, which determines which tools are ava
 
 Tier is set at construction time via the `tier` parameter and validated against `VALID_TIERS`. Invalid tiers raise `ConfigError`.
 
+## The first call and the KB refusal
+
+`kb_orient` is the first call of a session. With no `kb_name` it answers from `KBService.orient_overview` with the KBs the caller may read; its handler takes `readable_kbs`, which is also what lets a scoped caller past the dispatcher's fail-closed rule for a call that names no KB. With a `kb_name` it answers from `KBService.orient`; `detail="brief"` drops the write-side schema blocks (`ai_instructions`, `evaluation_rubric`, `guidelines`, `goals`, and the top-level `guidelines`) but keeps `relationship_types`, and blocks a plugin adds (`get_orient_supplement`) are returned whole.
+
+A caller with a readable set is refused by `_kb_not_found` for any KB name outside that set, absent or private alike, before a handler runs, so one caller cannot tell the two apart. The code is `KB_NOT_FOUND` (with `legacy_error_code: NOT_FOUND` for 0.25.7 only). Handlers' own not-found answers are only ever reached for a name the caller may read, so they need not match it; several still say `NOT_FOUND` and move with the error-code sweep.
+
+The types orient and `kb_schema` list come from `KBSchema.declared_types()`, the rule the write path's `UNDECLARED_TYPE` refusal uses.
+
 ## Plugin Tool Merging
 
 After core tools are registered, `_register_plugin_tools()` calls `registry.get_all_mcp_tools(self.tier)` to collect plugin-provided tools. Plugin tools are merged into the same `self.tools` dict, making them indistinguishable from core tools to MCP clients. Plugins register tools via the `get_mcp_tools(tier)` protocol method. Plugin loading failures are silently caught to avoid breaking the server.

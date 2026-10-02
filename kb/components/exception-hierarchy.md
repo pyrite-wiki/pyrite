@@ -42,13 +42,15 @@ The REST API endpoints in `pyrite/server/endpoints/entries.py` use a consistent 
 
 | Exception(s) | HTTP Status | Error Code |
 |--------------|-------------|------------|
-| `KBNotFoundError`, `EntryNotFoundError` | 404 Not Found | `NOT_FOUND` |
+| `KBNotFoundError`, `EntryNotFoundError` | 404 Not Found | `NOT_FOUND` in these entry handlers (written by hand at each `except`); the class codes below are what everything else sends |
 | `KBReadOnlyError` | 403 Forbidden | `READ_ONLY` |
 | `ValidationError`, `PyriteError`, `ValueError` | 400 Bad Request | `CREATE_FAILED` / `UPDATE_FAILED` / `DELETE_FAILED` |
 
 This pattern is applied uniformly in the create, update, and delete entry handlers. Each handler wraps its service call in a try/except block that catches the three exception groups in order of specificity.
 
-In the MCP server, `PyriteError` is caught generically and returned as tool error text, since MCP does not use HTTP status codes.
+The code a class carries is its own `error_code` (ADR-0037): `KBNotFoundError` is `KB_NOT_FOUND`, `EntryNotFoundError` is `ENTRY_NOT_FOUND`. The KB-scoped REST routes (`api.kb_not_found`, `GET /kbs/{kb}/orient`), the CLI and, since 0.25.7 (#66), MCP send those; the MCP refusal for a KB outside a caller's readable set and `kb_orient`'s answer for a bad name carry the old code (`NOT_FOUND`, `OPERATION_FAILED`) in `legacy_error_code` for one release. The hand-written `NOT_FOUND` in the entry handlers above is the remaining spelling that predates that decision.
+
+In the MCP server, `PyriteError` is caught generically and returned in the error contract (`error_code` from the class, `VALIDATION_FAILED` for `ValidationError`), since MCP does not use HTTP status codes.
 
 ## Design Notes
 
