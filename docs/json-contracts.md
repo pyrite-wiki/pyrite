@@ -159,6 +159,26 @@ and for every plugin row (status `warning`), and `info` for an
 `allow_other` field (does not change the status). Empty for a KB without
 drift.
 
+**`index health` file findings.** The JSON report exposes the detailed
+`unreadable_files` and `orphaned_entries` arrays both at the top level and in
+`checks`:
+
+- `unreadable_files` rows are `{kb, path, error}`. They represent files that
+  exist but fail to load for a non-frontmatter reason; `error` includes the
+  exception type and message. Any such row makes status `unhealthy` and the
+  CLI exits `1`.
+- `orphaned_entries` rows are `{kb, id, path}` for an indexed ID absent from
+  the files health check successfully loaded while its recorded path still
+  exists. Paths already reported as unreadable or malformed stay in those
+  categories. When a readable replacement ID is at the same path, the row
+  also has `replacement_id`. These findings make status `unhealthy` and exit
+  `1`.
+- `malformed_frontmatter` remains its own category; non-frontmatter read
+  failures are not mislabeled as malformed YAML.
+- `missing_files` still refers to the path recorded in the index. A file moved
+  on disk with its ID unchanged is reported there until `index sync` updates
+  the indexed path, even if health check can already read the moved file.
+
 **Update fields.** An update applies the fields it names: the entry type's
 own fields (its model's fields and every field its `kb.yaml` names for the
 type) and, on every surface, keys the type does not declare, which are

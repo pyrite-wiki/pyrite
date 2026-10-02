@@ -429,6 +429,8 @@ def index_health(
     missing_required = health.get("missing_required_fields", [])
     subdirectory_mismatches = health.get("subdirectory_mismatches", [])
     malformed_frontmatter = health.get("malformed_frontmatter", [])
+    unreadable_files = health.get("unreadable_files", [])
+    orphaned_entries = health.get("orphaned_entries", [])
     invalid_statuses = health.get("invalid_statuses", [])
     off_list_values = health.get("off_list_values", [])
     # Off-list enum values roll up by row severity (#555): `error` (a kb.yaml
@@ -441,6 +443,8 @@ def index_health(
         or health["unindexed_files"]
         or health["stale_entries"]
         or health.get("content_changed")
+        or unreadable_files
+        or orphaned_entries
         or "error" in off_list_severities
     )
     has_warning = (
@@ -466,6 +470,8 @@ def index_health(
             "missing_required_fields": missing_required,
             "subdirectory_mismatches": subdirectory_mismatches,
             "malformed_frontmatter": malformed_frontmatter,
+            "unreadable_files": unreadable_files,
+            "orphaned_entries": orphaned_entries,
             "invalid_statuses": invalid_statuses,
             "off_list_values": off_list_values,
             "checks": health,
@@ -598,6 +604,26 @@ def _report_health(
             )
         if len(off_list_values) > 10:
             console.print(f"  ... and {len(off_list_values) - 10} more")
+
+    unreadable_files = health.get("unreadable_files", [])
+    if unreadable_files:
+        console.print(f"[red]Unreadable files ({len(unreadable_files)}):[/red]")
+        for item in unreadable_files[:10]:
+            console.print(f"  {item['kb']}: {item['path']}  {item['error']}", markup=False)
+        if len(unreadable_files) > 10:
+            console.print(f"  ... and {len(unreadable_files) - 10} more")
+
+    orphaned_entries = health.get("orphaned_entries", [])
+    if orphaned_entries:
+        console.print(f"[red]Orphaned index entries ({len(orphaned_entries)}):[/red]")
+        for item in orphaned_entries[:10]:
+            replacement = f" (now {item['replacement_id']})" if item.get("replacement_id") else ""
+            console.print(
+                f"  {item['kb']}/{item['id']}: {item['path']}{replacement}",
+                markup=False,
+            )
+        if len(orphaned_entries) > 10:
+            console.print(f"  ... and {len(orphaned_entries) - 10} more")
 
     if health["missing_files"]:
         console.print(f"[red]Missing files ({len(health['missing_files'])}):[/red]")
