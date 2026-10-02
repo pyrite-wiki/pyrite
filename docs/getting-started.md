@@ -127,16 +127,63 @@ pyrite search "computing history" -k my-research --mode hybrid
 
 Pyrite includes a built-in MCP server.
 
-**One-command setup for Claude Desktop/Code:**
+**One-command setup for Claude Code and Claude Desktop:**
 
 ```bash
 pyrite mcp-setup
 ```
 
-This writes the `mcpServers` entry directly into
-`~/.claude/claude_desktop_config.json` (or pass `--config` for a
-different path) — no manual JSON editing needed. Restart Claude
-Desktop/Code afterward to pick up the change.
+This points a server entry named `pyrite` at this install, in every client it
+finds, and prints a JSON report of what it did to each (`--format rich` or
+`PYRITE_FORMAT=rich` for text). Restart the client afterwards.
+
+- **Claude Code**: through `claude mcp add -s user`, which stores the entry in
+  `~/.claude.json`. `--project` writes `./.mcp.json` in the current directory
+  instead.
+- **Claude Desktop**: in its own `claude_desktop_config.json`
+  (macOS `~/Library/Application Support/Claude/`, Windows `%APPDATA%\Claude\`).
+- **Any other client**: `--config PATH` names its `mcpServers` file.
+
+A new entry runs this install's `pyrite` by absolute path at the `write` tier
+(`--tier read` or `--tier admin` to choose).
+
+It is safe to run again, and safe on a config you edited by hand:
+
+- An entry that already points here is left alone: nothing is written.
+- An entry that points somewhere else has its `command` path changed, and its
+  tier only if you pass `--tier`. Everything else you put in the entry (`env`,
+  extra arguments, other keys) is kept. The report gives the old and new
+  values.
+- `env` is never added to an entry that exists. If your shell sets
+  `PYRITE_CONFIG_DIR` and the entry does not, the report says so and gives the
+  line to add. A new entry does pin it.
+- Other servers and other keys are never touched. Servers named `pyrite-read`,
+  `pyrite-write` or `pyrite-admin` (an older command wrote those) are
+  reported and left in place.
+
+The command stops, changes nothing in that client and exits 1 when it cannot
+do this safely:
+
+- the file is not valid JSON (comments and trailing commas included), has a
+  duplicate key, is read-only or hard-linked, or changed while the command ran;
+- the `pyrite` entry's arguments do not begin with `mcp`, or the entry is not
+  a server entry at all (`--force` discards it and writes the default entry);
+- in Claude Code's user scope, the entry has `env` or other keys and its path
+  must change. Claude Code can only remove and re-add an entry, which would
+  drop them, so the report gives the commands to run yourself;
+- `~/.claude.json` is empty or unreadable (Claude Code would replace it).
+
+`--force` means one thing: discard the existing `pyrite` entry and write the
+default one. The report names what was discarded.
+
+A config file that a client wrote comes back byte for byte outside the
+`pyrite` entry. A file you formatted by hand keeps every value and its indent,
+line endings and trailing newline, but some values are respelled: one-line
+arrays and objects are opened out, mixed indentation or line endings are made
+uniform, `\/` becomes `/`, a `\u` escape may become
+its character, and numbers are written Python's way (`1.10` as `1.1`, `1e5` as
+`100000.0`). If a value could not come back equal (a number with more digits
+than a float holds), nothing is written.
 
 **Manual setup** (any MCP-compatible client): add this to your config:
 
@@ -145,7 +192,7 @@ Desktop/Code afterward to pick up the change.
   "mcpServers": {
     "pyrite": {
       "command": "/absolute/path/to/.venv/bin/pyrite",
-      "args": ["mcp"]
+      "args": ["mcp", "--tier", "write"]
     }
   }
 }

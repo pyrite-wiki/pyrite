@@ -50,6 +50,7 @@ from .index_commands import index_app
 from .init_command import init_kb
 from .kb_commands import kb_app
 from .link_commands import links_app
+from .mcp_setup_command import mcp_setup, mcp_tool_counts
 from .protocol_commands import protocol_app
 from .qa_commands import qa_app
 from .repo_commands import repo_collab_app
@@ -702,18 +703,8 @@ def _mcp_command_help() -> str:
     wiki_*, social_*) started exposing 41+ tools at read tier alone (#229).
     Mirrors how PyriteMCPServer.__init__ assembles self.tools, without
     constructing a full server (no DB/config needed for --help text)."""
-    from ..plugins import get_registry
-    from ..server.tool_schemas import ADMIN_TOOLS, READ_TOOLS, WRITE_TOOLS
-
-    registry = get_registry()
-    read_total = len(READ_TOOLS) + len(registry.get_all_mcp_tools("read"))
-    write_total = len(READ_TOOLS) + len(WRITE_TOOLS) + len(registry.get_all_mcp_tools("write"))
-    admin_total = (
-        len(READ_TOOLS)
-        + len(WRITE_TOOLS)
-        + len(ADMIN_TOOLS)
-        + len(registry.get_all_mcp_tools("admin"))
-    )
+    counts = mcp_tool_counts()
+    read_total, write_total, admin_total = counts["read"], counts["write"], counts["admin"]
 
     return (
         "Start the MCP (Model Context Protocol) server.\n\n"
@@ -761,68 +752,7 @@ def mcp_server(
         server.close()
 
 
-@app.command("mcp-setup")
-def mcp_setup(
-    config_path: Path | None = typer.Option(
-        None,
-        "--config",
-        "-c",
-        help="Path to Claude Code config (default: ~/.claude/claude_desktop_config.json)",
-    ),
-):
-    """
-    Set up MCP server integration with Claude Code.
-
-    Adds pyrite to Claude Code's MCP server configuration.
-    """
-    import json
-    import shutil
-
-    if config_path is None:
-        config_path = Path.home() / ".claude" / "claude_desktop_config.json"
-
-    config_path = config_path.expanduser()
-
-    pyrite_exe = shutil.which("pyrite-admin")
-    if not pyrite_exe:
-        pyrite_exe = "python -m pyrite.admin_cli"
-        console.print("[yellow]Warning: pyrite-admin not in PATH, using module path[/yellow]")
-
-    if config_path.exists():
-        with open(config_path) as f:
-            claude_config = json.load(f)
-    else:
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        claude_config = {}
-
-    if "mcpServers" not in claude_config:
-        claude_config["mcpServers"] = {}
-
-    claude_config["mcpServers"]["pyrite"] = {
-        "command": pyrite_exe if "python" not in pyrite_exe else "python",
-        "args": ["-m", "pyrite.admin_cli", "mcp"] if "python" in pyrite_exe else ["mcp"],
-        "env": {},
-    }
-
-    with open(config_path, "w") as f:
-        json.dump(claude_config, f, indent=2)
-
-    console.print(f"[green]MCP server configured in {config_path}[/green]")
-    console.print("\nRestart Claude Code to load the new MCP server.")
-    console.print("\nAvailable tools:")
-    console.print("  • kb_list - List knowledge bases")
-    console.print("  • kb_search - Full-text search across KBs")
-    console.print("  • kb_get - Get entry by ID")
-    console.print("  • kb_schema - Get KB schema for agents")
-    console.print("  • kb_create - Create new entry")
-    console.print("  • kb_update - Update entry")
-    console.print("  • kb_delete - Delete entry")
-    console.print("  • kb_timeline - Query timeline events")
-    console.print("  • kb_backlinks - Find entries linking to an entry")
-    console.print("  • kb_tags - Get all tags with counts")
-    console.print("  • kb_stats - Get index statistics")
-    console.print("  • kb_index_sync - Sync index (admin tier)")
-    console.print("  • kb_manage - Manage KBs (admin tier)")
+app.command("mcp-setup")(mcp_setup)
 
 
 # =============================================================================

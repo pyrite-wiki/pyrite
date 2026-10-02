@@ -50,16 +50,29 @@ pyrite search "career transition" -k my-kb --mode=semantic  # keyword mode finds
 # embed` / `index sync` (or, on a server, at startup). Run `pyrite index
 # embed` to fetch the model and catch up on demand.
 
-# Connect to Claude Desktop / Claude Code
-# Add to your MCP config:
+# Connect to Claude Code and Claude Desktop (every client it finds; restart it after)
+pyrite mcp-setup                  # write tier; --tier read|admin, --client, --project
 ```
+
+`pyrite mcp-setup` points a `pyrite` server entry at this install where each
+client reads it: `claude mcp add` for Claude Code (or `./.mcp.json` with
+`--project`), and Claude Desktop's own `claude_desktop_config.json`. Run it
+again any time. An entry that already points here is not rewritten; one that
+points elsewhere gets its command path changed (and its tier, if you pass
+`--tier`), and keeps its `env`, extra arguments and other keys. Other servers
+are never touched. If it cannot do that safely it changes nothing, says why
+and exits 1. The JSON report names each client and what changed.
+[Getting started](docs/getting-started.md#connect-an-ai-via-mcp) lists the
+cases.
+
+Or add it by hand to any MCP client's config:
 
 ```json
 {
   "mcpServers": {
     "pyrite": {
       "command": "/absolute/path/to/.venv/bin/pyrite",
-      "args": ["mcp"]
+      "args": ["mcp", "--tier", "write"]
     }
   }
 }

@@ -2633,8 +2633,9 @@ def main():
     parser.add_argument(
         "--tier",
         choices=list(ROLES),
-        default="read",
-        help="Access tier (default: read)",
+        # write, as `pyrite mcp` and `pyrite-admin mcp` (ADR-0006; #582).
+        default="write",
+        help="Access tier (default: write)",
     )
     args = parser.parse_args()
 
