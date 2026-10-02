@@ -10,6 +10,7 @@ import pytest
 
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models import EventEntry, NoteEntry
+from pyrite.schema.core_types import CORE_TYPES
 from pyrite.schema.kb_schema import KBSchema
 from pyrite.services.qa_service import QAService
 from pyrite.storage.database import PyriteDB
@@ -217,3 +218,45 @@ class TestExtractTagsFromSchema:
         )
         tags = QAService._extract_tags_from_schema(schema)
         assert tags == set()
+
+
+def test_software_template_gap_report_only_lists_declared_core_types(tmp_path):
+    kb_path = tmp_path / "software"
+    kb_path.mkdir()
+    template_yaml = Path(__file__).resolve().parents[1] / "kb" / "kb.yaml"
+    (kb_path / "kb.yaml").write_text(template_yaml.read_text(encoding="utf-8"), encoding="utf-8")
+    kb = KBConfig(name="software", path=kb_path, kb_type="software")
+    config = PyriteConfig(
+        knowledge_bases=[kb],
+        settings=Settings(index_path=tmp_path / "index.db"),
+    )
+    db = PyriteDB(config.settings.index_path)
+    try:
+        declared_types = set(kb.kb_schema.declared_types())
+        undeclared_core_types = set(CORE_TYPES) - declared_types
+        assert undeclared_core_types
+
+        result = QAService(config, db).analyze_gaps("software")
+
+        assert set(result["empty_types"]) == declared_types
+        assert not (set(result["empty_types"]) & undeclared_core_types)
+    finally:
+        db.close()
+
+
+def test_untyped_qa_gap_analysis_falls_back_to_all_core_types(tmp_path):
+    kb_path = tmp_path / "plain"
+    kb_path.mkdir()
+    (kb_path / "kb.yaml").write_text("name: plain\n", encoding="utf-8")
+    kb = KBConfig(name="plain", path=kb_path, kb_type="generic")
+    config = PyriteConfig(
+        knowledge_bases=[kb],
+        settings=Settings(index_path=tmp_path / "index.db"),
+    )
+    db = PyriteDB(config.settings.index_path)
+    try:
+        assert kb.kb_schema.declared_types() == []
+        result = QAService(config, db).analyze_gaps("plain")
+        assert set(result["empty_types"]) == set(CORE_TYPES)
+    finally:
+        db.close()

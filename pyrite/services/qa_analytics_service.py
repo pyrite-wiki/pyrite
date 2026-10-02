@@ -190,15 +190,14 @@ class QAAnalyticsService:
 
         kb_schema = kb_config.kb_schema
 
-        # -- 1. Collect declared types (from kb.yaml + core types) -----------
-        from ..schema.core_types import CORE_TYPES
+        # -- 1. Collect the types this KB actually declares -----------------
+        declared_types = set(kb_schema.declared_types()) if kb_schema else set()
+        if not declared_types:
+            # An untyped KB accepts every core type; a typed KB accepts only
+            # the vocabulary returned by declared_types().
+            from ..schema.core_types import CORE_TYPES
 
-        declared_types: set[str] = set()
-        # Types from kb.yaml
-        if kb_schema and kb_schema.types:
-            declared_types.update(kb_schema.types.keys())
-        # Core types are always implicitly available
-        declared_types.update(CORE_TYPES.keys())
+            declared_types.update(CORE_TYPES)
 
         # -- 2. Actual entry counts by type ----------------------------------
         type_count_rows = self.db.execute_sql(
