@@ -43,6 +43,12 @@ Write these sections, in this order, into the ticket.
    schemas and templates) with evidence. Scope is the invariant across
    surfaces. Before naming anything out of scope, grep for what the change
    breaks: callers, declarations the new rule will judge, shipped files.
+   When the change writes state Pyrite does not own (another program's
+   config, git hooks, a user's `kb.yaml`, a registry), say whose it is, who
+   else writes it, and what a user who set it up by hand, from our own docs,
+   has on disk; that user is a regime. The four properties are in the
+   standard `pyrite-is-a-guest-in-state-it-does-not-own`. An item being out
+   of scope to edit does not make it out of scope to read.
 4. **Options.** Two or three, with trade-offs against the contracts, and a
    recommendation.
 5. **Open questions.** They invite the worker to explore, and to overturn your

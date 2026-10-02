@@ -505,6 +505,18 @@ change back to reviewed behaviour is still allowed, since it adds no new code.
 When a delta cold read finds a limit that fails safe, the theme may land with
 the limit documented on the PR and a follow-up issue instead of another round.
 
+**A fix round states the property, not the instances.** A redispatch opens
+with the invariant the cold read showed does not hold, in one sentence, and
+asks the worker to enumerate where it must hold and classify each place
+(guarded by a test, safe by reading and why, fixed here). The reviewer's
+findings follow as evidence that the property fails, not as the list to fix.
+Where the property spans a list the code already has (API prefixes, registered
+tools, relation types), ask for a test parametrised from that list, so a new
+member cannot be added without it. Maintainer decision, 2026-10-02: on #612
+the first redispatch listed instances ("replaces a user's own `pyrite`
+server"); the worker fixed the instance by changing the ownership test from
+name to shape, and the next cold read found the same defect one step over.
+
 **A push command must say when it did not push.** A guard such as
 `[ "$(git rev-parse A)" = "$(git rev-parse B)" ] && git push ...` exits
 quietly when `rev-parse` fails, and the tick believes the push happened
