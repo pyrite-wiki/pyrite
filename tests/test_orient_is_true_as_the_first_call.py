@@ -44,6 +44,9 @@ from tests.auth_seed import seed_user
 
 WRITE_SIDE_KEYS = ("ai_instructions", "evaluation_rubric", "guidelines", "goals")
 ABSENT = "no-such-kb-at-all"
+#: What the dispatcher's refusal says to do next: one string, for an absent and
+#: an unreadable name alike, and no KB name in it (round 1, item 4).
+SCOPED_REFUSAL_HINT = "Call kb_orient with no kb_name to list the KBs you can read."
 
 
 def _presets() -> dict[str, dict]:
@@ -311,6 +314,7 @@ class TestABadNameIsKBNotFound:
             "the code the scoping refusal reported before this release"
         )
 
+    @pytest.mark.control(reason="the CLI already answered KB_NOT_FOUND, exit 1; pinned beside MCP")
     def test_cli(self, one_kb, monkeypatch):
         result = one_kb.cli(monkeypatch, "orient", "-k", "nope")
         assert result.exit_code == 1
@@ -366,6 +370,7 @@ class TestUnreadableAndAbsentAreOneAnswer:
             "error": f"KB '{PRIVATE}' not found",
             "error_code": "KB_NOT_FOUND",
             "retryable": False,
+            "suggestion": SCOPED_REFUSAL_HINT,
             "legacy_error_code": "NOT_FOUND",
         }
 
@@ -456,7 +461,9 @@ class TestOrientWithNoNameIsTheFirstCall:
         assert json.loads(result.output) == one_kb.mcp("kb_orient")
 
     def test_detail_with_no_name_is_accepted_and_changes_nothing(self, one_kb):
-        assert one_kb.mcp("kb_orient", {"detail": "brief"}) == one_kb.mcp("kb_orient")
+        brief = one_kb.mcp("kb_orient", {"detail": "brief"})
+        assert "knowledge_bases" in brief
+        assert brief == one_kb.mcp("kb_orient")
 
     def test_an_invalid_detail_with_no_name_is_still_refused(self, one_kb):
         assert one_kb.dispatch("kb_orient", {"detail": "bogus"})["error_code"] == (
@@ -502,7 +509,7 @@ def sw(make_world):
 
 
 def _write_side_keys_in(schema: dict) -> list[str]:
-    found = [k for k in (*WRITE_SIDE_KEYS, "relationship_types") if k in schema]
+    found = [k for k in WRITE_SIDE_KEYS if k in schema]
     for name, info in schema.get("types", {}).items():
         found += [f"{name}.{k}" for k in WRITE_SIDE_KEYS if k in info]
     return found
@@ -558,6 +565,7 @@ class TestDetail:
         assert r.status_code == 422
         assert "VALIDATION_FAILED" in r.text
 
+    @pytest.mark.control(reason="before `detail` existed a null was ignored; it must stay 'absent'")
     def test_a_null_detail_is_absent(self, sw):
         """A null reaching the service is "not given" (REST's absent query
         parameter, the CLI's absent flag)."""
@@ -574,11 +582,14 @@ class TestDetail:
 
     def test_the_tool_schema_declares_detail(self, sw):
         prop = sw.server().tools["kb_orient"]["inputSchema"]["properties"]["detail"]
-        assert prop["enum"] == ["brief", "full"]
+        # null is allowed beside the two values (TestTheFirstCallSurvivesAClientThatSendsNull)
+        assert [v for v in prop["enum"] if v is not None] == ["brief", "full"]
 
     def test_read_and_write_tiers_answer_alike(self, sw):
         args = {"kb_name": "sw", "detail": "brief"}
-        assert sw.mcp("kb_orient", args, tier="read") == sw.mcp("kb_orient", args, tier="write")
+        read = sw.mcp("kb_orient", args, tier="read")
+        assert read["detail"] == "brief"
+        assert read == sw.mcp("kb_orient", args, tier="write")
 
 
 class TestAPluginSupplementSurvivesBothDetails:
@@ -622,3 +633,174 @@ class TestOrientAnswersInABrokenEnvironment:
         monkeypatch.setattr(KBSchema, "to_agent_schema", boom)
         out = one_kb.svc.orient("notes", detail="brief")
         assert out["schema"] == {} and out["detail"] == "brief"
+
+
+# ---------------------------------------------------------------------------
+# Review round 1
+# ---------------------------------------------------------------------------
+
+OMITTED_BY_BRIEF = ("ai_instructions", "evaluation_rubric", "guidelines", "goals")
+
+
+class TestBriefPointsAtWhatReturnsTheOmittedBlocks:
+    """Item 1: every command `detail_note` names returns what brief omitted."""
+
+    def _note(self, sw):
+        return sw.mcp("kb_orient", {"kb_name": "sw", "detail": "brief"})["detail_note"]
+
+    def test_every_cli_command_the_note_names_returns_the_omitted_blocks(self, sw, monkeypatch):
+        import re
+        import shlex
+
+        commands = re.findall(r"`(pyrite [^`]+)`", self._note(sw))
+        assert commands, "the note must name a CLI command, in backticks"
+        for command in commands:
+            argv = shlex.split(command.replace("<kb>", "sw"))[1:]
+            result = sw.cli(monkeypatch, *argv)
+            assert result.exit_code == 0, (command, result.output)
+            for block in ("evaluation_rubric", "guidelines"):
+                assert block in result.output, (command, block)
+
+    @pytest.mark.control(reason="kb_schema already returned them; pinned beside the CLI command")
+    def test_the_mcp_tool_the_note_names_returns_them(self, sw):
+        assert "kb_schema" in self._note(sw)
+        out = sw.mcp("kb_schema", {"kb_name": "sw"})
+        assert "evaluation_rubric" in out and "guidelines" in out
+
+
+class TestTheFirstCallSurvivesAClientThatSendsNull:
+    """Item 2: validated against the published inputSchema, as the SDK does."""
+
+    @staticmethod
+    def _validate(sw, arguments):
+        import jsonschema
+
+        schema = sw.server().tools["kb_orient"]["inputSchema"]
+        jsonschema.validate(arguments, schema)
+
+    @pytest.mark.parametrize(
+        "args", [{"kb_name": None}, {"detail": None}, {"kb_name": None, "detail": None}]
+    )
+    def test_null_arguments_validate_against_the_published_schema(self, sw, args):
+        self._validate(sw, args)
+
+    @pytest.mark.control(reason="the schema refused these before null was allowed; it must still")
+    @pytest.mark.parametrize("args", [{"detail": "bogus"}, {"kb_name": 123}, {"recent_limit": "x"}])
+    def test_the_schema_still_refuses_what_it_refused(self, sw, args):
+        import jsonschema
+
+        with pytest.raises(jsonschema.ValidationError):
+            self._validate(sw, args)
+
+    def test_a_null_kb_name_answers_as_if_absent_over_a_real_session(self, sw):
+        assert sw.mcp("kb_orient", {"kb_name": None}) == sw.mcp("kb_orient")
+        assert "knowledge_bases" in sw.mcp("kb_orient", {"kb_name": None})
+
+    def test_a_null_detail_answers_as_if_absent_over_a_real_session(self, sw):
+        assert sw.mcp("kb_orient", {"kb_name": "sw", "detail": None}) == sw.mcp(
+            "kb_orient", {"kb_name": "sw"}
+        )
+
+
+class TestAKbNameThatIsNotAStringIsRefused:
+    """Item 3: not read as "no name"."""
+
+    @pytest.mark.parametrize("bad", [123, 0, True, {"x": 1}, ["sw"]])
+    def test_unscoped(self, sw, bad):
+        out = sw.dispatch("kb_orient", {"kb_name": bad})
+        assert out.get("error_code") == "VALIDATION_FAILED", out
+        assert out["retryable"] is False
+        assert "knowledge_bases" not in out
+
+    @pytest.mark.parametrize("bad", [123, 0, True, {"x": 1}, [PUBLIC]])
+    def test_scoped(self, scoped, bad):
+        out = scoped.dispatch("kb_orient", {"kb_name": bad}, readable=scoped.peer)
+        assert out.get("error_code") == "VALIDATION_FAILED", out
+        assert "knowledge_bases" not in out
+
+    @pytest.mark.control(reason="a blank string is already 'no name' (named_kb, private #74)")
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_a_blank_string_is_still_no_name(self, sw, blank):
+        assert "knowledge_bases" in sw.dispatch("kb_orient", {"kb_name": blank})
+
+
+class TestTheScopedRefusalSaysWhatToDoNext:
+    """Item 4: one static hint, the same for an absent and an unreadable name."""
+
+    def test_the_hint_is_the_same_string_for_both_and_names_no_kb(self, scoped):
+        refused = scoped.mcp("kb_orient", {"kb_name": PRIVATE}, readable=scoped.peer)
+        absent = scoped.mcp("kb_orient", {"kb_name": ABSENT}, readable=scoped.peer)
+        assert refused["suggestion"] == absent["suggestion"] == SCOPED_REFUSAL_HINT
+        assert PRIVATE not in json.dumps(refused).replace(f"KB '{PRIVATE}' not found", "")
+        assert "did_you_mean" not in refused and "did_you_mean" not in absent
+
+    def test_every_tool_refuses_with_the_hint(self, scoped):
+        server = scoped.server("admin")
+        for tool in sorted(server.tools):
+            for key in ("kb_name", "kb"):
+                out = server._dispatch_tool(
+                    tool, {key: PRIVATE}, readable_kbs=scoped.peer, writable_kbs=set()
+                )
+                if out.get("error_code") == "KB_NOT_FOUND":
+                    assert out["suggestion"] == SCOPED_REFUSAL_HINT, (tool, key)
+
+    def test_the_changelog_does_not_promise_scoped_callers_near_matches(self):
+        import pathlib
+
+        text = pathlib.Path("changelog.d/66-orient-true-as-first-call.changed.md").read_text()
+        flat = " ".join(text.split())
+        assert "Names are drawn only from the KBs the caller may read" not in flat
+        assert "never from a KB the caller may not read" in flat
+        assert "scoped caller" in flat and "static hint" in flat
+
+
+class TestBriefAgreesWithItself:
+    """Item 5: no top-level `guidelines` that contradicts the dropped block."""
+
+    def test_no_top_level_guidelines_under_brief(self, sw):
+        brief = sw.mcp("kb_orient", {"kb_name": "sw", "detail": "brief"})
+        assert "guidelines" not in brief and "guidelines" not in brief["schema"]
+
+    def test_a_configured_guideline_is_not_hidden_behind_an_empty_one(self, sw):
+        sw.config.get_kb("sw").guidelines = {"tone": "plain"}
+        full = sw.mcp("kb_orient", {"kb_name": "sw"})
+        brief = sw.mcp("kb_orient", {"kb_name": "sw", "detail": "brief"})
+        assert full["guidelines"] == {"tone": "plain"}
+        assert "guidelines" not in brief
+        assert "guidelines" in brief["detail_note"]
+
+
+class TestBriefKeepsTheRelationNames:
+    """Item 6: a read session following links needs `relationship_types`."""
+
+    def test_relationship_types_survive_brief(self, sw):
+        full = sw.mcp("kb_orient", {"kb_name": "sw"})["schema"]
+        brief = sw.mcp("kb_orient", {"kb_name": "sw", "detail": "brief"})
+        assert full["relationship_types"]
+        assert brief["schema"]["relationship_types"] == full["relationship_types"]
+
+    def test_nothing_says_brief_drops_them(self, sw):
+        brief = sw.mcp("kb_orient", {"kb_name": "sw", "detail": "brief"})
+        desc = sw.server().tools["kb_orient"]["description"]
+        import re
+
+        for text in (brief["detail_note"], desc):
+            omitted = re.search(r"omits ([^.]*)\.", text).group(1)
+            assert "relationship_types" not in omitted, text
+
+
+class TestAPluginCannotOverwriteTheDetailMarkers:
+    """Item 9: `detail` and `detail_note` are set after the supplements."""
+
+    def test_brief_markers_win_over_a_supplement(self, sw, monkeypatch):
+        from pyrite.plugins.registry import PluginRegistry
+
+        monkeypatch.setattr(
+            PluginRegistry,
+            "get_orient_supplements",
+            lambda self, kb, kb_type: {"detail": "plugin", "detail_note": "plugin", "board": 1},
+        )
+        out = sw.svc.orient("sw", detail="brief")
+        assert out["detail"] == "brief"
+        assert out["detail_note"].startswith("brief omits")
+        assert out["board"] == 1

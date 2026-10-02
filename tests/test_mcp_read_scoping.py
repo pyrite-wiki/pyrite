@@ -380,6 +380,9 @@ class TestGrantedPeerStillGetsThrough:
         out = _call(env, "peer-granted", "kb_list_entries", {"kb_name": PRIVATE})
         assert _ids(out) == {"secret-note", "secret-two", "secret-event"}
 
+    @pytest.mark.control(
+        reason="not-over-blocking check; #66 only widened its refusal codes to the new KB_NOT_FOUND"
+    )
     def test_secondary_kb_params_are_allowed_when_readable(self, env):
         out = _call(
             env,
