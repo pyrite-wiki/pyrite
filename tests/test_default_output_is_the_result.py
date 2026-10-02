@@ -418,12 +418,16 @@ class TestSemanticWithoutTheExtraSaysSo:
 # ---------------------------------------------------------------------------
 
 
-def _embed_env(tmp_path, monkeypatch, n):
+def _embed_env(tmp_path, monkeypatch, n, other_kb_entries=0):
     """A config + index with ``n`` entries whose embeds are queued (ADR-0035)."""
     kb_path = tmp_path / "kb"
     kb_path.mkdir()
+    kbs = [KBConfig(name="t", path=kb_path, kb_type=KBType.GENERIC)]
+    if other_kb_entries:
+        (tmp_path / "kb2").mkdir()
+        kbs.append(KBConfig(name="u", path=tmp_path / "kb2", kb_type=KBType.GENERIC))
     config = PyriteConfig(
-        knowledge_bases=[KBConfig(name="t", path=kb_path, kb_type=KBType.GENERIC)],
+        knowledge_bases=kbs,
         settings=Settings(index_path=tmp_path / "i.db", auto_embed=True),
     )
     db = PyriteDB(config.settings.index_path)
@@ -433,6 +437,8 @@ def _embed_env(tmp_path, monkeypatch, n):
     svc = KBService(config, db)
     for i in range(n):
         svc.create_entry("t", f"e{i}", f"Entry {i}", "note", f"body {i}")
+    for i in range(other_kb_entries):
+        svc.create_entry("u", f"x{i}", f"Other {i}", "note", f"other body {i}")
 
     from pyrite.services.embedding_service import EmbeddingService
     from pyrite.services.embedding_worker import EmbeddingWorker
@@ -694,12 +700,7 @@ class TestIndexEmbedAccounting:
 
         from pyrite.cli import app
 
-        config, db = _embed_env(tmp_path, monkeypatch, 2)
-        other = tmp_path / "kb2"
-        other.mkdir()
-        config.knowledge_bases.append(KBConfig(name="u", path=other, kb_type=KBType.GENERIC))
-        KBService(config, db).create_entry("u", "x0", "Other 0", "note", "other body")
-        KBService(config, db).create_entry("u", "x1", "Other 1", "note", "other body 1")
+        _, db = _embed_env(tmp_path, monkeypatch, 2, other_kb_entries=2)
         out = CliRunner().invoke(app, ["index", "embed", "--kb", "t"]).output
         assert "Embedded: 2" in out, out
         assert "2 entries in other KBs" in out, out
@@ -718,8 +719,9 @@ class TestIndexEmbedAccounting:
         monkeypatch.setattr("pyrite.services.embedding_service.is_available", lambda: True)
         monkeypatch.setattr(db, "vec_available", False, raising=False)
         out = CliRunner().invoke(app, ["index", "embed"]).output
-        assert "did not load" in out, out
-        assert "pip install" not in out, out
+        flat = " ".join(out.split())  # the error wraps at the terminal width
+        assert "did not load" in flat, out
+        assert "pip install" not in flat, out
 
 
 @pytest.mark.control(
