@@ -165,6 +165,8 @@ Evidence:    the test-affected line; the draft PR's CI on the pushed SHA; the
              Regimes, one line each
 Guards:      each check you added -> the test that fails when it alone is removed
 Changed:     files, new vs existing; the count against the groom's prediction
+Covers:      for a property that says "every" or "all": each instance found by
+             search, marked guarded (test) | already safe (why) | out of scope (why)
 Learned:     the riskiest-assumption result, then what the groom got wrong,
              what the code turned out to do, contracts you found; one line
              each, with file:line

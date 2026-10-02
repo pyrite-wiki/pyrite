@@ -23,17 +23,29 @@ change stopped seeing. You read; you run; you do not edit.
 
 1. Read every hunk of the diff. Note the public surfaces it touches: CLI
    flags, REST fields, MCP tool arguments, file formats, config keys.
-2. For each behaviour change, ask: what input makes this wrong? Try it —
+2. **Review the claim, not only the diff.** State the property the change
+   claims in one sentence. If it says or implies "every" or "all" (every
+   caller is checked, every file stays inside, every tool records), list the
+   instances yourself by searching the codebase at that ref, not by reading
+   the diff: the calls, readers, writers, entry points and extensions the
+   property covers. Then mark each as guarded by this change, already safe
+   (say why), or unguarded. An unguarded instance is a "what breaks" finding.
+   A diff can be correct line by line and the claim still false, because the
+   missing guard is in code the diff never touched. If the change carries the
+   author's own list, check it for completeness; do not start from it. If you
+   reviewed only the diff, say so in the verdict.
+3. For each behaviour change, ask: what input makes this wrong? Try it —
    run the new tests with the implementation stashed, run the targeted tests
    a specific claim rests on, write a throwaway probe if a claim needs one.
    Do not re-run a suite on a tree CI or a pass stamp already passed (the PR's
    `gh pr checks`, or `scripts/test-affected --run` printing `already passed
    on tree ...`): read that result. The same tests on the same code say
    nothing new and cost the loaded machine a suite slot.
-3. Read the tests as code: do they assert behaviour or the implementation?
+4. Read the tests as code: do they assert behaviour or the implementation?
    Would they fail if the fix were reverted? Is the "happy path" the only
-   path?
-4. Look for what is missing: the case the change implies but does not handle,
+   path? Does each guarded caller have a test through its own entry point, or
+   is only the shared helper tested?
+5. Look for what is missing: the case the change implies but does not handle,
    the caller that still uses the old behaviour, the doc or the
    `changelog.d/<slug>.<section>.md` fragment that should exist.
 

@@ -28,6 +28,13 @@ ready, not you.
    build.
 3. Complete the theme: every ticket, every acceptance property. If part
    cannot be done, finish the rest and say what is left and why.
+   When the property says "every" or "all", list the instances before you
+   write code, by searching the codebase, not from the ticket: each caller,
+   reader, writer, entry point and extension it covers. Put the list in the
+   PR with each marked guarded (and the test that proves it, run through
+   that caller's own entry point), already safe (why), or out of scope
+   (why). Your own review of your diff cannot find the guard you never
+   wrote; this list can.
 4. Commit as you go: each time a step passes, commit it with a message that
    says why. A stopped session then loses minutes, and the next worker reads
    your reasoning in `git log`. Before the report, rewrite the branch into a
