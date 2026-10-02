@@ -419,9 +419,9 @@ Some content.
         assert found is None
         assert any("0100-bad-adr.md" in record.message for record in caplog.records)
 
-    def test_load_strips_duplicated_frontmatter_from_body(self, events_kb):
-        """Frontmatter field duplicated in body should be stripped on load."""
-        # Write a file with 'type: event' leaked into body (migration error pattern)
+    def test_load_preserves_frontmatter_looking_body_line(self, events_kb):
+        """A body line that resembles a frontmatter field is still user content."""
+        # A body line may repeat a frontmatter value without being metadata.
         md = """---
 type: event
 id: 2025-01-20--test-leak
@@ -439,8 +439,7 @@ The actual body content starts here.
 
         loaded = events_kb.load("2025-01-20--test-leak")
         assert loaded is not None
-        assert not loaded.body.startswith("type:")
-        assert "actual body content" in loaded.body
+        assert loaded.body == "type: event\n\nThe actual body content starts here."
 
     def test_load_frontmatter_with_triple_dash_in_quoted_value(self, events_kb, caplog):
         """Frontmatter delimiter detection must require `---` at start of line.
