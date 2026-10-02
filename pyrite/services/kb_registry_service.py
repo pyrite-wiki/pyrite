@@ -86,12 +86,62 @@ class KBRegistryService:
         self.db.merge_registered_kbs(self.config)
         return count
 
-    def list_kbs(self, type_filter: str | None = None) -> list[dict[str, Any]]:
-        """List all KBs from DB, enriched with config metadata."""
-        from sqlalchemy import text
+    def list_kbs(
+        self,
+        type_filter: str | None = None,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        kb_names: set[str] | None = None,
+        include_yaml_origin: bool = True,
+    ) -> list[dict[str, Any]]:
+        """List KBs from the registry, optionally filtering and paging in SQL."""
+        from sqlalchemy import bindparam, text
 
-        query = "SELECT * FROM kb ORDER BY name"
-        rows = self.db.session.execute(text(query)).fetchall()
+        if limit is not None and (
+            isinstance(limit, bool) or not isinstance(limit, int) or limit < 1
+        ):
+            raise ValueError("limit must be a positive integer")
+        if (
+            isinstance(offset, bool)
+            or not isinstance(offset, int)
+            or offset < 0
+            or (offset and limit is None)
+        ):
+            raise ValueError("offset requires a non-negative offset and a limit")
+        if kb_names is not None and not kb_names:
+            return []
+
+        clauses = []
+        params: dict[str, Any] = {}
+        if type_filter:
+            clauses.append("kb.kb_type = :type_filter")
+            params["type_filter"] = type_filter
+        if kb_names is not None:
+            clauses.append("kb.name IN :kb_names")
+            params["kb_names"] = sorted(kb_names)
+
+        query = (
+            "SELECT kb.*, COALESCE(entry_counts.entry_count, 0) AS live_entry_count "
+            "FROM kb LEFT JOIN ("
+            "SELECT kb_name, COUNT(DISTINCT id) AS entry_count "
+            "FROM entry GROUP BY kb_name"
+            ") AS entry_counts ON entry_counts.kb_name = kb.name"
+        )
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY name"
+        if limit is not None:
+            query += " LIMIT :limit"
+            params["limit"] = limit
+            if offset:
+                query += " OFFSET :offset"
+                params["offset"] = offset
+
+        statement = text(query)
+        if kb_names is not None:
+            statement = statement.bindparams(bindparam("kb_names", expanding=True))
+        rows = self.db.session.execute(statement, params).fetchall()
 
         result = []
         for row in rows:
@@ -106,14 +156,15 @@ class KBRegistryService:
                 "source": r.get("source", "user"),
                 "read_only": cfg.read_only if cfg else False,
                 "shortname": cfg.shortname if cfg else None,
-                "entries": r.get("entry_count", 0) or 0,
+                "entries": r.get("live_entry_count", 0) or 0,
                 "indexed": bool(r.get("last_indexed")),
                 "last_indexed": r.get("last_indexed"),
                 "default_role": r.get("default_role"),
-                "default_role_editable": self._yaml_origin(r["name"], r.get("repo_id")) != "hand",
             }
-            if type_filter and kb_info["type"] != type_filter:
-                continue
+            if include_yaml_origin:
+                kb_info["default_role_editable"] = (
+                    self._yaml_origin(r["name"], r.get("repo_id")) != "hand"
+                )
             result.append(kb_info)
         return result
 

@@ -178,6 +178,12 @@ def register_browse_commands(app: typer.Typer) -> None:
             "--detail",
             help="full (default) or brief. brief omits the write-side schema blocks.",
         ),
+        overview_limit: int = typer.Option(
+            50, "--limit", help="KBs per no-name overview page (maximum 100)."
+        ),
+        overview_offset: int = typer.Option(
+            0, "--offset", min=0, help="KB offset for a no-name overview page."
+        ),
         output_format: str = typer.Option(
             "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
         ),
@@ -193,7 +199,12 @@ def register_browse_commands(app: typer.Typer) -> None:
         with cli_context() as (config, db, svc):
             try:
                 if not named_kb(kb_name):
-                    result = svc.orient_overview(readable_kbs=UNSCOPED, detail=detail)
+                    result = svc.orient_overview(
+                        readable_kbs=UNSCOPED,
+                        detail=detail,
+                        limit=overview_limit,
+                        offset=overview_offset,
+                    )
                 else:
                     result = svc.orient(kb_name, recent_limit=recent, detail=detail)
             except KBNotFoundError as e:

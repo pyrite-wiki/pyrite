@@ -2036,7 +2036,12 @@ class KBService:
         return [], how
 
     def orient_overview(
-        self, *, readable_kbs: set[str] | None, detail: str | None = None
+        self,
+        *,
+        readable_kbs: set[str] | None,
+        detail: str | None = None,
+        limit: int | None = 50,
+        offset: int = 0,
     ) -> dict[str, Any]:
         """Orient with no KB named: the first call of a session.
 
@@ -2047,18 +2052,43 @@ class KBService:
         per-type blocks here to omit.
         """
         self._orient_detail(detail)
+        if limit is not None and (
+            isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100
+        ):
+            raise ValidationError("limit must be between 1 and 100")
+        if (
+            isinstance(offset, bool)
+            or not isinstance(offset, int)
+            or offset < 0
+            or (limit is None and offset)
+        ):
+            raise ValidationError("offset must be non-negative and requires a limit")
+
+        registry = self._registry
+        if registry is None:
+            from .kb_registry_service import KBRegistryService
+
+            registry = KBRegistryService(self.config, self.db)
+        page = registry.list_kbs(
+            limit=limit + 1 if limit is not None else None,
+            offset=offset,
+            kb_names=readable_kbs,
+            include_yaml_origin=False,
+        )
+        has_more = limit is not None and len(page) > limit
+        if limit is not None:
+            page = page[:limit]
         kbs = [
             {
-                "name": kb.name,
-                "type": kb.kb_type or "default",
-                "description": kb.description or "",
-                "entry_count": self.count_entries(kb_name=kb.name),
-                "read_only": kb.read_only,
+                "name": kb["name"],
+                "type": kb["type"],
+                "description": kb.get("description") or "",
+                "entry_count": kb["entries"],
+                "read_only": kb.get("read_only", False),
             }
-            for kb in sorted(self.config.all_kbs(), key=lambda k: k.name)
-            if readable_kbs is None or kb.name in readable_kbs
+            for kb in page
         ]
-        return {
+        result = {
             "knowledge_bases": kbs,
             "operational_contracts": self._operational_contracts(),
             "next": (
@@ -2066,6 +2096,9 @@ class KBService:
                 "(CLI). Add detail='brief' (`--detail brief`) for a read session."
             ),
         }
+        if limit is not None:
+            result.update({"limit": limit, "offset": offset, "has_more": has_more})
+        return result
 
     def orient(
         self, kb_name: str, recent_limit: int = 5, *, detail: str | None = None
