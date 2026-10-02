@@ -806,6 +806,9 @@ class KBService:
         )
         ctx = hook_ctx or self._hook_ctx(kb_name, kb_config, "create")
         entry = self._run_hooks("before_save", entry, ctx)
+        # Hooks return the entry that will be persisted, so validate their
+        # changes before the file is written.
+        warnings = self._validate_write(entry, kb_name, kb_config)
         try:
             self._doc_mgr.save_entry(entry, kb_name, kb_config, is_create=True)
         except FileExistsError as e:
@@ -1315,6 +1318,8 @@ class KBService:
         extra = {"old_status": old_status} if old_status else {}
         hook_ctx = self._hook_ctx(kb_name, kb_config, "update", extra)
         entry = self._run_hooks("before_save", entry, hook_ctx)
+        # Preserve the update exception for unchanged on-disk enum values.
+        warnings = self._validate_write(entry, kb_name, kb_config, before=before)
 
         # Save to file, register KB, and re-index
         self._doc_mgr.save_entry(
