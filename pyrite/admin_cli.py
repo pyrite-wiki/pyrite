@@ -579,6 +579,22 @@ def mcp_server(
         server.close()
 
 
+@app.command(
+    "mcp-setup",
+    hidden=True,
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def mcp_setup_moved(ctx: typer.Context):
+    """Removed (#582): use `pyrite mcp-setup`."""
+    cli_error(
+        "`pyrite-admin mcp-setup` was removed: it wrote three servers to a file no client "
+        "reads (#582)",
+        error_code="COMMAND_MOVED",
+        suggestion="run `pyrite mcp-setup` (options --tier, --client, --project, --config); "
+        "it registers one server where Claude Code and Claude Desktop read it",
+    )
+
+
 # =============================================================================
 # Web users
 # =============================================================================

@@ -46,7 +46,7 @@ FAKE_CLAUDE = textwrap.dedent(
     from pathlib import Path
 
     home = Path(os.environ["HOME"])
-    cfg = home / ".claude.json"
+    cfg = Path(os.environ.get("CLAUDE_CONFIG_DIR") or home) / ".claude.json"
     args = sys.argv[1:]
     with open(home / "claude-calls.jsonl", "a") as log:
         log.write(json.dumps(args) + "\\n")
@@ -66,12 +66,16 @@ FAKE_CLAUDE = textwrap.dedent(
         if scope != "user":
             sys.exit(f"fake claude: only user scope is emulated, got {{scope}}")
         if name in servers:
-            sys.exit(f"MCP server {{name}} already exists in user config")
+            # Deliberately not Claude Code's wording: mcp-setup must not
+            # depend on message text (#612 review).
+            sys.exit(f"fake claude: E_DUPLICATE {{name}}")
         servers[name] = {{"type": "stdio", "command": command, "args": rest, "env": env}}
     elif args[:2] == ["mcp", "remove"]:
+        if os.environ.get("FAKE_CLAUDE_FAIL") == "remove":
+            sys.exit("fake claude: E_LOCKED")
         name = [a for a in args[2:] if not a.startswith("-") and a != "user"][0]
         if name not in servers:
-            sys.exit(f'No MCP server named "{{name}}" in user scope')
+            sys.exit(f"fake claude: E_MISSING {{name}}")
         del servers[name]
     else:
         sys.exit(f"fake claude: unsupported {{args}}")
@@ -81,9 +85,41 @@ FAKE_CLAUDE = textwrap.dedent(
 )
 
 
+def _guard_paths_inside(monkeypatch, root: Path) -> None:
+    """Fail the test if mcp-setup computes or writes a client path outside
+    `root`. Skipped where the module does not exist yet (dev, for verify-red),
+    so a test there still fails on behaviour, not on this import."""
+    try:
+        import pyrite.cli.mcp_setup_command as mod
+    except ImportError:
+        return
+    root = root.resolve()
+
+    def inside(path, what):
+        resolved = Path(os.path.realpath(path))
+        assert resolved.is_relative_to(root), f"{what} outside the test's temp dir: {path}"
+        return path
+
+    for name in ("desktop_config_path", "claude_code_config_path"):
+        real = getattr(mod, name, None)
+        if real is not None:
+            monkeypatch.setattr(mod, name, lambda real=real, name=name: inside(real(), name))
+    real_write = mod._atomic_write
+    monkeypatch.setattr(
+        mod, "_atomic_write", lambda path, text: real_write(inside(path, "write"), text)
+    )
+
+
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    """A temp HOME, a PATH holding only a scratch bin/, and a scratch cwd."""
+    """A temp HOME, a PATH holding only a scratch bin/, and a scratch cwd.
+
+    Every variable a client path is computed from points inside tmp_path:
+    HOME (POSIX Path.home()), USERPROFILE (Windows Path.home()), APPDATA
+    (Windows Desktop), XDG_CONFIG_HOME (Linux Desktop); CLAUDE_CONFIG_DIR
+    is unset so Claude Code's file is $HOME/.claude.json. A guard fails the
+    test if a computed or written path still lands outside tmp_path.
+    """
     home = tmp_path / "home"
     home.mkdir()
     bindir = tmp_path / "bin"
@@ -91,16 +127,20 @@ def env(tmp_path, monkeypatch):
     work = tmp_path / "work"
     work.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("APPDATA", str(home / "AppData" / "Roaming"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.setenv("PATH", str(bindir))
     for var in (
         "PYRITE_CONFIG_DIR",
         "PYRITE_DATA_DIR",
-        "XDG_CONFIG_HOME",
-        "APPDATA",
         "CLAUDE_CONFIG_DIR",
+        "HOMEDRIVE",
+        "HOMEPATH",
     ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(sys, "platform", "linux")
+    _guard_paths_inside(monkeypatch, tmp_path)
     # cli_error's console wraps at 80 columns when not on a terminal, inside
     # the long temp paths these tests look for.
     monkeypatch.setenv("COLUMNS", "1000")
@@ -605,13 +645,14 @@ def test_real_claude_code_reads_back_the_entry(env, monkeypatch):
 # -- pyrite-admin ----------------------------------------------------------------
 
 
-def test_pyrite_admin_has_no_second_mcp_setup():
+def test_pyrite_admin_mcp_setup_points_to_pyrite_mcp_setup():
     from pyrite.admin_cli import app as admin_app
 
-    result = runner.invoke(admin_app, ["mcp-setup"])
+    result = runner.invoke(admin_app, ["mcp-setup", "--tier", "read"])
 
-    assert result.exit_code != 0
-    assert "No such command" in result.output
+    assert result.exit_code == 1, result.output
+    assert "COMMAND_MOVED" in result.output
+    assert "pyrite mcp-setup" in result.output
 
 
 def test_pyrite_admin_mcp_defaults_to_the_write_tier(monkeypatch):
@@ -673,3 +714,335 @@ def test_tutorial_mcp_setup_block_passes_on_a_runner_with_no_client(tmp_path):
     )
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+# -- fix round 1 (#612 cold read) ------------------------------------------------
+
+
+def test_short_tier_flag_works_like_pyrite_admin_mcp(env):
+    desktop = install_desktop(linux_desktop_config(env.home))
+
+    result = setup("-t", "read")
+
+    assert result.exit_code == 0, result.output
+    assert_starts_pyrite_at(servers_in(desktop)["pyrite"], "read")
+
+
+def test_project_help_says_it_writes_the_current_directory():
+    result = runner.invoke(app, ["mcp-setup", "--help"], env={"COLUMNS": "1000"})
+
+    assert result.exit_code == 0, result.output
+    assert "current directory" in result.output
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+def test_symlinked_desktop_config_is_written_through_the_link(env):
+    """A dotfiles setup: the client's path is a link to a file elsewhere. The
+    target gets the entry; the link stays a link."""
+    target = env.tmp / "dotfiles" / "claude_desktop_config.json"
+    target.parent.mkdir()
+    target.write_text(json.dumps({"mcpServers": {"other": {"command": "/bin/true"}}}))
+    desktop = install_desktop(linux_desktop_config(env.home))
+    desktop.symlink_to(target)
+
+    result = setup()
+
+    assert result.exit_code == 0, result.output
+    assert desktop.is_symlink()
+    assert os.readlink(desktop) == str(target)
+    servers = servers_in(target)
+    assert servers["other"] == {"command": "/bin/true"}
+    assert_starts_pyrite_at(servers["pyrite"], "write")
+    assert sorted(p.name for p in target.parent.iterdir()) == [target.name]
+
+
+def _fail_writes_to(monkeypatch, victim: Path) -> None:
+    """The write to `victim` fails the way a read-only directory makes it
+    fail (root ignores the mode bits, so the failure is injected)."""
+    real = os.replace
+
+    def replace(src, dst, *args, **kwargs):
+        if Path(dst) == victim:
+            raise PermissionError(13, "Permission denied", str(dst))
+        return real(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(os, "replace", replace)
+
+
+def test_partial_failure_names_what_was_configured_and_what_failed(env, monkeypatch):
+    install_fake_claude(env)
+    desktop = install_desktop(linux_desktop_config(env.home))
+    _fail_writes_to(monkeypatch, desktop)
+
+    result = setup()
+
+    assert result.exit_code == 1, result.output
+    assert_starts_pyrite_at(servers_in(env.home / ".claude.json")["pyrite"], "write")
+    assert not desktop.exists()
+    configured = [line for line in result.output.splitlines() if "Claude Code" in line]
+    failed = [line for line in result.output.splitlines() if "Claude Desktop" in line]
+    assert any(str(env.home / ".claude.json") in line for line in configured), result.output
+    assert any("CONFIG_WRITE_FAILED" in line for line in failed), result.output
+    assert "Configured" in result.output and "Failed" in result.output
+
+
+def test_partial_failure_in_json_lists_each_client(env, monkeypatch):
+    install_fake_claude(env)
+    desktop = install_desktop(linux_desktop_config(env.home))
+    _fail_writes_to(monkeypatch, desktop)
+
+    result = setup("--format", "json")
+
+    assert result.exit_code == 1, result.output
+    report = json.loads(result.stdout)
+    assert [c["client"] for c in report["configured"]] == ["claude-code"]
+    assert report["configured"][0]["location"] == str(env.home / ".claude.json")
+    assert [f["client"] for f in report["failed"]] == ["claude-desktop"]
+    assert report["failed"][0]["error_code"] == "CONFIG_WRITE_FAILED"
+    assert report["failed"][0]["suggestion"]
+    assert report["tier"] == "write"
+
+
+def test_json_success_lists_every_client_and_the_command(env):
+    install_fake_claude(env)
+    desktop = install_desktop(linux_desktop_config(env.home))
+
+    result = setup("--format", "json")
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.stdout)
+    assert {c["client"]: c["location"] for c in report["configured"]} == {
+        "claude-code": str(env.home / ".claude.json"),
+        "claude-desktop": str(desktop),
+    }
+    assert report["failed"] == []
+    assert report["command"][1:] == ["mcp", "--tier", "write"]
+
+
+def test_json_no_client_is_the_error_shape_with_the_manual_entry(env):
+    result = setup("--format", "json")
+
+    assert result.exit_code == 1, result.output
+    report = json.loads(result.stdout)
+    assert report["error_code"] == "CLIENT_NOT_FOUND"
+    assert report["manual"]["mcpServers"]["pyrite"]["args"] == ["mcp", "--tier", "write"]
+    assert "claude mcp add" in report["manual_claude_code"]
+
+
+USERS_OWN = {"command": "/usr/local/bin/my-pyrite-wrapper", "args": ["--serve"]}
+
+
+def _seed_users_own(env, client: str) -> Path:
+    if client == "claude-code":
+        install_fake_claude(env)
+        config = env.home / ".claude.json"
+    else:
+        config = install_desktop(linux_desktop_config(env.home))
+    config.write_text(json.dumps({"mcpServers": {"pyrite": USERS_OWN}}))
+    return config
+
+
+@pytest.mark.parametrize("client", ["claude-code", "claude-desktop"])
+def test_a_users_own_server_named_pyrite_is_not_replaced_without_force(env, client):
+    config = _seed_users_own(env, client)
+    before = config.read_text()
+
+    result = setup("--client", client)
+
+    assert result.exit_code == 1, result.output
+    assert "SERVER_NAME_TAKEN" in result.output
+    assert "--force" in result.output
+    assert config.read_text() == before
+    assert claude_calls(env) == []
+
+
+@pytest.mark.parametrize("client", ["claude-code", "claude-desktop"])
+def test_force_replaces_a_users_own_server_and_says_what_it_replaced(env, client):
+    config = _seed_users_own(env, client)
+
+    result = setup("--client", client, "--force")
+
+    assert result.exit_code == 0, result.output
+    assert_starts_pyrite_at(servers_in(config)["pyrite"], "write")
+    assert "Replaced" in result.output
+    assert USERS_OWN["command"] in result.output
+
+
+@pytest.mark.parametrize("client", ["claude-code", "claude-desktop"])
+def test_an_entry_from_the_old_pyrite_mcp_setup_is_replaced_without_force(env, client):
+    """The old `pyrite mcp-setup` wrote `pyrite` -> `pyrite-admin mcp` (or
+    `python -m pyrite.admin_cli mcp`); that entry is ours to replace."""
+    if client == "claude-code":
+        install_fake_claude(env)
+        config = env.home / ".claude.json"
+    else:
+        config = install_desktop(linux_desktop_config(env.home))
+    old = {"command": "python", "args": ["-m", "pyrite.admin_cli", "mcp"], "env": {}}
+    config.write_text(json.dumps({"mcpServers": {"pyrite": old}}))
+
+    result = setup("--client", client)
+
+    assert result.exit_code == 0, result.output
+    assert_starts_pyrite_at(servers_in(config)["pyrite"], "write")
+
+
+def test_config_that_is_not_utf8_is_config_invalid_and_untouched(env):
+    desktop = install_desktop(linux_desktop_config(env.home))
+    raw = b'{"mcpServers": {"x": {"command": "caf\xe9"}}}'
+    desktop.write_bytes(raw)
+
+    result = setup()
+
+    assert result.exit_code == 1, result.output
+    assert "CONFIG_INVALID" in result.output
+    assert "UTF-8" in result.output
+    assert "Traceback" not in result.output
+    assert desktop.read_bytes() == raw
+
+
+def test_untouched_servers_round_trip_with_their_text(env):
+    """What can be kept is kept: non-ASCII stays as written (no \\u escapes),
+    strings, ints, floats, bools, null, nesting and key order compare equal.
+    The JSON module's limit (in _write_file's docstring): a number's
+    spelling (1.10, 1e3) and the indentation are not preserved."""
+    desktop = install_desktop(linux_desktop_config(env.home))
+    other = {
+        "command": "/opt/Zürich tools/srv",
+        "args": ["--name", "café ☕", "--n", 3, "--ratio", 0.25],
+        "env": {"FLAG": True, "EMPTY": None, "NESTED": {"b": [1, {"c": "ü"}], "a": 2}},
+    }
+    desktop.write_text(json.dumps({"mcpServers": {"other": other}}, ensure_ascii=False))
+
+    result = setup()
+
+    assert result.exit_code == 0, result.output
+    assert_starts_pyrite_at(servers_in(desktop)["pyrite"], "write")
+    text = desktop.read_text(encoding="utf-8")
+    assert "Zürich" in text and "café ☕" in text and "\\u" not in text
+    written = json.loads(text)["mcpServers"]["other"]
+    assert written == other
+    assert list(written["env"]["NESTED"]) == ["b", "a"]
+
+
+def test_mcp_server_module_entry_defaults_to_write(monkeypatch):
+    """`python -m pyrite.server.mcp_server` is the third stdio entry point;
+    the write default holds there too (maintainer's decision on #582)."""
+    import pyrite.server.mcp_server as mcp_server
+
+    started = []
+
+    class Recorder:
+        def __init__(self, tier, **kwargs):
+            started.append(tier)
+
+        def run_stdio(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(mcp_server, "PyriteMCPServer", Recorder)
+    monkeypatch.setattr(sys, "argv", ["pyrite.server.mcp_server"])
+
+    mcp_server.main()
+
+    assert started == ["write"]
+
+
+def test_pyrite_mcp_package_serve_defaults_to_write(monkeypatch):
+    """The separately published `pyrite-mcp serve` (pyrite-mcp/)."""
+    import pyrite.server.mcp_server as mcp_server
+
+    monkeypatch.syspath_prepend(str(REPO / "pyrite-mcp"))
+    sys.modules.pop("pyrite_mcp.__main__", None)
+    import pyrite_mcp.__main__ as pyrite_mcp_main
+
+    started = []
+
+    class Recorder:
+        def __init__(self, tier, **kwargs):
+            started.append(tier)
+
+        def run_stdio(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(mcp_server, "PyriteMCPServer", Recorder)
+    monkeypatch.setattr(sys, "argv", ["pyrite-mcp", "serve"])
+
+    pyrite_mcp_main.main()
+
+    assert started == ["write"]
+
+
+def test_claude_code_is_found_in_its_windows_install_dir(env, monkeypatch):
+    """The native installer puts claude.exe in %USERPROFILE%\\.local\\bin, which
+    need not be on PATH."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    # Not on PATH. Python 3.13's shutil.which takes its Windows branch from
+    # sys.platform and calls _winapi, which a Linux runner does not have.
+    monkeypatch.setattr(shutil, "which", lambda *args, **kwargs: None)
+    local_bin = env.home / ".local" / "bin"
+    local_bin.mkdir(parents=True)
+    exe = local_bin / "claude.exe"
+    exe.write_text(FAKE_CLAUDE.format(python=sys.executable))
+    exe.chmod(0o755)
+
+    result = setup("--client", "claude-code")
+
+    assert result.exit_code == 0, result.output
+    assert_starts_pyrite_at(servers_in(env.home / ".claude.json")["pyrite"], "write")
+
+
+def test_a_failed_remove_is_reported_and_no_add_is_tried(env, monkeypatch):
+    install_fake_claude(env)
+    assert setup("--client", "claude-code").exit_code == 0
+    monkeypatch.setenv("FAKE_CLAUDE_FAIL", "remove")
+
+    result = setup("--client", "claude-code", "--tier", "read")
+
+    assert result.exit_code == 1, result.output
+    assert "CLIENT_COMMAND_FAILED" in result.output
+    assert "claude mcp remove" in result.output
+    assert claude_calls(env)[-1][:2] == ["mcp", "remove"]
+    assert_starts_pyrite_at(servers_in(env.home / ".claude.json")["pyrite"], "write")
+
+
+@pytest.mark.parametrize(
+    ("platform", "unset", "expected"),
+    [
+        ("win32", "APPDATA", ("AppData", "Roaming", "Claude")),
+        ("linux", "XDG_CONFIG_HOME", (".config", "Claude")),
+    ],
+)
+def test_desktop_path_falls_back_to_the_home_default(env, monkeypatch, platform, unset, expected):
+    """With APPDATA (Windows) or XDG_CONFIG_HOME (Linux) unset, Desktop's
+    directory is the documented default under the home directory."""
+    monkeypatch.delenv(unset)
+    config = env.home.joinpath(*expected, "claude_desktop_config.json")
+    install_desktop(config)
+    monkeypatch.setattr(sys, "platform", platform)
+
+    result = setup("--client", "claude-desktop")
+
+    assert result.exit_code == 0, result.output
+    assert_starts_pyrite_at(servers_in(config)["pyrite"], "write")
+
+
+def test_claude_code_config_dir_is_where_ownership_is_read(env, monkeypatch):
+    """CLAUDE_CONFIG_DIR moves Claude Code's .claude.json; a user's own
+    'pyrite' there is found and left alone."""
+    install_fake_claude(env)
+    alt = env.tmp / "claude-config"
+    alt.mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(alt))
+    (alt / ".claude.json").write_text(json.dumps({"mcpServers": {"pyrite": USERS_OWN}}))
+
+    result = setup("--client", "claude-code")
+
+    assert result.exit_code == 1, result.output
+    assert "SERVER_NAME_TAKEN" in result.output
+    assert str(alt / ".claude.json") in result.output
+    assert claude_calls(env) == []
