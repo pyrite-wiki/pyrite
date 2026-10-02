@@ -668,7 +668,7 @@ def user_create(
 
 
 def main():
-    configure_entry_point_logging()
+    configure_entry_point_logging(app=app)
     app()
 
 

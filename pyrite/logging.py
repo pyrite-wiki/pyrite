@@ -10,7 +10,7 @@ Provides consistent logging across all modules with:
 import logging
 import os
 import sys
-from typing import Literal
+from typing import Any, Literal
 
 # Log level type
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -95,13 +95,47 @@ LOG_LEVEL_ENV = "PYRITE_LOG_LEVEL"
 _LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
-def split_verbosity(argv: list[str]) -> tuple[int, list[str]]:
+def _takes_a_value(app: Any, argv: list[str], i: int) -> bool:
+    """Is ``argv[i]`` an option that consumes the next token as its value?
+
+    Walks ``argv[:i]`` down the Click command tree of ``app`` (a Typer app) to
+    the command in effect, then looks the option up there. False when it cannot
+    tell (no app, an unknown option, a stand-in app): the token is then a flag.
+    """
+    try:
+        import typer.main
+
+        cmd = typer.main.get_command(app)
+        for tok in argv[:i]:
+            sub = getattr(cmd, "commands", {}).get(tok) if not tok.startswith("-") else None
+            if sub is not None:
+                cmd = sub
+        for param in cmd.params:
+            if argv[i] in (*param.opts, *param.secondary_opts):
+                return (
+                    param.param_type_name == "option"
+                    and not getattr(param, "is_flag", False)
+                    and not getattr(param, "count", False)
+                    and param.nargs == 1
+                )
+    except Exception:  # introspection is best effort; the flag reading is the fallback
+        return False
+    return False
+
+
+def split_verbosity(argv: list[str], app: Any = None) -> tuple[int, list[str]]:
     """Count ``-v`` / ``-vv`` / ``--verbose`` in ``argv`` and return the rest.
 
     The flag is taken out of the argument list before Typer sees it, so it works
     in any position (``pyrite search x -v``, not only ``pyrite -v search x``;
     a Typer root option must precede the subcommand, which is not what people
     type) and identically on all three entry points. Scanning stops at ``--``.
+
+    A token right after an option that takes a value is that value, not a flag:
+    on ``dev`` Click read ``create -b -v --title T`` as ``body="-v"``, and
+    stripping the token would make ``-b`` swallow ``--title`` instead. With
+    ``app`` given, that one ambiguous position is checked against the real
+    command's options, so a boolean flag (``--force -v``) is still a flag.
     """
     count = 0
     rest: list[str] = []
@@ -109,10 +143,13 @@ def split_verbosity(argv: list[str]) -> tuple[int, list[str]]:
         if arg == "--":
             rest.extend(argv[i:])
             break
-        if arg == "--verbose":
-            count += 1
-        elif len(arg) > 1 and arg[0] == "-" and arg[1] != "-" and set(arg[1:]) == {"v"}:
-            count += len(arg) - 1
+        is_flag = arg == "--verbose" or (
+            len(arg) > 1 and arg[0] == "-" and arg[1] != "-" and set(arg[1:]) == {"v"}
+        )
+        if is_flag and i and argv[i - 1].startswith("-") and _takes_a_value(app, argv, i - 1):
+            is_flag = False
+        if is_flag:
+            count += 1 if arg == "--verbose" else len(arg) - 1
         else:
             rest.append(arg)
     return count, rest
@@ -123,20 +160,22 @@ def logging_epilog(prog: str) -> str:
     return (
         f"Logging: warnings only by default. `-v` (INFO) or `-vv` (DEBUG), in any position, "
         f"shows progress on stderr; {LOG_LEVEL_ENV}=INFO does the same without a flag. "
-        f"Use `{prog} ... -- -v` to pass a literal -v."
+        f"A -v that is an option's value (`-b -v`) is kept as the value; `{prog} ... -- -v` "
+        f"passes a literal -v as an argument."
     )
 
 
-def configure_entry_point_logging(default: LogLevel = "WARNING") -> None:
+def configure_entry_point_logging(default: LogLevel = "WARNING", app: Any = None) -> None:
     """The one place a command-line entry point decides what reaches the terminal.
 
     A command's default output is its result (#584): diagnostics are asked for.
     Level, most specific first: ``-v`` (INFO) / ``-vv`` (DEBUG) in ``sys.argv``,
     then ``PYRITE_LOG_LEVEL``, then ``default``. The flag is removed from
-    ``sys.argv`` so the command parser never sees it. Output goes to stderr only;
+    ``sys.argv`` so the command parser never sees it, unless it is an option's
+    value (``app``, the Typer app, tells which options take one). Output goes to stderr only;
     stdout belongs to the result (and, for stdio MCP, to the protocol).
     """
-    verbosity, rest = split_verbosity(sys.argv[1:])
+    verbosity, rest = split_verbosity(sys.argv[1:], app=app)
     sys.argv[1:] = rest
 
     level: LogLevel = default

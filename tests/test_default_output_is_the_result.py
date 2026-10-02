@@ -534,3 +534,189 @@ class TestIndexEmbedReportsTheVectorsItAdded:
         assert "Embedded: 0" in result.output
         assert "Errors: 2" in result.output, result.output
         assert _vector_count(db) == 0
+
+
+# ---------------------------------------------------------------------------
+# Round 1 review of PR #590
+# ---------------------------------------------------------------------------
+
+
+class TestAnOptionValueThatLooksLikeTheFlagIsData:
+    """Review item 1. On dev, Click reads `-b -v` as body="-v". Stripping every
+    bare `-v` token made `-b` swallow the *next* option as its value, and a
+    valid command line saved a different value without a word."""
+
+    def test_a_value_taking_option_keeps_dash_v_as_its_value(self, tmp_path):
+        kb = tmp_path / "kb"
+        assert (
+            _run(tmp_path, CLI, "init", "--template", "research", "--path", str(kb)).returncode == 0
+        )
+        made = _run(tmp_path, CLI, "create", "-k", "kb", "-t", "note", "-b", "-v", "--title", "T")
+        assert made.returncode == 0, made.stdout + made.stderr
+        shown = _run(tmp_path, CLI, "get", "t", "-k", "kb", "--format", "json")
+        assert shown.returncode == 0, shown.stdout + shown.stderr
+        assert json.loads(shown.stdout)["body"].strip() == "-v"
+
+    def test_it_is_not_counted_as_verbosity(self):
+        from typer.testing import CliRunner  # noqa: F401  (the real app is introspected)
+
+        from pyrite.cli import app
+        from pyrite.logging import split_verbosity
+
+        argv = ["create", "-k", "kb", "-b", "-v", "--title", "T"]
+        assert split_verbosity(argv, app=app) == (0, argv)
+
+    def test_a_boolean_flag_before_dash_v_is_still_a_flag(self):
+        from pyrite.cli import app
+        from pyrite.logging import split_verbosity
+
+        count, rest = split_verbosity(["index", "embed", "--force", "-v"], app=app)
+        assert (count, rest) == (1, ["index", "embed", "--force"])
+
+    def test_a_dash_v_that_follows_a_value_is_a_flag(self):
+        from pyrite.cli import app
+        from pyrite.logging import split_verbosity
+
+        count, rest = split_verbosity(["create", "-b", "text", "-v", "--title", "T"], app=app)
+        assert (count, rest) == (1, ["create", "-b", "text", "--title", "T"])
+
+    def test_an_unknown_app_falls_back_to_treating_it_as_a_flag(self):
+        from pyrite.logging import split_verbosity
+
+        assert split_verbosity(["x", "--opt", "-v"], app=None) == (1, ["x", "--opt"])
+
+
+class TestTheTraceAndTheWarningAgree:
+    """Review item 2. The trace said a keyword search ran for a semantic search
+    that was skipped, naming embeddings as the cause, beside a warning that
+    named a missing package."""
+
+    @staticmethod
+    def _trace(db, mode):
+        from pyrite.services.search_service import SearchService
+
+        trace: dict = {}
+        warnings: list[str] = []
+        SearchService(db).search("falcon", mode=mode, warnings=warnings, trace=trace)
+        return trace, warnings
+
+    def test_semantic_without_the_extra(self, indexed, no_extra):
+        trace, warnings = self._trace(indexed[1], "semantic")
+        assert trace["reason"] == "semantic_extra_missing", trace
+        assert trace["actual_mode"] == "none", "nothing ran in pure semantic mode"
+        assert "sentence-transformers" in warnings[0]
+
+    def test_hybrid_without_the_extra(self, indexed, no_extra):
+        trace, warnings = self._trace(indexed[1], "hybrid")
+        assert trace["reason"] == "hybrid_extra_missing", trace
+        assert trace["actual_mode"] == "keyword"
+        assert "sentence-transformers" in warnings[0]
+
+    def test_extension_not_loaded(self, indexed, monkeypatch):
+        import importlib.util
+
+        db = indexed[1]
+        if importlib.util.find_spec("sqlite_vec") is None:
+            pytest.skip("sqlite-vec package not installed")
+        monkeypatch.setattr("pyrite.services.embedding_service.is_available", lambda: True)
+        monkeypatch.setattr(db, "vec_available", False, raising=False)
+        trace, warnings = self._trace(db, "semantic")
+        assert trace["reason"] == "semantic_sqlite_vec_not_loaded", trace
+        assert "did not load" in warnings[0]
+
+    def test_package_missing(self, indexed, monkeypatch):
+        db = indexed[1]
+        monkeypatch.setattr("pyrite.services.embedding_service.is_available", lambda: True)
+        monkeypatch.setattr(db, "vec_available", False, raising=False)
+        monkeypatch.setattr("importlib.util.find_spec", lambda name, *a: None)
+        trace, warnings = self._trace(db, "hybrid")
+        assert trace["reason"] == "hybrid_sqlite_vec_missing", trace
+        assert "sqlite-vec package is not installed" in warnings[0]
+
+    def test_no_embeddings_keeps_its_reason(self, indexed):
+        db = indexed[1]
+        if not db.vec_available:
+            pytest.skip("sqlite-vec unavailable")
+        trace, warnings = self._trace(db, "semantic")
+        assert trace["reason"] == "semantic_empty_no_embeddings", trace
+        assert "no embeddings" in warnings[0]
+
+
+class TestPyriteServerSaysItsOwnWarning:
+    """Review item 3: the reason the entry point was touched at all."""
+
+    def test_open_registration_warning_is_formatted_on_stderr(self, tmp_path):
+        cfg = tmp_path / "data"  # PYRITE_DATA_DIR wins over PYRITE_CONFIG_DIR
+        cfg.mkdir(exist_ok=True)
+        (cfg / "config.yaml").write_text(
+            "settings:\n  auth:\n    enabled: true\n    allow_registration: true\n"
+        )
+        pre = (
+            "from unittest.mock import patch; import uvicorn; "
+            "patch('uvicorn.run', side_effect=lambda *a, **k: None).start()"
+        )
+        proc = _run(tmp_path, SERVER, pre=pre)
+        assert "[WARNING] pyrite.server.api:" in proc.stderr, proc.stderr
+        assert "allow_registration" in proc.stderr, proc.stderr
+        assert proc.stdout == ""
+
+
+class TestIndexEmbedAccounting:
+    def test_counts_helper_three_cases(self):
+        from pyrite.cli.index_commands import _embed_counts
+
+        stats = {"embedded": 1, "skipped": 4}
+        assert _embed_counts(stats, 0, False) == (1, 4, 0)  # no queue
+        assert _embed_counts(stats, 3, False) == (4, 1, 0)  # queue within skipped
+        assert _embed_counts(stats, 6, False) == (7, 0, 2)  # queue exceeds skipped
+        assert _embed_counts(stats, 3, True) == (1, 4, 0)  # force: embed_all did it all
+
+    def test_a_queue_that_exceeds_skipped_is_said(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        from pyrite.cli import app
+        from pyrite.services import embedding_service
+
+        _embed_env(tmp_path, monkeypatch, 2)
+        real = embedding_service.EmbeddingService.embed_all
+
+        def fewer_skipped(self, *a, **k):
+            stats = real(self, *a, **k)
+            stats["skipped"] = 0
+            return stats
+
+        monkeypatch.setattr(embedding_service.EmbeddingService, "embed_all", fewer_skipped)
+        out = CliRunner().invoke(app, ["index", "embed"]).output
+        assert "more than" in out and "skipped" in out, out
+
+    def test_other_kbs_settled_by_the_drain_are_counted(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        from pyrite.cli import app
+
+        config, db = _embed_env(tmp_path, monkeypatch, 2)
+        other = tmp_path / "kb2"
+        other.mkdir()
+        config.knowledge_bases.append(KBConfig(name="u", path=other, kb_type=KBType.GENERIC))
+        KBService(config, db).create_entry("u", "x0", "Other 0", "note", "other body")
+        KBService(config, db).create_entry("u", "x1", "Other 1", "note", "other body 1")
+        out = CliRunner().invoke(app, ["index", "embed", "--kb", "t"]).output
+        assert "Embedded: 2" in out, out
+        assert "2 entries in other KBs" in out, out
+        assert _vector_count(db) == 4
+
+    def test_sqlite_vec_that_will_not_load_gets_the_search_wording(self, tmp_path, monkeypatch):
+        import importlib.util
+
+        from typer.testing import CliRunner
+
+        from pyrite.cli import app
+
+        if importlib.util.find_spec("sqlite_vec") is None:
+            pytest.skip("sqlite-vec package not installed")
+        _, db = _embed_env(tmp_path, monkeypatch, 1)
+        monkeypatch.setattr("pyrite.services.embedding_service.is_available", lambda: True)
+        monkeypatch.setattr(db, "vec_available", False, raising=False)
+        out = CliRunner().invoke(app, ["index", "embed"]).output
+        assert "did not load" in out, out
+        assert "pip install" not in out, out

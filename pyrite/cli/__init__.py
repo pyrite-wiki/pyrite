@@ -93,6 +93,9 @@ def _main(
         is_eager=True,
         help="Show the installed Pyrite version and exit.",
     ),
+    # Declared only so `--help` lists it: `main()` removes -v/-vv before Typer
+    # parses (pyrite.logging.split_verbosity), so this parameter is never read
+    # and, under CliRunner (which skips main()), -v does nothing.
     verbose: int = typer.Option(
         0,
         "--verbose",
@@ -989,7 +992,7 @@ def _first_command(argv: list[str]) -> str | None:
 
 def main():
     default = "INFO" if _first_command(sys.argv[1:]) in _SERVER_COMMANDS else "WARNING"
-    configure_entry_point_logging(default=default)
+    configure_entry_point_logging(default=default, app=app)
     app()
 
 

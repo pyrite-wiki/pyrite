@@ -7,6 +7,10 @@ import sys
 
 from pyrite.cli import main
 
+#: What pytest's own argv was when this module was collected; `main()` rewrites
+#: `sys.argv`, so a test that calls it in-process must put it back.
+_ARGV_AT_COLLECTION = list(sys.argv)
+
 
 def test_bare_import_does_not_configure_application_logging():
     """Library imports must not install an emitting handler or touch root."""
@@ -48,7 +52,7 @@ def test_cli_warning_is_formatted_on_stderr_and_json_stdout_stays_parseable():
     assert "Traceback" not in probe.stderr
 
 
-def test_repeated_cli_startup_does_not_accumulate_handlers():
+def test_repeated_cli_startup_does_not_accumulate_handlers(monkeypatch):
     """Repeated in-process CLI invocations replace rather than stack handlers."""
     package_logger = logging.getLogger("pyrite")
     original_handlers = package_logger.handlers[:]
@@ -58,6 +62,7 @@ def test_repeated_cli_startup_does_not_accumulate_handlers():
     try:
         from unittest.mock import patch
 
+        monkeypatch.setattr(sys, "argv", list(sys.argv))  # main() strips -v from it
         with patch("pyrite.cli.app"):
             main()
             main()
@@ -69,3 +74,9 @@ def test_repeated_cli_startup_does_not_accumulate_handlers():
         package_logger.handlers = original_handlers
         package_logger.setLevel(original_level)
         package_logger.propagate = original_propagate
+
+
+def test_zz_in_process_main_leaves_the_runners_argv_alone():
+    """`main()` strips `-v` from `sys.argv`; under `pytest -v` that stripped
+    pytest's own argv for the rest of the worker. Runs last in the module."""
+    assert sys.argv == _ARGV_AT_COLLECTION
