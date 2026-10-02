@@ -160,8 +160,7 @@ the workflow run) so the maintainer knows the gate has not spoken yet.
   Findings become GitHub issues, and the flows worth keeping become
   **Playwright specs** — scripted, repeatable, run in CI on `main`. The two
   are complementary: exploring finds what to test; Playwright keeps it tested.
-- **Hallway testing with agent users** — the `tcp-skills:hallway-agent-testing`
-  skill: an agent uses Pyrite's CLI/MCP to do a real task and files friction.
+- **Hallway testing with agent users** — an agent uses Pyrite's CLI/MCP to do a real task and files friction.
   Cheap, and it is how the tool got good.
 - **Manual-test scripts** — a Sonnet worker turns a release's user-visible
   changes into a checklist a human can run in ten minutes, when the change is
@@ -228,14 +227,15 @@ the claims on the board and the tick log are the whole state.
 # FIRST, before reading any file: the main checkout poisons every grep,
 # pytest and `pyrite` call run in it while it is behind (#210). A stale tree
 # always argues AGAINST a fix having landed, and the answer looks plausible.
-git -C /Users/markr/pyrite fetch -q origin
-git -C /Users/markr/pyrite merge --ff-only origin/dev   # or say how far behind it is
+main=$(git worktree list --porcelain | sed -n '1s/^worktree //p')   # the main checkout
+git -C "$main" fetch -q origin
+git -C "$main" merge --ff-only origin/dev   # or say how far behind it is
 
 gh run list --branch dev --limit 3                      # is dev green?
 gh pr list --state open --json number,title,mergeStateStatus
-git -C /Users/markr/pyrite worktree list; git branch --list 'fix/*' 'feature/*' 'kb/*' 'process/*'
+git -C "$main" worktree list; git branch --list 'fix/*' 'feature/*' 'kb/*' 'process/*'
 gh issue list --milestone "<next version>" --state open
-df -h /Users/markr | tail -1                            # free disk, see the budget
+df -h "$main" | tail -1                              # free disk, see the budget
 ```
 
 - **The main checkout is current** — the `merge --ff-only` above. It went 35
@@ -349,11 +349,13 @@ own review suites, review agents told to run the suite, or the pre-push hook
 inside each worker). That is the failure these two budgets exist to prevent.
 
 *The machine budget* — count **suite slots**, not workers, and count your
-own:
+own. The operator sets the budget for their machine; the numbers below are the
+worked example, from the maintainer's 10-core / 16 GB laptop, where the #168
+failure happened. Scale them to your cores and memory, and keep the rule:
 - every suite anywhere runs `-n 4`, never `-n auto` (ten processes per suite
-  on this 10-core / 16 GB machine); every worker prompt and every reviewer
+  on that 10-core machine); every worker prompt and every reviewer
   prompt says so;
-- at most **four suite slots** in use at once: each code worker holds one
+- at most **four suite slots** in use at once (the example's limit): each code worker holds one
   while it lives (it may run its suite at any moment, and its pre-push hook
   will), the conductor's review suite holds one, and **a Playwright run holds
   two** (uvicorn + vite + several Chromium workers);
@@ -401,35 +403,36 @@ footprint. The retro reads these three to score the speed of learning.
 
 **Read the tick log by timestamp, not by position.** Entries are appended
 by whichever conductor finishes first, so the newest tick can sit above an
-older retro; before absorbing anything, `grep -n "^## " desk/notes/conductor-log-*.md`
+older retro; before absorbing anything, `grep -n "^## " "$LOG_DIR"/conductor-log-*.md`
 and read the latest *timestamp*.
 
-**Append the same report to the tick log** — `desk/notes/conductor-log-<YYYY-Www>.md`
-in the **`pyrite-desk` KB** (one note per ISO week; create it with
-`pyrite create -k pyrite-desk -t note --title "Conductor log <YYYY-Www>"` on
-the week's first tick, then append a `## Tick <timestamp>` section and
-`pyrite index sync`). The retro reads this log, not your memory; a tick that
-leaves no entry did not happen.
+**Append the same report to the tick log**, `conductor-log-<YYYY-Www>.md` in
+the log directory (one file per ISO week; start it on the week's first tick,
+then append a `## Tick <timestamp>` section). The retro reads this log, not
+your memory; a tick that leaves no entry did not happen.
 
-**The log does not go in *this* repo** (maintainer, 2026-09-21). `desk/` is
-gitignored here, so a tick writes the file and stops — no worktree, no branch,
-no PR, no commit. It was on a weekly branch because the `dev` ruleset takes
-nothing without a PR (#71); that produced **34 commits in the last 100 on
-`dev`, all touching one file**, one of them reading "conductor tick — quiet".
-A record of a tick that did nothing is not worth a commit on the branch every
-contributor reads, and the value of the log — the retro reads it, the next tick
-resumes from it — is unchanged by its living somewhere else.
+*The setting:* the log directory is `PYRITE_CONDUCTOR_LOG_DIR`, defaulting to
+`.pyrite-conductor/` at the main checkout's root (gitignored). Resolve it once
+per tick: `LOG_DIR=${PYRITE_CONDUCTOR_LOG_DIR:-$main/.pyrite-conductor}`;
+`mkdir -p "$LOG_DIR"`. Point it at any directory you keep elsewhere (your own
+notes KB, a private repository); the meta-conductor reads the same setting.
+
+**The log does not go in *this* repo's history** (maintainer, 2026-09-21). The
+default directory is gitignored, so a tick writes the file and stops: no
+worktree, no branch, no PR, no commit. It was on a weekly branch because the
+`dev` ruleset takes nothing without a PR (#71); that produced **34 commits in
+the last 100 on `dev`, all touching one file**, one of them reading "conductor
+tick — quiet". A record of a tick that did nothing is not worth a commit on the
+branch every contributor reads, and the value of the log (the retro reads it,
+the next tick resumes from it) is unchanged by its living somewhere else.
 
 The distinction is *audience*, not durability: `pyrite/pyrite` is what
-contributors read, and the loop's own bookkeeping is not addressed to them. The
-maintainer intends to make `desk/` a **private repository of its own**, at
-which point the log is versioned and backed up again without ever appearing in
-the history a contributor reads. Until that lands, treat the log as local to
-this machine: it is not backed up, and a tick that produces something worth
-keeping past the week — a decision, a process finding, an ADR — must still lift
-it out of the log into a KB entry or an ADR, which do go in `pyrite/pyrite`.
-That rule does not change when `desk/` gets its own remote; the log is a
-working surface either way, not the project's record of itself.
+contributors read, and the loop's own bookkeeping is not addressed to them.
+Treat the log as local to the machine the loop runs on unless you point the
+setting at something backed up: a tick that produces something worth keeping
+past the week (a decision, a process finding, an ADR) must still lift it out of
+the log into a KB entry or an ADR, which do go in `pyrite/pyrite`. The log is a
+working surface, not the project's record of itself.
 
 **The dispatch spec is the groomed ticket.** The draft PR's body is the
 backlog item's body (its `## Groom` section included), not a spec written

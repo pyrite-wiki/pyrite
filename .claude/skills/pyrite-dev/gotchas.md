@@ -395,7 +395,7 @@ tree.
 
 The `pyrite` KB is registered in `~/.pyrite/config.yaml` with the main
 checkout's path. Run `pyrite update <ticket>` from a worktree and the file
-under `/Users/markr/pyrite/kb/` changes, not the worktree's -- three stray
+under the main checkout's `kb/` changes, not the worktree's -- three stray
 modifications on 2026-09-18, caught only by `git status` in the main tree.
 Fixed by repo-local config: `resolve_config_dir()` finds `.pyrite/config.yaml`
 upward from the cwd (explicit `PYRITE_CONFIG_DIR` still wins), and

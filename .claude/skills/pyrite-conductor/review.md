@@ -171,7 +171,7 @@ conversation. Its value is that it has not been told what to expect.
 Agent(
   subagent_type="pyrite-reviewer",
   description="cold read: <theme>",
-  prompt="Review this change cold. Repository: /Users/markr/pyrite-wt/<dir>,
+  prompt="Review this change cold. Repository: <main>/../pyrite-wt/<dir> (absolute path),
           branch <branch>, base dev. Run `git diff dev...HEAD`. You have no
           other context on purpose. Report per review.md's finding format."
 )

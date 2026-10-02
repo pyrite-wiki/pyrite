@@ -8,7 +8,7 @@ description: "This skill should be used, by the strongest available model, to ru
 **Announce at start:** "I'm using the pyrite-meta-conductor skill."
 
 The conductor runs the loops; you run the retrospective on them. Your stance
-is the one `tcp-skills:hallway-agent-testing` takes toward a tool — *where
+is the one a hallway test takes toward a tool — *where
 did the process make its users detour, wait, guess, or redo* — turned on the
 conductor, its workers, its reviewers and its human. You are not a faster
 conductor. You are the reason next month's conductor is better than this
@@ -46,21 +46,23 @@ never pause it, you change what it will read next tick.
 ## Inputs — evidence, never the conductor's self-report alone
 
 ```bash
-# The tick log: one entry per tick, written by the conductor. It lives in the
-# `pyrite-desk` KB, NOT in kb/ — the loop's bookkeeping is not addressed to
-# contributors (maintainer, 2026-09-21; it had put 34 of the last 100 commits
-# on dev, all on one file). `desk/` is gitignored here and is intended to
-# become its own private repo; until it does, the log is local to the machine
-# the loop ran on. If it is absent, say so and work from the GitHub evidence
-# below — an absent log is a missing input, never evidence that no ticks ran.
-ls desk/notes/conductor-log-*.md | tail -2
+# The tick log: one entry per tick, written by the conductor, in the directory
+# the conductor skill's `PYRITE_CONDUCTOR_LOG_DIR` setting names (default
+# `.pyrite-conductor/` at the main checkout root, gitignored). It is not in
+# kb/: the loop's bookkeeping is not addressed to contributors (maintainer,
+# 2026-09-21; it had put 34 of the last 100 commits on dev, all on one file).
+# If it is absent, say so and work from the GitHub evidence below — an absent
+# log is a missing input, never evidence that no ticks ran.
+main=$(git worktree list --porcelain | sed -n '1s/^worktree //p')
+LOG_DIR=${PYRITE_CONDUCTOR_LOG_DIR:-$main/.pyrite-conductor}
+ls "$LOG_DIR"/conductor-log-*.md | tail -2
 # Friction filed as it happened (conductor and workers file these; ADR-0033)
 gh issue list --label process --state all --limit 40 --json number,title,createdAt,closedAt
 # Flow: how long themes wait in each lane (draft PR = claim, ready = reviewed, merged = landed)
 gh pr list --state all --base dev --limit 60 --json number,title,isDraft,createdAt,mergedAt,closedAt,labels
 # Rework: rebases (BEHIND), redispatches, reverts
 gh pr list --state merged --base dev --limit 60 --json number,commits   # commit counts vs theme size
-git -C /Users/markr/pyrite log --oneline --grep='revert' -i dev | head
+git -C "$main" log --oneline --grep='revert' -i dev | head
 # Gate: CI duration and outcomes per job
 gh run list --branch dev --limit 40 --json databaseId,conclusion,createdAt,updatedAt
 # Backlog and queue shape
@@ -206,7 +208,6 @@ not add ceremony.
 
 - [pyrite-conductor](../pyrite-conductor/SKILL.md) — the loops you watch;
   its tick log and `process` issues are your primary evidence
-- `tcp-skills:hallway-agent-testing` — the stance
 - `poppendiecks` KB: `amplify-learning`, `seven-wastes-of-software`,
   `eliminate-waste` — the premise and the checklist
 - ADR-0019 (the constraint is review attention), ADR-0032 §3a (the value

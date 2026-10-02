@@ -575,6 +575,30 @@ class TestCloudSessionSetup:
         ]
         assert offenders == []
 
+    def test_skills_and_agents_name_no_private_kb_or_plugin(self):
+        # The loop must run for any contributor: the tick log's location is a
+        # setting (PYRITE_CONDUCTOR_LOG_DIR), and the maintainer's private KB
+        # and plugin are not part of the project's workflow.
+        import re
+
+        private = re.compile(r"tcp-kb-internal|tcp-skills|pyrite-desk|desk/notes")
+        offenders = [
+            f"{path.relative_to(REPO)}:{n}"
+            for base in (REPO / ".claude" / "skills", REPO / ".claude" / "agents")
+            for path in base.rglob("*.md")
+            for n, line in enumerate(path.read_text().splitlines(), 1)
+            if private.search(line)
+        ]
+        assert offenders == []
+
+    def test_conductor_log_dir_setting_is_stated_once_and_gitignored(self):
+        conductor = (REPO / ".claude/skills/pyrite-conductor/SKILL.md").read_text()
+        meta = (REPO / ".claude/skills/pyrite-meta-conductor/SKILL.md").read_text()
+        assert conductor.count("PYRITE_CONDUCTOR_LOG_DIR") >= 1
+        assert "PYRITE_CONDUCTOR_LOG_DIR" in meta, "the retro must find the log"
+        ignored = (REPO / ".gitignore").read_text().splitlines()
+        assert ".pyrite-conductor/" in ignored, "the default log dir must be gitignored"
+
 
 class TestGateJob:
     """One required check that always reports (ADR-0032 §2).

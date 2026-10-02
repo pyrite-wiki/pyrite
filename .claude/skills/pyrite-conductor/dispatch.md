@@ -129,8 +129,8 @@ the shell's eval (twice on 2026-09-18), and the failure looks like a
 half-run command.
 
 ```bash
-cd /Users/markr/pyrite && scripts/new-worktree.sh fix/<theme-slug>
-#  -> /Users/markr/pyrite-wt/fix-<theme-slug>  with its own .venv and hooks
+cd "$main" && scripts/new-worktree.sh fix/<theme-slug>   # $main: first line of `git worktree list`
+#  -> ../pyrite-wt/fix-<theme-slug>, a sibling of the main checkout, with its own .venv and hooks
 ```
 
 Then launch the worker with the Agent tool. Never use the tool's
@@ -151,7 +151,7 @@ Agent(
   model="sonnet" | "opus",
   description="theme: write-path correctness",
   prompt=<the spec above, plus:>
-    "Work in /Users/markr/pyrite-wt/fix-<slug> on branch fix/<slug>. Use its
+    "Work in <main>/../pyrite-wt/fix-<slug> (absolute path) on branch fix/<slug>. Use its
      .venv. Load the pyrite-dev skill and follow it. Test the groom's
      riskiest assumption first and post the result on the draft PR. Open a
      draft PR to dev right after your first push so CI starts; do not mark
