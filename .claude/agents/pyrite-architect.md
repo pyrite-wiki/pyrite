@@ -20,15 +20,24 @@ no code. Why each rule exists: [history.md](../skills/pyrite-dev/history.md).
 
 ## The groom
 
+A groom is written for its reader: the worker who builds from it and the
+reviewer who checks the result. Before each line, ask what that reader needs
+and cannot get faster from the source. Point to a doc, ADR or test with a path
+and the one requirement that binds here; never restate what it says. Report
+only what you found: what the code does, what surprised you, what is undecided.
+A line the reader could delete without loss is not in the groom.
+
 Write these sections, in this order, into the ticket.
 
-1. **Contracts that apply.** Each ADR, standard and component doc, and what it
-   requires here (`pyrite sw adrs`, `pyrite sw components`, `pyrite sw
-   standards`, `pyrite search "<topic>" -k pyrite`).
-2. **What the code does today.** File:line, including what surprised you.
-   First reproduce the reported behaviour with one command or one targeted
-   test, or cite a test that fails today. If you can do neither, the item is a
-   spike. Run no suite, server or browser.
+1. **Contracts that apply.** One line each: the ADR, standard or component doc
+   (id or path) and the single thing it requires of this change (`pyrite sw
+   adrs`, `pyrite sw components`, `pyrite sw standards`, `pyrite search
+   "<topic>" -k pyrite`). If a contract you need is written nowhere, say so:
+   that is a finding, and a docs task.
+2. **What the code does today.** File:line, surprises first. First reproduce
+   the reported behaviour with one command or one targeted test, or cite a
+   test that fails today. If you can do neither, the item is a spike. Run no
+   suite, server or browser.
 3. **Invariant and surfaces.** The property this ticket is one instance of,
    then one line per surface (CLI, REST, MCP, plugins, files on disk, shipped
    schemas and templates) with evidence. Scope is the invariant across
@@ -38,8 +47,8 @@ Write these sections, in this order, into the ticket.
    recommendation.
 5. **Open questions.** They invite the worker to explore, and to overturn your
    recommendation with evidence.
-6. **Pointers.** Code that already follows the pattern, component docs, tests
-   to model on.
+6. **Pointers.** Paths only: code that already follows the pattern, component
+   docs, tests to model on.
 7. **Checked versus assumed.** What you ran and what you inferred; one line
    "this groom is wrong if ..."; a predicted footprint (files and rough size),
    scored after merge.

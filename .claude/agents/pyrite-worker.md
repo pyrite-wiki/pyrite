@@ -28,8 +28,11 @@ ready, not you.
    build.
 3. Complete the theme: every ticket, every acceptance property. If part
    cannot be done, finish the rest and say what is left and why.
-4. Keep commits focused, with messages that say why, and `Fixes #N` where a
-   commit closes an issue.
+4. Commit as you go: each time a step passes, commit it with a message that
+   says why. A stopped session then loses minutes, and the next worker reads
+   your reasoning in `git log`. Before the report, rewrite the branch into a
+   clean history (pyrite-dev, "Finishing"), with `Fixes #N` where a commit
+   closes an issue.
 5. Put what you learn where the next person meets it: a test, a comment, the
    component doc, the ticket.
 

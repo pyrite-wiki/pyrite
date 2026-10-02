@@ -97,6 +97,9 @@ work" is not evidence.
   a bare marker is rejected.
 - A `fix:` branch whose line shows **0 red, or only import-only reds, is not
   done**: write a test that fails on the bug's behaviour, or say why none can.
+- Commit each passing step as you reach it, with the reason in the message.
+  Uncommitted work and the thinking behind it are lost when a session stops
+  (2026-10-02: a worker died with eight files edited and no note of why).
 - Open a draft PR right after your first push (`gh pr create --draft --base dev
   --fill`, `Fixes #N` in the body). Its CI is the authority.
 - Test each tree once: run `scripts/test-affected --run` in the foreground on a
@@ -137,11 +140,20 @@ Done means the whole theme, with evidence for every claim. Then, in order:
 
 1. **Diff your footprint**: `git diff --name-only origin/dev...HEAD`. A file on
    the out-of-scope list is not yours: find how it got in.
-2. **Push**: `git push -u origin <branch>`. A red pre-push in a test your change
+2. **Clean the history.** You committed at every passing step; the reviewer
+   reads commits, not checkpoints. Rewrite the branch into the few commits the
+   idea needs, each one coherent with a message that says why: `git fetch
+   origin dev`, `git rebase origin/dev`, note that head, then `git reset
+   --soft origin/dev` and recommit by explicit paths (or `git commit --fixup`
+   as you go and `GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash
+   origin/dev`). `git diff <noted-head> HEAD` must be empty: the rewrite
+   changes history, never content. Then `git push --force-with-lease`. Only your own branch, and only before the PR
+   is marked ready.
+3. **Push**: `git push -u origin <branch>`. A red pre-push in a test your change
    touches: fix it. In a test it does not touch: re-run that test alone, and if
    it passes, push with `--no-verify` and name the test in the report. If CI
    then fails the same test, it is yours to fix.
-3. **Report with the pushed SHA.** The PR stays a draft.
+4. **Report with the pushed SHA.** The PR stays a draft.
 
 ```
 Branch:      fix/what-it-fixes      Worktree: ../pyrite-wt/fix-what-it-fixes
