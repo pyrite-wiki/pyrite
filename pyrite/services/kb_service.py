@@ -301,6 +301,7 @@ class KBService:
         kb_name: str,
         kb_config: KBConfig,
         before: dict[str, Any] | None = None,
+        existing_entry: Entry | None = None,
     ) -> list[dict[str, Any]]:
         """Refuse a write the KB schema or a plugin validator rejects.
 
@@ -319,13 +320,16 @@ class KBService:
         """
         fields = self._validated_fields(entry)
         try:
-            result = kb_config.kb_schema.validate_entry(
+            kb_schema = kb_config.kb_schema
+            result = kb_schema.validate_entry(
                 entry.entry_type,
                 fields,
                 context={
                     "kb_name": kb_name,
+                    "kb_schema": kb_schema,
                     "kb_type": kb_config.kb_type,
                     "_schema_version": getattr(entry, "_schema_version", 0),
+                    "existing_entry": copy.deepcopy(existing_entry),
                 },
             )
         except Exception:  # a broken validator must not make every write fail
@@ -1205,6 +1209,7 @@ class KBService:
         if not entry:
             raise EntryNotFoundError(f"Entry not found: {entry_id}{repo.not_found_hint(entry_id)}")
 
+        existing_entry = copy.deepcopy(entry)
         # `type`/`entry_type` and the empty key are never model attributes on
         # any entry (`type` is frontmatter-only; `entry_type` is a read-only
         # `@property` with no setter, so setting it raised a raw
@@ -1302,7 +1307,9 @@ class KBService:
             entry.touch_updated_at()
 
         # Refuse before anything is written: the file must stay exactly as it was.
-        warnings = self._validate_write(entry, kb_name, kb_config, before=before)
+        warnings = self._validate_write(
+            entry, kb_name, kb_config, before=before, existing_entry=existing_entry
+        )
 
         # Run before_save hooks
         extra = {"old_status": old_status} if old_status else {}

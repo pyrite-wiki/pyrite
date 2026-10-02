@@ -264,11 +264,17 @@ class PyritePlugin(Protocol):
             List of callables that accept (entry_type, data, context) and return
             list of validation error dicts.
 
-            context is a dict with keys:
+            For create/update writes, context contains:
                 kb_name: str - name of the knowledge base
-                kb_schema: KBSchema | None - the KB's schema
-                user: str - current user identity
-                existing_entry: Entry | None - the existing entry (for updates)
+                kb_schema: KBSchema - the KB's schema
+                kb_type: str - the KB's type identifier
+                _schema_version: int - the entry's schema version
+                existing_entry: Entry | None - the entry before an update,
+                    or None for a create
+
+            Other validator call sites may provide only a subset. A user
+            identity is not available on every write surface and is therefore
+            not included.
         """
         ...
 

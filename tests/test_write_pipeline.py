@@ -1021,3 +1021,69 @@ def test_bulk_create_description_does_not_promise_a_single_index_sync():
     from pyrite.server.tool_schemas import WRITE_TOOLS
 
     assert "single index sync" not in WRITE_TOOLS["kb_bulk_create"]["description"]
+
+
+def test_plugin_validator_receives_documented_context_for_create_and_update(env, mcp, monkeypatch):
+    """#600: validators get the schema and the original Entry on update."""
+    from pyrite.plugins import get_registry
+    from pyrite.plugins.capabilities import Capability
+    from pyrite.schema.kb_schema import KBSchema
+
+    calls = []
+
+    def record_context(entry_type, fields, context):
+        calls.append((fields.get("role"), dict(context)))
+        return []
+
+    class RecordingPlugin:
+        name = "issue_600_validator_context"
+        capabilities = {Capability.STORAGE}
+
+        def get_kb_types(self):
+            return ["generic"]
+
+        def get_validators(self):
+            return [record_context]
+
+    registry = get_registry()
+    monkeypatch.setattr(registry, "_discovered", True)
+    monkeypatch.setattr(registry, "_plugins", dict(registry._plugins))
+    monkeypatch.setattr(registry, "_conformance_cache", {})
+    registry.register(RecordingPlugin())
+
+    created = mcp._dispatch_tool(
+        "kb_create",
+        {
+            "kb_name": KB,
+            "entry_type": "person",
+            "title": "Validator Context",
+            "body": "before update",
+            "role": "author",
+        },
+    )
+    assert created.get("created"), created
+    entry_id = created["entry_id"]
+
+    updated = mcp._dispatch_tool(
+        "kb_update",
+        {"kb_name": KB, "entry_id": entry_id, "role": "editor"},
+    )
+    assert updated.get("updated"), updated
+
+    create_contexts = [context for role, context in calls if role == "author"]
+    update_contexts = [context for role, context in calls if role == "editor"]
+    assert create_contexts
+    assert update_contexts
+    expected_keys = {"kb_name", "kb_schema", "kb_type", "_schema_version", "existing_entry"}
+    assert all(set(context) == expected_keys for context in create_contexts + update_contexts)
+    assert all(context["kb_name"] == KB for context in create_contexts + update_contexts)
+    assert all(
+        isinstance(context["kb_schema"], KBSchema) for context in create_contexts + update_contexts
+    )
+    assert all(context["existing_entry"] is None for context in create_contexts)
+
+    for context in update_contexts:
+        existing = context["existing_entry"]
+        assert existing is not None
+        assert existing.title == "Validator Context"
+        assert existing.role == "author"
