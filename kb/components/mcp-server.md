@@ -73,17 +73,21 @@ When triggered, the `_maybe_validate()` helper runs structural QA and appends `q
 
 ## Configuration and Startup
 
-- CLI: `pyrite mcp --tier write` or `pyrite-admin mcp`
-- Entry point: `main()` in `mcp_server.py` parses `--tier` flag
-- Default tier: `read`
+- CLI: `pyrite mcp --tier <tier>` or `pyrite-admin mcp --tier <tier>`; both default to `write` (ADR-0006) and reject an unknown tier with `INVALID_TIER`. `pyrite-admin mcp` defaulted to `admin` until #582.
+- Entry point: `main()` in `mcp_server.py` (`python -m pyrite.server.mcp_server`, no installed script) parses `--tier`, default `read`
 - The server creates its own `PyriteDB` and `KBService` instances
 - `close()` must be called to release the DB connection
 
 ## Consumers
 
-- Claude Code via `.claude-plugin/plugin.json` MCP server config
-- Claude Desktop / Cline via manual MCP server setup
-- Any MCP-compatible client over stdio
+`pyrite mcp-setup` (`pyrite/cli/mcp_setup_command.py`, #582) registers the server where each client reads it:
+
+- Claude Code, user scope: `claude mcp add -s user pyrite -- <abs>/pyrite mcp --tier <tier>`, stored by Claude Code in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`). Pyrite never edits that file itself. A re-run removes and re-adds, because `claude mcp add` refuses an existing name.
+- Claude Code, project scope (`--project`): `./.mcp.json`.
+- Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS), `%APPDATA%\Claude\claude_desktop_config.json` (Windows). There is no official Linux build; `$XDG_CONFIG_HOME/Claude/` (default `~/.config/Claude/`) is the path unofficial builds use.
+- Any MCP-compatible client over stdio: `--config <file>`, or the snippet the command prints when it finds no client.
+
+The entry's command is the absolute path of the running install's `pyrite` script (the interpreter's scripts directory, never `PATH`), with `--tier` always explicit. The command is run once (`mcp --help`) before anything is written. A server that Claude Desktop launches gets a limited environment and an undefined cwd (`/` on macOS), so it never finds a repo-local `.pyrite/` and loads `~/.pyrite`. The Desktop entry therefore carries `PYRITE_CONFIG_DIR`/`PYRITE_DATA_DIR` in `env` when `mcp-setup` ran under them, and never pins a repo-local config, because an explicit config dir is trusted. Claude Code entries carry no `env`: Claude Code inherits the shell and resolves per project. Tests: `tests/test_mcp_setup_reads_back.py`, including one against the real `claude` binary when it is installed.
 
 ## Related
 

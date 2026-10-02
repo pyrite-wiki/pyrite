@@ -70,7 +70,7 @@ pip install -e ".[all]"
 }
 ```
 
-Set `--tier read` for untrusted agents, `--tier write` for trusted research workflows, `--tier admin` for human-supervised KB management. Use `pyrite-admin mcp` for admin-tier access.
+Set `--tier read` for untrusted agents, `--tier write` for trusted research workflows, `--tier admin` for human-supervised KB management. `pyrite mcp` and `pyrite-admin mcp` both default to `write`; admin access is always an explicit `--tier admin`.
 
 ### MCP Tools by Tier
 

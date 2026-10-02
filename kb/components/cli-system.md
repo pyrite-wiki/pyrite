@@ -37,6 +37,10 @@ Typer-based CLI with a root app and eleven domain-specific sub-apps. Commands sh
 
 A command's default output is its result (#584). `main()` of `pyrite`, `pyrite-admin` and `pyrite-read` calls `pyrite.logging.configure_entry_point_logging()`: WARNING by default, `-v` INFO, `-vv` DEBUG (stripped from `sys.argv` before Typer, so it works in any position), `PYRITE_LOG_LEVEL` when no flag. `pyrite serve` and `pyrite-server` default to INFO (the operator's log); stdio `pyrite mcp` stays at WARNING and logs to stderr only. Tests that need this must run `main()` in a subprocess; `CliRunner` skips it (`tests/test_default_output_is_the_result.py`). A `-v` right after an option that takes a value (`create -b -v`) is that value: `split_verbosity` asks the real Click command, so boolean flags (`--force -v`) still strip. A test that calls `main()` in-process must restore `sys.argv`, which `main()` rewrites. The search trace's `reason` and the warning take their cause from `semantic_unavailable` (`embedding_service.py`), so they cannot disagree.
 
+## MCP client setup
+
+`pyrite mcp-setup` lives in `mcp_setup_command.py`. It configures every client it finds (Claude Code through `claude mcp add -s user`, Claude Desktop's per-OS config file) or the one named by `--client`; `--project` writes `./.mcp.json` and `--config` writes any named file. It exits 1 with `CLIENT_NOT_FOUND` and prints the entry to paste when it finds no client. Files it writes keep their other keys, are replaced atomically and keep their mode; invalid JSON is `CONFIG_INVALID` and a read-only file is `CONFIG_NOT_WRITABLE`, and in both cases the file is untouched. `mcp_tool_counts()` there is also the source of `pyrite mcp --help`'s per-tier counts. `pyrite-admin` has no `mcp-setup` since #582. See [[mcp-server]] for where each client reads its entry.
+
 ## Related
 
 - [[plugin-system]] — dynamic command registration
