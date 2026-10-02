@@ -124,10 +124,13 @@ class WriteResult:
     Warnings are the non-blocking findings of the same validation that refuses
     a write (an unknown select value when the KB does not enforce, a missing
     optional source...). Every surface can now return them (#378).
+
+    changed is False when an update has no writable fields and is not saved.
     """
 
     entry: Entry
     warnings: list[dict[str, Any]] = field(default_factory=list)
+    changed: bool = True
 
 
 @dataclass
@@ -1255,6 +1258,9 @@ class KBService:
                     f"the file (for example `{entry.entry_type}_{refused[0]}`) "
                     "and update the new name."
                 )
+
+        if not updates:
+            return WriteResult(entry=entry, changed=False)
 
         # Capture old_status before applying updates (for workflow hooks)
         old_status = getattr(entry, "status", None)
