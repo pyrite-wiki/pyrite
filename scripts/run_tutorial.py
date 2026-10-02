@@ -256,6 +256,16 @@ def main(argv: list[str]) -> int:
             "NO_COLOR": "1",
         }
     )
+    # `pyrite mcp-setup` registers the server with the MCP clients it finds and
+    # exits 1 when it finds none (#582), and a CI runner has none. A stub
+    # `claude` stands in for Claude Code, first on PATH so a caller's real one
+    # is never called; it records each call in the temp HOME.
+    stub_bin = home / ".tutorial-bin"
+    stub_bin.mkdir()
+    stub = stub_bin / "claude"
+    stub.write_text('#!/bin/sh\necho "$*" >> "$HOME/.tutorial-claude-calls"\n')
+    stub.chmod(0o755)
+    env["PATH"] = f"{stub_bin}{os.pathsep}{env.get('PATH', '')}"
     # Git identity: the tutorial's git block commits, and a CI runner has no
     # global identity configured.
     env.setdefault("GIT_AUTHOR_NAME", "Pyrite Tutorial")

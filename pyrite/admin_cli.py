@@ -22,7 +22,7 @@ from .config import (
     save_config,
 )
 from .logging import configure_entry_point_logging, logging_epilog
-from .utils.errors import PyriteCLIGroup
+from .utils.errors import PyriteCLIGroup, cli_error
 
 app = typer.Typer(
     cls=PyriteCLIGroup,
@@ -553,77 +553,30 @@ def schema_show(kb_name: str = typer.Argument(..., help="KB name")):
 
 @app.command("mcp")
 def mcp_server(
-    tier: str = typer.Option("admin", "--tier", "-t", help="Permission tier: read, write, admin"),
+    # write, as `pyrite mcp`: ADR-0006's default for agent integration. It was
+    # admin here, so a config written for `pyrite-admin mcp` with no --tier
+    # served kb_push and kb_registry_remove to any agent (#582).
+    tier: str = typer.Option(
+        "write", "--tier", "-t", help="Permission tier: read, write (default), admin"
+    ),
 ):
     """Start an MCP server at the specified permission tier."""
     import sys
 
     from .server.mcp_server import PyriteMCPServer
 
+    if tier not in PyriteMCPServer.VALID_TIERS:
+        cli_error(
+            f"Invalid tier: {tier!r}",
+            error_code="INVALID_TIER",
+            suggestion=f"choose one of: {', '.join(PyriteMCPServer.VALID_TIERS)}",
+        )
     print(f"Starting MCP server (tier={tier}) on stdio...", file=sys.stderr)
     server = PyriteMCPServer(tier=tier)
     try:
         server.run_stdio()
     finally:
         server.close()
-
-
-@app.command("mcp-setup")
-def mcp_setup(
-    config_path: Path | None = typer.Option(None, "--config", "-c"),
-    tier: str = typer.Option("write", "--tier", "-t", help="Default MCP tier: read, write, admin"),
-):
-    """Set up MCP server integration with Claude Code."""
-    import json
-    import shutil
-
-    if config_path is None:
-        config_path = Path.home() / ".claude" / "claude_desktop_config.json"
-
-    config_path = config_path.expanduser()
-
-    pyrite_exe = shutil.which("pyrite-admin")
-    if not pyrite_exe:
-        pyrite_exe = "python -m pyrite.admin_cli"
-        console.print("[yellow]Warning: pyrite-admin not in PATH, using module path[/yellow]")
-
-    if config_path.exists():
-        with open(config_path) as f:
-            claude_config = json.load(f)
-    else:
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        claude_config = {}
-
-    if "mcpServers" not in claude_config:
-        claude_config["mcpServers"] = {}
-
-    from .services.access_policy import ROLES
-
-    # Register one server per tier
-    for t in ROLES:
-        server_name = f"pyrite-{t}"
-        if "python" in str(pyrite_exe):
-            claude_config["mcpServers"][server_name] = {
-                "command": "python",
-                "args": ["-m", "pyrite.admin_cli", "mcp", "--tier", t],
-                "env": {},
-            }
-        else:
-            claude_config["mcpServers"][server_name] = {
-                "command": pyrite_exe,
-                "args": ["mcp", "--tier", t],
-                "env": {},
-            }
-
-    with open(config_path, "w") as f:
-        json.dump(claude_config, f, indent=2)
-
-    console.print(f"[green]MCP servers configured in {config_path}[/green]")
-    console.print("\nRegistered three MCP servers:")
-    console.print("  pyrite-read  — Search, browse, retrieve (safe for any agent)")
-    console.print("  pyrite-write — Read + create/update/delete entries")
-    console.print("  pyrite-admin — Write + KB management, indexing, repos, config")
-    console.print("\nRestart Claude Code to load the new MCP servers.")
 
 
 # =============================================================================
