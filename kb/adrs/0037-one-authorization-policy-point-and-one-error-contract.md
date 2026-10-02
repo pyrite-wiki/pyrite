@@ -20,10 +20,10 @@ links:
 
 # ADR-0037: One authorization policy point and one error contract
 
-> **Proposed** (spike, 2026-09-25). The maintainer accepts or rejects it. It
-> answers the decision #383 asks to have recorded before dispatch ("do services
+> **Accepted** (maintainer, 2026-09-26; see "Accepted" below. First written as
+> a spike proposal, 2026-09-25). It answers the decision #383 asks to have recorded before dispatch ("do services
 > take a principal, or does scoping stay a surface duty with one shared
-> helper?"). The open questions at the end are the maintainer's.
+> helper?"). The decisions at the end are the maintainer's.
 
 ## Context
 

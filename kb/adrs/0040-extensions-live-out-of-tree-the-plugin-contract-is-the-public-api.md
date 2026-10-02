@@ -1,5 +1,5 @@
 ---
-id: adr-0039
+id: adr-0040
 title: Extensions live out of tree; the plugin contract is the public API
 type: adr
 importance: 5
@@ -27,8 +27,8 @@ links:
 
 # ADR-0040: Extensions live out of tree; the plugin contract is the public API
 
-> **Proposed** (spike, 2026-09-26). The maintainer accepts or rejects it. The
-> direction is already set: journalism-investigation moves out first, then
+> **Accepted** (maintainer, 2026-09-26, with the seven decisions at the end;
+> first written as a spike proposal). The direction is set: journalism-investigation moves out first, then
 > cascade, social, encyclopedia and perhaps zettelkasten, and software-kb stays
 > in tree. This ADR says what the contract is, how it is kept, and what has
 > to change before the first extension can leave. The decisions left open are

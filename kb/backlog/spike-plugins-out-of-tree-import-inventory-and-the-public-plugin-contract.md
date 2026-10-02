@@ -23,7 +23,7 @@ Deliverables:
 ## Spike result (2026-09-26)
 
 The spike read the code and ran no suites. Its findings are in
-[[adr-0039]], which is **proposed**, and its inventory table has one row per
+[[adr-0040]], which was **proposed** when this spike reported (accepted 2026-09-26), and its inventory table has one row per
 symbol. The headline numbers:
 
 - The extensions import **43 distinct `pyrite.*` symbols** from 18 modules:

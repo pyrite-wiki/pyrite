@@ -80,5 +80,5 @@ Update plugin protocol to use `execute_sql()` instead of `context.db.conn.execut
 ## Related
 
 - [ADR-0003: Two-Tier Data Durability](0003-two-tier-data-durability.md) — content in git, engagement in SQLite
-- [ADR-0005: SQLAlchemy ORM with Alembic Migrations](0005-sqlalchemy-orm-with-alembic-migrations.md) — original ORM decision
+- [ADR-0005: SQLAlchemy ORM with Alembic Migrations](0005-sqlalchemy-orm-with-alembic.md) — original ORM decision
 - Backlog #40: Unify Database Connection and Transaction Management

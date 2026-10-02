@@ -7,7 +7,17 @@ status: accepted
 deciders: ["markr"]
 date: "2025-10-01"
 tags: [architecture, plugins]
+links:
+- target: adr-0040
+  relation: amended_by
+  kb: pyrite
 ---
+
+> **Amended by [[adr-0040]] (2026-09-26).** Extensions move out of tree and
+> the plugin contract becomes the public API (a `pyrite.plugin_api` facade,
+> `PLUGIN_API_VERSION`, an operator allowlist). The entry-point mechanism and
+> the capability declarations below stand. ADR-0040 decision 2 deletes the
+> `cascade` extension rather than extracting it.
 
 ## Context
 

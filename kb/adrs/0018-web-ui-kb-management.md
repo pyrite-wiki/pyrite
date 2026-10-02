@@ -14,7 +14,15 @@ links:
   - target: "adr-0003"
     relation: "extends"
     note: "Two-tier durability applies per-fork"
+  - target: "adr-0024"
+    relation: "superseded_by"
+    note: "In part: the per-user fork/clone/PR mechanics are replaced for the single-instance case (see ADR-0024 'What this supersedes from ADR-0018')"
 ---
+
+> **Superseded in part by [[adr-0024]] (the per-user fork, shallow-clone,
+> GitHub-PR and org/user-directory mechanics, for the single-instance
+> multi-user case).** ADR-0024 says this design "remains valid as a future
+> evolution for federated/cross-instance collaboration"; that part stands.
 
 # ADR-0018: Web UI KB Management via Git Forks
 

@@ -7,6 +7,10 @@ status: accepted
 deciders: ["markr"]
 date: "2026-04-01"
 tags: [process, releases, deployment, git, ci]
+links:
+- target: adr-0032
+  relation: amended_by
+  kb: pyrite
 ---
 
 > **Amended by [[adr-0032]] (2026-09-17).** The branch roles below stand. "All
