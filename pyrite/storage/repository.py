@@ -78,18 +78,6 @@ class KBRepository:
                     fm = load_yaml(text[3:end])
                     if fm and isinstance(fm, dict):
                         body = text[end + 3 :].strip()
-                        # Defensive: strip duplicated frontmatter fields from body start
-                        # (e.g., "type: timeline_event" leaked into body by migration error)
-                        if body and ":" in body.split("\n", 1)[0]:
-                            first_line = body.split("\n", 1)[0].strip()
-                            key = first_line.split(":", 1)[0].strip()
-                            if key in fm:
-                                logger.debug(
-                                    "Stripped duplicated frontmatter field '%s' from body of %s",
-                                    key,
-                                    file_path,
-                                )
-                                body = body.split("\n", 1)[1].strip() if "\n" in body else ""
                         fm = self._maybe_migrate(fm)
                         # `fm` is the entry's frontmatter and nothing else. It
                         # used to get `body` and `file_path` injected here, but
