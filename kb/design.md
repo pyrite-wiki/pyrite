@@ -29,10 +29,13 @@ contracts are alpha.
 
 1. **The files are the KB.** Any tool can use them. A KB Pyrite has never
    touched is still a KB, and removing Pyrite loses none of its content.
-2. **Pyrite is additive.** It must never make maintaining the files by hand
-   worse. Hand edits and other tools' edits are first-class. Pyrite reads a
-   file as it is at the moment it acts, and does not require a file to be
-   spelled its way.
+2. **Pyrite is additive, and its contract with your files is explicit.** It
+   must never make maintaining the files by hand worse. Hand edits and other
+   tools' edits are first-class, and Pyrite reads a file as it is at the
+   moment it acts. What it asks of a file is written down and small: YAML
+   frontmatter, and an `id:`. Beyond the contract it does not require a file
+   to be spelled its way. A file outside the contract is reported, never
+   silently repaired.
 3. **A write does what was asked, loses nothing, and reports it.** A write is
    an operation on the file's own value: set a field, append an item, remove
    a key. Pyrite emits no bytes for anything it was not asked to change, and
@@ -43,7 +46,8 @@ contracts are alpha.
    may refuse a write. It may not change one.
 5. **The file decides.** Pyrite keeps no record outside a file about what is
    in it or who wrote it. The index is a cache and never the tiebreaker. An
-   entry's identity is its path, unless an `id:` pins it.
+   entry's identity is its `id:`. A file with none is addressed by its path
+   and reported as missing one.
 6. **Types give structure; protocols give behaviour.** A type is a schema. A
    protocol is a set of fields plus the derived and explicit operations the
    platform provides for them. Extensions add types, protocols and tools.
