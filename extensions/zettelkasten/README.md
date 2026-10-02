@@ -18,6 +18,12 @@ Pyrite plugin:
   (and their inverses), for linking notes as they mature.
 - **Preset:** `zettelkasten`, for `pyrite init --template zettelkasten`.
 
+`zettel_graph` accepts a depth from 1 to 3 (default 1). Depth 1 returns the
+center note's links; each additional level expands readable neighbors and
+includes their own links. Neighbor records include their note ID, KB, and hop
+distance. Same-KB records use the note ID as the key; cross-KB records use
+`kb_name:id`. Missing or unreadable targets are not expanded.
+
 Read `extensions/zettelkasten/src/pyrite_zettelkasten/plugin.py` for the
 full `ZettelkastenPlugin` implementation, and `entry_types.py`,
 `validators.py` for how the CEQRC (Capture, Elaborate, Question, Review,

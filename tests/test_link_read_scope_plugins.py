@@ -37,6 +37,42 @@ from tests.link_scope_seed import (
 PRIVATE_TITLE_MARK = "Private sw"
 
 
+def _seed_zettel_graph(db):
+    entries = [
+        (READABLE, "graph-depth-two-a", "Depth two A"),
+        (READABLE, "graph-depth-two-b", "Depth two B"),
+        (READABLE, "graph-depth-two-c", "Depth two C"),
+        (READABLE, "graph-depth-three-a", "Depth three A"),
+        (READABLE, "graph-depth-three-b", "Depth three B"),
+        (READABLE, "graph-depth-three-c", "Depth three C"),
+        (READABLE, "graph-depth-three-d", "Depth three D"),
+        (READABLE, "graph-scope-a", "Scope A"),
+        (READABLE, "graph-scope-b", "Scope B"),
+        (READABLE, "graph-cycle-a", "Cycle A"),
+        (READABLE, "graph-cycle-b", "Cycle B"),
+        (PRIVATE, "graph-scope-secret", "Private graph secret"),
+        (READABLE, "graph-scope-leak", "Readable graph target"),
+    ]
+    for kb_name, entry_id, title in entries:
+        _insert(db, kb_name, entry_id, title, "open", {}, entry_type="note")
+
+    links = [
+        ("graph-depth-two-a", READABLE, "graph-depth-two-b", READABLE),
+        ("graph-depth-two-b", READABLE, "graph-depth-two-c", READABLE),
+        ("graph-depth-three-a", READABLE, "graph-depth-three-b", READABLE),
+        ("graph-depth-three-b", READABLE, "graph-depth-three-c", READABLE),
+        ("graph-depth-three-c", READABLE, "graph-depth-three-d", READABLE),
+        ("graph-scope-a", READABLE, "graph-scope-b", READABLE),
+        ("graph-cycle-a", READABLE, "graph-cycle-b", READABLE),
+        ("graph-cycle-b", READABLE, "graph-cycle-a", READABLE),
+        ("graph-scope-b", READABLE, "graph-scope-secret", PRIVATE),
+        ("graph-scope-secret", PRIVATE, "graph-scope-leak", READABLE),
+    ]
+    for source_id, source_kb, target_id, target_kb in links:
+        _link(db, source_id, source_kb, target_id, target_kb, "elaborates", "elaborated_by")
+    db._raw_conn.commit()
+
+
 def _insert(db, kb, entry_id, title, status, meta, entry_type="backlog_item"):
     db._raw_conn.execute(
         "INSERT INTO entry (id, kb_name, entry_type, title, body, status, priority, metadata,"
@@ -115,6 +151,7 @@ def w(tmp_path_factory):
     world = build_world(tmp_path_factory, label="link-scope-plugins")
     seed_links(world)
     _seed_software(world.db)
+    _seed_zettel_graph(world.db)
     try:
         yield world
     finally:
@@ -166,6 +203,68 @@ def test_investigation_network_totals_count_only_readable_links(w, scope):
         w, "investigation_network", {"entry_id": READABLE_ENTRY, "kb_name": READABLE}, scope
     )
     assert result["totals"]["backlinks"] == 0
+
+
+def test_zettel_graph_depth_two_includes_first_neighbor_links(w, scope):
+    result = _call(
+        w,
+        "zettel_graph",
+        {"entry_id": "graph-depth-two-a", "kb_name": READABLE, "depth": 2},
+        scope,
+    )
+    neighbors = result.get("neighbors", {})
+    assert "graph-depth-two-b" in neighbors, result
+    assert "graph-depth-two-c" in [row["id"] for row in neighbors["graph-depth-two-b"]["outlinks"]]
+
+
+def test_zettel_graph_depth_three_includes_second_neighbor_links(w, scope):
+    result = _call(
+        w,
+        "zettel_graph",
+        {"entry_id": "graph-depth-three-a", "kb_name": READABLE, "depth": 3},
+        scope,
+    )
+    neighbors = result.get("neighbors", {})
+    assert "graph-depth-three-c" in neighbors, result
+    assert "graph-depth-three-d" in [
+        row["id"] for row in neighbors["graph-depth-three-c"]["outlinks"]
+    ]
+
+
+def test_zettel_graph_expansion_does_not_read_unreadable_sources(w, scope):
+    result = _call(
+        w,
+        "zettel_graph",
+        {"entry_id": "graph-scope-a", "kb_name": READABLE, "depth": 3},
+        scope,
+    )
+    neighbors = result.get("neighbors", {})
+    assert "graph-scope-b" in neighbors, result
+    assert "graph-scope-secret" not in neighbors
+    assert "Private graph secret" not in json.dumps(result)
+    assert "graph-scope-leak" not in json.dumps(result)
+
+
+def test_zettel_graph_rejects_depth_above_three(w, scope):
+    result = _call(
+        w,
+        "zettel_graph",
+        {"entry_id": "graph-depth-three-a", "kb_name": READABLE, "depth": 4},
+        scope,
+    )
+    assert result.get("error") == "depth must be between 1 and 3"
+
+
+def test_zettel_graph_depth_expansion_handles_cycles_once(w, scope):
+    result = _call(
+        w,
+        "zettel_graph",
+        {"entry_id": "graph-cycle-a", "kb_name": READABLE, "depth": 3},
+        scope,
+    )
+    neighbors = result.get("neighbors", {})
+    assert "graph-cycle-b" in neighbors, result
+    assert len(neighbors) == 1
 
 
 def test_zettel_graph_neighbours_stay_readable(w, scope):
