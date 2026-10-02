@@ -11,6 +11,7 @@ import json
 import tomllib
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -54,3 +55,21 @@ def _railway_env(command: str, env: dict) -> str:
         shlex.split(probe), env={**base, **env}, capture_output=True, text=True, check=True
     )
     return out.stdout.strip()
+
+
+@pytest.mark.control(reason="all four deploy compose files already set it; this pins them")
+def test_deploy_and_prod_compose_files_keep_auth_on():
+    """The `deploy/*` compose files bind the wildcard; each keeps auth on so a
+    wide bind always comes with a credential."""
+    files = sorted((ROOT / "deploy").glob("*/docker-compose*.y*ml"))
+    files.append(ROOT / "docker-compose.prod.yml")
+    assert len(files) == 5, "no deploy compose files found"
+    for f in files:
+        svcs = yaml.safe_load(f.read_text())["services"].values()
+        envs = []
+        for svc in svcs:
+            env = svc.get("environment") or {}
+            if isinstance(env, list):
+                env = dict(e.split("=", 1) for e in env if "=" in e)
+            envs.append(env)
+        assert any(_truthy(e.get("PYRITE_AUTH_ENABLED")) for e in envs), f

@@ -1499,7 +1499,7 @@ def main():
     """Run the API server."""
     import uvicorn
 
-    from ..config import open_registration_warning
+    from ..config import open_registration_warning, unauthenticated_bind_warning
     from ..logging import configure_entry_point_logging
 
     # The operator's log: INFO by default, unlike the one-shot CLIs. Before
@@ -1508,6 +1508,8 @@ def main():
     configure_entry_point_logging(default="INFO")
     config = load_config()
     if warning := open_registration_warning(config):
+        logger.warning(warning)
+    if warning := unauthenticated_bind_warning(config):
         logger.warning(warning)
     uvicorn.run(
         "pyrite.server.api:app",

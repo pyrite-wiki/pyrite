@@ -1268,6 +1268,83 @@ def load_config() -> PyriteConfig:
     return config
 
 
+def _is_loopback_bind(host: str) -> bool:
+    """Every spelling of a loopback bind: 127.0.0.0/8 (``127.1`` too), ``::1``
+    (bracketed or not), ``localhost`` in any case or with a trailing dot, with or
+    without a port. The wildcard and the empty string are not loopback."""
+    import ipaddress
+    import socket
+
+    from .server.request_guard import _hostname
+
+    name = _hostname(host).rstrip(".")
+    if name == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        pass
+    try:  # short IPv4 forms such as 127.1
+        return ipaddress.IPv4Address(socket.inet_aton(name)).is_loopback
+    except (OSError, ValueError):
+        return False
+
+
+def _in_container() -> bool:
+    """This process runs inside a container.
+
+    Signals: ``/.dockerenv`` (Docker), ``/run/.containerenv`` (Podman), or a
+    container runtime named in PID 1's cgroup. A heuristic: a bare host can
+    create ``/.dockerenv`` by hand, and a container runtime that leaves none of
+    these is missed (the acknowledgement then has no effect, the safe side).
+    """
+    if os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv"):
+        return True
+    try:
+        with open("/proc/1/cgroup") as f:
+            text = f.read()
+    except OSError:
+        return False
+    return any(m in text for m in ("docker", "containerd", "kubepods", "libpod"))
+
+
+def unauthenticated_bind_warning(config: PyriteConfig, host: str | None = None) -> str | None:
+    """The startup warning for a server with no credential bound beyond loopback.
+
+    ``host`` is the address actually bound (``pyrite serve --host`` wins over
+    settings); None means ``settings.host``. "No credential" is the guard's own
+    definition, ``acts_without_credential``. None when the server needs a
+    credential or binds loopback.
+
+    Also None when ``PYRITE_PUBLISHED_ON_LOOPBACK=true`` is set inside a
+    container and auth is off: the server cannot see the host side of Docker's
+    port mapping, so the compose file that publishes on 127.0.0.1 says so. The
+    promise is about the published address only, so it never covers auth that is
+    on with anonymous write, and outside a container (where no mapping exists to
+    promise about) it has no effect.
+    """
+    from .server.request_guard import acts_without_credential
+
+    settings = config.settings
+    bind = settings.host if host is None else host
+    if _is_loopback_bind(bind) or not acts_without_credential(settings):
+        return None
+    if (
+        os.environ.get("PYRITE_PUBLISHED_ON_LOOPBACK") == "true"
+        and not settings.auth.enabled
+        and _in_container()
+    ):
+        return None
+    shown = bind or "all interfaces"
+    return (
+        f"This server is bound to {shown} without a credential: anyone who can reach "
+        "that address can read and change everything in it. Bind to loopback "
+        "(--host 127.0.0.1, or PYRITE_HOST=127.0.0.1; in a container, publish the "
+        "port as 127.0.0.1:8088:8088) or turn on auth (PYRITE_AUTH_ENABLED=true, or "
+        "settings.auth.enabled: true)."
+    )
+
+
 def open_registration_warning(config: PyriteConfig) -> str | None:
     """The startup warning for an auth-enabled server anyone can sign up to.
 

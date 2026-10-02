@@ -2,14 +2,20 @@ services:
   pyrite:
     build: .
     ports:
-      - "8088:8088"
+      - "127.0.0.1:8088:8088"
     volumes:
       - pyrite-data:/data
     environment:
-      # Bound to all interfaces with auth disabled: requests must use an allowed
-      # host (localhost, or PYRITE_ALLOWED_HOSTS) or they get 421. For a shared
-      # or LAN deployment, enable auth instead (see docs/configuration.md).
+      # The container binds all interfaces (it must, to be reachable through
+      # Docker's port mapping); the `ports:` line above decides who can reach it.
       - PYRITE_HOST=0.0.0.0
+      # PYRITE_PUBLISHED_ON_LOOPBACK=true is true ONLY while `ports:` publishes
+      # on 127.0.0.1. The server cannot see that mapping; this tells it, so it
+      # does not warn about a credential-free wildcard bind on every start.
+      # Anyone changing `ports:` -- here or in a docker-compose.override.yml
+      # (Compose MERGES port lists) -- must remove this line in the same edit,
+      # and turn on auth (PYRITE_AUTH_ENABLED=true) first.
+      - PYRITE_PUBLISHED_ON_LOOPBACK=true
     restart: unless-stopped
 
 volumes:

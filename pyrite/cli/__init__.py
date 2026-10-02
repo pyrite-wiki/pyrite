@@ -27,6 +27,7 @@ from ..config import (
     load_config,
     open_registration_warning,
     save_config,
+    unauthenticated_bind_warning,
 )
 from ..exceptions import (
     EntryNotFoundError,
@@ -449,6 +450,8 @@ def serve(
         console.print(f"[yellow]Warning:[/yellow] {warning}")
     host = host or config.settings.host or "127.0.0.1"
     port = port or config.settings.port or 8088
+    if warning := unauthenticated_bind_warning(config, host):
+        console.print(f"[yellow]Warning:[/yellow] {warning}")
 
     web_dir = Path(__file__).parent.parent.parent / "web"
     dist_dir = web_dir / "dist"
