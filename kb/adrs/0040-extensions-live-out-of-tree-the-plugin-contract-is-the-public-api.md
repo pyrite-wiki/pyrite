@@ -1,5 +1,5 @@
 ---
-id: adr-0039
+id: adr-0040
 title: Extensions live out of tree; the plugin contract is the public API
 type: adr
 importance: 5

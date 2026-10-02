@@ -10,6 +10,9 @@ links:
 - target: adr-0037
   relation: related
   kb: pyrite
+- target: adr-0042
+  relation: related
+  kb: pyrite
 ---
 
 # ADR-0038: Entry identity and the file lifecycle
@@ -333,6 +336,39 @@ Backlog items, one per step: [[storage-invariants-harness-land-the-adr-0038-stat
    sync). This ADR takes mtime or size and leaves hash-always for measurement.
 
 5. **Derived id when a file has no `id:`. DECIDED (maintainer, 2026-09-26): from the filename, not the title.** Filenames are stable; titles change. This unblocks step 2.
+
+> **Proposed amendment (2026-10-02), to question 5.** Written by the ADR-0042
+> revision; the maintainer accepts or rejects it with that ADR. It amends the
+> decision above and two sentences of this ADR.
+>
+> **With no `id:` key, an entry's identity is its path relative to the KB
+> root. `id:` is an optional pin that survives a move. Identity is never
+> derived from the title.** Pyrite writes an `id:` only on files it creates, or
+> when asked.
+>
+> - **Why not the filename alone.** `_index.md`, a leaf bundle's `index.md` and
+>   `blog/intro.md` against `docs/intro.md` would share one id, and §2's
+>   duplicate rule would then index the first path and report the rest. A path
+>   is unique.
+> - **Section 1**, "the id generated from the title when there is none", is the
+>   sentence the 2026-09-26 decision had already replaced; it reads "the id
+>   derived from the path".
+> - **Section 2, row Update**, "The path changes only for a templated
+>   subdirectory, and then only the folder": gains "and only for a file with an
+>   `id:` pin". A type whose folder is templated by a field (`backlog/{status}`)
+>   needs the pin, because a change of that field moves the file. Pyrite creates
+>   those files and pins them. An update that would move an unpinned file sets
+>   the field, leaves the file, and reports "not moved: no id pin".
+> - **A move of an unpinned file changes its identity.** Links to the old id
+>   dangle and `qa` and `index health` report them. Pinning prevents it.
+> - **Existing links that point at title-derived ids.** Upgrade runs a one-time
+>   report of every id-less file whose old (title-derived) id differs from its
+>   path, and of every link, star, review and `entry_version` row that referred
+>   to the old id. A command applies the rewrite on request. Nothing is
+>   rewritten silently (ADR-0042 decision 5).
+> - **I8 and the `entry-da39a3ee` case.** An untitled file no longer collides:
+>   each has its own path.
+> - **Spelling of the path id** (extension, separators) is ADR-0042 question 4.
 
 ---
 
