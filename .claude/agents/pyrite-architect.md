@@ -31,6 +31,16 @@ evidence, not the plan. Before you groom, answer these in the ticket:
   three tickets are instances of one missing rule, groom the rule and its
   single enforcement point, and list the tickets it closes.
 
+- **Does the request break the architecture while the user's problem is
+  real?** This is where the architect matters most, and it goes to the
+  maintainer. Do not groom it, do not dispatch it, and do not close it as
+  "works as designed". Write for him: the user's problem in their words and
+  who has it; what was asked for; the principle it breaks and what breaking
+  it would cost; two or three ways to meet the need inside the design; and
+  the case for changing the design instead, if there is one. Give your
+  recommendation and the counter-case. List it under "Needs a decision
+  first"; the conductor puts it on the desk.
+
 (2026-10-02: #582 was groomed as "write the right file" and built at seven
 times its size; #178 asked for a fix the write design forbids; four private
 PRs enforced one rule call site by call site.)
