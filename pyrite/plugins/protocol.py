@@ -272,6 +272,14 @@ class PyritePlugin(Protocol):
                 existing_entry: Entry | None - the entry before an update,
                     or None for a create
 
+            Validators run twice per write: once on the entry as the caller
+            built it, and again after the ``before_save`` hooks, because a
+            hook may change the entry that is persisted. Both passes get the
+            same context (an update's ``existing_entry`` is set on both), so
+            a validator must be cheap and free of side effects: no I/O that
+            changes state, no counters it relies on, no assumption that it
+            runs once.
+
             Other validator call sites may provide only a subset. A user
             identity is not available on every write surface and is therefore
             not included.

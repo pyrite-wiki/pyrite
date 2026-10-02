@@ -1319,7 +1319,9 @@ class KBService:
         hook_ctx = self._hook_ctx(kb_name, kb_config, "update", extra)
         entry = self._run_hooks("before_save", entry, hook_ctx)
         # Preserve the update exception for unchanged on-disk enum values.
-        warnings = self._validate_write(entry, kb_name, kb_config, before=before)
+        warnings = self._validate_write(
+            entry, kb_name, kb_config, before=before, existing_entry=existing_entry
+        )
 
         # Save to file, register KB, and re-index
         self._doc_mgr.save_entry(
