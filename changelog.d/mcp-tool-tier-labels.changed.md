@@ -1,0 +1,1 @@
+- MCP tool descriptions now begin with `[read]`, `[write]`, or `[admin]` for each tool's own tier, including plugin tools, so agents can distinguish reads, writes, and administrative operations (#68).

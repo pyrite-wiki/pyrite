@@ -453,29 +453,34 @@ class PyriteMCPServer:
             body_response_budget=self.body_bounds.response_budget,
         )
 
+    def _register_tool(self, name: str, schema: dict[str, Any], tier: str) -> None:
+        """Label a copy at registration, keeping shared schemas unmodified."""
+        self._tool_tiers[name] = tier
+        self.tools[name] = {
+            **schema,
+            "description": f"[{tier}] {schema.get('description') or ''}",
+        }
+
     def _build_read_tools(self):
         """Register read-only tools (available in all tiers)."""
         from .tool_schemas import READ_TOOLS
 
         for name, schema in self._render_schemas(READ_TOOLS).items():
-            self.tools[name] = {**schema, "handler": getattr(self, f"_{name}")}
-            self._tool_tiers[name] = "read"
+            self._register_tool(name, {**schema, "handler": getattr(self, f"_{name}")}, "read")
 
     def _build_write_tools(self):
         """Register write tools (available in write and admin tiers)."""
         from .tool_schemas import WRITE_TOOLS
 
         for name, schema in self._render_schemas(WRITE_TOOLS).items():
-            self.tools[name] = {**schema, "handler": getattr(self, f"_{name}")}
-            self._tool_tiers[name] = "write"
+            self._register_tool(name, {**schema, "handler": getattr(self, f"_{name}")}, "write")
 
     def _build_admin_tools(self):
         """Register admin tools (available only in admin tier)."""
         from .tool_schemas import ADMIN_TOOLS
 
         for name, schema in self._render_schemas(ADMIN_TOOLS).items():
-            self.tools[name] = {**schema, "handler": getattr(self, f"_{name}")}
-            self._tool_tiers[name] = "admin"
+            self._register_tool(name, {**schema, "handler": getattr(self, f"_{name}")}, "admin")
 
     def _register_plugin_tools(self):
         """Register MCP tools from plugins for the current tier."""
@@ -500,7 +505,8 @@ class PyriteMCPServer:
                     if name not in lower and name in plugin_tools:
                         self._tool_tiers[name] = tier
                 lower.update(at_tier)
-            self.tools.update(plugin_tools)
+            for name, schema in plugin_tools.items():
+                self._register_tool(name, schema, self._tool_tiers[name])
         except Exception:
             logger.warning("Plugin MCP tool loading failed", exc_info=True)
 
