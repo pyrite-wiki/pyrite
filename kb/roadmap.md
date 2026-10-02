@@ -448,6 +448,68 @@ neighbour at once (#63), and block-sequence indentation lost on a round trip
 
 ---
 
+## The release line (redesigned 2026-10-02, maintainer)
+
+**Design.** A KB is Markdown files with YAML frontmatter on disk, usable by any
+tool. Pyrite is additive to someone maintaining those files by hand (ADR-0041,
+proposed). A write does what was asked, loses nothing, and reports it.
+
+**Who it is for now.** Local use by one operator, usually through a terminal
+coding agent. Multi-user stays experimental until its design is right; no new
+bespoke authorization objects are built before then.
+
+**Contracts are alpha.** The plugin and API contracts are our attempt to clean
+up the design around what matters most to users. They will be revised with
+community needs and feedback.
+
+| Release | Promise | Leaves |
+|---|---|---|
+| 0.25.7 | The first hour works; the alpha announcement | 2026-10-08 |
+| 0.25.8 | The CLI contract for agents | 2026-10-15 |
+| 0.25.9 | Search reads the whole entry; links work across KBs | 2026-10-22 |
+| 0.26 | Your files, exactly | undated |
+| 0.27 | One operator, many users | undated |
+| 0.28 | Alpha plugin and API contracts | undated |
+
+Dated releases are trains: what is done by the date ships. The GitHub
+milestones carry the issues; this table carries the promise and the gate.
+
+- **0.25.7.** `mcp-setup` does what was asked (#582), first-hour docs (#583),
+  declared types (#595, #607), orient (#232), first search (#43), a save that
+  deletes a body line (#636), and the journalism-investigation tools marked
+  experimental and unsupported (#644). *Gate:* ADR-0041 accepted for entry
+  files. *Slips first:* #232, #43.
+- **0.25.8.** Formats (#547, #553, #303), exit codes (#526), ambiguity (#528),
+  error spelling (#610), create (#86), the echo rule against the file (#569),
+  tiers in tool descriptions (#68), `.claude/` by audience (#244). Left open
+  for contributors: #54, #52, #59, #572, #200.
+- **0.25.9.** Whole-entry passage embedding
+  ([[embed-the-whole-entry-in-passages-by-default]]), #594, #194, #627; links
+  and cross-KB reads (#62, #64, #124, #621, #622, #623, #468). Embedding lands
+  before the index reconcile (maintainer, 2026-10-02).
+- **0.26: your files, exactly.** First the index tells the truth: the ADR-0038
+  reconcile (#6, #7, #484 to #487, #495, #51, #22), identity (#639, #494, #488
+  to #490), health (#593). Then a write changes only what was asked (ADR-0042,
+  proposed; its rule is re-spiked on the real path first): #637, #638, #640,
+  #178, #628, a stale-read rule, and explicit format and migrate commands.
+  *Gate:* ADR-0038 and the ADR-0042 decisions.
+- **0.27: one operator, many users.** Design first: the authorization model
+  and its executable matrix (#587), the security review (#586), the registry
+  in config under the operator (#539, #521, #565, #602, #382), one landing rule
+  for writes, the `published` flag. Two planes: users read and write entries
+  per KB by grant; everything else belongs to the operator. Capabilities
+  granted by the operator and configured in a user-owned file are the
+  direction, not this release.
+- **0.28: alpha plugin and API contracts.** Plugins out of tree with
+  journalism-investigation as the pilot, where its tools are fixed (#92, #93,
+  #94, #98); identity injected by the dispatcher (#384); #385, #412, #456,
+  #626.
+
+The sections below for 0.25.7 to 0.25.9, 0.26 and 0.27 predate this line.
+Where they differ, this section wins; their detail is kept for the reasoning.
+
+---
+
 ## 0.25.7 to 0.25.9 — Agents in the terminal (next; weekly patch releases)
 
 **Decided 2026-10-01 (maintainer).** The work a new user tests first comes before the
