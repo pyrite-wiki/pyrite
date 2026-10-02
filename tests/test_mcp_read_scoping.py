@@ -46,16 +46,20 @@ from tests.auth_seed import seed_user
 PUBLIC, PRIVATE = "public-kb", "private-kb"
 
 
-# The exact payload MCP already returns for a KB that genuinely does not
-# exist (`_error("NOT_FOUND", f"KB '{name}' not found")`, e.g. `_kb_schema`).
-# A refusal must be byte-identical to it: a caller must not be able to tell
-# "you may not read this" from "there is no such KB", or `/mcp` becomes an
-# oracle for the existence of private KBs.
+# The exact payload a scoped caller gets for a KB that genuinely does not
+# exist. A refusal must be byte-identical to it: a caller must not be able to
+# tell "you may not read this" from "there is no such KB", or `/mcp` becomes
+# an oracle for the existence of private KBs. Both come from the dispatcher's
+# `_kb_not_found`: a scoped caller never reaches a handler with a name outside
+# its readable set. The code is the contract's `KB_NOT_FOUND` since 0.25.7
+# (#66), with the old `NOT_FOUND` carried one release.
 def _absent_kb_payload(kb_name):
     return {
         "error": f"KB '{kb_name}' not found",
-        "error_code": "NOT_FOUND",
+        "error_code": "KB_NOT_FOUND",
         "retryable": False,
+        "suggestion": "Call kb_orient with no kb_name to list the KBs you can read.",
+        "legacy_error_code": "NOT_FOUND",
     }
 
 
@@ -340,7 +344,7 @@ class TestTheRefusalIsIndistinguishableFromAbsence:
         assert absent == _absent_kb_payload("no-such-kb-at-all")
         # Same keys, same codes, same message template: only the name differs.
         assert set(refused) == set(absent)
-        assert refused["error_code"] == absent["error_code"] == "NOT_FOUND"
+        assert refused["error_code"] == absent["error_code"] == "KB_NOT_FOUND"
         assert refused["retryable"] == absent["retryable"] is False
 
     def test_the_word_forbidden_never_appears(self, env):
@@ -383,7 +387,7 @@ class TestGrantedPeerStillGetsThrough:
             "kb_discover_neighbors",
             {"entry_id": "public-note", "kb_name": PUBLIC, "target_kb": PRIVATE},
         )
-        assert out.get("error_code") != "NOT_FOUND"
+        assert out.get("error_code") not in ("NOT_FOUND", "KB_NOT_FOUND")
 
 
 class TestAnApiKeyIsNotScoped:

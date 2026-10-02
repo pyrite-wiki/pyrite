@@ -217,9 +217,9 @@ def list_type_schemas(
         kb_config = config.get_kb(kb)
         if kb_config:
             schema = kb_config.kb_schema
-            # The same vocabulary `_refuse_undeclared_type` (#378) checks
-            # against: non-empty only when the KB's kb.yaml declares any type.
-            declared = sorted(schema.types.keys()) if schema and schema.types else []
+            # The vocabulary `_refuse_undeclared_type` (#378) checks against,
+            # from the same method: non-empty only when kb.yaml declares a type.
+            declared = schema.declared_types() if schema else []
             for type_name, ts in schema.types.items():
                 if type_name not in result:
                     result[type_name] = {"description": "", "fields": {}, "subdirectory": ""}

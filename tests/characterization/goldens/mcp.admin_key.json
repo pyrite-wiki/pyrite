@@ -1246,9 +1246,12 @@
     "valid": true
   },
   "kb_orient | admin_key | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
-    "error_code": "OPERATION_FAILED",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "OPERATION_FAILED",
+    "retryable": false,
+    "suggestion": "Call orient with no KB name to list the KBs you can read."
   },
   "kb_orient | admin_key | no-default-role-kb": {
     "description": "",

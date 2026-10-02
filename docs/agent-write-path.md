@@ -12,7 +12,15 @@ All of it verified by running against `dev` (0.25.4, commit `8c1e2a43`).
 ## 1. Discovering what a type needs
 
 Call `pyrite orient -k <kb>` (CLI) or `kb_orient` (MCP; same underlying
-`KBService.orient`) first. Its `schema.types` block is good enough for
+`KBService.orient`) first; with no KB named, either one lists the KBs. Since
+0.25.7 `schema.types` lists the types `create` accepts in that KB: only the
+declared ones when `kb.yaml` declares any (the commit this page was verified
+against also listed every core type). `detail=brief` drops the write-side
+blocks (`ai_instructions`, `evaluation_rubric`, `guidelines`, `goals`, and the
+top-level `guidelines`) and keeps `relationship_types`; use the default when
+you are about to write. To get the omitted blocks back, ask again with
+`pyrite orient -k <kb> --detail full` or call `kb_schema`; `pyrite kb schema
+show` returns names only. The block is good enough for
 **core types** (`note`, `person`, `organization`, `event`, …): each carries
 a `fields` dict with a type per field, plus `field_descriptions` and
 `ai_instructions` where the type has them.

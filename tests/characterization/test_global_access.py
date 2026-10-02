@@ -73,4 +73,4 @@ def test_local_user_is_refused_it_over_mcp_too(world):
         readable_kbs=set(principal.readable_kbs) if principal.readable_kbs is not None else None,
         writable_kbs=set(principal.writable_kbs) if principal.writable_kbs is not None else None,
     )
-    assert result.get("error_code") == "NOT_FOUND", result
+    assert result.get("error_code") == "KB_NOT_FOUND", result

@@ -169,22 +169,63 @@ def register_browse_commands(app: typer.Typer) -> None:
 
     @app.command("orient")
     def orient_kb(
-        kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base to orient in"),
+        kb_name: str | None = typer.Option(
+            None, "--kb", "-k", help="Knowledge base to orient in. Omit to list the KBs."
+        ),
         recent: int = typer.Option(5, "--recent", "-r", help="Number of recent entries to include"),
+        detail: str | None = typer.Option(
+            None,
+            "--detail",
+            help="full (default) or brief. brief omits the write-side schema blocks.",
+        ),
         output_format: str = typer.Option(
             "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
         ),
     ):
-        """One-shot KB orientation summary — types, tags, recent changes, and schema."""
+        """One-shot KB orientation summary — types, tags, recent changes, and schema.
+
+        With no --kb, lists the knowledge bases: the first call of a session.
+        """
+        from ..exceptions import KBNotFoundError
+        from ..services.access_policy import named_kb
+        from ..utils.errors import cli_error, cli_error_from
+
         with cli_context() as (config, db, svc):
             try:
-                result = svc.orient(kb_name, recent_limit=recent)
+                if not named_kb(kb_name):
+                    result = svc.orient_overview(readable_kbs=UNSCOPED, detail=detail)
+                else:
+                    result = svc.orient(kb_name, recent_limit=recent, detail=detail)
+            except KBNotFoundError as e:
+                # The CLI is the local, unscoped caller: every KB is readable.
+                names, hint = svc.kb_name_suggestions(kb_name, readable_kbs=UNSCOPED)
+                cli_error(
+                    str(e),
+                    output_format,
+                    error_code=e.error_code,
+                    suggestion=hint,
+                    extra={"did_you_mean": names},
+                )
             except PyriteError as e:
-                _cli_error(str(e), output_format, "KB_NOT_FOUND")
+                cli_error_from(e, output_format)
 
             formatted = _format_output(result, output_format)
             if formatted is not None:
                 typer.echo(formatted)
+                return
+
+            if "knowledge_bases" in result:
+                kb_table = Table(title="Knowledge Bases")
+                kb_table.add_column("Name", style="cyan")
+                kb_table.add_column("Type")
+                kb_table.add_column("Entries", justify="right")
+                kb_table.add_column("Description")
+                for kb in result["knowledge_bases"]:
+                    kb_table.add_row(
+                        kb["name"], kb["type"], str(kb["entry_count"]), kb["description"]
+                    )
+                console.print(kb_table)
+                console.print(f"\n{result['next']}")
                 return
 
             console.print(

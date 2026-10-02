@@ -342,17 +342,41 @@ def _only_readable(rows: list[dict], readable_kbs: set[str] | None) -> list[dict
     return [r for r in rows if r.get("kb_name") in readable_kbs]
 
 
+#: The way forward in the dispatcher's refusal. One static string for an absent
+#: and an unreadable name alike, naming no KB: a near match here would be drawn
+#: from outside the caller's readable set or confirm what is inside it.
+_KB_NOT_FOUND_HINT = "Call kb_orient with no kb_name to list the KBs you can read."
+
+
 def _kb_not_found(kb_name: str) -> dict:
     """The refusal for a KB the caller may not read.
 
-    Byte-identical to what MCP already returns for a KB that genuinely does
-    not exist (`_kb_schema`, `_kb_manage`). Deliberately **not** a
-    "forbidden": a private KB's existence is itself private, so a caller must
-    not be able to tell the two apart and probe for which private KBs exist.
-    This is the MCP spelling of `api.kb_not_found`, whose REST counterpart
-    404s for the same reason.
+    Deliberately **not** a "forbidden": a private KB's existence is itself
+    private, so a caller must not be able to tell "you may not read this"
+    from "there is no such KB" and probe for which private KBs exist. This is
+    the MCP spelling of `api.kb_not_found`, whose REST counterpart 404s with
+    the same `KB_NOT_FOUND` for the same reason.
+
+    **Why the two answers cannot diverge for one caller.** Every refusal for
+    a scoped caller comes from this function: `_dispatch_tool`, the prompt
+    dispatcher and the resource reader call it for *any* KB name outside the
+    readable set, absent or private alike, before a handler runs. The
+    readable set holds only KBs that exist (`AccessPolicy.kbs_at_tier` walks
+    `config.all_kbs()`), so a handler's own not-found answer (`_kb_schema`
+    and others still say `NOT_FOUND`; `_kb_orient` adds a suggestion) is only
+    ever given for a name the caller was allowed to read. Those handler
+    answers therefore need not match this one byte for byte, and no longer
+    do. `tests/test_orient_is_true_as_the_first_call.py` walks every tool.
+
+    The code was `NOT_FOUND` until 0.25.7 (#66); it is carried in
+    `legacy_error_code` for one release (ADR-0037 theme 2).
     """
-    return _error("NOT_FOUND", f"KB '{kb_name}' not found")
+    return _error(
+        "KB_NOT_FOUND",
+        f"KB '{kb_name}' not found",
+        suggestion=_KB_NOT_FOUND_HINT,
+        legacy_error_code="NOT_FOUND",
+    )
 
 
 class PyriteMCPServer:
@@ -992,14 +1016,46 @@ class PyriteMCPServer:
             "has_more": offset + limit < total,
         }
 
-    def _kb_orient(self, args: dict[str, Any]) -> dict[str, Any]:
-        """One-shot KB orientation summary."""
+    def _kb_orient(
+        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any]:
+        """One-shot KB orientation; with no `kb_name`, the KBs the caller may read.
+
+        Takes `readable_kbs` for two reasons: the no-name answer is a listing,
+        which must be filtered, and without the parameter the dispatcher's
+        fail-closed rule refuses a scoped caller who names no KB.
+        """
         kb_name = args.get("kb_name")
-        recent_limit = args.get("recent_limit", 5)
+        # `"detail": null` is "not given"; anything else goes to the service.
+        detail = args.get("detail")
         try:
-            return self.svc.orient(kb_name, recent_limit=recent_limit)
+            # Null or a blank string is "no name"; any other non-string is a
+            # malformed name, not a request for the overview.
+            if kb_name is not None and not isinstance(kb_name, str):
+                raise ValidationError(f"kb_name must be a string, not {type(kb_name).__name__}")
+            if not named_kb(kb_name):
+                return self.svc.orient_overview(readable_kbs=readable_kbs, detail=detail)
+            return self.svc.orient(kb_name, recent_limit=args.get("recent_limit", 5), detail=detail)
+        except KBNotFoundError as e:
+            # A scoped caller is refused by the dispatcher before this for any
+            # name outside its readable set, so this is reached with the name
+            # of a KB the caller could have read. The near matches are drawn
+            # from the readable set all the same.
+            names, hint = self.svc.kb_name_suggestions(kb_name, readable_kbs=readable_kbs)
+            # This handler reported OPERATION_FAILED, not the NOT_FOUND
+            # `_refusal` would replay for the class, so the old code is given
+            # here. One release (ADR-0037 theme 2); remove with the rest.
+            return {
+                **_error(
+                    e.error_code,
+                    _safe_message(e),
+                    suggestion=hint,
+                    legacy_error_code="OPERATION_FAILED",
+                ),
+                "did_you_mean": names,
+            }
         except PyriteError as e:
-            return _error("OPERATION_FAILED", _safe_message(e))
+            return _refusal(e)
 
     def _kb_recent(
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None

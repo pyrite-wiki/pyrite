@@ -50,9 +50,14 @@ def cli_error(
     error_code: str = "ERROR",
     suggestion: str | None = None,
     retryable: bool = False,
+    extra: dict[str, Any] | None = None,
 ) -> None:
     """Print a structured (machine formats) or colored single-line (rich) error
     and raise ``typer.Exit(1)``.
+
+    ``extra`` adds keys beside the contract's own in the machine payload (a
+    ``did_you_mean`` list, say); it never replaces one of them, and the rich
+    line carries the same information in ``suggestion``.
 
     Machine formats (anything other than ``rich``) get the JSON payload on
     stdout so scripts/agents can parse it; rich gets a human line:
@@ -61,6 +66,7 @@ def cli_error(
             hint: run `pyrite kb list`
     """
     payload = build_error(message, error_code, suggestion=suggestion, retryable=retryable)
+    payload = {**(extra or {}), **payload}
     if output_format != "rich":
         typer.echo(json.dumps(payload))
     else:

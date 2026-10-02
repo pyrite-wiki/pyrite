@@ -672,8 +672,8 @@ class KBService:
         named it, before that resolution.
         """
         schema = kb_config.kb_schema
-        declared = sorted(schema.types.keys()) if schema and schema.types else []
-        if declared and entry_type not in schema.types:
+        declared = schema.declared_types() if schema else []
+        if declared and entry_type not in declared:
             raise UndeclaredTypeError(
                 f"type '{entry_type}' is not declared in KB '{kb_name}'. "
                 f"Declared types: {', '.join(declared)}. Inspect the KB schema, or "
@@ -1971,8 +1971,98 @@ class KBService:
             ),
         }
 
-    def orient(self, kb_name: str, recent_limit: int = 5) -> dict[str, Any]:
-        """One-shot KB orientation summary for agents entering a new KB."""
+    #: `orient`'s `detail` values. `full` is the default until 0.25.8
+    #: (maintainer, 2026-10-01); `brief` is the read session's answer.
+    ORIENT_DETAILS = ("brief", "full")
+    #: What `detail="brief"` drops from `schema`, at the KB level and per type
+    #: (and `guidelines` from the top level too): the blocks a caller needs to
+    #: write an entry, not to read the KB. `relationship_types` is kept: a read
+    #: session following links needs the relation names (review round 1).
+    _ORIENT_WRITE_SIDE_KEYS = frozenset(
+        {"ai_instructions", "evaluation_rubric", "guidelines", "goals"}
+    )
+    #: Cap on near-match KB names offered for a name that is not a KB.
+    KB_NAME_SUGGESTION_LIMIT = 3
+
+    @classmethod
+    def _orient_detail(cls, detail: str | None) -> str:
+        """`detail` as one of `ORIENT_DETAILS`; absent is `full`. Decided here
+        so MCP, the CLI and REST refuse the same values with the same code."""
+        if detail is None:
+            return "full"
+        if detail not in cls.ORIENT_DETAILS:
+            raise ValidationError(f"detail must be 'brief' or 'full', not {detail!r}")
+        return detail
+
+    def kb_name_suggestions(
+        self, kb_name: Any, *, readable_kbs: set[str] | None
+    ) -> tuple[list[str], str]:
+        """Near matches for a name that is not a KB, and the hint to show.
+
+        Drawn only from the KBs the caller may read (`readable_kbs`, required;
+        `UNSCOPED` is the caller for whom that is every KB) and capped: a name
+        offered from outside that set would confirm a private KB exists. The
+        hint names no KB when nothing matches.
+        """
+        import difflib
+
+        names = sorted(
+            kb.name
+            for kb in self.config.all_kbs()
+            if readable_kbs is None or kb.name in readable_kbs
+        )
+        matches = (
+            difflib.get_close_matches(kb_name, names, n=self.KB_NAME_SUGGESTION_LIMIT)
+            if isinstance(kb_name, str)
+            else []
+        )
+        how = "Call orient with no KB name to list the KBs you can read."
+        if matches:
+            return matches, f"Did you mean: {', '.join(matches)}? {how}"
+        return [], how
+
+    def orient_overview(
+        self, *, readable_kbs: set[str] | None, detail: str | None = None
+    ) -> dict[str, Any]:
+        """Orient with no KB named: the first call of a session.
+
+        The KBs the caller may read (`readable_kbs`, required; `UNSCOPED` is
+        the caller with no per-KB scoping) and nothing about any other, the operational contracts, and
+        what to call next. One shape whether there are zero, one or many
+        KBs. `detail` is validated and otherwise has no effect: there are no
+        per-type blocks here to omit.
+        """
+        self._orient_detail(detail)
+        kbs = [
+            {
+                "name": kb.name,
+                "type": kb.kb_type or "default",
+                "description": kb.description or "",
+                "entry_count": self.count_entries(kb_name=kb.name),
+                "read_only": kb.read_only,
+            }
+            for kb in sorted(self.config.all_kbs(), key=lambda k: k.name)
+            if readable_kbs is None or kb.name in readable_kbs
+        ]
+        return {
+            "knowledge_bases": kbs,
+            "operational_contracts": self._operational_contracts(),
+            "next": (
+                "Orient in one KB: kb_orient with kb_name (MCP) or `pyrite orient -k <name>` "
+                "(CLI). Add detail='brief' (`--detail brief`) for a read session."
+            ),
+        }
+
+    def orient(
+        self, kb_name: str, recent_limit: int = 5, *, detail: str | None = None
+    ) -> dict[str, Any]:
+        """One-shot KB orientation summary for agents entering a new KB.
+
+        `detail="brief"` drops the write-side blocks from `schema` and adds
+        `detail` and `detail_note`; absent or `"full"` adds nothing, so an
+        existing caller's response is unchanged.
+        """
+        detail = self._orient_detail(detail)
         kb_config = self.config.get_kb(kb_name)
         if not kb_config:
             raise KBNotFoundError(f"KB '{kb_name}' not found")
@@ -2036,8 +2126,37 @@ class KBService:
         from ..plugins.registry import get_registry
 
         supplements = get_registry().get_orient_supplements(kb_name, kb_config.kb_type or "default")
+
+        if detail == "brief":
+            drop = self._ORIENT_WRITE_SIDE_KEYS
+            brief_schema = {k: v for k, v in schema_info.items() if k not in drop}
+            if "types" in brief_schema:
+                brief_schema["types"] = {
+                    name: {k: v for k, v in info.items() if k not in drop}
+                    for name, info in brief_schema["types"].items()
+                }
+            result["schema"] = brief_schema
+            # The top-level `guidelines` goes with `schema.guidelines`: left
+            # behind as `{}` it would read as "this KB has none".
+            result.pop("guidelines", None)
+
         if supplements:
             result.update(supplements)
+
+        if detail == "brief":
+            # Set after the supplements so a plugin key named `detail` cannot
+            # overwrite them. A plugin's block is kept whole: the service
+            # cannot tell which of a plugin's keys are write-side without a
+            # new plugin shape (ADR-0040), so `brief` is not a bound for a KB
+            # whose plugin supplement is large (ADR-0034). Said in the
+            # response, not hidden.
+            result["detail"] = "brief"
+            result["detail_note"] = (
+                "brief omits ai_instructions, evaluation_rubric, guidelines and goals from "
+                "schema, and the top-level guidelines. Get them with kb_schema (MCP), "
+                "`pyrite orient -k <kb> --detail full` (CLI) or detail='full'. Blocks added by "
+                "a plugin are returned whole, so brief does not bound their size."
+            )
 
         return result
 

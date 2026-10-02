@@ -1,18 +1,24 @@
 {
   "cascade_actors | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "cascade_actors | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "cascade_actors | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "cascade_actors | local_user | readable-kb": {
     "actors": [],
@@ -20,18 +26,24 @@
   },
   "cascade_capture_lanes | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "cascade_capture_lanes | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "cascade_capture_lanes | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "cascade_capture_lanes | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -39,18 +51,24 @@
   },
   "cascade_network | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "cascade_network | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "cascade_network | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "cascade_network | local_user | readable-kb": {
     "backlinks": [],
@@ -69,18 +87,24 @@
   },
   "cascade_timeline | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "cascade_timeline | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "cascade_timeline | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "cascade_timeline | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -88,18 +112,24 @@
   },
   "investigation_bulk_edges | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_bulk_edges | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_bulk_edges | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_bulk_edges | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -108,18 +138,24 @@
   },
   "investigation_claims | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_claims | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_claims | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_claims | local_user | readable-kb": {
     "claims": [],
@@ -128,18 +164,24 @@
   },
   "investigation_create_claim | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_create_claim | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_create_claim | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_create_claim | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -148,18 +190,24 @@
   },
   "investigation_create_entity | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_create_entity | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_create_entity | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_create_entity | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -168,18 +216,24 @@
   },
   "investigation_create_event | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_create_event | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_create_event | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_create_event | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -188,18 +242,24 @@
   },
   "investigation_entities | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_entities | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_entities | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_entities | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -208,36 +268,48 @@
   },
   "investigation_evidence_chain | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_evidence_chain | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_evidence_chain | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_evidence_chain | local_user | readable-kb": {
     "error": "Claim 'characterization-placeholder-id-investigation_evidence_chain-local_user-readable-kb' not found"
   },
   "investigation_export_pack | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_export_pack | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_export_pack | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_export_pack | local_user | readable-kb": {
     "content": "<ENUMERATION_CONTENT>",
@@ -245,54 +317,72 @@
   },
   "investigation_find_duplicates | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_find_duplicates | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_find_duplicates | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_find_duplicates | local_user | readable-kb": {
     "duplicates": []
   },
   "investigation_ftm_export | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_ftm_export | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_ftm_export | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_ftm_export | local_user | readable-kb": {
     "entities": []
   },
   "investigation_ftm_import | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_ftm_import | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_ftm_import | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_ftm_import | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -301,18 +391,24 @@
   },
   "investigation_log_source | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_log_source | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_log_source | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_log_source | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -321,18 +417,24 @@
   },
   "investigation_money_flow | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_money_flow | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_money_flow | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_money_flow | local_user | readable-kb": {
     "circular_flows": [],
@@ -346,18 +448,24 @@
   },
   "investigation_network | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_network | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_network | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_network | local_user | readable-kb": {
     "backlinks": [],
@@ -376,18 +484,24 @@
   },
   "investigation_ownership_chain | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_ownership_chain | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_ownership_chain | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_ownership_chain | local_user | readable-kb": {
     "beneficial_owners": [],
@@ -400,18 +514,24 @@
   },
   "investigation_promote_claim | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_promote_claim | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_promote_claim | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_promote_claim | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -420,18 +540,24 @@
   },
   "investigation_qa_report | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_qa_report | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_qa_report | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_qa_report | local_user | readable-kb": {
     "claims": "<ENUMERATION_CONTENT>",
@@ -441,18 +567,24 @@
   },
   "investigation_search_all | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_search_all | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_search_all | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_search_all | local_user | readable-kb": {
     "groups": "<ENUMERATION_CONTENT>",
@@ -461,18 +593,24 @@
   },
   "investigation_sources | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_sources | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_sources | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_sources | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -481,18 +619,24 @@
   },
   "investigation_start | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_start | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_start | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_start | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -501,18 +645,24 @@
   },
   "investigation_status | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_status | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_status | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_status | local_user | readable-kb": {
     "claim_breakdown": "<ENUMERATION_CONTENT>",
@@ -525,18 +675,24 @@
   },
   "investigation_timeline | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_timeline | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_timeline | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "investigation_timeline | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -545,18 +701,24 @@
   },
   "kb_backlinks | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_backlinks | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_backlinks | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_backlinks | local_user | readable-kb": {
     "backlink_count": "<ENUMERATION_CONTENT>",
@@ -632,18 +794,24 @@
   },
   "kb_batch_suggest | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_batch_suggest | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_batch_suggest | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_batch_suggest | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -653,18 +821,24 @@
   },
   "kb_bulk_create | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_bulk_create | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_bulk_create | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_bulk_create | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -673,18 +847,24 @@
   },
   "kb_commit | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_commit | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_commit | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_commit | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -693,18 +873,24 @@
   },
   "kb_create | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_create | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_create | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_create | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -713,18 +899,24 @@
   },
   "kb_delete | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_delete | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_delete | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_delete | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -733,18 +925,24 @@
   },
   "kb_discover_neighbors | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_discover_neighbors | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_discover_neighbors | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_discover_neighbors | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -754,18 +952,24 @@
   },
   "kb_find_by_assignee | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_find_by_assignee | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_find_by_assignee | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_find_by_assignee | local_user | readable-kb": {
     "assignee": "characterization-assignee",
@@ -774,18 +978,24 @@
   },
   "kb_find_by_location | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_find_by_location | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_find_by_location | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_find_by_location | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -794,18 +1004,24 @@
   },
   "kb_find_by_status | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_find_by_status | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_find_by_status | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_find_by_status | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -814,18 +1030,24 @@
   },
   "kb_find_overdue | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_find_overdue | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_find_overdue | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_find_overdue | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -833,18 +1055,24 @@
   },
   "kb_get | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_get | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_get | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_get | local_user | readable-kb": {
     "entry": {
@@ -882,18 +1110,24 @@
   },
   "kb_index_sync | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_index_sync | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_index_sync | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_index_sync | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -902,18 +1136,24 @@
   },
   "kb_link | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_link | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_link | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_link | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -962,18 +1202,24 @@
   },
   "kb_list_entries | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_list_entries | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_list_entries | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_list_entries | local_user | readable-kb": {
     "entries": [
@@ -989,18 +1235,24 @@
   },
   "kb_manage | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_manage | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_manage | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_manage | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -1009,18 +1261,24 @@
   },
   "kb_orient | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_orient | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_orient | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_orient | local_user | readable-kb": {
     "description": "",
@@ -1361,18 +1619,24 @@
   },
   "kb_push | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_push | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_push | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_push | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -1381,18 +1645,24 @@
   },
   "kb_qa_assess | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_qa_assess | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_qa_assess | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_qa_assess | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -1401,18 +1671,24 @@
   },
   "kb_qa_status | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_qa_status | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_qa_status | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_qa_status | local_user | readable-kb": {
     "coverage": "<ENUMERATION_CONTENT>",
@@ -1423,18 +1699,24 @@
   },
   "kb_qa_validate | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_qa_validate | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_qa_validate | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_qa_validate | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -1443,18 +1725,24 @@
   },
   "kb_read_body | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_read_body | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_read_body | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_read_body | local_user | readable-kb": {
     "body": "a zebra in the open",
@@ -1465,18 +1753,24 @@
   },
   "kb_recent | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_recent | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_recent | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_recent | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -1489,18 +1783,24 @@
   },
   "kb_schema | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_schema | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_schema | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_schema | local_user | readable-kb": {
     "evaluation_rubric": [
@@ -1818,18 +2118,24 @@
   },
   "kb_search | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_search | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_search | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_search | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -1872,18 +2178,24 @@
   },
   "kb_tags | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_tags | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_tags | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_tags | local_user | readable-kb": {
     "has_more": "<ENUMERATION_CONTENT>",
@@ -1912,18 +2224,24 @@
   },
   "kb_update | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_update | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_update | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "kb_update | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -1932,18 +2250,24 @@
   },
   "list_edge_types | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "list_edge_types | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "list_edge_types | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "list_edge_types | local_user | readable-kb": {
     "edge_types": [],
@@ -1951,18 +2275,24 @@
   },
   "social_newest | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "social_newest | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "social_newest | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "social_newest | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -1970,18 +2300,24 @@
   },
   "social_post | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "social_post | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "social_post | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "social_post | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2014,18 +2350,24 @@
   },
   "social_top | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "social_top | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "social_top | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "social_top | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2033,18 +2375,24 @@
   },
   "social_vote | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "social_vote | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "social_vote | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "social_vote | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2053,18 +2401,24 @@
   },
   "solidarity_infrastructure_types | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "solidarity_infrastructure_types | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "solidarity_infrastructure_types | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "solidarity_infrastructure_types | local_user | readable-kb": {
     "count": 0,
@@ -2072,18 +2426,24 @@
   },
   "solidarity_timeline | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "solidarity_timeline | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "solidarity_timeline | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "solidarity_timeline | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2091,18 +2451,24 @@
   },
   "sw_adrs | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_adrs | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_adrs | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_adrs | local_user | readable-kb": {
     "adrs": [],
@@ -2114,18 +2480,24 @@
   },
   "sw_backlog | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_backlog | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_backlog | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_backlog | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2137,18 +2509,24 @@
   },
   "sw_board | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_board | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_board | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_board | local_user | readable-kb": {
     "lanes": [
@@ -2172,36 +2550,48 @@
   },
   "sw_check_ready | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_check_ready | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_check_ready | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_check_ready | local_user | readable-kb": {
     "error": "Backlog item 'characterization-placeholder-id-sw_check_ready-local_user-readable-kb' not found in KB 'readable-kb'"
   },
   "sw_claim | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_claim | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_claim | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_claim | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2210,18 +2600,24 @@
   },
   "sw_component | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_component | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_component | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_component | local_user | readable-kb": {
     "components": [],
@@ -2233,36 +2629,48 @@
   },
   "sw_context_for_item | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_context_for_item | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_context_for_item | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_context_for_item | local_user | readable-kb": {
     "error": "Entry 'characterization-placeholder-id-sw_context_for_item-local_user-readable-kb' not found in KB 'readable-kb'"
   },
   "sw_conventions | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_conventions | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_conventions | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_conventions | local_user | readable-kb": {
     "conventions": [],
@@ -2270,18 +2678,24 @@
   },
   "sw_create_adr | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_create_adr | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_create_adr | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_create_adr | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2290,18 +2704,24 @@
   },
   "sw_create_backlog_item | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_create_backlog_item | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_create_backlog_item | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_create_backlog_item | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2310,36 +2730,48 @@
   },
   "sw_epic_detail | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_epic_detail | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_epic_detail | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_epic_detail | local_user | readable-kb": {
     "error": "Epic 'characterization-placeholder-id-sw_epic_detail-local_user-readable-kb' not found in KB 'readable-kb'"
   },
   "sw_epics | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_epics | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_epics | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_epics | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2347,18 +2779,24 @@
   },
   "sw_log | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_log | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_log | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_log | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2367,18 +2805,24 @@
   },
   "sw_milestones | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_milestones | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_milestones | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_milestones | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2386,18 +2830,24 @@
   },
   "sw_prioritize | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_prioritize | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_prioritize | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_prioritize | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2406,18 +2856,24 @@
   },
   "sw_pull_next | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_pull_next | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_pull_next | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_pull_next | local_user | readable-kb": {
     "reason": "<ENUMERATION_CONTENT>",
@@ -2426,18 +2882,24 @@
   },
   "sw_refine | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_refine | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_refine | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_refine | local_user | readable-kb": {
     "items": [],
@@ -2445,18 +2907,24 @@
   },
   "sw_review | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_review | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_review | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_review | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2465,18 +2933,24 @@
   },
   "sw_review_queue | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_review_queue | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_review_queue | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_review_queue | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2486,18 +2960,24 @@
   },
   "sw_standards | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_standards | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_standards | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_standards | local_user | readable-kb": {
     "count": 0,
@@ -2509,18 +2989,24 @@
   },
   "sw_submit | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_submit | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_submit | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_submit | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2529,18 +3015,24 @@
   },
   "sw_transition | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_transition | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_transition | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_transition | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2549,18 +3041,24 @@
   },
   "sw_validations | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_validations | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_validations | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "sw_validations | local_user | readable-kb": {
     "count": 0,
@@ -2568,18 +3066,24 @@
   },
   "task_ancestors | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_ancestors | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_ancestors | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_ancestors | local_user | readable-kb": {
     "error": "Task 'characterization-placeholder-id-task_ancestors-local_user-readable-kb' not found",
@@ -2588,18 +3092,24 @@
   },
   "task_blocked_by | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_blocked_by | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_blocked_by | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_blocked_by | local_user | readable-kb": {
     "error": "Task 'characterization-placeholder-id-task_blocked_by-local_user-readable-kb' not found",
@@ -2608,18 +3118,24 @@
   },
   "task_checkpoint | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_checkpoint | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_checkpoint | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_checkpoint | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2628,18 +3144,24 @@
   },
   "task_claim | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_claim | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_claim | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_claim | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2648,18 +3170,24 @@
   },
   "task_create | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_create | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_create | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_create | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2668,18 +3196,24 @@
   },
   "task_critical_path | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_critical_path | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_critical_path | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_critical_path | local_user | readable-kb": {
     "error": "Task 'characterization-placeholder-id-task_critical_path-local_user-readable-kb' not found",
@@ -2688,18 +3222,24 @@
   },
   "task_decompose | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_decompose | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_decompose | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_decompose | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2708,18 +3248,24 @@
   },
   "task_list | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_list | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_list | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_list | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2727,18 +3273,24 @@
   },
   "task_status | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_status | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_status | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_status | local_user | readable-kb": {
     "error": "Task 'characterization-placeholder-id-task_status-local_user-readable-kb' not found",
@@ -2747,18 +3299,24 @@
   },
   "task_subtree | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_subtree | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_subtree | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_subtree | local_user | readable-kb": {
     "error": "Task 'characterization-placeholder-id-task_subtree-local_user-readable-kb' not found",
@@ -2767,18 +3325,24 @@
   },
   "task_update | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_update | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_update | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "task_update | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2787,18 +3351,24 @@
   },
   "wiki_assess_quality | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_assess_quality | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_assess_quality | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_assess_quality | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2807,18 +3377,24 @@
   },
   "wiki_protect | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_protect | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_protect | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_protect | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2827,18 +3403,24 @@
   },
   "wiki_quality_stats | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_quality_stats | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_quality_stats | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_quality_stats | local_user | readable-kb": {
     "quality_distribution": "<ENUMERATION_CONTENT>",
@@ -2848,18 +3430,24 @@
   },
   "wiki_review_queue | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_review_queue | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_review_queue | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_review_queue | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2867,18 +3455,24 @@
   },
   "wiki_stubs | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_stubs | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_stubs | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_stubs | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2886,18 +3480,24 @@
   },
   "wiki_submit_review | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_submit_review | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_submit_review | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "wiki_submit_review | local_user | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2906,18 +3506,24 @@
   },
   "zettel_graph | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "zettel_graph | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "zettel_graph | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "zettel_graph | local_user | readable-kb": {
     "backlinks": [],
@@ -2929,18 +3535,24 @@
   },
   "zettel_inbox | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "zettel_inbox | local_user | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "zettel_inbox | local_user | private-kb": {
     "error": "KB 'private-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "zettel_inbox | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",

@@ -56,6 +56,20 @@ itself: its code is `VALIDATION_FAILED` on every transport, unchanged (see
 "Write refusals" below). The CLI has no transition field, and no CLI write
 command has adopted the new class-level codes yet — see "Write refusals".
 
+Two more joined in 0.25.7 (#66), both now `KB_NOT_FOUND`: the refusal a
+caller with per-KB scoping gets from any MCP tool, prompt or resource for a
+KB outside its readable set (`legacy_error_code: "NOT_FOUND"`; the answer is
+the same whether the KB is private or does not exist), and `kb_orient`'s
+answer for a name that is not a KB (`legacy_error_code: "OPERATION_FAILED"`).
+That scoped refusal carries one static `suggestion` ("Call kb_orient with no
+kb_name to list the KBs you can read."), the same string for a private and
+an absent name and naming no KB. `kb_orient` and `pyrite orient` add
+`did_you_mean` beside the contract's keys: a list of at most three near-match
+KB names the caller may read, empty when there are none (a scoped caller is
+refused by the scoped refusal first, so it sees the static hint, not
+`did_you_mean`). A `kb_name` that is not a string is `VALIDATION_FAILED`; `null`
+is "no name".
+
 **REST** answers a domain refusal as `{"detail": {"code", "message",
 "retryable", "hint"?}}` — the web client already speaks this shape
 (`web/src/lib/api/client.ts`). This is true whether the refusal reached the

@@ -135,11 +135,17 @@ def orient_kb(
     kb_name: str,
     request: Request,
     recent: int = 5,
+    detail: str | None = None,
     svc: KBService = Depends(get_kb_service),
 ):
-    """One-shot KB orientation summary — types, tags, recent changes, and schema."""
+    """One-shot KB orientation summary — types, tags, recent changes, and schema.
+
+    `detail=brief` omits the write-side schema blocks; absent or `full` is
+    everything. Any other value is the service's `VALIDATION_FAILED` (422),
+    the same refusal MCP and the CLI give.
+    """
     try:
-        result = svc.orient(kb_name, recent_limit=recent)
+        result = svc.orient(kb_name, recent_limit=recent, detail=detail)
     except KBNotFoundError:
         raise HTTPException(
             status_code=404,

@@ -132,12 +132,36 @@ class KBSchema:
             return CORE_TYPES[entry_type]["subdirectory"]
         return f"{entry_type}s"  # Default: plural of type name
 
-    def to_agent_schema(self) -> dict[str, Any]:
-        """Export schema in agent-friendly format for kb_schema MCP tool."""
-        types_dict = {}
+    def declared_types(self) -> list[str]:
+        """The types this KB's kb.yaml declares, sorted; empty when it declares none.
 
-        # Include core types
+        The one rule for "which types does this KB have" (#66, #232). A KB
+        that declares any type declares its whole vocabulary: core types it
+        does not name are not part of it (#197). A KB that declares none has
+        no vocabulary of its own, and every type is allowed -- so an empty
+        answer means "not restricted", never "nothing allowed".
+
+        Read by the write path's refusal (`KBService._refuse_undeclared_type`),
+        by `to_agent_schema` (orient, `kb_schema`, `GET /kbs/{kb}/schema`,
+        `pyrite-admin schema`) and by the web type picker's route. They used
+        to hold a copy each, and orient's copy listed all core types for a KB
+        whose `create` refused them.
+        """
+        return sorted(self.types)
+
+    def to_agent_schema(self) -> dict[str, Any]:
+        """Export schema in agent-friendly format for kb_schema MCP tool.
+
+        Lists the types `create` accepts in this KB: see `declared_types`.
+        """
+        types_dict = {}
+        declared = self.declared_types()
+
+        # Include core types -- all of them when the KB declares no
+        # vocabulary, otherwise only the ones it names.
         for type_name, core_def in CORE_TYPES.items():
+            if declared and type_name not in declared:
+                continue
             type_info: dict[str, Any] = {
                 "description": core_def["description"],
                 "fields": core_def["fields"],

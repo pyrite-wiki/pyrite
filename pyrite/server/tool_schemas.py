@@ -243,17 +243,26 @@ READ_TOOLS = {
         },
     },
     "kb_orient": {
-        "description": "Use this first when entering a new KB. Returns a one-shot summary: description, entry counts by type, top tags, recent changes, and schema. Saves multiple round-trips.",
+        "description": "Use this first. With no kb_name it lists the KBs you can read. With kb_name it returns a one-shot summary of that KB: description, entry counts by type, top tags, recent changes, and the schema of the types the KB accepts. Pass detail='brief' for a read session: it omits the write-side schema blocks (ai_instructions, evaluation_rubric, guidelines, goals), which kb_schema returns when you need to write. brief keeps relationship_types, for following links.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "kb_name": {"type": "string", "description": "KB to orient in"},
+                "kb_name": {
+                    # Nullable: a client that fills every optional argument
+                    # sends null for the one it has no value for.
+                    "type": ["string", "null"],
+                    "description": "KB to orient in. Omit (or null) to list the KBs you can read.",
+                },
                 "recent_limit": {
                     "type": "integer",
                     "description": "Number of recent entries to include (default 5)",
                 },
+                "detail": {
+                    "type": ["string", "null"],
+                    "enum": ["brief", "full", None],
+                    "description": "full (default; null is the same): everything. brief: omits ai_instructions, evaluation_rubric, guidelines and goals.",
+                },
             },
-            "required": ["kb_name"],
         },
     },
     "kb_qa_validate": {
