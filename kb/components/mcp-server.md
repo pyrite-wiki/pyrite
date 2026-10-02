@@ -74,7 +74,7 @@ When triggered, the `_maybe_validate()` helper runs structural QA and appends `q
 ## Configuration and Startup
 
 - CLI: `pyrite mcp --tier <tier>` or `pyrite-admin mcp --tier <tier>`; both default to `write` (ADR-0006) and reject an unknown tier with `INVALID_TIER`. `pyrite-admin mcp` defaulted to `admin` until #582.
-- Entry point: `main()` in `mcp_server.py` (`python -m pyrite.server.mcp_server`, no installed script) parses `--tier`, default `read`
+- Entry point: `main()` in `mcp_server.py` (`python -m pyrite.server.mcp_server`, no installed script) parses `--tier`, default `write` since #582; so does the separately published `pyrite-mcp serve` (`pyrite-mcp/`). The `PyriteMCPServer(tier="read")` constructor default is library API, and every caller passes a tier.
 - The server creates its own `PyriteDB` and `KBService` instances
 - `close()` must be called to release the DB connection
 
@@ -82,12 +82,12 @@ When triggered, the `_maybe_validate()` helper runs structural QA and appends `q
 
 `pyrite mcp-setup` (`pyrite/cli/mcp_setup_command.py`, #582) registers the server where each client reads it:
 
-- Claude Code, user scope: `claude mcp add -s user pyrite -- <abs>/pyrite mcp --tier <tier>`, stored by Claude Code in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`). Pyrite never edits that file itself. A re-run removes and re-adds, because `claude mcp add` refuses an existing name.
+- Claude Code, user scope: `claude mcp add -s user pyrite -- <abs>/pyrite mcp --tier <tier>`, stored by Claude Code in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`). Pyrite never writes that file; it reads it to see whether a user-scope `pyrite` exists and whose it is. When one exists, it runs `claude mcp remove`, then `claude mcp add`, because `add` refuses an existing name. Each step is judged by its exit code, never by message text.
 - Claude Code, project scope (`--project`): `./.mcp.json`.
 - Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS), `%APPDATA%\Claude\claude_desktop_config.json` (Windows). There is no official Linux build; `$XDG_CONFIG_HOME/Claude/` (default `~/.config/Claude/`) is the path unofficial builds use.
 - Any MCP-compatible client over stdio: `--config <file>`, or the snippet the command prints when it finds no client.
 
-The entry's command is the absolute path of the running install's `pyrite` script (the interpreter's scripts directory, never `PATH`), with `--tier` always explicit. The command is run once (`mcp --help`) before anything is written. A server that Claude Desktop launches gets a limited environment and an undefined cwd (`/` on macOS), so it never finds a repo-local `.pyrite/` and loads `~/.pyrite`. The Desktop entry therefore carries `PYRITE_CONFIG_DIR`/`PYRITE_DATA_DIR` in `env` when `mcp-setup` ran under them, and never pins a repo-local config, because an explicit config dir is trusted. Claude Code entries carry no `env`: Claude Code inherits the shell and resolves per project. Tests: `tests/test_mcp_setup_reads_back.py`, including one against the real `claude` binary when it is installed.
+The entry's command is the absolute path of the running install's `pyrite` script (the interpreter's scripts directory, never `PATH`), with `--tier` always explicit. The command is run once (`mcp --help`) before anything is written. A server that Claude Desktop launches gets a limited environment and an undefined cwd (`/` on macOS), so it never finds a repo-local `.pyrite/` and loads `~/.pyrite`. The Desktop entry therefore carries `PYRITE_CONFIG_DIR`/`PYRITE_DATA_DIR` in `env` when `mcp-setup` ran under them, and never pins a repo-local config, because an explicit config dir is trusted. Claude Code entries carry no `env`: Claude Code inherits the shell and resolves per project. A server named `pyrite` that mcp-setup did not write (its command is not `pyrite`/`pyrite-admin ... mcp` or `-m pyrite.cli|admin_cli`) is refused with `SERVER_NAME_TAKEN` in a file and in Claude Code alike, unless `--force`, which replaces it and says so. A symlinked config is written through the link: the target is replaced atomically and the link stays a link. Every file is read and checked before any client is changed. After that, each client is reported as configured or failed (rich, or `--format json`), and the exit code is 1 if any failed. Tests: `tests/test_mcp_setup_reads_back.py`, including one against the real `claude` binary when it is installed.
 
 ## Related
 
