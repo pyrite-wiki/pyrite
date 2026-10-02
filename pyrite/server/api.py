@@ -1500,7 +1500,12 @@ def main():
     import uvicorn
 
     from ..config import open_registration_warning
+    from ..logging import configure_entry_point_logging
 
+    # The operator's log: INFO by default, unlike the one-shot CLIs. Before
+    # #584 this entry point configured nothing, so even the warning below was
+    # dropped by the package's NullHandler.
+    configure_entry_point_logging(default="INFO")
     config = load_config()
     if warning := open_registration_warning(config):
         logger.warning(warning)

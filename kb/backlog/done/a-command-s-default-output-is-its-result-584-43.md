@@ -6,7 +6,7 @@ tags:
 - 0.25.7
 importance: 5
 kind: bug
-status: in_progress
+status: done
 priority: high
 assignee: agent:pyrite-worker-sonnet
 effort: S

@@ -343,6 +343,9 @@ def show_config():
 
 
 def main():
+    from .logging import configure_entry_point_logging
+
+    configure_entry_point_logging()
     app()
 
 

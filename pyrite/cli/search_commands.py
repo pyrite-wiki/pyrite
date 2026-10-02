@@ -8,6 +8,7 @@ import logging
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from ..config import load_config
@@ -210,7 +211,9 @@ def register_search_command(app: typer.Typer):
             for warning in search_warnings:
                 # stderr, like the trace and the staleness notice, so it never
                 # corrupts --format json on stdout.
-                err_console.print(f"[yellow]warning:[/yellow] {warning}")
+                # escape(): a warning names `pip install pyrite[semantic]`, and
+                # Rich reads `[semantic]` as a style tag and prints nothing there.
+                err_console.print(f"[yellow]warning:[/yellow] {escape(warning)}", soft_wrap=True)
 
             if debug and search_trace is not None:
                 # Trace goes to stderr so it never corrupts --format json on stdout.

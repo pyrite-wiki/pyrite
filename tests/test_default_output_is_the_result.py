@@ -1,0 +1,475 @@
+"""A command's default output is its result (#584, #43).
+
+Diagnostics are asked for (`-v`, `-vv`, ``PYRITE_LOG_LEVEL``); a degraded answer
+says so. Every logging test here runs a real entry point's ``main()`` in a
+subprocess: ``CliRunner`` skips ``main()``, which is where logging is
+configured, so it cannot see this class of bug.
+
+Model: ``test_logging_configuration.py`` (subprocess, real entry point) and
+``test_semantic_search_warns_when_nothing_is_embedded.py`` (CLI, REST, MCP).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from unittest.mock import MagicMock
+
+import pytest
+
+from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
+from pyrite.services.kb_service import KBService
+from pyrite.storage.database import PyriteDB
+
+CLI = "pyrite.cli"
+ADMIN = "pyrite.admin_cli"
+READ = "pyrite.read_cli"
+SERVER = "pyrite.server.api"
+
+
+def _env(tmp_path, **extra):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("PYRITE_")}
+    env.update(
+        HOME=str(tmp_path / "home"),
+        PYRITE_CONFIG_DIR=str(tmp_path / "config"),
+        PYRITE_DATA_DIR=str(tmp_path / "data"),
+    )
+    env.update(extra)
+    return env
+
+
+def _run(tmp_path, module, *args, pre="", env=None, stdin=subprocess.DEVNULL):
+    """Run ``module.main()`` as the installed script would, ``args`` as argv."""
+    code = f"import sys; {pre}\nfrom {module} import main; main()"
+    return subprocess.run(
+        [sys.executable, "-c", code, *args],
+        capture_output=True,
+        text=True,
+        env=_env(tmp_path, **(env or {})),
+        cwd=tmp_path,
+        stdin=stdin,
+        timeout=120,
+    )
+
+
+#: Make the app log one INFO and one WARNING record, then print a result: what
+#: a command does, minus everything the test is not about.
+_PROBE = (
+    "import logging; from unittest.mock import patch; "
+    "patch('{app}', side_effect=lambda: (logging.getLogger('pyrite.probe').info('INFO-LINE'), "
+    "logging.getLogger('pyrite.probe').debug('DEBUG-LINE'), "
+    "logging.getLogger('pyrite.probe').warning('WARN-LINE'), "
+    "print('RESULT', sys.argv[1:]))).start()"
+)
+
+
+def _probe(tmp_path, module, app, *args, env=None):
+    return _run(tmp_path, module, *args, pre=_PROBE.format(app=app), env=env)
+
+
+# ---------------------------------------------------------------------------
+# The groom's failing test: the real `pyrite init` on a fresh data dir
+# ---------------------------------------------------------------------------
+
+
+def test_init_on_a_fresh_data_dir_writes_nothing_to_stderr(tmp_path):
+    """Regime: fresh index (every migration runs)."""
+    proc = _run(tmp_path, CLI, "init", "--template", "research", "--path", str(tmp_path / "kb"))
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stderr == ""
+    assert proc.stdout, "the result still reaches stdout"
+
+
+def test_an_existing_index_is_quiet_and_search_writes_no_trace_line(tmp_path):
+    """Regime: existing index. `search.query` was one stderr line per search."""
+    kb = tmp_path / "kb"
+    init = _run(tmp_path, CLI, "init", "--template", "research", "--path", str(kb))
+    assert init.returncode == 0, init.stderr
+    created = _run(tmp_path, CLI, "create", "-k", "kb", "-t", "note", "--title", "Kestrel")
+    assert created.returncode == 0, created.stdout
+    first = _run(tmp_path, CLI, "search", "kestrel", "-k", "kb", "--format", "json")
+    second = _run(tmp_path, CLI, "search", "kestrel", "-k", "kb", "--format", "json")
+    for proc in (created, first, second):
+        assert "Applied migration" not in proc.stderr, proc.stderr
+        assert "search.query" not in proc.stderr, proc.stderr
+    assert second.stderr == ""
+    assert second.returncode == 0, second.stdout
+    assert second.returncode == 0, second.stdout
+    json.loads(second.stdout)  # still exactly one document
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="needs a pty")
+def test_a_terminal_sees_the_same_quiet_as_a_pipe(tmp_path):
+    """Regime: TTY. Logging must not depend on what stderr is attached to."""
+    import pty
+
+    master, slave = pty.openpty()
+    try:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from pyrite.cli import main; main()",
+                "init",
+                "--template",
+                "research",
+                "--path",
+                str(tmp_path / "kb"),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=slave,
+            env=_env(tmp_path),
+            cwd=tmp_path,
+            timeout=120,
+        )
+        os.close(slave)
+        slave = None
+        os.set_blocking(master, False)
+        try:
+            seen = os.read(master, 65536)
+        except BlockingIOError:
+            seen = b""
+    finally:
+        os.close(master)
+        if slave is not None:
+            os.close(slave)
+    assert proc.returncode == 0
+    assert seen == b""
+
+
+# ---------------------------------------------------------------------------
+# One level policy, three entry points
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("module", "app"),
+    [(CLI, "pyrite.cli.app"), (ADMIN, "pyrite.admin_cli.app"), (READ, "pyrite.read_cli.app")],
+)
+class TestEveryEntryPointFollowsOnePolicy:
+    def test_default_shows_a_formatted_warning_and_nothing_below_it(self, tmp_path, module, app):
+        proc = _probe(tmp_path, module, app, "x")
+        assert "[WARNING] pyrite.probe: WARN-LINE" in proc.stderr, proc.stderr
+        assert "INFO-LINE" not in proc.stderr
+        assert "DEBUG-LINE" not in proc.stderr
+
+    def test_v_shows_info_and_vv_shows_debug(self, tmp_path, module, app):
+        v = _probe(tmp_path, module, app, "x", "-v")
+        vv = _probe(tmp_path, module, app, "-vv", "x")
+        assert "INFO-LINE" in v.stderr and "DEBUG-LINE" not in v.stderr
+        assert "DEBUG-LINE" in vv.stderr
+
+    def test_the_flag_never_reaches_the_command_parser_and_works_after_the_command(
+        self, tmp_path, module, app
+    ):
+        proc = _probe(tmp_path, module, app, "search", "q", "--limit", "3", "-v")
+        assert "RESULT ['search', 'q', '--limit', '3']" in proc.stdout
+        assert "INFO-LINE" in proc.stderr
+
+    def test_env_var_sets_the_level_and_the_flag_beats_it(self, tmp_path, module, app):
+        env = {"PYRITE_LOG_LEVEL": "debug"}
+        assert "DEBUG-LINE" in _probe(tmp_path, module, app, "x", env=env).stderr
+        flagged = _probe(tmp_path, module, app, "x", "-v", env=env)
+        assert "INFO-LINE" in flagged.stderr and "DEBUG-LINE" not in flagged.stderr
+
+    def test_a_bad_env_value_is_named_and_the_default_holds(self, tmp_path, module, app):
+        proc = _probe(tmp_path, module, app, "x", env={"PYRITE_LOG_LEVEL": "loud"})
+        assert "PYRITE_LOG_LEVEL" in proc.stderr and "loud" in proc.stderr
+        assert "INFO-LINE" not in proc.stderr
+
+    def test_logs_never_reach_stdout(self, tmp_path, module, app):
+        proc = _probe(tmp_path, module, app, "x", "-vv")
+        assert "LINE" not in proc.stdout
+        assert proc.stdout.strip() == "RESULT ['x']"
+
+
+def test_double_dash_ends_the_scan_so_a_dash_v_argument_is_data(tmp_path):
+    proc = _probe(tmp_path, CLI, "pyrite.cli.app", "search", "--", "-v")
+    assert "RESULT ['search', '--', '-v']" in proc.stdout
+    assert "INFO-LINE" not in proc.stderr
+
+
+class TestServersAndStdioMcp:
+    """The maintainer's decision: HTTP servers keep INFO; stdio mcp goes quiet."""
+
+    def test_pyrite_serve_keeps_info(self, tmp_path):
+        proc = _probe(tmp_path, CLI, "pyrite.cli.app", "serve")
+        assert "INFO-LINE" in proc.stderr and "DEBUG-LINE" not in proc.stderr
+
+    def test_pyrite_mcp_is_quiet_and_can_be_raised(self, tmp_path):
+        quiet = _probe(tmp_path, CLI, "pyrite.cli.app", "mcp")
+        assert "INFO-LINE" not in quiet.stderr and "WARN-LINE" in quiet.stderr
+        raised = _probe(tmp_path, CLI, "pyrite.cli.app", "mcp", env={"PYRITE_LOG_LEVEL": "INFO"})
+        assert "INFO-LINE" in raised.stderr
+
+    def test_pyrite_server_entry_point_logs_info_and_its_own_warning_is_no_longer_dropped(
+        self, tmp_path
+    ):
+        """`pyrite-server` configured nothing, so the package NullHandler ate
+        every record, including its open-registration warning."""
+        pre = (
+            "import logging; from unittest.mock import patch; import uvicorn; "
+            "patch('uvicorn.run', side_effect=lambda *a, **k: "
+            "(logging.getLogger('pyrite.probe').info('INFO-LINE'), "
+            "logging.getLogger('pyrite.probe').debug('DEBUG-LINE'))).start()"
+        )
+        proc = _run(tmp_path, SERVER, pre=pre)
+        assert "[INFO] pyrite.probe: INFO-LINE" in proc.stderr, proc.stderr
+        assert "DEBUG-LINE" not in proc.stderr
+        assert proc.stdout == ""
+
+    def test_stdio_mcp_writes_nothing_to_stdout_and_no_info_to_stderr(self, tmp_path):
+        """Real server, stdin at EOF: the protocol stream stays empty and the
+        client's server log gets no INFO chatter."""
+        init = _run(tmp_path, CLI, "init", "--template", "research", "--path", str(tmp_path / "kb"))
+        assert init.returncode == 0, init.stderr
+        proc = _run(tmp_path, CLI, "mcp", "--tier", "read")
+        assert proc.stdout == "", proc.stdout
+        assert "[INFO]" not in proc.stderr, proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# A degraded semantic answer says so (#43): the extra is missing
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def indexed(tmp_path):
+    kb_path = tmp_path / "kb"
+    kb_path.mkdir()
+    config = PyriteConfig(
+        knowledge_bases=[KBConfig(name="t", path=kb_path, kb_type=KBType.GENERIC)],
+        settings=Settings(index_path=tmp_path / "i.db", auto_embed=False),
+    )
+    db = PyriteDB(config.settings.index_path)
+    KBService(config, db).create_entry("t", "kestrel", "Kestrel Notes", "note", "a falcon hovers")
+    yield config, db
+    db.close()
+
+
+@pytest.fixture
+def no_extra(monkeypatch):
+    """The `[semantic]` extra is not installed."""
+    monkeypatch.setattr("pyrite.services.embedding_service.is_available", lambda: False)
+
+
+def _search(db, mode, warnings):
+    from pyrite.services.search_service import SearchService
+
+    return SearchService(db).search("falcon", mode=mode, warnings=warnings)
+
+
+class TestSemanticWithoutTheExtraSaysSo:
+    def test_semantic_names_the_install_line_and_does_not_claim_a_keyword_leg(
+        self, indexed, no_extra
+    ):
+        warnings: list[str] = []
+        assert _search(indexed[1], "semantic", warnings) == []
+        assert len(warnings) == 1
+        assert "pip install pyrite[semantic]" in warnings[0]
+        assert "keyword leg ran" not in warnings[0], "false in pure semantic mode"
+
+    def test_hybrid_names_the_install_line_beside_real_keyword_hits(self, indexed, no_extra):
+        warnings: list[str] = []
+        results = _search(indexed[1], "hybrid", warnings)
+        assert [r["id"] for r in results] == ["kestrel"]
+        assert len(warnings) == 1
+        assert "pip install pyrite[semantic]" in warnings[0]
+        assert "only the keyword leg ran" in warnings[0]
+
+    def test_keyword_mode_stays_silent(self, indexed, no_extra):
+        warnings: list[str] = []
+        _search(indexed[1], "keyword", warnings)
+        assert warnings == []
+
+    def test_no_model_is_loaded_to_find_out(self, indexed, no_extra, monkeypatch):
+        """The leg is skipped before the query is encoded (the groom's question)."""
+        from pyrite.services.embedding_service import EmbeddingService
+
+        boom = MagicMock(side_effect=AssertionError("a model was loaded"))
+        monkeypatch.setattr(EmbeddingService, "embed_text", boom)
+        monkeypatch.setattr(EmbeddingService, "_get_model", boom, raising=False)
+        _search(indexed[1], "semantic", [])
+        boom.assert_not_called()
+
+    def test_extra_present_but_zero_vectors_still_names_embed(self, indexed):
+        warnings: list[str] = []
+        _search(indexed[1], "semantic", warnings)
+        if not indexed[1].vec_available:
+            pytest.skip("sqlite-vec unavailable")
+        assert any("pyrite index embed" in w for w in warnings), warnings
+        assert not any("keyword leg ran" in w for w in warnings)
+
+    def test_vectors_present_and_no_hit_is_not_a_degraded_answer(self, indexed, monkeypatch):
+        """No warning when the leg ran and simply found nothing."""
+        config, db = indexed
+        if not db.vec_available:
+            pytest.skip("sqlite-vec unavailable")
+        db.backend.upsert_embedding("kestrel", "t", [0.01] * 384)
+        monkeypatch.setattr(
+            "pyrite.services.embedding_service.EmbeddingService.embed_text",
+            lambda self, text: [0.9] * 384,
+        )
+        warnings: list[str] = []
+        _search(db, "semantic", warnings)
+        assert warnings == []
+
+    @pytest.mark.api
+    def test_the_warning_reaches_rest(self, indexed, no_extra):
+        pytest.importorskip("fastapi")
+        from fastapi.testclient import TestClient
+
+        from pyrite.server.api import create_app, get_config, get_db
+
+        config, db = indexed
+        app = create_app(config=config)
+        app.dependency_overrides[get_config] = lambda: config
+        app.dependency_overrides[get_db] = lambda: db
+        body = (
+            TestClient(app)
+            .get("/api/search", params={"q": "falcon", "kb": "t", "mode": "semantic"})
+            .json()
+        )
+        assert any("pip install pyrite[semantic]" in w for w in body["warnings"]), body
+
+    def test_the_warning_reaches_mcp(self, indexed, no_extra):
+        from pyrite.server.mcp_server import PyriteMCPServer
+
+        config, _ = indexed
+        server = PyriteMCPServer(config, tier="read")
+        try:
+            result = server._dispatch_tool(
+                "kb_search", {"query": "falcon", "kb_name": "t", "mode": "hybrid"}
+            )
+        finally:
+            server.close()
+        assert any("pip install pyrite[semantic]" in w for w in result["warnings"]), result
+
+    def test_the_warning_reaches_the_cli_on_stderr_and_stdout_stays_one_document(self, tmp_path):
+        kb = tmp_path / "kb"
+        assert (
+            _run(tmp_path, CLI, "init", "--template", "research", "--path", str(kb)).returncode == 0
+        )
+        made = _run(tmp_path, CLI, "create", "-k", "kb", "-t", "note", "--title", "Kestrel")
+        assert made.returncode == 0, made.stdout
+        pre = "sys.modules['sentence_transformers'] = None"  # import raises ImportError
+        proc = _run(
+            tmp_path,
+            CLI,
+            "search",
+            "kestrel",
+            "-k",
+            "kb",
+            "--mode",
+            "hybrid",
+            "--format",
+            "json",
+            pre=pre,
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert "pip install pyrite[semantic]" in proc.stderr
+        json.loads(proc.stdout)
+
+
+# ---------------------------------------------------------------------------
+# `index embed` reports what it did
+# ---------------------------------------------------------------------------
+
+
+def _embed_env(tmp_path, monkeypatch, n):
+    """A config + index with ``n`` entries whose embeds are queued (ADR-0035)."""
+    kb_path = tmp_path / "kb"
+    kb_path.mkdir()
+    config = PyriteConfig(
+        knowledge_bases=[KBConfig(name="t", path=kb_path, kb_type=KBType.GENERIC)],
+        settings=Settings(index_path=tmp_path / "i.db", auto_embed=True),
+    )
+    db = PyriteDB(config.settings.index_path)
+    if not db.vec_available:
+        db.close()
+        pytest.skip("sqlite-vec unavailable")
+    svc = KBService(config, db)
+    for i in range(n):
+        svc.create_entry("t", f"e{i}", f"Entry {i}", "note", f"body {i}")
+
+    from pyrite.services.embedding_service import EmbeddingService
+    from pyrite.services.embedding_worker import EmbeddingWorker
+
+    def fake_embed_entry(entry_id, kb_name):
+        db.backend.upsert_embedding(entry_id, kb_name, [0.01] * 384)
+        return True
+
+    monkeypatch.setattr(
+        EmbeddingWorker,
+        "_get_embedding_svc",
+        lambda self: MagicMock(**{"embed_entry.side_effect": fake_embed_entry}),
+    )
+    monkeypatch.setattr(EmbeddingService, "embed_text", lambda self, text: [0.01] * 384)
+    monkeypatch.setattr("pyrite.cli.index_commands.get_config_and_db", lambda: (config, db))
+    return config, db
+
+
+def _vector_count(db):
+    return len(db.backend.get_embedded_rowids())
+
+
+class TestIndexEmbedReportsTheVectorsItAdded:
+    def test_the_drained_entries_are_counted_as_embedded_not_skipped(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        from pyrite.cli import app
+
+        _, db = _embed_env(tmp_path, monkeypatch, 4)
+        assert _vector_count(db) == 0
+        result = CliRunner().invoke(app, ["index", "embed"])
+        assert result.exit_code == 0, result.output
+        assert _vector_count(db) == 4
+        assert "Embedded: 4" in result.output, result.output
+        assert "Skipped: 0" in result.output, result.output
+
+    def test_counts_split_between_the_queue_and_the_sweep(self, tmp_path, monkeypatch):
+        """An entry with no queue row is swept by embed_all, not the drain."""
+        from typer.testing import CliRunner
+
+        from pyrite.cli import app
+
+        _, db = _embed_env(tmp_path, monkeypatch, 3)
+        db.backend.upsert_embedding("e0", "t", [0.5] * 384)  # already current
+        result = CliRunner().invoke(app, ["index", "embed"])
+        assert "Embedded: 2" in result.output and "Skipped: 1" in result.output, result.output
+        assert _vector_count(db) == 3
+
+    def test_force_does_not_double_count(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner
+
+        from pyrite.cli import app
+
+        _embed_env(tmp_path, monkeypatch, 2)
+        result = CliRunner().invoke(app, ["index", "embed", "--force"])
+        assert "Embedded: 2" in result.output, result.output
+
+    def test_model_unreachable_still_exits_zero_with_errors_named(self, tmp_path, monkeypatch):
+        """Regime: model unreachable. Exit codes are 0.25.8's contract and
+        scripts/release.py asserts exit 0 here, so this pins the *report* only."""
+        from typer.testing import CliRunner
+
+        from pyrite.cli import app
+        from pyrite.services.embedding_service import EmbeddingService
+
+        _, db = _embed_env(tmp_path, monkeypatch, 2)
+
+        def offline(self, text):
+            raise OSError("model unreachable")
+
+        monkeypatch.setattr(EmbeddingService, "embed_text", offline)
+        monkeypatch.setattr(
+            "pyrite.services.embedding_worker.EmbeddingWorker._get_embedding_svc",
+            lambda self: MagicMock(**{"embed_entry.side_effect": offline}),
+        )
+        result = CliRunner().invoke(app, ["index", "embed"])
+        assert result.exit_code == 0, result.output
+        assert "Embedded: 0" in result.output
+        assert "Errors: 2" in result.output, result.output
+        assert _vector_count(db) == 0

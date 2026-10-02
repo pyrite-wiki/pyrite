@@ -47,6 +47,20 @@ def _settle_embed_queue(db) -> int:
     return settle_embed_queue(db)
 
 
+def _embed_counts(stats: dict, from_queue: int, force: bool) -> tuple[int, int]:
+    """The (embedded, skipped) a person should read after `index embed`.
+
+    The queue drain runs first and embeds what writes left owed; `embed_all`
+    then finds those vectors and counts them as *skipped*, which printed
+    "Embedded: 0, Skipped: 4" for a run that added four vectors (#584). Credit
+    the drain to Embedded and take it back out of Skipped. With ``force``
+    `embed_all` re-embeds everything itself, so nothing is double counted.
+    """
+    if force or not from_queue:
+        return stats["embedded"], stats["skipped"]
+    return stats["embedded"] + from_queue, max(0, stats["skipped"] - from_queue)
+
+
 @index_app.command("build")
 def index_build(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB to index (all if omitted)"),
@@ -307,7 +321,9 @@ def index_embed(
     # Before embed_all, not after: a queued row marks an entry whose body
     # changed, and only the drain re-embeds it. embed_all(force=False) skips
     # anything that already has a vector, stale or not.
-    _settle_embed_queue(db)
+    from ..services.embedding_worker import settle_embed_queue_in_scope
+
+    drained, from_queue = settle_embed_queue_in_scope(db, kb_name)
 
     svc = EmbeddingService(db, model_name=config.settings.embedding_model)
 
@@ -329,9 +345,16 @@ def index_embed(
             progress_callback=update_progress,
         )
 
+    embedded, skipped = _embed_counts(stats, from_queue, force)
     console.print("\n[green]Embedding complete.[/green]")
-    console.print(f"  Embedded: {stats['embedded']}")
-    console.print(f"  Skipped: {stats['skipped']}")
+    console.print(f"  Embedded: {embedded}")
+    console.print(f"  Skipped: {skipped}")
+    if drained and not force:
+        console.print(
+            f"  [dim]Of the embedded, {from_queue} came from the embed queue"
+            + (f"; {drained - from_queue} more in other KBs" if drained > from_queue else "")
+            + "[/dim]"
+        )
     if stats.get("truncated"):
         # Surface silent body-truncation count so operators know
         # how many entries had only a prefix embedded (Tier A r2100).

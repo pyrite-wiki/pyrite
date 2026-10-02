@@ -95,6 +95,22 @@ def settle_embed_queue(db: PyriteDB, *, label: str = "") -> int:
         return 0
 
 
+def settle_embed_queue_in_scope(db: PyriteDB, kb_name: str | None = None) -> tuple[int, int]:
+    """`settle_embed_queue`, also saying how many of the new vectors are in ``kb_name``.
+
+    Returns ``(embedded, embedded_in_scope)``. `pyrite index embed` needs the
+    second number: its sweep (`embed_all`) counts a vector the drain just added
+    as *skipped*, so the report credits the drain to Embedded (#584).
+    """
+    before = db.backend.get_embedded_rowids()
+    embedded = settle_embed_queue(db)
+    if not embedded:
+        return 0, 0
+    added = db.backend.get_embedded_rowids() - before
+    in_scope = {r["rowid"] for r in db.backend.get_entries_for_embedding(kb_name)}
+    return embedded, len(added & in_scope)
+
+
 class EmbeddingWorker:
     """SQLite-backed embedding queue. Despite the name, not a thread.
 

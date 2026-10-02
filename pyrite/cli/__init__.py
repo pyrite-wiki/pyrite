@@ -13,6 +13,7 @@ Split into submodules for maintainability:
 
 import json as _json
 import logging
+import sys
 from pathlib import Path
 
 import typer
@@ -33,7 +34,7 @@ from ..exceptions import (
     PyriteError,
     ValidationError,
 )
-from ..logging import configure_logging
+from ..logging import configure_entry_point_logging
 from ..services.access_policy import UNSCOPED
 from ..services.kb_service import KBService
 from ..utils.errors import PyriteCLIGroup, cli_error
@@ -91,6 +92,14 @@ def _main(
         callback=_version_callback,
         is_eager=True,
         help="Show the installed Pyrite version and exit.",
+    ),
+    verbose: int = typer.Option(
+        0,
+        "--verbose",
+        "-v",
+        count=True,
+        help="Show progress on stderr: -v for INFO, -vv for DEBUG "
+        "(any position; PYRITE_LOG_LEVEL sets it without a flag).",
     ),
 ) -> None:
     """Multi-KB research infrastructure for citizen journalists and AI agents."""
@@ -969,8 +978,18 @@ def generate_readme_cmd(
             typer.echo(readme)
 
 
+#: Commands that are long-running servers keep INFO, which is the operator's
+#: log. Stdio `mcp` is not one: its stderr lands in an MCP client's log.
+_SERVER_COMMANDS = {"serve"}
+
+
+def _first_command(argv: list[str]) -> str | None:
+    return next((a for a in argv if not a.startswith("-")), None)
+
+
 def main():
-    configure_logging()
+    default = "INFO" if _first_command(sys.argv[1:]) in _SERVER_COMMANDS else "WARNING"
+    configure_entry_point_logging(default=default)
     app()
 
 

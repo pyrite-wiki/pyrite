@@ -666,8 +666,13 @@ class SearchService:
         offset: int = 0,
         filters: dict[str, Any] | None = None,
         warnings: list[str] | None = None,
+        keyword_leg_ran: bool = False,
     ) -> list[dict[str, Any]]:
         """Pure semantic vector search, with the keyword leg's filters applied.
+
+        ``keyword_leg_ran`` is True when a hybrid search calls this beside a
+        keyword leg; it only changes how a skipped leg is worded, because "only
+        the keyword leg ran" is false in pure semantic mode, where nothing ran.
 
         ``filters`` goes to the backend's ``search_semantic``, which applies it
         inside the KNN query. Whether a backend can do that is a *declared*
@@ -685,7 +690,22 @@ class SearchService:
         """
         from .embedding_service import EmbeddingService, is_available
 
+        # Checked before anything is encoded: no model is loaded for a search
+        # that can only come back empty. Without the extra or the sqlite-vec
+        # extension the leg cannot run, and that is a degraded answer, so it is
+        # named (#43), not returned as a silent [].
         if not is_available() or not self.db.vec_available:
+            if warnings is not None:
+                cause = (
+                    "sentence-transformers is not installed"
+                    if not is_available()
+                    else "the sqlite-vec extension did not load"
+                )
+                outcome = "only the keyword leg ran" if keyword_leg_ran else "it returned nothing"
+                warnings.append(
+                    f"semantic leg skipped: {cause}, so {outcome}; "
+                    "install with `pip install pyrite[semantic]`"
+                )
             return []
 
         svc = EmbeddingService(self.db)
@@ -704,9 +724,10 @@ class SearchService:
             # answer is `pyrite index build`, and sending someone to `index
             # embed` would be the wrong advice confidently given.
             if warnings is not None and self._index_has_entries(kb_name):
+                outcome = "only the keyword leg ran" if keyword_leg_ran else "it returned nothing"
                 warnings.append(
                     "semantic leg skipped: no embeddings exist for this index yet, so "
-                    "only the keyword leg ran; run `pyrite index embed` to build them"
+                    f"{outcome}; run `pyrite index embed` to build them"
                 )
             return []
 
@@ -873,6 +894,7 @@ class SearchService:
                 include_archived=include_archived,
             ),
             warnings=warnings,
+            keyword_leg_ran=True,
         )
 
         if not semantic_results:
