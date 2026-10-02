@@ -53,6 +53,8 @@ FAKE_CLAUDE = textwrap.dedent(
     data = json.loads(cfg.read_text()) if cfg.exists() else {{}}
     servers = data.setdefault("mcpServers", {{}})
     if args[:2] == ["mcp", "add"]:
+        if os.environ.get("FAKE_CLAUDE_FAIL") == "add":
+            sys.exit("fake claude: E_REFUSED")
         sep = args.index("--")
         opts, (command, *rest) = args[2:sep], args[sep + 1 :]
         name, env, scope, i = opts[-1], {{}}, "local", 0
@@ -70,6 +72,11 @@ FAKE_CLAUDE = textwrap.dedent(
             # depend on message text (#612 review).
             sys.exit(f"fake claude: E_DUPLICATE {{name}}")
         servers[name] = {{"type": "stdio", "command": command, "args": rest, "env": env}}
+    elif args[:2] == ["mcp", "add-json"]:
+        name, payload = [a for a in args[2:] if not a.startswith("-") and a != "user"][:2]
+        if name in servers:
+            sys.exit(f"fake claude: E_DUPLICATE {{name}}")
+        servers[name] = json.loads(payload)
     elif args[:2] == ["mcp", "remove"]:
         if os.environ.get("FAKE_CLAUDE_FAIL") == "remove":
             sys.exit("fake claude: E_LOCKED")
@@ -1046,3 +1053,190 @@ def test_claude_code_config_dir_is_where_ownership_is_read(env, monkeypatch):
     assert "SERVER_NAME_TAKEN" in result.output
     assert str(alt / ".claude.json") in result.output
     assert claude_calls(env) == []
+
+
+# -- fix round 2 (#612 second cold read): never silently destroy user config ---
+
+
+def _seed(env, client: str, servers: dict) -> Path:
+    if client == "claude-code":
+        install_fake_claude(env)
+        config = env.home / ".claude.json"
+    else:
+        config = install_desktop(linux_desktop_config(env.home))
+    config.write_text(json.dumps({"mcpServers": servers}))
+    return config
+
+
+#: README.md's hand-written shape, customised the way people do: an admin
+#: tier and a secret in env.
+CUSTOMISED = {
+    "command": "/old/venv/bin/pyrite",
+    "args": ["mcp", "--tier", "admin"],
+    "env": {"OPENAI_API_KEY": "sk-secret-value", "PYRITE_CONFIG_DIR": "/home/me/kb-config"},
+}
+
+
+@pytest.mark.parametrize("client", ["claude-code", "claude-desktop"])
+def test_a_customised_pyrite_entry_is_refused_naming_what_differs(env, client):
+    config = _seed(env, client, {"pyrite": CUSTOMISED})
+    before = config.read_text()
+
+    result = setup("--client", client)
+
+    assert result.exit_code == 1, result.output
+    assert "ENTRY_CUSTOMIZED" in result.output
+    for named in ("admin", "OPENAI_API_KEY", "PYRITE_CONFIG_DIR", "--tier admin", "--force"):
+        assert named in result.output, named
+    assert "sk-secret-value" not in result.output
+    assert config.read_text() == before
+    assert claude_calls(env) == []
+
+
+@pytest.mark.parametrize("client", ["claude-code", "claude-desktop"])
+def test_force_replaces_a_customised_entry_and_lists_what_it_dropped(env, client):
+    config = _seed(env, client, {"pyrite": CUSTOMISED})
+
+    result = setup("--client", client, "--force")
+
+    assert result.exit_code == 0, result.output
+    assert_starts_pyrite_at(servers_in(config)["pyrite"], "write")
+    assert "OPENAI_API_KEY" in result.output and "admin" in result.output
+    assert "sk-secret-value" not in result.output
+
+
+def test_an_explicit_tier_is_consent_to_change_the_tier_only(env):
+    config = _seed(
+        env,
+        "claude-desktop",
+        {"pyrite": {"command": "/old/bin/pyrite", "args": ["mcp", "--tier", "admin"]}},
+    )
+
+    refused = setup()
+    kept = setup("--tier", "admin")
+
+    assert refused.exit_code == 1 and "--tier admin" in refused.output, refused.output
+    assert kept.exit_code == 0, kept.output
+    assert_starts_pyrite_at(servers_in(config)["pyrite"], "admin")
+    assert setup("--tier", "read").exit_code == 0
+    assert_starts_pyrite_at(servers_in(config)["pyrite"], "read")
+
+
+def test_an_explicit_tier_does_not_excuse_dropping_env(env):
+    config = _seed(env, "claude-desktop", {"pyrite": CUSTOMISED})
+
+    result = setup("--tier", "admin")
+
+    assert result.exit_code == 1, result.output
+    assert "OPENAI_API_KEY" in result.output
+    assert servers_in(config)["pyrite"] == CUSTOMISED
+
+
+def test_the_readme_shape_is_updated_without_force(env):
+    """README.md's own example (no --tier, so write, and no env) is what this
+    command writes, give or take the path: re-running moves it to this
+    install and says so."""
+    config = _seed(
+        env, "claude-desktop", {"pyrite": {"command": "/old/venv/bin/pyrite", "args": ["mcp"]}}
+    )
+
+    result = setup()
+
+    assert result.exit_code == 0, result.output
+    assert_starts_pyrite_at(servers_in(config)["pyrite"], "write")
+    assert "/old/venv/bin/pyrite" in result.output
+
+
+def test_a_users_own_pyrite_admin_server_with_env_is_kept(env):
+    """Shaped like the old trio, but with settings the old command never
+    wrote: it is the user's, so it stays (and the output says so)."""
+    mine = {"command": "/v/bin/pyrite-admin", "args": ["mcp", "--tier", "admin"], "env": {"K": "v"}}
+    config = _seed(env, "claude-desktop", {"pyrite-admin": mine})
+
+    result = setup()
+
+    assert result.exit_code == 0, result.output
+    assert servers_in(config)["pyrite-admin"] == mine
+    assert_starts_pyrite_at(servers_in(config)["pyrite"], "write")
+    assert "Kept pyrite-admin" in result.output
+
+
+@pytest.mark.parametrize(
+    "content",
+    ['{"other": {"x": 1e400}}', '{"other": {"x": NaN}}', '{"other": {"x": -Infinity}}'],
+    ids=["overflow", "nan", "infinity"],
+)
+def test_a_number_json_cannot_write_back_is_refused_untouched(env, content):
+    desktop = install_desktop(linux_desktop_config(env.home))
+    desktop.write_text(content)
+
+    result = setup()
+
+    assert result.exit_code == 1, result.output
+    assert "CONFIG_INVALID" in result.output
+    assert desktop.read_text() == content
+
+
+def test_duplicate_keys_are_refused_untouched(env):
+    desktop = install_desktop(linux_desktop_config(env.home))
+    content = (
+        '{"mcpServers": {"a": {"command": "/bin/a"}},\n "mcpServers": {"b": {"command": "/bin/b"}}}'
+    )
+    desktop.write_text(content)
+
+    result = setup()
+
+    assert result.exit_code == 1, result.output
+    assert "CONFIG_INVALID" in result.output
+    assert "mcpServers" in result.output and "duplicate" in result.output
+    assert desktop.read_text() == content
+
+
+def test_a_failed_add_after_remove_restores_the_previous_entry(env, monkeypatch):
+    install_fake_claude(env)
+    assert setup("--client", "claude-code").exit_code == 0
+    before = servers_in(env.home / ".claude.json")["pyrite"]
+    monkeypatch.setenv("FAKE_CLAUDE_FAIL", "add")
+
+    result = setup("--client", "claude-code", "--tier", "read")
+
+    assert result.exit_code == 1, result.output
+    assert "CLIENT_COMMAND_FAILED" in result.output
+    assert "restored" in result.output
+    assert servers_in(env.home / ".claude.json")["pyrite"] == before
+
+
+def test_tutorial_reads_back_what_was_asked_of_claude(tmp_path):
+    """The tutorial's stub claude records each call, and the runner checks
+    every `claude mcp add` it recorded: an absolute command that exists, and
+    an explicit --tier. A doc that registers a bare `pyrite mcp` fails."""
+    doc = tmp_path / "doc.md"
+    doc.write_text("```bash\nclaude mcp add -s user pyrite -- pyrite mcp\n```\n")
+    path = os.pathsep.join([str(Path(sys.executable).parent), "/usr/bin", "/bin"])
+
+    proc = subprocess.run(
+        [sys.executable, str(REPO / "scripts" / "run_tutorial.py"), str(doc)],
+        env={"PATH": path, "HOME": str(tmp_path), "NO_COLOR": "1", "PYTHONPATH": str(REPO)},
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "claude mcp add" in proc.stderr and "absolute" in proc.stderr
+
+
+@pytest.mark.parametrize("client", ["claude-code", "claude-desktop"])
+def test_extra_args_on_a_pyrite_entry_are_not_dropped_silently(env, client):
+    config = _seed(
+        env,
+        client,
+        {"pyrite": {"command": "/old/bin/pyrite", "args": ["mcp", "--tier", "write", "-vv"]}},
+    )
+    before = config.read_text()
+
+    result = setup("--client", client)
+
+    assert result.exit_code == 1, result.output
+    assert "ENTRY_CUSTOMIZED" in result.output and "-vv" in result.output
+    assert config.read_text() == before

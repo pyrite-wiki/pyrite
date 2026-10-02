@@ -78,6 +78,40 @@ class TutorialError(Exception):
     pass
 
 
+#: Where the stub `claude` records its calls, relative to the temp HOME.
+CLAUDE_CALLS = ".tutorial-claude-calls.jsonl"
+
+STUB_CLAUDE = """#!{python}
+import json, os, sys
+with open(os.path.join(os.environ["HOME"], "{log}"), "a") as log:
+    log.write(json.dumps(sys.argv[1:]) + "\\n")
+"""
+
+
+def check_claude_calls(home: Path, ran_mcp_setup: bool) -> None:
+    """Read back every `claude mcp add` the doc caused (#582): the command a
+    client will start must be an absolute path that exists, with an explicit
+    --tier. An exit code alone passed a setup that wrote a bare `pyrite`."""
+    import json
+
+    log = home / CLAUDE_CALLS
+    calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    adds = [call for call in calls if call[:2] == ["mcp", "add"]]
+    if ran_mcp_setup and not adds:
+        raise TutorialError("`pyrite mcp-setup` ran but asked Claude Code to add nothing")
+    for call in adds:
+        if "--" not in call or call.index("--") == len(call) - 1:
+            raise TutorialError(f"`claude mcp add` was given no command to run: {call}")
+        command, *args = call[call.index("--") + 1 :]
+        if not os.path.isabs(command) or not os.path.isfile(command):
+            raise TutorialError(
+                f"`claude mcp add` registered {command!r}, which is not an absolute path that "
+                "exists, so a client could not start it"
+            )
+        if "--tier" not in args:
+            raise TutorialError(f"`claude mcp add` registered no explicit --tier: {call}")
+
+
 def extract_blocks(doc: Path) -> list[str]:
     """Fenced ```bash blocks, in document order."""
     return [body for lang, body in FENCE.findall(doc.read_text()) if lang == "bash"]
@@ -259,11 +293,12 @@ def main(argv: list[str]) -> int:
     # `pyrite mcp-setup` registers the server with the MCP clients it finds and
     # exits 1 when it finds none (#582), and a CI runner has none. A stub
     # `claude` stands in for Claude Code, first on PATH so a caller's real one
-    # is never called; it records each call in the temp HOME.
+    # is never called; it records each call, and check_claude_calls reads back
+    # what the doc asked it to add.
     stub_bin = home / ".tutorial-bin"
     stub_bin.mkdir()
     stub = stub_bin / "claude"
-    stub.write_text('#!/bin/sh\necho "$*" >> "$HOME/.tutorial-claude-calls"\n')
+    stub.write_text(STUB_CLAUDE.format(python=sys.executable, log=CLAUDE_CALLS))
     stub.chmod(0o755)
     env["PATH"] = f"{stub_bin}{os.pathsep}{env.get('PATH', '')}"
     # Git identity: the tutorial's git block commits, and a CI runner has no
@@ -297,6 +332,7 @@ def main(argv: list[str]) -> int:
             cwd = resulting_cwd(proc.stdout, cwd)
             ran += 1
 
+        check_claude_calls(home, any("pyrite mcp-setup" in block for block in blocks))
         check_index_health("my-research", cwd, env)
     except TutorialError as failure:
         print(f"\nFAIL: {failure}", file=sys.stderr)

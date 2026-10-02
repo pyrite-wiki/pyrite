@@ -148,29 +148,85 @@ class _SetupError(Exception):
         self.error_code, self.message, self.suggestion = error_code, message, suggestion
 
 
-def _is_pyrite_entry(entry: object) -> bool:
-    """An entry mcp-setup, the old `pyrite mcp-setup` or the removed
-    `pyrite-admin mcp-setup` wrote: it runs pyrite's own MCP server. Anything
-    else under the name is the user's."""
+def _pyrite_shape(entry: object) -> tuple[str, list[str]] | None:
+    """(program, the args after its `mcp`) when `entry` runs Pyrite's own MCP
+    server -- `pyrite mcp ...`, `pyrite-admin mcp ...` or `python -m
+    pyrite.cli|pyrite.admin_cli mcp ...` -- else None: anything else under a
+    Pyrite name is the user's own server."""
     if not isinstance(entry, dict):
-        return False
+        return None
     command = Path(str(entry.get("command", ""))).name
     args = [str(a) for a in entry.get("args") or []]
     if command in _PYRITE_COMMANDS and args[:1] == ["mcp"]:
-        return True
-    return any(module in args for module in ("pyrite.admin_cli", "pyrite.cli"))
+        return ("pyrite-admin" if command.startswith("pyrite-admin") else "pyrite"), args[1:]
+    for module, program in (("pyrite.admin_cli", "pyrite-admin"), ("pyrite.cli", "pyrite")):
+        if args[:3] == ["-m", module, "mcp"]:
+            return program, args[3:]
+    return None
 
 
-def _is_old_admin_entry(entry: object) -> bool:
-    """An entry the removed `pyrite-admin mcp-setup` wrote, and only that: a
-    user's own server that happens to share the name is kept."""
-    if not isinstance(entry, dict):
-        return False
-    command = str(entry.get("command", ""))
-    args = [str(a) for a in entry.get("args") or []]
-    return Path(command).name in ("pyrite-admin", "pyrite-admin.exe") or (
-        "pyrite.admin_cli" in args
-    )
+def _tier_and_extra(program: str, rest: list[str]) -> tuple[str, list[str]]:
+    """The tier an entry serves and any args beyond it. With no --tier, the
+    program's default when the entry was written: `pyrite mcp` was always
+    write, `pyrite-admin mcp` was admin until #582."""
+    if len(rest) == 2 and rest[0] in ("--tier", "-t"):
+        return rest[1], []
+    if not rest:
+        return ("admin" if program == "pyrite-admin" else "write"), []
+    return "", rest
+
+
+def _plain(entry: dict) -> bool:
+    """Only the keys an earlier mcp-setup wrote, and no env."""
+    return set(entry) <= {"command", "args", "env"} and not entry.get("env")
+
+
+def _is_old_pyrite_mcp_setup(entry: object) -> bool:
+    """Exactly what the old `pyrite mcp-setup` wrote: `pyrite-admin mcp` (or
+    `python -m pyrite.admin_cli mcp`), admin by default, no env. Ours to move
+    to the tier this run chooses."""
+    return _pyrite_shape(entry) == ("pyrite-admin", []) and _plain(entry)  # type: ignore[arg-type]
+
+
+def _is_old_trio_entry(name: str, entry: object) -> bool:
+    """Exactly what the removed `pyrite-admin mcp-setup` wrote under `name`:
+    pyrite-<tier> -> `pyrite-admin mcp --tier <tier>`, no env, nothing else.
+    A trio-named entry with anything more is the user's and is kept."""
+    tier = name.removeprefix("pyrite-")
+    return _pyrite_shape(entry) == ("pyrite-admin", ["--tier", tier]) and _plain(entry)  # type: ignore[arg-type]
+
+
+def _what_would_be_dropped(
+    existing: dict, new: dict, tier: str, tier_explicit: bool
+) -> tuple[list[str], str | None]:
+    """What replacing a Pyrite-shaped `existing` with `new` would lose, and the
+    tier to suggest keeping. The command path may change (a re-run moves the
+    entry to this install); everything else the user set is listed: a tier
+    they did not ask to change, env keys whose value would go or change (keys
+    only, never values), extra args, other settings."""
+    program, rest = _pyrite_shape(existing)  # type: ignore[misc]
+    old_tier, extra = _tier_and_extra(program, rest)
+    dropped: list[str] = []
+    keep_tier = None
+    if extra:
+        dropped.append(f"args {shlex.join(['mcp', *rest])}")
+    elif old_tier != tier and not tier_explicit and not _is_old_pyrite_mcp_setup(existing):
+        dropped.append(f"tier {old_tier} (this run writes {tier})")
+        keep_tier = old_tier
+    old_env = existing.get("env") or {}
+    new_env = new.get("env") or {}
+    if not isinstance(old_env, dict):
+        dropped.append("env")
+    else:
+        changed = [k for k in old_env if new_env.get(k) != old_env[k]]
+        if changed:
+            dropped.append("env " + ", ".join(changed))
+    other = sorted(set(existing) - {"command", "args", "env", "type"})
+    if existing.get("type") not in (None, "stdio"):
+        other.append("type")
+    if other:
+        dropped.append("settings " + ", ".join(other))
+    return dropped, keep_tier
 
 
 def _describe(entry: object) -> str:
@@ -195,9 +251,31 @@ def _load_config(path: Path) -> dict:
         raise _SetupError(
             "CONFIG_INVALID", f"{path} is not valid UTF-8 (byte {exc.start}: {exc.reason})", keep
         ) from None
+
+    def no_duplicates(pairs: list) -> dict:
+        seen: dict = {}
+        for key, value in pairs:
+            if key in seen:
+                raise _SetupError(
+                    "CONFIG_INVALID",
+                    f"{path} has a duplicate key {key!r}; a rewrite would silently keep only "
+                    "the last one",
+                    keep,
+                )
+            seen[key] = value
+        return seen
+
     try:
-        data = json.loads(text or "{}")
-    except json.JSONDecodeError as exc:
+        data = json.loads(text or "{}", object_pairs_hook=no_duplicates)
+        json.dumps(data, allow_nan=False)
+    except ValueError as exc:
+        if not isinstance(exc, json.JSONDecodeError):
+            raise _SetupError(
+                "CONFIG_INVALID",
+                f"{path} holds NaN, Infinity or a number too large for JSON (such as 1e400); "
+                "written back it would not be JSON, and the client would lose every server",
+                keep,
+            ) from None
         raise _SetupError(
             "CONFIG_INVALID",
             f"{path} is not valid JSON (line {exc.lineno}, column {exc.colno}: {exc.msg})",
@@ -237,6 +315,34 @@ def _taken(where: str, existing: object) -> _SetupError:
     )
 
 
+def _customised(where: str, dropped: list[str], keep_tier: str | None) -> _SetupError:
+    how = f"pass --tier {keep_tier} to keep the tier; " if keep_tier else ""
+    return _SetupError(
+        "ENTRY_CUSTOMIZED",
+        f"{where} already has a {SERVER_NAME!r} entry with settings this run would drop: "
+        + "; ".join(dropped),
+        how + "re-run with --force to replace it anyway (the output lists what it dropped), "
+        "or change the entry's command path by hand",
+    )
+
+
+def _check_existing(
+    where: str, existing: object, new: dict, tier: str, tier_explicit: bool, force: bool
+) -> list[str]:
+    """Raise unless replacing `existing` loses nothing the user set, or
+    --force. Returns what --force drops (empty when nothing is)."""
+    if existing is None:
+        return []
+    if _pyrite_shape(existing) is None:
+        if not force:
+            raise _taken(where, existing)
+        return [f"your server {_describe(existing)}"]
+    dropped, keep_tier = _what_would_be_dropped(existing, new, tier, tier_explicit)  # type: ignore[arg-type]
+    if dropped and not force:
+        raise _customised(where, dropped, keep_tier)
+    return dropped
+
+
 def _new_file_mode() -> int:
     umask = os.umask(0)
     os.umask(umask)
@@ -273,7 +379,9 @@ class _FileTarget:
     entry: dict
     data: dict
     stale: list[str]
-    replaced: object = None
+    kept: list[str]
+    existing: object = None
+    dropped: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -281,7 +389,7 @@ class _ClaudeTarget:
     claude: Path
     config: Path
     existing: object = None  # the user-scope `pyrite` entry, when one was read
-    replaced: object = None
+    dropped: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -291,19 +399,28 @@ class _Result:
     notes: list[str] = field(default_factory=list)
 
 
-def _prepare_file(client: str, label: str, path: Path, entry: dict, force: bool) -> _FileTarget:
+def _prepare_file(
+    client: str,
+    label: str,
+    path: Path,
+    entry: dict,
+    tier: str,
+    tier_explicit: bool,
+    force: bool,
+) -> _FileTarget:
     real = Path(os.path.realpath(path))
     _refuse_read_only(real)
     data = _load_config(real)
     servers = data.get("mcpServers", {})
     existing = servers.get(SERVER_NAME)
-    replaced = None
-    if existing is not None and not _is_pyrite_entry(existing):
-        if not force:
-            raise _taken(str(path), existing)
-        replaced = existing
-    stale = [name for name in STALE_TRIO if _is_old_admin_entry(servers.get(name))]
-    return _FileTarget(client, label, path, real, entry, data, stale, replaced)
+    dropped = _check_existing(str(path), existing, entry, tier, tier_explicit, force)
+    stale = [name for name in STALE_TRIO if _is_old_trio_entry(name, servers.get(name))]
+    kept = [
+        name
+        for name in STALE_TRIO
+        if name not in stale and _pyrite_shape(servers.get(name)) is not None
+    ]
+    return _FileTarget(client, label, path, real, entry, data, stale, kept, existing, dropped)
 
 
 def _write_file(target: _FileTarget) -> None:
@@ -313,15 +430,19 @@ def _write_file(target: _FileTarget) -> None:
     every value (equal after a round trip), and non-ASCII text as written
     (ensure_ascii=False). What it cannot keep is spelling: a number is
     re-spelled the way Python prints it (1.10 -> 1.1, 1e3 -> 1000.0), \\u
-    escapes become the characters they name, duplicate keys collapse to the
-    last, and the indentation becomes two spaces.
+    escapes become the characters they name, and the indentation becomes two
+    spaces. What it would lose instead of re-spell is refused before any write
+    (_load_config): a duplicate key, NaN/Infinity, a number that overflows.
     """
     servers = target.data.setdefault("mcpServers", {})
     for name in target.stale:
         del servers[name]
     servers[SERVER_NAME] = target.entry
     try:
-        _atomic_write(target.real, json.dumps(target.data, indent=2, ensure_ascii=False) + "\n")
+        _atomic_write(
+            target.real,
+            json.dumps(target.data, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
+        )
     except OSError as exc:
         raise _SetupError(
             "CONFIG_WRITE_FAILED",
@@ -330,26 +451,30 @@ def _write_file(target: _FileTarget) -> None:
         ) from None
 
 
-def _prepare_claude_code(claude: Path, force: bool) -> _ClaudeTarget:
+def _prepare_claude_code(
+    claude: Path, entry: dict, tier: str, tier_explicit: bool, force: bool
+) -> _ClaudeTarget:
     """Read Claude Code's own config to learn whether a user-scope `pyrite`
-    exists and whose it is. The decision never depends on `claude`'s message
-    text; an unreadable file means "unknown", and `claude mcp add` then
-    decides by its exit code."""
+    exists, whose it is and what replacing it would drop: the same rule as a
+    file. The decision never depends on `claude`'s message text; an
+    unreadable file means "unknown", and `claude mcp add` then decides by its
+    exit code."""
     config = claude_code_config_path()
     target = _ClaudeTarget(claude, config)
     with contextlib.suppress(OSError, ValueError, _SetupError):
         servers = _load_config(config).get("mcpServers", {})
         target.existing = servers.get(SERVER_NAME)
-    if target.existing is not None and not _is_pyrite_entry(target.existing):
-        if not force:
-            raise _taken(f"Claude Code's user config ({config})", target.existing)
-        target.replaced = target.existing
+    target.dropped = _check_existing(
+        f"Claude Code's user config ({config})", target.existing, entry, tier, tier_explicit, force
+    )
     return target
 
 
 def _claude_code_apply(target: _ClaudeTarget, args: list[str], manual: str) -> None:
     """`claude mcp remove` (when a `pyrite` is there) then `claude mcp add`,
-    each judged by its exit code alone."""
+    each judged by its exit code alone. If `add` fails after `remove`, the
+    previous entry is put back with `claude mcp add-json`, so a failed re-run
+    loses nothing."""
 
     def run(*cmd: str) -> subprocess.CompletedProcess:
         try:
@@ -377,13 +502,31 @@ def _claude_code_apply(target: _ClaudeTarget, args: list[str], manual: str) -> N
                 f"remove it yourself, then run: {manual}",
             )
     proc = run("add", "-s", "user", SERVER_NAME, "--", *args)
-    if proc.returncode != 0:
+    if proc.returncode == 0:
+        return
+    failure = f"`claude mcp add` failed: {(proc.stderr or proc.stdout).strip()}"
+    if target.existing is None:
         raise _SetupError(
             "CLIENT_COMMAND_FAILED",
-            f"`claude mcp add` failed: {(proc.stderr or proc.stdout).strip()}",
+            failure,
             f"if a user-scope {SERVER_NAME!r} is already there, `claude mcp remove -s user "
             f"{SERVER_NAME}` first; then run: {manual}",
         )
+    restore = run("add-json", "-s", "user", SERVER_NAME, json.dumps(target.existing))
+    if restore.returncode == 0:
+        raise _SetupError(
+            "CLIENT_COMMAND_FAILED",
+            f"{failure}; the previous {SERVER_NAME!r} entry was restored",
+            f"fix the cause and re-run, or run: {manual}",
+        )
+    keys = sorted((target.existing.get("env") or {}) if isinstance(target.existing, dict) else {})
+    raise _SetupError(
+        "CLIENT_COMMAND_FAILED",
+        f"{failure}; restoring the previous entry also failed: "
+        f"{(restore.stderr or restore.stdout).strip()}. It was {_describe(target.existing)}"
+        + (f" with env {', '.join(keys)}" if keys else ""),
+        f"re-add it by hand, or run: {manual}",
+    )
 
 
 def _verify_starts(command: Path) -> None:
@@ -456,11 +599,12 @@ def mcp_setup(
         "--client",
         help="claude-code or claude-desktop. Default: every client found on this machine.",
     ),
-    tier: str = typer.Option(
-        "write",
+    tier: str | None = typer.Option(
+        None,
         "--tier",
         "-t",
-        help="Tool tier the client gets: read, write or admin.",
+        help="Tool tier the client gets: read, write (default) or admin. Naming it also "
+        "allows changing the tier of an existing pyrite entry.",
     ),
     project: bool = typer.Option(
         False,
@@ -478,8 +622,10 @@ def mcp_setup(
     force: bool = typer.Option(
         False,
         "--force",
-        help="Replace a server named 'pyrite' that mcp-setup did not write (it says what "
-        "it replaced). Without it, such a server is left alone and the command stops.",
+        help="Replace an existing 'pyrite' entry even if that drops something you set "
+        "(your own server under the name, env keys, a tier you did not name, extra args); "
+        "the output lists what it dropped. Without it, such an entry is left alone and the "
+        "command stops, naming what differs.",
     ),
     output_format: str = typer.Option(
         "rich",
@@ -504,6 +650,8 @@ def mcp_setup(
 
     fmt = output_format
     out = Console(soft_wrap=True, highlight=False)
+    tier_explicit = tier is not None
+    tier = tier or "write"
 
     def stop(failure: _SetupError, extra: dict | None = None) -> None:
         cli_error(
@@ -567,22 +715,38 @@ def mcp_setup(
     result = _Result()
 
     # Phase 1, nothing changed yet: find the clients and read and check every
-    # file (read-only, not JSON, not UTF-8, a 'pyrite' that is not ours). Any
-    # problem here stops the run before a client has been touched.
+    # file and Claude Code's existing entry (read-only, not JSON, not UTF-8, a
+    # duplicate key, a number JSON cannot write, a 'pyrite' that is not ours or
+    # carries settings this run would drop). Any problem here stops the run
+    # before a client has been touched.
     files: list[_FileTarget] = []
     claude_target: _ClaudeTarget | None = None
     try:
         if config_path is not None:
             files.append(
                 _prepare_file(
-                    "config", "Config file", config_path.expanduser(), desktop_entry, force
+                    "config",
+                    "Config file",
+                    config_path.expanduser(),
+                    desktop_entry,
+                    tier,
+                    tier_explicit,
+                    force,
                 )
             )
         elif project:
             mcp_json = Path.cwd() / ".mcp.json"
             entry = {"type": "stdio", "command": str(command), "args": args[1:], "env": {}}
             files.append(
-                _prepare_file(CLAUDE_CODE, "Claude Code (project scope)", mcp_json, entry, force)
+                _prepare_file(
+                    CLAUDE_CODE,
+                    "Claude Code (project scope)",
+                    mcp_json,
+                    entry,
+                    tier,
+                    tier_explicit,
+                    force,
+                )
             )
             result.notes.append(
                 f"{mcp_json} holds this machine's path to pyrite; commit it only if everyone "
@@ -602,7 +766,10 @@ def mcp_setup(
                     )
                 )
             if claude is not None:
-                claude_target = _prepare_claude_code(claude, force)
+                claude_entry = {"command": str(command), "args": args[1:], "env": {}}
+                claude_target = _prepare_claude_code(
+                    claude, claude_entry, tier, tier_explicit, force
+                )
             if client == CLAUDE_DESKTOP or (client is None and desktop.parent.is_dir()):
                 if not desktop.parent.is_dir():
                     result.notes.append(
@@ -615,7 +782,15 @@ def mcp_setup(
                         "unofficial builds use."
                     )
                 files.append(
-                    _prepare_file(CLAUDE_DESKTOP, "Claude Desktop", desktop, desktop_entry, force)
+                    _prepare_file(
+                        CLAUDE_DESKTOP,
+                        "Claude Desktop",
+                        desktop,
+                        desktop_entry,
+                        tier,
+                        tier_explicit,
+                        force,
+                    )
                 )
             if claude_target is None and not files:
                 manual = {"mcpServers": {SERVER_NAME: desktop_entry}}
@@ -658,10 +833,20 @@ def mcp_setup(
     # Phase 2: change each client. A failure here does not undo a client
     # already changed and does not stop the next one: each is reported as
     # configured or failed, and the exit code is 1 if any failed.
-    def record_replaced(where: str, replaced: object) -> None:
-        if replaced is not None:
+    def record_existing(where: str, existing: object, dropped: list[str]) -> None:
+        """Say what happened to an entry that was there: what --force dropped,
+        or where a re-run moved it from."""
+        if existing is None:
+            return
+        if dropped:
             result.notes.append(
-                f"Replaced your {SERVER_NAME!r} server in {where} (--force): {_describe(replaced)}"
+                f"Replaced the {SERVER_NAME!r} entry in {where} (--force), dropping: "
+                + "; ".join(dropped)
+                + f". It was {_describe(existing)}."
+            )
+        elif isinstance(existing, dict) and str(existing.get("command")) != str(command):
+            result.notes.append(
+                f"Moved the {SERVER_NAME!r} entry in {where} from {_describe(existing)}."
             )
 
     if claude_target is not None:
@@ -685,7 +870,7 @@ def mcp_setup(
             result.configured.append(
                 {"client": CLAUDE_CODE, "scope": "user", "label": label, "location": location}
             )
-            record_replaced(location, claude_target.replaced)
+            record_existing(location, claude_target.existing, claude_target.dropped)
     for target in files:
         item = {"client": target.client, "label": target.label, "location": str(target.path)}
         if target.client == CLAUDE_CODE:
@@ -705,11 +890,16 @@ def mcp_setup(
         if target.path.is_symlink():
             item["written_to"] = str(target.real)
         result.configured.append(item)
-        record_replaced(str(target.path), target.replaced)
+        record_existing(str(target.path), target.existing, target.dropped)
         if target.stale:
             result.notes.append(
                 f"Removed {', '.join(target.stale)} from {target.path} "
                 "(left by the old `pyrite-admin mcp-setup`)."
+            )
+        for name in target.kept:
+            result.notes.append(
+                f"Kept {name} in {target.path}: it has settings the old `pyrite-admin "
+                "mcp-setup` never wrote, so it is yours; remove it by hand if it is not."
             )
 
     if fmt == "rich":
