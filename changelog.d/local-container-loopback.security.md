@@ -1,0 +1,5 @@
+The local Docker compose file now publishes the server on 127.0.0.1 only, so a server with no credential is reachable only from the machine it runs on. **Upgrade note:** if you reached the old container from another machine on your network, that access stops. To restore it deliberately, turn on auth (`PYRITE_AUTH_ENABLED=true`), then publish the port wider and remove `PYRITE_PUBLISHED_ON_LOOPBACK` from the compose file (and from any `docker-compose.override.yml`, since Compose merges port lists).
+
+`pyrite serve` and `pyrite-server` now warn at startup when they act without a credential on a non-loopback address, and name how to bind to loopback or turn on auth. A server started another way, such as `uvicorn pyrite.server.api:app --host 0.0.0.0`, is not covered: the app cannot see its bind address. The new `PYRITE_PUBLISHED_ON_LOOPBACK=true` (set by the compose file) silences the warning only inside a container with auth off.
+
+The container path was verified by parsing the compose file in tests, not by running a container.

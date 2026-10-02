@@ -306,6 +306,14 @@ For local development without TLS, use the minimal compose:
 docker compose up -d  # http://localhost:8088
 ```
 
+The compose file publishes the port on `127.0.0.1` only, and the server in it
+has no credential, so only this machine can reach it. To serve anyone else,
+turn on auth first (`PYRITE_AUTH_ENABLED=true`) and then change the published
+address. `pyrite serve` and `pyrite-server` warn at startup when they run
+without a credential on a non-loopback address; a server started some other way
+(for example `uvicorn pyrite.server.api:app --host 0.0.0.0`) does not, because
+the app cannot see its own bind address.
+
 ## Install
 
 No PyPI wheel yet. From source (CLI, server, MCP **and** the web UI):

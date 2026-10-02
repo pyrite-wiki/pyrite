@@ -12,7 +12,8 @@ pip install -e ".[all]"   # Core + AI + semantic search + dev tools
 ```
 
 Or run the bundled Docker image instead (`docker compose up -d`, serves
-on `http://localhost:8088`) — see the [README](../README.md#install)
+on `http://localhost:8088`, reachable only from your own machine: the compose
+file publishes the port on `127.0.0.1` and runs with no credential) — see the [README](../README.md#install)
 for details, or [pyrite.wiki](https://pyrite.wiki) for hosted/one-click
 cloud options.
 
