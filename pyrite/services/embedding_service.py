@@ -30,6 +30,38 @@ def is_available() -> bool:
         return False
 
 
+def semantic_unavailable(vec_available: bool) -> tuple[str, str, str] | None:
+    """Why semantic search cannot run here, or None when it can.
+
+    Returns ``(code, cause, remedy)``. The one source of this wording: `search`
+    puts it in a warning and in the trace's ``reason``, `index embed` in its
+    error, so the three never disagree. The install line only fits a missing
+    package, not an extension that is installed but would not load.
+    """
+    import importlib.util
+
+    if not is_available():
+        return (
+            "extra_missing",
+            "sentence-transformers is not installed",
+            "install with `pip install pyrite[semantic]`",
+        )
+    if vec_available:
+        return None
+    if importlib.util.find_spec("sqlite_vec") is None:
+        return (
+            "sqlite_vec_missing",
+            "the sqlite-vec package is not installed",
+            "install with `pip install pyrite[semantic]`",
+        )
+    return (
+        "sqlite_vec_not_loaded",
+        "the sqlite-vec extension is installed but did not load",
+        "this Python's sqlite3 is probably built without loadable-extension "
+        "support; use a Python whose sqlite3 allows extensions",
+    )
+
+
 #: Default max body chars per embedding model. Each model has an
 #: effective token window — all-MiniLM-L6-v2 is ~256 tokens (~1200 chars
 #: of typical English) but in practice 500 chars after title+summary

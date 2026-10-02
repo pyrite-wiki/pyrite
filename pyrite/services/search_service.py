@@ -5,7 +5,6 @@ Unified search operations with FTS5 query sanitization and hybrid search.
 Used by API, CLI, and UI layers.
 """
 
-import importlib.util
 import logging
 import re
 import sqlite3
@@ -536,6 +535,7 @@ class SearchService:
             expanded_query = self._expand_query(query) if expand else query
 
             if mode == SearchMode.SEMANTIC:
+                skip: dict[str, Any] = {}
                 # Semantic uses original natural language query, not expanded
                 fetch = limit * 4 if kb_names is not None else limit
                 results = self._semantic_search(
@@ -554,12 +554,15 @@ class SearchService:
                         include_archived=include_archived,
                     ),
                     warnings=warnings,
+                    trace=skip,
                 )
                 results = self._restrict(results, kb_names, limit)
-                if not results:
-                    # Semantic returned nothing (commonly: no embeddings).
-                    tr["actual_mode"] = "keyword"
-                    tr["reason"] = "semantic_empty_no_embeddings"
+                if skip.get("semantic_skip"):
+                    # The leg never ran, so nothing did: a pure semantic search
+                    # does not fall back to keyword. The reason is the same
+                    # cause the warning names.
+                    tr["actual_mode"] = "none"
+                    tr["reason"] = self._skip_reason("semantic", skip["semantic_skip"])
             elif mode == SearchMode.HYBRID:
                 results = self._hybrid_search(
                     query,
@@ -637,6 +640,17 @@ class SearchService:
 
         return results
 
+    @staticmethod
+    def _skip_reason(mode: str, code: str | None) -> str:
+        """Trace reason for a vector leg that returned nothing, in ``mode``.
+
+        Keeps the two reasons published before #584 (``semantic_empty_no_embeddings``,
+        ``hybrid_no_embeddings``); the install causes are named for what they are.
+        """
+        if code in (None, "no_embeddings"):
+            return "semantic_empty_no_embeddings" if mode == "semantic" else "hybrid_no_embeddings"
+        return f"{mode}_{code}"
+
     def _expand_query(self, query: str) -> str:
         """Expand query with AI-generated terms, returning OR-combined FTS5 query."""
         svc = self._get_expansion_service()
@@ -668,6 +682,7 @@ class SearchService:
         filters: dict[str, Any] | None = None,
         warnings: list[str] | None = None,
         keyword_leg_ran: bool = False,
+        trace: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Pure semantic vector search, with the keyword leg's filters applied.
 
@@ -689,29 +704,18 @@ class SearchService:
         relabelled as a missing feature and turned into a silently empty
         semantic leg. Bugs now propagate.
         """
-        from .embedding_service import EmbeddingService, is_available
+        from .embedding_service import EmbeddingService, semantic_unavailable
 
         # Checked before anything is encoded: no model is loaded for a search
         # that can only come back empty. Without the extra or the sqlite-vec
         # extension the leg cannot run, and that is a degraded answer, so it is
         # named (#43), not returned as a silent [].
-        if not is_available() or not self.db.vec_available:
+        if unavailable := semantic_unavailable(self.db.vec_available):
+            code, cause, remedy = unavailable
+            if trace is not None:
+                trace["semantic_skip"] = code
             if warnings is not None:
                 outcome = "only the keyword leg ran" if keyword_leg_ran else "it returned nothing"
-                # Each cause names its own remedy: the install line only fits
-                # a missing package, not an extension that failed to load.
-                if not is_available():
-                    cause = "sentence-transformers is not installed"
-                    remedy = "install with `pip install pyrite[semantic]`"
-                elif importlib.util.find_spec("sqlite_vec") is None:
-                    cause = "the sqlite-vec package is not installed"
-                    remedy = "install with `pip install pyrite[semantic]`"
-                else:
-                    cause = "the sqlite-vec extension is installed but did not load"
-                    remedy = (
-                        "this Python's sqlite3 is probably built without loadable-extension "
-                        "support; use a Python whose sqlite3 allows extensions"
-                    )
                 warnings.append(f"semantic leg skipped: {cause}, so {outcome}; {remedy}")
             return []
 
@@ -730,6 +734,8 @@ class SearchService:
             # Only when the KB has entries: on a genuinely empty index the
             # answer is `pyrite index build`, and sending someone to `index
             # embed` would be the wrong advice confidently given.
+            if trace is not None:
+                trace["semantic_skip"] = "no_embeddings"
             if warnings is not None and self._index_has_entries(kb_name):
                 outcome = "only the keyword leg ran" if keyword_leg_ran else "it returned nothing"
                 warnings.append(
@@ -884,6 +890,7 @@ class SearchService:
             include_archived=include_archived,
         )
 
+        skip: dict[str, Any] = {}
         # Try to get semantic results — filtered on the vector leg itself, so
         # the fused set can never contain an entry the caller's filter excluded.
         semantic_results = self._semantic_search(
@@ -902,13 +909,15 @@ class SearchService:
             ),
             warnings=warnings,
             keyword_leg_ran=True,
+            trace=skip,
         )
 
         if not semantic_results:
-            # No embeddings — fall back to keyword only
+            # The vector leg was skipped (or found nothing): keyword only. The
+            # reason is the cause the warning names, not always "no embeddings".
             if trace is not None:
                 trace["actual_mode"] = "keyword"
-                trace["reason"] = "hybrid_no_embeddings"
+                trace["reason"] = self._skip_reason("hybrid", skip.get("semantic_skip"))
             return keyword_results[offset : offset + limit]
 
         if trace is not None:

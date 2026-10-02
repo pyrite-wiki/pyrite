@@ -720,3 +720,19 @@ class TestIndexEmbedAccounting:
         out = CliRunner().invoke(app, ["index", "embed"]).output
         assert "did not load" in out, out
         assert "pip install" not in out, out
+
+
+@pytest.mark.control(
+    reason="dev already reported these two reasons; pins that naming the install causes left them unchanged"
+)
+def test_hybrid_and_semantic_keep_their_published_no_embeddings_reasons(indexed):
+    db = indexed[1]
+    if not db.vec_available:
+        pytest.skip("sqlite-vec unavailable")
+    assert (
+        TestTheTraceAndTheWarningAgree._trace(db, "hybrid")[0]["reason"] == "hybrid_no_embeddings"
+    )
+    assert (
+        TestTheTraceAndTheWarningAgree._trace(db, "semantic")[0]["reason"]
+        == "semantic_empty_no_embeddings"
+    )
