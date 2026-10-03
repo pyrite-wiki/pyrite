@@ -46,6 +46,7 @@ from .db_commands import db_app
 from .entry_commands import register_entry_commands
 from .export_commands import export_app
 from .extension_commands import extension_app
+from .ids_commands import ids_app
 from .index_commands import index_app
 from .init_command import init_kb
 from .kb_commands import kb_app
@@ -152,6 +153,9 @@ app.add_typer(repo_collab_app, name="repo")
 app.add_typer(extension_app, name="extension")
 app.add_typer(schema_app, name="schema")
 app.add_typer(protocol_app, name="protocol")
+
+# Entry ids: list id-less files and pin them (#700, ADR-0042 decision 5)
+app.add_typer(ids_app, name="ids")
 
 # Init command (headless KB init)
 app.command("init")(init_kb)
