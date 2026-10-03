@@ -68,8 +68,8 @@ PR #635) or [[adr-0038]]; **not built** = accepted, code absent.
 ## ADRs in reading order
 
 1. [[adr-0001]] why files. 2. ADR-0041 the principle (proposed). 3.
-ADR-0042 the write path (proposed; acceptance waits on a second spike on the
-real write path). 4. [[adr-0038]] identity and I1 to I10 (proposed; read with
+ADR-0042 the write path (proposed; spike 2 ran it on 52 real KBs and found
+it holds, with amendments; concurrency and hand-made shapes remain). 4. [[adr-0038]] identity and I1 to I10 (proposed; read with
 ADR-0042's amendment). 5. [[adr-0035]] and [[adr-0034]] for embedding and
 bounded bodies. History only: [[adr-0015]] (on-load migration; ADR-0042
 decision 7 makes migration an explicit command), [[adr-0003]] (superseded).
@@ -95,7 +95,8 @@ Proposed, not yet written: `tests/test_doc_write_as_patch.py` (ADR-0042).
 
 - Update re-serialises the file; hooks write links and parent status; the id
   comes from the title; a single read comes from the index. ADR-0042 and
-  ADR-0045 address them; ADR-0042 is not accepted and has a spike owed.
+  ADR-0045 address them; ADR-0042 is not accepted; spike 2 is done, and the checks it did not run
+  (concurrency; CRLF, BOM, anchors, Hugo; `/` in ids) are listed in the ADR.
 - `previous_ids` (history across a rename) is absent; most I1 to I10 are
   strict expected failures until [[adr-0038]] steps 2 to 5 land. The ADR is
   still labelled `proposed` though its questions are decided.

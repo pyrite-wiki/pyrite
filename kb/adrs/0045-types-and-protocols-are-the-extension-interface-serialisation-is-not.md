@@ -46,6 +46,9 @@ links:
 > for an extensible protocol interface." Nothing here removes types or
 > protocols or their behaviour. It moves one thing: who writes the bytes of an
 > existing file.
+>
+> Spike 2 of ADR-0042 (2026-10-02, 28,041 files across 52 real KBs) bears on
+> decisions 3, 7 and 8 and question 3; its findings are recorded there.
 
 ## Context
 
@@ -116,7 +119,9 @@ software-kb 10, encyclopedia 2, social 2, zettelkasten 2):
 - All 37 define `entry_type`, `to_frontmatter` and `from_frontmatter`.
 - 6 define `FRONTMATTER_ALIASES` (core defines 2 more). It is a `frozenset` of
   alias names with no target, and it is in neither ADR-0040's inventory nor
-  its contract table.
+  its contract table. Spike 2 (2026-10-02, 28,041 files across 52 real KBs)
+  ran into it: alias resolution (ADR-0042 decision 6) needed a hand-written
+  alias-to-target map, because no class says where `participants` goes.
 - 35 contain branches inside a `to_frontmatter` or `from_frontmatter`. The
   branches in `to_frontmatter` are presumed to be "emit only when not the
   default"; those in `from_frontmatter` are `try` blocks around coercions. Not
@@ -163,6 +168,13 @@ returned under their own key beside the file's fields (the spelling is
 illustrative), never inside the file's frontmatter as the reading returns it,
 so a caller does not echo them back as fields. An operation that names a
 derived key is refused with a message saying so (ADR-0042 decision 11).
+
+Spike 2 measured what happens without it: sending the type's reading
+(`to_frontmatter()` with its defaults and normalised values) back through the
+write path wrote 1,295 of 2,826 real files (46%), adding keys such as
+`verification_status`, `importance` and `research_status`. Defaults, normalised
+values and derived links are one rule: anything the type or the index computes
+comes back under a derived key, or an echo writes it into the file.
 
 ## Decision
 
@@ -216,12 +228,51 @@ a side effect of a write:
 A parent's `status` means what a person or an explicit operation set. Files
 that already say `done` because the hook wrote it stay as they are.
 
+**What spike 2 found, and what it makes required.** Of the writers in this
+decision, only `_parent_rollup` left values in real files: 37 parent tasks in
+the research KB (83 parents) are `done` with no `status_change_log` entry and
+an `updated_at` within 5 s of their last child (a timestamp check, not git
+history). `unblock_dependents` and `aggregate_evidence_to_parent` left 0. If the
+rollup stops writing and nothing replaces it, decomposed research tasks stay
+open after their children finish; a worker could claim one and the
+investigation conductor's drain check would count it. So:
+
+- **The derived completion of Parentable lands with the change that stops the
+  rollup writing, not after.** Acceptance: *`task list` shows a parent's
+  derived completion, and its open filter (`--status open --parent <epic>`)
+  honours it.* Its consumers are `task list`, the investigation conductor's
+  drain check and `task decompose`; all three read the derived value (ADR-0042
+  decision 4 and its phasing, step 6).
+- **The References derivation is a new capability.** The link hooks it
+  replaces left no values on the reference corpus: 0 `actor_reference` links in
+  the 3 cascade-typed KBs, 0 enriched connection links in the journalism KB.
+  Nothing reads the `actor_reference` relation by name; generic backlinks and
+  the graph are unaffected if the hooks stop writing.
+- **Cross-KB actor resolution.** Cascade's lookup is same-KB only, and
+  re-running it derives nothing for 6,484 events whose actors live in another
+  KB (and 8 links for 3 scenes). The References derivation either resolves
+  `actors` across KBs, using the one KB registry (ADR-0039), or states in its
+  contract that it does not. Which is a question for the maintainer (question
+  5).
+
 **8. Aliases and migrations are declared by the schema, not by class
 attributes.** A type's schema names each alias and its target
 (`participants: actors`) and each version step. The platform resolves an alias
 to the key a file uses (ADR-0042 decision 6) and applies migrations only by
 explicit command (decision 7). A plugin that is removed takes no migration
 with it, because the migrations were never in its code.
+
+**Aliases are required before the write path lands; migrations are not on its
+critical path.** Spike 2 found `FRONTMATTER_ALIASES` is a set of names with no
+target, so ADR-0042's alias rule (an edit of `actors` writes the file's own
+`participants:` line; 95 such appends were written correctly in the spike, with
+a hand-written map) cannot be implemented from the class attributes. The alias
+declaration is therefore a precondition of ADR-0042 phase 4, not an
+improvement. Migrations carry less evidence: 0 of 365 types on the maintainer's
+52 KBs declare a `version`, no plugin registers a migration, no file carries
+`_schema_version`. The "behind schema version" report and the explicit
+migrate command stay, and nothing in acceptance waits on them; they can follow
+the aliases.
 
 **9. A before-save hook refuses; it does not change the entry.** Its return
 value is ignored. A default that depends on the acting principal (the social
@@ -329,6 +380,13 @@ claim on an open `lead` succeeds exactly once when two agents race. Editing
 `actors` on a file that carries `participants:` changes the `participants:`
 line and no other.
 
+Added by spike 2 (ADR-0042): the alias declaration above is what makes the last
+sentence true, so its test runs on a file whose alias has no hand-written map
+anywhere else. A parent whose children are all resolved shows derived
+completion in `task list`, and `task list --status open --parent <epic>` does
+not list it, with the parent's file unchanged. The References derivation's
+contract states whether it resolves an actor in another KB, and a test shows it.
+
 ## Consequences
 
 **Easier**
@@ -346,7 +404,9 @@ line and no other.
 - Some class behaviour may not fit a schema (`auto_confidence`). It needs a
   protocol operation or stays in the plugin as a tool.
 - Workflows that relied on a parent being completed for them (`task decompose`,
-  the conductors) read the derived value or set the status explicitly.
+  the conductors) read the derived value or set the status explicitly. The
+  derived completion must exist and be honoured by `task list --status open`
+  before the rollup stops writing (decision 7).
 
 **Deleted, when the inventory allows**
 - `FRONTMATTER_ALIASES` as a class attribute; per-class `to_frontmatter`
@@ -388,10 +448,21 @@ citizen; the mixins stay as in-Python conveniences.
    and evidence now, because they replace two dead writers.*
 3. **Aliases and migrations in the schema before the freeze**, with
    `FRONTMATTER_ALIASES` kept as a shim for one minor release. *Recommended:
-   yes.* Blocks the alpha contract (0.28).
+   yes.* Blocks the alpha contract (0.28). Spike 2 splits it: **aliases block
+   ADR-0042's write path** (decision 8), so they come first; migrations are
+   inert on the maintainer's corpus and may follow. The shim has no targets to
+   carry, so it can only warn.
 4. **`to_frontmatter` in the contract.** Keep it for the alpha as a create and
    index helper, and retire it when the inventory shows schema-driven emit
    matches for all 37 classes? *Recommended: yes.* Blocks the same.
+
+5. **Does the References derivation resolve actors across KBs?** Cascade's
+   hook was same-KB only and derives nothing for 6,484 real events. Resolve
+   across the registry's KBs (ADR-0039), or state that it does not and say
+   which relation a reader should use for an actor in another KB?
+   *Recommended: state the scope in the derivation's contract; do not widen it
+   until a consumer reads the relation* (none does today). Blocks ADR-0042
+   step 6 only if a consumer is found.
 
 Decided and recorded, not asked: rollup, unblock and evidence aggregation are
 derived (decision 7); a protocol operation never writes as a side effect

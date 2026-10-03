@@ -39,12 +39,15 @@ links:
 # ADR-0042: A write changes what was asked and nothing else
 
 > **Proposed** (2026-10-02). The maintainer accepts or rejects it. The rule
-> below (decisions 1 to 13) is the maintainer's, stated 2026-10-02. **Its
-> acceptance waits on a second spike, on the real write path** (section "What
-> is not yet measured"). The first spike measured a text splice, not this
-> rule, and an adversarial read of the first draft found holes that the
-> measurements could not have shown. Measurements are from `origin/dev` at
-> `d35eae77`, ruamel.yaml 0.19.1; line references are at that commit.
+> below (decisions 1 to 13) is the maintainer's, stated 2026-10-02. The first
+> spike measured a text splice, not this rule, and an adversarial read of the
+> first draft found holes that the measurements could not have shown. **Spike
+> 2 (2026-10-02, 28,041 files across 52 real KBs) ran the rule on the real
+> write path and found it holds, with the changes now written into decisions
+> 2, 5, 8, 9 and 11, and the hooks table.** What it did not measure is listed
+> in section "What spike 2 measured, and what remains". First-spike
+> measurements are from `origin/dev` at `d35eae77`, ruamel.yaml 0.19.1; line
+> references in the context are at that commit. Spike 2 ran on `d3fdc172`.
 
 ## Context
 
@@ -175,6 +178,24 @@ top-level key, still as an operation on the file's own value. If that fails,
 the write is refused. **There is no fallback that re-emits the file or writes
 the model's rendering of a key the operation touched.**
 
+**A widened emit copies each unchanged item's bytes from the file, or the write
+is refused.** It never re-emits a sibling item through a serializer. Spike 2
+found why: when a sub-key cannot be added by a narrow edit, a widen that
+re-emits the whole key with the document's detected list indent respelled every
+sibling item in 52 of 376 "add a sub-key to `links[0]`" operations (some files
+indent different lists differently). The values were equal and the bytes were
+not, so decision 1 ("siblings' bytes alone") and "widen to the whole key" could
+not both hold. Two consequences:
+
+- The narrow edit **add a sub-key to a mapping item** is an operation of its
+  own: insert one line at the item's indent. It was one line in 324 of the 376
+  link cases (the other 52 took 4 to 49 lines) and one line in 4,940 of 5,071
+  source cases (the other 131 took 2 to 9).
+- Where the narrow edit does not apply, the widen is item-wise: unchanged
+  items are copied byte for byte from the file, and only the item the operation
+  names is emitted. If that cannot be done, the write is refused with the
+  reason.
+
 The role of the type is the one ADR-0014 gives it: structure for the data
 and, through the protocols it satisfies, an extensible behavioural interface
 (ADR-0045). Here the type and its protocols **validate and project**: they
@@ -230,6 +251,45 @@ only these define `get_hooks`, plus two core hooks registered in
 | `aggregate_evidence_to_parent` (not a hook) | core, `task_service.py:684` | copies a child's evidence into the parent's `evidence` (writes the parent). No caller outside tests | **Derived at read time**: subtree evidence is computed from the children |
 | `_on_actor_saved`, `after_save_update_counts`, `after_delete_adjust_reputation` | cascade, social | invalidate a cache; write the plugin's own tables | Unchanged: they write no entry file |
 
+**What spike 2 found the hooks leave in real files** (52 KBs, hooks and plugin
+types on):
+
+- **The link hooks left no values on the reference corpus.** Cascade's
+  `resolve_actor_links` left 0 `actor_reference` links in the 3 cascade-typed
+  KBs; re-running it derives nothing for 6,484 events (their actors live in
+  another KB and its lookup is same-KB only) and 8 links for 3 scenes.
+  `enrich_connection_links` left 0 in the one journalism KB. The social
+  `author_id` hook fires in no KB. So the index-time derivation is **a new
+  capability, not a preservation of something files hold**; the generic
+  backlinks and graph (used by the investigation, network-mapper and research
+  skills) lose nothing if hooks stop writing, and nothing reads the
+  `actor_reference` relation by name (the Hugo converter and `static_export`
+  read `actors`).
+- **The cascade derivation must resolve actors across KBs, or say that it does
+  not.** Same-KB resolution derives nothing for the 6,484 events above. The
+  derivation's contract names which it does (ADR-0043 and the one KB registry
+  decide what "across KBs" means).
+- **Only the parent rollup left values: 37 parent tasks** in the research KB
+  (83 parents) are `done` with no `status_change_log` entry and `updated_at`
+  within 5 s of their last child (a timestamp check; git history was not read).
+  The same KB has 4 parents closed by hand, 10 with every child resolved and
+  not `done`, and 8 `parent` values that point at no entry. If hooks stop
+  writing and nothing replaces the rollup, decomposed research tasks stay open
+  after their children finish, a worker could claim one, and the investigation
+  conductor's drain check would count it.
+- **The rollup's consumers** are `task list --status open --parent <epic>`, the
+  investigation conductor's drain check, and `task decompose`. Those read
+  completion; they must read the derived completion.
+- No `parent` value points at an id-less file, so the identity switch
+  (decision 5) orphans no task tree. The 8 dangling `parent` values predate it.
+
+**The derived completion lands in the same change as the hook stops writing.**
+It is an acceptance criterion of this ADR: *`task list` shows a parent's
+derived completion, and its open filter honours it* (a parent whose children
+are all resolved is not listed as open), and the drain check and
+`task decompose` read the same value. Step 6 of the phasing does not merge
+without it.
+
 **Migration note.** Existing KBs already hold links that hooks wrote. They are
 now the user's text and stay. A derived link equal to a file link (same target
 and relation) is one link. `qa` lists the file links that a derivation would
@@ -256,7 +316,8 @@ This amends ADR-0038 (below). The rest follows:
   pin, because a change of that field moves the file. Pyrite creates those
   files and pins them. An update of a templated-folder field on a file with no
   pin sets the field, does not move the file, and reports "not moved: no id
-  pin" with the command that pins it.
+  pin" with the command that pins it. (Inert on the maintainer's corpus: no
+  type has a templated subdirectory. The rule stays for other users.)
 - **Existing links that point at title-derived ids.** Switching rules changes
   the id of every id-less file whose title-derived id differs from its path.
   Upgrade runs a one-time report: each such file, its old and new id, and
@@ -279,6 +340,57 @@ This amends ADR-0038 (below). The rest follows:
   is added. Pyrite does not add the id as a side effect of another write;
   adding it is an explicit command or a hand edit. What else the contract
   names (`type`, `title`) is a question for the maintainer.
+- **Dry run on the real corpus (spike 2).** 292 of 28,041 files (1.0%, in 9
+  KBs) have no `id:`; two agent-workflow KBs are almost all id-less (111 of
+  115 files and 64 of 70). All 292 change id under the path rule (16 are at a
+  KB root; 4 take the `entry-xxxx` hash fallback; 1 is `_index.md`). Of the
+  290 distinct changed ids, 69 are referenced, by 1,106 references from 296
+  files: 694 wikilinks, 412 bare id fields and 0 frontmatter `links:` (57 of
+  the 412 are `tags` values, probably coincidental strings). `entry_version`,
+  `starred_entry`, `review`, `entry_ref` and `edge_endpoint` rows: 0 each, so
+  database re-keying is empty on those installs. No path id equals another
+  file's `id:`, and the path rule has 0 collisions.
+- **Pinning changes nothing.** On a copy, each id-less file got `id: <the id
+  the index holds for it today>` as one `set id` operation (every diff is one
+  added line). Compared with the unmigrated index: every `(kb, id, path)`
+  unchanged, link rows 52,445 = 52,445, resolved links 41,457 = 41,457, tags
+  and sources identical. No id-less file remains, so the path rule is never
+  consulted.
+- **Bare id fields are references too.** Of the 412 references, fields such as
+  an outlet id, a contact id, an exploiting party and a list of firms hold
+  entry ids. Wikilinks and `links:` are not the only references: `qa` reports
+  a dangling bare id field the way it reports a dangling link.
+- **A shadowed collision exists under today's title rule:** one group of 3
+  files, 2 of which are shadowed in the index and unreachable. Pinning cannot
+  choose for the operator: the operator picks which file keeps the id and
+  renames the others (the dry run used `<id>-2` and `<id>-3`, which is a
+  choice). The two shadowed files become reachable after pinning (+2 entries,
+  +145 blocks).
+- **Two commands ship one release before the switch,** so an operator pins
+  while the old rule is still in force: one lists files missing an id
+  (`ids missing`), one pins them (`ids pin`, with `--dry-run` and
+  `--rename <path>=<id>`). **The pin is a single `set id` operation.** It is
+  not `pyrite update`: today's update would also nest keys under `metadata:`,
+  rename aliases, refuse the files that are invalid in another field, move
+  root-level files and rewrite the whole file. None of the commands exists
+  today: no command lists id-less files, `schema validate` reports only
+  collisions and `qa fix` has no id fixer. (The names are illustrative; the
+  CLI contract is #303.)
+
+  **Upgrade steps, as a reader follows them:**
+  1. With the old version installed, run `pyrite ids missing -k <kb>`.
+  2. Run `pyrite ids pin -k <kb> --dry-run`, read the plan, then
+     `pyrite ids pin -k <kb>`. Each file gains one line.
+  3. If two files share an id, choose which keeps it and rename the other
+     (`--rename <path>=<id>`). The other file was never reachable.
+  4. Commit (`git diff --stat` shows one added line per file), upgrade, run
+     `pyrite index build`, and check that `pyrite index health` reports 0
+     files without an id.
+
+  An agent runs the same steps with `--format json` on `kb list`,
+  `ids missing`, `ids pin --dry-run`, and `index health`.
+- Not measured: `/` inside an id through routes and wikilinks (see "What
+  remains" below). `_validate_entry_id` refuses `/` today (read, not run).
 - `rename` of an entry that has an `id:` changes the pin; of one that has none
   is a move of the file (the path is the identity). Both rewrite inbound links
   by decision 12.
@@ -299,7 +411,12 @@ This amends ADR-0038 (below). The rest follows:
   decided.
 - **An alias resolves to the key the file uses.** A set of `actors` on a file
   that carries `participants:` writes `participants:`. A file carrying both is
-  refused and reported.
+  refused and reported. Spike 2 confirmed the rule on real files (95 appends
+  to `actors` were written under the file's own `participants` key) and found
+  what it depends on: **`FRONTMATTER_ALIASES` is a set of alias names with no
+  target**, so the spike needed a hand-written map. Alias resolution therefore
+  requires the targets to be schema data: **ADR-0045 decision 8 is required
+  before this lands, not optional.**
 - A key that defines or uses a YAML anchor is refused for change, with the
   reason. TOML and JSON frontmatter are refused untouched (as today).
 
@@ -311,7 +428,12 @@ This amends ADR-0038 (below). The rest follows:
   stray `body:` key and re-quoting existing values are explicit commands
   (`qa fix`, `schema migrate`), never side effects of an update.
 - Migrations are reading rules, never writes, and are idempotent. Files behind
-  their type's version are reported, not silently migrated on save.
+  their type's version are reported, not silently migrated on save. Spike 2
+  found migrations inert on the maintainer's corpus: 0 of 365 types declare a
+  `version`, no plugin registers a migration and no file carries
+  `_schema_version`. Keep the "behind schema version" report; **acceptance
+  does not wait on it.** The review's re-run-on-every-load case cannot happen
+  there today and stays covered for other users by the rule.
 
 ### 8. Validation: refuse what the write causes, report what it does not
 
@@ -322,6 +444,17 @@ result. This generalises the existing downgrade for off-list enum values on
 unchanged fields (`kb_service.py:278`, `:340-343`): a hand-written file with a
 missing required field can still be edited elsewhere, and the response says
 what is wrong.
+
+Spike 2 sized it. Across 14,034 files, 143 (1%, in 8 KBs) are invalid in a
+field the write did not touch. **The most common existing violation is an
+undeclared type** (an `entry_type` the KB's `kb.yaml` does not declare), then
+missing required fields; the undeclared type is a warning, not a refusal. The
+candidate edited all 143 with a warning. Today's path refuses every update of
+34 of 1,427 sampled files (2.4%), including 21 echoes refused for an enum value
+already on disk, which `_keep_on_disk_enum_values` was meant to allow (#676).
+The candidate still refused 183 of 2,667 sets of a `kb.yaml`-declared key
+(enum) and 45 of 14,033 unsets (required field), as it should: those are
+violations the write causes.
 
 `qa validate` and `index health` report what the repairs of decision 7
 address: files with no `id:`, derived-id collisions, files behind their schema
@@ -336,6 +469,19 @@ the body exactly as written (no dropped first line; #636), and a
 uses, `storage/index.py:73-82`). It does not read the index row. Lists,
 search, graph and counts remain index reads and may lag the file; they carry
 `indexed_at` and no token.
+
+**The fields of a read are the file's parsed values.** Type defaults,
+normalised values (a coerced enum, a re-typed date) and anything computed
+(derived links, derived completion) come back **only under a key labelled
+derived**, never among the fields. Spike 2 measured why: sending
+`entry.to_frontmatter()` (the type's reading) back through the same splice
+wrote 1,295 of 2,826 files (46%), adding `verification_status` (606 files),
+`importance` (316), `research_status` (180), `tier` (58), `rank` (45),
+`status` (42) and `id` (33), and changing `sources` in 484. An echo of the
+file's own parsed values was byte-identical on all 14,034. **Echoed defaults,
+normalised values and derived links are one rule:** anything the type or the
+index computes must come back from a read under a derived key, or an echo
+writes it into the file. (This is the same property as ADR-0045 decision 3.)
 
 ### 10. A lock and a compare-and-replace guard every write
 
@@ -368,7 +514,9 @@ Every write returns the new `content_hash` and a report: what was written,
 what was `unchanged`, what was not moved, warnings.
 
 A whole-document echo of a read is therefore either exact (nothing written) or
-refused as stale. The web editor sends operations for the fields the user
+refused as stale. That holds only because a read returns the file's values as
+its fields (decision 9): an echo of the type's reading would differ from the
+file in 46% of real files, and the comparison would write the difference. The web editor sends operations for the fields the user
 changed, not the document. Whether a body replace or a set should also accept
 an optional guard against a stale form is **question 2**.
 
@@ -381,6 +529,12 @@ claim and task services, and plugins' commands. `software-kb`'s
 `write_text` and regex today; they are converted (cascade is deleted). A
 plugin writes entry files only through `ctx.kb_service` (ADR-0040), and so is
 bound by decisions 1 to 11. ADR-0041 and this ADR say the same thing.
+
+**The root-file move (#488) is a fix in this decision.** Today every update of
+a root-level file whose type has `subdirectory: ""` and a `file_pattern` moves
+it into the type's folder: 6,071 real files are exposed, and the sample of
+today's path saw 1,854 moves (reproduced on one file in isolation). An operation never moves a file except
+the templated move of decision 5.
 
 ### 13. Create is the one place Pyrite chooses spelling
 
@@ -415,42 +569,88 @@ stayed green shows it does not pin the new behaviour; it is not evidence for
 it. The prototype is not saved, and the figure "about 330 of 969 lines of
 `models/base.py` go" is the first spike's, not verified by the read.
 
-## What is not yet measured: spike 2
+## What spike 2 measured, and what remains
 
-**Question.** On the real write path, does applying operations to the file's
-own value, with the model validating the result, hold three properties on
-files Pyrite did not write: (1) a one-field operation changes exactly that
-field's lines; (2) a no-op operation changes no byte and says so; (3) no key
-outside the operation parses to a different value, and no bytes of an
-untouched key are emitted by a serializer?
+**Spike 2 (2026-10-02, 28,041 files across 52 real KBs).** Copies of every KB
+in the maintainer's registry (read-only originals, a second copy to work on;
+no symlinks, CRLF or BOM in the corpus), run through `KBService` with hooks,
+`kb.yaml` schemas, plugin entry classes and `FRONTMATTER_ALIASES` on, in a
+scratch home. Building the index wrote nothing (a SHA manifest of the copy was
+identical before and after). The candidate was the first spike's candidate C
+with its `'it''s'` defect fixed (`''` inside single quotes is an escape),
+followed by `KBRepository._load_entry`, `_validate_write` and the real
+`before_save` hooks on a copy (recorded, not applied). The oracle was
+independent of the candidate: PyYAML parses before and after, its `compose`
+gives each top-level key's line span, every other key must parse equal, the
+target must equal the operation applied to PyYAML's value, and key order, body
+bytes, line endings and the span of every changed line are checked. Run against
+today's path as a control, the oracle caught today's known defects, so it can
+see failures.
 
-It must be run on, and report separately, each of the things the first spike
-did not touch:
+**The rule held on the real path.** Over every second file (14,034 files,
+about 127,000 operations): no collateral key changed, no target was wrong, no
+changed line fell outside the target key's span, and no splice refused or
+raised.
 
-1. **Typed KBs** with `kb.yaml` schemas, `file_pattern` and templated folders.
-2. **Hooks**: the table in decision 4, with `before_save` hooks refusing and
-   not writing, and the derivations replacing them.
-3. **Plugin types**: all 37 extension entry classes, not only core types.
-4. **Nested values**: lists of maps with unknown sub-keys, comments inside
-   items, `Link` and `Source` shapes (the P1 probes).
-5. **Migrations**: a type at an old `version`, a rename migration, a set of a
-   migrated field; the "behind schema" report.
-6. **Undeclared keys and the `metadata:` block** (#178, #447), and aliases
-   with both keys present.
-7. **Shapes the corpus lacks**: CRLF, BOM, symlinks, anchors, duplicate keys,
-   a real Hugo site, a file at the KB root.
-8. **Concurrency**: several processes writing different keys of one file; a
-   checkout between read and replace; two writers racing a templated move; the
-   claim race (`tests/test_task_claim_concurrency.py` shape).
-9. **Reads**: the cost of a file read per `get`; migrations run per load.
+| Operation | n | Result |
+|---|---|---|
+| Echo of the file's parsed values | 14,034 | all byte-identical |
+| Set `title` | 14,015 | 2 lines changed |
+| New undeclared key | 14,034 | 1 line, top level, at the end |
+| Set a `kb.yaml`-declared key | 2,667 | 183 refused (enum), as they should be |
+| Append to / remove from `tags` | 11,898 / 11,896 | 1 to 3 lines |
+| Append to `sources` / `links` | 5,096 / 397 | 2 lines |
+| Append to `actors` | 3,351 | 95 written under the file's own `participants` key |
+| Set `links[0].relation` | 374 | 2 lines |
+| Add a sub-key to `sources[0]` | 5,071 | 1 line in 4,940; 2 to 9 in 131 |
+| Add a sub-key to `links[0]` | 376 | 1 line in 324; **4 to 49 in 52** (decision 2) |
+| Unset a key | 14,033 | the key's own lines; 45 refused (required field) |
+| Replace body | 14,034 | body only |
 
-It must grade output with an **independent oracle**: the expected text built
-without the candidate's equality (a second YAML parser; a naive line editor
-for the targeted lines), not computed from the value being checked. Its
-corpus must include files nobody at Pyrite wrote. Its pass condition is zero
-unexplained diff lines over every shape above. Its deliverable is a findings
-file, the doc passage below running as a test, and either "accept" or the
-list of decisions that need changing.
+About 5,500 real `links`, `sources` and `provenance` edits lost nothing:
+unknown sub-keys and legacy spellings parse back unchanged (the first draft's
+data-loss case). Hooks, had they been allowed to write, would have changed 10
+`scene` files (3 `actor_reference` links each).
+
+**The control: today's path, same oracle, every 20th file (1,427 files).**
+
+| Today's path | Result |
+|---|---|
+| Echo of the read | 558 of 1,427 byte-identical; 171 rewrote lines outside any asked key; 200 changed the body |
+| Undeclared key | 332 (23%) went under a `metadata:` block instead of the top level (#178); 343 real files already have a top-level `metadata:` |
+| Any save | `id:` added to files with none; `participants:` renamed `actors:` |
+| Update of a root-level file | moves it into the type's folder (#488): 6,071 files exposed, 1,854 moves in the sample |
+| Update with `sources` or `links` as JSON objects | `AttributeError` on `to_dict`, 1,134 cases (#675; believed raised before anything is written) |
+| Files invalid in another field | 34 of 1,427 (2.4%) refuse every update; 21 echoes refused for an enum value already on disk (#676) |
+
+**The corpus found a hole in the first draft's reads (decisions 9 and 11):**
+the type's reading is not the file's values, and echoing it wrote 1,295 of
+2,826 files (46%).
+
+**Which spike 2 conditions are met.** Of the nine things the first draft
+required spike 2 to cover:
+
+| Required | Status |
+|---|---|
+| 1. Typed KBs with `kb.yaml` | Met (declared keys, enums, required fields) |
+| 2. Hooks | Met: what each writes, and what reads it (decision 4) |
+| 3. Plugin types | Met for the types the 52 KBs use. One fixture per plugin class was not run |
+| 4. Nested values | Met (about 5,500 edits) |
+| 5. Migrations | Inert on this corpus (0 of 365 types declare a version); the "behind schema" report stays, acceptance does not wait on it |
+| 6. Undeclared keys, `metadata:`, aliases | Met, with the alias-target finding (decision 6) |
+| 7. Shapes the corpus lacks | **Remain.** CRLF, BOM, anchors, duplicate keys and Hugo shapes are not in the corpus. The first spike tried 26 hand-made files; they need fixtures in the doc's test |
+| 8. Concurrency | **Remains, not run** (several writers on one file, a checkout between read and replace, a racing templated move, the claim race) |
+| 9. Reads | Simulated in the harness; `get` reading the file is **not implemented**, so its cost per `get` was not measured on the real path |
+
+Also not measured: `/` in an id through routes and wikilinks (decision 5), and
+the git history of the real repos (the 37 rollups rest on a timestamp check).
+
+**What remains is a pre-condition of the step it blocks, not of acceptance:**
+concurrency blocks step 4 (wire the update path); the hand-made fixtures block
+step 2's doc; `/` in ids blocks step 7. Spike 2's answer is "mostly yes": the rule
+holds as written for decisions 1, 3, 4, 6, 7, 10 and 13, with the amendments to
+decisions 2, 5, 8, 9, 11 and 12 and the hooks table above. Acceptance is the
+maintainer's.
 
 ## Acceptance
 
@@ -628,6 +828,29 @@ leaves a comment above it; an alias key is edited in place; an anchor is
 refused with a reason; a templated-folder field on a file with no pin sets the
 field and reports "not moved".
 
+**Added by spike 2.** Examples and checks the real corpus calls for:
+
+- *An echo of a read, with a type that has defaults, writes nothing.* The
+  `echo` flag runs on a typed entry whose type supplies defaults (a
+  verification status, an importance): the diff is empty, and the defaults come
+  back only under the derived key.
+- *Adding a sub-key to a link in a file whose lists indent differently* inserts
+  one line at the item's indent and leaves the sibling items' bytes alone (the
+  52-of-376 case).
+- *A file invalid in another field is edited with a warning* (an undeclared
+  type): the write succeeds and the report names the warning.
+- *A pin of an id-less file* is one added `id:` line, and no link in the index
+  changes.
+- *A save of a root-level file* does not move it (#488).
+- *`task list` shows a parent's derived completion, and its open filter
+  honours it.* A parent whose children are all resolved is not listed as open;
+  the drain check and `task decompose` read the same value (decision 4).
+- *The cascade derivation says whether it resolves actors across KBs*, and a
+  test shows which.
+- Fixtures for CRLF, BOM, anchors, duplicate keys and a Hugo post (none are in
+  the corpus), and a concurrency test (two processes, different keys), since
+  spike 2 ran neither.
+
 ## Amends
 
 - **ADR-0038, question 5** ("Derived id when a file has no `id:`. DECIDED
@@ -693,18 +916,26 @@ field and reports "not moved".
   `generate_entry_id(title)` when the metadata has no `id`" and that
   `to_frontmatter()` omits defaults. The first is decision 5 reversed.
 
-**Phasing** (each one reviewable PR; none before spike 2 reports and the
-maintainer accepts):
+**Phasing** (each one reviewable PR; none before the maintainer accepts):
 
-1. Spike 2 (decision to accept).
+0. One release ahead of step 7: `ids missing` and `ids pin` (decision 5).
+1. Spike 2 (done, 2026-10-02; the concurrency, hand-made-shape and `/`-in-id
+   checks it did not run belong to steps 2, 4 and 7).
 2. The doc and its runner, as expected failures.
 3. The operation function (pure), not wired.
 4. Wire the update path: lock, check, no-op writes nothing.
 5. Reads from the file; `content_hash`; the new hash and report on writes.
-6. Hooks stop writing; derivations in the index.
+6. Hooks stop writing; derivations in the index. **Not without the derived
+   completion** (`task list` shows it and its open filter honours it; the
+   drain check and `task decompose` read it): see decision 4.
 7. Identity from the path; the one-time report and rewrite.
 8. Delete the load-time records; the other writers; explicit repairs.
 9. Interfaces: `unset`, operations on CLI, MCP and REST, the web editor.
+
+Spike 2 found two product bugs on today's path, outside this ADR's rule but
+in its way: #675 (`update` with `sources` or `links` as JSON objects raises
+`AttributeError`) and #676 (an echoed update is refused for an enum value
+already on disk). #488 (root-file move) is fixed by decision 12.
 
 Tickets: #569 lands in 0.25.8 as groomed and its internals are replaced at
 step 4 (maintainer's release line); #636 (a save that deletes a body line)
