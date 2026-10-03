@@ -38,6 +38,17 @@ These examples are run, not just read: `tests/test_doc_write_as_patch.py`
 writes each `file` into a fresh KB, sends the `update` through the MCP
 server's `kb_update`, and checks the file's diff against the `diff` block.
 
+A passing example has to be passing for the reason it names, so some examples
+carry controls the page does not show:
+
+- the stale example also replaces with the hash of a re-read after the hand
+  edit, in the same KB, and expects that write to happen: a refusal because
+  the hash is stale must not look like a refusal because the file changed;
+- the hook example reads the actor's link from the backlinks or from a
+  derived key of a read, never from a `links:` block in your file;
+- an example that watches the YAML emitter checks that the watch covers the
+  emitter the update itself uses, not only the one a create uses.
+
 ## Where Pyrite does not keep this promise yet
 
 Today an update re-renders the whole frontmatter from Pyrite's model of the
