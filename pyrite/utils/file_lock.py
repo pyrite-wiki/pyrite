@@ -2,8 +2,7 @@
 
 A write holds this lock only for the instant of compare-and-replace; nothing
 is held while a caller reads, decides or merges. It is two locks taken
-together: an in-process ``threading.Lock`` and an OS lock (``fcntl.flock``,
-``msvcrt.locking`` on Windows) on a *stripe file*.
+together: an in-process ``threading.Lock`` and an OS lock (``fcntl.flock``) on a *stripe file*.
 
 **Stripes, not one file per entry (A2).** The stripe is
 ``sha256(realpath) mod STRIPES`` and the file is ``<lockdir>/<stripe>.lock``.
@@ -14,26 +13,41 @@ Two entries sharing a stripe only wait for each other; they never conflict.
 A write that moves a file takes the stripes of both paths in ascending order,
 deduplicated, so two movers cannot deadlock.
 
-**The lock directory (A1, pending the maintainer's decision).** By default it
-is per user: ``$XDG_RUNTIME_DIR/pyrite/locks`` on Linux,
-``$TMPDIR/pyrite-locks`` on macOS, ``%LOCALAPPDATA%\\pyrite\\locks`` on
-Windows (else ``<tempdir>/pyrite-locks``), created ``0o700``. Two OS users
-writing one tree exclude each other only when ``PYRITE_LOCK_DIR`` (or the
-``lock_dir_path`` argument) points both at one directory that passes the check
-below, for example a sticky ``1777`` directory the operator made. It never
-depends on the config or data directory (not ``default_data_dir()``) and is
-not inside the KB.
+**The lock directory (A1, decided in #742).** Per user by default, in every
+environment: ``$XDG_RUNTIME_DIR/pyrite/locks`` on Linux and
+``$TMPDIR/pyrite-locks`` on macOS (both per-user directories), created
+``0o700``. When that variable is unset, or names a directory other users can
+write (``/tmp``), the path gains the user id: ``<base>/pyrite-locks-<uid>``
+under the temp directory. Two OS users exclude each other only when
+``PYRITE_LOCK_DIR`` (or the ``lock_dir_path`` argument) names one absolute
+directory that both can use, and the check below allows exactly one shape: a
+**root-owned sticky directory** (``root``, mode ``1777``). A directory owned by
+one ordinary user is refused for every other user. The directory is never
+``default_data_dir()`` and never inside the KB.
 
-**The directory is trusted only if it is safe to be shared.** It must not be a
-symlink, must be owned by the current user or root, and must not be writable
-by group or others unless it is sticky; otherwise ``LockDirError`` names
-``PYRITE_LOCK_DIR``. A stripe file is opened relative to the verified
-directory with ``O_NOFOLLOW``; only a file this call just created
-(``O_CREAT|O_EXCL``) has its mode set (``0o600``, or ``0o666`` in a shared
-sticky directory); an existing one is opened as is, and must be a regular
-file. Case and Unicode normalisation are folded before hashing, so
-``Entry.md`` and ``entry.md`` share a stripe on a case-insensitive
+**The directory is used only if it passes this check**, else ``LockDirError``
+names ``PYRITE_LOCK_DIR``: not a symlink, owned by the current user or root,
+and not writable by group or others unless sticky. A stripe file is opened
+relative to the verified directory's fd with ``O_NOFOLLOW``; only a file this
+call just created (``O_CREAT|O_EXCL``) has its mode set (``0o600``, or
+``0o666`` in a shared sticky directory); an existing one is opened as is, and
+must be a regular file. Case and Unicode normalisation are folded before
+hashing, so ``Entry.md`` and ``entry.md`` share a stripe on a case-insensitive
 filesystem (on a case-sensitive one that is only extra waiting).
+
+**Limits, stated.**
+
+- Only the final path component of the lock directory is checked: a symlink
+  in a parent is followed (``/var`` is one on macOS).
+- Group-writable counts as shared, so a setgid ``2770`` group directory is
+  refused.
+- Only mode bits are read; ACLs are not inspected.
+- A forked child shares the parent's open file description, so a child that
+  leaves a ``with`` block can release the parent's lock. ``atomic_write_text``
+  never forks while holding it.
+- ``PYRITE_LOCK_DIR`` must be absolute.
+- **Windows is unsupported:** ``file_lock`` raises ``LockDirError``, so
+  ``atomic_write_text(expect=)`` fails closed there.
 
 **Why the kernel lock.** The kernel drops an OS lock when its holder dies, so
 ``kill -9`` leaves no stale lock (an ``O_EXCL`` lock file would).
@@ -52,6 +66,7 @@ because ``tests/test_doc_write_as_patch.py`` patches it.
 from __future__ import annotations
 
 import contextlib
+import getpass
 import hashlib
 import os
 import stat
@@ -65,9 +80,8 @@ from pathlib import Path
 
 try:
     import fcntl
-except ImportError:  # Windows
+except ImportError:  # Windows: unsupported, see the module docstring
     fcntl = None  # type: ignore[assignment]
-    import msvcrt
 
 STRIPES = 1024
 LOCK_DIR_ENV = "PYRITE_LOCK_DIR"
@@ -96,30 +110,48 @@ class LockTimeout(TimeoutError):  # noqa: N818 - reads as the event, like FileCh
     """The lock was not acquired within ``timeout`` seconds."""
 
 
-def default_lock_dir(platform: str | None = None, env: Mapping[str, str] | None = None) -> Path:
-    """The lock directory when nothing overrides it (A1). Pure, so each
-    platform's answer can be tested on any host."""
+def _uid() -> str:
+    if hasattr(os, "geteuid"):
+        return str(os.geteuid())
+    return getpass.getuser()
+
+
+def _private_base(base: str) -> bool:
+    """True unless ``base`` exists and other users can write to it."""
+    try:
+        return not os.stat(base).st_mode & stat.S_IWOTH
+    except OSError:
+        return True
+
+
+def default_lock_dir(
+    platform: str | None = None, env: Mapping[str, str] | None = None, uid: str | None = None
+) -> Path:
+    """The lock directory when nothing overrides it (A1): per user in every
+    branch. Pure apart from one ``stat`` of the environment's base directory."""
     platform = platform or sys.platform
     env = os.environ if env is None else env
-    if platform.startswith("win"):
-        base = env.get("LOCALAPPDATA")
-        if base:
-            return Path(base) / "pyrite" / "locks"
-    elif platform == "darwin":
-        tmp = env.get("TMPDIR")
-        if tmp:
-            return Path(tmp) / "pyrite-locks"
+    uid = _uid() if uid is None else uid
+    if platform == "darwin":
+        base, name = env.get("TMPDIR"), Path("pyrite-locks")
     else:
         runtime = env.get("XDG_RUNTIME_DIR")
-        if runtime:
-            return Path(runtime) / "pyrite" / "locks"
-    return Path(tempfile.gettempdir()) / "pyrite-locks"
+        base, name = runtime, Path("pyrite") / "locks"
+    if base and _private_base(base):
+        return Path(base) / name
+    return Path(tempfile.gettempdir()) / f"pyrite-locks-{uid}"
 
 
 def lock_dir(override: str | os.PathLike[str] | None = None) -> Path:
-    """The lock directory: argument, then ``PYRITE_LOCK_DIR``, then the default."""
+    """The lock directory: argument, then ``PYRITE_LOCK_DIR``, then the default.
+    It must be absolute."""
     chosen = override or os.environ.get(LOCK_DIR_ENV)
-    return Path(chosen) if chosen else default_lock_dir()
+    result = Path(chosen) if chosen else default_lock_dir()
+    if not result.is_absolute():
+        raise LockDirError(
+            f"lock directory {result} is not absolute; set {LOCK_DIR_ENV} to an absolute path"
+        )
+    return result
 
 
 def stripe_of(path: str | os.PathLike[str]) -> int:
@@ -149,15 +181,13 @@ def _open_directory(directory: Path) -> int:
         created = True
     except FileExistsError:
         created = False
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
     try:
         dfd = os.open(directory, flags)
     except OSError as e:
         raise _unsafe(directory, f"cannot open it as a directory ({e.strerror or e})") from e
     try:
         st = os.fstat(dfd)
-        if not stat.S_ISDIR(st.st_mode):
-            raise _unsafe(directory, "it is not a directory")
         if created and hasattr(os, "fchmod"):
             os.fchmod(dfd, 0o700)
             st = os.fstat(dfd)
@@ -204,28 +234,21 @@ def _open_stripe(directory: Path, stripe: int) -> int:
 
 
 def _os_lock(fd: int, deadline: float | None) -> None:
-    if fcntl is not None and deadline is None:
+    if deadline is None:
         fcntl.flock(fd, fcntl.LOCK_EX)
         return
     while True:
         try:
-            if fcntl is not None:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            else:  # pragma: no cover - Windows
-                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return
         except OSError:
-            if deadline is not None and time.monotonic() >= deadline:
+            if time.monotonic() >= deadline:
                 raise LockTimeout("lock not acquired in time") from None
             time.sleep(_POLL_SECONDS)
 
 
 def _os_unlock(fd: int) -> None:
-    if fcntl is not None:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-    else:  # pragma: no cover - Windows
-        os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 @contextlib.contextmanager
@@ -235,6 +258,8 @@ def file_lock(
     timeout: float | None = None,
 ) -> Iterator[None]:
     """Hold the momentary lock for one path, or for two when a write moves a file."""
+    if fcntl is None:
+        raise LockDirError("file locking is not supported on this platform (Windows)")
     if not 1 <= len(paths) <= 2:
         raise ValueError("file_lock takes one path, or two for a move")
     directory = lock_dir(lock_dir_path)

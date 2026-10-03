@@ -263,15 +263,44 @@ class TestStripes:
 
 
 class TestLockDirResolution:
-    def test_platform_defaults(self):
-        env = {
-            "XDG_RUNTIME_DIR": "/run/user/7",
-            "TMPDIR": "/var/folders/x/T/",
-            "LOCALAPPDATA": "C:/L",
+    def test_platform_defaults(self, tmp_path):
+        env = {"XDG_RUNTIME_DIR": "/run/user/7", "TMPDIR": "/var/folders/x/T/"}
+        assert fl.default_lock_dir("linux", env, "7") == Path("/run/user/7/pyrite/locks")
+        assert fl.default_lock_dir("darwin", env, "7") == Path("/var/folders/x/T/pyrite-locks")
+
+    def test_every_default_branch_is_per_user(self, tmp_path):
+        """Each (platform, env) branch, for two users: no two users share a path."""
+        private = tmp_path / "private"
+        private.mkdir(mode=0o700)
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        os.chmod(shared, 0o1777)
+        branches = {
+            "linux, XDG unset": ("linux", {}),
+            "linux, XDG private": ("linux", {"XDG_RUNTIME_DIR": str(private)}),
+            "linux, XDG shared": ("linux", {"XDG_RUNTIME_DIR": str(shared)}),
+            "darwin, TMPDIR unset": ("darwin", {}),
+            "darwin, TMPDIR private": ("darwin", {"TMPDIR": str(private)}),
+            "darwin, TMPDIR shared": ("darwin", {"TMPDIR": str(shared)}),
         }
-        assert fl.default_lock_dir("linux", env) == Path("/run/user/7/pyrite/locks")
-        assert fl.default_lock_dir("darwin", env) == Path("/var/folders/x/T/pyrite-locks")
-        assert fl.default_lock_dir("win32", env) == Path("C:/L/pyrite/locks")
+        for name, (platform, env) in branches.items():
+            mine = fl.default_lock_dir(platform, env, "1001")
+            theirs = fl.default_lock_dir(platform, env, "1002")
+            private_base = "private" in name
+            # a per-user base is already per user; anything else carries the uid
+            assert (mine == theirs) == private_base, name
+            if not private_base:
+                assert "1001" in mine.name and "1002" in theirs.name, name
+            assert str(shared) != str(mine), name  # never the shared directory itself
+
+    def test_a_relative_lock_dir_is_refused(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(fl.LockDirError, match="absolute"):
+            fl.lock_dir("locks")
+        monkeypatch.setenv(fl.LOCK_DIR_ENV, "locks")
+        with pytest.raises(fl.LockDirError, match="absolute"):
+            _lock_once(tmp_path / "e.md", None)
+        assert not (tmp_path / "locks").exists()
 
     def test_override_wins_and_default_ignores_config_and_kb(self, tmp_path, monkeypatch):
         monkeypatch.delenv(fl.LOCK_DIR_ENV, raising=False)
@@ -454,6 +483,56 @@ class TestLockDirectoryIsSafeToShare:
         monkeypatch.setattr(os, "geteuid", lambda: os.stat(locks).st_uid + 4242)
         with pytest.raises(fl.LockDirError, match="owned by"):
             _lock_once(tmp_path / "e.md", locks)
+
+
+def test_a_stripe_opens_relative_to_the_verified_directory(tmp_path, monkeypatch):
+    """A directory swapped after verification must not redirect the stripe."""
+    locks, moved = tmp_path / "locks", tmp_path / "moved"
+    real = fl._open_directory
+
+    def swap_after_verify(directory):
+        dfd = real(directory)
+        os.rename(locks, moved)
+        locks.mkdir(mode=0o700)  # the decoy
+        return dfd
+
+    monkeypatch.setattr(fl, "_open_directory", swap_after_verify)
+    _lock_once(tmp_path / "e.md", locks)
+    assert len(list(moved.iterdir())) == 1
+    assert not list(locks.iterdir())
+
+
+def test_a_group_writable_sticky_directory_counts_as_shared(tmp_path):
+    locks = tmp_path / "locks"
+    locks.mkdir()
+    os.chmod(locks, 0o1770)
+    _lock_once(tmp_path / "e.md", locks)
+    (stripe,) = locks.iterdir()
+    assert _mode(stripe) == 0o666
+
+
+def test_a_group_writable_directory_without_sticky_is_refused(tmp_path):
+    """The current rule (a setgid group directory is refused); see the docstring."""
+    locks = tmp_path / "locks"
+    locks.mkdir()
+    os.chmod(locks, 0o2770)
+    with pytest.raises(fl.LockDirError):
+        _lock_once(tmp_path / "e.md", locks)
+
+
+def test_a_symlinked_parent_of_the_directory_is_followed(tmp_path):
+    """A limit, pinned: only the final component is checked."""
+    real = tmp_path / "real"
+    real.mkdir()
+    os.symlink(real, tmp_path / "link")
+    _lock_once(tmp_path / "e.md", tmp_path / "link" / "locks")
+    assert len(list((real / "locks").iterdir())) == 1
+
+
+def test_windows_is_unsupported_and_says_so(tmp_path, monkeypatch):
+    monkeypatch.setattr(fl, "fcntl", None)
+    with pytest.raises(fl.LockDirError, match="Windows"):
+        _lock_once(tmp_path / "e.md", tmp_path / "locks")
 
 
 def _fork_child(entry, locks):
