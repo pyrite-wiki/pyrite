@@ -596,7 +596,7 @@ an optional guard against a stale form is **question 2**.
 ### 12. Every write of an entry file goes through this path
 
 Rename's link rewrite (operations on other files' `links:` and wikilinks,
-preserving line endings, under their locks), schema migrate, `qa fix`, the
+preserving line endings, each against its base), schema migrate, `qa fix`, the
 claim and task services, and plugins' commands. `software-kb`'s
 `cli.py:704-714` and cascade's `migration.py` write entry files with
 `write_text` and regex today; they are converted (cascade is deleted). A
