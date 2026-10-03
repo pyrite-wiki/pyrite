@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One session, one branch, one checkout (ADR-0032).
 #
-#   scripts/new-worktree.sh fix/what-it-fixes            # branch from origin/dev
+#   scripts/new-worktree.sh fix/what-it-fixes            # branch from the project dev
 #   scripts/new-worktree.sh feature/thing v0.24.1        # branch from a tag/sha
 #
 # Creates ../pyrite-wt/<branch-with-slashes-as-dashes>/ as a git worktree on a
@@ -16,14 +16,24 @@
 set -euo pipefail
 
 branch="${1:?usage: $0 <branch-name> [start-point]}"
-start="${2:-origin/dev}"
+start="${2:-}"
 
 repo_root="$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)"
 wt_parent="$(dirname "$repo_root")/pyrite-wt"
 wt_dir="$wt_parent/${branch//\//-}"
 
 cd "$repo_root"
-git fetch -q origin dev
+python="${PYRITE_SETUP_PYTHON:-python3}"
+if [ -n "$start" ]; then
+  start="$("$python" "$repo_root/scripts/base_ref.py" --base "$start")"
+else
+  start="$("$python" "$repo_root/scripts/base_ref.py" --fetch)"
+fi
+
+# Hooks must outlive a worktree. Bootstrap the main checkout before making one.
+if [ ! -x "$repo_root/.venv/bin/pre-commit" ]; then
+  "$repo_root/scripts/setup-checkout.sh" "$repo_root"
+fi
 
 mkdir -p "$wt_parent"
 if git show-ref --verify --quiet "refs/heads/$branch"; then
@@ -43,12 +53,7 @@ cd "$wt_dir"
 # Python that installed them. Install from the MAIN checkout's venv, which
 # outlives any worktree: hooks installed from a worktree's venv break for
 # every checkout the moment that worktree is removed (learned the hard way).
-if [ -x "$repo_root/.venv/bin/pre-commit" ]; then
-  (cd "$repo_root" && .venv/bin/pre-commit install >/dev/null)
-else
-  echo "note: $repo_root/.venv has no pre-commit; hooks installed from this worktree's venv" >&2
-  .venv/bin/pre-commit install >/dev/null
-fi
+(cd "$repo_root" && .venv/bin/pre-commit install >/dev/null)
 
 cat <<EOF
 

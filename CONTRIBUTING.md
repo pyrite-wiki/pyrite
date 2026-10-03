@@ -16,36 +16,38 @@ project is worth their time.
 
 ### Initial Setup
 
+<!-- contributor-setup:start -->
 ```bash
-# Clone the repository
 git clone https://github.com/pyrite-wiki/pyrite.git
 cd pyrite
+scripts/setup-checkout.sh
+.venv/bin/pyrite kb list
+.venv/bin/pyrite search design -k pyrite
+.venv/bin/pre-commit install
+scripts/test-affected --list
+```
+<!-- contributor-setup:end -->
 
-# Create virtual environment and install dependencies
-uv venv
-source .venv/bin/activate  # or `.venv\Scripts\activate` on Windows
-# `.[all]` is the whole optional surface (CLI, server, MCP, AI) plus the test
-# tooling. `.[dev]` alone is tooling only and cannot even collect the suite.
-uv pip install -e ".[all]"
+The setup script installs Pyrite and every extension, registers `pyrite` to
+this checkout's `kb/`, and indexes it. It uses uv when available, or Python's
+venv and pip otherwise. This Bash/POSIX walkthrough is tested on Linux;
+native Windows setup is not verified. The same block runs in CI through
+`scripts/run_setup.py`, in a fresh clone and temporary HOME.
 
-# Install all extensions (required for full test suite)
-for ext in extensions/*/; do uv pip install -e "$ext"; done
+Development scripts use `PYRITE_BASE`, then `upstream/dev`, `origin/dev`,
+then local `dev`. An explicit `--base` or worktree start point wins and an
+invalid explicit ref fails. In a fork, add the project's upstream remote:
 
-# Install the git hooks (commit, commit-msg and pre-push in one go)
-pre-commit install
-
-# Verify installation
-.venv/bin/pytest tests/ extensions/*/tests/ -q
+```bash
+git remote add upstream https://github.com/pyrite-wiki/pyrite.git
+git fetch upstream dev
 ```
 
-Pytest prints the current collected and passed test counts in its summary;
-they change as the project and extensions grow.
-
-See [Setting Up the Development Environment](kb/runbooks/setting-up-dev-environment.md) for troubleshooting.
-
-`scripts/setup-checkout.sh` does the venv, the extensions and a repo-local
-`.pyrite/config.yaml` (so `pyrite -k pyrite` means this checkout's `kb/`) in
-one step; `scripts/new-worktree.sh <branch>` creates a worktree and runs it.
+For parallel sessions, `scripts/new-worktree.sh <branch>` runs the same setup
+in a separate checkout. With no remote, give it an existing commit or tag as
+its second argument. A failed fetch uses an existing local ref and reports
+the failure on stderr. See the [setup runbook](kb/runbooks/setting-up-dev-environment.md)
+for troubleshooting.
 
 ### Developing in Claude Code on the web
 

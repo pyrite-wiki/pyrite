@@ -5,6 +5,9 @@ Claude Code, any agent framework that reads `AGENTS.md`.
 
 ## Start here
 
+On a fresh clone, first follow [the canonical setup](CONTRIBUTING.md#initial-setup).
+It registers this checkout's project KB before the context commands below.
+
 1. Read `CLAUDE.md` — the full development guide (git workflow,
    testing, KB usage, pre-commit hooks). It applies regardless of
    which agent is reading it.
