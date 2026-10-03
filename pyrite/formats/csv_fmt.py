@@ -4,6 +4,8 @@ import csv
 import io
 from typing import Any
 
+from .tabular import cell_text, projected_columns
+
 
 def csv_serialize(data: Any, **kwargs) -> str:
     """Serialize tabular data to CSV.
@@ -12,6 +14,16 @@ def csv_serialize(data: Any, **kwargs) -> str:
     For non-tabular data, falls back to a simple key-value format.
     """
     if isinstance(data, dict):
+        fields = kwargs.get("fields")
+        if fields and ("results" in data or "entries" in data):
+            rows = data["results"] if "results" in data else data["entries"]
+            output = io.StringIO()
+            columns = projected_columns(fields)
+            writer = csv.DictWriter(output, fieldnames=columns)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({key: cell_text(row.get(key)) for key in columns})
+            return output.getvalue()
         if "results" in data:
             return _results_to_csv(data["results"])
         if "entries" in data:

@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from .tabular import projected_markdown
+
 
 def markdown_serialize(data: Any, **kwargs) -> str:
     """Serialize data to Markdown.
@@ -11,6 +13,10 @@ def markdown_serialize(data: Any, **kwargs) -> str:
     For search results: renders as a list with snippets.
     """
     if isinstance(data, dict):
+        fields = kwargs.get("fields")
+        if fields and ("results" in data or "entries" in data):
+            rows = data["results"] if "results" in data else data["entries"]
+            return projected_markdown(rows, fields)
         if "id" in data and "title" in data:
             return _entry_to_markdown(data)
         if "entries" in data:
