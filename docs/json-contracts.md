@@ -422,6 +422,33 @@ used to claim already existed.
 
 ## Related contracts
 
+### Explicit fields and output formats
+
+`search`, `recent`, `list-entries`, and `batch-read` accept `--fields`.
+REST search accepts the corresponding `fields=` query parameter. The
+identity fields `id`, then `kb_name`, are always retained, followed by
+requested fields in the supplied order, with duplicates removed. JSON and
+YAML omit requested keys absent from a record rather than inventing values.
+
+CSV, Markdown, and Rich retain every requested column, even when all records
+lack that field; absent and null values are empty cells. CSV encodes list and
+dictionary cells as JSON; ordinary strings, including snippets with quotes,
+newlines, or `<mark>` tags, are preserved through standard CSV quoting.
+Markdown uses an ordered table, escaping pipes and displaying cell line
+breaks as `<br>`. Rich renders field names and values literally, without
+interpreting markup. A projection never changes the underlying records or
+the fields returned when no projection is requested.
+
+Empty projected CSV responses retain their column header and contain no data
+records. Empty Markdown responses are empty, and Rich retains each command's
+existing no-results message. JSON and YAML retain their existing empty
+envelope. Without `--fields`, each format keeps its existing rendering.
+
+For example, `pyrite search needle --fields status,title --format csv`
+returns the columns `id,kb_name,status,title`, including an empty `status`
+cell if a hit has no status. A requested field does not make search acquire
+data its result records do not otherwise carry.
+
 These aren't JSON shapes but are part of the same "don't relearn this
 the hard way" surface — also returned in `pyrite orient`'s
 `operational_contracts` field:
