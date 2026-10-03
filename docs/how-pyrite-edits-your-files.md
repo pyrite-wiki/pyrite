@@ -49,8 +49,8 @@ carry controls the page does not show:
   exists only because the cascade plugin writes a `links:` block that is then
   indexed; the example does not read that block directly, and a read's
   normalised `actors` value is not a link;
-- an example that watches the YAML emitter looks at every key either library
-  emits, and counts as not entered a run whose update opens an emitter the
+- an example that watches the YAML emitter looks at the top-level keys of
+  every mapping either library emits (limits: #741), and counts as not entered a run whose update opens an emitter the
   watch cannot see. An update that quotes one value passes; one that emits
   the whole frontmatter does not;
 - the stale example also checks that a replace carrying the old hash is

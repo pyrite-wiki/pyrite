@@ -521,8 +521,15 @@ def _watch_emitter(
     (``dump``, ``dump_all``, ``safe_dump``, a ``safe_dump`` bound at import, a
     ``Dumper`` used directly), and rebuilds the top-level keys from the event
     stream: a scalar at depth 1 in an even position of the root mapping is a
-    key. A scalar value or a list item emitted alone has no top-level keys and
-    is not a leak; a document that carries the whole frontmatter is.
+    key. A scalar value emitted alone has no top-level keys and is not a leak;
+    a document that carries the whole frontmatter is.
+
+    Limits (#741): any mapping emitted as the root of its own document has its
+    keys counted as top-level, so a correct append of a mapping item, or a
+    nested set that emits its parent's value, whose keys repeat a top-level key
+    reads as a leak; and only depth-1 keys of a root mapping are seen, so
+    untouched values re-emitted one by one, or a frontmatter wrapped in a list,
+    are not caught here (the diff check still holds the file's bytes).
 
     ``watch`` narrows which library is watched, so a test can point the watch
     at the wrong one on purpose.
@@ -1067,8 +1074,9 @@ def test_emitter_flag_on_the_one_field_edit(
 # - emitter unwatched-door control: an update through a C dumper. Rejected by
 #   test_emitter_control_fails_when_the_update_uses_a_door_the_watch_cannot_see;
 #   accepted: the model, and a splice that emits a scalar.
-# - emitter leak check: a key nobody asked to change reaching any watched
-#   emitter, by any door including an import-bound `safe_dump`. Rejected by
+# - emitter leak check: a key nobody asked to change at depth 1 of a root
+#   mapping handed to a watched emitter, including through an import-bound
+#   `safe_dump` (limits in `_watch_emitter`'s docstring, #741). Rejected by
 #   test_emitter_leak_is_seen_through_an_import_bound_dump; accepted by
 #   test_emitter_control_passes_a_splice_that_emits_a_scalar.
 # - hook precondition (`_require_actor_link_derived`): a derived LINK, not a
