@@ -7,7 +7,7 @@ tags:
 - refactor
 importance: 5
 kind: enhancement
-status: in_progress
+status: done
 priority: high
 effort: S
 rank: 0

@@ -23,7 +23,8 @@ from ..models import Entry, EventEntry
 from ..models.collection import CollectionEntry
 from ..models.core_types import entry_from_frontmatter, explicit_entry_id, read_entry_id
 from ..schema import CORE_TYPES
-from ..utils.yaml import load_yaml_file
+from ..utils.frontmatter import Frontmatter, split_frontmatter
+from ..utils.yaml import load_yaml, load_yaml_file
 
 logger = logging.getLogger(__name__)
 
@@ -57,57 +58,41 @@ class KBRepository:
         try:
             # Read frontmatter to determine type
             text = file_path.read_text(encoding="utf-8")
-            from pyrite.utils.yaml import load_yaml
-
-            if text.startswith("---\n") or text.startswith("---\r\n"):
-                # Find the closing `---` delimiter at the start of a line.
-                # Simple text.find("---", 3) matches `---` inside quoted
-                # frontmatter values like "Rental Property --- Chicago, IL".
-                search_start = 3
-                end = -1
-                while True:
-                    hit = text.find("\n---", search_start)
-                    if hit < 0:
-                        break
-                    delim_end = hit + 4
-                    if delim_end == len(text) or text[delim_end] in ("\n", "\r"):
-                        end = hit + 1
-                        break
-                    search_start = hit + 1
-                if end > 0:
-                    fm = load_yaml(text[3:end])
-                    if fm and isinstance(fm, dict):
-                        body = text[end + 3 :].strip()
-                        # Defensive: strip duplicated frontmatter fields from body start
-                        # (e.g., "type: timeline_event" leaked into body by migration error)
-                        if body and ":" in body.split("\n", 1)[0]:
-                            first_line = body.split("\n", 1)[0].strip()
-                            key = first_line.split(":", 1)[0].strip()
-                            if key in fm:
-                                logger.debug(
-                                    "Stripped duplicated frontmatter field '%s' from body of %s",
-                                    key,
-                                    file_path,
-                                )
-                                body = body.split("\n", 1)[1].strip() if "\n" in body else ""
-                        fm = self._maybe_migrate(fm)
-                        # `fm` is the entry's frontmatter and nothing else. It
-                        # used to get `body` and `file_path` injected here, but
-                        # no from_frontmatter reads either (body arrives as the
-                        # positional argument, file_path is set by the caller),
-                        # while capture_extra_frontmatter reads this same dict to
-                        # decide which keys the class did not declare -- so the
-                        # two internals were recorded as "unknown frontmatter"
-                        # and written back into the file on the next save (#46).
-                        entry = entry_from_frontmatter(fm, body)
-                        # Preserve references in metadata if present in frontmatter
-                        # (typed entries drop unknown fields during from_frontmatter)
-                        if "references" in fm and fm["references"]:
-                            if not hasattr(entry, "metadata") or not entry.metadata:
-                                entry.metadata = {}
-                            if "references" not in entry.metadata:
-                                entry.metadata["references"] = fm["references"]
-                        return entry
+            split = split_frontmatter(text)
+            if isinstance(split, Frontmatter):
+                fm = load_yaml(split.text)
+                if fm and isinstance(fm, dict):
+                    body = split.body
+                    # Defensive: strip duplicated frontmatter fields from body start
+                    # (e.g., "type: timeline_event" leaked into body by migration error)
+                    if body and ":" in body.split("\n", 1)[0]:
+                        first_line = body.split("\n", 1)[0].strip()
+                        key = first_line.split(":", 1)[0].strip()
+                        if key in fm:
+                            logger.debug(
+                                "Stripped duplicated frontmatter field '%s' from body of %s",
+                                key,
+                                file_path,
+                            )
+                            body = body.split("\n", 1)[1].strip() if "\n" in body else ""
+                    fm = self._maybe_migrate(fm)
+                    # `fm` is the entry's frontmatter and nothing else. It
+                    # used to get `body` and `file_path` injected here, but
+                    # no from_frontmatter reads either (body arrives as the
+                    # positional argument, file_path is set by the caller),
+                    # while capture_extra_frontmatter reads this same dict to
+                    # decide which keys the class did not declare -- so the
+                    # two internals were recorded as "unknown frontmatter"
+                    # and written back into the file on the next save (#46).
+                    entry = entry_from_frontmatter(fm, body)
+                    # Preserve references in metadata if present in frontmatter
+                    # (typed entries drop unknown fields during from_frontmatter)
+                    if "references" in fm and fm["references"]:
+                        if not hasattr(entry, "metadata") or not entry.metadata:
+                            entry.metadata = {}
+                        if "references" not in entry.metadata:
+                            entry.metadata["references"] = fm["references"]
+                    return entry
 
             # Fallback: try EventEntry.load for backward compat
             return EventEntry.load(file_path)

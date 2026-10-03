@@ -6,10 +6,15 @@ useful for suggesting links when creating entities in investigation KBs.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from pyrite.utils.frontmatter import Frontmatter, NoFrontmatter, describe, split_frontmatter
+
+logger = logging.getLogger(__name__)
 
 
 def find_matching_entities(
@@ -80,14 +85,13 @@ def _extract_aliases(entry: dict) -> list[str]:
     except OSError:
         return []
 
-    # Parse YAML frontmatter (between --- delimiters)
-    if not text.startswith("---"):
-        return []
-    end = text.find("---", 3)
-    if end == -1:
+    split = split_frontmatter(text)
+    if not isinstance(split, Frontmatter):
+        if not isinstance(split, NoFrontmatter):
+            logger.warning("No aliases read from %s: %s", path, describe(split))
         return []
     try:
-        fm = yaml.safe_load(text[3:end])
+        fm = yaml.safe_load(split.text)
     except yaml.YAMLError:
         return []
     if not isinstance(fm, dict):

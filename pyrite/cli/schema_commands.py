@@ -11,6 +11,13 @@ from rich.console import Console
 from rich.table import Table
 
 from ..utils.errors import cli_error
+from ..utils.frontmatter import (
+    Frontmatter,
+    NoFrontmatter,
+    Unterminated,
+    describe,
+    split_frontmatter,
+)
 from .context import cli_context, get_config_with_registered_kbs
 
 logger = logging.getLogger(__name__)
@@ -58,7 +65,8 @@ def _parse_frontmatter(file_path: Path) -> tuple[dict[str, Any], str, list[dict[
         )
         return {}, "", errors
 
-    if not text.startswith("---"):
+    split = split_frontmatter(text)
+    if isinstance(split, NoFrontmatter):
         errors.append(
             {
                 "file": path_str,
@@ -69,20 +77,23 @@ def _parse_frontmatter(file_path: Path) -> tuple[dict[str, Any], str, list[dict[
         )
         return {}, text, errors
 
-    end = text.find("---", 3)
-    if end < 0:
+    if not isinstance(split, Frontmatter):
         errors.append(
             {
                 "file": path_str,
                 "check": "frontmatter_parse",
-                "message": "Unterminated YAML frontmatter (missing closing ---)",
+                "message": (
+                    "Unterminated YAML frontmatter (missing closing ---)"
+                    if isinstance(split, Unterminated)
+                    else f"Unreadable YAML frontmatter: {describe(split)}"
+                ),
                 "severity": "error",
             }
         )
         return {}, text, errors
 
-    yaml_text = text[3:end]
-    body = text[end + 3 :].strip()
+    yaml_text = split.text
+    body = split.body
 
     try:
         from ..utils.yaml import load_yaml

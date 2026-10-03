@@ -17,6 +17,14 @@ from rich.console import Console
 from ..exceptions import EntryNotFoundError, KBNotFoundError, PyriteError, ValidationError
 from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_fields_param, project_fields
+from ..utils.frontmatter import (
+    Frontmatter,
+    Malformed,
+    Unsupported,
+    Unterminated,
+    describe,
+    split_frontmatter,
+)
 from .context import cli_context
 from .output import validate_output_format
 
@@ -274,17 +282,27 @@ def register_entry_commands(app: typer.Typer) -> None:
 
         # Extract YAML frontmatter from body content (--body-file or --stdin)
         _file_meta: dict = {}
-        if body and body.startswith("---"):
-            _fm_end = body.find("---", 3)
-            if _fm_end > 0:
-                from pyrite.utils.yaml import load_yaml
+        _split = split_frontmatter(body) if body else None
+        # A body that opens a frontmatter block and cannot close it is refused,
+        # not stored with its YAML as prose. A leading `{` is just body text here.
+        if _split is not None and (
+            isinstance(_split, (Unterminated, Malformed))
+            or (isinstance(_split, Unsupported) and _split.format == "toml")
+        ):
+            _cli_error(
+                f"Cannot read the frontmatter in the body: {describe(_split)}",
+                "rich",
+                "VALIDATION_FAILED",
+            )
+        if isinstance(_split, Frontmatter):
+            from pyrite.utils.yaml import load_yaml
 
-                _parsed = load_yaml(body[3:_fm_end])
-                if _parsed and isinstance(_parsed, dict):
-                    for _k, _v in _parsed.items():
-                        if _k not in ("id", "type", "title"):
-                            _file_meta[_k] = _v
-                    body = body[_fm_end + 3 :].strip()
+            _parsed = load_yaml(_split.text)
+            if _parsed and isinstance(_parsed, dict):
+                for _k, _v in _parsed.items():
+                    if _k not in ("id", "type", "title"):
+                        _file_meta[_k] = _v
+                body = _split.body
 
         extra: dict = {**_file_meta}
         if date:

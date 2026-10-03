@@ -8,6 +8,7 @@ from rich.console import Console
 
 from ..cli.context import cli_context
 from ..services.access_policy import UNSCOPED
+from ..utils.frontmatter import Frontmatter, split_frontmatter
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -128,22 +129,12 @@ def export_collection(
                 if kb_config:
                     folder = kb_config.path / collection.folder_path
                     if folder.exists():
-                        from ..models.core_types import entry_from_frontmatter
-                        from ..utils.yaml import load_yaml
-
                         for md_file in sorted(folder.rglob("*.md")):
                             if md_file.name.startswith("__"):
                                 continue
                             try:
-                                import re
-
-                                text = md_file.read_text(encoding="utf-8")
-                                parts = re.split(r"^---\s*$", text, flags=re.MULTILINE, maxsplit=2)
-                                if len(parts) >= 3:
-                                    meta = load_yaml(parts[1])
-                                    body = parts[2].strip()
-                                    entry = entry_from_frontmatter(meta, body)
-                                    entry.file_path = md_file
+                                entry = _entry_from_file(md_file)
+                                if entry:
                                     entries.append(entry)
                             except Exception as e:
                                 logger.warning("Could not load %s: %s", md_file, e)
@@ -269,27 +260,32 @@ def export_site(
             console.print("  npx quartz build --serve")
 
 
-def _load_entry_from_result(result: dict, svc, kb: str | None):
-    """Load an Entry from a DB query result, using file_path when available."""
+def _entry_from_file(path):
+    """The Entry a markdown file holds, split by the loader's rule; None when
+    the file has no frontmatter."""
     from ..models.core_types import entry_from_frontmatter
     from ..utils.yaml import load_yaml
 
+    split = split_frontmatter(path.read_text(encoding="utf-8"))
+    if not isinstance(split, Frontmatter):
+        return None
+    entry = entry_from_frontmatter(load_yaml(split.text), split.body)
+    entry.file_path = path
+    return entry
+
+
+def _load_entry_from_result(result: dict, svc, kb: str | None):
+    """Load an Entry from a DB query result, using file_path when available."""
     # Try file_path from DB first (handles ID/filename mismatches)
     file_path = result.get("file_path", "")
     if file_path:
-        import re
         from pathlib import Path
 
         path = Path(file_path)
         if path.exists():
             try:
-                text = path.read_text(encoding="utf-8")
-                parts = re.split(r"^---\s*$", text, flags=re.MULTILINE, maxsplit=2)
-                if len(parts) >= 3:
-                    meta = load_yaml(parts[1])
-                    body = parts[2].strip()
-                    entry = entry_from_frontmatter(meta, body)
-                    entry.file_path = path
+                entry = _entry_from_file(path)
+                if entry:
                     return entry
             except Exception:
                 pass

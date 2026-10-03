@@ -41,6 +41,7 @@ from ..storage.database import PyriteDB
 from ..storage.document_manager import DocumentManager
 from ..storage.index import IndexManager
 from ..storage.repository import KBRepository
+from ..utils.frontmatter import Frontmatter, NoFrontmatter, describe, split_frontmatter
 from ..utils.metadata import parse_metadata
 from .access_policy import named_kb
 from .body_bounds import MARKER_KEYS, ensure_not_truncated
@@ -1014,18 +1015,17 @@ class KBService:
 
         # Read and parse frontmatter
         text = source_path.read_text(encoding="utf-8")
-        if not text.startswith("---"):
+        split = split_frontmatter(text)
+        if isinstance(split, NoFrontmatter):
             raise ValidationError("File must start with YAML frontmatter (---)")
+        if not isinstance(split, Frontmatter):
+            raise ValidationError(f"Could not read the frontmatter: {describe(split)}")
 
-        end = text.find("---", 3)
-        if end < 0:
-            raise ValidationError("Could not find closing frontmatter delimiter (---)")
-
-        meta = load_yaml(text[3:end])
+        meta = load_yaml(split.text)
         if not meta or not isinstance(meta, dict):
             raise ValidationError("Frontmatter is empty or invalid")
 
-        body = text[end + 3 :].strip()
+        body = split.body
 
         # Require type and title
         if "type" not in meta:
@@ -2706,15 +2706,13 @@ class KBService:
     @staticmethod
     def _extract_frontmatter(content: str) -> dict | None:
         """Extract YAML frontmatter from markdown content."""
-        if not content.startswith("---"):
-            return None
-        parts = content.split("---", 2)
-        if len(parts) < 3:
+        split = split_frontmatter(content)
+        if not isinstance(split, Frontmatter):
             return None
         try:
             from ..utils.yaml import load_yaml
 
-            return load_yaml(parts[1])
+            return load_yaml(split.text)
         except Exception:
             return None
 
