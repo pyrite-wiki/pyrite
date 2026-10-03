@@ -218,3 +218,178 @@ class TestMatching:
         nodeid = "tests/test_export_service.py::TestPathTraversalPrevention::test_x"
         assert surface.matches(nodeid, "tests/test_export_service.py")
         assert not surface.is_experimental(nodeid)
+
+
+# -- Property 2: decided by what a test checks, not by its name -------------
+
+
+def _experimental_test_bodies():
+    """(node id without parameters, source) of every test function the
+    mapping marks experimental, read with ``ast`` from the files."""
+    import ast
+
+    for path in sorted(
+        [*REPO.glob("tests/**/test_*.py"), *REPO.glob("extensions/*/tests/**/test_*.py")]
+    ):
+        rel = path.relative_to(REPO).as_posix()
+        src = path.read_text()
+        tree = ast.parse(src)
+
+        def walk(node, prefix, rel=rel, src=src):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, ast.ClassDef):
+                    yield from walk(child, [*prefix, child.name])
+                elif isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef) and (
+                    child.name.startswith("test")
+                ):
+                    nodeid = "::".join([rel, *prefix, child.name])
+                    if surface.is_experimental(nodeid):
+                        yield nodeid, ast.get_source_segment(src, child) or ""
+
+        yield from walk(tree, [])
+
+
+class TestSecurityVocabularyNeedsAReason:
+    """The gate decides, not a name pattern (#657 review). Any experimental
+    test whose body touches the vocabulary of a security property (paths
+    leaving a root, private or readable sets, read-only KBs, redaction,
+    credentials, escaping, tiers) fails here unless `REVIEWED_EXPERIMENTAL`
+    says why it is not a security test -- or it moves to `NEVER_EXPERIMENTAL`.
+    A new security test added to an experimental file therefore stops the
+    gate until someone decides, whatever it is called."""
+
+    def test_every_experimental_test_touching_security_is_reviewed(self):
+        unreviewed = [
+            nodeid
+            for nodeid, body in _experimental_test_bodies()
+            if surface.touches_security(body) and not surface.reviewed_reason(nodeid)
+        ]
+        assert not unreviewed, (
+            "experimental tests that touch a security property: list each in "
+            "NEVER_EXPERIMENTAL, or in REVIEWED_EXPERIMENTAL with the reason it is "
+            "not one:\n" + "\n".join(unreviewed)
+        )
+
+    def test_no_reviewed_entry_is_stale(self):
+        hits = {
+            nodeid for nodeid, body in _experimental_test_bodies() if surface.touches_security(body)
+        }
+        stale = [
+            p for p in surface.REVIEWED_EXPERIMENTAL if not any(surface.matches(n, p) for n in hits)
+        ]
+        assert not stale, stale
+
+    def test_every_reviewed_entry_gives_a_reason(self):
+        assert all(len(r) > 20 for r in surface.REVIEWED_EXPERIMENTAL.values())
+
+    @pytest.mark.parametrize(
+        "nodeid",
+        [
+            "tests/test_quartz_renderer.py::TestExportSite::test_entry_type_absolute_path_stays_inside_output_dir",
+            "tests/test_quartz_renderer.py::TestExportSite::test_entry_id_absolute_path_stays_inside_output_dir",
+            "tests/test_notebooklm_renderer.py::TestBundler::test_bundle_none_entry_id_absolute_path_is_safe_filename",
+            "tests/test_notebooklm_renderer.py::TestBundler::test_bundle_by_type_entry_type_absolute_path_is_safe_filename",
+            "tests/test_collection_export.py::TestExportCollection::test_export_with_source_redaction",
+            "tests/test_collection_export.py::TestExportCollection::test_export_with_source_public",
+            "extensions/journalism-investigation/tests/test_mcp_tools.py::TestMCPToolRegistration::test_no_tools_for_invalid_tier",
+            "extensions/journalism-investigation/tests/test_promote_claim.py::TestDryRunMatchesRealRunRefusal::test_read_only_kb_refused_the_same_way_by_both",
+            "tests/test_repo_endpoints.py::TestGitHubRepos::test_github_repos_requires_token",
+        ],
+    )
+    def test_the_cold_reads_findings_are_in_the_gate(self, nodeid):
+        assert not surface.is_experimental(nodeid)
+
+    def test_the_vocabulary_ignores_unscoped_plumbing(self):
+        assert not surface.touches_security('db.get_outlinks("a", "kb", readable_kbs=UNSCOPED)')
+        assert surface.touches_security("assert not path.is_relative_to(root)")
+
+
+# -- A broken experimental-only file does not stop the core --------------------
+
+_BROKEN = "import module_that_does_not_exist\n\ndef test_x():\n    pass\n"
+
+
+@pytest.fixture
+def scratch_project(tmp_path):
+    """The root conftest and the mapping, in a project of their own."""
+    import shutil
+
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "__init__.py").write_text("")
+    shutil.copy(REPO / "conftest.py", tmp_path / "conftest.py")
+    shutil.copy(
+        REPO / "tests" / "experimental_surface.py", tmp_path / "tests" / "experimental_surface.py"
+    )
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\nmarkers =\n    experimental: x\n    core: x\n    slow: x\n    e2e: x\n"
+    )
+    (tmp_path / "tests" / "test_ok.py").write_text("def test_ok():\n    pass\n")
+    return tmp_path
+
+
+def _pytest(root, *args):
+    env = {k: v for k, v in os.environ.items() if k != "PYTEST_ADDOPTS"}
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", *args],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+CORE = "not slow and not e2e and not experimental"
+
+
+class TestCollectionErrors:
+    """The core does not stop for a file whose tests are all experimental;
+    any file that holds a core or security case still stops it."""
+
+    def _write(self, root, rel, text=_BROKEN):
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def test_a_wholly_experimental_file_does_not_stop_the_core(self, scratch_project):
+        self._write(scratch_project, "extensions/zettelkasten/tests/test_broken_x.py")
+        proc = _pytest(scratch_project, "-m", CORE)
+        assert proc.returncode == 0, proc.stdout[-2000:]
+        assert "experimental" in proc.stdout and "failed to collect" in proc.stdout
+
+    def test_the_experimental_run_still_reports_it(self, scratch_project):
+        self._write(scratch_project, "extensions/zettelkasten/tests/test_broken_x.py")
+        proc = _pytest(scratch_project, "-m", "experimental")
+        assert proc.returncode != 0
+        assert "module_that_does_not_exist" in proc.stdout
+
+    @pytest.mark.parametrize(
+        "rel",
+        [
+            "tests/test_broken_core.py",  # core
+            "extensions/social/tests/test_social.py",  # experimental, with security cases
+            "tests/test_settings.py",  # core, with an experimental class
+        ],
+    )
+    def test_a_file_with_any_core_case_still_stops_the_core(self, scratch_project, rel):
+        self._write(scratch_project, rel)
+        proc = _pytest(scratch_project, "-m", CORE)
+        assert proc.returncode != 0, proc.stdout[-2000:]
+        assert "module_that_does_not_exist" in proc.stdout
+
+    def test_a_default_run_still_stops(self, scratch_project):
+        self._write(scratch_project, "extensions/zettelkasten/tests/test_broken_x.py")
+        assert _pytest(scratch_project).returncode != 0
+
+    @pytest.mark.parametrize(
+        ("path", "expected"),
+        [
+            ("extensions/zettelkasten/tests/test_zettelkasten.py", False),  # has security cases
+            ("extensions/cascade/tests/test_aliases.py", True),
+            ("tests/test_task_dag.py", True),
+            ("tests/test_settings.py", False),  # only a class is experimental
+            ("tests/test_storage.py", False),
+        ],
+    )
+    def test_wholly_experimental_files(self, path, expected):
+        assert surface.wholly_experimental_file(path) is expected

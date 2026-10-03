@@ -284,6 +284,11 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     "tests/test_settings_secret_authz.py": AUTHZ,
     "tests/test_untrusted_local_config.py": AUTHZ,
     "tests/test_repo_endpoints.py::*requires_github_token*": AUTHZ,
+    "tests/test_repo_endpoints.py::*requires_token*": AUTHZ,
+    "extensions/journalism-investigation/tests/test_mcp_tools.py::*no_tools_for_invalid_tier*": AUTHZ,
+    # A read-only KB refuses a write, on every path that writes.
+    "extensions/journalism-investigation/tests/test_promote_claim.py::*read_only_kb_refused*": AUTHZ,
+    "tests/test_kb_bulk_create_description.py::*unavailable_kb_still_rejects_whole_batch*": AUTHZ,
     # A tier's tool list is what an HTTP MCP credential of that tier may call.
     "extensions/software-kb/tests/test_software_kb.py::*read_tier_no_write_tools*": AUTHZ,
     "extensions/software-kb/tests/test_software_kb.py::*read_tier_does_not_have*": AUTHZ,
@@ -331,6 +336,10 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     # Restricted sources stay out of a public export; a demo upgrade never
     # makes a KB public that its kb.yaml or operator made private.
     "tests/test_notebooklm_renderer.py::*restricted_sources*": SCOPE,
+    "tests/test_collection_export.py::*source_redaction*": SCOPE,
+    "tests/test_collection_export.py::*source_public*": SCOPE,
+    "extensions/journalism-investigation/tests/test_export_pack.py::*test_source_redaction*": SCOPE,
+    "extensions/journalism-investigation/tests/test_export_pack.py::*redacted_sources*": SCOPE,
     "tests/test_demo_public_kbs_upgrade.py": SCOPE,
     "tests/test_demo_seed_public_kbs.py::*default_role_wins*": SCOPE,
     # -- containment of paths and names inside their root --
@@ -344,7 +353,12 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     "tests/test_export_service.py::TestPathTraversalPrevention::*": CONTAIN,
     "tests/test_export_service.py::*does_not_inject_fields*": CONTAIN,
     "tests/test_quartz_renderer.py::*traversal*": CONTAIN,
+    "tests/test_quartz_renderer.py::*absolute_path*": CONTAIN,
+    "tests/test_quartz_renderer.py::*index_links_each_section_to_the_folder_actually_written*": CONTAIN,
     "tests/test_notebooklm_renderer.py::*traversal*": CONTAIN,
+    "tests/test_notebooklm_renderer.py::*absolute_path*": CONTAIN,
+    # Git acts on the repository it was told to, not one a parent process leaked.
+    "tests/test_worktree_service.py::TestGitServiceEnvIsolation::*": CONTAIN,
     "tests/test_site_cache.py::*traversal*": CONTAIN,
     "tests/test_branding_endpoints.py::*traversal*": CONTAIN,
     "tests/test_branding_service.py::*traversal*": CONTAIN,
@@ -378,7 +392,98 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     # An error body carries the public message, never the raw exception.
     "tests/test_rest_api.py::*public_message_replaces_str_exc*": ESCAPE,
     "extensions/social/tests/test_social.py::*public_message_not_the_raw_detail*": ESCAPE,
+    "tests/test_rest_api.py::*domain_error_maps_to_status_and_shape*": ESCAPE,  # no traceback
+    "tests/test_mcp_prompts.py::*broken_branding_yaml_is_a_refusal*": ESCAPE,  # no server path
 }
+
+
+# -- The gate decides, not a name (#657 review) --------------------------------
+#
+# Name patterns rescue the security cases we found; they cannot rescue one
+# written tomorrow in an experimental file. So the default is the gate's:
+# tests/test_experimental_surface.py fails when an experimental test's body
+# touches this vocabulary and the test is in neither NEVER_EXPERIMENTAL nor
+# REVIEWED_EXPERIMENTAL below. (Listing the experimental cases of every mixed
+# file instead would not cover a file that becomes mixed later.)
+SECURITY_VOCABULARY = re.compile(
+    r"is_relative_to|is_absolute|absolute.path|outside|private|read_only|readable"
+    r"|redact|restricted|travers|\.\./|\b40[13]\b|forbidden|unauthori[sz]|permission"
+    r"|secret|password|credential|bearer|github_token|xss|<script|javascript:"
+    r"|injection|leak|default_role|read_tier|requires_kb_tier|escape",
+    re.IGNORECASE,
+)
+# Plumbing that names the vocabulary without testing it: an explicitly
+# unscoped read, a test helper that injects a mock.
+_NOT_VOCABULARY = re.compile(r"readable_kbs=UNSCOPED|_inject_llm")
+
+
+def touches_security(source: str) -> bool:
+    return SECURITY_VOCABULARY.search(_NOT_VOCABULARY.sub("", source)) is not None
+
+
+# Experimental tests that touch the vocabulary and are not security tests,
+# each with the reason. Patterns as above (node ids without parameters).
+_FIXTURE_LEAK = "journalism data about a leak (a document classification), not a disclosure check"
+_PUBLIC_FIXTURE = "builds a public KB (default_role: read) as fixture; tests rendering, not access"
+_IN_READ_TIER = "asserts a tool IS offered at the read tier (feature), not that one is withheld"
+_JSONLD = "parses the page's JSON-LD block for SEO fields; escaping is TestXSSPrevention"
+REVIEWED_EXPERIMENTAL: dict[str, str] = {
+    "extensions/journalism-investigation/tests/test_claim_entry.py::TestClaimEntry::test_round_trip": _FIXTURE_LEAK,
+    "extensions/journalism-investigation/tests/test_entity_types.py::TestDocumentSourceEntry::test_round_trip": _FIXTURE_LEAK,
+    "extensions/journalism-investigation/tests/test_entity_types.py::TestDocumentSourceEntry::test_classification_values": _FIXTURE_LEAK,
+    "extensions/journalism-investigation/tests/test_event_types.py::TestInvestigationEventEntry::*": _FIXTURE_LEAK,
+    "extensions/journalism-investigation/tests/test_evidence_entry.py::TestEvidenceEntry::test_round_trip": _FIXTURE_LEAK,
+    "extensions/journalism-investigation/tests/test_mcp_write_integration.py::TestLogSourceRoundTrip::test_log_source_and_query": _FIXTURE_LEAK,
+    "extensions/journalism-investigation/tests/test_mcp_write_integration.py::TestEvidenceChainRoundTrip::test_full_evidence_chain": _FIXTURE_LEAK,
+    "extensions/journalism-investigation/tests/test_cli.py::TestPromoteClaimCommand::test_promote_claim_without_endpoint_fields_is_refused": "'machine-readable' output format; a schema refusal, not access",
+    "extensions/journalism-investigation/tests/test_export_pack.py::TestBuildInvestigationPack::test_source_no_redaction": "redaction switched off shows sources: the feature's default, the redaction itself is in the gate",
+    "extensions/journalism-investigation/tests/test_ownership_chains.py::TestMaxDepthLimit::test_depth_limit_stops_traversal": "graph traversal depth, not a path leaving a root",
+    "extensions/journalism-investigation/tests/test_promote_claim.py::TestDryRunMatchesRealRunRefusal::test_invalid_enum_endpoint_field_refused_the_same_way_by_both": "an enum value 'outside' the schema; dry-run parity of a schema refusal",
+    "extensions/software-kb/tests/test_software_kb.py::TestFlowToolRegistration::test_read_tier_has_*": _IN_READ_TIER,
+    "extensions/software-kb/tests/test_software_kb.py::TestContextForItemCLI::test_rich_output_format": "'human-readable' output format",
+    "extensions/software-kb/tests/test_software_kb.py::TestBacklogSortAndFilter::test_filter_by_epic": "an item titled 'Outside Epic'; a filter",
+    "extensions/zettelkasten/tests/test_zettelkasten.py::TestPreset::test_preset_structure": "the preset's declared policies; KB policy enforcement is tested in the gate",
+    "tests/backends/test_postgres_engine_driver.py::test_*": "a database URL's password survives driver normalization: URL parsing, no secret is exposed or stored",
+    "tests/test_gates.py::test_*_in_read_tier": _IN_READ_TIER,
+    "tests/test_kb_commit.py::TestRESTCommitEndpoints::test_commit_endpoint_records_readable_version": "a commit records a version that can be read back; not access",
+    "tests/test_pending_changes.py::TestPublishChanges::test_publish_records_a_readable_version": "a publish records a version that can be read back; not access",
+    "tests/test_pending_changes.py::TestPublishChanges::test_publish_no_remote_reports_real_git_error": "redaction must NOT hide an ordinary git error: precision of messages, the disclosure guard is test_repo_error_disclosure",
+    "tests/test_mcp_resources_session.py::TestResourcesReadOverARealSession::test_kbs_list": "an unscoped session lists every KB by design; the scoped session is TestResourcesAreScopedOverARealSession",
+    "tests/test_notebooklm_renderer.py::TestSourceRendering::test_full_mode_renders_all_sources": "full mode is the operator's explicit choice to include all sources; public and redact modes are in the gate",
+    "tests/test_personal_kb.py::TestUsageTierConfig::*": "usage-tier config defaults (allow_private_repos); a quota, not access",
+    "tests/test_personal_kb.py::TestMigrationV10::test_migration_adds_usage_tier_column": "a migration's table DDL names password_hash; tests the new column",
+    "tests/test_repo_endpoints.py::TestFork::test_fork_success": "a stub token is set to reach the success path",
+    "tests/test_repo_endpoints.py::TestCreatePR::test_pr_success": "a stub token is set to reach the success path",
+    "tests/test_site_cache.py::TestSiteCacheRenderAll::test_includes_db_only_kb": _PUBLIC_FIXTURE,
+    "tests/test_site_cache.py::TestAboutPageLink::*": _PUBLIC_FIXTURE,
+    "tests/test_site_cache.py::TestRenderSiteCacheEndpoint::*": _PUBLIC_FIXTURE,
+    "tests/test_site_cache.py::TestBrandingNestedMappingValidation::*": _PUBLIC_FIXTURE,
+    "tests/test_site_cache.py::TestBrandingScalarFieldValidation::*": _PUBLIC_FIXTURE,
+    "tests/test_site_cache.py::TestEditLinkVisibility::test_edit_link_hidden_for_read_only_kb": "hides an edit link in the page (UI); the write refusal itself is tested in the gate",
+    "tests/test_site_cache.py::TestSEOAndSocialMetadata::*": _JSONLD,
+    "tests/test_site_cache.py::TestSiteCacheBranding::test_jsonld_publisher_is_brand": _JSONLD,
+    "tests/test_static_routes_with_a_built_dist.py::test_a_reserved_prefix_and_everything_under_it_is_404_never_the_spa": "routing: a reserved prefix is a 404, with or without a credential; no access decision",
+    "tests/test_task_cli_create_fields.py::test_conductor_desk_recipe_creates_a_task_in_one_step": "a tag named 'outside'",
+    "tests/test_task_service.py::TestListTasks::test_list_preserves_priority": "'readable' in a docstring; priority round-trip",
+}
+
+
+def reviewed_reason(nodeid: str) -> str | None:
+    base = nodeid.split("[", 1)[0]
+    for pattern, reason in REVIEWED_EXPERIMENTAL.items():
+        if matches(base, pattern):
+            return reason
+    return None
+
+
+def wholly_experimental_file(path: str) -> bool:
+    """Every test in ``path`` is experimental, by the mapping alone: a
+    file-level experimental pattern matches it and no security entry names
+    it or a case inside it. Only such a file may fail to collect without
+    stopping the core (conftest.py)."""
+    if not any(matches(path, p) for s in EXPERIMENTAL for p in s.paths if "::" not in p):
+        return False
+    return not any(matches(path, p.split("::", 1)[0]) for p in NEVER_EXPERIMENTAL)
 
 
 @cache
