@@ -7,14 +7,15 @@ Supports incremental updates based on file modification times.
 
 import hashlib
 import logging
+import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from ..config import KBConfig, PyriteConfig, load_config
-from ..exceptions import FrontmatterError
 from ..models import Entry
 from ..models.core_types import id_text
 from ..models.protocols import (
@@ -102,11 +103,11 @@ def _parse_indexed_at(indexed_at: str) -> datetime:
 
     Legacy rows may store the literal string 'CURRENT_TIMESTAMP' — an
     unresolved SQLAlchemy server_default from before the explicit-timestamp
-    fix in base_backend. Treat these as the Unix epoch so `_is_stale` sees
-    them as maximally out-of-date and the next sync re-indexes them. (A
-    prior version of this function returned `datetime.now(UTC)` here, which
-    had the opposite effect: the stale check always failed and the affected
-    rows were never touched by `sync_incremental`.)
+    fix in base_backend. Treat these as the Unix epoch so `check_staleness`
+    sees them as maximally out-of-date. (A prior version of this function
+    returned `datetime.now(UTC)` here, which had the opposite effect.) The
+    reconcile no longer reads `indexed_at`: it compares the recorded file
+    stat (`_file_changed`), so such a row is re-read once and re-recorded.
     """
     if indexed_at == "CURRENT_TIMESTAMP":
         return datetime.fromtimestamp(0, tz=UTC)
@@ -155,6 +156,53 @@ def _same_entry_history(
     return log_entries
 
 
+# ---------------------------------------------------------------------------
+# One reconcile (ADR-0038 step 2)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _Claim:
+    """One parseable file and the id it holds."""
+
+    rel: str  # KB-relative path, POSIX spelling: the duplicate tiebreaker
+    path: Path
+    entry_id: str
+    stat: os.stat_result
+    entry: Entry | None = None  # None: a known file whose stat matched, not read
+
+
+@dataclass
+class ReconcilePlan:
+    """What the files say, before anything is written.
+
+    ``winners`` maps each id held by a parseable file to the file that wins
+    it: the lexicographically first KB-relative path (maintainer, 2026-09-26).
+    ``duplicates`` lists every id held by more than one file. Building a plan
+    writes nothing, so a caller that only needs to know who holds an id
+    (``DocumentManager.delete_entry``, ``check_health``) asks for one.
+    """
+
+    kb_name: str
+    winners: dict[str, _Claim] = field(default_factory=dict)
+    duplicates: list[dict[str, Any]] = field(default_factory=list)
+    malformed: list[dict[str, str]] = field(default_factory=list)
+    holders: dict[str, list[_Claim]] = field(default_factory=dict)
+    walked: int = 0
+
+
+def _file_changed(row: dict[str, Any], stat: os.stat_result) -> bool:
+    """THE staleness rule: a known file is re-read when its mtime OR its size
+    differs from what was recorded when it was indexed (ADR-0038 decision 4).
+
+    "Differs", not "is newer": a restore from a backup carries an older mtime.
+    A row indexed before the stat was recorded (v27) has none and is re-read
+    once; the content hash then decides whether it changed, so that first
+    reconcile after an upgrade reports nothing for an unchanged file.
+    """
+    return row.get("file_mtime_ns") != stat.st_mtime_ns or row.get("file_size") != stat.st_size
+
+
 class IndexManager:
     """
     Manages the SQLite FTS index for all KBs.
@@ -169,8 +217,26 @@ class IndexManager:
         self.db = db
         self.config = config or load_config()
 
-    def _entry_to_dict(self, entry: Entry, kb_name: str, file_path: Path) -> dict[str, Any]:
-        """Convert an Entry to a dict for database storage."""
+    def _entry_to_dict(
+        self,
+        entry: Entry,
+        kb_name: str,
+        file_path: Path,
+        *,
+        stat: os.stat_result | None = None,
+        content_hash: str | None = None,
+    ) -> dict[str, Any]:
+        """Convert an Entry to a dict for database storage.
+
+        ``stat`` and ``content_hash`` are the reconcile's own reading of the
+        file, taken before it parsed it; without them they are read here. The
+        stat is what the next reconcile compares (``_file_changed``).
+        """
+        if stat is None:
+            try:
+                stat = file_path.stat()
+            except OSError:
+                stat = None
         data = {
             "id": id_text(entry.id),
             "kb_name": kb_name,
@@ -179,7 +245,9 @@ class IndexManager:
             "body": entry.body,
             "summary": entry.summary,
             "file_path": str(file_path),
-            "content_hash": _hash_file(file_path),
+            "content_hash": content_hash or _hash_file(file_path),
+            "file_mtime_ns": stat.st_mtime_ns if stat else None,
+            "file_size": stat.st_size if stat else None,
             "tags": entry.tags,
             "aliases": entry.aliases,
             "sources": [s.to_dict() for s in entry.sources],
@@ -490,59 +558,223 @@ class IndexManager:
 
         return data
 
-    def index_kb(
-        self, kb_name: str, progress_callback: Callable[[int, int], None] | None = None
-    ) -> int:
+    # -----------------------------------------------------------------
+    # One reconcile (ADR-0038 step 2). Every path that indexes a KB's files
+    # -- `index_kb` (pyrite index build, init, the rebuild job),
+    # `sync_incremental` (pyrite index sync, rename, the sync job), `sync_kb`
+    # (pyrite kb reindex) and `index_with_attribution` -- is `reconcile_kb`
+    # with a different `force`. tests/test_one_reconcile.py pins the rule;
+    # tests/test_one_reconcile_structure.py fails when a new path walks files
+    # and writes rows without coming through here.
+    # -----------------------------------------------------------------
+
+    def plan_reconcile(
+        self,
+        kb_config: KBConfig,
+        *,
+        force: bool | Iterable[Path] = False,
+        indexed: dict[str, dict[str, Any]] | None = None,
+    ) -> ReconcilePlan:
+        """Read the files and decide which file holds each id. Writes nothing.
+
+        Files are walked in KB-relative path order. A file the index already
+        knows at that path, whose recorded stat still matches
+        (``_file_changed``), is not read: its row's id stands for it. Every
+        other file is parsed -- new paths, changed files, and the losing copies
+        of a duplicate, which never have a row -- and one that fails to parse
+        is listed in ``malformed``. ``force`` (True, or a set of paths) parses
+        those files whatever their stat says.
         """
-        Fully reindex a knowledge base.
-
-        Args:
-            kb_name: Name of the KB to index
-            progress_callback: Optional callback(current, total) for progress updates
-
-        Returns:
-            Number of entries indexed
-        """
-        kb_config = self.config.get_kb(kb_name)
-        if not kb_config:
-            raise ValueError(f"KB '{kb_name}' not found in config")
-
         repo = KBRepository(kb_config)
+        if indexed is None:
+            indexed = self._load_indexed_state(kb_config.name)
+        path_to_row = {
+            info["file_path"]: (entry_id, info)
+            for entry_id, info in indexed.items()
+            if info.get("file_path")
+        }
+        forced = None if isinstance(force, bool) else {Path(p) for p in force}
+        plan = ReconcilePlan(kb_name=kb_config.name)
 
-        # Register KB in database
+        files = []
+        for file_path in repo.list_all_files():
+            try:
+                rel = file_path.relative_to(kb_config.path).as_posix()
+            except ValueError:
+                continue
+            files.append((rel, file_path))
+        files.sort()
+
+        for rel, file_path in files:
+            plan.walked += 1
+            try:
+                stat = file_path.stat()
+            except OSError:
+                continue  # removed while walking: as if never seen
+            known = path_to_row.get(str(file_path))
+            must_read = force is True or (forced is not None and file_path in forced)
+            if known and not must_read and not _file_changed(known[1], stat):
+                claim = _Claim(rel, file_path, known[0], stat)
+            else:
+                try:
+                    entry = repo.load_entry_from_file(file_path)
+                except Exception as e:
+                    # An unparseable file is content drift, not a Pyrite bug:
+                    # reported in the result, one log line, and it holds no id.
+                    plan.malformed.append({"path": str(file_path), "error": str(e)})
+                    logger.warning("Could not parse %s: %s", file_path, e)
+                    continue
+                claim = _Claim(rel, file_path, id_text(entry.id), stat, entry)
+            plan.holders.setdefault(claim.entry_id, []).append(claim)
+
+        for entry_id, claims in plan.holders.items():
+            # `files` was sorted, so the first claim is the first path.
+            plan.winners[entry_id] = claims[0]
+            if len(claims) > 1:
+                plan.duplicates.append(
+                    {
+                        "kb": kb_config.name,
+                        "id": entry_id,
+                        "winner": claims[0].rel,
+                        "paths": [c.rel for c in claims],
+                    }
+                )
+        plan.duplicates.sort(key=lambda d: d["id"])
+        return plan
+
+    def reconcile_kb(
+        self,
+        kb_config: KBConfig,
+        *,
+        force: bool | Iterable[Path] = False,
+        enrich: Callable[[Entry, Path, dict[str, Any]], Callable[[], None] | None] | None = None,
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> dict[str, Any]:
+        """Make the KB's rows equal its files (I2), and report what changed.
+
+        Rows become exactly the ids of parseable files: each id's row points at
+        its winning file (``plan_reconcile``) with that file's hash; a row no
+        file claims is retired. A file is written when its row is missing, its
+        path moved, or its content hash differs; a file whose stat moved but
+        whose hash did not is rewritten only to record the new stat, and is not
+        counted. ``force=True`` (a rebuild) rewrites every row, to recompute what
+        the row derives from the file. Never writes a file (I4).
+
+        ``enrich(entry, path, data)`` may add to a row before it is written and
+        return a callable to run after (attribution writes ``entry_version``).
+
+        Returns ``added``, ``updated``, ``removed`` (row counts), ``malformed``
+        (``{"path", "error"}``), ``duplicates`` (``{"kb", "id", "winner",
+        "paths"}``, KB-relative paths, the winner first) and ``written`` (rows
+        written, counted or not).
+        """
+        results: dict[str, Any] = {
+            "added": 0,
+            "updated": 0,
+            "removed": 0,
+            "malformed": [],
+            "duplicates": [],
+            "written": 0,
+        }
+        if not kb_config.path.exists():
+            return results
+        if not isinstance(force, bool):
+            force = {Path(p) for p in force}
+
         self.db.register_kb(
-            name=kb_name,
+            name=kb_config.name,
             kb_type=kb_config.kb_type,
             path=str(kb_config.path),
             description=kb_config.description,
         )
+        indexed = self._load_indexed_state(kb_config.name)
+        plan = self.plan_reconcile(kb_config, force=force, indexed=indexed)
+        results["malformed"] = plan.malformed
+        results["duplicates"] = plan.duplicates
 
-        # Count total files for progress
-        total_files = repo.count()
-        indexed_count = 0
-        error_count = 0
+        total = len(plan.winners)
+        unwritable: set[str] = set()
+        for done, (entry_id, claim) in enumerate(sorted(plan.winners.items()), start=1):
+            if claim.entry is not None:
+                try:
+                    self._write_claim(
+                        kb_config.name, claim, indexed.get(entry_id), force, enrich, results
+                    )
+                except Exception as e:
+                    # The file parsed but its row cannot be written (a
+                    # `title:` that is a YAML list, found on the pyrite KB).
+                    # It is reported like a file that cannot be read, and
+                    # holds no row: a row kept from before would be stale.
+                    logger.warning("Could not index %s", claim.path, exc_info=True)
+                    # First line only: a driver error carries the SQL and
+                    # every bound value, the file's body among them.
+                    error = (str(e).splitlines() or [type(e).__name__])[0]
+                    results["malformed"].append({"path": str(claim.path), "error": error})
+                    unwritable.add(entry_id)
+            if progress_callback and done % 10 == 0 and done < total:
+                progress_callback(done, total)
+        if progress_callback:
+            # Always once at the end, an empty KB included: the index worker
+            # turns this into the job's `index_progress` event.
+            progress_callback(total, total)
 
-        # Index all entries
-        for entry, file_path in repo.list_entries():
-            try:
-                data = self._entry_to_dict(entry, kb_name, file_path)
-                self.db.upsert_entry(data)
-                indexed_count += 1
+        for entry_id in indexed:
+            if entry_id not in plan.winners or entry_id in unwritable:
+                self.remove_entry(entry_id, kb_config.name)
+                results["removed"] += 1
 
-                if progress_callback:
-                    progress_callback(indexed_count, total_files)
+        self.db.update_kb_indexed(kb_config.name, len(plan.winners) - len(unwritable))
+        return results
 
-            except Exception as e:
-                logger.error("Failed to index %s: %s", file_path, e)
-                error_count += 1
+    def _write_claim(
+        self,
+        kb_name: str,
+        claim: _Claim,
+        row: dict[str, Any] | None,
+        force: bool | Iterable[Path],
+        enrich,
+        results: dict[str, Any],
+    ) -> None:
+        """Write one winning file's row if the reconcile rule says so."""
+        content_hash = _hash_file(claim.path)
+        if row is None:
+            counter = "added"
+        elif row.get("file_path") != str(claim.path) or row.get("content_hash") != content_hash:
+            counter = "updated"
+        else:
+            # Same file, same bytes: the hash breaks the tie. Rewrite only for
+            # a rebuild or to record a stat that moved (a touch, a checkout),
+            # so the next reconcile does not read the file again.
+            counter = None
+            forced = force is True or (not isinstance(force, bool) and claim.path in force)
+            if not forced and not _file_changed(row, claim.stat):
+                return
+        entry = claim.entry
+        assert entry is not None
+        data = self._entry_to_dict(
+            entry, kb_name, claim.path, stat=claim.stat, content_hash=content_hash
+        )
+        after = enrich(entry, claim.path, data) if enrich else None
+        self.db.upsert_entry(data)
+        if after:
+            after()
+        results["written"] += 1
+        if counter:
+            results[counter] += 1
 
-        # Update KB stats
-        self.db.update_kb_indexed(kb_name, indexed_count)
-
-        if error_count > 0:
-            logger.warning("%d entries failed to index", error_count)
-
-        return indexed_count
+    def index_kb(
+        self, kb_name: str, progress_callback: Callable[[int, int], None] | None = None
+    ) -> int:
+        """Rebuild a KB's rows from its files: ``reconcile_kb`` reading every
+        file. Returns the number of entries indexed (one per id, not per file).
+        """
+        kb_config = self.config.get_kb(kb_name)
+        if not kb_config:
+            raise ValueError(f"KB '{kb_name}' not found in config")
+        result = self.reconcile_kb(kb_config, force=True, progress_callback=progress_callback)
+        if result["malformed"]:
+            logger.warning("%d files could not be parsed", len(result["malformed"]))
+        return result["written"]
 
     def index_all(
         self, progress_callback: Callable[[str, int, int], None] | None = None
@@ -626,7 +858,8 @@ class IndexManager:
     def _load_indexed_state(self, kb_name: str) -> dict[str, dict[str, str]]:
         """Load indexed entry state from DB for a KB.
 
-        Returns dict mapping entry_id -> {"file_path", "indexed_at", "content_hash"}.
+        Returns dict mapping entry_id -> {"file_path", "indexed_at",
+        "content_hash", "file_mtime_ns", "file_size"}.
         """
         indexed = {}
         for row in self.db.get_entries_for_indexing(kb_name):
@@ -634,6 +867,8 @@ class IndexManager:
                 "file_path": row["file_path"],
                 "indexed_at": row["indexed_at"],
                 "content_hash": row.get("content_hash"),
+                "file_mtime_ns": row.get("file_mtime_ns"),
+                "file_size": row.get("file_size"),
             }
         return indexed
 
@@ -701,13 +936,6 @@ class IndexManager:
 
         return stale
 
-    @staticmethod
-    def _is_stale(file_path: Path, indexed_at: str) -> bool:
-        """Check whether a file is newer than its indexed_at timestamp."""
-        file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime, tz=UTC)
-        index_time = _parse_indexed_at(indexed_at)
-        return file_mtime > index_time
-
     def check_health(self, kb_name: str | None = None) -> dict[str, Any]:
         """
         Check index health and consistency.
@@ -721,7 +949,9 @@ class IndexManager:
         Returns dict with:
         - missing_files: entries in DB but file not found
         - unindexed_files: files not in DB
-        - stale_entries: entries where file is newer than index
+        - stale_entries: entries whose file's mtime or size differs from the
+          values recorded when it was indexed (``_file_changed``, the
+          reconcile's rule)
         - content_changed: entries whose on-disk content hash no longer
           matches the hash recorded at index time. Catches same-second
           edits and coarse-mtime filesystems that `stale_entries` (mtime
@@ -745,6 +975,11 @@ class IndexManager:
           rejects.
         - off_list_values: one row per off-list value of a declared enum
           (#555, #47) -- see `_check_off_list_values`.
+        - duplicates: one row per id held by more than one file --
+          ``{"kb", "id", "winner", "paths"}`` -- with the file the index
+          holds (the lexicographically first KB-relative path). Only the
+          winner is checked for staleness; a losing copy is not the indexed
+          file, so it is neither stale nor changed.
         """
         health = {
             "missing_files": [],
@@ -758,6 +993,7 @@ class IndexManager:
             "malformed_frontmatter": [],
             "invalid_statuses": [],
             "off_list_values": [],
+            "duplicates": [],
         }
 
         # The file's own value of each protocol column, per (kb, id), read
@@ -794,59 +1030,48 @@ class IndexManager:
             if not kb.path.exists():
                 continue
 
-            repo = KBRepository(kb)
             indexed = self._load_indexed_state(kb.name)
+            # The reconcile's own reading of the files (every file parsed):
+            # the same winner per id, the same duplicates, the same staleness
+            # rule as `pyrite index sync` (ADR-0038 step 2).
+            plan = self.plan_reconcile(kb, force=True, indexed=indexed)
+            health["duplicates"].extend(plan.duplicates)
+            for bad in plan.malformed:
+                health["malformed_frontmatter"].append({"kb": kb.name, **bad})
 
-            # Check each file
-            for file_path in repo.list_files():
-                try:
-                    entry = repo._load_entry(file_path)
-                    source = entry._source_frontmatter or {}
-                    file_values[(kb.name, entry.id)] = {
-                        k: source[k] for k in PROTOCOL_COLUMN_KEYS if source.get(k) is not None
-                    }
-
-                    if entry.id not in indexed:
-                        health["unindexed_files"].append(
-                            {"kb": kb.name, "path": str(file_path), "id": entry.id}
-                        )
-                    else:
-                        indexed_at = indexed[entry.id]["indexed_at"]
-                        if indexed_at and self._is_stale(file_path, indexed_at):
-                            health["stale_entries"].append(
-                                {
-                                    "kb": kb.name,
-                                    "id": entry.id,
-                                    "file_mtime": datetime.fromtimestamp(
-                                        file_path.stat().st_mtime, tz=UTC
-                                    ).isoformat(),
-                                    "indexed_at": indexed_at,
-                                }
-                            )
-
-                        indexed_hash = indexed[entry.id].get("content_hash")
-                        if indexed_hash:
-                            current_hash = _hash_file(file_path)
-                            if current_hash and current_hash != indexed_hash:
-                                health["content_changed"].append(
-                                    {
-                                        "kb": kb.name,
-                                        "id": entry.id,
-                                        "path": str(file_path),
-                                    }
-                                )
-                except FrontmatterError as e:
-                    # Malformed YAML / missing frontmatter: a content problem in
-                    # the file, not a Pyrite bug. Surface it in the report and
-                    # log a clean one-liner rather than a stack trace.
-                    health["malformed_frontmatter"].append(
-                        {"kb": kb.name, "path": str(file_path), "error": str(e)}
+            for entry_id, claim in sorted(plan.winners.items()):
+                file_path = claim.path
+                entry = claim.entry
+                source = getattr(entry, "_source_frontmatter", None) or {}
+                file_values[(kb.name, entry_id)] = {
+                    k: source[k] for k in PROTOCOL_COLUMN_KEYS if source.get(k) is not None
+                }
+                row = indexed.get(entry_id)
+                if row is None:
+                    health["unindexed_files"].append(
+                        {"kb": kb.name, "path": str(file_path), "id": entry_id}
                     )
-                    logger.warning("Malformed frontmatter in %s: %s", file_path, e)
                     continue
-                except Exception:
-                    logger.warning("Health check failed for %s", file_path, exc_info=True)
-                    continue
+                if row.get("file_path") != str(file_path):
+                    continue  # moved: reported as the row's missing file below
+                if _file_changed(row, claim.stat):
+                    health["stale_entries"].append(
+                        {
+                            "kb": kb.name,
+                            "id": entry_id,
+                            "file_mtime": datetime.fromtimestamp(
+                                claim.stat.st_mtime, tz=UTC
+                            ).isoformat(),
+                            "indexed_at": row.get("indexed_at"),
+                        }
+                    )
+                indexed_hash = row.get("content_hash")
+                if indexed_hash:
+                    current_hash = _hash_file(file_path)
+                    if current_hash and current_hash != indexed_hash:
+                        health["content_changed"].append(
+                            {"kb": kb.name, "id": entry_id, "path": str(file_path)}
+                        )
 
             # Check for missing files
             for entry_id, info in indexed.items():
@@ -1160,222 +1385,44 @@ class IndexManager:
         self,
         kb_name: str | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
-    ) -> dict[str, int]:
-        """
-        Incremental sync: only parse changed/new files, skip unchanged ones.
+    ) -> dict[str, Any]:
+        """Reconcile one KB, or every configured KB, reading only files whose
+        stat moved and paths the index does not know (``reconcile_kb``).
 
-        Walks file paths first (no parsing), checks mtime-based staleness,
-        and only parses files that are new or modified since last index.
-
-        Args:
-            kb_name: Sync specific KB (all if None)
-            progress_callback: Optional callback(current, total) for progress updates
-
-        Returns dict with counts of added, updated, removed entries, plus
-        a ``malformed`` list of ``{"path", "error"}`` entries — files whose
-        frontmatter could not be parsed. The CLI surfaces this as a summary
-        (N files skipped, paths…) rather than spewing per-file tracebacks
-        for each malformed file. See Tier A 1080
-        (bug-index-sync-scannererror-output-pollution-no-skip-for-malformed-
-        or-hidden-scratch-files).
+        Returns ``added``, ``updated``, ``removed``, ``malformed`` and
+        ``duplicates`` summed over the KBs. The CLI prints the malformed and
+        duplicate files as a summary rather than per-file tracebacks (Tier A
+        1080).
         """
         results: dict[str, Any] = {
             "added": 0,
             "updated": 0,
             "removed": 0,
             "malformed": [],
+            "duplicates": [],
         }
-
         kbs = [self.config.get_kb(kb_name)] if kb_name else self.config.all_kbs()
         kbs = [kb for kb in kbs if kb and kb.path.exists()]
 
-        # Count total files across all KBs for progress (cheap: just path listing)
-        total_files = 0
-        if progress_callback:
-            for kb in kbs:
-                repo = KBRepository(kb)
-                total_files += repo.count()
-
-        processed = 0
-
-        for kb in kbs:
-            repo = KBRepository(kb)
-
-            # Ensure KB is registered
-            self.db.register_kb(
-                name=kb.name,
-                kb_type=kb.kb_type,
-                path=str(kb.path),
-                description=kb.description,
-            )
-
-            indexed = self._load_indexed_state(kb.name)
-
-            # Build reverse map: file_path -> (entry_id, indexed_at)
-            path_to_indexed: dict[str, tuple[str, str | None]] = {}
-            for entry_id, info in indexed.items():
-                fp = info.get("file_path")
-                if fp:
-                    path_to_indexed[fp] = (entry_id, info.get("indexed_at"))
-
-            seen_ids: set[str] = set()
-
-            # Walk all file paths without parsing
-            for file_path in repo.list_all_files():
-                fp_str = str(file_path)
-
-                if fp_str in path_to_indexed:
-                    # Known file — check staleness before parsing
-                    entry_id, indexed_at = path_to_indexed[fp_str]
-                    seen_ids.add(entry_id)
-
-                    if indexed_at:
-                        try:
-                            if self._is_stale(file_path, indexed_at):
-                                # Stale — parse and re-index.
-                                entry = repo.load_entry_from_file(file_path)
-                                self.index_entry(entry, kb.name, file_path)
-                                results["updated"] += 1
-                                # #391 cold read round 2: a rename that keeps
-                                # the file's PATH fixed (a file_pattern type
-                                # with no {id}/{slug} placeholder) changes
-                                # the frontmatter id without moving the file,
-                                # so the id now on disk can differ from the
-                                # one this path was last indexed under.
-                                # `entry_id` (the STALE id) was marked "seen"
-                                # above so the cleanup loop below would not
-                                # otherwise retire it -- it would survive as
-                                # a stale duplicate row pointing at the same
-                                # (now-renamed) file. Retire it explicitly and
-                                # mark the entry's ACTUAL (current) id seen.
-                                #
-                                # #391 cold read round 3: retiring `entry_id`
-                                # unconditionally could delete a ROW THAT IS
-                                # NO LONGER STALE -- e.g. two files SWAP ids
-                                # in one pass (a.md: x->y, b.md: y->x). By the
-                                # time b.md is processed, `entry_id` (y, the
-                                # id b.md held before) may already have been
-                                # rewritten by a.md's own processing to point
-                                # at a.md -- removing it here would undo that
-                                # correct write. Read the row live and only
-                                # retire it if it still points at THIS file:
-                                # if some other file already re-claimed the
-                                # id this pass, that write wins, not this
-                                # cleanup.
-                                if entry.id != entry_id:
-                                    current = self.db.get_entry(entry_id, kb.name)
-                                    if current and current.get("file_path") == fp_str:
-                                        self.remove_entry(entry_id, kb.name)
-                                        results["removed"] += 1
-                                    seen_ids.add(entry.id)
-                        except FrontmatterError as e:
-                            # Malformed frontmatter is content drift, not a
-                            # Pyrite bug. Surface in the summary; log one-line.
-                            results["malformed"].append({"path": str(file_path), "error": str(e)})
-                            logger.warning("Malformed frontmatter in %s: %s", file_path, e)
-                        except Exception:
-                            logger.warning(
-                                "Stale check/re-index failed for %s", entry_id, exc_info=True
-                            )
-                else:
-                    # Unknown file — parse to discover entry
-                    try:
-                        entry = repo.load_entry_from_file(file_path)
-                        seen_ids.add(entry.id)
-                        if entry.id in indexed:
-                            # Entry exists but file path changed (rename)
-                            self.index_entry(entry, kb.name, file_path)
-                            results["updated"] += 1
-                        else:
-                            # Genuinely new entry
-                            self.index_entry(entry, kb.name, file_path)
-                            results["added"] += 1
-                    except FrontmatterError as e:
-                        # Same: malformed-frontmatter content drift, not a bug.
-                        results["malformed"].append({"path": str(file_path), "error": str(e)})
-                        logger.warning("Malformed frontmatter in %s: %s", file_path, e)
-                    except Exception:
-                        logger.warning("Could not parse new file %s", file_path, exc_info=True)
-
-                processed += 1
-                if progress_callback and processed % 10 == 0:
-                    progress_callback(processed, total_files)
-
-            # Remove deleted entries
-            for entry_id in indexed:
-                if entry_id not in seen_ids:
-                    self.remove_entry(entry_id, kb.name)
-                    results["removed"] += 1
-
-            # Update KB stats
-            self.db.update_kb_indexed(kb.name, len(seen_ids))
-
-        # Final progress callback
-        if progress_callback:
-            progress_callback(processed, total_files)
-
+        for n, kb in enumerate(kbs, start=1):
+            callback = None
+            if progress_callback and len(kbs) == 1:
+                callback = progress_callback
+            one = self.reconcile_kb(kb, progress_callback=callback)
+            for key in ("added", "updated", "removed"):
+                results[key] += one[key]
+            results["malformed"].extend(one["malformed"])
+            results["duplicates"].extend(one["duplicates"])
+            if progress_callback and len(kbs) > 1:
+                progress_callback(n, len(kbs))
         return results
 
     def sync_kb(self, kb_config: KBConfig) -> dict[str, Any]:
-        """Sync a single KB given its config. Used by KBRegistryService for DB-only KBs.
-
-        Mirrors ``sync_incremental``'s malformed-file tracking: a file that
-        fails to parse is recorded in ``results["malformed"]`` rather than
-        silently dropped from index coverage with only a log line (the
-        verify-after-write-on-the-index-path gap — ``list_entries()``'s
-        generator swallows parse errors with no result-level signal).
-        """
-        results: dict[str, Any] = {"added": 0, "updated": 0, "removed": 0, "malformed": []}
-
-        if not kb_config.path.exists():
-            return results
-
-        repo = KBRepository(kb_config)
-
-        self.db.register_kb(
-            name=kb_config.name,
-            kb_type=kb_config.kb_type,
-            path=str(kb_config.path),
-            description=kb_config.description,
-        )
-
-        indexed = self._load_indexed_state(kb_config.name)
-        seen_ids = set()
-
-        for file_path in repo.list_all_files():
-            try:
-                entry = repo.load_entry_from_file(file_path)
-            except FrontmatterError as e:
-                results["malformed"].append({"path": str(file_path), "error": str(e)})
-                logger.warning("Malformed frontmatter in %s: %s", file_path, e)
-                continue
-            except Exception as e:
-                results["malformed"].append({"path": str(file_path), "error": str(e)})
-                logger.warning("Could not parse %s", file_path, exc_info=True)
-                continue
-
-            seen_ids.add(entry.id)
-
-            if entry.id not in indexed:
-                self.index_entry(entry, kb_config.name, file_path)
-                results["added"] += 1
-            else:
-                indexed_at = indexed[entry.id]["indexed_at"]
-                if indexed_at:
-                    try:
-                        if self._is_stale(file_path, indexed_at):
-                            self.index_entry(entry, kb_config.name, file_path)
-                            results["updated"] += 1
-                    except Exception:
-                        logger.warning("Stale check failed for %s", entry.id, exc_info=True)
-
-        for entry_id in indexed:
-            if entry_id not in seen_ids:
-                self.remove_entry(entry_id, kb_config.name)
-                results["removed"] += 1
-
-        self.db.update_kb_indexed(kb_config.name, len(seen_ids))
-        return results
+        """Reconcile one KB given its config: ``sync_incremental`` for a KB
+        that may exist only as a registry row (``KBRegistryService``)."""
+        result = self.reconcile_kb(kb_config)
+        result.pop("written", None)
+        return result
 
     def index_with_attribution(
         self,
@@ -1387,8 +1434,9 @@ class IndexManager:
         """
         Index a KB with git attribution.
 
-        For each entry file:
-        1. Parse and upsert entry (existing flow)
+        The rows come from ``reconcile_kb`` like every other index path; for
+        each file whose history is read:
+        1. Its row is written by the reconcile, with the attribution below
         2. git log --follow -> populate entry_version table
         3. Set entry.created_by = first commit author
         4. Set entry.modified_by = last commit author
@@ -1402,7 +1450,7 @@ class IndexManager:
             progress_callback: Optional callback(current, total)
 
         Returns:
-            Number of entries indexed
+            Number of entries whose history was read
         """
         if git_service is None:
             raise ValueError("git_service is required for index_with_attribution")
@@ -1411,71 +1459,54 @@ class IndexManager:
         if not kb_config:
             raise ValueError(f"KB '{kb_name}' not found in config")
 
-        repo = KBRepository(kb_config)
-
-        # Register KB in database
-        self.db.register_kb(
-            name=kb_name,
-            kb_type=kb_config.kb_type,
-            path=str(kb_config.path),
-            description=kb_config.description,
-        )
-
-        # Determine which files to process
         kb_path = kb_config.path
         is_git = git_service.is_git_repo(kb_path)
 
+        # Which files get their git history read: every file, or the ones git
+        # says changed since `since_commit`. The reconcile itself covers the
+        # whole KB either way, so a file deleted since then loses its row.
+        force: bool | set[Path] = True
         if since_commit and is_git:
-            # Only changed files
-            changed_files = git_service.get_changed_files(kb_path, since_commit=since_commit)
-            files_to_process = set()
-            for rel_path in changed_files:
+            force = set()
+            for rel_path in git_service.get_changed_files(kb_path, since_commit=since_commit):
                 full_path = kb_path / rel_path
                 if full_path.exists() and full_path.suffix == ".md":
-                    files_to_process.add(full_path)
-        else:
-            files_to_process = None  # Process all
+                    force.add(full_path)
 
-        indexed_count = 0
-        error_count = 0
+        attributed = 0
 
-        for entry, file_path in repo.list_entries():
-            if files_to_process is not None and file_path not in files_to_process:
-                continue
+        def enrich(entry: Entry, file_path: Path, data: dict[str, Any]):
+            nonlocal attributed
+            if force is not True and file_path not in force:
+                return None
+            attributed += 1
+            if progress_callback:
+                progress_callback(attributed, 0)
+            if not is_git:
+                return None
+            rel_path = str(file_path.relative_to(kb_path))
+            log_entries = _same_entry_history(
+                entry.id,
+                rel_path,
+                git_service.get_file_log(kb_path, rel_path),
+                kb_path,
+                git_service,
+            )
+            if log_entries:
+                # First commit = created_by, last commit = modified_by
+                data["created_by"] = log_entries[-1]["author_name"]
+                data["modified_by"] = log_entries[0]["author_name"]
 
-            try:
-                data = self._entry_to_dict(entry, kb_name, file_path)
-                log_entries = []
-
-                # Extract git attribution if available
-                if is_git:
-                    rel_path = str(file_path.relative_to(kb_path))
-                    log_entries = _same_entry_history(
-                        entry.id,
-                        rel_path,
-                        git_service.get_file_log(kb_path, rel_path),
-                        kb_path,
-                        git_service,
-                    )
-
-                    if log_entries:
-                        # First commit = created_by, last commit = modified_by
-                        data["created_by"] = log_entries[-1]["author_name"]
-                        data["modified_by"] = log_entries[0]["author_name"]
-
-                # Insert entry first (must exist before entry_version FK)
-                self.db.upsert_entry(data)
-
-                # Then populate entry_version table. Each commit's file_path
-                # is the KB-relative path this entry had *at that commit*
-                # (its own tree), not necessarily its current path --
-                # get_file_log resolves this per commit via --name-status
-                # so a pre-rename commit stays readable at the name it
-                # actually had (#432). Stored KB-relative, not absolute: an
-                # absolute path breaks the moment the KB's directory moves.
+            def write_versions() -> None:
+                # After the row (entry_version's FK). Each commit's file_path
+                # is the KB-relative path this entry had *at that commit* (its
+                # own tree), not necessarily its current path -- get_file_log
+                # resolves this per commit via --name-status so a pre-rename
+                # commit stays readable at the name it actually had (#432).
+                # Stored KB-relative, not absolute: an absolute path breaks the
+                # moment the KB's directory moves.
                 for i, log_entry in enumerate(log_entries):
                     change_type = "created" if i == len(log_entries) - 1 else "modified"
-                    commit_rel_path = log_entry.get("file_path", rel_path)
                     self.db.upsert_entry_version(
                         entry_id=entry.id,
                         kb_name=kb_name,
@@ -1485,24 +1516,13 @@ class IndexManager:
                         commit_date=log_entry["date"],
                         message=log_entry["message"],
                         change_type=change_type,
-                        file_path=commit_rel_path,
+                        file_path=log_entry.get("file_path", rel_path),
                     )
-                indexed_count += 1
 
-                if progress_callback:
-                    progress_callback(indexed_count, 0)
+            return write_versions
 
-            except Exception as e:
-                logger.error("Failed to index %s: %s", file_path, e)
-                error_count += 1
-
-        # Update KB stats
-        self.db.update_kb_indexed(kb_name, self.db.count_entries(kb_name))
-
-        if error_count > 0:
-            logger.warning("%d entries failed to index with attribution", error_count)
-
-        return indexed_count
+        self.reconcile_kb(kb_config, force=force, enrich=enrich)
+        return attributed
 
 
 def create_index(config: PyriteConfig | None = None) -> IndexManager:

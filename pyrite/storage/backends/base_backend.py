@@ -128,6 +128,8 @@ class BaseBackend(ABC):
             existing.summary = entry_data.get("summary")
             existing.file_path = entry_data.get("file_path")
             existing.content_hash = entry_data.get("content_hash")
+            existing.file_mtime_ns = entry_data.get("file_mtime_ns")
+            existing.file_size = entry_data.get("file_size")
             existing.date = entry_data.get("date")
             existing.importance = entry_data.get("importance")
             existing.status = entry_data.get("status")
@@ -163,6 +165,8 @@ class BaseBackend(ABC):
                 summary=entry_data.get("summary"),
                 file_path=entry_data.get("file_path"),
                 content_hash=entry_data.get("content_hash"),
+                file_mtime_ns=entry_data.get("file_mtime_ns"),
+                file_size=entry_data.get("file_size"),
                 date=entry_data.get("date"),
                 importance=entry_data.get("importance"),
                 status=entry_data.get("status"),
@@ -546,12 +550,27 @@ class BaseBackend(ABC):
 
     def get_entries_for_indexing(self, kb_name: str) -> list[dict[str, Any]]:
         rows = (
-            self._session.query(Entry.id, Entry.file_path, Entry.indexed_at, Entry.content_hash)
+            self._session.query(
+                Entry.id,
+                Entry.file_path,
+                Entry.indexed_at,
+                Entry.content_hash,
+                Entry.file_mtime_ns,
+                Entry.file_size,
+            )
             .filter_by(kb_name=kb_name)
             .all()
         )
         return [
-            {"id": r[0], "file_path": r[1], "indexed_at": r[2], "content_hash": r[3]} for r in rows
+            {
+                "id": r[0],
+                "file_path": r[1],
+                "indexed_at": r[2],
+                "content_hash": r[3],
+                "file_mtime_ns": r[4],
+                "file_size": r[5],
+            }
+            for r in rows
         ]
 
     # =====================================================================

@@ -67,6 +67,22 @@ def _embed_counts(stats: dict, from_queue: int, force: bool) -> tuple[int, int, 
     return stats["embedded"] + from_queue, max(0, skipped), max(0, -skipped)
 
 
+def _duplicate_lines(duplicates: list[dict], limit: int = 10) -> list[str]:
+    """One line per id held by several files, the indexed file first.
+
+    The index holds the lexicographically first KB-relative path (ADR-0038,
+    decided 2026-09-26); the others are not indexed until the duplicate is
+    resolved -- by deleting a copy, or giving one its own `id:`.
+    """
+    lines = []
+    for dup in duplicates[:limit]:
+        others = [p for p in dup["paths"] if p != dup["winner"]]
+        lines.append(f"{dup['kb']}/{dup['id']}: {dup['winner']} (indexed), {', '.join(others)}")
+    if len(duplicates) > limit:
+        lines.append(f"… and {len(duplicates) - limit} more")
+    return lines
+
+
 @index_app.command("build")
 def index_build(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB to index (all if omitted)"),
@@ -220,6 +236,13 @@ def index_sync(
             console.print(f"    [dim]• {entry['path']}[/dim]")
         if len(malformed) > 5:
             console.print(f"    [dim]… and {len(malformed) - 5} more[/dim]")
+    duplicates = results.get("duplicates", [])
+    if duplicates:
+        console.print(
+            f"  [yellow]Duplicate ids: {len(duplicates)} (one file indexed per id)[/yellow]"
+        )
+        for line in _duplicate_lines(duplicates):
+            console.print(f"    • {line}", markup=False, highlight=False)
 
     # Auto-embed new/updated entries if embeddings are available.
     #
@@ -436,11 +459,16 @@ def index_health(
     # unhealthy; `warning` (switch off, or a plugin enum) is a warning; `info`
     # (an `allow_other` field) does not move the status.
     off_list_severities = {row.get("severity") for row in off_list_values}
+    duplicates = health.get("duplicates", [])
     is_unhealthy = (
         health["missing_files"]
         or health["unindexed_files"]
         or health["stale_entries"]
         or health.get("content_changed")
+        # Two files claiming one id: only the first path is indexed, so the
+        # other is invisible to search. Unhealthy, named loudly (maintainer,
+        # 2026-10-03, ADR-0038 decided question 3).
+        or duplicates
         or "error" in off_list_severities
     )
     has_warning = (
@@ -468,6 +496,7 @@ def index_health(
             "malformed_frontmatter": malformed_frontmatter,
             "invalid_statuses": invalid_statuses,
             "off_list_values": off_list_values,
+            "duplicates": duplicates,
             "checks": health,
         },
         output_format,
@@ -486,6 +515,7 @@ def index_health(
         malformed_frontmatter=malformed_frontmatter,
         invalid_statuses=invalid_statuses,
         off_list_values=off_list_values,
+        duplicates=duplicates,
         health=health,
     )
     if is_unhealthy and fail:
@@ -504,6 +534,7 @@ def _report_health(
     malformed_frontmatter,
     invalid_statuses,
     off_list_values,
+    duplicates=(),
     health,
 ):
     """Print the health report. Returns nothing; the caller sets the exit code."""
@@ -598,6 +629,14 @@ def _report_health(
             )
         if len(off_list_values) > 10:
             console.print(f"  ... and {len(off_list_values) - 10} more")
+
+    if duplicates:
+        console.print(
+            f"[red]{len(duplicates)} id(s) held by more than one file"
+            " (the first path is indexed; the rest are not):[/red]"
+        )
+        for line in _duplicate_lines(list(duplicates)):
+            console.print(f"  • {line}", markup=False, highlight=False)
 
     if health["missing_files"]:
         console.print(f"[red]Missing files ({len(health['missing_files'])}):[/red]")

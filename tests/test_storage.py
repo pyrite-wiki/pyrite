@@ -699,9 +699,12 @@ class TestIndexManager:
         assert target.stat().st_mtime == original_mtime
 
         health = setup["index_mgr"].check_health()
-        assert health["stale_entries"] == [], (
-            "sanity check: mtime-only comparison should NOT catch this edit"
-        )
+        # Since ADR-0038 step 2 the stat rule is mtime OR size, so the size
+        # change makes this stale too; the hash check stays the backstop for a
+        # same-size edit that keeps the mtime.
+        assert [e["id"] for e in health["stale_entries"]] == [
+            e["id"] for e in health["content_changed"]
+        ]
         assert len(health["content_changed"]) == 1, (
             "content changed but mtime did not advance — hash comparison "
             "must still catch it, mtime-only comparison cannot"
@@ -1072,34 +1075,37 @@ class TestParseIndexedAt:
         assert result.hour == 12
 
 
-class TestIsStaleHelper:
-    """Tests for IndexManager._is_stale() helper."""
+class TestFileChangedRule:
+    """The reconcile's staleness rule, `_file_changed` (ADR-0038 decision 4):
+    the recorded mtime or size differs. It replaced `_is_stale` (file mtime
+    newer than `indexed_at`), which missed an edit that kept the mtime (#495)."""
 
-    def test_stale_file_detected(self, tmp_path):
-        """A file newer than indexed_at should be stale."""
-        import time
-
-        from pyrite.storage.index import IndexManager
-
-        # indexed_at in the past
-        indexed_at = "2020-01-01 00:00:00"
-        # Create a file (will have current mtime, much newer)
-        f = tmp_path / "test.md"
-        f.write_text("hello")
-        time.sleep(0.01)  # ensure mtime settles
-
-        assert IndexManager._is_stale(f, indexed_at) is True
-
-    def test_fresh_file_not_stale(self, tmp_path):
-        """A file older than indexed_at should not be stale."""
-        from pyrite.storage.index import IndexManager
+    def test_unchanged_stat_is_not_changed(self, tmp_path):
+        from pyrite.storage.index import _file_changed
 
         f = tmp_path / "test.md"
         f.write_text("hello")
+        st = f.stat()
+        assert (
+            _file_changed({"file_mtime_ns": st.st_mtime_ns, "file_size": st.st_size}, st) is False
+        )
 
-        # indexed_at far in the future
-        indexed_at = "2099-12-31 23:59:59"
-        assert IndexManager._is_stale(f, indexed_at) is False
+    def test_a_different_mtime_or_size_is_changed(self, tmp_path):
+        from pyrite.storage.index import _file_changed
+
+        f = tmp_path / "test.md"
+        f.write_text("hello")
+        st = f.stat()
+        assert _file_changed({"file_mtime_ns": st.st_mtime_ns - 1, "file_size": st.st_size}, st)
+        assert _file_changed({"file_mtime_ns": st.st_mtime_ns, "file_size": st.st_size + 1}, st)
+
+    def test_a_row_without_a_recorded_stat_is_changed(self, tmp_path):
+        """Rows indexed before v27 are read once, then recorded."""
+        from pyrite.storage.index import _file_changed
+
+        f = tmp_path / "test.md"
+        f.write_text("hello")
+        assert _file_changed({"file_mtime_ns": None, "file_size": None}, f.stat())
 
 
 @pytest.mark.integration

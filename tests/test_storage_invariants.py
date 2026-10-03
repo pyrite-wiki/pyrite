@@ -457,26 +457,22 @@ def test_i1_create_duplicates_a_derived_id():
     _run("I1", [NO_ID_BETA_AT_ALPHA, ("create_note", {"title": "Beta", "id": None})])
 
 
-@_violates("I2", "#486", "index build keeps a row for a deleted file")
 def test_i2_index_build_keeps_a_deleted_files_row():
     steps = [("create_decision", {"id": "dec-1", "n": 1, "title": "Alpha"})]
     _run("I2", [*steps, ("ext_rm", {"k": 0}), ("full_index", {})])
 
 
-@_violates("I2", "#487", "kb reindex keeps a moved file's old path")
 def test_i2_reindex_keeps_a_moved_files_old_path():
     steps = [("create_note", {"title": "Alpha", "id": None})]
     _run("I2", [*steps, ("ext_mv", {"k": 0, "name": "x.md"}), ("reindex", {})])
 
 
-@_violates("I2", "#495", "sync misses an edit that keeps the mtime")
 def test_i2_edit_keeping_mtime_is_not_synced():
     steps = [("create_note", {"title": "Alpha", "id": None})]
     edit = ("ext_edit_body", {"k": 0, "keep_mtime": True})
     _run("I2", [*steps, edit, ("sync_incremental", {})])
 
 
-@_violates("I3", "#485", "a duplicated id flips its row on every sync")
 def test_i3_duplicate_id_flips_on_every_sync():
     steps = [
         ("create_note", {"title": "Alpha", "id": None}),

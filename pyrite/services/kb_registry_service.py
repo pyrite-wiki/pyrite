@@ -422,8 +422,12 @@ class KBRegistryService:
         """
         self.db.merge_registered_kbs(self.config)
 
-    def reindex_kb(self, name: str) -> dict[str, int]:
-        """Reindex a specific KB. Works for both config and user KBs."""
+    def reindex_kb(self, name: str) -> dict[str, Any]:
+        """Reindex a specific KB. Works for both config and user KBs.
+
+        The one reconcile (``IndexManager.sync_kb``): ``added``, ``updated``,
+        ``removed``, ``malformed`` and ``duplicates``.
+        """
         # Try config first
         kb_config = self.config.get_kb(name)
         if kb_config:

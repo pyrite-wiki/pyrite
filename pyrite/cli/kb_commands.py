@@ -471,6 +471,13 @@ def kb_reindex(
         console.print(
             f"  Added: {result['added']}, Updated: {result['updated']}, Removed: {result['removed']}"
         )
+        duplicates = result.get("duplicates", [])
+        if duplicates:
+            from .index_commands import _duplicate_lines
+
+            console.print(f"  [yellow]Duplicate ids: {len(duplicates)}[/yellow]")
+            for line in _duplicate_lines(duplicates):
+                console.print(f"    • {line}", markup=False, highlight=False)
 
 
 @kb_app.command("health")
