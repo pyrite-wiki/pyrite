@@ -336,7 +336,7 @@ def _expected(meta: dict, op: Any) -> dict:
     return result
 
 
-def check_contract(before: str, ops: list, after: str) -> None:
+def check_contract(before: str, ops: list, after: str, narrow: bool = True) -> None:
     """The contract for any result, one operation at a time:
 
     - every byte outside the spans the operation names is identical, before
@@ -346,17 +346,29 @@ def check_contract(before: str, ops: list, after: str) -> None:
       new keys last;
     - the BOM, the body (unless replaced) and the line endings are kept.
 
-    A call with several operations must equal applying them one by one, and
-    each step must pass on its own."""
+    Every step one by one must pass on its own and stay narrow (no widen: the
+    edits these tests make all have a narrow form). A call with several
+    operations reads the same as applying them one by one. Its bytes equal
+    them too, except for one stated limit (L3, module docstring): a batch of
+    operations on different top-level keys indents newly emitted lines by the
+    file's conventions *before* the batch, one by one by the conventions after
+    each step; there the call is checked against all its spans in the
+    original."""
     step = before
+    tops = set()
     for op in ops:
-        nxt, _ = apply(step, [op], span_of(step))
+        nxt, report = apply(step, [op], span_of(step))
+        assert not narrow or report.widened == (), f"{op}: widened on an edit with a narrow form"
         spans = op_spans(step, span_of(step), op)
         assert outside_identical(step, nxt, spans), (
             f"{op}: bytes outside its spans {spans} changed:\n{_diff(step, nxt)}"
         )
         step = nxt
-    assert after == step, "the call differs from its operations applied one by one"
+        tops.add(None if isinstance(op, ReplaceBody) else str(_segments(op.path)[0]))
+    if after != step:
+        assert len(tops) == len(ops), "the call differs from its operations applied one by one"
+        spans = [sp for op in ops for sp in op_spans(before, span_of(before), op)]
+        assert outside_identical(before, after, spans), _diff(before, after)
     meta, body = _reader(before)
     expected = meta
     for op in ops:
@@ -773,7 +785,7 @@ def test_a_narrow_edit_that_fails_the_post_check_is_widened_not_returned(monkeyp
     except OperationRefusedError:
         return
     assert "type: note\n" in after
-    check_contract(before, [Append("links", {"target": "x"})], after)
+    check_contract(before, [Append("links", {"target": "x"})], after, narrow=False)
     assert report.widened == ("links",)
 
 
@@ -790,7 +802,7 @@ def test_a_narrow_edit_that_breaks_the_value_is_widened(monkeypatch):
     before = SHAPES["doc-legacy-links"]
     op = Append("links", {"target": "bar", "relation": "related"})
     after, report = run(before, op)
-    check_contract(before, [op], after)
+    check_contract(before, [op], after, narrow=False)
     assert report.widened == ("links",)
     # item-wise: the hand-written item, comment and all, is copied by bytes
     assert _diff(before, after) == ["+- target: bar\n", "+  relation: related\n"]
@@ -929,7 +941,7 @@ def test_a_narrow_edit_touching_bytes_outside_its_span_is_never_returned(
     after, report = run(_GUARDED, op)
     assert target in after, fault
     assert report.widened == ("list",)
-    check_contract(_GUARDED, [op], after)
+    check_contract(_GUARDED, [op], after, narrow=False)
 
 
 def test_a_fault_on_a_scalar_that_cannot_widen_is_refused(monkeypatch):
@@ -950,19 +962,18 @@ def test_a_fault_on_a_scalar_that_cannot_widen_is_refused(monkeypatch):
 
 
 def test_the_final_check_catches_what_the_per_operation_check_missed(monkeypatch):
-    """The second line: once per call, through the reader's split and each
-    operation's spans in the original. With the first line blinded (it allows
-    every byte) a corrupt edit is still refused."""
+    """The second line: once per call, the values through the reader's own
+    split, compared without ``_same``. With the per-operation value check
+    blinded, a corrupt value inside the span is still refused."""
     from pyrite.storage import file_operations as fo
 
     real = fo._narrow_edits
 
     def corrupt(doc, op):
-        at = doc.text.index("# rule")
-        return [*real(doc, op), (at, at + len("# rule"), "# RULE")]
+        return [(s, e, r.replace("- b", "- zz")) for s, e, r in real(doc, op)]
 
     monkeypatch.setattr(fo, "_narrow_edits", corrupt)
-    monkeypatch.setattr(fo, "_named_spans", lambda doc, op: [(0, len(doc.text))])
+    monkeypatch.setattr(fo, "_same", lambda got, expected: True)
     with pytest.raises(OperationRefusedError) as raised:
         run(_GUARDED, Append("list", "b"))
     assert "post-check" in raised.value.reason
@@ -1178,8 +1189,17 @@ def test_malformed_operations_raise_only_operation_refused():
         )
 
     reasons: list[str] = []
-    for _ in range(1500):
-        text = rng.choice(list(SHAPES.values()))
+    texts = [
+        *SHAPES.values(),
+        COMMENTED,
+        "---\na: 1\n? [x, y]\n: v\n---\nx\n",
+        "---\np:\n  ? {x: 1}\n  : v\n---\nx\n",
+        "---\na: !custom 1\nb: !!set {x}\nc: !!binary aGk=\n---\nx\n",
+        "---\ntrue: 1\nnull: 2\n3: c\n---\nx\n",
+        "---\nl:\n- - a\n  - b\n---\nx\n",
+    ]
+    for _ in range(3000):
+        text = rng.choice(texts)
         ops = [op() for _ in range(rng.randint(1, 3))]
         try:
             result = apply(text, ops, span_of(text))
@@ -1320,10 +1340,203 @@ def test_sweep_every_shape_through_the_byte_oracle(variant):
             text = "﻿" + text
         for op in _sweep_ops(_reader(text)[0]):
             try:
-                after, _ = run(text, op)
+                after, report = run(text, op)
             except OperationRefusedError as e:
                 refused.append((name, op, e.reason))
                 continue
+            # every sweep edit has a narrow form: none may widen (round 2)
+            assert report.widened == (), (name, op)
             if after is not text:
                 check_contract(text, [op], after)
     assert not refused, refused[:5]
+
+
+# --- round 2 (#732): narrow wherever a narrow edit can express it -------------
+
+
+@pytest.mark.parametrize(
+    "keys", [("x", "y"), ("alpha", "beta"), ("".join(["al", "pha"]), "be" + "ta")]
+)
+def test_a_map_set_with_long_keys_stays_narrow(keys):
+    """Keys longer than one character are not interned: comparing them by
+    identity made every kept key look new, and the edit widened (B1)."""
+    a, b = keys
+    before = f"---\np:\n  {a}: 1  # keep\n  # between\n  {b}: 2\nz: 1\n---\nb\n"
+    after, report = run(before, Set("p", {a: 1, b: 3}))
+    assert report.widened == ()
+    assert after == before.replace(f"{b}: 2", f"{b}: 3")
+
+
+def test_a_nested_map_set_map_to_map_keeps_comments_between_pairs():
+    before = (
+        "---\np:\n  # about q\n  q:\n    alpha: 1  # a\n    # mid\n    beta: 2\n"
+        "  # after q\n  r: 1\n---\nx\n"
+    )
+    after, report = run(before, Set("p.q", {"alpha": 1, "beta": 3, "gamma": 4}))
+    assert report.widened == ()
+    assert after == before.replace("    beta: 2\n", "    beta: 2\n    gamma: 4\n").replace(
+        "beta: 2", "beta: 3"
+    )
+
+
+def test_a_hugo_params_set_changing_one_value_keeps_its_comments():
+    before = (
+        "---\ntitle: T\nparams:\n    author: Jane\n    # social block\n    social:\n"
+        "        twitter: jane\n    draft: false\n---\nx\n"
+    )
+    new = {"author": "Jane", "social": {"twitter": "jane"}, "draft": True}
+    after, report = run(before, Set("params", new))
+    assert report.widened == ()
+    assert after == before.replace("draft: false", "draft: true")
+
+
+def test_an_item_map_set_keeps_its_comments():
+    before = (
+        "---\nlinks:\n- target: t1  # tgt\n  # rel note\n  relation: r1\n- target: t2\n---\nx\n"
+    )
+    after, report = run(before, Set("links[0]", {"target": "t1", "relation": "r2"}))
+    assert report.widened == ()
+    assert after == before.replace("relation: r1", "relation: r2")
+
+
+def test_a_whole_list_set_keeps_the_comments_between_kept_items():
+    """Decision 2: every existing item's bytes stay, and so do the lines
+    between them."""
+    before = (
+        "---\nlinks:\n- target: t1  # first link\n  relation: r1\n# between 0 and 1\n"
+        "- target: t2\n  relation: r2\n- target: t3\n  relation: r3\nz: 1\n---\nx\n"
+    )
+    cur = [{"target": f"t{i}", "relation": f"r{i}"} for i in (1, 2, 3)]
+    changed = [dict(x) for x in cur]
+    changed[2]["relation"] = "CHANGED"
+    after, report = run(before, Set("links", changed))
+    assert report.widened == ()
+    assert after == before.replace("relation: r3", "relation: CHANGED")
+    after, report = run(before, Set("links", [*cur[:2], {"target": "t9"}]))
+    assert report.widened == ()
+    assert "# between 0 and 1\n" in after and "  relation: r2\n" in after
+
+
+def _fault(monkeypatch, target: str, replacement: str):
+    from pyrite.storage import file_operations as fo
+
+    real = fo._narrow_edits
+
+    def corrupt(doc, op):
+        at = doc.text.index(target)
+        return [*real(doc, op), (at, at + len(target), replacement)]
+
+    monkeypatch.setattr(fo, "_narrow_edits", corrupt)
+
+
+def test_the_widen_of_a_map_keeps_the_files_order_and_its_comments(monkeypatch):
+    """Decision 2: a widen copies each unchanged pair's bytes and the lines
+    between pairs, in the file's order; only the changed pair is emitted."""
+    before = "---\nparams:\n  b: 1  # bee\n  # about a\n  a: 2\n  c: 3\nz: x  # zed\n---\nx\n"
+    _fault(monkeypatch, "# zed", "# ZED")
+    after, report = run(before, Set("params", {"a": 2, "b": 1, "c": 4}))
+    assert report.widened == ("params",)
+    assert after == before.replace("c: 3", "c: 4")
+
+
+def test_the_widen_of_a_list_keeps_the_comments_between_kept_items(monkeypatch):
+    before = "---\ntags:\n- a  # A\n# about b\n- b\n- c\nz: x  # zed\n---\nx\n"
+    _fault(monkeypatch, "# zed", "# ZED")
+    after, report = run(before, Set("tags", ["a", "b", "X", "d"]))
+    assert report.widened == ("tags",)
+    assert after == before.replace("- c\n", "- X\n- d\n")
+
+
+@pytest.mark.parametrize(
+    "complex_key", ["? [x, y]\n: v\n", "? {x: 1}\n: v\n", "p:\n  ? [x]\n  : v\n"]
+)
+def test_a_complex_key_anywhere_is_refused_with_a_reason(complex_key):
+    text = f"---\na: 1\n{complex_key}---\nx\n"
+    with pytest.raises(OperationRefusedError) as raised:
+        run(text, Set("a", 2))
+    assert "complex key" in raised.value.reason
+
+
+@pytest.mark.parametrize("tagged", ["!custom 1", "!!set {x, y}", "!!binary aGk=", "!!omap [x: 1]"])
+def test_a_tagged_value_elsewhere_does_not_block_an_edit(tagged):
+    """L4: an untouched tagged value compares equal to itself after the reparse."""
+    text = f"---\na: {tagged}\nb: 1\n---\nx\n"
+    assert _apply1(text, Set("b", 2)) == text.replace("b: 1", "b: 2")
+
+
+@pytest.mark.parametrize(
+    ("ops", "expected"),
+    [
+        ([Unset("tags[0]"), Unset("tags[0]")], "tags: []\n"),
+        ([Unset("title"), Set("title", "U")], "tags:\n- a\n- b\ntitle: U\n"),
+        ([Append("tags", "c"), Remove("tags", "a")], "tags:\n- b\n- c\n"),
+    ],
+)
+def test_a_same_key_sequence_in_one_call(ops, expected):
+    """L1: each operation is checked against the text it applied to, not the
+    call's original."""
+    before = "---\ntitle: T\ntags:\n- a\n- b\n---\nx\n"
+    after = _apply1(before, *ops)
+    assert after.endswith(expected + "---\nx\n")
+
+
+def test_a_shared_value_in_one_call_does_not_alias_in_the_model():
+    """L2: [d, d] set, then one item changed: only that item changes."""
+    d = {"a": 1}
+    after = _apply1("---\nl:\n- {a: 1}\n---\nx\n", Set("l", [d, d]), Set("l[0].a", 2))
+    assert _reader(after)[0]["l"] == [{"a": 2}, {"a": 1}]
+
+
+def test_limit_a_batch_indents_new_lines_by_the_conventions_before_it():
+    """L3, pinned: operations on different keys in one call are spliced
+    against one parse, so a list emitted in the same call that removes the
+    file's only indented list still uses that list's indent; one by one, the
+    second call no longer sees it."""
+    before = "---\ntags:\n  - a\nid: x\n---\nb\n"
+    together = _apply1(before, Set("tags", 7), Set("id", ["p"]))
+    one, _ = run(before, Set("tags", 7))
+    one = _apply1(one, Set("id", ["p"]))
+    assert together == "---\ntags: 7\nid:\n  - p\n---\nb\n"
+    assert one == "---\ntags: 7\nid:\n- p\n---\nb\n"
+    assert _reader(together)[0] == _reader(one)[0]
+
+
+@pytest.mark.parametrize("key", ["---", "...", "--- x"])
+def test_a_new_key_spelled_like_a_document_marker_is_quoted(key):
+    """L5: Pyrite is a guest in files other tools split on ``---``."""
+    after = _apply1("---\nk: v\n---\nb\n", Set((key,), 1))
+    assert f'\n"{key}": 1\n' in after
+
+
+def test_limit_unset_of_a_dash_line_pair_before_a_comment_leaves_the_dash_alone():
+    """L6, pinned (cosmetic): the comment line's bytes are outside the
+    unset's span, so the dash stays on its line before it."""
+    before = "---\nl:\n- target: a\n  # note\n  relation: b\n---\nx\n"
+    assert _apply1(before, Unset("l[0].target")) == "---\nl:\n-   # note\n  relation: b\n---\nx\n"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "---\np:\n  a: 1\n  s: |\n    text\n    # not a comment\nz: 1\n---\nx\n",
+        '---\np:\n  a: "x\n    # inside quotes"\nz: 1\n---\nx\n',
+    ],
+    ids=["literal", "double-quoted"],
+)
+def test_limit_a_comment_looking_last_line_refuses_an_insertion_after_it(text):
+    with pytest.raises(OperationRefusedError):
+        run(text, Set("p.new", 1))
+    # an edit that does not insert after that line is not affected
+    assert _apply1(text, Unset("z")).endswith("---\nx\n")
+
+
+def test_the_widen_of_a_nested_operation_rebuilds_its_top_level_value(monkeypatch):
+    """Decision 2: a widen goes to the whole top-level value, so a nested
+    operation whose narrow edit fails is checked against that value's span."""
+    before = "---\nparams:\n  b: 1  # bee\n  # about c\n  c: 3  # cee\nz: x  # zed\n---\nx\n"
+    _fault(monkeypatch, "# zed", "# ZED")
+    after, report = run(before, Set("params.c", 4))
+    assert report.widened == ("params",)
+    # the changed pair is emitted afresh (its own comment goes with it); the
+    # kept pair, the comment between them and every byte outside stay
+    assert after == before.replace("c: 3  # cee", "c: 4")
