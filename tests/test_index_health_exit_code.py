@@ -145,3 +145,62 @@ class TestOutputChannelsAreNotRegressed:
                 app, ["index", "health", "--format", "json"], catch_exceptions=False
             )
         json.loads(result.stdout)  # raises if anything else was printed to stdout
+
+
+class TestUnreadableAndOrphanedEntries:
+    def test_unreadable_file_is_reported_with_path_and_error(self, two_kb_env):
+        target = next((two_kb_env["tmpdir"] / "dirty").rglob("*.md"))
+        target.write_bytes(b"\xff")
+
+        result = _run(two_kb_env["config"], "--format", "json")
+        data = json.loads(result.stdout)
+        rows = data["checks"]["unreadable_files"]
+
+        row = next(item for item in rows if item["path"] == str(target))
+        assert data["unreadable_files"] == rows
+        assert row["kb"] == "dirty"
+        assert "UnicodeDecodeError" in row["error"]
+        assert data["status"] == "unhealthy"
+        assert result.exit_code == 1
+
+    def test_replaced_id_names_old_index_row(self, two_kb_env):
+        target = next((two_kb_env["tmpdir"] / "dirty").rglob("*.md"))
+        content = target.read_text(encoding="utf-8")
+        id_line = next(line for line in content.splitlines() if line.startswith("id:"))
+        old_id = id_line.split(":", 1)[1].strip()
+        target.write_text(content.replace(id_line, "id: replacement-id", 1), encoding="utf-8")
+
+        result = _run(two_kb_env["config"], "--format", "json")
+        data = json.loads(result.stdout)
+        rows = data["checks"]["orphaned_entries"]
+
+        old_row = next(item for item in rows if item["id"] == old_id)
+        assert old_row["kb"] == "dirty"
+        assert old_row["path"] == str(target)
+        assert old_row["replacement_id"] == "replacement-id"
+        assert any(item["id"] == "replacement-id" for item in data["checks"]["unindexed_files"])
+        assert data["status"] == "unhealthy"
+        assert result.exit_code == 1
+
+    def test_unreadable_file_is_explained_in_rich_output(self, two_kb_env):
+        target = next((two_kb_env["tmpdir"] / "dirty").rglob("*.md"))
+        target.write_bytes(b"\xff")
+
+        result = _run(two_kb_env["config"], "--format", "rich")
+        assert "Unreadable files (1)" in result.stdout
+        assert target.name in result.stdout
+        assert "UnicodeDecodeError" in result.stdout
+        assert result.exit_code == 1
+
+    def test_moved_file_remains_missing_until_index_sync(self, two_kb_env):
+        target = next((two_kb_env["tmpdir"] / "dirty").rglob("*.md"))
+        moved = target.with_name("moved-" + target.name)
+        target.rename(moved)
+
+        result = _run(two_kb_env["config"], "--format", "json")
+        data = json.loads(result.stdout)
+        missing = data["checks"]["missing_files"]
+        assert any(item["path"] == str(target) for item in missing)
+        assert data["checks"]["orphaned_entries"] == []
+        assert data["status"] == "unhealthy"
+        assert result.exit_code == 1

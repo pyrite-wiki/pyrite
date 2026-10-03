@@ -720,6 +720,11 @@ class IndexManager:
 
         Returns dict with:
         - missing_files: entries in DB but file not found
+        - unreadable_files: files that exist but could not be loaded for a
+          non-frontmatter error, with path and exception detail
+        - orphaned_entries: indexed IDs absent from readable files even though
+          their indexed path still exists; replacement_id identifies an ID
+          now found at that same path
         - unindexed_files: files not in DB
         - stale_entries: entries where file is newer than index
         - content_changed: entries whose on-disk content hash no longer
@@ -748,6 +753,8 @@ class IndexManager:
         """
         health = {
             "missing_files": [],
+            "unreadable_files": [],
+            "orphaned_entries": [],
             "unindexed_files": [],
             "stale_entries": [],
             "content_changed": [],
@@ -797,10 +804,45 @@ class IndexManager:
             repo = KBRepository(kb)
             indexed = self._load_indexed_state(kb.name)
 
+            # IDs read from disk this pass let us distinguish an indexed ID
+            # replaced in place from a file that simply moved. Keep failures
+            # separate: a file whose ID could not be read is not an orphan.
+            loaded_ids: set[str] = set()
+            loaded_ids_by_path: dict[str, str] = {}
+            uninspectable_paths: set[str] = set()
+
             # Check each file
             for file_path in repo.list_files():
                 try:
                     entry = repo._load_entry(file_path)
+                except FrontmatterError as e:
+                    # Malformed YAML / missing frontmatter: a content problem in
+                    # the file, not a Pyrite bug. Surface it in the report and
+                    # log a clean one-liner rather than a stack trace.
+                    health["malformed_frontmatter"].append(
+                        {"kb": kb.name, "path": str(file_path), "error": str(e)}
+                    )
+                    uninspectable_paths.add(str(file_path))
+                    logger.warning("Malformed frontmatter in %s: %s", file_path, e)
+                    continue
+                except Exception as e:
+                    # A present file that cannot be decoded/read is neither
+                    # missing nor malformed frontmatter. Report its actual
+                    # failure so health cannot silently pass (#593).
+                    health["unreadable_files"].append(
+                        {
+                            "kb": kb.name,
+                            "path": str(file_path),
+                            "error": f"{type(e).__name__}: {e}",
+                        }
+                    )
+                    uninspectable_paths.add(str(file_path))
+                    logger.warning("Could not load %s: %s", file_path, e)
+                    continue
+
+                loaded_ids.add(entry.id)
+                loaded_ids_by_path[str(file_path)] = entry.id
+                try:
                     source = entry._source_frontmatter or {}
                     file_values[(kb.name, entry.id)] = {
                         k: source[k] for k in PROTOCOL_COLUMN_KEYS if source.get(k) is not None
@@ -835,25 +877,23 @@ class IndexManager:
                                         "path": str(file_path),
                                     }
                                 )
-                except FrontmatterError as e:
-                    # Malformed YAML / missing frontmatter: a content problem in
-                    # the file, not a Pyrite bug. Surface it in the report and
-                    # log a clean one-liner rather than a stack trace.
-                    health["malformed_frontmatter"].append(
-                        {"kb": kb.name, "path": str(file_path), "error": str(e)}
-                    )
-                    logger.warning("Malformed frontmatter in %s: %s", file_path, e)
-                    continue
                 except Exception:
                     logger.warning("Health check failed for %s", file_path, exc_info=True)
                     continue
 
-            # Check for missing files
+            # Check for missing files and IDs superseded at an existing path.
             for entry_id, info in indexed.items():
-                if not Path(info["file_path"]).exists():
+                indexed_path = Path(info["file_path"])
+                if not indexed_path.exists():
                     health["missing_files"].append(
                         {"kb": kb.name, "id": entry_id, "path": info["file_path"]}
                     )
+                elif entry_id not in loaded_ids and str(indexed_path) not in uninspectable_paths:
+                    orphan = {"kb": kb.name, "id": entry_id, "path": info["file_path"]}
+                    replacement_id = loaded_ids_by_path.get(str(indexed_path))
+                    if replacement_id and replacement_id != entry_id:
+                        orphan["replacement_id"] = replacement_id
+                    health["orphaned_entries"].append(orphan)
 
         # Count broken links (targets that don't resolve to entries)
         broken_sql = """
