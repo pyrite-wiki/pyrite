@@ -391,7 +391,7 @@ class EmbeddingService:
             self._model = model
             return model
 
-    def prewarm(self) -> bool:
+    def prewarm(self, *, log_failure: bool = True) -> bool:
         """Pre-load the embedding model to avoid cold-start latency.
 
         Returns True if model was loaded successfully, False if dependencies
@@ -404,7 +404,13 @@ class EmbeddingService:
             logger.info("Embedding model '%s' pre-warmed", self.model_name)
             return True
         except Exception:
-            logger.warning("Failed to pre-warm embedding model", exc_info=True)
+            if log_failure:
+                logger.warning(
+                    "Failed to pre-warm embedding model %r. Check that the model is cached "
+                    "locally or that Hugging Face is reachable.",
+                    self.model_name,
+                    exc_info=True,
+                )
             return False
 
     @property
