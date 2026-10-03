@@ -187,6 +187,7 @@ Tests carry no size marker yet.
 cd web && npm ci && npm run check && npm run test:unit && npm run build   # frontend
 HF_HUB_OFFLINE=1 .venv/bin/pytest tests/e2e -m e2e -n 4 --dist loadfile   # large: real server and MCP processes
 PATH="$PWD/.venv/bin:$PATH" bash scripts/run_tutorial.sh                  # large: docs/getting-started.md as a test
+PATH="$PWD/.venv/bin:$PATH" bash scripts/run_tutorial.sh docs/tutorials/pyrite-in-20-minutes.md   # large: the 20-minute tutorial as a test (clones the demo KBs)
 cd web && npx playwright install chromium && npm run test:e2e             # large: browser; manual-only in CI while non-deterministic
 ```
 

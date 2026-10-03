@@ -117,6 +117,10 @@ DEFAULT_WAIT_CI_MINUTES = 15
 # it was checking.
 INSTALL_CHECK_EXTRAS = "all"
 
+# The second document step (c) runs against the install, after getting-started:
+# the tutorial a newcomer is sent to first (docs/tutorials/pyrite-in-20-minutes.md).
+TUTORIAL_20_MIN = "docs/tutorials/pyrite-in-20-minutes.md"
+
 CI_PASSED = "passed"
 CI_FAILED = "failed"
 CI_PENDING = "pending"
@@ -1072,6 +1076,9 @@ def step_release_layer(ctx: Context) -> None:
         print(f'    WOULD RUN: uv pip install --python <tmp>/bin/python "{spec}"')
         print(f"    WOULD RUN: <tmp>/bin/pyrite --version    (must contain {ctx.version})")
         print("    WOULD RUN: PYRITE_TUTORIAL_VENV=<tmp> scripts/run_tutorial.sh")
+        print(
+            f"    WOULD RUN: PYRITE_TUTORIAL_VENV=<tmp> scripts/run_tutorial.sh {TUTORIAL_20_MIN}"
+        )
         if ctx.docker_check:
             print(f"    WOULD RUN: docker build -t pyrite:{ctx.version} .")
         else:
@@ -1115,6 +1122,16 @@ def step_release_layer(ctx: Context) -> None:
         )
         _check_output([str(ctx.repo / "scripts" / "run_tutorial.sh")], cwd=ctx.repo, env=env)
         ctx.runner.note("getting-started tutorial ran clean against the install")
+        print(
+            f"    RUN: PYRITE_TUTORIAL_VENV={venv} scripts/run_tutorial.sh {TUTORIAL_20_MIN}"
+            "   (the 20-minute tutorial against the install)"
+        )
+        _check_output(
+            [str(ctx.repo / "scripts" / "run_tutorial.sh"), TUTORIAL_20_MIN],
+            cwd=ctx.repo,
+            env=env,
+        )
+        ctx.runner.note("Pyrite-in-20-minutes tutorial ran clean against the install")
     finally:
         shutil.rmtree(venv, ignore_errors=True)
 

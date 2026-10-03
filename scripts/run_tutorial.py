@@ -155,13 +155,18 @@ def extract_items(doc: Path) -> list[tuple[str, str]]:
 def stand_in_for_clone(target: Path) -> None:
     """What `git clone` + `python3 -m venv pyrite/.venv` would have left behind.
 
-    The checkout under test, as links to what a tutorial reads (its KB, skills
-    and docs) so nothing a tutorial does can write into the checkout, and an
-    `activate` that does nothing: the runner's own `pyrite` is already on PATH,
-    and a tutorial tells the reader to `source` it again in a new terminal.
+    The checkout under test, as what a tutorial reads: its KB and skills as a
+    COPY, because Pyrite writes into a KB directory it indexes (it creates
+    `kb/_templates/`), and a run must leave the checkout, and so a release's
+    clean-tree check, as it found it; the rest as links. And an `activate` that
+    does nothing: the runner's own `pyrite` is already on PATH, and a tutorial
+    tells the reader to `source` it again in a new terminal.
     """
     target.mkdir()
-    for name in ("kb", ".claude", "docs", "CLAUDE.md", "README.md"):
+    for name in ("kb", ".claude"):
+        if (REPO / name).is_dir():
+            shutil.copytree(REPO / name, target / name, symlinks=True)
+    for name in ("docs", "CLAUDE.md", "README.md"):
         if (REPO / name).exists():
             (target / name).symlink_to(REPO / name)
     activate = target / ".venv" / "bin" / "activate"
@@ -322,15 +327,17 @@ def check_index_health(kb_name: str, cwd: Path, env: dict[str, str]) -> None:
         text=True,
         timeout=600,
     )
-    if proc.returncode != 0:
-        raise TutorialError(
-            f"`pyrite index health` exited {proc.returncode}\n"
-            f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
-        )
+    # `index health` exits 1 when ANY registered KB is unhealthy -- the demo
+    # KBs declare fewer types than they use -- so a nonzero exit with a report
+    # is not by itself this tutorial's failure; the report is read per KB below.
+    # No report at all is.
     try:
         report = json.loads(proc.stdout)
     except json.JSONDecodeError:
-        raise TutorialError(f"`pyrite index health` did not print JSON:\n{proc.stdout}") from None
+        raise TutorialError(
+            f"`pyrite index health` exited {proc.returncode} without a JSON report\n"
+            f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+        ) from None
 
     # `checks` values are mostly lists of {kb, path, id} rows, but not all:
     # `broken_links` is a bare count. Only the row-shaped ones can be

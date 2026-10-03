@@ -647,6 +647,12 @@ jobs:
       - name: Getting-started tutorial (docs-as-tests)
         run: bash scripts/run_tutorial.sh
 
+      # The 20-minute tutorial clones the demo KBs from GitHub and indexes
+      # about 5,300 entries (no embeddings: PYRITE_AUTO_EMBED=0), so it runs
+      # after the cheaper getting-started one.
+      - name: Pyrite in 20 minutes tutorial (docs-as-tests)
+        run: bash scripts/run_tutorial.sh docs/tutorials/pyrite-in-20-minutes.md
+
   # ===========================================================================
   # verify-red (#352; redesigned in 0.26): do the PR's new and edited tests
   # fail without its change? scripts/verify_red_ci.py checks the merge base

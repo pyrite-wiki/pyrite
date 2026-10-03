@@ -43,7 +43,7 @@ You should see a version number. If the shell says `command not found`, you are 
 
 A knowledge base (a KB) is a folder of Markdown files with a little YAML at the top of each, plus a `kb.yaml` that says what types of entry it holds. Pyrite's own project knowledge lives in one: `pyrite/kb/`, with its design page, its architecture decision records (ADRs), topic maps and standards.
 
-For something to read it against, there are 26 more, written about the thinkers whose ideas Pyrite's design and process draw on: Goldratt, Reinertsen, the Poppendiecks, Deming, Toyota's production system and others. They are in a separate repository, under a CC BY-SA 4.0 licence.
+For something to read it against, there are 26 more, mostly written about the thinkers whose ideas Pyrite's design and process draw on: Goldratt, Reinertsen, the Poppendiecks, Deming, Toyota's production system and others. They are in a separate repository, under a CC BY-SA 4.0 licence.
 
 ```bash
 git clone https://github.com/pyrite-wiki/pyrite-kb-demo.git
@@ -66,7 +66,7 @@ Pyrite does not search your files directly. It builds an index (a SQLite file un
 pyrite index build
 ```
 
-This reads about 5,300 entries and writes their embeddings; on the machine this page was written on it took a little over two minutes, the download included. You will see a progress bar per KB, then `Embedded 5289 entries`.
+This reads about 5,300 entries and writes their embeddings; on the machine this page was written on it took a little over two minutes, the download included. You will see a progress bar per KB, then `Generating embeddings...` and a count of the entries embedded.
 
 ### Search from the terminal
 
@@ -80,7 +80,7 @@ You should see the `andon` entry first: Toyota's cord that lets any worker stop 
 pyrite search "too much going on at once slows everything down" -k reinertsen --mode semantic --fields id,title -n 5
 ```
 
-The entries that come back are about batch size and fast feedback, though none of them uses those words. Give the same sentence to keyword search with `--mode keyword` and you get broader, less relevant results.
+The entries that come back are about batch size and fast feedback, though the sentence uses neither phrase. Run it again with `--mode keyword` and compare: keyword search is looking for those words, not that meaning.
 
 ### Connect Claude Code
 
@@ -231,6 +231,8 @@ git add -A
 git commit -q -m "Start the WIP research KB"
 cd ..
 ```
+
+<!-- runner: health-kb wip-research -->
 
 (`git` needs your name and email set, as always. If the commit complains, run `git config --global user.name "Your Name"` and `git config --global user.email you@example.com`.)
 
