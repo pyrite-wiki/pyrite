@@ -84,6 +84,24 @@ def _isolate_pyrite_config_environment() -> None:
 _isolate_pyrite_config_environment()
 
 
+def _isolate_hypothesis_storage() -> None:
+    """Keep Hypothesis's cache out of the checkout.
+
+    Hypothesis writes ``<cwd>/.hypothesis/constants`` even when a test sets
+    ``database=None``, and a test that lists the repository root while other
+    xdist workers run then sees it appear (#708's CI, 2026-10-03).
+    tests/test_suite_writes_outside_checkout.py is the canary.
+    """
+    from hypothesis.configuration import set_hypothesis_home_dir
+
+    home = Path(tempfile.mkdtemp(prefix="pyrite-test-hypothesis-"))
+    atexit.register(shutil.rmtree, home, ignore_errors=True)
+    set_hypothesis_home_dir(home)
+
+
+_isolate_hypothesis_storage()
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
     """Mark experimental tests, from the one mapping (#657).

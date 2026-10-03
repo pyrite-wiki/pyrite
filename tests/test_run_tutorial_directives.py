@@ -20,6 +20,13 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 DOC = REPO / "docs" / "tutorials" / "pyrite-in-20-minutes.md"
 KNOWN_DIRECTIVES = {"expect-ids", "expect-text", "expect-exit", "seed", "health-kb"}
+# Caches pytest and pytest-cov write into the repository root during a run.
+# Hypothesis is not one: the root conftest moves its home out of the checkout.
+RUNNER_CACHES = (".pytest_cache", ".coverage")
+
+
+def _is_runner_cache(name: str) -> bool:
+    return name.startswith(RUNNER_CACHES)
 
 
 @pytest.fixture(scope="module")
@@ -110,7 +117,13 @@ class TestStandInForTheClone:
         )
         assert (target / ".claude" / "skills").is_dir()
         assert (target / ".venv" / "bin" / "activate").is_file()
-        assert sorted(p.name for p in REPO.iterdir()) == before
+        # Other xdist workers write the test runner's own caches into the root
+        # while this runs (coverage data files at worker exit); those are not
+        # the tutorial's writes, so they are left out of the comparison.
+        after = sorted(p.name for p in REPO.iterdir())
+        assert [n for n in after if not _is_runner_cache(n)] == [
+            n for n in before if not _is_runner_cache(n)
+        ]
 
 
 @pytest.fixture(scope="module")
