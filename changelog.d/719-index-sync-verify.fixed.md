@@ -1,0 +1,1 @@
+pyrite index sync --verify hashes files whose size and modification time still match the index, then reindexes content changes. The option is foreground-only and opt-in; ordinary sync keeps its existing fast path.
