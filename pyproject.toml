@@ -218,3 +218,14 @@ ignore = [
 "tests/*" = ["F401", "F841", "E402", "I001", "PT011", "PT012", "PT018", "PT019"]
 # PT is pytest-only style; turn it off everywhere that isn't a test file.
 "!tests/**" = ["PT"]
+
+# Pyright is here for code navigation (go to definition, find references, call
+# hierarchy) through the editor or Claude Code's LSP tool, not as a type gate.
+# It resolves imports from the worktree's own .venv. typeCheckingMode "off"
+# keeps type resolution for navigation but reports no diagnostics: the code is
+# not pyright-clean (418 errors under "basic", 2026-10-03), and an agent should
+# not get unrelated type errors pushed into its context after every edit.
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "off"
