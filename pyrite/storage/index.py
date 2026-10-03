@@ -618,7 +618,16 @@ class IndexManager:
             stat_changed = known is None or _file_changed(known[1], stat)
             if known and not must_read and not stat_changed and verify:
                 current_hash = _hash_file(file_path)
-                must_read = current_hash is None or current_hash != known[1].get("content_hash")
+                if current_hash is None:
+                    error = (
+                        "Could not hash file for verification; keeping the existing indexed entry"
+                    )
+                    plan.malformed.append({"path": str(file_path), "error": error})
+                    logger.warning("%s: %s", error, file_path)
+                    claim = _Claim(rel, file_path, known[0], stat)
+                    plan.holders.setdefault(claim.entry_id, []).append(claim)
+                    continue
+                must_read = current_hash != known[1].get("content_hash")
             if known and not must_read and not stat_changed:
                 claim = _Claim(rel, file_path, known[0], stat)
             else:

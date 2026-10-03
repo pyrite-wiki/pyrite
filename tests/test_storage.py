@@ -708,6 +708,47 @@ class TestIndexManager:
         )
         assert row[0] == "Event X"
 
+    def test_sync_verify_keeps_index_when_file_cannot_be_read(self, setup, monkeypatch):
+        """An unavailable verification read must not retire a known index row."""
+        from pyrite.storage import index as index_module
+
+        index_mgr = setup["index_mgr"]
+        index_mgr.index_kb("test-kb")
+        target = sorted(setup["kb_path"].rglob("*.md"))[0]
+        original_hash = index_module._hash_file
+
+        def unavailable_hash(path):
+            if path == target:
+                return None
+            return original_hash(path)
+
+        original_load = KBRepository.load_entry_from_file
+
+        def unavailable_load(repo, path):
+            if path == target:
+                raise PermissionError("simulated unreadable file")
+            return original_load(repo, path)
+
+        monkeypatch.setattr(index_module, "_hash_file", unavailable_hash)
+        monkeypatch.setattr(KBRepository, "load_entry_from_file", unavailable_load)
+
+        results = index_mgr.sync_incremental("test-kb", verify=True)
+        row = (
+            setup["db"]
+            ._raw_conn.execute(
+                "SELECT id FROM entry WHERE file_path = ?",
+                (str(target),),
+            )
+            .fetchone()
+        )
+
+        assert row is not None
+        assert results["removed"] == 0
+        assert any(
+            item["path"] == str(target) and "hash" in item["error"].lower()
+            for item in results["malformed"]
+        )
+
     def test_check_health_detects_same_second_content_edit(self, setup):
         """A file edited without its mtime advancing (same-second double
         edit, or a filesystem with coarse mtime resolution) must still show
