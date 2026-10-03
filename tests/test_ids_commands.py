@@ -411,6 +411,8 @@ def test_files_pin_cannot_change_safely_are_reported_and_untouched(kb):
     # flow-mapping and indented frontmatter: a top-level `id:` line would not
     # parse there, so the re-parse check refuses them before anything is written
     assert skipped == {"empty.md", "bad.md", "nofm.md", "flowmap.md", "indented.md"}
+    reasons = {r["path"]: r["reason"] for r in data["skipped"]}
+    assert "empty id: line" in reasons["empty.md"], reasons["empty.md"]
     assert _numstat(root) == {"ok.md": ("1", "0")}
 
 
@@ -496,3 +498,13 @@ def test_files_with_no_title_share_the_hash_id_and_are_a_collision(kb):
     assert result.exit_code == 0, result.output
     assert _added_lines(root, "a.md") == [f"id: {group['id']}"]
     assert _added_lines(root, "b.md") == ["id: note-b"]
+
+
+def test_the_reparse_check_refuses_a_line_that_reads_back_as_something_else(monkeypatch):
+    """Defence behind the quoting rule: if the added line ever read back as
+    another value (``id: 123`` is an int), the file is refused, not written."""
+    from pyrite.services import id_pin_service
+
+    monkeypatch.setattr(id_pin_service, "id_line", lambda eid, eol="\n": f"id: {eid}{eol}")
+    with pytest.raises(id_pin_service.PinRefusedError):
+        id_pin_service.insert_id_line("---\ntitle: '123'\n---\n", "123")
