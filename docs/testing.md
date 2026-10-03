@@ -153,3 +153,38 @@ The `verify-red` job waits for `test`, whatever its result, and writes
 PR has no code change, or no new or edited test. `diff_coverage` is `null`
 when the test job produced no report. To collect the file:
 `gh run download <run-id> -n test-evidence`.
+
+## Experimental tests and the ratchet
+
+A third CI job, `experimental`, is not about the PR's own tests: it keeps the
+tests of experimental features (#657) running without letting them block a
+merge.
+
+- **What is experimental**: the surfaces `kb/designs/alpha-supported-surface.md`
+  marks experimental. `tests/experimental_surface.py` maps them to test paths
+  and node ids, and the root `conftest.py` applies the `experimental` marker
+  from it. Security properties are never experimental; that file lists them
+  and `tests/test_experimental_surface.py` checks both lists against a real
+  collection.
+- **The gate**: the `test` job (and the merge queue's full matrix) runs
+  `-m "not slow and not e2e and not experimental"`. `gate` needs `test`, not
+  `experimental`.
+- **The ratchet**: `experimental` runs `-m "experimental and not slow and not
+  e2e"` on Python 3.12 with Postgres, on every backend PR and every push to
+  `dev`, and hands the JUnit report to `scripts/experimental_ratchet.py check`.
+  The job is red only for a failure missing from
+  `tests/experimental_known_failures.txt`, or for a PR that adds a line to it:
+  the list can only shrink. A listed test that passes, or no longer exists, is
+  named in the job summary for removal.
+- **Never silently**: on a push to `dev`, the `experimental-issues` job (the
+  only job with `issues: write`, using the workflow's token) opens an
+  `experimental-broken` issue per test file with a new failure, naming the
+  tests, the commit and the run, or comments on the open one with the tests it
+  does not name yet. On a PR the news is in the job summary only.
+
+Run either set locally:
+
+```bash
+.venv/bin/pytest tests/ extensions/ -n 4 -m "not slow and not e2e and not experimental"
+.venv/bin/pytest tests/ extensions/ -n 4 -m "experimental and not slow and not e2e"
+```

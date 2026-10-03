@@ -5,6 +5,9 @@
 [CONTRIBUTING.md, "Running the tests"](../../../CONTRIBUTING.md#running-the-tests).
 In short: medium tests through the real wiring are the default; run
 `scripts/test-affected --run` while you work; the PR's CI runs the full suite.
+Tests of experimental surfaces carry the `experimental` marker, applied from
+`tests/experimental_surface.py`; they run in their own non-blocking job and
+locally with `--experimental` (same section).
 
 ## 8-Section Extension Test Structure
 

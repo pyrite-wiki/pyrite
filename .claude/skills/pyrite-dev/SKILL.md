@@ -103,6 +103,13 @@ work" is not evidence.
 
 - A test meant to pass without the fix gets `@pytest.mark.control(reason="...")`;
   a bare marker is rejected.
+- `experimental` marks tests of experimental surfaces (#657). It is applied
+  from `tests/experimental_surface.py`, never by hand. Those tests do not block
+  a merge or a push; CI's `experimental` job runs them against
+  `tests/experimental_known_failures.txt`, which can only shrink. Run them with
+  `scripts/test-affected --run --experimental`. A security test is never
+  experimental: list a new one in that file's `NEVER_EXPERIMENTAL` if its path
+  is mapped experimental.
 - A `fix:` branch whose line shows **0 red, or only import-only reds, is not
   done**: write a test that fails on the bug's behaviour, or say why none can.
 - Commit each passing step as you reach it, with the reason in the message.

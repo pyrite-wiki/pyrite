@@ -1306,3 +1306,19 @@ class TestExperimentalLayer:
         script = (REPO / "scripts" / "test-affected").read_text()
         assert "not experimental" in script
         assert '"PYRITE_PUSH_EXPERIMENTAL"' in script
+
+    @pytest.mark.parametrize(
+        "doc",
+        ["CONTRIBUTING.md", "docs/testing.md", ".claude/skills/pyrite-dev/SKILL.md"],
+    )
+    def test_the_docs_say_what_the_marker_means(self, doc):
+        text = (REPO / doc).read_text()
+        assert "`experimental`" in text or "experimental marker" in text
+        assert "tests/experimental_surface.py" in text
+        assert "experimental_known_failures.txt" in text
+
+    def test_contributing_shows_how_to_run_each_set(self):
+        text = (REPO / "CONTRIBUTING.md").read_text()
+        assert '-m "not slow and not e2e and not experimental"' in text
+        assert '-m "experimental and not slow and not e2e"' in text
+        assert "PYRITE_PUSH_EXPERIMENTAL" in text and "--experimental" in text

@@ -219,6 +219,36 @@ set; and it switches to the full suite when you touch `conftest.py`,
 `pyrite/services/kb_service.py` selects 167 of the 281 test files that
 execute it on import. CI catches the rest.
 
+**Experimental tests** (#657). A red required check means the core broke.
+Tests of the surfaces `kb/designs/alpha-supported-surface.md` calls
+experimental (the extensions, tasks, REST and the web UI, `/site`, `/ws`, the
+AI endpoints, MCP prompts and resources and the non-core tools, Postgres, the
+overlay backend and worktrees, the `repo`/`auth`/`extension`/`export`/
+`collections` CLI groups) carry the `experimental` marker. Nobody writes it
+by hand: `tests/experimental_surface.py` maps paths and node ids to surfaces,
+and the root `conftest.py` applies it. Security properties (authorization,
+read scoping, containment of paths, credential handling, the characterization
+oracle, escaping) are never experimental, whatever surface they go through;
+the same file lists them, and a test checks the mapping against a real
+collection.
+
+```bash
+.venv/bin/pytest tests/ extensions/ -n 4 -m "not slow and not e2e and not experimental"   # the core, as CI's gating job runs it
+.venv/bin/pytest tests/ extensions/ -n 4 -m "experimental and not slow and not e2e"       # the experimental set
+scripts/test-affected --run --experimental      # the pre-push selection, experimental tests included
+```
+
+A plain `pytest` runs both. `scripts/test-affected --run`, and so the
+pre-push hook, runs the core only (`PYRITE_PUSH_EXPERIMENTAL=1` or
+`--experimental` includes the rest). In CI the `test` job, which `gate`
+needs, runs the core; the `experimental` job runs the rest on every PR and on
+`dev`, does not block a merge, and is red only for news: a failure missing
+from `tests/experimental_known_failures.txt`, or a PR that adds to that list
+(it can only shrink). On `dev` a new failure opens an `experimental-broken`
+issue per test file. A new test of an experimental surface needs no marker if
+its path is mapped; a new file for one needs a line in
+`tests/experimental_surface.py`.
+
 **Each tree is tested once.** A `--run` that passes on a clean tree (nothing
 uncommitted in tracked files, no untracked `.py` file, and no untracked or
 gitignored file under `pyrite/`, `tests/`, `extensions/`, `kb/` or `scripts/`
