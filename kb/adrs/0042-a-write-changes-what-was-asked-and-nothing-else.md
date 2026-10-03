@@ -510,6 +510,13 @@ writes it into the file. (This is the same property as ADR-0045 decision 3.)
 to just surface conflicts and make them easy to resolve", then "go with
 optimistic plus the momentary lock".*
 
+- **Scope: local file changes between commits.** The usual way changes to a
+  KB are shared is git: a pull request, a patch, a branch rebased and merged,
+  a commit. There git's own merge and conflict tools are the conflict surface,
+  and Pyrite does not reinvent them (ADR-0044 builds on that). This decision
+  covers only the narrower case of several writers (agents, the CLI, a server,
+  a person's editor) changing files in one working tree before the next
+  commit (maintainer, 2026-10-03).
 - **Optimistic concurrency.** No lock is held while a caller reads, decides
   and sends its change (server, CLI and stdio MCP share the files). Every
   write carries the base it was made against: the content hash, or for a field

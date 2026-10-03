@@ -83,6 +83,13 @@ contracts are alpha.
 - Not a site generator. Publishing is an export. The built-in `/site`
   ([[adr-0023]]) is experimental.
 - Not a formatter. It does not normalise or repair files unless asked to.
+- Not a database with instant indexes. Search, lists and links come from the
+  index, which catches up with the files after a write or a hand edit; a
+  single-entry read reads the file. A result may lag a change made a moment
+  ago: the index may lag the files.
+- Not a replacement for git. Changes are shared as commits, branches, patches
+  and pull requests; Pyrite's own conflict handling covers only local edits
+  between commits.
 - Not the owner of your repository, your config, or another program's files.
 - Not yet a service for many users who do not trust each other.
 
