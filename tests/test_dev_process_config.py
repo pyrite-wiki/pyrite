@@ -1220,3 +1220,89 @@ class TestDevPushReusesTheMergeQueuesPass:
 
     def test_garbage_from_the_api_runs_everything(self, run_step):
         assert run_step('echo \'{"message": "x"}\'') == "passed=false\n"
+
+
+class TestExperimentalLayer:
+    """A red required check means the core broke (#657).
+
+    Tests of experimental surfaces (tests/experimental_surface.py) are
+    deselected from `test`, the job `gate` needs, and run in `experimental`,
+    which `gate` does not need. That job fails only on a failure missing from
+    tests/experimental_known_failures.txt, so it is red only for news. On a
+    push to `dev` a separate job, the only one with `issues: write`, files the
+    news as an `experimental-broken` issue; on a pull request the news goes to
+    the job summary only.
+    """
+
+    NOT_EXPERIMENTAL = '-m "not slow and not e2e and not experimental"'
+
+    def _runs(self, job: dict) -> str:
+        return "\n".join(str(s.get("run", "")) for s in job["steps"])
+
+    def test_the_gating_job_deselects_experimental_tests(self, ci):
+        assert self.NOT_EXPERIMENTAL in self._runs(ci["jobs"]["test"])
+
+    @pytest.mark.control(reason="a still-true guard: #657 must not change it")
+    def test_the_gating_matrix_is_unchanged(self, ci):
+        # The merge queue's full matrix covers the core, as before.
+        matrix = str(ci["jobs"]["test"]["strategy"]["matrix"]["python-version"])
+        assert "3.11" in matrix and "3.13" in matrix and "pull_request" in matrix
+
+    @pytest.mark.control(reason="a still-true guard: #657 must not change it")
+    def test_gate_needs_neither_experimental_job(self, ci):
+        needs = set(ci["jobs"]["gate"]["needs"])
+        assert "experimental" not in needs and "experimental-issues" not in needs
+
+    def test_the_experimental_job_runs_on_pull_requests_and_dev(self, ci):
+        job = ci["jobs"]["experimental"]
+        cond = str(job["if"])
+        assert "changes" in job["needs"]
+        assert "github.event_name == 'pull_request'" in cond
+        assert "refs/heads/dev" in cond
+        assert "merge_group" not in cond, "the queue proves the core; this is not a gate"
+
+    def test_the_experimental_job_runs_the_marker_into_a_junit_report(self, ci):
+        runs = self._runs(ci["jobs"]["experimental"])
+        assert '-m "experimental and not slow and not e2e"' in runs
+        assert "junit_family=xunit1" in runs and "--junitxml=experimental.xml" in runs
+        assert "--continue-on-collection-errors" in runs
+
+    def test_only_the_ratchet_decides_the_job(self, ci):
+        steps = ci["jobs"]["experimental"]["steps"]
+        (tests,) = [s for s in steps if "pytest" in str(s.get("run", ""))]
+        assert tests.get("continue-on-error") is True or "|| true" in tests["run"]
+        (check,) = [s for s in steps if "experimental_ratchet.py check" in str(s.get("run", ""))]
+        assert "tests/experimental_known_failures.txt" in check["run"]
+        assert "$GITHUB_STEP_SUMMARY" in check["run"]
+        assert "--base-known" in check["run"], "the known-failures list can only shrink"
+        assert not check.get("continue-on-error")
+
+    def test_the_experimental_job_has_postgres_like_test(self, ci):
+        assert ci["jobs"]["experimental"]["services"] == ci["jobs"]["test"]["services"]
+
+    def test_the_experimental_job_cannot_write_issues(self, ci):
+        perms = ci["jobs"]["experimental"].get("permissions", {})
+        assert perms.get("issues", "none") in ("none", "read")
+
+    def test_issues_are_filed_only_on_a_push_to_dev(self, ci):
+        job = ci["jobs"]["experimental-issues"]
+        cond = str(job["if"])
+        assert "github.event_name == 'push'" in cond and "refs/heads/dev" in cond
+        assert "experimental" in job["needs"]
+        assert job["permissions"] == {"contents": "read", "issues": "write"}
+        runs = self._runs(job)
+        assert "experimental_ratchet.py file-issues" in runs
+        envs = [s.get("env", {}) for s in job["steps"]]
+        tokens = {v for e in envs for k, v in e.items() if "TOKEN" in k}
+        assert tokens == {"${{ github.token }}"}, "no secret beyond the workflow token"
+
+    def test_no_other_job_may_write_issues(self, ci):
+        writers = [
+            n for n, j in ci["jobs"].items() if j.get("permissions", {}).get("issues") == "write"
+        ]
+        assert writers == ["experimental-issues"]
+
+    def test_the_pre_push_hook_runs_the_core_only(self):
+        script = (REPO / "scripts" / "test-affected").read_text()
+        assert "not experimental" in script
+        assert '"PYRITE_PUSH_EXPERIMENTAL"' in script

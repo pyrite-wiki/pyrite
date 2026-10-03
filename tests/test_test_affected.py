@@ -46,6 +46,7 @@ def _not_under_a_push(monkeypatch):
     monkeypatch.delenv("PRE_COMMIT_FROM_REF", raising=False)
     monkeypatch.delenv("PRE_COMMIT_TO_REF", raising=False)
     monkeypatch.delenv("PYRITE_PUSH_FULL", raising=False)
+    monkeypatch.delenv("PYRITE_PUSH_EXPERIMENTAL", raising=False)
 
 
 def _write(root: Path, rel: str, text: str = "") -> None:
@@ -564,6 +565,24 @@ class TestCLI:
         out = self._run(repo, "--run", "--dry-run", "-n", "lots", "--files", "pyrite/b.py")
         assert out.returncode != 0
         assert "auto" in out.stderr
+
+    def test_run_deselects_experimental_tests_by_default(self, repo):
+        """#657: the pre-push hook runs the core; experimental tests do not
+        block a push any more than they block a merge."""
+        out = self._run(repo, "--run", "--dry-run", "--files", "pyrite/b.py")
+        assert "-m 'not slow and not e2e and not experimental'" in out.stdout
+
+    @pytest.mark.control(
+        reason="with the variable, the base also runs everything: it never filtered"
+    )
+    @pytest.mark.parametrize("how", [("--experimental",), ()])
+    def test_experimental_tests_are_one_flag_or_variable_away(self, repo, how, monkeypatch):
+        if not how:
+            monkeypatch.setenv("PYRITE_PUSH_EXPERIMENTAL", "1")
+        out = self._run(repo, "--run", "--dry-run", *how, "--files", "pyrite/b.py")
+        assert out.returncode == 0, out.stderr
+        assert "not experimental" not in out.stdout
+        assert "tests/test_b.py" in out.stdout
 
     def test_full_flag_forces_the_full_suite(self, repo):
         out = self._run(repo, "--run", "--dry-run", "--full", "-n", "3", "--files", "pyrite/b.py")

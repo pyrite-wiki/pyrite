@@ -36,6 +36,12 @@ A change under extensions/*/src/ also selects every test that mentions
 ``get_registry``, ``entry_points`` or ``PluginRegistry``: core tests reach
 plugins through entry points, which no import names.
 
+Experimental tests (#657) are deselected: ``--run`` passes ``-m "not slow and
+not e2e and not experimental"``, the gating CI job's expression, so a push is
+held to what a merge is. ``--experimental`` or ``PYRITE_PUSH_EXPERIMENTAL=1``
+runs them too. A pass is stamped per scope: a core-only pass never vouches for
+a run that includes experimental tests.
+
 Known blind spots, by design (CI covers them): autouse fixtures are not
 attributed to the tests they wrap. Importing ``pkg.x`` executes
 ``pkg/__init__.py``, and so everything that ``__init__`` imports; that
@@ -102,6 +108,7 @@ import ast
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -747,6 +754,11 @@ _OUTPUT_ONLY_ARGS = {
 _OUTPUT_ONLY_PREFIXES = ("--tb=", "--durations=", "--color=", "-r", "--capture=")
 
 
+# The gating CI job's marker expression (#657). It replaces pyproject's
+# addopts -m, so it restates "not slow and not e2e".
+CORE_ONLY = "not slow and not e2e and not experimental"
+
+
 def _truthy(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes"}
 
@@ -959,6 +971,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--committed", action="store_true")
     parser.add_argument("--files", nargs="*", help="changed paths (skip git)")
     parser.add_argument("--full", action="store_true", help="select the full suite")
+    parser.add_argument(
+        "--experimental",
+        action="store_true",
+        help="with --run: include experimental tests (PYRITE_PUSH_EXPERIMENTAL=1)",
+    )
     parser.add_argument("--helper-threshold", type=int, default=DEFAULT_HELPER_THRESHOLD)
     parser.add_argument("--dry-run", action="store_true", help="with --run: print the command only")
     parser.add_argument(
@@ -1011,7 +1028,9 @@ def main(argv: list[str] | None = None) -> int:
     if opts.run:
         extra = [a for a in opts.pytest_extra if a != "--"]
         python = _python(root)
-        cmd = [python, "-m", "pytest", *args, "-q", "--tb=short", *extra]
+        with_experimental = opts.experimental or _truthy("PYRITE_PUSH_EXPERIMENTAL")
+        scope = [] if with_experimental else ["-m", CORE_ONLY]
+        cmd = [python, "-m", "pytest", *args, *scope, "-q", "--tb=short", *extra]
         label = (
             selection.full
             and f"full suite: {selection.full}"
@@ -1019,10 +1038,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"test-affected: {label}", file=sys.stderr)
         if opts.dry_run:
-            print(" ".join(cmd))
+            print(shlex.join(cmd))
             return 0
         needed: str | list[str] = "full" if selection.full is not None else args[2:]
         version = python_version(python)
+        if version is not None and with_experimental:
+            # Its own stamp key: neither scope's pass vouches for the other.
+            version = f"{version}+experimental"
         # Stamps only with the worktree's own venv. The fallback interpreter
         # belongs to another checkout, whose editable installs import THAT
         # checkout's code (#210): its pass says nothing about this tree, and

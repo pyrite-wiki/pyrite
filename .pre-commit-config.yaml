@@ -11,8 +11,11 @@
 #   commit-msg `fix:` commits must touch tests/.
 #   pre-push   core + affected tests (scripts/test-affected), only when the
 #              pushed range touches code, and not again on a tree whose run
-#              already passed; PYRITE_PUSH_FULL=1 for everything.
-#   CI         the authority. Full suite + everything above, on every push and PR.
+#              already passed; PYRITE_PUSH_FULL=1 for everything. Experimental
+#              tests (#657) are deselected, as in the gating CI job;
+#              PYRITE_PUSH_EXPERIMENTAL=1 includes them.
+#   CI         the authority. Full suite + everything above, on every push and PR;
+#              experimental tests in their own non-blocking job.
 #
 # The commit stage must stay fast because pre-commit stashes EVERY unstaged edit
 # in the working tree while commit hooks run. Several sessions share this tree

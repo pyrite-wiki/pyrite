@@ -372,6 +372,11 @@ jobs:
         # tracer; --cov-fail-under=0 because [tool.coverage.report] fail_under
         # would otherwise fail this step, and with it `gate`. Every other leg
         # and every push runs without it.
+        #
+        # The core only (#657): tests of experimental surfaces carry the
+        # `experimental` marker (tests/experimental_surface.py) and run in the
+        # `experimental` job, which `gate` does not need. The -m here replaces
+        # pyproject's addopts -m, so it restates "not slow and not e2e".
         env:
           PYRITE_TEST_PG_URL: postgresql://postgres:postgres@localhost:5432/pyrite_test
           COVER: ${{ github.event_name == 'pull_request' && matrix.python-version == '3.12' }}
@@ -382,7 +387,7 @@ jobs:
             cov=(--cov=pyrite --cov-report=xml --cov-fail-under=0)
             for d in extensions/*/src/*/; do cov+=("--cov=$d"); done
           fi
-          pytest -n auto \
+          pytest -n auto -m "not slow and not e2e and not experimental" \
             -W "error::DeprecationWarning:pyrite" \
             -W "error::DeprecationWarning:tests" \
             ${cov[@]+"${cov[@]}"}
@@ -710,6 +715,134 @@ jobs:
           path: test-evidence.json
           if-no-files-found: ignore
           retention-days: 90
+
+  # ===========================================================================
+  # Experimental (#657): "a red check means the core broke; an experimental
+  # feature can be broken without stopping the core, but never silently."
+  #
+  # Runs the tests tests/experimental_surface.py marks `experimental` (the
+  # surfaces kb/designs/alpha-supported-surface.md calls experimental), on
+  # every PR that touches the backend and on every push to dev. NOT in
+  # `gate`'s needs and not a required check, so it never blocks a merge. It
+  # is red only for news: scripts/experimental_ratchet.py fails it on a
+  # failure missing from tests/experimental_known_failures.txt, or when a PR
+  # grows that file (it can only shrink), and lists in the summary a known
+  # failure that now passes. Not in the merge queue: the queue proves the
+  # core. One interpreter: breadth is the core's job.
+  # ===========================================================================
+  experimental:
+    needs: changes
+    if: >-
+      (github.event_name == 'pull_request' && needs.changes.outputs.backend == 'true')
+      || (github.event_name == 'push' && github.ref == 'refs/heads/dev')
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The Postgres backend is experimental, so its conformance legs run here.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pyrite_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The base's known-failures file, to check the list only shrank.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            extensions/*/pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          uv pip install --system -e ".[all,postgres]"
+          for ext in extensions/*/; do
+            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -e "$ext"; fi
+          done
+
+      # Never fails the job itself: the ratchet below reads the report and
+      # decides. xunit1 records each case's file, from which the ratchet
+      # rebuilds the node id; a module that fails to import is reported as a
+      # failure of that file instead of stopping the run.
+      - name: Run the experimental tests
+        continue-on-error: true
+        env:
+          PYRITE_TEST_PG_URL: postgresql://postgres:postgres@localhost:5432/pyrite_test
+          HF_HUB_OFFLINE: "1"
+        run: >-
+          pytest -n auto -m "experimental and not slow and not e2e"
+          --continue-on-collection-errors
+          -o junit_family=xunit1 --junitxml=experimental.xml
+
+      - name: Compare with the known failures
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          git show "$BASE_SHA:tests/experimental_known_failures.txt" > /tmp/base-known.txt 2>/dev/null \
+            || rm -f /tmp/base-known.txt
+          python scripts/experimental_ratchet.py check \
+            --junit experimental.xml \
+            --known tests/experimental_known_failures.txt \
+            --base-known /tmp/base-known.txt \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --result-json experimental-result.json
+
+      - name: Keep the result for issue filing
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: experimental-result
+          path: |
+            experimental-result.json
+            experimental.xml
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # On a push to dev only: each test file with a new experimental failure gets
+  # an `experimental-broken` issue (or a comment on the open one) naming the
+  # tests, the commit and the run. A separate job so that the only grant of
+  # issues: write is here, on dev pushes, with the workflow's own token; a
+  # pull request's run reports in its job summary and can write nothing.
+  experimental-issues:
+    needs: experimental
+    if: ${{ failure() && github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # gh label create / issue create / issue comment.
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: experimental-result
+
+      - name: File or update experimental-broken issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          python3 scripts/experimental_ratchet.py file-issues
+          --result-json experimental-result.json
+          --sha "$GITHUB_SHA"
+          --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
   # ===========================================================================
   # The one required check. A skipped matrix job reports as `test`, not
