@@ -230,6 +230,8 @@ FAKE_GH = textwrap.dedent(
     log = os.environ["FAKE_GH_LOG"]
     with open(log, "a") as fh:
         fh.write(json.dumps(sys.argv[1:]) + "\\n")
+    if os.environ.get("FAKE_GH_FAIL"):
+        sys.exit("gh: HTTP 403")
     state = json.load(open(os.environ["FAKE_GH_STATE"]))
     args = sys.argv[1:]
     if args[:2] == ["issue", "list"]:
@@ -243,7 +245,8 @@ FAKE_GH = textwrap.dedent(
 
 
 @pytest.fixture
-def fake_gh(tmp_path):
+def gh_env(tmp_path):
+    """A fake `gh` on PATH: (env for a subprocess, a reader of its calls)."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     gh = bin_dir / "gh"
@@ -252,10 +255,31 @@ def fake_gh(tmp_path):
     log = tmp_path / "gh.log"
     state = tmp_path / "state.json"
 
-    def run(result: dict, open_issues: list | None = None, views: dict | None = None, *extra):
+    def env(open_issues: list | None = None, views: dict | None = None, fail: bool = False):
         state.write_text(json.dumps({"open": open_issues or [], "views": views or {}}))
+        out = {
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "FAKE_GH_LOG": str(log),
+            "FAKE_GH_STATE": str(state),
+        }
+        if fail:
+            out["FAKE_GH_FAIL"] = "1"
+        return out
+
+    def calls():
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    return env, calls
+
+
+@pytest.fixture
+def fake_gh(tmp_path, gh_env):
+    make_env, calls = gh_env
+
+    def run(result, open_issues: list | None = None, views: dict | None = None, *extra):
         result_json = tmp_path / "result.json"
-        result_json.write_text(json.dumps(result))
+        if result is not None:
+            result_json.write_text(json.dumps(result))
         proc = _run(
             "file-issues",
             "--result-json",
@@ -265,14 +289,9 @@ def fake_gh(tmp_path):
             "--run-url",
             "https://github.com/o/r/actions/runs/1",
             *extra,
-            env={
-                "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-                "FAKE_GH_LOG": str(log),
-                "FAKE_GH_STATE": str(state),
-            },
+            env=make_env(open_issues, views),
         )
-        calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
-        return proc, calls
+        return proc, calls()
 
     return run
 
@@ -335,3 +354,129 @@ class TestFileIssues:
         proc, calls = fake_gh(_result("tests/test_a.py::test_x"), None, None, "--dry-run")
         assert proc.returncode == 0 and calls == []
         assert "experimental-broken: tests/test_a.py" in proc.stdout
+
+
+# -- Property 1: never silently (#657 review) ------------------------------
+
+
+class TestAnIncompleteRunIsNotAPass:
+    """The ratchet knows pytest's exit status: an interrupted, crashed or
+    timed-out run, or a missing report, is reported, never green."""
+
+    def _check(self, tmp_path, junit, *extra):
+        known = _known(tmp_path, "# none")
+        result_json = tmp_path / "result.json"
+        proc = _run(
+            "check", "--junit", str(junit), "--known", str(known),
+            "--result-json", str(result_json), *extra,
+        )  # fmt: skip
+        return proc, json.loads(result_json.read_text())
+
+    @pytest.mark.parametrize("code", ["2", "3", "4", "5", "", "137"])
+    def test_a_run_that_did_not_complete_fails(self, tmp_path, code):
+        junit = _junit(tmp_path, _case("tests.test_a", "test_x", "tests/test_a.py"))
+        proc, result = self._check(tmp_path, junit, "--pytest-exit", code)
+        assert proc.returncode == 2, proc.stdout
+        assert result["incomplete"]
+
+    @pytest.mark.parametrize("code", ["0", "1"])
+    def test_a_completed_run_is_judged_on_its_report(self, tmp_path, code):
+        junit = _junit(tmp_path, _case("tests.test_a", "test_x", "tests/test_a.py"))
+        proc, result = self._check(tmp_path, junit, "--pytest-exit", code)
+        assert proc.returncode == 0 and result["incomplete"] is None
+
+    def test_no_report_still_writes_a_result_to_file(self, tmp_path):
+        proc, result = self._check(tmp_path, tmp_path / "absent.xml", "--pytest-exit", "0")
+        assert proc.returncode == 2
+        assert "no JUnit report" in result["incomplete"]
+
+
+class TestAFailureAlreadyFiledIsNotNews:
+    """Once dev has an open experimental-broken issue naming a test, that test
+    failing on a PR (or the next dev push) is reported as filed, not new: red
+    keeps meaning news. A filed test that passes again is named so its issue
+    can be closed."""
+
+    ISSUE = {
+        "number": 42,
+        "title": "experimental-broken: tests/test_a.py",
+        "body": "- `tests/test_a.py::test_x`\n",
+        "comments": [{"body": "- `tests/test_a.py::test_y`"}],
+    }
+
+    def _check(self, tmp_path, gh_env, junit, **gh):
+        make_env, calls = gh_env
+        known = _known(tmp_path, "# none")
+        result_json = tmp_path / "result.json"
+        proc = _run(
+            "check", "--junit", str(junit), "--known", str(known), "--open-issues",
+            "--pytest-exit", "1", "--result-json", str(result_json),
+            env=make_env(**gh),
+        )  # fmt: skip
+        return proc, json.loads(result_json.read_text()), calls()
+
+    def test_a_filed_failure_is_not_new(self, tmp_path, gh_env):
+        junit = _junit(
+            tmp_path,
+            _case("tests.test_a", "test_x", "tests/test_a.py", "failed"),
+            _case("tests.test_a", "test_y", "tests/test_a.py", "failed"),
+        )
+        proc, result, calls = self._check(tmp_path, gh_env, junit, open_issues=[self.ISSUE])
+        assert proc.returncode == 0, proc.stdout
+        assert result["new"] == []
+        assert result["filed"] == {"tests/test_a.py::test_x": 42, "tests/test_a.py::test_y": 42}
+        assert "#42" in proc.stdout
+        (listing,) = [c for c in calls if c[:2] == ["issue", "list"]]
+        assert "body,comments" in ",".join(listing) or "number,title,body,comments" in listing
+
+    def test_an_unfiled_failure_is_still_new(self, tmp_path, gh_env):
+        junit = _junit(tmp_path, _case("tests.test_b", "test_z", "tests/test_b.py", "failed"))
+        proc, result, _ = self._check(tmp_path, gh_env, junit, open_issues=[self.ISSUE])
+        assert proc.returncode == 1 and result["new"] == ["tests/test_b.py::test_z"]
+
+    def test_a_filed_test_that_passes_again_is_named_for_closing(self, tmp_path, gh_env):
+        junit = _junit(tmp_path, _case("tests.test_a", "test_x", "tests/test_a.py"))
+        proc, result, _ = self._check(tmp_path, gh_env, junit, open_issues=[self.ISSUE])
+        assert result["filed_now_passing"] == {"tests/test_a.py::test_x": 42}
+        assert "close" in proc.stdout.lower()
+
+    def test_issues_that_cannot_be_read_make_every_failure_new(self, tmp_path, gh_env):
+        """Fail loud: an API error must not hide a failure as 'filed'."""
+        junit = _junit(tmp_path, _case("tests.test_a", "test_x", "tests/test_a.py", "failed"))
+        proc, result, _ = self._check(tmp_path, gh_env, junit, open_issues=[self.ISSUE], fail=True)
+        assert proc.returncode == 1 and result["new"] == ["tests/test_a.py::test_x"]
+        assert "could not read" in proc.stdout
+
+
+class TestEveryKindOfNewsIsFiledOnDev:
+    def test_a_grown_known_failures_list_is_filed(self, fake_gh):
+        result = {**_result(), "grown": ["tests/test_a.py::test_x"]}
+        proc, calls = fake_gh(result)
+        assert proc.returncode == 0, proc.stderr
+        (create,) = [c for c in calls if c[:2] == ["issue", "create"]]
+        title = create[create.index("--title") + 1]
+        assert "experimental_known_failures.txt" in title
+        assert "tests/test_a.py::test_x" in _body(create) and "abc1234" in _body(create)
+
+    def test_a_run_that_did_not_complete_is_filed(self, fake_gh):
+        result = {**_result(), "incomplete": "pytest exited 2 (interrupted)"}
+        proc, calls = fake_gh(result)
+        (create,) = [c for c in calls if c[:2] == ["issue", "create"]]
+        assert "did not complete" in create[create.index("--title") + 1]
+        assert "pytest exited 2" in _body(create)
+
+    def test_no_result_at_all_is_filed_with_the_job_conclusion(self, fake_gh):
+        proc, calls = fake_gh(None, None, None, "--job-result", "cancelled")
+        assert proc.returncode == 0, proc.stderr
+        (create,) = [c for c in calls if c[:2] == ["issue", "create"]]
+        assert "cancelled" in _body(create)
+        assert "https://github.com/o/r/actions/runs/1" in _body(create)
+
+    def test_an_incomplete_run_comments_on_the_open_issue(self, fake_gh):
+        open_issues = [
+            {"number": 5, "title": "experimental-broken: the experimental run did not complete"}
+        ]
+        views = {"5": {"body": "earlier", "comments": []}}
+        proc, calls = fake_gh({**_result(), "incomplete": "timed out"}, open_issues, views)
+        (comment,) = [c for c in calls if c[:2] == ["issue", "comment"]]
+        assert comment[2] == "5" and "abc1234" in _body(comment)

@@ -5,17 +5,25 @@ Tests of experimental surfaces carry ``@pytest.mark.experimental`` (applied
 from tests/experimental_surface.py). They do not gate a merge; the CI job
 `experimental` runs them and hands the JUnit report here.
 
-  check        Compare the report with tests/experimental_known_failures.txt.
-               Exit 1 on a failure that is not in the file (a NEW failure), or
-               when the file grew against --base-known (it can only shrink).
-               Report a known failure that now passes, or no longer exists,
-               so it can be removed. Exit 2 when the report is missing: a run
-               that never happened is not a pass.
-  file-issues  On a push to `dev` only (the workflow decides): for each test
-               file with a new failure, open an `experimental-broken` issue
-               naming the tests, the commit and the run, or comment on the
-               open one for that file with the tests it does not name yet.
-               Needs `gh` and a token with issues: write; nothing else.
+Never silently means every change in what the experimental set reports
+reaches a person: a new failure, a line added to the known-failures list, a
+run that did not complete.
+
+  check        Compare the report with tests/experimental_known_failures.txt
+               and, with --open-issues, the open `experimental-broken` issues.
+               Exit 1 on a NEW failure (in neither), or when the file grew
+               against --base-known (it can only shrink). Exit 2 when the run
+               did not complete: no report, or --pytest-exit other than 0/1.
+               A failure an open issue already names is "filed", not new, so
+               a PR's red keeps meaning news. Reports a known failure that now
+               passes or no longer exists (remove it), and a filed test that
+               passes again (close its issue).
+  file-issues  On a push to `dev` only (the workflow decides): open or
+               comment on an `experimental-broken` issue for each test file
+               with a new failure, for a grown known-failures list, and for a
+               run that did not complete, including one that left no result
+               at all (--job-result names how the job ended). Needs `gh` and a
+               token with issues: write; nothing else.
 
 One issue per test file, not per test: an import error fails every test in a
 module, and three hundred issues would bury the one that matters. The issue
@@ -29,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -107,24 +116,34 @@ def read_known(path: Path) -> set[str]:
 @dataclass
 class Result:
     new: list[str] = field(default_factory=list)
+    filed: dict[str, int] = field(default_factory=dict)  # failing, named in an open issue
     still_failing: list[str] = field(default_factory=list)
     fixed: list[str] = field(default_factory=list)
     stale: list[str] = field(default_factory=list)
     grown: list[str] = field(default_factory=list)
+    filed_now_passing: dict[str, int] = field(default_factory=dict)
+    incomplete: str | None = None
+    issues_unreadable: bool = False
     messages: dict[str, str] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
-        return not self.new and not self.grown
+        return not self.new and not self.grown and self.incomplete is None
 
 
-def compare(outcomes: dict[str, str], known: set[str]) -> Result:
+def compare(
+    outcomes: dict[str, str], known: set[str], filed: dict[str, int] | None = None
+) -> Result:
+    filed = filed or {}
     failed = {n for n, o in outcomes.items() if o == "failed"}
+    unknown = failed - known
     return Result(
-        new=sorted(failed - known),
+        new=sorted(n for n in unknown if n not in filed),
+        filed={n: filed[n] for n in sorted(unknown) if n in filed},
         still_failing=sorted(failed & known),
         fixed=sorted(n for n in known if outcomes.get(n) == "passed"),
         stale=sorted(n for n in known if n not in outcomes),
+        filed_now_passing={n: i for n, i in sorted(filed.items()) if outcomes.get(n) == "passed"},
     )
 
 
@@ -135,39 +154,114 @@ def grown(known: set[str], base: Path) -> list[str]:
     return sorted(known - read_known(base))
 
 
+# pytest's exit codes: 0 all passed, 1 some tests failed. Anything else (2
+# interrupted, 3 internal error, 4 usage error, 5 no tests collected, a signal,
+# or no status because the step was killed) means the report is not the whole
+# set, and a partial report must not read as a pass.
+COMPLETE_EXITS = {"0", "1"}
+
+
+def incompleteness(pytest_exit: str | None, junit: Path) -> str | None:
+    if not junit.exists():
+        return f"no JUnit report at {junit}: the run did not happen or did not finish"
+    if pytest_exit is None:
+        return None
+    if pytest_exit.strip() not in COMPLETE_EXITS:
+        status = pytest_exit.strip() or "no status (killed or timed out)"
+        return f"pytest exited {status}: the report may be partial"
+    return None
+
+
+_NAMED = re.compile(r"`([^`\s]+\.py(?:::[^`]*)?)`")
+
+
+def open_issue_tests() -> dict[str, int]:
+    """Node id -> number of the open experimental-broken issue that names it
+    (in its body or a comment). Raises when the issues cannot be read."""
+    issues = json.loads(
+        _gh(
+            [
+                "issue",
+                "list",
+                "--label",
+                LABEL,
+                "--state",
+                "open",
+                "--limit",
+                "500",
+                "--json",
+                "number,title,body,comments",
+            ]
+        )  # fmt: skip
+        or "[]"
+    )
+    named: dict[str, int] = {}
+    for issue in issues:
+        if not issue.get("title", "").startswith(TITLE_PREFIX):
+            continue
+        texts = [issue.get("body") or ""] + [
+            c.get("body") or "" for c in issue.get("comments") or []
+        ]
+        for text in texts:
+            for nodeid in _NAMED.findall(text):
+                named.setdefault(nodeid, issue["number"])
+    return named
+
+
+def _bullets(items) -> list[str]:
+    return [f"- `{n}`" for n in items] + [""]
+
+
 def summary_markdown(result: Result, known_path: str) -> str:
     out = ["## Experimental tests (non-blocking, #657)", ""]
+    if result.incomplete:
+        out += ["### The run did not complete", "", result.incomplete, ""]
     if result.ok:
-        out.append(
+        out += [
             "No new failures. A red experimental test does not block a merge; "
-            "a new one is never silent."
-        )
+            "a new one is never silent.",
+            "",
+        ]
+    if result.issues_unreadable:
+        out += [
+            f"Could not read the open `{LABEL}` issues: every unknown failure is counted new.",
+            "",
+        ]
     if result.new:
         out += [
             f"### New failures ({len(result.new)})",
             "",
-            f"Not in `{known_path}`. Fix them; on `dev` each test file gets an `{LABEL}` issue.",
+            f"Not in `{known_path}` and not in an open `{LABEL}` issue. Fix them; on `dev` "
+            "each test file gets an issue.",
             "",
+            *_bullets(result.new),
         ]
-        out += [f"- `{n}`" for n in result.new]
-        out.append("")
     if result.grown:
         out += [
             f"### `{known_path}` grew ({len(result.grown)})",
             "",
             "The known-failures list can only shrink: fix the test instead.",
             "",
+            *_bullets(result.grown),
         ]
-        out += [f"- `{n}`" for n in result.grown]
-        out.append("")
+    if result.filed:
+        out += [f"### Already filed on `dev` ({len(result.filed)}): not news", ""]
+        out += [f"- `{n}` (#{i})" for n, i in result.filed.items()] + [""]
+    if result.filed_now_passing:
+        out += ["### Filed tests that pass again: close their issues when all do", ""]
+        out += [f"- `{n}` (#{i})" for n, i in result.filed_now_passing.items()] + [""]
     if result.fixed:
-        out += [f"### Known failures that now pass: remove them from `{known_path}`", ""]
-        out += [f"- `{n}`" for n in result.fixed]
-        out.append("")
+        out += [
+            f"### Known failures that now pass: remove them from `{known_path}`",
+            "",
+            *_bullets(result.fixed),
+        ]
     if result.stale:
-        out += [f"### Known failures that no longer exist: remove them from `{known_path}`", ""]
-        out += [f"- `{n}`" for n in result.stale]
-        out.append("")
+        out += [
+            f"### Known failures that no longer exist: remove them from `{known_path}`",
+            "",
+            *_bullets(result.stale),
+        ]
     if result.still_failing:
         out += [f"Still failing, already known: {len(result.still_failing)}.", ""]
     return "\n".join(out)
@@ -198,30 +292,73 @@ def _test_lines(nodeids: list[str], messages: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
-def file_issues(result: dict, sha: str, run_url: str, dry_run: bool = False) -> int:
-    new: list[str] = result.get("new", [])
-    if not new:
+GROWN_TITLE = f"{TITLE_PREFIX}tests/experimental_known_failures.txt grew"
+INCOMPLETE_TITLE = f"{TITLE_PREFIX}the experimental run did not complete"
+
+
+@dataclass
+class _Filing:
+    title: str
+    intro: str
+    tests: list[str]  # named once each; [] for an event reported every time
+
+
+def _filings(result: dict) -> list[_Filing]:
+    filings = []
+    if result.get("incomplete"):
+        filings.append(
+            _Filing(
+                INCOMPLETE_TITLE,
+                f"The experimental job on `dev` did not produce a complete report: "
+                f"{result['incomplete']}",
+                [],
+            )
+        )
+    if result.get("grown"):
+        filings.append(
+            _Filing(
+                GROWN_TITLE,
+                "Lines were added to `tests/experimental_known_failures.txt`, which can "
+                "only shrink. Fix these tests and remove the lines:",
+                list(result["grown"]),
+            )
+        )
+    for file, tests in sorted(_by_file(result.get("new", [])).items()):
+        filings.append(
+            _Filing(
+                f"{TITLE_PREFIX}{file}",
+                f"Experimental tests in `{file}` newly failing on `dev` "
+                "(not in `tests/experimental_known_failures.txt`):",
+                tests,
+            )
+        )
+    return filings
+
+
+def file_issues(
+    result: dict | None, sha: str, run_url: str, dry_run: bool = False, job_result: str = ""
+) -> int:
+    if result is None:
+        result = {
+            "incomplete": f"the experimental job ended '{job_result or 'unknown'}' and left no "
+            "result (a timeout or cancellation stops it before the ratchet runs)"
+        }
+    filings = _filings(result)
+    if not filings:
         return 0
     messages: dict[str, str] = result.get("messages", {})
-    groups = _by_file(new)
 
     if dry_run:
-        for file, tests in groups.items():
-            print(f"would file or comment: {TITLE_PREFIX}{file} ({len(tests)} tests)")
+        for f in filings:
+            print(f"would file or comment: {f.title} ({len(f.tests)} tests)")
         return 0
 
     _gh(
         [
-            "label",
-            "create",
-            LABEL,
-            "--color",
-            LABEL_COLOR,
-            "--description",
-            LABEL_DESCRIPTION,
-            "--force",
+            "label", "create", LABEL, "--color", LABEL_COLOR,
+            "--description", LABEL_DESCRIPTION, "--force",
         ]
-    )
+    )  # fmt: skip
     open_issues = json.loads(
         _gh(
             [
@@ -236,36 +373,39 @@ def file_issues(result: dict, sha: str, run_url: str, dry_run: bool = False) -> 
                 "--json",
                 "number,title",
             ]
-        )
+        )  # fmt: skip
         or "[]"
     )
     by_title = {i["title"]: i["number"] for i in open_issues}
+    where = f"Commit: {sha}\nRun: {run_url}"
 
-    for file, tests in sorted(groups.items()):
-        title = f"{TITLE_PREFIX}{file}"
-        number = by_title.get(title)
+    for f in filings:
+        number = by_title.get(f.title)
         if number is None:
             body = (
-                f"Experimental tests in `{file}` newly failing on `dev` "
-                f"(not in `tests/experimental_known_failures.txt`).\n\n"
-                f"{_test_lines(tests, messages)}\n\n"
-                f"Commit: {sha}\nRun: {run_url}\n\n"
-                "Experimental tests do not block a merge (#657). Fix the test or "
-                "the feature; the known-failures list can only shrink. Filed by "
-                "scripts/experimental_ratchet.py."
+                f"{f.intro}\n\n"
+                + (f"{_test_lines(f.tests, messages)}\n\n" if f.tests else "")
+                + f"{where}\n\n"
+                "Experimental tests do not block a merge, but are never silent (#657). "
+                "Filed by scripts/experimental_ratchet.py."
             )
-            _gh(["issue", "create", "--title", title, "--label", LABEL, "--body", body])
-            print(f"opened: {title}")
+            _gh(["issue", "create", "--title", f.title, "--label", LABEL, "--body", body])
+            print(f"opened: {f.title}")
             continue
-        seen = json.loads(_gh(["issue", "view", str(number), "--json", "body,comments"]))
-        text = seen.get("body", "") + "\n".join(c.get("body", "") for c in seen.get("comments", []))
-        unseen = [t for t in tests if f"`{t}`" not in text]
-        if not unseen:
-            print(f"already named in #{number}: {file}")
-            continue
-        body = f"Also newly failing at {sha} ({run_url}):\n\n{_test_lines(unseen, messages)}"
+        if f.tests:
+            seen = json.loads(_gh(["issue", "view", str(number), "--json", "body,comments"]))
+            text = seen.get("body", "") + "\n".join(
+                c.get("body", "") for c in seen.get("comments", [])
+            )
+            unseen = [t for t in f.tests if f"`{t}`" not in text]
+            if not unseen:
+                print(f"already named in #{number}: {f.title}")
+                continue
+            body = f"Also at {sha} ({run_url}):\n\n{_test_lines(unseen, messages)}"
+        else:
+            body = f"Again at {sha} ({run_url}): {f.intro}"
         _gh(["issue", "comment", str(number), "--body", body])
-        print(f"commented on #{number}: {file}")
+        print(f"commented on #{number}: {f.title}")
     return 0
 
 
@@ -284,25 +424,45 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("--summary", type=Path, help="append the markdown report here")
     check.add_argument("--result-json", type=Path, help="write the result for file-issues")
 
+    check.add_argument(
+        "--pytest-exit",
+        help="pytest's exit status; anything but 0 or 1 (or empty) marks the run incomplete",
+    )
+    check.add_argument(
+        "--open-issues",
+        action="store_true",
+        help=f"treat failures named in an open {LABEL} issue as filed, not new (needs gh)",
+    )
+
     issues = sub.add_parser("file-issues", help="open or comment on experimental-broken issues")
     issues.add_argument("--result-json", type=Path, required=True)
     issues.add_argument("--sha", required=True)
     issues.add_argument("--run-url", required=True)
+    issues.add_argument("--job-result", default="", help="the experimental job's conclusion")
     issues.add_argument("--dry-run", action="store_true", help="print, call nothing")
 
     opts = parser.parse_args(argv)
 
     if opts.command == "file-issues":
-        return file_issues(
-            json.loads(opts.result_json.read_text()), opts.sha, opts.run_url, opts.dry_run
-        )
+        result = json.loads(opts.result_json.read_text()) if opts.result_json.exists() else None
+        return file_issues(result, opts.sha, opts.run_url, opts.dry_run, opts.job_result)
 
-    if not opts.junit.exists():
-        print(f"experimental-ratchet: no report at {opts.junit}; the run did not happen")
-        return 2
     known = read_known(opts.known)
-    result = compare(read_junit(opts.junit), known)
-    result.messages = {n: m for n, m in read_messages(opts.junit).items() if n in result.new}
+    filed: dict[str, int] = {}
+    unreadable = False
+    if opts.open_issues:
+        try:
+            filed = open_issue_tests()
+        except (subprocess.CalledProcessError, OSError, ValueError) as exc:
+            print(f"experimental-ratchet: could not read the open {LABEL} issues ({exc})")
+            unreadable = True
+    incomplete = incompleteness(opts.pytest_exit, opts.junit)
+    outcomes = read_junit(opts.junit) if opts.junit.exists() else {}
+    result = compare(outcomes, known, filed)
+    result.incomplete = incomplete
+    result.issues_unreadable = unreadable
+    if opts.junit.exists():
+        result.messages = {n: m for n, m in read_messages(opts.junit).items() if n in result.new}
     if opts.base_known is not None:
         result.grown = grown(known, opts.base_known)
 
@@ -317,6 +477,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"::warning title=experimental ratchet::remove {nodeid} from {opts.known}")
     if result.grown:
         print(f"experimental-ratchet: {opts.known} can only shrink; it grew by {len(result.grown)}")
+    if result.incomplete:
+        return 2
     return 0 if result.ok else 1
 
 
