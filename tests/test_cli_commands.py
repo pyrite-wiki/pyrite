@@ -688,3 +688,42 @@ class TestMcpCommandTier:
         assert str(admin_additions) in result.output, (
             f"expected live admin-tier addition count ({admin_additions}) in --help output"
         )
+
+
+@pytest.mark.cli
+@pytest.mark.core
+def test_index_sync_verify_forwards_option(monkeypatch):
+    from pyrite.cli import index_commands
+
+    calls = {}
+
+    class FakeIndexManager:
+        def __init__(self, db, config):
+            pass
+
+        def sync_incremental(self, kb_name=None, *, verify=False):
+            calls["kb_name"] = kb_name
+            calls["verify"] = verify
+            return {
+                "added": 0,
+                "updated": 0,
+                "removed": 0,
+                "malformed": [],
+                "duplicates": [],
+            }
+
+    monkeypatch.setattr(index_commands, "get_config_and_db", lambda: (object(), object()))
+    monkeypatch.setattr("pyrite.storage.IndexManager", FakeIndexManager)
+    result = runner.invoke(app, ["index", "sync", "--verify", "--no-embed"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == {"kb_name": None, "verify": True}
+
+
+@pytest.mark.cli
+@pytest.mark.core
+def test_index_sync_verify_rejects_background_mode():
+    result = runner.invoke(app, ["index", "sync", "--verify", "--background"])
+
+    assert result.exit_code == 2
+    assert "cannot be combined with --background" in plain(result.output)
