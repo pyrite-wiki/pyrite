@@ -590,3 +590,43 @@ I built one reconcile for `index build`, `index sync` and `kb reindex`: plan fro
 **Worked well:** the strict-xfail invariant harness. Removing five markers gave five red tests that went green one by one, which showed exactly where the work stood. `pyrite kb list` confirmed the worktree's KB before I started. `pyrite update <id> -k pyrite -f status=done` changed one line and nothing else. The coordinator's mid-task decision (duplicates are unhealthy) cost one small commit.
 
 **Severity:** friction 1 alarming (it looked like a destructive action on another branch); friction 2 slowed me by about 30 minutes of suite time; the rest were minor.
+## 2026-10-03 · building `pyrite ids missing` / `ids pin` (#700) under the pyrite-dev skill, in a worktree · claude-opus-5-5
+
+One theme from groom to draft PR: read the groom and ADR-0042, test the riskiest assumption with a scratch script, TDD the service and CLI, a doc run as a test, the pre-push suite. The KB CLI, the ADR's spike data and `KBRepository.id_of_file`'s docstring carried most of it. Seven places made me guess, look up or route around something, in the order they cost time.
+
+**Command:**
+```
+gh issue view 700                                      # the groom
+sed -n 330,460p kb/adrs/0042-a-write-changes-what-was-asked-and-nothing-else.md
+scripts/test-affected --run 2>&1 | tail -5             # piped
+.venv/bin/ruff check . && .venv/bin/ruff format --check .
+PYRITE_CONFIG_DIR=$d/cfg .venv/bin/pyrite ids pin -k notes
+```
+
+**Expected:** the groom names its riskiest assumption and the decisions that bind it; the skill's verification commands pass on a clean branch; a new command's output is its result.
+
+**Got / Friction:**
+
+1. **The groom had no "this groom is wrong if" line**, though the dispatch and the skill both say to start from it. I chose the assumption myself ("an id-less file's id today is what the current code derives, and that code can be reused") and tested it with a scratch script that indexed 15 fixtures. It held, and it also showed that an id-less file can shadow a file whose own `id:` states the id (commented on #485).
+2. **The groom's open question was already answered by the ADR it cites.** The groom asked whether the line goes first or after the leading comments. ADR-0042 decision 6, about 80 lines below the cited section, says "a new key goes on the last line of the frontmatter". I found it only by reading past the line I was pointed to.
+3. **"The code that derives it today" is two pieces of code.** `read_entry_id` / `_frontmatter_of` (regex `^---\s*$`) and `KBRepository._load_entry` (a `\n---` scan that wants `\n` or `\r` next) split frontmatter differently. I used `id_of_file`, which the docstrings call the one answer, and had to import the private `_frontmatter_of` to find the delimiter the same way.
+4. **The exit codes and default formats have no rule for a new command.** `docs/json-contracts.md` lists only `0` and `1`. `kb validate` uses `2` for drift, which is also click's usage error. The same page says read commands default to JSON, `mcp-setup` defaults to JSON with `PYRITE_FORMAT`, and ADR-0042's steps imply a human default with `--format json` for agents. I chose `3` and a text default, and recorded them; #303 is the open contract.
+5. **The skill's lint line fails on a clean branch.** `ruff check .` reports 6 errors in `deploy/*/create-user.py` and `scripts/*appointee*.py`, files no branch touches, so "Lint passes" cannot be shown as written. I quietly narrowed it to `ruff check pyrite tests`. That is the silent workaround.
+6. **"Run `scripts/test-affected --run` in the foreground" ran for 8 minutes** (4,586 tests, because the branch touches `pyrite/cli/__init__.py`), so the tool timeout pushed it to the background. Nothing tells you in advance that touching the CLI root selects nearly the full suite.
+7. **`ids pin` on an untyped file prints two loader warnings per file** (`Entry frontmatter missing 'type:' — falling back to 'note'`) on stderr, one from the scan and one from the re-parse check. On the ADR's 111-file id-less KB that is 200+ lines unrelated to ids. Not fixed here.
+
+**Had to figure out:**
+- How CLI tests inject a KB: patch `pyrite.cli.context.load_config` (copied from `tests/test_cli_json_output.py`).
+- That the CLI may not import `pyrite.storage`, from `tests/test_layer_boundaries.py`. Clear once found.
+- That `index health` does not list id-less files yet, although ADR-0042 decision 5 says it does. So the doc's last check uses `ids missing` exiting 0.
+- That a title YAML reads as a number (`title: 1e3`) gives no id and is silently not indexed. Filed as #704.
+
+**Would have helped:**
+1. A required "wrong if" line in the groom template, plus a "decisions that bind this" list naming the ADR clauses (decision 6 here).
+2. One CLI contract section on exit codes for "ran, found something" vs error vs usage, and on the default `--format`.
+3. A lint line in the skill that matches what CI lints, or fix or exclude `deploy/` and the appointee scripts.
+4. `scripts/test-affected --list | wc -l` shown before `--run`, with a note that touching `pyrite/cli/__init__.py` selects nearly everything.
+
+**Worked well:** `KBRepository.id_of_file` and `read_entry_id`'s docstrings pointed straight at the one derivation, and the ADR's spike numbers gave the scratch test a target. `atomic_write_text` does no newline translation, so CRLF survived without special handling. `scripts/verify-red.sh` classified the two import-only tests precisely. The `.pyrite/config.yaml` per worktree made `pyrite kb list` correct with no setup.
+
+**Severity:** slowed. Nothing blocked. Items 2 and 4 could have produced a command that contradicts its ADR, and item 5 is a check the skill asks for but nobody can pass as written.
