@@ -744,3 +744,17 @@ Replaced the parent rollup hook with a derived completion value across `task lis
 - `scripts/new-worktree.sh` gave a worktree, venv and `-k pyrite` pointed at this branch's `kb/`, and `pyrite kb list` confirmed it.
 - The groom and the ADRs had the line numbers right (`task_service.py:594`, `:1016`).
 - Hand-authored trees with `IndexManager(db, config).index_all()` made medium tests across CLI, MCP and REST cheap to write. `verify-red`'s per-test table is exactly what a reviewer needs.
+
+## 2026-10-03 · a pyrite-worker closing three test-harness limits (#703) in `tests/test_doc_write_as_patch.py` · claude-sonnet-5-5
+
+**Task:** make a write example's verdict depend only on the write-path behaviour it names.
+
+**Got:** the ticket asked for "a KB type whose links are derived". None exists for `actors` (the index derives links from body wikilinks and `references:`, not `actors`; `entry_ref` rows hold the bracket-wrapped value and `kb_backlinks` does not return them). I found that only after probing seven KB types with a script.
+
+**Would have helped:** the groom naming the missing production piece, so the limit is stated as "blocked on ADR-0045 reference fields" rather than "use a derived type".
+
+**Severity:** slowed.
+
+**Worked well:**
+- The strict-xfail design meant the new controls were unreachable by the real examples; a small model of the correct write path was the only way to see them red and green.
+- `verify-red.sh` said "nothing to verify (no code change)" at once; hand mutations were the evidence.
