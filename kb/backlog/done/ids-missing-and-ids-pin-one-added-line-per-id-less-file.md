@@ -6,7 +6,7 @@ tags:
 - core
 importance: 5
 kind: enhancement
-status: in_progress
+status: done
 priority: high
 assignee: agent:pyrite-worker
 effort: M
