@@ -1,0 +1,1 @@
+ADR listings now sort by numeric ADR number and expose each entry's ID, superseding/superseded-by links, and amendment links in JSON, MCP, and Rich output. Missing or non-positive numbers sort after numbered ADRs.
