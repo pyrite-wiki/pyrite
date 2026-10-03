@@ -32,7 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from ..config import KBConfig, PyriteConfig, load_config
+from .. import config as pyrite_config
+from ..config import KBConfig, PyriteConfig
 from ..exceptions import ValidationError
 from ..models.core_types import _frontmatter_of, explicit_entry_id, id_text, read_entry_id
 from ..storage.repository import KBRepository
@@ -434,7 +435,7 @@ def find_kb_without_writes(kb_name: str) -> KBConfig | None:
     that has not checkpointed) is not seen; the KB is then "not found",
     never a wrong KB.
     """
-    config = load_config(create_dir=False)
+    config = pyrite_config.load_config(create_dir=False)
     kb = config.get_kb(kb_name)
     if kb is not None:
         return kb

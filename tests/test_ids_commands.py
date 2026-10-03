@@ -76,7 +76,9 @@ def _run(config: PyriteConfig, *args: str):
     # cli_context (which would open, and so create, the index).
     with (
         patch("pyrite.cli.context.load_config", return_value=config),
-        patch("pyrite.services.id_pin_service.load_config", return_value=config),
+        # (patched where it is defined, so this helper also runs on a tree
+        # without the ids commands: verify-red then sees a real failure)
+        patch("pyrite.config.load_config", return_value=config),
     ):
         return runner.invoke(app, list(args))
 
