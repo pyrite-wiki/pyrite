@@ -440,6 +440,11 @@ This amends ADR-0038 (below). The rest follows:
   target**, so the spike needed a hand-written map. Alias resolution therefore
   requires the targets to be schema data: **ADR-0045 decision 8 is required
   before this lands, not optional.**
+  **Decided by the maintainer, 2026-10-03 (#720):** a write *request* that names
+  both spellings of one field (`participants` and `actors`, `source` and
+  `source_entity`) with different values is refused with a validation error
+  naming both keys, and writes nothing; equal values are accepted and write one
+  key. Empty values count as not given.
 - A key that defines or uses a YAML anchor is refused for change, with the
   reason. TOML and JSON frontmatter are refused untouched (as today).
 

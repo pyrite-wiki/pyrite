@@ -124,6 +124,43 @@ def file_keys_of(cls: type, entry_type: str) -> frozenset[str]:
     return frozenset(aliases) | frozenset(aliases.values())
 
 
+def refuse_conflicting_spellings(
+    entry_cls: type, entry_type: str, *sources: dict[str, Any]
+) -> None:
+    """Refuse a request that names a field and its alias with different values.
+
+    ADR-0042 decision 6 refuses a *file* carrying both spellings; this is the
+    same rule for a *request* (#720). ``sources`` are the dicts one write
+    carries -- its top-level fields and its ``metadata`` bag -- read together.
+    Equal values are accepted (they name one value). An empty value (``None``,
+    ``""``, ``[]``, ``{}``) is "not given": REST sends ``participants: []`` when
+    the client set none. Every create and update calls this one helper, before
+    anything is built or assigned, so a refusal writes nothing.
+    """
+    from ..exceptions import ValidationError
+
+    aliases = class_field_aliases(entry_cls, entry_type)
+    targets = set(aliases.values())
+    seen: dict[str, tuple[str, Any]] = {}
+    for source in sources:
+        for key, value in source.items():
+            if key not in aliases and key not in targets:
+                continue
+            if value is None or value == "" or value == [] or value == {}:
+                continue
+            target = aliases.get(key, key)
+            prior = seen.get(target)
+            if prior is None:
+                seen[target] = (key, value)
+            elif prior[0] != key and prior[1] != value:
+                first, second = sorted((prior[0], key), key=lambda k: k in aliases, reverse=True)
+                raise ValidationError(
+                    f"Cannot set both '{first}' and '{second}' on a {entry_type} with different "
+                    f"values: they are one field ('{target}'). Send one of them, or give both "
+                    "the same value."
+                )
+
+
 def attribute_for(entry: Any, key: str) -> str | None:
     """The model attribute an update to file key ``key`` should set, or None.
 

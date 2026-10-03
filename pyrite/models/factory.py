@@ -92,9 +92,17 @@ def build_entry(
     # A file key the type's aliases name (`actors`, `participants`, `source`):
     # the class reads it from the top level, so it goes there, never into the
     # `metadata:` bag where nothing reads it (#697, one name per field).
-    from ..schema.field_aliases import file_keys_of
+    from ..schema.field_aliases import file_keys_of, refuse_conflicting_spellings
 
     _alias_keys = file_keys_of(resolved_cls, entry_type)
+    # A request naming a field and its alias with different values is refused
+    # here, before either is lifted (#720); equal values fall through to one key.
+    refuse_conflicting_spellings(
+        resolved_cls,
+        entry_type,
+        {k: v for k, v in kwargs.items() if k != "metadata"},
+        kwargs["metadata"] if isinstance(kwargs.get("metadata"), dict) else {},
+    )
     _fm_keys = (
         _cls_fields
         | _alias_keys

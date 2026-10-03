@@ -35,6 +35,7 @@ import pytest
 from typer.testing import CliRunner
 
 from pyrite.cli import app
+from pyrite.exceptions import ValidationError
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models.factory import build_entry
 from pyrite.services.kb_service import KBService
@@ -175,6 +176,10 @@ def _mcp(config: PyriteConfig, tool: str, args: dict):
 
 
 def _rest(config: PyriteConfig, method: str, path: str, body: dict) -> int:
+    return _rest_full(config, method, path, body)[0]
+
+
+def _rest_full(config: PyriteConfig, method: str, path: str, body: dict) -> tuple[int, str]:
     pytest.importorskip("fastapi", reason="fastapi not installed")
     from starlette.testclient import TestClient
 
@@ -188,7 +193,8 @@ def _rest(config: PyriteConfig, method: str, path: str, body: dict) -> int:
     worker = IndexWorker(db, config)
     application.dependency_overrides[get_index_worker] = lambda: worker
     try:
-        return getattr(TestClient(application), method)(path, json=body).status_code
+        res = getattr(TestClient(application), method)(path, json=body)
+        return res.status_code, res.text
     finally:
         worker.wait_for_idle(timeout=10)
         db.close()
@@ -197,9 +203,13 @@ def _rest(config: PyriteConfig, method: str, path: str, body: dict) -> int:
             state_db.close()
 
 
-def _cli(config: PyriteConfig, *args: str) -> int:
+def _cli_raw(config: PyriteConfig, *args: str):
     with patch("pyrite.cli.context.load_config", return_value=config):
-        result = CliRunner().invoke(app, list(args))
+        return CliRunner().invoke(app, list(args))
+
+
+def _cli(config: PyriteConfig, *args: str) -> int:
+    result = _cli_raw(config, *args)
     assert result.exit_code == 0, result.output
     return result.exit_code
 
@@ -342,3 +352,230 @@ def test_every_published_name_of_a_changed_type_is_in_the_rows():
         published = set(CORE_TYPES[entry_type]["fields"])
         assert aliased <= published
         assert aliased <= covered, (entry_type, aliased - covered)
+
+
+# ---------------------------------------------------------------------------
+# A request that names both spellings of one field (#720, ADR-0042 decision 6)
+# ---------------------------------------------------------------------------
+#
+# ADR-0042 decision 6 refuses a *file* that carries a field and its alias. A
+# *request* that does is refused the same way when the values differ -- the
+# error names both keys and nothing is written -- and accepted when they are
+# equal, writing one key. Before this, each surface picked a winner by the
+# order it happened to lift keys in (build_entry kept the alias and dropped the
+# explicit top-level value).
+
+#: (type, alias, target, value, a different value, expected file keys for the equal value)
+PAIRS = [
+    ("event", "participants", "actors", ["x", "y"], ["z"], {"actors": ["x", "y"]}),
+    (
+        "relationship",
+        "source",
+        "source_entity",
+        "x",
+        "y",
+        {"source_entity": "x", "target_entity": ""},
+    ),
+    (
+        "relationship",
+        "target",
+        "target_entity",
+        "x",
+        "y",
+        {"source_entity": "", "target_entity": "x"},
+    ),
+]
+PAIR_IDS = ["participants+actors", "source+source_entity", "target+target_entity"]
+CONFLICT_CREATE_SURFACES = [
+    "build_entry",
+    "service",
+    "service_mixed",
+    "cli",
+    "mcp",
+    "rest_metadata",
+    "rest_participants",
+]
+CONFLICT_UPDATE_SURFACES = [
+    "service",
+    "service_mixed",
+    "cli",
+    "mcp",
+    "rest_put_metadata",
+    "rest_patch",
+]
+
+
+def _comma(v) -> str:
+    return ",".join(v) if isinstance(v, list) else v
+
+
+def _assert_refused_naming(text: str, alias: str, target: str, where: str) -> None:
+    assert f"'{alias}'" in text and f"'{target}'" in text, (where, text)
+
+
+def _conflict_create(tmp_path, surface, pair, equal):
+    entry_type, alias, target, value, other, _ = pair
+    config, kb = _env(tmp_path, {})
+    second = value if equal else other
+    spec = {"entry_type": entry_type, "title": "N"}
+    if entry_type == "event":
+        spec["date"] = "2025-01-02"
+    # Returns (refusal text or None); the caller reads the files.
+    if surface == "build_entry":
+        kwargs = {k: v for k, v in spec.items() if k not in ("entry_type", "title")}
+        try:
+            entry = build_entry(entry_type, title="N", **kwargs, **{alias: value, target: second})
+        except ValidationError as e:
+            return config, kb, str(e), None
+        return config, kb, None, _frontmatter(entry.to_markdown())
+    if surface in ("service", "service_mixed"):
+        if surface == "service":
+            spec.update({alias: value, target: second})
+        else:  # one spelling at the top level, the other in the metadata bag
+            spec.update({alias: value, "metadata": {target: second}})
+        try:
+            _service(config, lambda svc: svc.create(KB, dict(spec)))
+        except ValidationError as e:
+            return config, kb, str(e), None
+    elif surface == "cli":
+        extra = ["-f", "date=2025-01-02"] if entry_type == "event" else []
+        res = _cli_raw(
+            config,
+            "create", "-k", KB, "-t", entry_type, "--title", "N",
+            "-f", f"{alias}={_comma(value)}", "-f", f"{target}={_comma(second)}",
+            *extra,
+        )  # fmt: skip
+        if res.exit_code != 0:
+            return config, kb, res.output, None
+    elif surface == "mcp":
+        res = _mcp(config, "kb_create", {"kb_name": KB, **spec, alias: value, target: second})
+        if res.get("created") is not True:
+            assert res["error_code"] == "VALIDATION_FAILED", res
+            return config, kb, str(res), None
+    else:
+        body = {"kb": KB, "entry_type": entry_type, "title": "N"}
+        if entry_type == "event":
+            body["date"] = "2025-01-02"
+        if surface == "rest_participants":
+            body["participants"] = value
+            body["metadata"] = {target: second}
+        else:
+            body["metadata"] = {alias: value, target: second}
+        status, text = _rest_full(config, "post", "/api/entries", body)
+        if status != 200:
+            assert status == 400, (status, text)
+            return config, kb, text, None
+    return config, kb, None, _written(kb)
+
+
+@pytest.mark.parametrize("surface", CONFLICT_CREATE_SURFACES)
+@pytest.mark.parametrize("pair", PAIRS, ids=PAIR_IDS)
+def test_create_naming_both_spellings_with_different_values_is_refused(tmp_path, surface, pair):
+    entry_type, alias, target = pair[:3]
+    if surface == "rest_participants" and alias != "participants":
+        pytest.skip("POST /api/entries has one named list field, `participants`")
+    config, kb, refusal, fm = _conflict_create(tmp_path, surface, pair, equal=False)
+    assert refusal is not None, f"{surface} accepted both spellings with different values: {fm}"
+    _assert_refused_naming(refusal, alias, target, surface)
+    assert list(kb.rglob("n.md")) == [], "a refused create wrote a file"
+
+
+@pytest.mark.parametrize("surface", CONFLICT_CREATE_SURFACES)
+@pytest.mark.parametrize("pair", PAIRS, ids=PAIR_IDS)
+def test_create_naming_both_spellings_with_equal_values_writes_one_key(tmp_path, surface, pair):
+    alias = pair[1]
+    if surface == "rest_participants" and alias != "participants":
+        pytest.skip("POST /api/entries has one named list field, `participants`")
+    config, kb, refusal, fm = _conflict_create(tmp_path, surface, pair, equal=True)
+    assert refusal is None, refusal
+    if pair[0] == "relationship" and surface.startswith("rest"):
+        fm.pop("metadata", None)
+        fm.pop("participants", None)
+    _assert_lands(fm, pair[5], surface)
+
+
+def _conflict_update(tmp_path, surface, pair, equal):
+    entry_type, alias, target, value, other, _ = pair
+    rel, entry_id, text = EXISTING[entry_type]
+    config, kb = _env(tmp_path, {rel: text})
+    second = value if equal else other
+    refusal = None
+    if surface in ("service", "service_mixed"):
+        if surface == "service":
+            updates = {alias: value, target: second}
+        else:
+            updates = {alias: value, "metadata": {target: second}}
+        try:
+            _service(config, lambda svc: svc.update(entry_id, KB, updates))
+        except ValidationError as e:
+            refusal = str(e)
+    elif surface == "cli":
+        res = _cli_raw(
+            config, "update", entry_id, "-k", KB,
+            "-f", f"{alias}={_comma(value)}", "-f", f"{target}={_comma(second)}",
+        )  # fmt: skip
+        if res.exit_code != 0:
+            refusal = res.output
+    elif surface == "mcp":
+        res = _mcp(
+            config, "kb_update", {"entry_id": entry_id, "kb_name": KB, alias: value, target: second}
+        )
+        if res.get("updated") is not True:
+            assert res["error_code"] == "VALIDATION_FAILED", res
+            refusal = str(res)
+    elif surface == "rest_put_metadata":
+        status, body = _rest_full(
+            config,
+            "put",
+            f"/api/entries/{entry_id}",
+            {"kb": KB, "metadata": {alias: value, target: second}},
+        )
+        if status != 200:
+            assert status == 400, (status, body)
+            refusal = body
+    else:  # PATCH carries one field: a second spelling cannot be named in the request
+        pytest.skip("PATCH /api/entries/{id} names one field per request")
+    return kb / rel, text, refusal
+
+
+@pytest.mark.parametrize("surface", CONFLICT_UPDATE_SURFACES)
+@pytest.mark.parametrize("pair", PAIRS, ids=PAIR_IDS)
+def test_update_naming_both_spellings_with_different_values_is_refused(tmp_path, surface, pair):
+    path, before, refusal = _conflict_update(tmp_path, surface, pair, equal=False)
+    assert refusal is not None, f"{surface} accepted both spellings with different values"
+    _assert_refused_naming(refusal, pair[1], pair[2], surface)
+    assert path.read_text(encoding="utf-8") == before, "a refused update changed the file"
+
+
+@pytest.mark.parametrize("surface", CONFLICT_UPDATE_SURFACES)
+@pytest.mark.parametrize("pair", PAIRS, ids=PAIR_IDS)
+def test_update_naming_both_spellings_with_equal_values_writes_one_key(tmp_path, surface, pair):
+    path, _, refusal = _conflict_update(tmp_path, surface, pair, equal=True)
+    assert refusal is None, refusal
+    expected = {"actors": ["x", "y"], "date": "2025-01-01"}
+    if pair[0] == "relationship":
+        expected = {"source_entity": "a", "target_entity": "b"}
+        expected[pair[2]] = "x"
+    _assert_lands(_frontmatter(path.read_text(encoding="utf-8")), expected, surface)
+
+
+def test_put_metadata_source_does_not_overwrite_a_source_entity_it_contradicts(tmp_path):
+    """The reviewer's PUT case (#701): ``metadata.source`` replaced ``source_entity``."""
+    rel, entry_id, text = EXISTING["relationship"]
+    config, kb = _env(tmp_path, {rel: text})
+    status, body = _rest_full(
+        config,
+        "put",
+        f"/api/entries/{entry_id}",
+        {"kb": KB, "metadata": {"source": "wiki", "source_entity": "wiki"}},
+    )
+    assert status == 200, body  # both spellings, one value: accepted, one key
+    status, body = _rest_full(
+        config,
+        "put",
+        f"/api/entries/{entry_id}",
+        {"kb": KB, "metadata": {"source": "wiki", "source_entity": "other"}},
+    )
+    assert status == 400, body
+    _assert_refused_naming(body, "source", "source_entity", "put")
+    assert _frontmatter((kb / rel).read_text(encoding="utf-8"))["source_entity"] == "wiki"

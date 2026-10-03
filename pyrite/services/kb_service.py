@@ -1278,8 +1278,14 @@ class KBService:
         # One name per field (#697): an alias or target key (`actors`,
         # `participants`, `source`) sets the attribute the class reads, whether
         # it arrives at the top level or inside `metadata`, never the bag.
-        from ..schema.field_aliases import attribute_for
+        from ..schema.field_aliases import attribute_for, refuse_conflicting_spellings
 
+        refuse_conflicting_spellings(
+            type(entry),
+            entry.entry_type,
+            {k: v for k, v in updates.items() if k != "metadata"},
+            updates["metadata"] if isinstance(updates.get("metadata"), dict) else {},
+        )
         routed: dict[str, Any] = {}
         for key, value in updates.items():
             if key == "metadata" and isinstance(value, dict):
