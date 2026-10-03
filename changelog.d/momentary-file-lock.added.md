@@ -1,0 +1,1 @@
+`atomic_write_text` takes `expect=` (the file's expected bytes, sha256 digest, or `ABSENT`) and, under a new momentary per-host stripe lock (`pyrite.utils.file_lock`), writes nothing and raises `FileChanged` when the file differs. Nothing calls it yet (ADR-0042 decision 10, B6 P2).
