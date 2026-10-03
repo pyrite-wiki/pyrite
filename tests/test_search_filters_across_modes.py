@@ -257,6 +257,64 @@ def test_semantic_leg_alone_honours_filters(svc_db):
     assert rows == []
 
 
+def test_hybrid_filtered_semantic_leg_fills_limit_past_knn_cap(svc_db, monkeypatch):
+    """The filtered vector leg finds matches past nearer keyword distractors."""
+    from pyrite.storage.backends import sqlite_backend
+
+    monkeypatch.setattr(sqlite_backend, "_SQLITE_VEC_MAX_K", 8)
+    embedder = _StubEmbedder()
+
+    # These rows match the keyword query but not the filter, and occupy the
+    # entire initial KNN budget on the unfixed implementation.
+    for i in range(20):
+        entry_id = f"hybrid-distractor-{i}"
+        svc_db.upsert_entry(
+            {
+                "id": entry_id,
+                "kb_name": "test-kb",
+                "entry_type": "note",
+                "title": f"Detention distractor {i}",
+                "summary": "detention keyword result",
+                "body": "detention unrelated result",
+                "tags": [],
+                "sources": [],
+                "links": [],
+                "metadata": {},
+            }
+        )
+        svc_db.backend.upsert_embedding(
+            entry_id, "test-kb", embedder.embed_text(f"Detention distractor {i}")
+        )
+
+    # These satisfy the filter and semantic leg, but deliberately do not
+    # match the keyword, so only the hybrid semantic leg can return them.
+    for i in range(3):
+        entry_id = f"hybrid-target-{i}"
+        svc_db.upsert_entry(
+            {
+                "id": entry_id,
+                "kb_name": "test-kb",
+                "entry_type": "needle",
+                "title": f"Remote evidence item {i}",
+                "summary": "semantic-only target",
+                "body": "semantic target body",
+                "tags": [],
+                "sources": [],
+                "links": [],
+                "metadata": {},
+            }
+        )
+        svc_db.backend.upsert_embedding(
+            entry_id, "test-kb", embedder.embed_text(f"Remote evidence item {i}")
+        )
+
+    results = SearchService(svc_db).search(
+        "detention", kb_name="test-kb", mode="hybrid", entry_type="needle", limit=2
+    )
+    assert len(results) == 2
+    assert all(row["id"].startswith("hybrid-target-") for row in results)
+
+
 def _undeclare_filtered_semantic(backend, monkeypatch):
     """Model a backend whose vector leg cannot honour filters.
 
