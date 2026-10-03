@@ -28,14 +28,35 @@ What this deliberately does:
   tutorial KB failing the tool's own health check; it still does, and this
   is where that stays visible.
 
+- reads **runner directives**, HTML comments a reader never sees, for the few
+  things a document needs from the runner that fenced commands cannot say:
+
+  `<!-- runner: expect-ids ID [KB:ID ...] -->`  after a ```bash block: the
+      block's JSON output must list every one of these entries. A search that
+      "returns something" passes on the wrong entries; this names the right ones.
+  `<!-- runner: expect-exit N -->`  before a ```bash block: the block must
+      exit N (not 0). For the commands a tutorial shows being refused.
+  `<!-- runner: expect-text WORD -->`  after a ```bash block: WORD appears in
+      its output (stdout or stderr). Repeat the line for more words.
+  `<!-- runner: seed FIXTURE_DIR TARGET_DIR -->`  stands in for a step only a
+      person with an agent can do (docs/tutorials/pyrite-in-20-minutes.md's
+      "ask Claude" steps): copies the fixture's files into TARGET_DIR (under the
+      current directory) and runs `pyrite index sync`, which is what the agent's
+      write would have done. The commands that CHECK the result still run.
+  `<!-- runner: health-kb NAME -->`  the KB whose `pyrite index health` rows
+      must be clean at the end (default `my-research`, getting-started's).
+
 What it skips, and why (each skip is a line the tutorial shows but a CI run
 must not execute, not a line that is allowed to be wrong):
 
 - the install block: CI has already installed the package, and it would
-  clone the repo into the temp HOME.
+  clone the repo into the temp HOME. The checkout under test is linked in as
+  `pyrite/` where the clone would have put it, so later steps that read
+  `pyrite/kb/` read the KB of the code being tested. (Cloning any other
+  repository, such as the demo KBs, is run: that is the document's claim.)
 - `pyrite serve`: a long-running server with no terminating condition.
 
-Usage:  python scripts/run_tutorial.py [path/to/getting-started.md]
+Usage:  python scripts/run_tutorial.py [path/to/doc.md]   (default: docs/getting-started.md)
 Exit:   0 if every block ran and every assertion held; 1 otherwise.
 """
 
@@ -53,13 +74,14 @@ REPO = Path(__file__).resolve().parent.parent
 DEFAULT_DOC = REPO / "docs" / "getting-started.md"
 
 FENCE = re.compile(r"^```(\w*)[^\n]*\n(.*?)^```", re.S | re.M)
+DIRECTIVE = re.compile(r"<!--\s*runner:\s*(.*?)\s*-->", re.S)
+_ITEM = re.compile(FENCE.pattern + "|" + DIRECTIVE.pattern, re.S | re.M)
 
 # A block is skipped when any of these appears in it. Kept as substrings of
 # the command rather than block indexes so inserting a paragraph in the doc
 # does not silently change which blocks run.
 SKIP_MARKERS = (
-    "git clone",  # install block: CI already installed the package
-    "pip install",  # ditto
+    "pip install",  # install block: CI already installed the package
     "docker compose",  # not this job's surface
     "pyrite serve",  # long-running server, no terminating condition
 )
@@ -115,10 +137,92 @@ def check_claude_calls(home: Path, ran_mcp_setup: bool) -> None:
 
 def extract_blocks(doc: Path) -> list[str]:
     """Fenced ```bash blocks, in document order."""
-    return [body for lang, body in FENCE.findall(doc.read_text()) if lang == "bash"]
+    return [body for kind, body in extract_items(doc) if kind == "block"]
+
+
+def extract_items(doc: Path) -> list[tuple[str, str]]:
+    """("block", bash source) and ("directive", text) in document order."""
+    items: list[tuple[str, str]] = []
+    for match in _ITEM.finditer(doc.read_text()):
+        lang, body, directive = match.groups()
+        if directive is not None:
+            items.append(("directive", directive))
+        elif lang == "bash":
+            items.append(("block", body))
+    return items
+
+
+def stand_in_for_clone(target: Path) -> None:
+    """What `git clone` + `python3 -m venv pyrite/.venv` would have left behind.
+
+    The checkout under test, as links to what a tutorial reads (its KB, skills
+    and docs) so nothing a tutorial does can write into the checkout, and an
+    `activate` that does nothing: the runner's own `pyrite` is already on PATH,
+    and a tutorial tells the reader to `source` it again in a new terminal.
+    """
+    target.mkdir()
+    for name in ("kb", ".claude", "docs", "CLAUDE.md", "README.md"):
+        if (REPO / name).exists():
+            (target / name).symlink_to(REPO / name)
+    activate = target / ".venv" / "bin" / "activate"
+    activate.parent.mkdir(parents=True)
+    activate.write_text("# stand-in: the runner's pyrite is already on PATH\n")
+
+
+def assert_expected_ids(block: str, stdout: str, wanted: list[str]) -> None:
+    """Every `expect-ids` entry must be in the block's JSON results.
+
+    An item is `ID` (any KB) or `KB:ID`. Results are read from the `results`
+    list of the CLI's JSON; a block that did not print JSON cannot satisfy it.
+    """
+    import json
+
+    text = strip_marker(stdout)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        raise TutorialError(f"expect-ids needs JSON output, got:\n{block}\n{text[:500]}") from None
+    rows = payload.get("results", payload if isinstance(payload, list) else [])
+    have = {(row.get("kb_name"), row.get("id")) for row in rows if isinstance(row, dict)}
+    missing = []
+    for want in wanted:
+        kb, _, entry_id = want.rpartition(":")
+        if not any(i == entry_id and (not kb or k == kb) for k, i in have):
+            missing.append(want)
+    if missing:
+        listed = ", ".join(f"{k}:{i}" for k, i in sorted(have, key=str))
+        raise TutorialError(
+            f"the tutorial says this command finds {', '.join(missing)}, and it does not:\n"
+            f"{block}\nit found: {listed}"
+        )
+
+
+def seed_fixture(fixture: str, target: str, cwd: Path, env: dict[str, str]) -> None:
+    """Copy a fixture tree into `cwd/target` and index it (the `seed` directive)."""
+    source = REPO / fixture
+    if not source.is_dir():
+        raise TutorialError(f"runner: seed fixture {fixture!r} is not a directory")
+    destination = cwd / target
+    shutil.copytree(source, destination, dirs_exist_ok=True)
+    proc = subprocess.run(
+        ["pyrite", "index", "sync"],
+        cwd=str(cwd),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if proc.returncode != 0:
+        raise TutorialError(f"`pyrite index sync` after seeding {target} failed:\n{proc.stderr}")
+
+
+# The clone of Pyrite itself (not of any other repository) is the install step.
+CLONE_PYRITE_RE = re.compile(r"git clone\s+\S*/pyrite(?:\.git)?(?=\s|$)")
 
 
 def should_skip(block: str) -> str | None:
+    if CLONE_PYRITE_RE.search(block):
+        return "git clone of pyrite"
     for marker in SKIP_MARKERS:
         if marker in block:
             return marker
@@ -269,7 +373,8 @@ def main(argv: list[str]) -> int:
         )
         return 1
 
-    blocks = extract_blocks(doc)
+    items = extract_items(doc)
+    blocks = [text for kind, text in items if kind == "block"]
     if not blocks:
         print(f"no bash blocks found in {doc}", file=sys.stderr)
         return 1
@@ -314,27 +419,67 @@ def main(argv: list[str]) -> int:
 
     cwd = home
     ran = 0
+    health_kb = "my-research"
+    last: tuple[str, str] | None = None  # (block, stdout) of the block that ran last
+    last_output = ""  # stdout + stderr of that block
+    exit_wanted = 0  # set by `expect-exit` for the next block
     try:
-        for number, block in enumerate(blocks, start=1):
+        for number, (kind, text) in enumerate(items, start=1):
+            if kind == "directive":
+                words = text.split()
+                if words[:1] == ["expect-ids"] and len(words) > 1:
+                    if last is None:
+                        raise TutorialError(f"`{text}` follows no command that ran")
+                    print(f"  [{number}] expect-ids {' '.join(words[1:])}")
+                    assert_expected_ids(last[0], last[1], words[1:])
+                elif words[:1] == ["expect-exit"] and len(words) == 2 and words[1].isdigit():
+                    exit_wanted = int(words[1])
+                elif words[:1] == ["expect-text"] and len(words) > 1:
+                    if last is None:
+                        raise TutorialError(f"`{text}` follows no command that ran")
+                    print(f"  [{number}] expect-text {' '.join(words[1:])}")
+                    for word in words[1:]:
+                        if word not in last_output:
+                            raise TutorialError(
+                                f"the tutorial says this output contains {word!r}:\n"
+                                f"{last[0]}\n--- output ---\n{last_output[:2000]}"
+                            )
+                elif words[:1] == ["seed"] and len(words) == 3:
+                    print(f"  [{number}] seed {words[1]} -> {words[2]}")
+                    seed_fixture(words[1], words[2], cwd, env)
+                elif words[:1] == ["health-kb"] and len(words) == 2:
+                    health_kb = words[1]
+                else:
+                    raise TutorialError(f"unknown runner directive: {text!r}")
+                continue
+
+            block = text
             marker = should_skip(block)
             if marker:
                 print(f"  [{number}] skipped ({marker})")
+                if marker == "git clone of pyrite" and not (cwd / "pyrite").exists():
+                    stand_in_for_clone(cwd / "pyrite")
                 continue
 
             first = block.strip().splitlines()[0]
             print(f"  [{number}] {first}")
             proc = run_block(block, cwd, env)
-            if proc.returncode != 0:
+            if proc.returncode != exit_wanted:
                 raise TutorialError(
-                    f"block {number} of {doc.name} exited {proc.returncode}:\n"
+                    f"block {number} of {doc.name} exited {proc.returncode}, "
+                    f"the document says {exit_wanted}:\n"
                     f"{block}\n--- stdout ---\n{proc.stdout}\n--- stderr ---\n{proc.stderr}"
                 )
-            assert_search_returned_results(block, proc.stdout)
+            exit_wanted = 0
+            if proc.returncode == 0:
+                assert_search_returned_results(block, proc.stdout)
+            last = (block, proc.stdout)
+            last_output = proc.stdout + "\n" + proc.stderr
             cwd = resulting_cwd(proc.stdout, cwd)
             ran += 1
 
         check_claude_calls(home, any("pyrite mcp-setup" in block for block in blocks))
-        check_index_health("my-research", cwd, env)
+        check_index_health(health_kb, cwd, env)
     except TutorialError as failure:
         print(f"\nFAIL: {failure}", file=sys.stderr)
         return 1
