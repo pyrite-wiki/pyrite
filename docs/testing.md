@@ -172,15 +172,23 @@ merge.
 - **The ratchet**: `experimental` runs `-m "experimental and not slow and not
   e2e"` on Python 3.12 with Postgres, on every backend PR and every push to
   `dev`, and hands the JUnit report to `scripts/experimental_ratchet.py check`.
-  The job is red only for a failure missing from
-  `tests/experimental_known_failures.txt`, or for a PR that adds a line to it:
-  the list can only shrink. A listed test that passes, or no longer exists, is
-  named in the job summary for removal.
-- **Never silently**: on a push to `dev`, the `experimental-issues` job (the
-  only job with `issues: write`, using the workflow's token) opens an
-  `experimental-broken` issue per test file with a new failure, naming the
-  tests, the commit and the run, or comments on the open one with the tests it
-  does not name yet. On a PR the news is in the job summary only.
+  The job is red only for news: a failure in neither
+  `tests/experimental_known_failures.txt` nor an open `experimental-broken`
+  issue (the job reads them with `issues: read`); a PR that adds a line to
+  the list, which can only shrink; or a run that did not complete (no report,
+  or a pytest exit status other than 0 or 1; the run step times out before
+  the job so the ratchet still runs). A listed test that passes or no longer
+  exists is named for removal, and a filed test that passes again is named so
+  its issue can be closed.
+- **Never silently**: on a push to `dev`, whenever `experimental` did not
+  succeed (failed or cancelled), the `experimental-issues` job (the only job
+  with `issues: write`, using the workflow's token) opens or comments on an
+  `experimental-broken` issue: per test file with a new failure, for a grown
+  known-failures list, and for a run that did not complete, including one
+  that left no result at all. On a PR the news is in the job summary only.
+- **Collection errors**: a file that fails to import stops the core run unless
+  every test in it is experimental by the mapping; then the core run warns and
+  continues, and the experimental job reports it as a failure of that file.
 
 Run either set locally:
 

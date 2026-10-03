@@ -230,7 +230,11 @@ and the root `conftest.py` applies it. Security properties (authorization,
 read scoping, containment of paths, credential handling, the characterization
 oracle, escaping) are never experimental, whatever surface they go through;
 the same file lists them, and a test checks the mapping against a real
-collection.
+collection. The gate decides, not a test's name: an experimental test whose
+body touches that vocabulary (paths leaving a root, private or readable sets,
+read-only, redaction, credentials, escaping, tiers) fails
+`tests/test_experimental_surface.py` until it is listed as security
+(`NEVER_EXPERIMENTAL`) or reviewed with a reason (`REVIEWED_EXPERIMENTAL`).
 
 ```bash
 .venv/bin/pytest tests/ extensions/ -n 4 -m "not slow and not e2e and not experimental"   # the core, as CI's gating job runs it
@@ -242,11 +246,15 @@ A plain `pytest` runs both. `scripts/test-affected --run`, and so the
 pre-push hook, runs the core only (`PYRITE_PUSH_EXPERIMENTAL=1` or
 `--experimental` includes the rest). In CI the `test` job, which `gate`
 needs, runs the core; the `experimental` job runs the rest on every PR and on
-`dev`, does not block a merge, and is red only for news: a failure missing
-from `tests/experimental_known_failures.txt`, or a PR that adds to that list
-(it can only shrink). On `dev` a new failure opens an `experimental-broken`
-issue per test file. A new test of an experimental surface needs no marker if
-its path is mapped; a new file for one needs a line in
+`dev`, does not block a merge, and is red only for news: a failure in neither
+`tests/experimental_known_failures.txt` nor an open `experimental-broken`
+issue, a PR that adds to that list (it can only shrink), or a run that did
+not complete. On `dev` each of those opens or updates an `experimental-broken`
+issue. A file that fails to import stops the core run only if it holds a core
+or security case; one whose tests are all experimental is a warning there and
+a failure in the experimental job. `test-affected --run` says how many
+experimental tests it left out. A new test of an experimental surface needs
+no marker if its path is mapped; a new file for one needs a line in
 `tests/experimental_surface.py`.
 
 **Each tree is tested once.** A `--run` that passes on a clean tree (nothing

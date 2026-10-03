@@ -105,6 +105,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import importlib.util
 import json
 import os
 import re
@@ -738,6 +739,57 @@ def pytest_args(selection: Selection, workers: int | str = DEFAULT_WORKERS) -> l
     return [*args, *files, *extra]
 
 
+def _test_ids(path: Path, rel: str) -> list[str]:
+    """Node ids (without parameters) of the test functions in one file."""
+    try:
+        tree = ast.parse(path.read_text())
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return []
+    ids: list[str] = []
+
+    def walk(node: ast.AST, prefix: list[str]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef):
+                walk(child, [*prefix, child.name])
+            elif isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
+                if child.name.startswith("test"):
+                    ids.append("::".join([rel, *prefix, child.name]))
+
+    walk(tree, [])
+    return ids
+
+
+def experimental_left_out(root: Path, items: list[str]) -> tuple[int, int] | None:
+    """(tests, files) among the selection that the mapping marks experimental,
+    which the default --run deselects (#657). None without a mapping."""
+    mapping = root / "tests" / "experimental_surface.py"
+    if not mapping.exists():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("_experimental_surface", mapping)
+        module = importlib.util.module_from_spec(spec)
+        # Registered first: its dataclasses look their module up by name.
+        sys.modules["_experimental_surface"] = module
+        spec.loader.exec_module(module)
+        is_experimental = module.is_experimental
+    except Exception:  # noqa: BLE001 - a note, never a reason to block a run
+        return None
+    tests, files = 0, set()
+    for item in items:
+        target = item.split("::", 1)[0]
+        path = root / target
+        paths = sorted(path.rglob("test_*.py")) if path.is_dir() else [path]
+        for test_file in paths:
+            rel = test_file.relative_to(root).as_posix()
+            for nodeid in _test_ids(test_file, rel):
+                if "::" in item and not (nodeid == item or nodeid.startswith(item + "::")):
+                    continue
+                if is_experimental(nodeid):
+                    tests += 1
+                    files.add(rel)
+    return tests, len(files)
+
+
 # --------------------------------------------------------------------------
 # Pass stamps: each tree is tested once
 
@@ -1037,6 +1089,15 @@ def main(argv: list[str] | None = None) -> int:
             or (f"{len(selection.files)} affected test files + {len(selection.core)} core")
         )
         print(f"test-affected: {label}", file=sys.stderr)
+        left_out = None if with_experimental else experimental_left_out(root, args[2:])
+        if left_out and left_out[0]:
+            tests, files = left_out
+            print(
+                f"test-affected: {tests} experimental test function{'s' * (tests != 1)} in "
+                f"{files} file{'s' * (files != 1)} left out, as in CI's gating job; "
+                "run them too with: scripts/test-affected --run --experimental",
+                file=sys.stderr,
+            )
         if opts.dry_run:
             print(shlex.join(cmd))
             return 0

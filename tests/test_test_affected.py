@@ -572,6 +572,32 @@ class TestCLI:
         out = self._run(repo, "--run", "--dry-run", "--files", "pyrite/b.py")
         assert "-m 'not slow and not e2e and not experimental'" in out.stdout
 
+    def test_run_says_how_many_experimental_tests_it_left_out(self, repo):
+        """A change under extensions/ can select only experimental tests; the
+        run must say so and how to run them, not pass quietly on nothing."""
+        _write(
+            repo,
+            "tests/experimental_surface.py",
+            "def is_experimental(nodeid):\n    return nodeid.startswith('tests/test_b.py')\n",
+        )
+        out = self._run(repo, "--run", "--dry-run", "--files", "pyrite/b.py")
+        assert out.returncode == 0, out.stderr
+        assert "1 experimental test" in out.stderr and "1 file" in out.stderr
+        assert "--experimental" in out.stderr
+
+    def test_with_experimental_there_is_nothing_to_report(self, repo):
+        _write(
+            repo,
+            "tests/experimental_surface.py",
+            "def is_experimental(nodeid):\n    return True\n",
+        )
+        out = self._run(repo, "--run", "--dry-run", "--experimental", "--files", "pyrite/b.py")
+        assert "experimental test" not in out.stderr
+
+    def test_no_mapping_no_report(self, repo):
+        out = self._run(repo, "--run", "--dry-run", "--files", "pyrite/b.py")
+        assert out.returncode == 0 and "experimental test" not in out.stderr
+
     @pytest.mark.control(
         reason="with the variable, the base also runs everything: it never filtered"
     )
@@ -592,6 +618,10 @@ class TestCLI:
 
 class TestThisRepository:
     """The real tree: the selector parses it and the core set exists."""
+
+    def test_the_real_mapping_loads_and_counts(self):
+        tests, files = ta.experimental_left_out(SCRIPT.parent.parent, ["extensions/social/tests"])
+        assert tests > 0 and files == 1
 
     def test_selector_parses_the_repository(self):
         root = SCRIPT.parent.parent

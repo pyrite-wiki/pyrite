@@ -5,5 +5,12 @@
 # shrink: the job also fails when a pull request adds a line. Fix the test,
 # or the feature, instead of listing it.
 #
-# Seeded 2026-10-02 from a full run of `-m experimental` on dev e5d26431
-# (2078 passed, 78 skipped, 0 failed, macOS, Python 3.12, no Postgres).
+# A failure already named in an open `experimental-broken` issue is reported
+# as filed, not new; it does not belong here either.
+#
+# Seeded empty, 2026-10-02, from the environment the ratchet runs in: the CI
+# `experimental` job (ubuntu-latest, Python 3.12, `.[all,postgres]` plus every
+# extension, Postgres pgvector/pg16, HF_HUB_OFFLINE=1, -n auto) on dev
+# e0d3b934 plus this change, run 37085887526: 2163 passed, 2 skipped,
+# 0 failed. A local run on dev e5d26431 (macOS, Python 3.12, no Postgres, -n 4)
+# agreed: 2078 passed, 78 skipped (the Postgres legs), 0 failed.
