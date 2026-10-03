@@ -161,6 +161,10 @@ def pyrite_executable() -> Path | None:
     return None
 
 
+class _CallFailedError(Exception):
+    """A `claude mcp` call that did not exit 0, timed out or could not run."""
+
+
 class _StopError(Exception):
     """One client was not changed (``stopped``: it is as it was) or was left
     part-way (``failed``: `extra` says exactly how). Carries ADR-0037's shape."""
@@ -232,9 +236,8 @@ def _read_entry(existing: Any) -> tuple[str, list[str]]:
 
 def _tier_slot(args: list[str]) -> tuple[int, str] | None:
     """Where the tier value sits in `args` and the prefix it is written with:
-    ``--tier X`` / ``-t X`` (the next argument) or ``--tier=X``. No attached
-    ``-tX``: `pyrite mcp` does not read one, and an argument that only starts
-    with ``-t`` is not a tier."""
+    ``--tier X`` or ``--tier=X``, and ``-t X``, which `pyrite-admin mcp` reads
+    and `pyrite mcp` does not (`_decide` rewrites it). No attached ``-tX``."""
     for i, arg in enumerate(args[1:], 1):
         if arg in ("--tier", "-t"):
             if i + 1 >= len(args):
@@ -352,6 +355,12 @@ def _decide(existing: Any, default: dict, tier: str | None, force: bool) -> _Pla
         return _Plan("changed", default, changes=[change], discarded=discarded)
     command, args = _read_entry(existing)
     new_args = _with_tier(args, tier) if tier else args
+    slot = _tier_slot(new_args)
+    if (command != default["command"] or new_args != args) and slot and slot[1] == "":
+        # `pyrite-admin mcp` reads `-t X`, `pyrite mcp` only `--tier X`. The
+        # entry is changing anyway, so the tier is written the way it reads.
+        flag = slot[0] - 1
+        new_args = [*new_args[:flag], "--tier", *new_args[flag + 1 :]]
     changes = []
     if command != default["command"]:
         changes.append({"field": "command", "old": command, "new": default["command"]})
@@ -654,6 +663,8 @@ def _setup_file(
         _record(item, plan, existing)
         return
 
+    if plan.merged:
+        _verify_starts(Path(plan.entry["command"]), plan.entry["args"], entry=True)
     data = {**loaded.data}
     data["mcpServers"] = {**servers, SERVER_NAME: plan.entry}
     try:
@@ -804,6 +815,8 @@ def _setup_claude_code(
             by_hand=by_hand,
             entry=_public(existing),
         )
+    if plan.merged:
+        _verify_starts(Path(wanted["command"]), wanted["args"], entry=True)
     # Claude Code rewrites this file all the time, so what must not have moved
     # since the decision is the entry, not the bytes.
     again, _ = _read_claude_config(config)
@@ -836,32 +849,84 @@ def _setup_claude_code(
         return proc.returncode == 0, (proc.stderr or proc.stdout).strip()[-500:]
 
     def holds() -> Any:
+        """What the file holds now. Never raises: unreadable is _UNKNOWN."""
         try:
             return _read_claude_config(config)[0]
-        except _StopError:
+        except Exception:  # noqa: BLE001
             return _UNKNOWN
 
     def is_entry(now: Any, entry: Any) -> bool:
         return isinstance(now, dict) and _normal(now) == _normal(entry)
 
-    def unconfirmed(what: str) -> _StopError:
-        return _StopError(
-            "CLIENT_COMMAND_FAILED",
-            f"{what}, and {config} could not be read back to see what it holds",
-            f"check with `claude mcp get {SERVER_NAME}`; to point it at this install: {manual}",
-            status="failed",
-        )
+    def call(*cmd: str) -> None:
+        ok, detail = run(*cmd)
+        if not ok:
+            raise _CallFailedError(f"`claude mcp {cmd[0]}` failed: {detail}")
 
-    def not_back(failure: str) -> _StopError:
-        """The entry was removed and is not back: what it held, and the
-        commands that put it back or point it here."""
+    def why(exc: Exception) -> str:
+        return str(exc) if isinstance(exc, _CallFailedError) else f"{type(exc).__name__}: {exc}"
+
+    add_new = ["add", "-s", "user", SERVER_NAME, "--", wanted["command"], *wanted["args"]]
+    if existing is _ABSENT:
+        try:
+            call(*add_new)
+        except Exception as exc:  # noqa: BLE001 - nothing was removed; say what the file holds
+            failure, now = why(exc), holds()
+            if now is _ABSENT:
+                raise _StopError(
+                    "CLIENT_COMMAND_FAILED",
+                    f"{failure}; nothing was added",
+                    f"run it yourself: {manual}",
+                ) from None
+            if not is_entry(now, wanted):
+                raise _StopError(
+                    "CLIENT_COMMAND_FAILED",
+                    f"{failure}, and {config} could not be read back to see what it holds",
+                    f"check with `claude mcp get {SERVER_NAME}`; to add it: {manual}",
+                    status="failed",
+                ) from None
+            item["notes"].append(f"{failure}, but {config} holds the new entry.")
+        _record(item, plan, existing)
+        return
+
+    def settle(failure: str) -> None:
+        """The one way out of a failed remove-then-add, for any failure at any
+        step (a call, its output, a read-back, the restore, a bug): returns
+        only when the file holds the new entry; otherwise the entry is as it
+        was (restored if need be), or the report holds what was removed and
+        the commands that put it back. Criterion 5: never neither."""
+        # holds() and run() never raise, and the rest is plain logic over
+        # values already checked, so nothing below can escape this function.
+        now = holds()
+        if is_entry(now, wanted):
+            item["notes"].append(f"{failure}, but {config} holds the new entry.")
+            return
+        if is_entry(now, existing):
+            raise _StopError(
+                "CLIENT_COMMAND_FAILED",
+                f"{failure}; the previous {SERVER_NAME!r} entry is in place",
+                f"fix the cause and re-run, or run `{_REMOVE}` and then: {manual}",
+            )
+        if now is _UNKNOWN:
+            # Claude Code replaces a file it cannot read, so it is not called
+            # again: the report carries what to put back.
+            failure += f"; {config} could not be read back, so `claude` was not run again"
+        elif _add_reproduces(existing):
+            old = ["add", "-s", "user", SERVER_NAME, "--", existing["command"]]
+            restored, detail = run(*old, *existing["args"])
+            if restored or is_entry(holds(), existing):
+                raise _StopError(
+                    "CLIENT_COMMAND_FAILED",
+                    f"{failure}; the previous {SERVER_NAME!r} entry was restored",
+                    f"fix the cause and re-run, or run `{_REMOVE}` and then: {manual}",
+                )
+            failure += f"; restoring the previous entry also failed: {detail}"
         by_hand = [manual]
         if _add_reproduces(existing):
             by_hand.insert(0, _add_command(existing))
-        return _StopError(
+        raise _StopError(
             "CLIENT_COMMAND_FAILED",
-            f"{failure}. The previous {SERVER_NAME!r} entry was removed and is not back; "
-            "`removed` is what it held",
+            f"{failure}. The previous {SERVER_NAME!r} entry is not back; `removed` is what it held",
             "run the first command in by_hand to put it back as it was, or the last to "
             "point it at this install",
             status="failed",
@@ -869,69 +934,28 @@ def _setup_claude_code(
             by_hand=by_hand,
         )
 
-    def add_or_restore() -> None:
-        ok, detail = run("add", "-s", "user", SERVER_NAME, "--", wanted["command"], *wanted["args"])
-        if ok:
-            return
-        failure = f"`claude mcp add` failed: {detail}"
-        now = holds()
-        if is_entry(now, wanted):
-            item["notes"].append(f"{failure}, but {config} holds the new entry.")
-            return
-        if now is _UNKNOWN:
-            raise unconfirmed(failure)
-        if existing is _ABSENT:
-            raise _StopError(
-                "CLIENT_COMMAND_FAILED",
-                f"{failure}; nothing was added",
-                f"run it yourself: {manual}",
-            )
-        # `remove` succeeded and `add` did not: put back what was there.
-        if _add_reproduces(existing):
-            old = ["add", "-s", "user", SERVER_NAME, "--", existing["command"], *existing["args"]]
-            restored, why = run(*old)
-            if restored or is_entry(holds(), existing):
-                raise _StopError(
-                    "CLIENT_COMMAND_FAILED",
-                    f"{failure}; the previous {SERVER_NAME!r} entry was restored",
-                    f"fix the cause and re-run, or run `{_REMOVE}` and then: {manual}",
-                )
-            failure += f"; restoring the previous entry also failed: {why}"
-        raise not_back(failure)
-
-    if existing is not _ABSENT:
-        ok, detail = run("remove", "-s", "user", SERVER_NAME)
-        now = _ABSENT if ok else holds()
-        if now is _UNKNOWN:
-            raise unconfirmed(f"`{_REMOVE}` failed: {detail}")
-        if now is not _ABSENT:
-            raise _StopError(
-                "CLIENT_COMMAND_FAILED",
-                f"`{_REMOVE}` failed: {detail}; the entry is as it was",
-                f"fix the cause and re-run, or run `{_REMOVE}` and then: {manual}",
-            )
+    # From the moment `remove` is attempted, settle() is the only exit that is
+    # not success. Not covered: KeyboardInterrupt and signals.
     try:
-        add_or_restore()
-    except _StopError:
-        raise
+        call("remove", "-s", "user", SERVER_NAME)
+        call(*add_new)
     except Exception as exc:  # noqa: BLE001
-        # Criterion 5: once `remove` has succeeded, no failure of any kind may
-        # leave neither the entry restored nor the report of what it held.
-        if existing is _ABSENT:
-            raise
-        raise not_back(f"{type(exc).__name__}: {exc}") from None
+        settle(why(exc))
     _record(item, plan, existing)
 
 
 # -- the command ---------------------------------------------------------------------
 
 
-def _verify_starts(command: Path) -> None:
-    """Run the command once before any client is told to: a client that cannot
-    start it says so only in its own log."""
+def _verify_starts(command: Path, args: list[str], entry: bool = False) -> None:
+    """Run `command args --help` before any client is told to start it: a
+    client that cannot start a server says so only in its own log. With
+    `entry`, these are an existing entry's own arguments as they will be
+    written, so any option this install's pyrite rejects stops the write."""
+    argv = [str(command), *args, "--help"]
     try:
         proc = subprocess.run(
-            [str(command), "mcp", "--help"],
+            argv,
             capture_output=True,
             encoding="utf-8",
             errors="replace",
@@ -943,13 +967,22 @@ def _verify_starts(command: Path) -> None:
         detail = str(exc)
     else:
         detail = (proc.stderr or proc.stdout).strip()[-2000:]
-    if proc is None or proc.returncode != 0:
+    if proc is not None and proc.returncode == 0:
+        return
+    if entry:
         raise _StopError(
-            "MCP_COMMAND_FAILED",
-            f"{command} mcp --help failed, so no client could start it: {detail}",
-            "reinstall pyrite into this environment (the MCP server is a core "
-            "dependency) and re-run; nothing was written",
+            "ENTRY_WOULD_NOT_START",
+            f"with this install's path the {SERVER_NAME!r} entry would run "
+            f"`{shlex.join(argv[:-1])}`, which fails: {detail}",
+            "nothing was written; edit the entry's arguments by hand, or re-run with "
+            "--force to write the default entry",
         )
+    raise _StopError(
+        "MCP_COMMAND_FAILED",
+        f"{shlex.join(argv)} failed, so no client could start it: {detail}",
+        "reinstall pyrite into this environment (the MCP server is a core "
+        "dependency) and re-run; nothing was written",
+    )
 
 
 def _explicit_config_env() -> dict[str, str]:
@@ -1122,7 +1155,7 @@ def mcp_setup(
             )
         )
     try:
-        _verify_starts(command)
+        _verify_starts(command, ["mcp", "--tier", new_tier])
     except _StopError as failure:
         stop(failure)
 

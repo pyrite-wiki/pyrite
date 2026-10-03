@@ -169,6 +169,8 @@ do this safely:
   duplicate key, is read-only or hard-linked, or changed while the command ran;
 - the `pyrite` entry's arguments do not begin with `mcp`, or the entry is not
   a server entry at all (`--force` discards it and writes the default entry);
+- the entry's own arguments, with this install's path, would not start
+  (it runs them with `--help` first; an old `-t X` is rewritten to `--tier X`);
 - in Claude Code's user scope, the entry has `env` or other keys and its path
   must change. Claude Code can only remove and re-add an entry, which would
   drop them, so the report gives the commands to run yourself;

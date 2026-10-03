@@ -117,6 +117,8 @@ FAKE_CLAUDE = textwrap.dedent(
         sys.exit(f"fake claude: unsupported {args}")
     cfg.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"File modified: {cfg}")
+    if told("FAKE_CLAUDE_LIE"):
+        sys.exit(f"fake claude: E_LIE {verb}")
     if told("FAKE_CLAUDE_HANG_AFTER"):
         time.sleep(120)
     if told("FAKE_CLAUDE_VANISH"):
@@ -201,7 +203,7 @@ def env(tmp_path, monkeypatch):
     if e.mod is not None:
         _guard_paths_inside(monkeypatch, e.mod, tmp_path)
         e.real_verify = e.mod._verify_starts
-        monkeypatch.setattr(e.mod, "_verify_starts", lambda command: None)
+        monkeypatch.setattr(e.mod, "_verify_starts", lambda *args, **kwargs: None)
     return e
 
 
@@ -680,16 +682,14 @@ def test_the_old_trio_is_reported_and_never_removed(target, pyrite):
     ("old_args", "new_args"),
     [
         (["mcp", "--tier", "admin"], ["mcp", "--tier", "read"]),
-        (["mcp", "-t", "admin"], ["mcp", "-t", "read"]),
+        # `pyrite mcp` reads only --tier: a `-t` (pyrite-admin's) is rewritten.
+        (["mcp", "-t", "admin"], ["mcp", "--tier", "read"]),
         (["mcp", "--tier=admin"], ["mcp", "--tier=read"]),
         (["mcp"], ["mcp", "--tier", "read"]),
         (["mcp", "--tier", "admin", "-vv"], ["mcp", "--tier", "read", "-vv"]),
         (["mcp", "-vv"], ["mcp", "--tier", "read", "-vv"]),
-        # `pyrite mcp` has no attached `-tX` form; an argument that merely
-        # starts with -t is someone's, and is kept as it is.
-        (["mcp", "-trace"], ["mcp", "--tier", "read", "-trace"]),
     ],
-    ids=["long", "short", "equals", "absent", "args-after", "absent-with-args", "not-a-tier"],
+    ids=["long", "short", "equals", "absent", "args-after", "absent-with-args"],
 )
 def test_tier_is_changed_in_the_form_the_entry_uses(env, old_args, new_args):
     target = Target(env, "config")
@@ -703,6 +703,44 @@ def test_tier_is_changed_in_the_form_the_entry_uses(env, old_args, new_args):
         target.path.read_bytes()
         == target.text(member(cmd_text(NEW), args_text(*new_args))).encode()
     )
+
+
+def test_an_entry_whose_args_this_pyrite_rejects_is_not_written(target, monkeypatch):
+    """The probe runs the entry as it would be written (`<cmd> <args> --help`):
+    an option this install's pyrite rejects stops the write, whatever it is."""
+    if target.env.mod is not None:
+        monkeypatch.setattr(target.env.mod, "_verify_starts", target.env.real_verify)
+    target.seed(member(cmd_text(OLD), args_text("mcp", "--no-such-option")))
+    before = snapshot(target.path)
+
+    result = target.run()
+
+    assert result.exit_code == 1, result.output
+    item = only_client(result)
+    assert item["status"] == "stopped" and item["error_code"] == "ENTRY_WOULD_NOT_START", item
+    assert "--no-such-option" in item["error"] and "--force" in item["suggestion"]
+    assert snapshot(target.path) == before
+    assert claude_calls(target.env) == []
+
+
+@pytest.mark.parametrize("kind", ["config", "claude-code"])
+def test_a_pyrite_admin_short_tier_entry_is_written_in_the_form_pyrite_reads(
+    env, monkeypatch, kind
+):
+    """`pyrite-admin mcp -t admin` works; `pyrite mcp -t admin` exits 2. The
+    entry keeps its tier, written as --tier, and the probe confirms it starts."""
+    if env.mod is not None:
+        monkeypatch.setattr(env.mod, "_verify_starts", env.real_verify)
+    target = Target(env, kind)
+    target.seed(target.client_written("/opt/legacy/bin/pyrite-admin", "mcp", "-t", "admin"))
+
+    result = target.run()
+
+    assert result.exit_code == 0, result.output
+    item = only_client(result)
+    assert (item["status"], item["tier"]) == ("changed", "admin"), item
+    assert target.entry()["args"] == ["mcp", "--tier", "admin"]
+    assert target.entry()["command"] == NEW
 
 
 def test_readme_shaped_entry_without_a_tier_is_left_as_written(env):
@@ -1665,17 +1703,43 @@ def test_an_argument_claude_cannot_be_given_after_remove_is_reported(env):
     assert "restoring the previous entry also failed" in item["error"], item
 
 
-def test_an_unexpected_error_after_remove_still_reports_what_was_removed(env, monkeypatch):
-    """Whatever goes wrong once `remove` has succeeded, never neither: the
-    report holds what the entry was and the command that puts it back."""
+#: Each step after `remove` where something can go wrong, and how to make it
+#: go wrong there: (stub instructions, failing read-backs after this many
+#: reads, the outcome the guarantee allows). Reads: 1 decides, 2 re-checks
+#: before any call, 3 settles the failure, 4 checks the restore.
+AFTER_REMOVE = {
+    "remove-fails-but-removed": ({"FAKE_CLAUDE_LIE": "remove"}, None, "stopped"),
+    "add-fails-but-added": ({"FAKE_CLAUDE_LIE": "add"}, None, "changed"),
+    "remove-leaves-file-unreadable": ({"FAKE_CLAUDE_CORRUPT": "remove"}, None, "failed"),
+    "add-fails": ({"FAKE_CLAUDE_FAIL": "add#1"}, None, "stopped"),
+    "add-output-undecodable": (
+        {"FAKE_CLAUDE_GARBLE": "add", "FAKE_CLAUDE_FAIL": "add#1"}, None, "stopped"
+    ),
+    "add-cannot-run": ({"FAKE_CLAUDE_VANISH": "remove"}, None, "failed"),
+    "add-leaves-file-unreadable": ({"FAKE_CLAUDE_CORRUPT": "add"}, None, "failed"),
+    "read-back-raises": ({"FAKE_CLAUDE_FAIL": "add"}, 2, "failed"),
+    "restore-fails": ({"FAKE_CLAUDE_FAIL": "add"}, None, "failed"),
+    "restore-read-back-raises": ({"FAKE_CLAUDE_FAIL": "add"}, 3, "failed"),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("step", AFTER_REMOVE)
+def test_a_failure_at_any_step_after_remove_restores_or_reports_what_was_removed(
+    env, monkeypatch, step
+):
+    """Criterion 5, by construction: whatever fails after `remove` is
+    attempted, the entry is in place (as it was, or restored), or the report
+    holds exactly what was removed and the command that puts it back."""
+    stub, reads_ok, outcome = AFTER_REMOVE[step]
     target = _seed_changeable(env)
-    monkeypatch.setenv("FAKE_CLAUDE_FAIL", "add")
-    if env.mod is not None:
+    for var, value in stub.items():
+        monkeypatch.setenv(var, value)
+    if reads_ok is not None and env.mod is not None:
         real, reads = env.mod._read_claude_config, []
 
         def read_then_break(config):
             reads.append(config)
-            if len(reads) > 2:  # the read and the re-read before any call
+            if len(reads) > reads_ok:
                 raise RuntimeError("a bug nobody predicted")
             return real(config)
 
@@ -1683,11 +1747,21 @@ def test_an_unexpected_error_after_remove_still_reports_what_was_removed(env, mo
 
     result = target.run()
 
-    assert result.exit_code == 1, result.output
     item = only_client(result)
-    assert item["status"] == "failed", item
-    assert item["removed"] == {"command": OLD, "args": ["mcp", "--tier", "admin"]}
-    assert f"claude mcp add -s user pyrite -- {OLD} mcp --tier admin" == item["by_hand"][0]
+    assert item["status"] == outcome, item
+    if outcome == "changed":  # the file holds the new entry: judged by the file
+        assert result.exit_code == 0 and target.entry()["command"] == NEW, result.output
+        return
+    assert result.exit_code == 1, result.output
+    assert item["error_code"] == "CLIENT_COMMAND_FAILED", item
+    if outcome == "stopped":
+        assert target.entry() == OLD_ENTRY
+    else:
+        assert item["removed"] == {"command": OLD, "args": ["mcp", "--tier", "admin"]}
+        assert item["by_hand"][0] == f"claude mcp add -s user pyrite -- {OLD} mcp --tier admin"
+    if "unreadable" in step:
+        # Claude Code replaces a file it cannot read: it is not called again.
+        assert claude_calls(env)[-1][:2] == ["mcp", step.split("-")[0]]
 
 
 def test_a_call_that_times_out_after_doing_its_work_is_judged_by_the_file(env, monkeypatch):
@@ -1705,6 +1779,17 @@ def test_a_call_that_times_out_after_doing_its_work_is_judged_by_the_file(env, m
     assert item["status"] == "created", item
     assert any("timed out" in note for note in item["notes"])
     assert_starts_pyrite_at(servers_in(env.home / ".claude.json")["pyrite"], "write")
+
+
+def test_a_first_add_that_leaves_the_config_unreadable_claims_nothing(env, monkeypatch):
+    install_fake_claude(env)
+    monkeypatch.setenv("FAKE_CLAUDE_CORRUPT", "add")
+
+    result = setup("--client", "claude-code")
+
+    assert result.exit_code == 1, result.output
+    item = only_client(result)
+    assert item["status"] == "failed" and "could not be read back" in item["error"], item
 
 
 def test_a_failed_first_add_changes_nothing(env, monkeypatch):
