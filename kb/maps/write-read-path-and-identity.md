@@ -100,6 +100,8 @@ Proposed, not yet written: `tests/test_doc_write_as_patch.py` (ADR-0042).
 - `previous_ids` (history across a rename) is absent; most I1 to I10 are
   strict expected failures until [[adr-0038]] steps 2 to 5 land. The ADR is
   still labelled `proposed` though its questions are decided.
-- Not decided: `updated_at` stamping, an optional guard on a field set,
-  spelling of a path id, whether old title-derived ids keep resolving
-  (ADR-0042 questions 1, 2, 4, 5).
+- Decided 2026-10-02 (ADR-0042 questions 4 and 5): a path id is the path
+  without `.md`, with `/` separators; old title-derived ids do not keep
+  resolving; an `id:` is part of the contract, files without one are reported,
+  and the upgrade pins them. Not decided: `updated_at` stamping and an optional
+  guard on a field set (questions 1 and 2).
