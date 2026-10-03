@@ -719,3 +719,28 @@ git add <paths> && git commit -q -m "..." && (time scripts/test-affected --run 2
 - `tests/test_schema_validate_db_only_kb.py` was a ready pattern for driving `schema validate` with a KB held only in `_db_kb_cache`.
 
 **Severity (overall):** slowed. Nothing wrong silently; the costs were all timing and a missed grep.
+## 2026-10-03 · B7, derived task completion: one worker theme in a worktree (pyrite-dev skill, CLI, test tooling) · claude-opus-5-5
+
+Replaced the parent rollup hook with a derived completion value across `task list`, `task get`, `task decompose`, MCP and REST. Pyrite's own tooling, used as a worker would use it.
+
+**Friction 1: the local test run cannot finish inside one tool call. Severity: slowed.** `scripts/test-affected --run` for a change to `task_service.py`, `task_commands.py` and `mcp_server.py` ran 5,847 tests in 12m45s, past the 10-minute tool limit, so it moved to the background. Its output is buffered: for 12 minutes the log showed only the pre-commit lines, with no sign of progress or of which selection it had made. The pre-push hook then ran the same selection again on the rebased tree (another ~12 minutes), because a rebase onto a newer `dev` changes the tree and voids the stamp. Known as #706. **Would have helped:** a first line naming the selection and its size ("core + 212 files importing mcp_server.py: full suite"), and progress lines that are not buffered.
+
+**Friction 2: two lint commands, and the one the skill names is red on `dev`. Severity: had to figure out.** The pyrite-dev verification table says `ruff check .`. On a clean `dev` that reports about 20 errors in `deploy/*/create-user.py` and `scripts/*appointee*.py`. CLAUDE.md says `ruff check pyrite/`. I took CLAUDE.md's command and checked my own files. **Would have helped:** one command in both places, or those paths excluded in `pyproject.toml`.
+
+**Friction 3: `verify-red` marked every test in the new file "import-only". Severity: had to figure out.** The test module imported the new function at the top (`from pyrite.services.task_service import TaskService, derive_completion`). Without the fix the file does not collect, so all 16 tests, including the end-to-end CLI, MCP and REST ones, counted as weak evidence. I fixed it by reaching the function through the module (`task_service.derive_completion`) inside the tests. The result went from 13 import-only to 23 red and 3 import-only. **Would have helped:** one line in the skill's verification table: "import a name the PR adds inside the test, or through its module, so the other tests in the file still collect."
+
+**Friction 4: the structural hook test passed against the hook it was written to catch. Severity: nearly shipped a vacuous guard.** My first "no after_save hook writes another entry" test changed the child's status in memory and called every hook. `_parent_rollup` reads the children's statuses from the index, not from the entry it is given, so it saw no resolved child and wrote nothing. The test only went red once I persisted the child and re-indexed before calling the hooks. Neither `HookRunner` nor `protocol.py` says what state is on disk and in the index when `after_save` runs. **Would have helped:** a docstring line on `run_after_save`: "the entry is written and indexed; hooks that query the index see the new value."
+
+**Friction 5: the consumers and the data were not where the ADR said. Severity: had to look up.**
+- The investigation conductor's "drain check" is in another repo (`~/tcp-skills/plugins/tcp-skills/skills/investigation-conductor/SKILL.md:68`). I found it with `find / -name tcp-skills`. It shells out to `kb task list --status open -f json`, so fixing the open filter covers it.
+- The ADR's measurements (10 all-resolved parents not done, 8 dangling `parent` values) were 3 and 12 in today's research KB.
+- Several "dangling" parents name ids that are not tasks. So the dangling check has to look at every entry in the KB, not only tasks. The ADR does not say this.
+
+**Friction 6: the characterization goldens did not notice a change to the shape of the task list. Severity: a gap, not a slowdown.** Every `task_list` row gained a `derived` key, and every golden still passed. The characterization worlds hold no tasks (`{'tasks': []}`), so MCP and REST task output is not pinned anywhere.
+
+**Minor:** `pyrite search` prints JSON by default, while CLAUDE.md shows it as a quick-context lookup. I had to pipe it or read the JSON.
+
+**Worked well:**
+- `scripts/new-worktree.sh` gave a worktree, venv and `-k pyrite` pointed at this branch's `kb/`, and `pyrite kb list` confirmed it.
+- The groom and the ADRs had the line numbers right (`task_service.py:594`, `:1016`).
+- Hand-authored trees with `IndexManager(db, config).index_all()` made medium tests across CLI, MCP and REST cheap to write. `verify-red`'s per-test table is exactly what a reviewer needs.
