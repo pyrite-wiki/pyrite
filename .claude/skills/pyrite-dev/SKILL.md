@@ -109,7 +109,9 @@ work" is not evidence.
   `tests/experimental_known_failures.txt`, which can only shrink. Run them with
   `scripts/test-affected --run --experimental`. A security test is never
   experimental: list a new one in that file's `NEVER_EXPERIMENTAL` if its path
-  is mapped experimental.
+  is mapped experimental. `test_experimental_surface.py` fails on an
+  experimental test that touches security vocabulary until you list it there or
+  in `REVIEWED_EXPERIMENTAL` with the reason it is not one.
 - A `fix:` branch whose line shows **0 red, or only import-only reds, is not
   done**: write a test that fails on the bug's behaviour, or say why none can.
 - Commit each passing step as you reach it, with the reason in the message.

@@ -18,7 +18,9 @@ tags: [testing, pytest]
   new failure on `dev` opens an `experimental-broken` issue (#657). A test of a
   security property (authorization, read scoping, containment, credentials,
   the characterization oracle, escaping) is never experimental: list it in
-  that file's `NEVER_EXPERIMENTAL` when its path is mapped experimental
+  that file's `NEVER_EXPERIMENTAL` when its path is mapped experimental (a
+  test fails on any experimental test touching security vocabulary until it
+  is listed there or reviewed with a reason)
 
 ## Test Structure for Extensions (proven 8-section pattern)
 1. **TestPluginRegistration** — verify name, all capabilities in registry (use `in` not `len ==`)
