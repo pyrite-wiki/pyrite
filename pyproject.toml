@@ -139,6 +139,12 @@ markers = [
     # the KB service, read scoping, the REST app factory, MCP dispatch and the
     # CLI entry point. Keep it under a minute at -n 4.
     "core: always run by scripts/test-affected, whatever the branch changed",
+    # #657: a test of a surface kb/designs/alpha-supported-surface.md calls
+    # experimental. Applied by path from tests/experimental_surface.py (never
+    # by hand). The gating CI job and the pre-push hook run -m "not
+    # experimental"; the `experimental` CI job runs the rest against
+    # tests/experimental_known_failures.txt and does not block a merge.
+    "experimental: tests an experimental surface; non-blocking, ratcheted (tests/experimental_surface.py)",
     # verify-red (scripts/verify_red_ci.py): a test the PR adds on purpose to
     # pass without the fix too (a "still works" guard), so it is not warned about.
     # It must say why: reason=... or the test's docstring; a bare marker is rejected.

@@ -83,6 +83,22 @@ def _isolate_pyrite_config_environment() -> None:
 _isolate_pyrite_config_environment()
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(config, items):
+    """Mark experimental tests, from the one mapping (#657).
+
+    tests/experimental_surface.py decides; this only applies it. tryfirst so
+    the marker is on every item before ``-m`` deselects (the mark plugin's own
+    collection_modifyitems), whichever order plugins registered in.
+    """
+    from tests.experimental_surface import is_experimental
+
+    marker = pytest.mark.experimental
+    for item in items:
+        if is_experimental(item.nodeid):
+            item.add_marker(marker)
+
+
 @pytest.fixture(autouse=True)
 def _no_auto_embed_unless_marked(request, monkeypatch):
     """Write-time embedding is off for the suite (see tests/test_auto_embed_setting.py).
