@@ -588,3 +588,191 @@ def test_put_metadata_source_does_not_overwrite_a_source_entity_it_contradicts(t
     assert status == 400, body
     _assert_refused_naming(body, "source", "source_entity", "put")
     assert _frontmatter((kb / rel).read_text(encoding="utf-8"))["source_entity"] == "wiki"
+
+
+# ---------------------------------------------------------------------------
+# A key the caller sent counts as given, empty or not; order never matters (#720)
+# ---------------------------------------------------------------------------
+#
+# Design principle 3: a write does what was asked. `participants: ["x"]` with
+# `actors: []` names two values for one field, so it is refused -- not resolved
+# by whichever key came last. The same spelling sent at the top level and again
+# in `metadata` is the same conflict. Every case runs in both orders.
+
+_EMPTY = {"event": [], "relationship": ""}
+
+
+def _ordered_cases(pair):
+    """(case id, top-level items, metadata items) -- each conflict, in both orders."""
+    entry_type, alias, target, value, other, _ = pair
+    empty = _EMPTY[entry_type]
+    cases = [
+        ("alias-then-empty-target", [(alias, value), (target, empty)], []),
+        ("empty-target-then-alias", [(target, empty), (alias, value)], []),
+        ("target-then-empty-alias", [(target, value), (alias, empty)], []),
+        ("empty-alias-then-target", [(alias, empty), (target, value)], []),
+        ("alias-top-empty-target-in-bag", [(alias, value)], [(target, empty)]),
+        ("empty-target-top-alias-in-bag", [(target, empty)], [(alias, value)]),
+        ("target-twice", [(target, value)], [(target, other)]),
+        ("target-twice-swapped", [(target, other)], [(target, value)]),
+        ("alias-twice", [(alias, value)], [(alias, other)]),
+        ("alias-twice-swapped", [(alias, other)], [(alias, value)]),
+    ]
+    return cases
+
+
+def _conflict_cells(surfaces):
+    cells = []
+    for pair, pid in zip(PAIRS, PAIR_IDS, strict=True):
+        for case_id, top, bag in _ordered_cases(pair):
+            for surface in surfaces:
+                cells.append(pytest.param(surface, pair, top, bag, id=f"{surface}-{pid}-{case_id}"))
+    return cells
+
+
+def _put_cells():
+    cells = []
+    for pair, pid in zip(PAIRS, PAIR_IDS, strict=True):
+        _, alias, target, value, _other, _ = pair
+        empty = _EMPTY[pair[0]]
+        for case_id, items in (
+            ("alias-then-empty-target", [(alias, value), (target, empty)]),
+            ("empty-target-then-alias", [(target, empty), (alias, value)]),
+            ("target-then-empty-alias", [(target, value), (alias, empty)]),
+            ("empty-alias-then-target", [(alias, empty), (target, value)]),
+        ):
+            cells.append(pytest.param(pair, items, id=f"put-{pid}-{case_id}"))
+    return cells
+
+
+def _named_in(text: str, top, bag) -> bool:
+    keys = {k for k, _ in top} | {k for k, _ in bag}
+    return any(f"'{k}'" in text for k in keys)
+
+
+@pytest.mark.parametrize(("surface", "pair", "top", "bag"), _conflict_cells(
+    ["build_entry", "service_create", "mcp_create", "service_update", "mcp_update"]
+))  # fmt: skip
+def test_a_sent_empty_value_still_conflicts_and_order_never_decides(
+    tmp_path, surface, pair, top, bag
+):
+    entry_type = pair[0]
+    spec_extra = {"date": "2025-01-02"} if entry_type == "event" else {}
+    top_d = dict(top)
+    assert len(top_d) == len(top), "a top-level key cannot repeat in one dict"
+    refusal = None
+    if surface == "build_entry":
+        kwargs = {**top_d, **spec_extra}
+        if bag:
+            kwargs["metadata"] = dict(bag)
+        try:
+            build_entry(entry_type, title="N", **kwargs)
+        except ValidationError as e:
+            refusal = str(e)
+        written = None
+    elif surface.endswith("_create"):
+        config, kb = _env(tmp_path, {})
+        spec = {"entry_type": entry_type, "title": "N", **spec_extra, **top_d}
+        if bag:
+            spec["metadata"] = dict(bag)
+        if surface == "service_create":
+            try:
+                _service(config, lambda svc: svc.create(KB, dict(spec)))
+            except ValidationError as e:
+                refusal = str(e)
+        else:
+            res = _mcp(config, "kb_create", {"kb_name": KB, **spec})
+            if res.get("created") is not True:
+                assert res["error_code"] == "VALIDATION_FAILED", res
+                refusal = str(res)
+        written = list(kb.rglob("n.md"))
+    else:
+        rel, entry_id, text = EXISTING[entry_type]
+        config, kb = _env(tmp_path, {rel: text})
+        updates = dict(top_d)
+        if bag:
+            updates["metadata"] = dict(bag)
+        if surface == "service_update":
+            try:
+                _service(config, lambda svc: svc.update(entry_id, KB, updates))
+            except ValidationError as e:
+                refusal = str(e)
+        else:
+            res = _mcp(config, "kb_update", {"entry_id": entry_id, "kb_name": KB, **updates})
+            if res.get("updated") is not True:
+                assert res["error_code"] == "VALIDATION_FAILED", res
+                refusal = str(res)
+        assert (kb / rel).read_text(encoding="utf-8") == text, "a refused update changed the file"
+        written = []
+    assert refusal is not None, f"{surface} accepted a conflicting request: {top} {bag}"
+    assert _named_in(refusal, top, bag), refusal
+    if {k for k, _ in top} & {k for k, _ in bag}:
+        assert "two different values" in refusal, refusal  # one spelling, sent twice
+    assert not written, "a refused create wrote a file"
+
+
+@pytest.mark.parametrize(("pair", "items"), _put_cells())
+def test_put_metadata_with_a_sent_empty_value_conflicts_in_either_order(tmp_path, pair, items):
+    rel, entry_id, text = EXISTING[pair[0]]
+    config, kb = _env(tmp_path, {rel: text})
+    status, body = _rest_full(
+        config, "put", f"/api/entries/{entry_id}", {"kb": KB, "metadata": dict(items)}
+    )
+    assert status == 400, (status, body)
+    assert _named_in(body, items, [])
+    assert (kb / rel).read_text(encoding="utf-8") == text
+
+
+def test_rest_create_forwards_only_what_the_client_sent(tmp_path):
+    """POST fills `participants: []` for a client that sent none; that was not asked."""
+    base = {"kb": KB, "entry_type": "event", "title": "N", "date": "2025-01-02"}
+    # Unset `participants` plus `metadata.actors`: one value, accepted, written once.
+    for sub, body, ok in (
+        ("unset", {**base, "metadata": {"actors": ["x"]}}, True),
+        ("empty-sent", {**base, "participants": [], "metadata": {"actors": ["x"]}}, False),
+        ("value-vs-empty", {**base, "participants": ["x"], "metadata": {"actors": []}}, False),
+        ("value-vs-other", {**base, "participants": ["x"], "metadata": {"actors": ["y"]}}, False),
+    ):
+        (tmp_path / sub).mkdir()
+        config, kb = _env(tmp_path / sub, {})
+        status, text = _rest_full(config, "post", "/api/entries", body)
+        if ok:
+            assert status == 200, text
+            fm = _written(kb)
+            assert fm["actors"] == ["x"], fm
+            assert "participants" not in fm and "metadata" not in fm, fm
+        else:
+            assert status == 400, (sub, status, text)
+            assert "'participants'" in text and "'actors'" in text, text
+            assert list(kb.rglob("n.md")) == []
+
+
+@pytest.mark.parametrize("pair", PAIRS, ids=PAIR_IDS)
+def test_the_same_spelling_twice_with_equal_values_is_accepted(tmp_path, pair):
+    entry_type, _alias, target, value, _other, expected = pair
+    extra = {"date": "2025-01-02"} if entry_type == "event" else {}
+    fm = _frontmatter(
+        build_entry(
+            entry_type, title="N", **extra, **{target: value}, metadata={target: value}
+        ).to_markdown()
+    )
+    _assert_lands(fm, expected, "same-spelling-twice")
+
+
+def test_every_type_that_declares_an_alias_has_a_class_of_its_own():
+    """build_entry's generic-type branch returns before the conflict check. It can
+    skip it only while no type that is built there carries an alias: aliases come
+    from core and plugin type metadata, both of which belong to registered classes.
+    Writes do not read a kb.yaml alias (B6), so a kb.yaml-only type has none. This
+    fails the day an alias is declared for a type with no class -- add the check to
+    the generic branch then."""
+    from pyrite.models.core_types import ENTRY_TYPE_REGISTRY
+    from pyrite.plugins import get_registry
+    from pyrite.schema.core_types import CORE_TYPE_METADATA
+
+    registry = get_registry()
+    classes = dict(ENTRY_TYPE_REGISTRY) | registry.get_all_entry_types()
+    declared = {t for t, m in CORE_TYPE_METADATA.items() if m.get("field_aliases")}
+    declared |= {t for t, m in registry.get_all_type_metadata().items() if m.get("field_aliases")}
+    assert declared
+    assert declared <= set(classes), declared - set(classes)

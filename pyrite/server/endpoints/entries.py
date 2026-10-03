@@ -737,6 +737,9 @@ def get_entry(
     return EntryResponse(**result)
 
 
+_CREATE_DEFAULTED = frozenset({"participants", "tags", "metadata"})
+
+
 @router.post(
     "/entries",
     response_model=CreateResponse,
@@ -780,6 +783,10 @@ def create_entry(
             "metadata": req.metadata,
         }.items()
         if v is not None
+        # A field with a model default (`participants: []`, `tags: []`,
+        # `metadata: {}`) the client did not send was not asked for: leave it
+        # out, so "sent" and "empty" stay different (#720, design principle 3).
+        and (k not in _CREATE_DEFAULTED or k in req.model_fields_set)
     }
 
     try:

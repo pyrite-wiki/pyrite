@@ -444,7 +444,11 @@ This amends ADR-0038 (below). The rest follows:
   both spellings of one field (`participants` and `actors`, `source` and
   `source_entity`) with different values is refused with a validation error
   naming both keys, and writes nothing; equal values are accepted and write one
-  key. Empty values count as not given.
+  key. A key the caller sent counts as given, empty or not, and one spelling sent
+  at the top level and again in `metadata` with different values is refused the
+  same way; the result never depends on key order. A default the server filled
+  in is not a key the caller sent (REST create forwards only the fields the
+  client set).
 - A key that defines or uses a YAML anchor is refused for change, with the
   reason. TOML and JSON frontmatter are refused untouched (as today).
 

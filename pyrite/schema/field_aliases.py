@@ -127,33 +127,43 @@ def file_keys_of(cls: type, entry_type: str) -> frozenset[str]:
 def refuse_conflicting_spellings(
     entry_cls: type, entry_type: str, *sources: dict[str, Any]
 ) -> None:
-    """Refuse a request that names a field and its alias with different values.
+    """Refuse a request that names one field twice with different values.
 
-    ADR-0042 decision 6 refuses a *file* carrying both spellings; this is the
-    same rule for a *request* (#720). ``sources`` are the dicts one write
+    ADR-0042 decision 6 refuses a *file* carrying a field and its alias; this
+    is the same rule for a *request* (#720). ``sources`` are the dicts one write
     carries -- its top-level fields and its ``metadata`` bag -- read together.
-    Equal values are accepted (they name one value). An empty value (``None``,
-    ``""``, ``[]``, ``{}``) is "not given": REST sends ``participants: []`` when
-    the client set none. Every create and update calls this one helper, before
-    anything is built or assigned, so a refusal writes nothing.
+
+    A key the caller sent counts as given, empty or not (design principle 3: a
+    write does what was asked; a default the server filled in was not asked, so
+    the REST layer forwards only the fields the client set). Two keys for one
+    field, or one key sent at the top level and again in ``metadata``, with
+    different values are refused; equal values are accepted and name one value.
+    Nothing here reads dict order: any two present values that differ refuse,
+    and the message names the keys in a fixed order. Every create and update
+    calls this one helper, before anything is built or assigned, so a refusal
+    writes nothing.
     """
     from ..exceptions import ValidationError
 
     aliases = class_field_aliases(entry_cls, entry_type)
     targets = set(aliases.values())
-    seen: dict[str, tuple[str, Any]] = {}
+    given: dict[str, list[tuple[str, Any]]] = {}
     for source in sources:
         for key, value in source.items():
-            if key not in aliases and key not in targets:
-                continue
-            if value is None or value == "" or value == [] or value == {}:
-                continue
-            target = aliases.get(key, key)
-            prior = seen.get(target)
-            if prior is None:
-                seen[target] = (key, value)
-            elif prior[0] != key and prior[1] != value:
-                first, second = sorted((prior[0], key), key=lambda k: k in aliases, reverse=True)
+            if key in aliases or key in targets:
+                given.setdefault(aliases.get(key, key), []).append((key, value))
+    for target, items in given.items():
+        for i, (key_a, value_a) in enumerate(items):
+            for key_b, value_b in items[i + 1 :]:
+                if value_a == value_b:
+                    continue
+                if key_a == key_b:
+                    raise ValidationError(
+                        f"Cannot set '{key_a}' to two different values on a {entry_type}: it is "
+                        "sent at the top level and again in `metadata`. Send it once, or give "
+                        "both the same value."
+                    )
+                first, second = sorted((key_a, key_b), key=lambda k: (k not in aliases, k))
                 raise ValidationError(
                     f"Cannot set both '{first}' and '{second}' on a {entry_type} with different "
                     f"values: they are one field ('{target}'). Send one of them, or give both "
