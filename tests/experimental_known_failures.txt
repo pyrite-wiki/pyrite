@@ -1,0 +1,9 @@
+# Experimental tests known to fail (#657). One pytest node id per line.
+#
+# The `experimental` CI job fails only on a failure NOT listed here, and
+# reports a listed test that now passes (remove it). This list can only
+# shrink: the job also fails when a pull request adds a line. Fix the test,
+# or the feature, instead of listing it.
+#
+# Seeded 2026-10-02 from a full run of `-m experimental` on dev e5d26431
+# (2078 passed, 78 skipped, 0 failed, macOS, Python 3.12, no Postgres).
