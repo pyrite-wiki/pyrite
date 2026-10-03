@@ -405,6 +405,11 @@ allowed, and is never persisted as entry content.
 - `0` — success.
 - `1` — any error surfaced via `cli_error` (parses the JSON error shape
   above from stdout/stderr depending on `--format`).
+- `3` — the command ran and found files outside the id contract
+  (`pyrite ids missing`: a file has no `id:`, an empty one, or cannot be
+  read; `pyrite ids pin`: a file or collision group was left, and the output
+  says which and why). Not `2`, which is click's usage error.
+  See `docs/pinning-entry-ids.md`.
 
 ## `--format` defaults
 

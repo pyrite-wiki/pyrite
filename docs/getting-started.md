@@ -244,6 +244,7 @@ Visit [http://localhost:8088](http://localhost:8088). The web UI includes a mark
 
 - [Writing a Plugin](tutorials/plugin-writing.md) — extend Pyrite with custom entry types, MCP tools, and CLI commands
 - [Awesome Plugins](plugins.md) — community extensions
+- [Pin your entry ids before upgrading](pinning-entry-ids.md) — upgrading a KB with files that have no `id:` line
 - [Gemini MCP Integration](gemini-mcp-integration.md) — connect Pyrite to Gemini
 - [OpenAI MCP Integration](openai-mcp-integration.md) — connect Pyrite to OpenAI-compatible clients
 - [Docker Deployment](../README.md#deploy) — deploy for teams with Railway, Render, Fly.io, or self-hosted
