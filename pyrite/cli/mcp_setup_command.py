@@ -232,7 +232,9 @@ def _read_entry(existing: Any) -> tuple[str, list[str]]:
 
 def _tier_slot(args: list[str]) -> tuple[int, str] | None:
     """Where the tier value sits in `args` and the prefix it is written with:
-    ``--tier X`` / ``-t X`` (the next argument), ``--tier=X``, ``-tX``."""
+    ``--tier X`` / ``-t X`` (the next argument) or ``--tier=X``. No attached
+    ``-tX``: `pyrite mcp` does not read one, and an argument that only starts
+    with ``-t`` is not a tier."""
     for i, arg in enumerate(args[1:], 1):
         if arg in ("--tier", "-t"):
             if i + 1 >= len(args):
@@ -244,8 +246,6 @@ def _tier_slot(args: list[str]) -> tuple[int, str] | None:
             return i + 1, ""
         if arg.startswith("--tier="):
             return i, "--tier="
-        if arg.startswith("-t") and not arg.startswith("--") and len(arg) > 2:
-            return i, "-t"
     return None
 
 
@@ -597,6 +597,14 @@ def _record(item: dict, plan: _Plan, existing: Any) -> None:
             item[key] = getattr(plan, key)
     final = plan.entry if plan.entry is not None else existing
     item["entry"] = _public(final)
+    # The tier the entry serves, read from the entry: not --tier, which an
+    # existing entry keeps unless asked. With no tier argument the server
+    # starts at its default, write (ADR-0006).
+    with contextlib.suppress(_StopError):
+        args = _read_entry(final)[1]
+        slot = _tier_slot(args)
+        item["tier"] = args[slot[0]][len(slot[1]) :] if slot else "write"
+        item["tier_named"] = slot is not None
 
 
 def _env_notes(entry: Any, pins: dict[str, str]) -> list[str]:
@@ -650,9 +658,17 @@ def _setup_file(
     data["mcpServers"] = {**servers, SERVER_NAME: plan.entry}
     try:
         text = _serialize(data, loaded.style)
-    except (ValueError, RecursionError):  # 1e400 overflows to infinity; too deep to write
+        _check_preserved(loaded, text, plan, path)
+    except RecursionError:
+        # json.loads reads deeper than the encoder or the comparison can walk.
+        raise _StopError(
+            "CONFIG_INVALID",
+            f"{path} is nested too deeply to write back and check",
+            "nothing was written; add the entry by hand "
+            "(`pyrite mcp-setup --config <scratch.json>` shows it)",
+        ) from None
+    except ValueError:  # 1e400 parses to infinity, which JSON cannot hold
         raise _not_preserved(path) from None
-    _check_preserved(loaded, text, plan, path)
     if loaded.data and _serialize(loaded.data, loaded.style) != (
         ("\ufeff" if loaded.style.bom else "") + loaded.text
     ):
@@ -956,11 +972,19 @@ def _print_report(out: Console, report: dict) -> None:
     def line(text: str) -> None:
         out.print(Text(text))
 
-    tier, tools = report["tier"], report["tools"]
-    line(f"Pyrite MCP server: {shlex.join(report['command'])} ({tools} tools at the {tier} tier)")
+    new = report["new_entry"]
+    line(
+        f"A new entry runs: {shlex.join(new['command'])} "
+        f"({new['tools']} tools at the {new['tier']} tier)"
+    )
     for item in report["clients"]:
         code = f" [{item['error_code']}]" if "error_code" in item else ""
-        line(f"{item['label']}: {item['status']}{code}  {item['location']}")
+        serves = ""
+        if "tier" in item:
+            default = "" if item["tier_named"] else ", the server's default"
+            count = f", {item['tools']} tools" if "tools" in item else ""
+            serves = f"  ({item['tier']} tier{default}{count})"
+        line(f"{item['label']}: {item['status']}{code}{serves}  {item['location']}")
         if "error" in item:
             line(f"    {item['error']}")
             line(f"    hint: {item['suggestion']}")
@@ -972,6 +996,8 @@ def _print_report(out: Console, report: dict) -> None:
         for key in ("kept", "discarded"):
             if item.get(key):
                 line(f"    {key}: {'; '.join(item[key])}")
+        if "pinned" in item:
+            line("    pinned: " + ", ".join(f"{k}={v}" for k, v in item["pinned"].items()))
         if "removed" in item:
             line(f"    removed: {item['removed']}")
         for command in item.get("by_hand", []):
@@ -1226,12 +1252,15 @@ def mcp_setup(
                 f"~/.pyrite, not {source}."
             )
 
+    counts = mcp_tool_counts()
+    for item, _ in work:
+        if item.get("tier") in counts:
+            item["tools"] = counts[item["tier"]]
     report = {
         "ok": all(item["status"] in ("created", "unchanged", "changed") for item, _ in work),
-        "tier": new_tier,
-        "tier_asked": tier is not None,
-        "tools": mcp_tool_counts()[new_tier],
-        "command": args,
+        # What a new entry gets. Each client's own `tier` and `tools` say what
+        # its entry serves, which for a kept entry may be another tier.
+        "new_entry": {"command": args, "tier": new_tier, "tools": counts[new_tier]},
         "clients": [item for item, _ in work],
         "notes": notes,
     }

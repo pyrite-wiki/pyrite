@@ -685,8 +685,11 @@ def test_the_old_trio_is_reported_and_never_removed(target, pyrite):
         (["mcp"], ["mcp", "--tier", "read"]),
         (["mcp", "--tier", "admin", "-vv"], ["mcp", "--tier", "read", "-vv"]),
         (["mcp", "-vv"], ["mcp", "--tier", "read", "-vv"]),
+        # `pyrite mcp` has no attached `-tX` form; an argument that merely
+        # starts with -t is someone's, and is kept as it is.
+        (["mcp", "-trace"], ["mcp", "--tier", "read", "-trace"]),
     ],
-    ids=["long", "short", "equals", "absent", "args-after", "absent-with-args"],
+    ids=["long", "short", "equals", "absent", "args-after", "absent-with-args", "not-a-tier"],
 )
 def test_tier_is_changed_in_the_form_the_entry_uses(env, old_args, new_args):
     target = Target(env, "config")
@@ -1104,6 +1107,26 @@ def test_a_file_that_cannot_come_back_whole_is_refused_untouched(file_target, co
     assert sorted(p.name for p in file_target.path.parent.iterdir()) == [file_target.path.name]
 
 
+@pytest.mark.parametrize("depth", [300, 500, 900, 2000])
+def test_a_file_nested_hundreds_deep_is_written_whole_or_config_invalid(file_target, depth):
+    """json.loads reads deeper than the encoder and the check can walk. At
+    any depth: written with every value intact, or CONFIG_INVALID with the
+    file untouched; never INTERNAL_ERROR. Where the line falls depends on the
+    stack, so the test does not pin it."""
+    nested = '{"a": ' * depth + "1" + "}" * depth
+    file_target.path.write_text('{"mcpServers": {}, "x": ' + nested + "}")
+    before = snapshot(file_target.path)
+
+    result = file_target.run()
+
+    item = only_client(result)
+    if item["status"] == "created":
+        assert json.loads(file_target.path.read_text())["x"] == json.loads(nested)
+    else:
+        _assert_stopped_untouched(file_target, result, "CONFIG_INVALID", before)
+        assert "nested too deeply" in item["error"]
+
+
 def test_invalid_json_names_the_line_and_column(env):
     target = Target(env, "config")
     target.path.write_text('{\n  "mcpServers": {,\n}')
@@ -1414,7 +1437,7 @@ def test_both_clients_found_are_both_configured_and_named(env):
         "claude-code": str(env.home / ".claude.json"),
         "claude-desktop": str(desktop.path),
     }
-    assert report["command"] == [NEW, "mcp", "--tier", "read"]
+    assert report["new_entry"]["command"] == [NEW, "mcp", "--tier", "read"]
 
 
 # -- Claude Code user scope: only through `claude`, and never half done ------------
@@ -1773,6 +1796,17 @@ def test_a_new_entry_pins_an_explicit_config_dir(env, monkeypatch):
     assert servers_in(env.home / ".claude.json")["pyrite"]["env"] == {}
 
 
+def test_the_text_report_shows_a_new_entrys_pin_in_full(env, monkeypatch):
+    Target(env, "desktop")
+    monkeypatch.setenv("PYRITE_CONFIG_DIR", str(env.tmp / "my-config"))
+    monkeypatch.setenv("PYRITE_FORMAT", "rich")
+
+    result = setup()
+
+    assert result.exit_code == 0, result.output
+    assert f"pinned: PYRITE_CONFIG_DIR={env.tmp / 'my-config'}" in result.output
+
+
 @pytest.mark.parametrize(
     "existing_env", [None, '"env": {\n        "PYRITE_CONFIG_DIR": "/their/own"\n      }']
 )
@@ -1856,7 +1890,7 @@ def test_the_default_output_is_one_json_document(env):
     result = setup()
 
     report = json.loads(result.stdout)
-    assert report["ok"] is True and report["tier"] == "write"
+    assert report["ok"] is True and report["new_entry"]["tier"] == "write"
     assert [c["status"] for c in report["clients"]] == ["created"]
 
 
@@ -1905,6 +1939,29 @@ def test_text_report_gives_old_and_new_as_a_person_would_type_them(env, monkeypa
     reason="passes on dev, where mcp-setup had no --format at all; guards that the "
     "local declaration never grows the -f that #303 retires"
 )
+@pytest.mark.parametrize(
+    ("args", "tier", "named"),
+    [(["mcp", "--tier", "read"], "read", True), (["mcp"], "write", False)],
+    ids=["kept-read", "no-tier"],
+)
+def test_the_report_gives_the_tier_the_entry_serves_not_the_default(
+    env, monkeypatch, args, tier, named
+):
+    """Without --tier an existing entry keeps its own tier; the report says
+    which, and how many tools that is, in JSON and in text."""
+    target = Target(env, "config")
+    target.seed(member(cmd_text(OLD), args_text(*args)))
+
+    item = only_client(target.run())
+
+    assert (item["tier"], item["tier_named"]) == (tier, named), item
+    assert item["tools"] == env.mod.mcp_tool_counts()[tier]  # what `pyrite mcp --help` counts
+    target.seed(member(cmd_text(OLD), args_text(*args)))
+    monkeypatch.setenv("PYRITE_FORMAT", "rich")
+    text = target.run().output
+    assert f"({tier} tier" in text and f"{item['tools']} tools)" in text
+
+
 def test_there_is_no_short_f_for_format(env):
     """`-f` stops meaning `--format` (#303); here it never did."""
     Target(env, "desktop")
