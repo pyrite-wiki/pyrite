@@ -56,11 +56,13 @@ import re
 import subprocess
 import sys
 import textwrap
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.storage.database import PyriteDB
@@ -376,20 +378,24 @@ _CONCURRENT_CHILD = textwrap.dedent(
 
     spec = json.loads(sys.argv[1])
     target = os.path.realpath(spec["target"])
-    barrier = Path(spec["barrier"])
-    state = {"reached": None, "timed_out": False}
+    state = {"started": False, "reached": None, "timed_out": None}
+
+    def rendezvous(name):
+        # One wall-clock deadline for the whole group, set by the parent:
+        # a writer that starts late cannot run its own clock out.
+        d = Path(spec[name])
+        (d / str(os.getpid())).touch()
+        while len(list(d.iterdir())) < spec["writers"]:
+            if time.time() > spec["deadline"]:
+                state["timed_out"] = state["timed_out"] or name
+                return
+            time.sleep(0.01)
 
     def wait(where):
         if state["reached"]:
             return
         state["reached"] = where
-        (barrier / str(os.getpid())).touch()
-        deadline = time.monotonic() + 10
-        while len(list(barrier.iterdir())) < spec["writers"]:
-            if time.monotonic() > deadline:
-                state["timed_out"] = True
-                return
-            time.sleep(0.01)
+        rendezvous("critical")
 
     real_replace = os.replace
     def replace(src, dst, *a, **kw):
@@ -422,6 +428,9 @@ _CONCURRENT_CHILD = textwrap.dedent(
     )
     server = PyriteMCPServer(config, tier="write")
     try:
+        # Start barrier: every writer is loaded before any begins its update.
+        rendezvous("start")
+        state["started"] = True
         result = server._dispatch_tool("kb_update", spec["args"])
     finally:
         server.close()
@@ -433,14 +442,17 @@ _CONCURRENT_CHILD = textwrap.dedent(
 def _run_concurrent(
     tmp_path: Path, config: PyriteConfig, path: Path, ops: list[dict[str, Any]], entry_id: str
 ) -> list[dict[str, Any]]:
-    barrier = tmp_path / "barrier"
-    barrier.mkdir()
+    for name in ("start", "critical"):
+        (tmp_path / name).mkdir()
+    deadline = time.time() + 60
     kb = config.knowledge_bases[0]
     procs = []
     for op in ops:
         spec = {
             "target": str(path),
-            "barrier": str(barrier),
+            "start": str(tmp_path / "start"),
+            "critical": str(tmp_path / "critical"),
+            "deadline": deadline,
             "writers": len(ops),
             "kb": KB,
             "kb_path": str(kb.path),
@@ -459,15 +471,16 @@ def _run_concurrent(
         )
     reports = []
     for proc in procs:
-        out, err = proc.communicate(timeout=120)
+        out, err = proc.communicate(timeout=max(1.0, deadline - time.time()) + 30)
         _require(proc.returncode == 0, f"writer exited {proc.returncode}: {err[-2000:]}")
         reports.append(json.loads(out.strip().splitlines()[-1]))
     for report in reports:
         _require(
-            report["reached"] and not report["timed_out"],
-            f"a writer {'timed out at' if report['timed_out'] else 'never reached'} the barrier "
-            f"({report['reached']}), so the writers did not start from the same file; if the "
-            "write path neither locks nor replaces the entry file, move the barrier",
+            report["started"] and report["reached"] and not report["timed_out"],
+            f"a writer timed out at the {report['timed_out']} barrier or never reached the "
+            f"critical one ({report['reached']}), so the writers did not both write from the "
+            "file as it was; if the write path neither locks nor replaces the entry file "
+            "(ADR-0042 decision 10 does both), move the barrier",
         )
     return [report["result"] for report in reports]
 
@@ -514,22 +527,59 @@ def _require_entered(ex: Example, config: PyriteConfig, path: Path, entry_id: st
         _require(raw.count(b"\r\n") == raw.count(b"\n"), "the crlf file is not all CRLF")
     if "noid" in ex.file_flags:
         _require("id" not in meta, "the noid file has an id: line")
-    if meta.get("type") == "timeline_event":
-        from pyrite.plugins.registry import get_registry
+    for actor in _actors(meta):
+        got = _call(config, "kb_get", {"kb_name": KB, "entry_id": actor})
+        _require(not _is_error(got), f"actor {actor} is not in the KB, so nothing links to it")
 
-        kb_type = config.knowledge_bases[0].kb_type
-        hooks = get_registry().get_hooks_for_kb(kb_type).get("before_save", [])
+
+def _actors(meta: dict[str, Any]) -> list[str]:
+    return [str(ref).strip("[]") for ref in meta.get("actors", [])]
+
+
+def _require_actor_link_derived(config: PyriteConfig, meta: dict[str, Any], entry_id: str) -> None:
+    """After the save, each actor shows this entry among its backlinks.
+
+    That is what the user gets from the derivation, whichever way it is made:
+    today a save hook writes a `links:` block into the file; under ADR-0042
+    decision 4 it is derived when the file is indexed and stays out of the
+    file. If no actor shows the link, nothing was derived, and an empty diff
+    would prove nothing about hooks. (When the cascade plugin leaves the tree,
+    ADR-0040, this fails here: give the example a KB type that derives links.)
+    """
+    for actor in _actors(meta):
+        got = _call(config, "kb_backlinks", {"kb_name": KB, "entry_id": actor})
+        ids = [b.get("id") for b in got.get("backlinks", [])]
         _require(
-            any(h.__name__ == "resolve_actor_links" for h in hooks),
-            f"no resolve_actor_links before_save hook in a {kb_type} KB",
+            entry_id in ids,
+            f"{actor} has no backlink from {entry_id} after the save ({got}), so no actor "
+            "link was derived and the example did not enter its case",
         )
-        for ref in meta.get("actors", []):
-            actor = ref.strip("[]")
-            got = _call(config, "kb_get", {"kb_name": KB, "entry_id": actor})
-            _require(
-                not _is_error(got),
-                f"actor {actor} is not in the KB, so the hook has nothing to add",
-            )
+
+
+def _require_fresh_replace_is_written(
+    ex: Example, base: Path, op: dict[str, Any], *, echo: bool
+) -> None:
+    """Control for `stale`: the same replace, with no hand edit, is written.
+
+    Run in a second KB built from the same file. If it is refused too, the
+    refusal of the stale replace says nothing about staleness.
+    """
+    base.mkdir()
+    config, path, entry_id = _build_kb(base, ex)
+    file_text = path.read_text()
+    read = _read(config, entry_id)
+    fresh = {**op, "content_hash": read.get("content_hash")}
+    result = _call(
+        config, "kb_update", _to_kb_update_args(fresh, config, entry_id, file_text, echo=echo)
+    )
+    on_disk = yaml.safe_load(path.read_text().split("---\n", 2)[1]) or {}
+    landed = all(on_disk.get(k) == v for k, v in op["replace"].items())
+    _require(
+        not _is_error(result) and landed,
+        f"the same replace with no hand edit was not written as asked ({result}; file "
+        f"now {on_disk}), so a refusal of the stale one would not show that staleness "
+        "was detected",
+    )
 
 
 def _check(ex: Example, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -538,6 +588,7 @@ def _check(ex: Example, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     echo = "echo" in ex.update_flags
     _require_entered(ex, config, path, entry_id)
 
+    meta = _front(ex.file)
     if "concurrent" in ex.file_flags:
         before = path.read_bytes().decode("utf-8")
         results = _run_concurrent(tmp_path, config, path, op, entry_id)
@@ -551,6 +602,7 @@ def _check(ex: Example, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
         assert read.get("content_hash"), "the read returned no content_hash"
         op = {**op, "content_hash": read["content_hash"]}
         args = _to_kb_update_args(op, config, entry_id, file_at_read, echo=echo)
+        _require_fresh_replace_is_written(ex, tmp_path / "control", op, echo=echo)
         with path.open("ab") as fh:
             fh.write(b"Edited by hand after the read.\n")
         before = path.read_bytes().decode("utf-8")
@@ -564,12 +616,27 @@ def _check(ex: Example, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
         args = _to_kb_update_args(op, config, entry_id, path.read_text(), echo=echo)
         before = path.read_bytes().decode("utf-8")
         for name in op.get("append", {}):
+            # Against PyYAML's parse of the bytes on disk, not the parse that
+            # built the arguments: a mapping that sent Pyrite's reading of the
+            # items (normalised keys, `since` dropped) fails here.
+            on_disk = yaml.safe_load(before.split("---\n", 2)[1]) or {}
             _require(
-                args[name][:-1] == _front(before).get(name, []),
+                args[name][:-1] == on_disk.get(name, []),
                 f"the {name} sent are not the file's own items, so the append is not "
                 "what was measured",
             )
         emitted = _spy_emitter(monkeypatch) if "emitter" in ex.file_flags else None
+        if emitted is not None:
+            # Control: a create has to emit frontmatter (ADR-0042 decision 13),
+            # so the spy must see it. Then an update that emits nothing is a
+            # real pass, not a spy that is not watching.
+            _call(config, "kb_create", {"kb_name": KB, "entry_type": "note", "title": "Spy probe"})
+            _require(
+                emitted,
+                "the emitter spy saw nothing during a create; it is not watching "
+                "the emitter Pyrite uses, so an empty record would prove nothing",
+            )
+            emitted.clear()
         result = _call(config, "kb_update", args)
         if emitted is not None:
             monkeypatch.undo()
@@ -580,6 +647,8 @@ def _check(ex: Example, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
             leaked = sorted(set().union(*emitted) & untouched) if emitted else []
             assert not leaked, f"the emitter was handed keys nobody asked to change: {leaked}"
 
+    if _actors(meta):
+        _require_actor_link_derived(config, meta, entry_id)
     assert path.exists(), (
         f"the file is gone; KB now holds {sorted(map(str, path.parent.parent.rglob('*.md')))}"
     )
