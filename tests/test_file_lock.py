@@ -275,6 +275,9 @@ class TestLockDirResolution:
         shared = tmp_path / "shared"
         shared.mkdir()
         os.chmod(shared, 0o1777)
+        group = tmp_path / "group"
+        group.mkdir()
+        os.chmod(group, 0o2775)
         branches = {
             "linux, XDG unset": ("linux", {}),
             "linux, XDG private": ("linux", {"XDG_RUNTIME_DIR": str(private)}),
@@ -282,6 +285,8 @@ class TestLockDirResolution:
             "darwin, TMPDIR unset": ("darwin", {}),
             "darwin, TMPDIR private": ("darwin", {"TMPDIR": str(private)}),
             "darwin, TMPDIR shared": ("darwin", {"TMPDIR": str(shared)}),
+            "linux, XDG group-writable non-sticky": ("linux", {"XDG_RUNTIME_DIR": str(group)}),
+            "darwin, TMPDIR group-writable non-sticky": ("darwin", {"TMPDIR": str(group)}),
         }
         for name, (platform, env) in branches.items():
             mine = fl.default_lock_dir(platform, env, "1001")
@@ -292,6 +297,23 @@ class TestLockDirResolution:
             if not private_base:
                 assert "1001" in mine.name and "1002" in theirs.name, name
             assert str(shared) != str(mine), name  # never the shared directory itself
+
+    def test_the_fallbacks_parent_must_not_let_others_rename(self, tmp_path, monkeypatch):
+        parent = tmp_path / "tmp"
+        parent.mkdir()
+        monkeypatch.setattr(fl.tempfile, "tempdir", str(parent))
+        for mode in (0o777, 0o770, 0o2775):  # writable, not sticky
+            os.chmod(parent, mode)
+            for platform, env in (
+                ("linux", {}),
+                ("darwin", {}),
+                ("darwin", {"TMPDIR": str(parent)}),
+            ):
+                with pytest.raises(fl.LockDirError, match="PYRITE_LOCK_DIR"):
+                    fl.default_lock_dir(platform, env, "1001")
+        for mode in (0o1777, 0o700):  # sticky shared (/tmp) or private: fine
+            os.chmod(parent, mode)
+            assert fl.default_lock_dir("linux", {}, "1001") == parent / "pyrite-locks-1001"
 
     def test_a_relative_lock_dir_is_refused(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

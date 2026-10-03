@@ -16,9 +16,11 @@ deduplicated, so two movers cannot deadlock.
 **The lock directory (A1, decided in #742).** Per user by default, in every
 environment: ``$XDG_RUNTIME_DIR/pyrite/locks`` on Linux and
 ``$TMPDIR/pyrite-locks`` on macOS (both per-user directories), created
-``0o700``. When that variable is unset, or names a directory other users can
-write (``/tmp``), the path gains the user id: ``<base>/pyrite-locks-<uid>``
-under the temp directory. Two OS users exclude each other only when
+``0o700``. When that variable is unset, or names a directory group or other
+users can write (``/tmp``, a ``2775`` container directory), the path is
+``<tempdir>/pyrite-locks-<uid>``; if the temp directory itself lets others
+rename entries (writable and not sticky), ``LockDirError`` is raised rather
+than using it. Two OS users exclude each other only when
 ``PYRITE_LOCK_DIR`` (or the ``lock_dir_path`` argument) names one absolute
 directory that both can use, and the check below allows exactly one shape: a
 **root-owned sticky directory** (``root``, mode ``1777``). A directory owned by
@@ -45,6 +47,10 @@ filesystem (on a case-sensitive one that is only extra waiting).
 - A forked child shares the parent's open file description, so a child that
   leaves a ``with`` block can release the parent's lock. ``atomic_write_text``
   never forks while holding it.
+- In a shared directory another user can restrict a stripe file they created
+  (mode ``0o600``), so everyone else gets ``LockDirError`` (EACCES) for the
+  entries on it; and any user can hold any stripe, so others wait until
+  ``LockTimeout`` (10 s in ``atomic_write_text``).
 - ``PYRITE_LOCK_DIR`` must be absolute.
 - **Windows is unsupported:** ``file_lock`` raises ``LockDirError``, so
   ``atomic_write_text(expect=)`` fails closed there.
@@ -110,6 +116,21 @@ class LockTimeout(TimeoutError):  # noqa: N818 - reads as the event, like FileCh
     """The lock was not acquired within ``timeout`` seconds."""
 
 
+_OTHERS_WRITE = stat.S_IWGRP | stat.S_IWOTH
+
+
+def _is_shared(mode: int) -> bool:
+    """Group or other users can write to a directory with this mode."""
+    return bool(mode & _OTHERS_WRITE)
+
+
+def _others_can_rename(mode: int) -> bool:
+    """THE predicate: another user can write this directory (group-write or
+    other-write) and it is not sticky, so they can rename or remove what is in
+    it. Every "is this directory private?" question in this module asks it."""
+    return _is_shared(mode) and not mode & stat.S_ISVTX
+
+
 def _uid() -> str:
     if hasattr(os, "geteuid"):
         return str(os.geteuid())
@@ -117,11 +138,25 @@ def _uid() -> str:
 
 
 def _private_base(base: str) -> bool:
-    """True unless ``base`` exists and other users can write to it."""
+    """A base directory to create ``pyrite`` under: not group- or other-writable
+    at all (a sticky shared one such as /tmp lets another user squat the name)."""
     try:
-        return not os.stat(base).st_mode & stat.S_IWOTH
+        return not _is_shared(os.stat(base).st_mode)
     except OSError:
         return True
+
+
+def _fallback_parent() -> Path:
+    """The temp directory the per-user fallback lives in. It must not be one
+    where others can rename entries (a 0777 non-sticky TMPDIR): fail closed."""
+    parent = Path(tempfile.gettempdir())
+    try:
+        mode = os.stat(parent).st_mode
+    except OSError:
+        return parent
+    if _others_can_rename(mode):
+        raise _unsafe(parent, "other users can rename entries in it (writable and not sticky)")
+    return parent
 
 
 def default_lock_dir(
@@ -139,7 +174,7 @@ def default_lock_dir(
         base, name = runtime, Path("pyrite") / "locks"
     if base and _private_base(base):
         return Path(base) / name
-    return Path(tempfile.gettempdir()) / f"pyrite-locks-{uid}"
+    return _fallback_parent() / f"pyrite-locks-{uid}"
 
 
 def lock_dir(override: str | os.PathLike[str] | None = None) -> Path:
@@ -163,12 +198,8 @@ def stripe_of(path: str | os.PathLike[str]) -> int:
 def _unsafe(directory: Path, why: str) -> LockDirError:
     return LockDirError(
         f"lock directory {directory} is not safe to use: {why}. "
-        f"Point {LOCK_DIR_ENV} at a directory you own (mode 0700), or a sticky shared one."
+        f"Point {LOCK_DIR_ENV} at a directory you own (mode 0700), or a root-owned sticky one."
     )
-
-
-def _is_shared(mode: int) -> bool:
-    return bool(mode & (stat.S_IWGRP | stat.S_IWOTH))
 
 
 def _open_directory(directory: Path) -> int:
@@ -193,7 +224,7 @@ def _open_directory(directory: Path) -> int:
             st = os.fstat(dfd)
         if hasattr(os, "geteuid") and st.st_uid not in (os.geteuid(), 0):
             raise _unsafe(directory, f"it is owned by uid {st.st_uid}")
-        if _is_shared(st.st_mode) and not st.st_mode & stat.S_ISVTX:
+        if _others_can_rename(st.st_mode):
             raise _unsafe(directory, "it is writable by others and not sticky")
     except BaseException:
         os.close(dfd)
@@ -259,7 +290,7 @@ def file_lock(
 ) -> Iterator[None]:
     """Hold the momentary lock for one path, or for two when a write moves a file."""
     if fcntl is None:
-        raise LockDirError("file locking is not supported on this platform (Windows)")
+        raise LockDirError("file locking is not supported on Windows")
     if not 1 <= len(paths) <= 2:
         raise ValueError("file_lock takes one path, or two for a move")
     directory = lock_dir(lock_dir_path)
