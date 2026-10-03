@@ -1644,6 +1644,8 @@ def test_undecodable_output_from_claude_is_judged_like_any_other(env, monkeypatc
         assert item["status"] == "failed", item
         assert item["removed"] == {"command": OLD, "args": ["mcp", "--tier", "admin"]}
         assert f"-- {OLD} mcp --tier admin" in item["by_hand"][0]
+        # The client's own words survive the bad bytes (replaced, not fatal).
+        assert "E_REFUSED add" in item["error"] and "garbled" in item["error"], item
 
 
 def test_an_argument_claude_cannot_be_given_after_remove_is_reported(env):
@@ -1658,7 +1660,9 @@ def test_an_argument_claude_cannot_be_given_after_remove_is_reported(env):
     item = only_client(result)
     assert item["status"] == "failed" and item["error_code"] == "CLIENT_COMMAND_FAILED", item
     assert item["removed"] == {"command": OLD, "args": ["mcp", "a\x00b"]}
-    assert "ValueError" in item["error"]
+    # A call that cannot be made is a failed call: the restore is still tried.
+    assert "`claude mcp add` failed: could not be run (ValueError" in item["error"]
+    assert "restoring the previous entry also failed" in item["error"], item
 
 
 def test_an_unexpected_error_after_remove_still_reports_what_was_removed(env, monkeypatch):
