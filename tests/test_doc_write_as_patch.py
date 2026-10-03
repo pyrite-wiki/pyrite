@@ -493,66 +493,115 @@ def _run_concurrent(
     return [report["result"] for report in reports]
 
 
-def _spy_emitter(
-    monkeypatch: pytest.MonkeyPatch, watch: tuple[str, ...] = ("ruamel", "pyyaml")
-) -> list[set[str]]:
-    """Record the top-level keys of every mapping handed to a YAML emitter.
+class EmitterWatch:
+    """What the YAML emitters were handed: the top-level keys of each document.
 
-    ``watch`` names the emitters the spy patches; the default is all of them.
-    A narrower value exists to point the spy at the wrong emitter on purpose
-    (``test_emitter_control_fails_when_the_spy_watches_the_wrong_emitter``).
+    ``docs`` has one set per emitted document; ``unwatched`` names every door
+    the watch cannot see through that was opened.
     """
-    import yaml as pyyaml
-    from ruamel.yaml import YAML
 
-    emitted: list[set[str]] = []
+    def __init__(self) -> None:
+        self.docs: list[set[str]] = []
+        self.unwatched: list[str] = []
 
-    def record(data: Any) -> None:
-        if hasattr(data, "keys"):
-            emitted.append({str(k) for k in data.keys()})
+    def keys(self) -> set[str]:
+        return set().union(*self.docs) if self.docs else set()
 
-    if "ruamel" in watch:
-        real_dump = YAML.dump
-
-        def ruamel_dump(self, data, stream=None, **kw):
-            record(data)
-            return real_dump(self, data, stream, **kw)
-
-        monkeypatch.setattr(YAML, "dump", ruamel_dump)
-    if "pyyaml" in watch:
-        for name in ("dump", "safe_dump"):
-            real = getattr(pyyaml, name)
-
-            def py_dump(data, *a, _real=real, **kw):
-                record(data)
-                return _real(data, *a, **kw)
-
-            monkeypatch.setattr(pyyaml, name, py_dump)
-    return emitted
+    def clear(self) -> None:
+        self.docs.clear()
+        self.unwatched.clear()
 
 
-def _count_emits(monkeypatch: pytest.MonkeyPatch) -> list[int]:
-    """Count calls to the two libraries' lowest-level ``Emitter.emit``.
+def _watch_emitter(
+    monkeypatch: pytest.MonkeyPatch, watch: tuple[str, ...] = ("ruamel", "pyyaml")
+) -> EmitterWatch:
+    """Record the top-level keys of every document either library's emitter writes.
 
-    Every YAML dump of either library, however it is reached (``dump``,
-    ``dump_all``, ``safe_dump``, a ``Dumper`` used directly), ends in
-    ``Emitter.emit``, so this counter does not depend on which front door the
-    write path uses. It is the control for ``_spy_emitter``: if the update
-    emitted, the spy must have recorded a mapping.
+    It watches ``Emitter.emit``, the call every Python-side dump ends in
+    (``dump``, ``dump_all``, ``safe_dump``, a ``safe_dump`` bound at import, a
+    ``Dumper`` used directly), and rebuilds the top-level keys from the event
+    stream: a scalar at depth 1 in an even position of the root mapping is a
+    key. A scalar value or a list item emitted alone has no top-level keys and
+    is not a leak; a document that carries the whole frontmatter is.
+
+    ``watch`` narrows which library is watched, so a test can point the watch
+    at the wrong one on purpose.
+
+    Not seen through, and counted in ``unwatched`` so a run that opens one
+    fails as not entered: PyYAML's C dumpers (``CDumper``, ``CSafeDumper``,
+    ``CBaseDumper``, which use libyaml's emitter and never call
+    ``Emitter.emit``) and a ruamel ``YAML`` whose ``Emitter`` is not the
+    pure-Python class. Pyrite uses neither today (``pyrite/utils/yaml.py``
+    dumps through ruamel's round-trip emitter). Any other way of writing
+    frontmatter (hand-built strings, ``json``) is not an emitter and is not
+    watched: the diff check is what catches it.
     """
     import yaml.emitter as py_emitter
+    from ruamel.yaml import YAML
     from ruamel.yaml import emitter as ru_emitter
 
-    calls: list[int] = []
-    for cls in (py_emitter.Emitter, ru_emitter.Emitter):
+    result = EmitterWatch()
+    state: dict[int, dict[str, Any]] = {}
+
+    def observe(emitter: Any, event: Any) -> None:
+        name = type(event).__name__
+        st = state.setdefault(id(emitter), {"stack": [], "keys": set()})
+        stack: list[list[Any]] = st["stack"]
+        if name == "DocumentStartEvent":
+            stack.clear()
+            st["keys"] = set()
+        elif name == "DocumentEndEvent":
+            if st["keys"]:
+                result.docs.append(st["keys"])
+            st["keys"] = set()
+        elif name in ("MappingEndEvent", "SequenceEndEvent"):
+            if stack:
+                stack.pop()
+        elif name in ("ScalarEvent", "AliasEvent", "MappingStartEvent", "SequenceStartEvent"):
+            if stack and stack[-1][0] == "map":
+                index = stack[-1][1]
+                stack[-1][1] += 1
+                if len(stack) == 1 and index % 2 == 0 and name == "ScalarEvent":
+                    st["keys"].add(str(event.value))
+            if name == "MappingStartEvent":
+                stack.append(["map", 0])
+            elif name == "SequenceStartEvent":
+                stack.append(["seq", 0])
+
+    libraries = {"pyyaml": py_emitter.Emitter, "ruamel": ru_emitter.Emitter}
+    for lib in watch:
+        cls = libraries[lib]
         real = cls.emit
 
-        def counted(self, event, _real=real):
-            calls.append(1)
+        def emit(self, event, _real=real):
+            observe(self, event)
             return _real(self, event)
 
-        monkeypatch.setattr(cls, "emit", counted)
-    return calls
+        monkeypatch.setattr(cls, "emit", emit)
+
+    try:
+        from yaml import cyaml
+    except ImportError:  # PyYAML without libyaml cannot open the C door
+        cyaml = None
+    if cyaml is not None:
+        for name in ("CBaseDumper", "CDumper", "CSafeDumper"):
+            dumper = getattr(cyaml, name)
+            real_init = dumper.__init__
+
+            def init(self, *a, _real=real_init, _name=name, **kw):
+                result.unwatched.append(f"yaml.{_name}")
+                return _real(self, *a, **kw)
+
+            monkeypatch.setattr(dumper, "__init__", init)
+    real_get = YAML.get_serializer_representer_emitter
+
+    def get_emitter(self, *a, **kw):
+        if not (isinstance(self.Emitter, type) and issubclass(self.Emitter, ru_emitter.Emitter)):
+            result.unwatched.append(f"ruamel Emitter {self.Emitter!r}")
+        return real_get(self, *a, **kw)
+
+    monkeypatch.setattr(YAML, "get_serializer_representer_emitter", get_emitter)
+    return result
 
 
 # --------------------------------------------------------------------------
@@ -577,13 +626,29 @@ def _actors(meta: dict[str, Any]) -> list[str]:
     return [str(ref).strip("[]") for ref in meta.get("actors", [])]
 
 
-def _mentions(value: Any, target: str) -> bool:
-    """Whether ``target`` appears as a value anywhere in a nested result."""
+def _link_items(value: Any) -> list[dict[str, Any]]:
+    """Every mapping in a nested result that carries a link relation."""
     if isinstance(value, dict):
-        return any(_mentions(v, target) for v in value.values())
+        here = [value] if "relation" in value else []
+        return here + [i for v in value.values() for i in _link_items(v)]
     if isinstance(value, (list, tuple)):
-        return any(_mentions(v, target) for v in value)
-    return isinstance(value, str) and value.strip("[]") == target
+        return [i for v in value for i in _link_items(v)]
+    return []
+
+
+def _is_link_to(value: Any, target: str) -> bool:
+    """A link (a mapping with a ``relation``) one of whose values is ``target``.
+
+    A derived LINK, not a derived value: ADR-0042 decision 9 also puts
+    normalised field values under the derived key (``actors`` as the type
+    reads it), and that the file names an actor is not that something linked
+    to it.
+    """
+    return any(
+        isinstance(v, str) and v.strip("[]") == target
+        for item in _link_items(value)
+        for v in item.values()
+    )
 
 
 def _derived_link_seen(
@@ -591,15 +656,16 @@ def _derived_link_seen(
 ) -> str | None:
     """How the actor link is visible, or None.
 
-    Two places, neither of them the file's own `links:` block (the file may or
-    may not hold one; that is what the example measures, so it cannot also be
-    the precondition):
+    - ``kb_backlinks`` on the actor lists the entry. That is the index's row.
+      Today the row exists because the cascade hook wrote a `links:` block that
+      was then indexed; under ADR-0042 decision 4 the index derives it.
+    - ``kb_get`` on the entry or on the actor returns a link (a mapping with a
+      ``relation``) under a key whose name says it is derived. Which sub-key
+      holds it is not fixed yet, so any link under such a key counts, and
+      nothing that is not a link does.
 
-    - ``kb_backlinks`` on the actor lists the entry (the index derived it);
-    - ``kb_get`` on the entry or on the actor returns it under a key whose
-      name says it is derived (``derived``, ``derived_links``, ...), the
-      shape ADR-0042 decision 4 and decision 9 give a read. Which sub-key
-      holds it is not fixed yet, so any value under such a key counts.
+    Not read: the file's own `links:` block, as ``kb_get`` returns it under
+    ``links``. That the file says so is what the example measures.
     """
     call = call or _call
     got = call(config, "kb_backlinks", {"kb_name": KB, "entry_id": actor})
@@ -609,7 +675,7 @@ def _derived_link_seen(
         read = call(config, "kb_get", {"kb_name": KB, "entry_id": read_id})
         read = read.get("entry", read)
         for key, value in read.items():
-            if "derived" in key.lower() and _mentions(value, wanted):
+            if "derived" in key.lower() and _is_link_to(value, wanted):
                 return f"kb_get[{key!r}]"
     return None
 
@@ -624,8 +690,10 @@ def _require_actor_link_derived(
     handling, an actor the lookup cannot resolve). It must not rule out a
     write path that is correct: one that writes no hook links into the file
     and has the index derive them (ADR-0042 decision 4). So the link is read
-    from `kb_backlinks` or from the derived key of a read, never from the
-    file's `links:` block, and no KB type is named here.
+    from `kb_backlinks` or as a link under the derived key of a read, never
+    from the file's `links:` block as a read returns it, and no KB type is
+    named here. A derived field value (the normalised `actors`) is not a link
+    and does not count.
 
     Limit, stated because it is real: no KB type derives links from `actors`
     at index time yet (the index derives them from body wikilinks and
@@ -646,26 +714,42 @@ def _require_actor_link_derived(
         )
 
 
+def _whole_document(op: dict[str, Any], file_text: str) -> dict[str, Any]:
+    """The op with every key the file holds carried in ``replace``.
+
+    ADR-0042 decision 11: a whole-document replace says every key it keeps.
+    The example's own ``replace`` names only title and status, so a replace
+    that is actually written would, under that decision, unset ``id`` and
+    ``type``. The controls that need the write to happen carry the whole
+    document, so a correct path is not asked to damage the file. The stale
+    replace itself keeps the doc's wording: it is refused, so nothing is
+    written from it (limit: this does not test what a replace with omitted
+    keys does).
+    """
+    return {**op, "replace": {**_front(file_text), **op["replace"]}}
+
+
 def _require_fresh_replace_is_written(
     ex: Example, base: Path, op: dict[str, Any], *, echo: bool
 ) -> None:
     """Control for `stale`: the same replace, with no hand edit, is written.
 
-    Run in a second KB built from the same file. If it is refused too, the
-    refusal of the stale replace says nothing about staleness.
+    Run in a second KB built from the same file. What it rules out: a write
+    path that refuses every whole-document replace, which would make the
+    refusal of the stale one say nothing about staleness.
     """
     base.mkdir()
     config, path, entry_id = _build_kb(base, ex)
     file_text = path.read_text()
     read = _read(config, entry_id)
-    fresh = {**op, "content_hash": read.get("content_hash")}
+    fresh = _whole_document({**op, "content_hash": read.get("content_hash")}, file_text)
     result = _call(
         config, "kb_update", _to_kb_update_args(fresh, config, entry_id, file_text, echo=echo)
     )
     _require_replace_landed(
         result,
         path,
-        op,
+        fresh,
         "the same replace with no hand edit was not written as asked",
         "a refusal of the stale one would not show that staleness was detected",
     )
@@ -682,6 +766,26 @@ def _require_replace_landed(
     )
 
 
+def _require_old_hash_still_refused(
+    config: PyriteConfig, entry_id: str, args: dict[str, Any]
+) -> None:
+    """After the hand edit AND a read by anyone, a replace with the OLD hash is refused.
+
+    What it separates: a write path that checks the hash the replace carries
+    from one that refuses whenever the file differs from the last read (or
+    since indexing) and ignores the carried hash. After a re-read the second
+    would accept the old hash's replace. Raised as a failure, not as a miss:
+    writing a replace made from a stale hash is the behaviour the example
+    forbids.
+    """
+    _read(config, entry_id)
+    result = _call(config, "kb_update", args)
+    assert _is_error(result), (
+        "a replace carrying the hash from before the hand edit was written after the "
+        f"entry was read again; the carried hash is not what decides: {result}"
+    )
+
+
 def _require_reread_replace_is_written(
     ex: Example, config: PyriteConfig, path: Path, entry_id: str, op: dict[str, Any], *, echo: bool
 ) -> None:
@@ -692,13 +796,15 @@ def _require_reread_replace_is_written(
     the replace carried. The twin KB control shows a fresh-hash replace is
     written when nothing changed; it cannot show that the write path accepts
     a fresh hash on a file that was edited after it was indexed. Without this
-    control, a path that refuses any file changed since indexing (or since the
-    first read) would pass the stale example for the wrong reason.
+    control, a path that refuses any file changed since indexing would pass
+    the stale example for the wrong reason. (Paired with
+    ``_require_old_hash_still_refused``, which rules out the reverse: a path
+    that ignores the hash and accepts after any re-read.)
     """
     file_text = path.read_text()
     read = _read(config, entry_id)
     _require(read.get("content_hash"), "the re-read after the hand edit returned no content_hash")
-    op = {**op, "content_hash": read["content_hash"]}
+    op = _whole_document({**op, "content_hash": read["content_hash"]}, file_text)
     result = _call(
         config, "kb_update", _to_kb_update_args(op, config, entry_id, file_text, echo=echo)
     )
@@ -747,8 +853,10 @@ def _check(
             "a stale replace was written, not refused; diff:\n"
             + _render_diff(before, path.read_bytes().decode("utf-8"))
         )
-        # Control, same KB: the refusal is about the hash. The control writes
-        # the file, so the bytes the refusal left are put back for the diff.
+        # Controls, same KB: the refusal is about the hash carried. The second
+        # control writes the file, so the bytes the refusal left are put back
+        # for the diff.
+        _require_old_hash_still_refused(config, entry_id, args)
         refused = path.read_bytes()
         _require_reread_replace_is_written(ex, config, path, entry_id, op, echo=echo)
         path.write_bytes(refused)
@@ -766,39 +874,37 @@ def _check(
                 "what was measured",
             )
         with pytest.MonkeyPatch.context() as spy_patch:
-            emitted = _spy_emitter(spy_patch, spy_watch) if "emitter" in ex.file_flags else None
-            emits = _count_emits(spy_patch) if emitted is not None else []
-            if emitted is not None:
+            watched = _watch_emitter(spy_patch, spy_watch) if "emitter" in ex.file_flags else None
+            if watched is not None:
                 # Control 1: a create has to emit frontmatter (ADR-0042 decision
-                # 13), so the spy must see it.
+                # 13), so the watch must see it.
                 _call(
                     config, "kb_create", {"kb_name": KB, "entry_type": "note", "title": "Spy probe"}
                 )
                 _require(
-                    emitted,
-                    "the emitter spy saw nothing during a create; it is not watching "
+                    watched.docs,
+                    "the emitter watch saw no document during a create; it is not watching "
                     "the emitter Pyrite uses, so an empty record would prove nothing",
                 )
-                emitted.clear()
-                emits.clear()
+                watched.clear()
             result = _call(config, "kb_update", args)
-        if emitted is not None:
-            # Control 2: the UPDATE's own emitter. A create and an update may
-            # not share a front door. If the update ran any YAML emit and the
-            # spy recorded no mapping, the spy is not watching the emitter the
-            # update used, and "nothing leaked" would be vacuous. An update
-            # that never emits (a splice) leaves both empty: a real pass.
+        if watched is not None:
+            # Control 2: the update did not go through a door the watch cannot
+            # see (a C dumper). What it judges is the one question the flag
+            # asks, whether a key nobody asked to change was emitted. It does
+            # not ask whether a mapping was seen: an update that emits one
+            # value (a quoted scalar, a list item in its neighbours' style)
+            # emits no top-level key and is correct.
             _require(
-                emitted or not emits,
-                f"the update ran the YAML emitter {len(emits)} times but the spy "
-                "recorded no mapping: it is not watching the emitter the update uses, so "
-                "an empty leak list would prove nothing",
+                not watched.unwatched,
+                f"the update opened an emitter the watch cannot see ({watched.unwatched}), "
+                "so an empty leak list would prove nothing",
             )
         assert not _is_error(result), f"kb_update refused: {result}"
-        if emitted is not None:
+        if watched is not None:
             asked = set(args) - {"kb_name", "entry_id"}
             untouched = set(_front(before)) - asked
-            leaked = sorted(set().union(*emitted) & untouched) if emitted else []
+            leaked = sorted(watched.keys() & untouched)
             assert not leaked, f"the emitter was handed keys nobody asked to change: {leaked}"
 
     if _actors(meta):
@@ -923,40 +1029,79 @@ def test_emitter_flag_on_the_one_field_edit(
 
 
 # --------------------------------------------------------------------------
-# The harness against a write path that is right, and against ones that are wrong
+# The harness against write paths that are right and ones that are wrong
 # --------------------------------------------------------------------------
 #
 # The examples above run against today's write path, which diverges, so most
 # of the harness's controls are never reached by a passing run. These tests
 # run `_check` against ModelWritePath, a stand-in for the write path ADR-0042
 # describes (a splice of the named fields; a hash compare; links derived,
-# never written), and against variants that are wrong in one way each. Two
-# properties of a write example's verdict (#703):
+# never written), and against variants that are wrong in one way each. The
+# property (#703): a write example's verdict depends only on the behaviour it
+# names. A correct path is never hard-failed (no CaseNotEnteredError); an
+# incorrect one never satisfies a precondition or a control vacuously.
 #
-# - a correct write path is never hard-failed (no CaseNotEnteredError);
-# - an incorrect one never passes, and a wrong reason is not mistaken for the
-#   right one.
+# Every precondition, control and spy in this module, the one behaviour it
+# separates, and where each side is shown:
+#
+# - crlf / noid / actor-in-KB (`_require_entered`): the harness's own fixture
+#   bytes and neighbours, checked before the write. Safe by reading: they do
+#   not depend on the write path.
+# - append items (`_check`, the `append` loop): the arguments the harness
+#   built. Safe by reading: harness-side.
+# - barrier (`_run_concurrent`): both writers reach the critical section at
+#   once. A path that neither locks nor replaces the file times out as not
+#   entered; it cannot pass. Safe by reading.
+# - twin control (`_require_fresh_replace_is_written`): a path that refuses
+#   every replace. Rejected by test_twin_control_catches_a_path_that_refuses_every_replace;
+#   accepted: the correct model.
+# - same-KB re-read control: a path that refuses a file changed since indexing.
+#   Rejected by test_stale_control_in_the_same_kb_...; accepted: the model.
+# - old-hash control (`_require_old_hash_still_refused`): a path that ignores
+#   the carried hash and refuses only when the file differs from the last
+#   read. Rejected by test_stale_example_fails_for_a_path_that_checks_the_last_read_not_the_carried_hash;
+#   accepted: the model.
+# - emitter create control: a watch that sees nothing of Pyrite's writes.
+#   Rejected by test_emitter_watch_pointed_at_pyyaml_alone_...; accepted: the
+#   one-field example under today's path (xfail test above).
+# - emitter unwatched-door control: an update through a C dumper. Rejected by
+#   test_emitter_control_fails_when_the_update_uses_a_door_the_watch_cannot_see;
+#   accepted: the model, and a splice that emits a scalar.
+# - emitter leak check: a key nobody asked to change reaching any watched
+#   emitter, by any door including an import-bound `safe_dump`. Rejected by
+#   test_emitter_leak_is_seen_through_an_import_bound_dump; accepted by
+#   test_emitter_control_passes_a_splice_that_emits_a_scalar.
+# - hook precondition (`_require_actor_link_derived`): a derived LINK, not a
+#   derived value and not the file's own `links:` block. Accepted: the model
+#   (derived link) and the real backlinks path; rejected: the normalised
+#   echo, the unindexed `links:` block, nothing at all.
 
 
 class ModelWritePath:
     """Replaces ``_call``: reads and the create go to the real server, the update does not.
 
     ``refuse_if_changed_since_indexed`` is the wrong reason to refuse a stale
-    replace; ``ignore_hash`` is a path that does not check it at all.
+    replace; ``ignore_hash`` is a path that does not check it at all;
+    ``refuse_all_replaces`` never writes a replace. ``derived`` is what a read
+    returns under the derived key: a link (the correct shape) or only the
+    normalised field value (a read that derived no link).
     """
 
     def __init__(
         self,
         *,
-        derived_key: bool = True,
+        derived: str = "links",
         refuse_if_changed_since_indexed: bool = False,
         ignore_hash: bool = False,
+        refuse_all_replaces: bool = False,
     ) -> None:
         self.real = _call
-        self.derived_key = derived_key
+        self.derived = derived
         self.refuse_if_changed_since_indexed = refuse_if_changed_since_indexed
         self.ignore_hash = ignore_hash
+        self.refuse_all_replaces = refuse_all_replaces
         self.first_seen: dict[Path, str] = {}
+        self.last_read: dict[Path, str] = {}
 
     @staticmethod
     def _digest(path: Path) -> str:
@@ -979,43 +1124,48 @@ class ModelWritePath:
             path = self._file(config, args["entry_id"])
             if path is not None:
                 self.first_seen.setdefault(path, self._digest(path))
+                self.last_read[path] = self._digest(path)
                 entry["content_hash"] = self._digest(path)
-            if self.derived_key:
-                entry["derived"] = {"links": self._derived_links(config, args["entry_id"])}
+            entry["derived"] = self._derived(config, args["entry_id"])
             return {"entry": entry} if "entry" in got else entry
-        if tool == "kb_backlinks" and self.derived_key:
-            return {"backlinks": [{"id": i} for i in self._linking_to(config, args["entry_id"])]}
         if tool == "kb_update":
             return self._update(config, args)
         return self.real(config, tool, args)
 
-    def _entries(self, config: PyriteConfig) -> list[Path]:
-        return sorted(config.knowledge_bases[0].path.rglob("*.md"))
-
-    def _derived_links(self, config: PyriteConfig, entry_id: str) -> list[str]:
-        out = []
-        for path in self._entries(config):
+    def _derived(self, config: PyriteConfig, entry_id: str) -> dict[str, Any]:
+        """Links (outgoing from this entry, incoming to it) derived from the files."""
+        if self.derived == "none":
+            return {}
+        outgoing: list[str] = []
+        incoming: list[str] = []
+        for path in sorted(config.knowledge_bases[0].path.rglob("*.md")):
             meta = _front(path.read_text())
+            actors = [str(r).strip("[]") for r in meta.get("actors", [])]
             if meta.get("id") == entry_id:
-                out += [str(ref).strip("[]") for ref in meta.get("actors", [])]
-        return out
-
-    def _linking_to(self, config: PyriteConfig, target: str) -> list[str]:
-        out = []
-        for path in self._entries(config):
-            meta = _front(path.read_text())
-            if target in [str(r).strip("[]") for r in meta.get("actors", [])]:
-                out.append(str(meta["id"]))
-        return out
+                outgoing = actors
+            if entry_id in actors:
+                incoming.append(str(meta["id"]))
+        if self.derived == "normalised":
+            # A read's normalised field value, which is not a link.
+            return {"actors": outgoing}
+        return {
+            "links": [{"target": t, "relation": "actor_reference"} for t in outgoing]
+            + [{"id": i, "relation": "actor_reference"} for i in incoming]
+        }
 
     def _update(self, config: PyriteConfig, args: dict[str, Any]) -> dict[str, Any]:
         path = self._file(config, args["entry_id"])
         assert path is not None
+        replace = "content_hash" in args
+        if replace and self.refuse_all_replaces:
+            return {"error": "no replace"}
         if self.refuse_if_changed_since_indexed and self.first_seen.get(path) != self._digest(path):
             return {"error": "the file changed since it was indexed"}
-        if "content_hash" in args and not self.ignore_hash:
-            if args["content_hash"] != self._digest(path):
-                return {"error": "the file changed since you read it; read it again"}
+        if replace and self.ignore_hash and self.last_read.get(path) != self._digest(path):
+            # Ignores the carried hash; refuses when the file differs from the last read by anyone.
+            return {"error": "changed since the last read"}
+        if replace and not self.ignore_hash and args["content_hash"] != self._digest(path):
+            return {"error": "the file changed since you read it; read it again"}
         text = path.read_bytes().decode("utf-8")
         head, front, rest = text.split("---\n", 2)
         for key, value in args.items():
@@ -1034,8 +1184,21 @@ class ModelWritePath:
         return {"updated": True}
 
 
+class LastReadModel(ModelWritePath):
+    """WRONG: ignores the carried hash and refuses when the file differs from the last read."""
+
+    def __init__(self) -> None:
+        super().__init__(ignore_hash=True)
+
+
 def _example(slug_start: str) -> Example:
     return next(e for e in DOC_EXAMPLES if e.slug.startswith(slug_start))
+
+
+def _install(monkeypatch: pytest.MonkeyPatch, **names: Any) -> None:
+    this = sys.modules[__name__]
+    for name, value in names.items():
+        monkeypatch.setattr(this, name, value)
 
 
 def test_a_correct_write_path_is_not_hard_failed_by_the_hook_example(
@@ -1044,49 +1207,103 @@ def test_a_correct_write_path_is_not_hard_failed_by_the_hook_example(
     """A path that writes no hook link, with the link derived, passes the hook example.
 
     What it rules out: the example's precondition reading the link from the
-    file's `links:` block or from a cascade-only KB type. The hook is
-    switched off (the cascade plugin's `resolve_actor_links` becomes a
-    no-op), the KB is a generic one, and the link is visible only under
-    `kb_get`'s derived key and in `kb_backlinks`.
+    file's `links:` block or requiring a cascade-only KB type. The KB is a
+    generic one, ModelWritePath writes no link, and the link is visible only
+    as a derived link under `kb_get`'s derived key. (The cascade hook is not
+    in play here: ModelWritePath replaces the update, so it is neither
+    switched off nor run.)
     """
-    import pyrite_cascade.plugin as cascade
-
-    monkeypatch.setattr(cascade, "resolve_actor_links", lambda entry, ctx: entry)
-    monkeypatch.setattr(sys.modules[__name__], "KB_TYPE_FOR_ENTRY_TYPE", {})
-    monkeypatch.setattr(sys.modules[__name__], "_call", ModelWritePath())
+    _install(monkeypatch, KB_TYPE_FOR_ENTRY_TYPE={}, _call=ModelWritePath())
     _check(_example("a-save-does-not"), tmp_path, monkeypatch)
 
 
-@pytest.mark.parametrize("derived_key", [True, False])
-def test_the_hook_precondition_reads_either_derived_form(
-    derived_key: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The link counts from `kb_backlinks` alone or from the derived key alone.
+def test_the_hook_precondition_accepts_the_real_backlinks_path(tmp_path: Path) -> None:
+    """The real `kb_backlinks`, with no derived key, satisfies the precondition.
 
-    What it rules out: accepting only one of the two places ADR-0042 allows,
-    which would hard-fail a path that provides the other.
+    What it rules out: accepting only the derived key of a read. Today the
+    backlink exists because the file holds a `links:` block that was indexed,
+    so this builds exactly that, and goes through the real server.
     """
-    model = ModelWritePath()
+    ex = _example("a-save-does-not")
+    config, path, entry_id = _build_kb(tmp_path, ex)
+    text = path.read_text()
+    path.write_text(
+        text.replace(
+            "---\n\nText.", "links:\n- target: jane-doe\n  relation: actor_reference\n---\n\nText."
+        )
+    )
+    db = PyriteDB(config.settings.index_path)
+    try:
+        IndexManager(db, config).index_all()
+    finally:
+        db.close()
+    assert _derived_link_seen(config, "jane-doe", entry_id) == "kb_backlinks"
+    _require_actor_link_derived(config, _front(ex.file), entry_id)
+
+
+def test_the_hook_precondition_accepts_a_derived_link_alone(tmp_path: Path) -> None:
+    """A derived link under the key of a read, with no backlink, satisfies it.
+
+    What it rules out: accepting only `kb_backlinks`, which would hard-fail a
+    path that provides the other place ADR-0042 allows.
+    """
     ex = _example("a-save-does-not")
     config, _path, entry_id = _build_kb(tmp_path, ex)
-
-    def only(config, tool, args, _m=model, _d=derived_key):
-        got = _m(config, tool, args)
-        if tool == "kb_backlinks" and not _d:
-            return got
-        if tool == "kb_backlinks":
-            return {"backlinks": []}
-        if tool == "kb_get" and not _d:
-            entry = got.get("entry", got)
-            return {"entry": {k: v for k, v in entry.items() if k != "derived"}}
-        return got
-
-    _require_actor_link_derived(config, _front(ex.file), entry_id, call=only)
+    model = ModelWritePath()
+    _require_actor_link_derived(config, _front(ex.file), entry_id, call=model)
+    assert _derived_link_seen(config, "jane-doe", entry_id, call=model) == "kb_get['derived']"
 
 
-def test_the_hook_precondition_still_fails_when_nothing_derives_the_link(
+def test_the_hook_precondition_rejects_a_normalised_field_under_the_derived_key(
     tmp_path: Path,
 ) -> None:
+    """`derived: {actors: [...]}` is the field echoed back, not a link.
+
+    What it rules out: the example being entered because a read returned the
+    entry's own `actors` under the derived key (ADR-0042 decision 9 puts
+    normalised values there) when nothing linked to the actor.
+    """
+    ex = _example("a-save-does-not")
+    config, _path, entry_id = _build_kb(tmp_path, ex)
+    echo = ModelWritePath(derived="normalised")
+    with pytest.raises(CaseNotEnteredError, match="shows no link"):
+        _require_actor_link_derived(config, _front(ex.file), entry_id, call=echo)
+
+
+def test_the_hook_precondition_rejects_a_links_block_in_the_file_that_is_not_indexed(
+    tmp_path: Path,
+) -> None:
+    """A file whose `links:` names the actor, with no backlink and no derived key, is not enough.
+
+    What it rules out: reading the file's own `links:` block as proof that a
+    link was derived. The KB is not re-indexed after the block is written, so
+    the real `kb_backlinks` has no row; the read is the one ADR-0042 decision
+    9 describes, which returns the file's parsed `links` (as a field, not under
+    a derived key).
+    """
+    ex = _example("a-save-does-not")
+    config, path, entry_id = _build_kb(tmp_path, ex)
+    path.write_text(
+        path.read_text().replace(
+            "---\n\nText.",
+            "links:\n- target: jane-doe\n  relation: actor_reference\n---\n\nText.",
+        )
+    )
+
+    def reads_the_file(config, tool, args):
+        got = _call(config, tool, args)
+        if tool != "kb_get" or args["entry_id"] != entry_id:
+            return got
+        entry = dict(got.get("entry", got))
+        entry["links"] = json.loads(json.dumps(_front(path.read_text())["links"]))
+        return {"entry": entry}
+
+    assert _call(config, "kb_backlinks", {"kb_name": KB, "entry_id": "jane-doe"})["backlinks"] == []
+    with pytest.raises(CaseNotEnteredError, match="shows no link"):
+        _require_actor_link_derived(config, _front(ex.file), entry_id, call=reads_the_file)
+
+
+def test_the_hook_precondition_still_fails_when_nothing_derives_the_link(tmp_path: Path) -> None:
     """With no backlink and no derived key, the example is not entered.
 
     What it rules out: a precondition loosened until it accepts anything,
@@ -1094,19 +1311,31 @@ def test_the_hook_precondition_still_fails_when_nothing_derives_the_link(
     """
     ex = _example("a-save-does-not")
     config, _path, entry_id = _build_kb(tmp_path, ex)
-    silent = lambda config, tool, args: (  # noqa: E731
-        {"backlinks": []} if tool == "kb_backlinks" else {"entry": {"id": args["entry_id"]}}
-    )
-    with pytest.raises(CaseNotEnteredError, match="no link"):
-        _require_actor_link_derived(config, _front(ex.file), entry_id, call=silent)
+    with pytest.raises(CaseNotEnteredError, match="shows no link"):
+        _require_actor_link_derived(
+            config, _front(ex.file), entry_id, call=ModelWritePath(derived="none")
+        )
 
 
 def test_a_correct_write_path_passes_the_stale_example_and_its_controls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Hash compare only: refused when stale, written when the hash is fresh."""
-    monkeypatch.setattr(sys.modules[__name__], "_call", ModelWritePath())
+    """Hash compare only: refused when stale (also after a re-read), written when fresh."""
+    _install(monkeypatch, _call=ModelWritePath())
     _check(_example("a-stale"), tmp_path, monkeypatch)
+
+
+def test_twin_control_catches_a_path_that_refuses_every_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A path that never writes a replace is not a pass for the stale example.
+
+    What it rules out: the refusal of the stale replace standing for
+    staleness when this path would refuse the replace at any hash.
+    """
+    _install(monkeypatch, _call=ModelWritePath(refuse_all_replaces=True))
+    with pytest.raises(CaseNotEnteredError, match="no hand edit was not written"):
+        _check(_example("a-stale"), tmp_path, monkeypatch)
 
 
 def test_stale_control_in_the_same_kb_catches_a_refusal_for_the_wrong_reason(
@@ -1119,8 +1348,7 @@ def test_stale_control_in_the_same_kb_catches_a_refusal_for_the_wrong_reason(
     carries. The twin-KB control cannot see this (nothing changed there);
     the same-KB re-read control does.
     """
-    model = ModelWritePath(refuse_if_changed_since_indexed=True)
-    monkeypatch.setattr(sys.modules[__name__], "_call", model)
+    _install(monkeypatch, _call=ModelWritePath(refuse_if_changed_since_indexed=True))
     with pytest.raises(CaseNotEnteredError, match="re-read after the hand edit"):
         _check(_example("a-stale"), tmp_path, monkeypatch)
 
@@ -1129,21 +1357,40 @@ def test_stale_example_fails_for_a_path_that_ignores_the_hash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The refusal assertion still bites: a stale replace that is written fails."""
-    monkeypatch.setattr(sys.modules[__name__], "_call", ModelWritePath(ignore_hash=True))
+    # ignore_hash alone also refuses when the file differs from the last read, so
+    # this variant checks nothing: the first stale replace is written.
+    model = ModelWritePath(ignore_hash=True)
+    model.last_read = _AlwaysFresh()
+    _install(monkeypatch, _call=model)
     with pytest.raises(AssertionError, match="written, not refused"):
         _check(_example("a-stale"), tmp_path, monkeypatch)
 
 
-def test_emitter_control_passes_an_update_that_emits_nothing(
+class _AlwaysFresh(dict):
+    """A ``last_read`` that always matches, so ``ignore_hash`` checks nothing."""
+
+    def get(self, key, default=None):
+        return ModelWritePath._digest(key)
+
+
+def test_stale_example_fails_for_a_path_that_checks_the_last_read_not_the_carried_hash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A splice emits no YAML; the spy and the counter are both empty: a pass.
+    """Refuse-if-changed-since-the-last-read passes the first three controls and fails here.
 
-    What it rules out: the update control hard-failing a correct path because
-    its update did not emit.
+    What it rules out: a write path that ignores the `content_hash` the
+    replace carries. It refuses the stale replace (the file differs from the
+    last read), accepts a fresh one, and after a read by anyone accepts the
+    replace that carries the OLD hash. The old-hash control refuses that.
     """
+    _install(monkeypatch, _call=LastReadModel())
+    with pytest.raises(AssertionError, match="carried hash is not what decides"):
+        _check(_example("a-stale"), tmp_path, monkeypatch)
+
+
+def _one_field_with_emitter() -> Example:
     one_field = DOC_EXAMPLES[0]
-    ex = Example(
+    return Example(
         title=one_field.title,
         file=one_field.file,
         file_flags=one_field.file_flags | {"emitter"},
@@ -1151,62 +1398,100 @@ def test_emitter_control_passes_an_update_that_emits_nothing(
         diff=one_field.diff,
     )
 
-    monkeypatch.setattr(sys.modules[__name__], "_call", ModelWritePath())
-    _check(ex, tmp_path, monkeypatch)
+
+class ScalarEmitting(ModelWritePath):
+    """CORRECT: splices the line, and runs the new VALUE through the YAML emitter to quote it."""
+
+    def _update(self, config: PyriteConfig, args: dict[str, Any]) -> dict[str, Any]:
+        from io import StringIO
+
+        from pyrite.utils.yaml import _get_yaml
+
+        _get_yaml().dump(args["title"], StringIO())
+        return super()._update(config, args)
 
 
-def test_emitter_control_fails_when_the_spy_watches_a_different_emitter_than_the_update(
+def test_emitter_control_passes_a_splice_that_emits_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A spy that sees the create but not the update's emitter is not accepted.
+    """A splice emits no YAML: both the watch and the unwatched list are empty."""
+    _install(monkeypatch, _call=ModelWritePath())
+    _check(_one_field_with_emitter(), tmp_path, monkeypatch)
 
-    What it rules out: the leak check passing vacuously because the spy was
-    never pointed at the emitter the update goes through. Here the spy is
-    given the create's mapping and nothing from the update, while the real
-    update emits through the YAML emitter (counted below the spy).
+
+def test_emitter_control_passes_a_splice_that_emits_a_scalar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A correct splice may run one value through the emitter (ADR-0042 decision 2).
+
+    What it rules out: judging "did the spy record a mapping" instead of "did
+    the update emit a key it was not asked to change". A quoted scalar or an
+    appended list item emits no top-level key.
     """
-    one_field = DOC_EXAMPLES[0]
-    ex = Example(
-        title=one_field.title,
-        file=one_field.file,
-        file_flags=one_field.file_flags | {"emitter"},
-        update=one_field.update,
-        diff=one_field.diff,
-    )
-    seen: list[set[str]] = []
-    real_call = _call
-
-    def create_only_spy(patch: pytest.MonkeyPatch, watch: tuple[str, ...]) -> list[set[str]]:
-        return seen
-
-    def call(config, tool, args):
-        out = real_call(config, tool, args)
-        if tool == "kb_create":
-            seen.append({"id", "title", "type"})
-        return out
-
-    this = sys.modules[__name__]
-    monkeypatch.setattr(this, "_spy_emitter", create_only_spy)
-    monkeypatch.setattr(this, "_call", call)
-    with pytest.raises(CaseNotEnteredError, match="not watching the emitter the update uses"):
-        _check(ex, tmp_path, monkeypatch)
+    _install(monkeypatch, _call=ScalarEmitting())
+    _check(_one_field_with_emitter(), tmp_path, monkeypatch)
 
 
-def test_emitter_spy_pointed_at_pyyaml_alone_does_not_see_the_create(
+from yaml import safe_dump as _safe_dump_bound_at_import  # noqa: E402  (bound before any patch)
+
+
+class WholeFrontmatterThrough(ModelWritePath):
+    """WRONG: splices the line, then emits the whole frontmatter through ``door``."""
+
+    def __init__(self, door: str) -> None:
+        super().__init__()
+        self.door = door
+
+    def _update(self, config: PyriteConfig, args: dict[str, Any]) -> dict[str, Any]:
+        import yaml as pyyaml
+
+        path = self._file(config, args["entry_id"])
+        assert path is not None
+        whole = json.loads(json.dumps(_front(path.read_text()), default=str))
+        if self.door == "c":
+            pyyaml.dump(whole, Dumper=pyyaml.CSafeDumper)
+        else:
+            _safe_dump_bound_at_import(whole)
+        return super()._update(config, args)
+
+
+def test_emitter_leak_is_seen_through_an_import_bound_dump(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The narrowing argument is real: PyYAML alone sees nothing of Pyrite's writes.
+    """The whole frontmatter through PyYAML's `safe_dump` is a leak, not a pass.
 
-    What it rules out: a spy that watches the wrong library passing the first
+    What it rules out: a spy that only wraps `dump` attributes, which a
+    function bound with `from yaml import safe_dump` would escape. The watch
+    is at `Emitter.emit`, below every such binding.
+    """
+    _install(monkeypatch, _call=WholeFrontmatterThrough("python"))
+    with pytest.raises(AssertionError, match="emitter was handed keys nobody asked to change"):
+        _check(_one_field_with_emitter(), tmp_path, monkeypatch)
+
+
+@pytest.mark.skipif(
+    not getattr(__import__("yaml"), "__with_libyaml__", False), reason="PyYAML has no libyaml"
+)
+def test_emitter_control_fails_when_the_update_uses_a_door_the_watch_cannot_see(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole frontmatter through PyYAML's C dumper is not entered, not passed.
+
+    What it rules out: the leak check passing vacuously because the update
+    emitted through an emitter the watch is not pointed at.
+    """
+    _install(monkeypatch, _call=WholeFrontmatterThrough("c"))
+    with pytest.raises(CaseNotEnteredError, match="cannot see"):
+        _check(_one_field_with_emitter(), tmp_path, monkeypatch)
+
+
+def test_emitter_watch_pointed_at_pyyaml_alone_does_not_see_the_create(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The narrowing is real: PyYAML alone sees nothing of Pyrite's writes.
+
+    What it rules out: a watch on the wrong library passing the create
     control by accident.
     """
-    one_field = DOC_EXAMPLES[0]
-    ex = Example(
-        title=one_field.title,
-        file=one_field.file,
-        file_flags=one_field.file_flags | {"emitter"},
-        update=one_field.update,
-        diff=one_field.diff,
-    )
-    with pytest.raises(CaseNotEnteredError, match="saw nothing during a create"):
-        _check(ex, tmp_path, monkeypatch, spy_watch=("pyyaml",))
+    with pytest.raises(CaseNotEnteredError, match="saw no document during a create"):
+        _check(_one_field_with_emitter(), tmp_path, monkeypatch, spy_watch=("pyyaml",))

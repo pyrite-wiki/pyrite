@@ -44,10 +44,18 @@ carry controls the page does not show:
 - the stale example also replaces with the hash of a re-read after the hand
   edit, in the same KB, and expects that write to happen: a refusal because
   the hash is stale must not look like a refusal because the file changed;
-- the hook example reads the actor's link from the backlinks or from a
-  derived key of a read, never from a `links:` block in your file;
-- an example that watches the YAML emitter checks that the watch covers the
-  emitter the update itself uses, not only the one a create uses.
+- the hook example needs the actor's link to show up in the actor's
+  backlinks or as a link under a derived key of a read. Today the backlink
+  exists only because the cascade plugin writes a `links:` block that is then
+  indexed; the example does not read that block directly, and a read's
+  normalised `actors` value is not a link;
+- an example that watches the YAML emitter looks at every key either library
+  emits, and counts as not entered a run whose update opens an emitter the
+  watch cannot see. An update that quotes one value passes; one that emits
+  the whole frontmatter does not;
+- the stale example also checks that a replace carrying the old hash is
+  refused even after the entry was read again, so the hash carried, not the
+  last read, is what decides.
 
 ## Where Pyrite does not keep this promise yet
 
