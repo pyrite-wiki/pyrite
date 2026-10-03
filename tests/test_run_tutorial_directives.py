@@ -105,7 +105,9 @@ class TestStandInForTheClone:
         target = tmp_path / "pyrite"
         runner.stand_in_for_clone(target)
         assert (target / "kb" / "kb.yaml").is_file()
-        assert not (target / "kb").is_symlink(), "Pyrite writes into a KB it indexes"
+        assert not (target / "kb").is_symlink(), (
+            "a software KB loaded with its extension gets a kb/_templates/"
+        )
         assert (target / ".claude" / "skills").is_dir()
         assert (target / ".venv" / "bin" / "activate").is_file()
         assert sorted(p.name for p in REPO.iterdir()) == before

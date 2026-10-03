@@ -9,8 +9,10 @@ Pyrite is alpha. This tutorial uses only what the project lists as supported: fi
 **You need:**
 
 - macOS or Linux, `git`, and Python 3.11 or newer. `python3 --version` tells you; the Python that ships with macOS is older, so use Homebrew's (`brew install python`).
-- [Claude Code](https://docs.claude.com/en/docs/claude-code) for the steps marked **Ask Claude**. Any MCP client works the same way, but only Claude Code is covered here. Without an agent you can still do every command step, and you will see what the agent would have been shown.
+- [Claude Code](https://docs.claude.com/en/docs/claude-code) for the steps marked **Ask Claude**. Any MCP client works the same way, but only Claude Code is covered here. Without an agent you can still run every command; the page says what the agent would have found.
 - About 2 GB of disk. Most of it is the local embedding model's libraries.
+
+**How long it takes.** The aim is twenty minutes, reading included. What we measured, on a MacBook with a fast connection and nothing installed beforehand, is the waiting: about three and a half minutes for Act one's commands (the install and the index build are nearly all of it) and about two minutes for Claude's five answers, then about two and a half minutes for the agent's research in Act two. Reading and typing are on top, and yours will differ.
 
 Commands you type are in `bash` blocks. Things you say to Claude are in `text` blocks under an **Ask Claude** heading. Stay in one terminal tab, in the tutorial folder, until the page tells you to open a new one.
 
@@ -88,7 +90,7 @@ The entries that come back are about batch size and fast feedback, though the se
 pyrite mcp-setup
 ```
 
-This tells Claude Code (and Claude Desktop, if it finds it) to start Pyrite's MCP server, the part that lets an agent search, read and write your KBs. It prints a JSON report of what it changed. The entry runs this install's `pyrite` by its full path, so it works from any folder, at the `write` tier: the agent can read and create entries. `pyrite mcp-setup --tier read` gives an agent that can only read. Running the command again is safe.
+This tells Claude Code (and Claude Desktop, if it finds it) to start Pyrite's MCP server, the part that lets an agent search, read and write your KBs. It prints a JSON report of what it changed. The entry runs this install's `pyrite` by its full path, so it works from any folder, at the `write` tier: the agent can read and create entries. `pyrite mcp-setup --tier read` gives an agent that can only read. Running the command again is safe. For another MCP client, `--config PATH` names the file that holds its `mcpServers`.
 
 Check that Claude Code can start it:
 
@@ -246,7 +248,7 @@ Start a new Claude Code session in the tutorial folder, or carry on in the one y
 Research how teams use work-in-progress (WIP) limits and write what you find into the wip-research knowledge base. First look in the demo knowledge bases (reinertsen, poppendiecks, anderson, goldratt) for the concepts that already exist. Then use web search to find where the idea comes from, how teams choose a limit, and what goes wrong. Write short typed entries: practice entries for the ideas, source entries (with a url) for what you read, organization entries for teams that describe their own use. Every claim must trace to a source entry. Link to the demo concepts with [[kb:id]] wikilinks, for example [[reinertsen:wip-constraints]]. If you cannot verify a claim, say so in the entry.
 ```
 
-Claude will ask permission to search the web and to create entries. Allow them. It searches your KBs first, which takes a few seconds, then searches the web and writes entries as it goes. Expect a couple of minutes.
+Claude will ask permission to search the web and to create entries. Allow them. It searches your KBs first, which takes a few seconds, then searches the web and writes entries as it goes. Ours took two and a half minutes.
 
 This step uses web search, which is Claude Code's, not Pyrite's; and what comes back depends on what the web says today. Yours will not match anyone else's. The page's test stands in for this step with five small entries written for it, and checks everything after.
 
@@ -308,9 +310,9 @@ Links go both ways. The demo KBs did not change, but Pyrite can tell you what no
 pyrite backlinks wip-constraints -k reinertsen --format csv
 ```
 
-<!-- runner: expect-text wip-limits-in-practice -->
+<!-- runner: expect-text wip-research -->
 
-Your `wip-limits-in-practice` entry is in the list, next to the demo's own entries that link to Reinertsen's WIP constraints. The next agent that reads `wip-constraints` finds your research from there.
+The entries the agent wrote about WIP limits are in the list (the `wip-research` rows), next to the demo's own entries that link to Reinertsen's WIP constraints. The next agent that reads `wip-constraints` finds your research from there.
 
 ### Come back in a new session
 
@@ -332,19 +334,18 @@ The index, the config and the files all outlived the session. Now start `claude`
 What did we find out about choosing a WIP limit? Use the wip-research knowledge base, and tell me which claims it marks as unverified.
 ```
 
-A good answer cites `choosing-a-wip-limit` and repeats its caveats. The agent has no memory of last time. The KB is the memory, and it is a folder in git.
+A good answer cites the entry about choosing a limit (in ours, `choosing-a-wip-limit`) and repeats its caveats. The agent has no memory of last time. The KB is the memory, and it is a folder in git.
 
 ## Act three: make it yours
 
-The demo repository is a place to put a KB of your own, and the way to share one.
-
-**Fork it.** Fork `pyrite-wiki/pyrite-kb-demo` on GitHub and clone your fork. With the GitHub CLI:
+**Fork it.** The demo repository is where this collection lives, and the place to put a KB of your own. Fork `pyrite-wiki/pyrite-kb-demo` with the Fork button on GitHub, then point your clone of it at your fork:
 
 ```text
-$ gh repo fork pyrite-wiki/pyrite-kb-demo --clone
+$ cd pyrite-kb-demo
+$ git remote add mine https://github.com/YOUR-NAME/pyrite-kb-demo.git
 ```
 
-(Not run by the page's test: a fork needs your GitHub account.) Then register your fork's KBs where `pyrite kb discover` looks, as you did above.
+(Not run by the page's test: a fork needs your GitHub account.) A new KB is a new folder in that clone, next to `tps` and `goldratt`, and `pyrite kb discover` registers it like the others.
 
 **Pick an idea.** One that you know and that has a shape: a thinker or practitioner you have read closely (an "intellectual biography"), a movement and its practices (`movement`, as in Act two), a tool's history, the decisions your team made. Thirty to fifty entries is where a KB starts to be dense enough to be worth searching.
 
@@ -355,7 +356,7 @@ mkdir -p ~/.claude/skills
 cp -r pyrite/.claude/skills/kb-lifecycle ~/.claude/skills/
 ```
 
-Then, from your fork's folder:
+Then, from the clone of the demo repository:
 
 **Ask Claude:**
 
@@ -365,7 +366,7 @@ Use the kb-lifecycle skill to create a knowledge base about <your idea>. Start w
 
 The skill is built around one hard-won rule: agents invent plausible details, so every claim needs a source and every KB needs a fact-checking pass. Read its `SKILL.md` before you let it write a hundred entries. This step is experimental: the skill is Pyrite's, but the agent that runs it is yours, and a full build takes much longer than this tutorial.
 
-**Share it.** Commit, push to your fork and open a pull request against `pyrite-kb-demo` if you would like it in the collection. A list of KBs made with Pyrite is planned; until it exists, a repository on GitHub with a `kb.yaml` at its root is all someone needs to clone it and run `pyrite kb discover`.
+**Share it.** Commit, push to your fork (`git push mine`) and open a pull request against `pyrite-kb-demo` if you would like it in the collection. A list of KBs made with Pyrite is planned; until it exists, a repository on GitHub with a `kb.yaml` at its root is all someone needs to clone it and run `pyrite kb discover`.
 
 ## Where to read next
 

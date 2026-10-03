@@ -156,9 +156,10 @@ def stand_in_for_clone(target: Path) -> None:
     """What `git clone` + `python3 -m venv pyrite/.venv` would have left behind.
 
     The checkout under test, as what a tutorial reads: its KB and skills as a
-    COPY, because Pyrite writes into a KB directory it indexes (it creates
-    `kb/_templates/`), and a run must leave the checkout, and so a release's
-    clean-tree check, as it found it; the rest as links. And an `activate` that
+    COPY: with the software extension installed (CI has it) Pyrite creates
+    `kb/_templates/` in a software KB it loads, and a run must leave the
+    checkout, and so a release's clean-tree check, as it found it. The rest
+    are links. And an `activate` that
     does nothing: the runner's own `pyrite` is already on PATH, and a tutorial
     tells the reader to `source` it again in a new terminal.
     """
