@@ -126,7 +126,7 @@ Probes against the prototype (script `probe_review.py`, spike scratch):
   `self.db.get_entry`, `kb_service.py:554`). A content-hash rule over an index
   read either loops (the stale row returns the same hash) or lies (the hash
   of the file with the fields of the row, so an echo reverts a hand edit).
-- **No lock and no compare-and-replace** (no `flock` or `fcntl` in
+- **No compare, no merge and no lock** (no `flock` or `fcntl` in
   `pyrite/`). Two writers on different keys, a `git checkout` between read
   and replace, and a templated-folder move each lose a change.
 - **Undeclared keys on typed entries land under `metadata:`**
@@ -168,7 +168,7 @@ A set of one nested key leaves its siblings' bytes alone.
 
 ### 2. The model validates the result; it never supplies bytes
 
-The write pipeline for an existing entry is: read the file under its lock
+The write pipeline for an existing entry is: read the file and its base
 (decision 10); apply the operation to the file's parsed document and splice
 the text; parse the result; check that every path outside the operation parses
 to what it was and the operation's path parses to what was asked; validate the
@@ -504,45 +504,65 @@ normalised values and derived links are one rule:** anything the type or the
 index computes must come back from a read under a derived key, or an echo
 writes it into the file. (This is the same property as ADR-0045 decision 3.)
 
-### 10. A lock and a compare-and-replace guard every write
+### 10. Writes are optimistic: merge against the base, lock only the instant of replace
 
-- A per-file lock guards read-apply-replace across processes and threads
-  (server, CLI and stdio MCP share the files). It is an OS lock (`flock`;
-  `msvcrt.locking` on Windows) on a **sidecar lock file that is never replaced
-  or deleted**, named by the SHA-256 of the entry file's real path, in a
-  per-user lock directory outside the KB that does not depend on which config
-  or data directory a process resolved (decision 5 of ADR-0041; not
-  `default_data_dir()`, which varies by working directory). Never on the entry
-  file: the atomic replace changes its inode (spike 3: 52% of increments
-  lost). Never a POSIX record lock alone: it belongs to the process, so the
-  server's threads share it (85% lost). Never an `O_EXCL` file: a killed holder
-  leaves it and recovery races. In front of the OS lock, an in-process lock
-  keyed by the same path. The kernel releases a killed process's lock (0.2 ms
-  to the next acquire); no stale-lock recovery is needed. A write that moves a
-  file takes the locks of both paths in sorted real-path order.
-- The lock is per host. Two machines writing one KB through a network or
-  synced folder share no lock; only the re-check guards them.
-- Under the lock: read, apply, write and fsync the temp file, **then** compare
-  the file's bytes with what was read, immediately before `os.replace`. If
-  they differ (a `git checkout`, an editor), apply again to the new bytes, at
-  most 5 times, then refuse with a conflict. A file missing under the lock is
-  refused ("moved or deleted"), never recreated: only create creates a file.
-  A small window between that compare and the rename remains for a writer that
-  does not take Pyrite's lock; it is stated, not claimed away. Spike 3, an
-  editor saving every 3 ms against 300 locked increments: comparing before
-  `atomic_write_text` still lost 9 to 97 of the human's saves; comparing after
-  the fsync lost 5 to 19. What no lock prevents: an editor that saves an old
-  buffer later.
+*Reconsidered by the maintainer before merge: "the git way is not to lock and
+to just surface conflicts and make them easy to resolve", then "go with
+optimistic plus the momentary lock".*
+
+- **Optimistic concurrency.** No lock is held while a caller reads, decides
+  and sends its change (server, CLI and stdio MCP share the files). Every
+  write carries the base it was made against: the content hash, or for a field
+  operation the field values it read, as git merges against a base.
+- **Three-way merge at write time, per key.** Base is what the caller read,
+  theirs is the file now, yours is the request. A change to a key nobody else
+  changed merges automatically (spike 3's "8 writers, different keys" case
+  needs no lock to be correct). The same key changed on both sides, or
+  overlapping body changes, is a **conflict**: nothing is written, and the
+  response carries base, theirs and yours and the one operation that resolves
+  it (re-apply on theirs, keep theirs, or replace with an explicit value). The
+  CLI, MCP and REST map it to their conflict code; the CLI prints it
+  readably. A human editing the file in another tool is just another "theirs".
+- **The momentary lock, as git takes for a ref update.** Held only for the
+  instant of compare-and-replace: acquire, re-read the file and compare it
+  with what the merge was computed on (if it changed, merge again, at most 5
+  times, then conflict), write and fsync the temp file, compare again
+  immediately before `os.replace`, rename, release. Never held while work is
+  done. A write that moves a file takes the locks of both paths in sorted
+  real-path order. It is an OS lock (`flock`; `msvcrt.locking` on Windows) on
+  a **sidecar lock file that is never replaced or deleted**, named by the
+  SHA-256 of the entry file's real path, in a per-user lock directory outside
+  the KB that does not depend on which config or data directory a process
+  resolved (decision 5 of ADR-0041; not `default_data_dir()`, which varies by
+  working directory), plus an in-process lock keyed by the same path for the
+  server's threads. This gives git's momentary semantics without git's one
+  wart, a stale `index.lock` after a crash: the kernel releases an OS lock if
+  the holder dies (0.2 ms to the next acquire). Spike 3 rules out the
+  alternatives: a lock on the entry file lost 52% of increments (the atomic
+  replace changes its inode); a process-wide POSIX record lock lost 85% across
+  threads; an `O_EXCL` lock file is left behind by `kill -9` and recovery
+  races.
+- **Per host only.** Two machines writing one KB through a shared or synced
+  folder share no lock; they rely on the compare and the merge, and conflicts
+  surface there too. A small window between the last compare and the rename
+  remains for a writer that does not take Pyrite's lock; it is stated, not
+  claimed away. Spike 3, an editor saving every 3 ms against 300 locked
+  increments: comparing before `atomic_write_text` lost 9 to 97 of the
+  human's saves; comparing after the fsync lost 5 to 19. What nothing
+  prevents: an editor that saves an old buffer later.
+- **A file missing at write time** is a conflict ("moved or deleted"), never
+  recreated: only create creates a file.
 - The replace uses `pyrite/utils/atomic_write.py`, which follows symlinks.
 - The index row is built from the bytes written, with their hash, never from
   an in-memory entry.
-- **The claim guard** (`claim_entry`, `kb_service.py:2357-2392`) compares
-  `status` against the file's value under the lock, and updates the row after.
-  The row is never the tiebreaker. This amends ADR-0029 section 4 (**question
-  3**). Measured on today's code (spike 3): a hand-set claim not yet indexed
-  is overwritten and the agent is told it won. Under the sidecar lock, as a
-  file operation, 8 claimants raced 5 times gave exactly 1 winner each; with
-  no lock, 2 to 4.
+- **The claim** (`claim_entry`, `kb_service.py:2357-2392`) is a conditional
+  write: "set `status` to claimed if it is still open", decided against the
+  file, then the row is updated. Anyone else's claim is a conflict, including
+  a human's that is not yet indexed. The row is never the tiebreaker. This
+  amends ADR-0029 section 4 (**question 3**). Measured on today's code (spike
+  3): a hand-set claim not yet indexed is overwritten and the agent is told it
+  won. As a file operation under the sidecar lock, 8 claimants raced 5 times
+  gave exactly 1 winner each; with no lock, 2 to 4.
 - **Spike 3 (2026-10-02, scratch KBs on macOS APFS, 10 cores, Python 3.12).**
   8 processes x 50 increments, 3 runs a row. Lost updates of one counter, of
   400: sidecar `flock` 0, sidecar `lockf` 0, `O_EXCL` file 0; no lock 227 to
@@ -552,8 +572,8 @@ writes it into the file. (This is the same property as ADR-0045 decision 3.)
   process: sidecar `flock` 0 lost, sidecar `lockf` 346 of 400 (85%). The lock
   costs about 5% (1 writer 1,071 ops/s unlocked, 1,018 with `flock`; 8
   contending 582 to 796). A file moved by one writer while another sets a
-  field leaves two files with one id today; with the lock it leaves one and
-  refuses the setter. Linux, Windows, NFS/SMB and synced folders were not
+  field leaves two files with one id today; with the compare it leaves one and
+  reports the setter's conflict. Linux, Windows, NFS/SMB and synced folders were not
   run.
 
 ### 11. The token: field operations need none
@@ -910,36 +930,47 @@ field and reports "not moved".
 
 ### Acceptance criteria from spike 3 (condensed)
 
-**Concurrency (decision 10; step 4).**
+**Concurrency (decision 10; step 4), optimistic plus the momentary lock.**
 
 1. New `pyrite/utils/file_lock.py`: `entry_lock(path)` locks
    `<per-user lock dir>/<sha256(realpath)>.lock` (the directory is not
    `default_data_dir()`); inside, a `threading.Lock` per real path, then
    `flock(LOCK_EX)` on POSIX or `msvcrt.locking` with retry on Windows; the
    lock file is never unlinked. `entry_locks(*paths)` takes several in sorted
-   real-path order.
-2. `atomic_write_text(path, text, *, expect=None)`: when `expect` is given,
-   compare the file's bytes after the temp file's fsync and immediately before
+   real-path order. It is held only for compare-and-replace.
+2. `atomic_write_text(path, text, *, expect=None)`: with `expect`, compare the
+   file's bytes after the temp file's fsync and immediately before
    `os.replace`; on mismatch remove the temp file and raise
-   `FileChangedError`. Existing callers are unchanged. On Windows, `os.replace`
+   `FileChangedError`. Existing callers are unchanged. On Windows `os.replace`
    gets a bounded retry on `PermissionError`.
-3. Every entry-file write (decision 12) runs read, apply,
-   `atomic_write_text(expect=before)` inside `entry_lock`, retries on
-   `FileChangedError` up to 5 times, then raises a conflict that the CLI, MCP
-   and REST map to their conflict codes. A file missing under the lock raises
-   not-found and writes nothing.
-4. `claim_entry` compares `status` and `assignee` in the file under the lock,
-   writes the file, then updates the index row.
-5. Tests, process-spawning per `tests/test_task_claim_concurrency.py`: 8
-   processes x 25 increments of one key gives 200, of 8 different keys gives
-   25 each; 8 threads in one process x 25 gives 200; a `SIGKILL`ed holder
-   frees the lock within 1 s; two configs (different `PYRITE_DATA_DIR` or
-   working directory) still exclude each other; 8 claimants give exactly 1
-   winner and the file's assignee is the winner; an unindexed hand claim makes
-   `claim_task` return `claimed: False` with the file byte-identical; the move
-   race leaves no file at the old path; `expect=` raises when the bytes change
-   between read and replace (inject with a monkeypatched `os.fsync`), leaving
-   the file untouched and no temp file.
+3. Every entry-file write (decision 12) carries its base, merges per key
+   against the file now, and replaces inside `entry_lock`; on
+   `FileChangedError` it merges again up to 5 times. A same-key or
+   overlapping-body change, or a missing file, raises a conflict carrying
+   base, theirs, yours and the resolving operation, and writes nothing; the
+   CLI, MCP and REST map it to their conflict codes.
+4. `claim_entry` is a conditional write on `status` and `assignee` in the
+   file; the row is updated after.
+5. Tests, process-spawning per `tests/test_task_claim_concurrency.py`:
+   - 8 processes change 8 different keys concurrently: all 8 changes are
+     present, no conflicts.
+   - 8 processes change the same key: exactly one succeeds per round, the
+     others get a conflict carrying base, theirs and yours, none lost
+     silently.
+   - A human edit to a different key between read and write is kept; to the
+     same key it gives a conflict.
+   - The claim race: exactly one winner, and an unindexed hand claim is not
+     overwritten (`claimed: False`, file byte-identical).
+   - A process killed (`SIGKILL`) during the momentary step leaves no lock
+     that blocks the next writer (acquired within 1 s).
+   - Two different configs (`PYRITE_DATA_DIR` or working directory) still
+     exclude each other at the momentary step.
+   - 8 threads in one process change 8 different keys: all present.
+   - The move race leaves no file at the old path and a conflict for the
+     setter.
+   - `expect=` raises when the bytes change between read and replace (inject
+     with a monkeypatched `os.fsync`), leaving the file untouched and no temp
+     file.
 
 **`/` in ids (decision 5; step 7).**
 
@@ -997,7 +1028,7 @@ field and reports "not moved".
 - A ruamel upgrade cannot respell a KB: untouched keys never pass through the
   emitter.
 - One rule decides "was this asked", in one place, against the file.
-- Concurrent writers and checkouts are handled by one lock and one check.
+- Concurrent writers and checkouts are handled by a merge against the base and a momentary lock; a conflict is reported, never lost.
 
 **Deleted**
 - The load-time records and the restyle code in `pyrite/models/base.py`;
@@ -1042,7 +1073,7 @@ field and reports "not moved".
    checks it did not run belong to steps 2, 4 and 7).
 2. The doc and its runner, as expected failures.
 3. The operation function (pure), not wired.
-4. Wire the update path: lock, check, no-op writes nothing.
+4. Wire the update path: base, merge, momentary lock, no-op writes nothing.
 5. Reads from the file; `content_hash`; the new hash and report on writes.
 6. Hooks stop writing; derivations in the index. **Not without the derived
    completion** (`task list` shows it and its open filter honours it; the

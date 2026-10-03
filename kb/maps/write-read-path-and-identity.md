@@ -44,9 +44,10 @@ PR #635) or [[adr-0038]]; **not built** = accepted, code absent.
    plus create. **proposed** [[adr-0038]] question 1 (decided 2026-09-25).
 8. Create is the one place Pyrite chooses spelling, and it never overwrites.
    **proposed** ADR-0042 decision 13; [[adr-0038]] I5 holds today.
-9. A lock and a compare-and-replace guard every write. **proposed** ADR-0042
-   decision 10 (sidecar `flock`, measured by spike 3). No `flock` exists in
-   `pyrite/` today.
+9. Writes are optimistic: each carries its base, merges per key against the
+   file now, and conflicts are reported, never lost; a momentary sidecar
+   `flock` covers only compare-and-replace. **proposed** ADR-0042 decision 10
+   (measured by spike 3). No `flock` exists in `pyrite/` today.
 10. `auto_embed: true` enqueues the entry and returns; it never loads the model
     in the write. **decided** [[adr-0035]].
 11. A truncated body is never valid input to a write. **decided** [[adr-0034]].
