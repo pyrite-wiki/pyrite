@@ -1268,26 +1268,43 @@ class TestExperimentalLayer:
         assert "--continue-on-collection-errors" in runs
 
     def test_only_the_ratchet_decides_the_job(self, ci):
-        steps = ci["jobs"]["experimental"]["steps"]
+        job = ci["jobs"]["experimental"]
+        steps = job["steps"]
         (tests,) = [s for s in steps if "pytest" in str(s.get("run", ""))]
-        assert tests.get("continue-on-error") is True or "|| true" in tests["run"]
+        assert tests.get("continue-on-error") is True
+        # pytest's own status reaches the ratchet; a killed step leaves none.
+        assert 'echo "exit=$?" >> "$GITHUB_OUTPUT"' in tests["run"]
+        assert int(tests["timeout-minutes"]) < int(job["timeout-minutes"]), (
+            "the step must time out before the job, so the ratchet still runs"
+        )
         (check,) = [s for s in steps if "experimental_ratchet.py check" in str(s.get("run", ""))]
+        assert f"steps.{tests['id']}.outputs.exit" in check["run"]
+        assert "--run-exit" in check["run"]
         assert "tests/experimental_known_failures.txt" in check["run"]
         assert "$GITHUB_STEP_SUMMARY" in check["run"]
         assert "--base-known" in check["run"], "the known-failures list can only shrink"
+        assert "--open-issues" in check["run"], "a failure filed on dev is not news"
+        assert check["env"]["GH_TOKEN"] == "${{ github.token }}"
+        assert "!cancelled()" in str(check.get("if", ""))
         assert not check.get("continue-on-error")
 
     def test_the_experimental_job_has_postgres_like_test(self, ci):
         assert ci["jobs"]["experimental"]["services"] == ci["jobs"]["test"]["services"]
 
-    def test_the_experimental_job_cannot_write_issues(self, ci):
-        perms = ci["jobs"]["experimental"].get("permissions", {})
-        assert perms.get("issues", "none") in ("none", "read")
+    def test_the_experimental_job_reads_issues_and_cannot_write_them(self, ci):
+        assert ci["jobs"]["experimental"]["permissions"] == {"contents": "read", "issues": "read"}
 
     def test_issues_are_filed_only_on_a_push_to_dev(self, ci):
         job = ci["jobs"]["experimental-issues"]
         cond = str(job["if"])
         assert "github.event_name == 'push'" in cond and "refs/heads/dev" in cond
+        # failure() is false for a cancelled (timed-out) job: that must file too.
+        assert "always()" in cond and "failure()" not in cond
+        assert "needs.experimental.result != 'success'" in cond
+        assert "needs.experimental.result != 'skipped'" in cond
+        (download,) = [s for s in job["steps"] if "download-artifact" in str(s.get("uses", ""))]
+        assert download.get("continue-on-error") is True, "no result must still file"
+        assert "--job-result" in self._runs(job) and "needs.experimental.result" in self._runs(job)
         assert "experimental" in job["needs"]
         assert job["permissions"] == {"contents": "read", "issues": "write"}
         runs = self._runs(job)
@@ -1322,3 +1339,14 @@ class TestExperimentalLayer:
         assert '-m "not slow and not e2e and not experimental"' in text
         assert '-m "experimental and not slow and not e2e"' in text
         assert "PYRITE_PUSH_EXPERIMENTAL" in text and "--experimental" in text
+
+    @pytest.mark.parametrize("path", ["tests/experimental_surface.py", "conftest.py"])
+    def test_the_mapping_and_its_hook_widen_the_matrix(self, ci, path):
+        import fnmatch
+
+        filt = yaml.safe_load(
+            next(s for s in ci["jobs"]["changes"]["steps"] if s.get("id") == "filter")["with"][
+                "filters"
+            ]
+        )
+        assert any(fnmatch.fnmatch(path, g.replace("**", "*")) for g in filt["infra"]), path

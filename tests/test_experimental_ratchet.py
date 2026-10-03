@@ -375,18 +375,18 @@ class TestAnIncompleteRunIsNotAPass:
     @pytest.mark.parametrize("code", ["2", "3", "4", "5", "", "137"])
     def test_a_run_that_did_not_complete_fails(self, tmp_path, code):
         junit = _junit(tmp_path, _case("tests.test_a", "test_x", "tests/test_a.py"))
-        proc, result = self._check(tmp_path, junit, "--pytest-exit", code)
+        proc, result = self._check(tmp_path, junit, "--run-exit", code)
         assert proc.returncode == 2, proc.stdout
         assert result["incomplete"]
 
     @pytest.mark.parametrize("code", ["0", "1"])
     def test_a_completed_run_is_judged_on_its_report(self, tmp_path, code):
         junit = _junit(tmp_path, _case("tests.test_a", "test_x", "tests/test_a.py"))
-        proc, result = self._check(tmp_path, junit, "--pytest-exit", code)
+        proc, result = self._check(tmp_path, junit, "--run-exit", code)
         assert proc.returncode == 0 and result["incomplete"] is None
 
     def test_no_report_still_writes_a_result_to_file(self, tmp_path):
-        proc, result = self._check(tmp_path, tmp_path / "absent.xml", "--pytest-exit", "0")
+        proc, result = self._check(tmp_path, tmp_path / "absent.xml", "--run-exit", "0")
         assert proc.returncode == 2
         assert "no JUnit report" in result["incomplete"]
 
@@ -410,7 +410,7 @@ class TestAFailureAlreadyFiledIsNotNews:
         result_json = tmp_path / "result.json"
         proc = _run(
             "check", "--junit", str(junit), "--known", str(known), "--open-issues",
-            "--pytest-exit", "1", "--result-json", str(result_json),
+            "--run-exit", "1", "--result-json", str(result_json),
             env=make_env(**gh),
         )  # fmt: skip
         return proc, json.loads(result_json.read_text()), calls()

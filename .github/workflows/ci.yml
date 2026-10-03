@@ -175,6 +175,10 @@ jobs:
               - '.github/workflows/ci.yml'
               - 'scripts/*.sh'
               - 'scripts/*.py'
+              # The experimental mapping and the root conftest that applies
+              # it decide which tests the gate runs (#657).
+              - 'conftest.py'
+              - 'tests/experimental_surface.py'
 
   # Fast check for KB-only changes: schema validation, seconds.
   kb:
@@ -738,6 +742,11 @@ jobs:
       || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Reading the open experimental-broken issues tells a failure already
+    # filed on dev (not news) from a new one; writing them is the next job's.
+    permissions:
+      contents: read
+      issues: read
     # The Postgres backend is experimental, so its conformance legs run here.
     services:
       postgres:
@@ -777,29 +786,44 @@ jobs:
           done
 
       # Never fails the job itself: the ratchet below reads the report and
-      # decides. xunit1 records each case's file, from which the ratchet
-      # rebuilds the node id; a module that fails to import is reported as a
-      # failure of that file instead of stopping the run.
+      # pytest's exit status, and decides. xunit1 records each case's file,
+      # from which the ratchet rebuilds the node id; a module that fails to
+      # import is reported as a failure of that file instead of stopping the
+      # run. The step times out before the job does, so the ratchet still
+      # runs and reports the run incomplete (no exit status) instead of the
+      # job ending cancelled.
       - name: Run the experimental tests
+        id: run
         continue-on-error: true
+        timeout-minutes: 20
         env:
           PYRITE_TEST_PG_URL: postgresql://postgres:postgres@localhost:5432/pyrite_test
           HF_HUB_OFFLINE: "1"
-        run: >-
-          pytest -n auto -m "experimental and not slow and not e2e"
-          --continue-on-collection-errors
-          -o junit_family=xunit1 --junitxml=experimental.xml
+        run: |
+          set +e
+          pytest -n auto -m "experimental and not slow and not e2e" \
+            --continue-on-collection-errors \
+            -o junit_family=xunit1 --junitxml=experimental.xml
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
 
-      - name: Compare with the known failures
+      # Red only for news: a failure in neither the known-failures list nor
+      # an open experimental-broken issue, a grown list, or a run that did
+      # not complete (exit 2).
+      - name: Compare with the known failures and the open issues
+        if: ${{ !cancelled() }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           git show "$BASE_SHA:tests/experimental_known_failures.txt" > /tmp/base-known.txt 2>/dev/null \
             || rm -f /tmp/base-known.txt
           python scripts/experimental_ratchet.py check \
             --junit experimental.xml \
+            --run-exit "${{ steps.run.outputs.exit }}" \
             --known tests/experimental_known_failures.txt \
             --base-known /tmp/base-known.txt \
+            --open-issues \
             --summary "$GITHUB_STEP_SUMMARY" \
             --result-json experimental-result.json
 
@@ -814,14 +838,22 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # On a push to dev only: each test file with a new experimental failure gets
-  # an `experimental-broken` issue (or a comment on the open one) naming the
-  # tests, the commit and the run. A separate job so that the only grant of
-  # issues: write is here, on dev pushes, with the workflow's own token; a
-  # pull request's run reports in its job summary and can write nothing.
+  # On a push to dev only, whenever `experimental` did not succeed: a test
+  # file with a new failure, a grown known-failures list, or a run that did
+  # not complete gets an `experimental-broken` issue (or a comment on the open
+  # one) naming the commit and the run. always(), not failure(): a job that
+  # hit its timeout ends `cancelled`, and failure() is false for that, so the
+  # one run that reported nothing would file nothing. A separate job so that
+  # the only grant of issues: write is here, on dev pushes, with the
+  # workflow's own token; a pull request's run reports in its job summary and
+  # can write nothing.
   experimental-issues:
     needs: experimental
-    if: ${{ failure() && github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+    if: >-
+      ${{ always()
+      && github.event_name == 'push' && github.ref == 'refs/heads/dev'
+      && needs.experimental.result != 'success'
+      && needs.experimental.result != 'skipped' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -830,7 +862,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No artifact (the job timed out or crashed) is itself the news.
       - uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: experimental-result
 
@@ -841,6 +875,7 @@ jobs:
         run: >-
           python3 scripts/experimental_ratchet.py file-issues
           --result-json experimental-result.json
+          --job-result "${{ needs.experimental.result }}"
           --sha "$GITHUB_SHA"
           --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 

@@ -13,7 +13,7 @@ run that did not complete.
                and, with --open-issues, the open `experimental-broken` issues.
                Exit 1 on a NEW failure (in neither), or when the file grew
                against --base-known (it can only shrink). Exit 2 when the run
-               did not complete: no report, or --pytest-exit other than 0/1.
+               did not complete: no report, or --run-exit other than 0/1.
                A failure an open issue already names is "filed", not new, so
                a PR's red keeps meaning news. Reports a known failure that now
                passes or no longer exists (remove it), and a filed test that
@@ -425,7 +425,7 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("--result-json", type=Path, help="write the result for file-issues")
 
     check.add_argument(
-        "--pytest-exit",
+        "--run-exit",
         help="pytest's exit status; anything but 0 or 1 (or empty) marks the run incomplete",
     )
     check.add_argument(
@@ -456,7 +456,7 @@ def main(argv: list[str] | None = None) -> int:
         except (subprocess.CalledProcessError, OSError, ValueError) as exc:
             print(f"experimental-ratchet: could not read the open {LABEL} issues ({exc})")
             unreadable = True
-    incomplete = incompleteness(opts.pytest_exit, opts.junit)
+    incomplete = incompleteness(opts.run_exit, opts.junit)
     outcomes = read_junit(opts.junit) if opts.junit.exists() else {}
     result = compare(outcomes, known, filed)
     result.incomplete = incomplete
