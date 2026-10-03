@@ -21,9 +21,9 @@ from .capabilities import BackendCapability
 #: sqlite-vec's hard ceiling on ``k`` in a KNN query. Asking for more is not a
 #: slow query but an error — sqlite-vec 0.1.9 raises
 #: ``OperationalError: k value in knn query too large, provided N and the limit
-#: is 4096``. Every ``k`` the semantic leg builds is clamped against this, so a
-#: filtered search over an index larger than the cap under-returns rather than
-#: raising (#56).
+#: is 4096``. Every ``k`` the semantic leg builds is clamped against this; a
+#: query can still under-return when more matching candidates exist than the
+#: cap, or when distance culling removes candidates (#56, #194).
 _SQLITE_VEC_MAX_K = 4096
 
 
@@ -410,20 +410,19 @@ class SQLiteBackend(BaseBackend):
         """KNN over ``vec_entry``, filtered by the same predicates as ``search``.
 
         sqlite-vec's ``MATCH`` needs a literal ``k`` (the number of nearest
-        neighbours to consider) and applies it *before* any join predicate, so
-        a filter cannot be pushed into the KNN itself. Filtering the k rows
-        afterwards would silently under-return whenever the k nearest happen
-        not to match the filter. Instead we over-fetch and escalate ``k`` until
-        ``limit`` rows survive the filter, ``k`` covers every embedded row, or
-        ``k`` reaches :data:`_SQLITE_VEC_MAX_K`.
+        neighbours to consider). For a caller-supplied filter, the matching
+        rowids are passed into the KNN query so unrelated neighbours do not
+        consume that budget. The outer predicates remain as a consistency
+        check. The query over-fetches and escalates ``k`` for distance culling,
+        until ``limit`` rows survive, the filtered candidate set is exhausted,
+        or ``k`` reaches :data:`_SQLITE_VEC_MAX_K`.
 
-        **Recall is best-effort at the cap.** sqlite-vec refuses ``k`` above
-        4096 outright, so on an index larger than that a filter selective
-        enough to exclude the 4096 nearest neighbours returns fewer rows than
-        ``limit`` — possibly none. That is a deliberate under-return, never an
-        exception and never a row the filter excluded. The keyword leg, which
-        has no such ceiling, is unaffected; in hybrid mode it carries the
-        result.
+        sqlite-vec refuses ``k`` above 4096 outright. Filtering candidates
+        before KNN avoids losing recall because unrelated rows occupied those
+        4096 slots. A request for more than the cap, or a restrictive
+        ``max_distance``, can still return fewer than ``limit`` results. The
+        keyword leg, which has no KNN ceiling, is unaffected; in hybrid mode it
+        carries its own result.
 
         The escalation costs one extra query per round, and only when the
         previous budget did not fill ``limit``: an unfiltered search whose
@@ -453,11 +452,18 @@ class SQLiteBackend(BaseBackend):
         # would be wasted. That is the exhaustion signal — an unconditional
         # ``COUNT(*) FROM vec_entry`` would instead scan the whole vector table
         # on every semantic search, filtered or not.
+        # sqlite-vec 0.1.6+ accepts a rowid subquery in MATCH's WHERE clause.
+        # Apply caller filters before KNN so unrelated rows cannot exhaust the
+        # hard k cap; keep the unfiltered hot path free of this extra query.
+        knn_filter = (
+            f" AND rowid IN (SELECT e.rowid FROM entry e WHERE 1=1{where})" if selective else ""
+        )
+        candidate_params = params if selective else []
         sql = f"""
             WITH knn AS (
                 SELECT rowid, distance
                 FROM vec_entry
-                WHERE embedding MATCH ? AND k = ?
+                WHERE embedding MATCH ? AND k = ?{knn_filter}
             ), knn_size AS (
                 SELECT COUNT(*) AS n FROM knn
             )
@@ -468,9 +474,9 @@ class SQLiteBackend(BaseBackend):
             WHERE 1=1{where}
             ORDER BY knn.distance
         """
-        size_sql = """
+        size_sql = f"""
             WITH knn AS (
-                SELECT rowid FROM vec_entry WHERE embedding MATCH ? AND k = ?
+                SELECT rowid FROM vec_entry WHERE embedding MATCH ? AND k = ?{knn_filter}
             )
             SELECT COUNT(*) FROM knn
         """
@@ -481,7 +487,7 @@ class SQLiteBackend(BaseBackend):
         results: list[dict[str, Any]] = []
         while True:
             with self._raw_cursor() as cur:
-                rows = cur.execute(sql, [blob, k, *params]).fetchall()
+                rows = cur.execute(sql, [blob, k, *candidate_params, *params]).fetchall()
             results = []
             for row in rows:
                 entry = dict(row)
@@ -502,7 +508,7 @@ class SQLiteBackend(BaseBackend):
                 knn_size = rows[0]["_knn_size"]
             else:
                 with self._raw_cursor() as cur:
-                    knn_size = cur.execute(size_sql, (blob, k)).fetchone()[0]
+                    knn_size = cur.execute(size_sql, (blob, k, *candidate_params)).fetchone()[0]
             if knn_size < k:
                 # The table is exhausted: a larger k cannot find more.
                 break
