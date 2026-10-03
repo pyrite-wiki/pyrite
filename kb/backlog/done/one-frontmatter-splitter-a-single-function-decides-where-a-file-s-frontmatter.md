@@ -7,10 +7,11 @@ tags:
 - refactor
 importance: 5
 kind: enhancement
-status: proposed
+status: done
 priority: high
 effort: S
 rank: 0
+assignee: agent:pyrite-worker
 ---
 
 Retro 2026-10-03 quality theme (approved by the maintainer). Two pieces of code split a file into frontmatter and body differently: the regex in `_frontmatter_of` (pyrite/models/core_types.py ~451) and `KBRepository._load_entry` (pyrite/storage/repository.py ~62). `ids pin` (#700/#702) now imports the private `_frontmatter_of`, and the write path (B6) needs one answer to "where does the frontmatter end". Principle: kb/design.md 8 (each rule lives in one place).

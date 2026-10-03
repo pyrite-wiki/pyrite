@@ -20,6 +20,7 @@ from ..schema import (
     validate_date,
     validate_importance,
 )
+from ..utils.frontmatter import load_frontmatter
 from ..utils.parse import safe_int
 from .base import Entry, capture_extra_frontmatter
 from .collection import CollectionEntry
@@ -444,25 +445,6 @@ def entry_from_frontmatter(meta: dict[str, Any], body: str) -> Entry:
     return entry
 
 
-def _frontmatter_of(text: str) -> tuple[dict, str] | None:
-    """(frontmatter, body) of an entry file's text, split as
-    ``Entry.from_markdown`` splits it; None when the text has none."""
-    from ..utils.yaml import load_yaml
-
-    if text.startswith("\ufeff"):
-        text = text[1:]
-    if not text.startswith(("---\n", "---\r\n")):
-        return None
-    after_open = text.split("\n", 1)[1]
-    parts = re.split(r"^---\s*$", after_open, flags=re.MULTILINE, maxsplit=1)
-    if len(parts) < 2:
-        return None
-    meta = load_yaml(parts[0])
-    if not isinstance(meta, dict):
-        return None
-    return meta, parts[1].strip()
-
-
 def id_text(value: Any) -> str | None:
     """An entry id as text, the one way the index stores it and lookup
     compares it. A YAML scalar id (``id: true``, ``id: 123``, ``id: 1.50``,
@@ -499,7 +481,7 @@ def read_entry_id(
     None when the text has no frontmatter; raises what the loader would
     raise on malformed frontmatter.
     """
-    parsed = _frontmatter_of(text)
+    parsed = load_frontmatter(text)
     if parsed is None:
         return None
     meta, body = parsed
@@ -533,7 +515,7 @@ def explicit_entry_id(text: str) -> str | None:
     states none (the id is then derived from the title, which may have
     changed between versions of the same entry)."""
     try:
-        parsed = _frontmatter_of(text)
+        parsed = load_frontmatter(text)
         if parsed is None:
             return None
         return id_text(parsed[0].get("id"))

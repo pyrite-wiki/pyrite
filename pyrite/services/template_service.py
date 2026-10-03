@@ -8,6 +8,7 @@ Templates are stored as markdown files with YAML frontmatter in
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,10 +17,13 @@ from typing import Any
 import yaml
 
 from ..config import PyriteConfig
-from ..exceptions import KBNotFoundError
+from ..exceptions import FrontmatterError, KBNotFoundError
+from ..utils.frontmatter import Frontmatter, NoFrontmatter, describe, split_frontmatter
 
 # Pattern for {{variable}} placeholders
 _VAR_PATTERN = re.compile(r"\{\{(\w+)\}\}")
+
+logger = logging.getLogger(__name__)
 
 # Built-in variables that are auto-populated at render time
 BUILTIN_VARIABLES = {"date", "datetime", "title", "kb", "author"}
@@ -57,11 +61,19 @@ class TemplateService:
         frontmatter: dict[str, Any] = {}
         body = text
 
-        if text.startswith("---"):
-            parts = text.split("---", 2)
-            if len(parts) >= 3:
-                frontmatter = yaml.safe_load(parts[1]) or {}
-                body = parts[2].lstrip("\n")
+        split = split_frontmatter(text)
+        if isinstance(split, Frontmatter):
+            try:
+                frontmatter = yaml.safe_load(split.text) or {}
+            except yaml.YAMLError as e:
+                raise FrontmatterError(
+                    f"Template {path.name}: invalid YAML frontmatter: {e}"
+                ) from e
+            if not isinstance(frontmatter, dict):
+                raise FrontmatterError(f"Template {path.name}: frontmatter is not a mapping")
+            body = text[split.close_end :].lstrip("\n")
+        elif not isinstance(split, NoFrontmatter):
+            raise FrontmatterError(f"Template {path.name}: {describe(split)}")
 
         name = frontmatter.pop("template_name", path.stem)
         description = frontmatter.pop("template_description", "")
@@ -89,7 +101,12 @@ class TemplateService:
 
         templates: list[dict[str, Any]] = []
         for path in sorted(tpl_dir.glob("*.md")):
-            parsed = self._parse_template_file(path)
+            try:
+                parsed = self._parse_template_file(path)
+            except (FrontmatterError, yaml.YAMLError, UnicodeDecodeError) as e:
+                # One unreadable template must not hide the others.
+                logger.warning("Skipping template %s: %s", path.name, e)
+                continue
             templates.append(
                 {
                     "name": parsed["name"],

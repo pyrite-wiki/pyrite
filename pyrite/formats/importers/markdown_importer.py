@@ -1,12 +1,18 @@
 """Markdown format importer -- parse markdown files with YAML frontmatter."""
 
 import logging
-import re
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from pyrite.exceptions import FrontmatterError
+from pyrite.utils.frontmatter import (
+    Frontmatter,
+    NoFrontmatter,
+    describe,
+    next_delimiter,
+    split_frontmatter,
+)
 
-_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+logger = logging.getLogger(__name__)
 
 
 def import_markdown(data: str | bytes) -> list[dict[str, Any]]:
@@ -24,25 +30,30 @@ def import_markdown(data: str | bytes) -> list[dict[str, Any]]:
     # Strategy: parse first entry, then check for more
     remaining = data.strip()
 
+    first = True
     while remaining:
+        split = split_frontmatter(remaining)
+        if first and not isinstance(split, (Frontmatter, NoFrontmatter)):
+            # Refused visibly: reading the YAML as the body would change what the text means.
+            raise FrontmatterError(f"Invalid entry format: {describe(split)}")
+        first = False
         entry = _parse_single_md(remaining)
         if entry:
             entries.append(entry)
-        # Find next entry separator
-        # After the first frontmatter+body, look for next ---\n that starts a new entry
-        match = _FRONTMATTER_RE.match(remaining)
-        if match:
-            after_fm = remaining[match.end() :]
-            # Find next document separator
-            next_sep = re.search(r"\n---\s*\n", after_fm)
-            if next_sep:
-                remaining = after_fm[next_sep.end() :]
-                # Re-add frontmatter markers
-                remaining = "---\n" + remaining if not remaining.startswith("---") else remaining
-            else:
-                break
-        else:
+        if not isinstance(split, Frontmatter):
             break
+        # After the first frontmatter+body, look for the next --- line. It
+        # starts another entry only when what follows reads as frontmatter;
+        # otherwise it is a horizontal rule in the body (Hugo reads one page).
+        next_sep = next_delimiter(remaining[split.close_end :])
+        if not next_sep:
+            break
+        candidate = remaining[split.close_end :][next_sep[1] :]
+        if not isinstance(split_frontmatter(candidate), Frontmatter):
+            candidate = "---\n" + candidate
+        if not isinstance(split_frontmatter(candidate), Frontmatter):
+            break
+        remaining = candidate
 
     return entries
 
@@ -51,8 +62,8 @@ def _parse_single_md(text: str) -> dict[str, Any] | None:
     """Parse a single markdown entry with frontmatter."""
     from pyrite.utils.yaml import load_yaml
 
-    match = _FRONTMATTER_RE.match(text)
-    if not match:
+    split = split_frontmatter(text)
+    if not isinstance(split, Frontmatter):
         # No frontmatter -- treat entire text as body
         if text.strip():
             # Try to extract title from first heading
@@ -71,14 +82,12 @@ def _parse_single_md(text: str) -> dict[str, Any] | None:
             }
         return None
 
-    frontmatter_text = match.group(1)
-    body = text[match.end() :].strip()
+    frontmatter_text = split.text
+    body = split.body
 
-    try:
-        fm = load_yaml(frontmatter_text)
-    except Exception:
-        logger.warning("Failed to parse YAML frontmatter", exc_info=True)
-        fm = {}
+    # YAML that does not parse raises FrontmatterError: an entry with its frontmatter
+    # dropped is a different entry, so the import refuses instead of carrying on.
+    fm = load_yaml(frontmatter_text)
 
     if not isinstance(fm, dict):
         fm = {}

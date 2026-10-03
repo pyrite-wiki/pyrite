@@ -36,8 +36,9 @@ from typing import Any
 from .. import config as pyrite_config
 from ..config import KBConfig, PyriteConfig
 from ..exceptions import ValidationError
-from ..models.core_types import _frontmatter_of, explicit_entry_id, id_text, read_entry_id
+from ..models.core_types import explicit_entry_id, id_text, read_entry_id
 from ..storage.repository import KBRepository
+from ..utils.frontmatter import Frontmatter, describe, load_frontmatter, split_frontmatter
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +46,6 @@ logger = logging.getLogger(__name__)
 # and 1.1 readers alike; anything else is single-quoted.
 _PLAIN_ID = re.compile(r"[A-Za-z][A-Za-z0-9._-]*")
 _YAML11_WORDS = {"y", "n", "yes", "no", "on", "off", "true", "false", "null"}
-
-_OPENING = re.compile(r"\A(﻿?)---(\r?\n)")
-# The loader's closing delimiter, the same pattern ``_frontmatter_of`` splits
-# on, searched from the same place (after the opening line).
-_CLOSING = re.compile(r"^---\s*$", re.MULTILINE)
 
 
 class PinRefusedError(Exception):
@@ -106,13 +102,10 @@ def insert_id_line(text: str, entry_id: str) -> str:
     ``id`` and nothing else, with the body unchanged and ``read_entry_id``
     reading back ``entry_id``.
     """
-    opening = _OPENING.match(text)
-    if not opening:
-        raise PinRefusedError("no YAML frontmatter (the file does not start with ---)")
-    closing = _CLOSING.search(text, opening.end())
-    if not closing:
-        raise PinRefusedError("no closing --- for the frontmatter")
-    at = closing.start()
+    split = split_frontmatter(text)
+    if not isinstance(split, Frontmatter):
+        raise PinRefusedError(describe(split))
+    at = split.close_start
     # The new line goes between the frontmatter's last line and the closing
     # `---`, so it takes that last line's ending (the opening line's, when the
     # frontmatter is empty): in a file with mixed endings it matches its
@@ -121,8 +114,8 @@ def insert_id_line(text: str, entry_id: str) -> str:
     new_text = text[:at] + id_line(entry_id, eol) + text[at:]
 
     try:
-        before = _frontmatter_of(text)
-        after = _frontmatter_of(new_text)
+        before = load_frontmatter(text)
+        after = load_frontmatter(new_text)
     except Exception as e:  # FrontmatterError: the added line broke the YAML
         raise PinRefusedError(
             f"one added line would not parse here ({type(e).__name__}); add the id by hand"
@@ -348,7 +341,7 @@ def scan(kb_config: KBConfig) -> IdScan:
             result.skipped.append({"path": rel, "reason": f"not readable as UTF-8: {e}"})
             continue
         try:
-            parsed = _frontmatter_of(text)
+            parsed = load_frontmatter(text)
         except Exception as e:  # what the loader would raise: report, never repair
             result.skipped.append({"path": rel, "reason": f"invalid frontmatter: {e}"})
             continue
