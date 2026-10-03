@@ -7,10 +7,11 @@ tags:
 - storage
 importance: 5
 kind: tech_debt
-status: proposed
+status: in_progress
 priority: high
 effort: M
 rank: 0
+assignee: agent:pyrite-worker
 ---
 
 Step 2 of [[adr-0038]] (proposed). Fixes #485, #486, #487 and #495.
