@@ -9,7 +9,16 @@ tags: [testing, pytest]
 
 ## Framework
 - pytest with rich output
-- Pre-commit hook runs full suite on every commit
+- The commit hooks run no tests; the pre-push hook runs the core plus the
+  affected tests (`scripts/test-affected --run`); CI is the authority
+- Tests of experimental surfaces carry the `experimental` marker, applied by
+  path from `tests/experimental_surface.py` (never by hand). They do not gate a
+  merge or a push; CI's `experimental` job runs them against
+  `tests/experimental_known_failures.txt`, a list that can only shrink, and a
+  new failure on `dev` opens an `experimental-broken` issue (#657). A test of a
+  security property (authorization, read scoping, containment, credentials,
+  the characterization oracle, escaping) is never experimental: list it in
+  that file's `NEVER_EXPERIMENTAL` when its path is mapped experimental
 
 ## Test Structure for Extensions (proven 8-section pattern)
 1. **TestPluginRegistration** — verify name, all capabilities in registry (use `in` not `len ==`)
