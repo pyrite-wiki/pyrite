@@ -369,7 +369,12 @@ class KBRepository:
             return None
         return "explicit" if stated == entry_id else "derived"
 
-    def files_to_delete(self, entry_id: str, indexed_path: Path | None = None) -> list[Path]:
+    def files_to_delete(
+        self,
+        entry_id: str,
+        indexed_path: Path | None = None,
+        holders: list[Path] | None = None,
+    ) -> list[Path]:
         """The files ``delete(entry_id)`` removes: only files certain to BE
         the entry (ADR-0038 I7).
 
@@ -384,9 +389,20 @@ class KBRepository:
         holding it, any of them by derivation (two notes titled "Draft", or
         untitled notes that all derive one id), cannot be told apart: the
         delete is refused with their paths, and an ``id:`` line settles it.
+
+        ``holders`` are the files the reconcile found holding the id
+        (``IndexManager.plan_reconcile``, #494). When there are several, the
+        same rule applies to them before anything else: all stating it are
+        removed, one deriving it refuses the delete.
         """
         if not isinstance(entry_id, str) or not entry_id:
             return []
+        if holders and len(holders) > 1:
+            held = {f: self._holds(f, entry_id) for f in holders if self._lexically_inside(f)}
+            held = {f: how for f, how in held.items() if how}
+            if len(held) > 1:
+                self._refuse_if_derived(entry_id, held)
+                return list(held)
         candidates: list[Path] = []
         if indexed_path is not None and self._lexically_inside(indexed_path):
             candidates.append(indexed_path)
@@ -402,14 +418,20 @@ class KBRepository:
 
         held = {f: self._holds(f, entry_id) for f in self.list_files()}
         held = {f: how for f, how in held.items() if how}
-        if len(held) > 1 and "derived" in held.values():
-            paths = ", ".join(str(f.relative_to(self.path)) for f in sorted(held))
-            raise ValidationError(
-                f"Refusing to delete '{entry_id}': {len(held)} files hold it and at least "
-                f"one derives it from its title, so which is the entry is not certain "
-                f"({paths}). Add an `id:` line to the one to delete, or remove it by hand."
-            )
+        if len(held) > 1:
+            self._refuse_if_derived(entry_id, held)
         return list(held)
+
+    def _refuse_if_derived(self, entry_id: str, held: dict[Path, str]) -> None:
+        """Several files hold ``entry_id``; refuse unless every one states it."""
+        if "derived" not in held.values():
+            return
+        paths = ", ".join(str(f.relative_to(self.path)) for f in sorted(held))
+        raise ValidationError(
+            f"Refusing to delete '{entry_id}': {len(held)} files hold it and at least "
+            f"one derives it from its title, so which is the entry is not certain "
+            f"({paths}). Add an `id:` line to the one to delete, or remove it by hand."
+        )
 
     def not_found_hint(self, entry_id: str) -> str:
         """Why a lookup by a filename found nothing: the file named like the
@@ -515,14 +537,21 @@ class KBRepository:
 
         return file_path
 
-    def delete(self, entry_id: str, *, indexed_path: Path | None = None) -> bool:
+    def delete(
+        self,
+        entry_id: str,
+        *,
+        indexed_path: Path | None = None,
+        holders: list[Path] | None = None,
+    ) -> bool:
         """Delete the files that are certainly ``entry_id`` (``files_to_delete``;
         refuses when that is not certain). Returns True if any was deleted.
-        ``indexed_path`` is the index row's file, a candidate checked first."""
+        ``indexed_path`` is the index row's file, a candidate checked first;
+        ``holders`` the files the reconcile found holding the id."""
         if self.config.read_only:
             raise KBReadOnlyError(f"KB '{self.name}' is read-only")
 
-        files = self.files_to_delete(entry_id, indexed_path)
+        files = self.files_to_delete(entry_id, indexed_path, holders)
         for file_path in files:
             file_path.unlink(missing_ok=True)
         return bool(files)

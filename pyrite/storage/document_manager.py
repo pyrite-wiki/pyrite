@@ -185,11 +185,15 @@ class DocumentManager:
         """
         repo = KBRepository(kb_config)
         # The index row's file is a candidate the repository verifies before
-        # it walks the KB (ADR-0038 step 1): a delete by an explicit id reads
-        # a file or two, not every file.
+        # it walks the KB (ADR-0038 step 1). Every file holding the id comes
+        # from the reconcile's plan (step 2, #494): it reads only files the
+        # index does not know or whose stat moved, so a copy written by hand
+        # since the last sync is found, and nothing is written to the index.
         row = self._db.get_entry(entry_id, kb_name)
         indexed = Path(row["file_path"]) if row and row.get("file_path") else None
-        file_deleted = repo.delete(entry_id, indexed_path=indexed)
+        plan = self._index_mgr.plan_reconcile(kb_config)
+        holders = [claim.path for claim in plan.holders.get(entry_id, [])]
+        file_deleted = repo.delete(entry_id, indexed_path=indexed, holders=holders)
         self._db.delete_entry(entry_id, kb_name)
         return file_deleted
 

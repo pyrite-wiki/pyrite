@@ -515,7 +515,6 @@ def test_i9_rename_to_same_id_is_refused():
     _run("I9", [*steps, ("rename", {"old": "alpha", "new": "alpha"})])
 
 
-@_violates("I9", "#494", "delete of a duplicated id orphans the other file")
 def test_i9_delete_of_a_duplicated_id_orphans_a_file():
     steps = [
         ("create_note", {"title": "Gamma", "id": None}),
