@@ -97,7 +97,7 @@ contracts are alpha.
 | Who may do what | [[adr-0037]], ADR-0043 (proposed) |
 | Types, protocols, plugins | [[adr-0014]], [[adr-0017]], [[adr-0040]], ADR-0045 (proposed) |
 | Review of changes | ADR-0044 (proposed) |
-| What the alpha supports | `alpha-supported-surface` (proposed) |
+| What the alpha supports | `alpha-supported-surface` (approved 2026-10-02) |
 | Releases | [[roadmap]], "The release line" |
 
 ### Topic maps
@@ -134,10 +134,15 @@ code follows it; check, and treat a mismatch as the work to do.
 
 - An update re-serialises the whole file from the model (principle 3).
 - Save hooks write links and parent status into files (principle 4).
-- An entry with no `id:` takes its identity from its title (principle 5).
-- A single-entry read comes from the index, not the file (principle 5).
+- An entry with no `id:` takes its identity from its title, and no command
+  lists or pins the files missing one (principle 5).
+- A single-entry read comes from the index, not the file, and returns the
+  type's defaults and normalised values among the file's own fields, so a
+  client that sends a read back writes them into the file (principles 3 to 5).
 - Entry classes and protocol mixins serialise themselves (principle 6).
 - KBs can exist only as database rows; grants and secrets are not in a
   reviewable config file (principle 7).
 - Several rules are enforced per call site (principle 8).
-- No supported-surface list is published (principle 9).
+- The supported-surface list is approved but not yet reflected in the
+  README, `--help` and tool descriptions, and experimental tests are not yet
+  marked (principle 9).
