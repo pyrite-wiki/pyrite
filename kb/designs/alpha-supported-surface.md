@@ -2,7 +2,7 @@
 id: alpha-supported-surface
 type: design_doc
 title: "The alpha's supported surface: what is supported, what is experimental, what is unsupported"
-status: draft
+status: approved
 author: pyrite-docs
 date: "2026-10-02"
 reviewers: []
@@ -157,6 +157,12 @@ that process, not authorization.
 15 + 93 + 4 = 112.)
 
 ## Questions for the maintainer
+
+**Approved as written by the maintainer, 2026-10-02**, including the
+recommendations below (the single-user web UI is experimental until it is
+packaged). Tests of experimental features carry the `experimental` marker and
+do not block a merge; a known-failures list for them can only shrink (see the
+issue that tracks the marker and ratchet).
 
 Ranked by what they block (the README's claims and the 0.25.7 announcement).
 
