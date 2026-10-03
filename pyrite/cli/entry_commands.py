@@ -78,8 +78,13 @@ def _field_type_for(
                 return field_schema.field_type
 
     from ..schema import CORE_TYPES
+    from ..schema.field_aliases import field_aliases
 
-    return CORE_TYPES.get(entry_type, {}).get("fields", {}).get(field_name)
+    core_fields = CORE_TYPES.get(entry_type, {}).get("fields", {})
+    # `participants` (the attribute name `create` accepts) is an alias of the
+    # file key `actors`: it parses as the target does.
+    name = field_aliases(entry_type).get(field_name, field_name) if entry_type else field_name
+    return core_fields.get(field_name) or core_fields.get(name)
 
 
 def _parse_field_value(value: str, field_type: str | None = None) -> Any:

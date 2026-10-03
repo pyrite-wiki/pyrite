@@ -150,6 +150,13 @@ class JournalismInvestigationPlugin:
             "funding": FundingEntry,
         }
 
+    def get_type_metadata(self) -> dict[str, dict]:
+        """Aliases for keys older files spell another way (ADR-0045 decision 8)."""
+        return {
+            t: {"field_aliases": {"participants": "actors"}}
+            for t in ("investigation_event", "transaction", "legal_action")
+        }
+
     def get_cli_commands(self) -> list[tuple[str, Any]]:
         from .cli import investigation_app
 

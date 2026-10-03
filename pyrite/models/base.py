@@ -175,10 +175,13 @@ def capture_extra_frontmatter(entry: "Entry", meta: dict[str, Any]) -> None:
             exc_info=True,
         )
         return
+    from ..schema.field_aliases import entry_alias_names
+
+    alias_names = entry_alias_names(entry)
     extras = {
         k: v
         for k, v in meta.items()
-        if k not in emitted and k not in _BASE_CONSUMED_KEYS and k not in entry.FRONTMATTER_ALIASES
+        if k not in emitted and k not in _BASE_CONSUMED_KEYS and k not in alias_names
     }
     if extras:
         entry.extra_frontmatter = extras
@@ -193,7 +196,7 @@ def capture_extra_frontmatter(entry: "Entry", meta: dict[str, Any]) -> None:
         if k not in extras
         and k not in _TIMESTAMP_KEYS
         and k not in _NEVER_FRONTMATTER_KEYS
-        and k not in entry.FRONTMATTER_ALIASES
+        and k not in alias_names
         and _plain(v) != _plain(emitted.get(k, _ABSENT))
     }
     if unrepresented:
@@ -464,9 +467,11 @@ class Entry(ABC):
     # restyling the whole block (#46). Never read as data -- only as style.
     _source_frontmatter: Any = field(default=None, init=False, repr=False, compare=False)
 
-    # Legacy frontmatter keys a class reads under another name (e.g. `participants`
-    # -> `actors`). They are consumed, not unknown, so they are not preserved
-    # as extras (which would write the value twice).
+    # DEPRECATED (#697, ADR-0045 decision 8): a bare set of alias names has no
+    # target. Declare `field_aliases: {alias: target}` in the type's schema
+    # (core metadata, a plugin's get_type_metadata(), or kb.yaml) instead; see
+    # pyrite/schema/field_aliases.py. Still honoured for one release, with a
+    # warning per class, so a third-party plugin keeps loading.
     FRONTMATTER_ALIASES: ClassVar[frozenset[str]] = frozenset()
 
     # Fields this type's own service logic maintains -- an audit trail, a

@@ -152,8 +152,6 @@ class EventEntry(Temporal, Locatable, Statusable, Entry):
     def entry_type(self) -> str:
         return "event"
 
-    FRONTMATTER_ALIASES = frozenset({"participants"})  # legacy name for `actors`
-
     def to_frontmatter(self) -> dict[str, Any]:
         meta = self._base_frontmatter()
         if self.date:
@@ -288,8 +286,6 @@ class RelationshipEntry(Entry):
     @property
     def entry_type(self) -> str:
         return "relationship"
-
-    FRONTMATTER_ALIASES = frozenset({"source", "target"})  # legacy names
 
     def to_frontmatter(self) -> dict[str, Any]:
         meta = self._base_frontmatter()

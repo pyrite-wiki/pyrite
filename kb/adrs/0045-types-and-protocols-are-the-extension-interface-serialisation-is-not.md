@@ -379,7 +379,8 @@ types:
     fields:
       status: {type: select, values: [open, claimed, done]}
       assignee: {type: text}
-      participants: {type: list, alias_of: actors}   # spelling: question 3
+      actors: {type: list}
+    field_aliases: {participants: actors}   # a type-level map, decided 2026-10-03
 ```
 ```
 $ pyrite protocol check -k notes -t lead
@@ -465,7 +466,9 @@ citizen; the mixins stay as in-Python conveniences.
    yes.* Blocks the alpha contract (0.28). Spike 2 splits it: **aliases block
    ADR-0042's write path** (decision 8), so they come first; migrations are
    inert on the maintainer's corpus and may follow. The shim has no targets to
-   carry, so it can only warn.
+   carry, so it can only warn. **Spelling DECIDED 2026-10-03:** a type-level map
+   `field_aliases: {participants: actors}`, in `kb.yaml` and in a plugin's
+   `get_type_metadata()` (#697).
 4. **`to_frontmatter` in the contract. DECIDED 2026-10-03** (before decision 6). Keep it for the alpha as a create and
    index helper, and retire it when the inventory shows schema-driven emit
    matches for all 37 classes? *Recommended: yes.* Blocks the same.

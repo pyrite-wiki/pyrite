@@ -272,7 +272,6 @@ class DocumentSourceEntry(DocumentEntry):
 
 @dataclass
 class InvestigationEventEntry(EventEntry):
-    FRONTMATTER_ALIASES = frozenset(["participants"])  # legacy keys read under another name
     """An event in an investigation with actors, source references, and verification status."""
 
     actors: list[str] = field(default_factory=list)
@@ -312,7 +311,6 @@ class InvestigationEventEntry(EventEntry):
 
 @dataclass
 class TransactionEntry(EventEntry):
-    FRONTMATTER_ALIASES = frozenset(["participants"])  # legacy keys read under another name
     """A financial transaction — payment, bribe, grant, etc."""
 
     amount: str = ""
@@ -367,7 +365,6 @@ class TransactionEntry(EventEntry):
 
 @dataclass
 class LegalActionEntry(EventEntry):
-    FRONTMATTER_ALIASES = frozenset(["participants"])  # legacy keys read under another name
     """A legal or regulatory action — case, indictment, sanctions, etc."""
 
     case_type: str = ""

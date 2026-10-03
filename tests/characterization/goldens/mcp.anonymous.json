@@ -1491,17 +1491,17 @@
             }
           ],
           "field_descriptions": {
+            "actors": "People or organizations involved",
             "date": "When the event occurred (YYYY-MM-DD)",
             "importance": "Significance score from 1 (minor) to 10 (major)",
             "location": "Where the event took place",
-            "participants": "People or organizations involved",
             "status": "Verification status: confirmed, disputed, alleged, rumored"
           },
           "fields": {
+            "actors": "list[str]",
             "date": "str",
             "importance": "int",
             "location": "str",
-            "participants": "list[str]",
             "status": "EventStatus"
           }
         },
@@ -1583,8 +1583,8 @@
           },
           "fields": {
             "relationship_type": "str",
-            "source": "str",
-            "target": "str"
+            "source_entity": "str",
+            "target_entity": "str"
           }
         },
         "timeline": {
@@ -1835,17 +1835,17 @@
             }
           ],
           "field_descriptions": {
+            "actors": "People or organizations involved",
             "date": "When the event occurred (YYYY-MM-DD)",
             "importance": "Significance score from 1 (minor) to 10 (major)",
             "location": "Where the event took place",
-            "participants": "People or organizations involved",
             "status": "Verification status: confirmed, disputed, alleged, rumored"
           },
           "fields": {
+            "actors": "list[str]",
             "date": "str",
             "importance": "int",
             "location": "str",
-            "participants": "list[str]",
             "status": "EventStatus"
           }
         },
@@ -1927,8 +1927,8 @@
           },
           "fields": {
             "relationship_type": "str",
-            "source": "str",
-            "target": "str"
+            "source_entity": "str",
+            "target_entity": "str"
           }
         },
         "timeline": {
@@ -2320,17 +2320,17 @@
           }
         ],
         "field_descriptions": {
+          "actors": "People or organizations involved",
           "date": "When the event occurred (YYYY-MM-DD)",
           "importance": "Significance score from 1 (minor) to 10 (major)",
           "location": "Where the event took place",
-          "participants": "People or organizations involved",
           "status": "Verification status: confirmed, disputed, alleged, rumored"
         },
         "fields": {
+          "actors": "list[str]",
           "date": "str",
           "importance": "int",
           "location": "str",
-          "participants": "list[str]",
           "status": "EventStatus"
         }
       },
@@ -2412,8 +2412,8 @@
         },
         "fields": {
           "relationship_type": "str",
-          "source": "str",
-          "target": "str"
+          "source_entity": "str",
+          "target_entity": "str"
         }
       },
       "timeline": {
@@ -2641,17 +2641,17 @@
           }
         ],
         "field_descriptions": {
+          "actors": "People or organizations involved",
           "date": "When the event occurred (YYYY-MM-DD)",
           "importance": "Significance score from 1 (minor) to 10 (major)",
           "location": "Where the event took place",
-          "participants": "People or organizations involved",
           "status": "Verification status: confirmed, disputed, alleged, rumored"
         },
         "fields": {
+          "actors": "list[str]",
           "date": "str",
           "importance": "int",
           "location": "str",
-          "participants": "list[str]",
           "status": "EventStatus"
         }
       },
@@ -2733,8 +2733,8 @@
         },
         "fields": {
           "relationship_type": "str",
-          "source": "str",
-          "target": "str"
+          "source_entity": "str",
+          "target_entity": "str"
         }
       },
       "timeline": {

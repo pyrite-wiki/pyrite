@@ -1,5 +1,7 @@
 """Tests for type metadata: CORE_TYPE_METADATA, resolve_type_metadata, TypeSchema extensions."""
 
+import pytest
+
 from pyrite.schema import (
     CORE_TYPE_METADATA,
     CORE_TYPES,
@@ -238,11 +240,18 @@ class TestToAgentSchema:
 class TestPluginTypeMetadata:
     """Tests for plugin type metadata integration."""
 
+    @pytest.mark.control(
+        reason="passes on dev, where no installed plugin returns type metadata; "
+        "the test only breaks once cascade and journalism do (#697), and isolates itself now"
+    )
     def test_registry_get_all_type_metadata_empty(self):
         """Registry with no plugins should return empty metadata."""
         from pyrite.plugins.registry import PluginRegistry
 
         registry = PluginRegistry()
+        # "No plugins" means none discovered: a bare registry would discover the
+        # installed ones (cascade and journalism declare field_aliases, #697).
+        registry._discovered = True
         assert registry.get_all_type_metadata() == {}
 
     def test_registry_get_all_type_metadata_with_plugin(self):

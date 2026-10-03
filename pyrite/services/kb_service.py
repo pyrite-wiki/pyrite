@@ -1275,6 +1275,27 @@ class KBService:
             if ts_key in updates and not isinstance(updates[ts_key], datetime):
                 updates[ts_key] = parse_datetime(updates[ts_key])
 
+        # One name per field (#697): an alias or target key (`actors`,
+        # `participants`, `source`) sets the attribute the class reads, whether
+        # it arrives at the top level or inside `metadata`, never the bag.
+        from ..schema.field_aliases import attribute_for
+
+        routed: dict[str, Any] = {}
+        for key, value in updates.items():
+            if key == "metadata" and isinstance(value, dict):
+                rest = {}
+                for mk, mv in value.items():
+                    attr = attribute_for(entry, mk)
+                    if attr is None:
+                        rest[mk] = mv
+                    else:
+                        routed[attr] = mv
+                if rest or not value:
+                    routed["metadata"] = rest
+                continue
+            routed[attribute_for(entry, key) or key] = value
+        updates = routed
+
         # Apply updates
         for key, value in updates.items():
             if not hasattr(entry, key):

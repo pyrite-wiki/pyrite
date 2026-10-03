@@ -66,6 +66,15 @@ class CascadePlugin:
             "solidarity_event": SolidarityEventEntry,
         }
 
+    def get_type_metadata(self) -> dict[str, dict]:
+        """Aliases for keys older files spell another way (ADR-0045 decision 8)."""
+        participants = {"participants": "actors"}
+        return {
+            "cascade_event": {"field_aliases": {"event_date": "date", **participants}},
+            "timeline_event": {"field_aliases": dict(participants)},
+            "solidarity_event": {"field_aliases": dict(participants)},
+        }
+
     def get_kb_types(self) -> list[str]:
         return ["cascade-research", "cascade-timeline", "cascade-solidarity"]
 

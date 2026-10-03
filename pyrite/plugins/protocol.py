@@ -223,6 +223,11 @@ class PyritePlugin(Protocol):
                 ai_instructions: str - guidance for AI agents on how to use this type
                 field_descriptions: dict[str, str] - per-field human-readable descriptions
                 display: dict - display hints (icon, color, layout)
+                field_aliases: dict[str, str] - {alias: target} for keys a hand-written
+                    file may spell another way, e.g. {"participants": "actors"}.
+                    The type's class reads the target; the platform resolves the
+                    alias through pyrite.schema.field_aliases.field_aliases().
+                protocols, guidelines, goals, evaluation_rubric - as in kb.yaml
         """
         ...
 

@@ -550,6 +550,20 @@ def schema_validate(
                 }
             )
 
+    # Schema-level: a malformed `field_aliases` map on a type (#697).
+    if schema:
+        from ..schema.field_aliases import field_aliases_findings
+
+        for w in field_aliases_findings(schema):
+            all_errors.append(
+                {
+                    "file": w["where"],
+                    "check": "schema_field_aliases",
+                    "message": w["message"],
+                    "severity": "warning",
+                }
+            )
+
     # Phase 3: Protocol satisfaction checking
     if schema:
         from ..models.core_types import get_entry_class

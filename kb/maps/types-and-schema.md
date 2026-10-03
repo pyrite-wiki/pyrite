@@ -99,11 +99,16 @@ Components [[schema-validation]], [[schema-service]], [[entry-factory]],
 - Plugin vocabularies are code-owned and outside the enum switch
   ([[adr-0008]] point 3); a KB made by `pyrite init -t software` is registered
   as generic and gets no status check (#572, named in [[adr-0008]]).
-- Aliases are a `frozenset` on six extension classes with no target; they are
-  not in the schema (ADR-0045 context, decision 8, accepted).
+- Aliases: `field_aliases(type, kb_schema)` (`pyrite/schema/field_aliases.py`)
+  resolves `{alias: target}` from core schema < plugin `get_type_metadata()` <
+  `kb.yaml` (#697). The `FRONTMATTER_ALIASES` class attribute is a deprecated
+  shim that warns. A `kb.yaml` alias is declared and validated (`pyrite schema
+  validate`) now; it is honoured on write in B6, and not at load (a generic
+  class does not read it). Link-item keys (`to` -> `target`) are not covered yet (B6).
 - On-load migration may write the migrated entry back ([[adr-0015]]) against
   P3; ADR-0042 decision 7 is accepted.
 - Which of [[adr-0011]]'s five phases shipped was not verified
   ([[adr-audit-2026-10]]); "New collection" returns an error in the web UI
   (the alpha supported-surface entry cites #480).
-- Not decided: spelling of an alias declaration (ADR-0045 question 3).
+- Decided 2026-10-03: the alias declaration is `field_aliases: {alias: target}`
+  (ADR-0045 question 3). Test: `tests/test_field_aliases.py`.

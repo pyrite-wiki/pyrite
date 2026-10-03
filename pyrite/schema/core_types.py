@@ -43,7 +43,7 @@ CORE_TYPES: dict[str, dict[str, Any]] = {
             "location": "str",
             "importance": "int",
             "status": "EventStatus",
-            "participants": "list[str]",
+            "actors": "list[str]",
         },
     },
     "document": {
@@ -65,8 +65,8 @@ CORE_TYPES: dict[str, dict[str, Any]] = {
         "description": "A connection between entities",
         "subdirectory": "relationships",
         "fields": {
-            "source": "str",
-            "target": "str",
+            "source_entity": "str",
+            "target_entity": "str",
             "relationship_type": "str",
         },
     },
@@ -144,10 +144,12 @@ CORE_TYPE_METADATA: dict[str, dict[str, Any]] = {
             "importance": "Significance score from 1 (minor) to 10 (major)",
             "status": "Verification status: confirmed, disputed, alleged, rumored",
             "location": "Where the event took place",
-            "participants": "People or organizations involved",
+            "actors": "People or organizations involved",
         },
         "protocols": ["temporal", "locatable", "statusable"],
         "display": {"icon": "calendar", "layout": "record"},
+        # A hand-written file may say `participants:`; EventEntry reads it as `actors`.
+        "field_aliases": {"participants": "actors"},
         "evaluation_rubric": [
             {"text": "Event has a date field", "covered_by": "schema"},
             {"text": "Event has an importance score between 1 and 10", "covered_by": "schema"},
@@ -241,6 +243,8 @@ CORE_TYPE_METADATA: dict[str, dict[str, Any]] = {
         },
         "protocols": [],
         "display": {"icon": "link", "layout": "record"},
+        # Legacy spellings RelationshipEntry.from_frontmatter reads.
+        "field_aliases": {"source": "source_entity", "target": "target_entity"},
     },
     "timeline": {
         "ai_instructions": (
