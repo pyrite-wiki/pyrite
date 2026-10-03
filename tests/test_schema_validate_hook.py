@@ -24,10 +24,12 @@ def _schema_hook_entry() -> str:
 
 def test_schema_validate_hook_refuses_package_directory(tmp_path):
     (tmp_path / "pyrite").mkdir()
+    # `.` first, as Git Bash does, but keep the system directories so `bash`
+    # itself can run the hook entry.
     result = subprocess.run(
         ["bash", "-c", _schema_hook_entry()],
         cwd=tmp_path,
-        env={"PATH": f".:{tmp_path}", "HOME": str(tmp_path)},
+        env={"PATH": f".:/usr/bin:/bin", "HOME": str(tmp_path)},
         capture_output=True,
         text=True,
     )
@@ -43,7 +45,7 @@ def test_schema_validate_hook_runs_executable_on_path(tmp_path):
     script = bindir / "pyrite"
     script.write_text(
         "#!/bin/sh\n"
-        'echo called > "$PWD/called"\n'
+        "echo called > \"$PWD/called\"\n"
         "printf '%s\\n' \"$@\" >> \"$PWD/called\"\n"
     )
     script.chmod(0o755)
