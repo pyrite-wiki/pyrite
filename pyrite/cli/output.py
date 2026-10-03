@@ -135,13 +135,13 @@ def requested_format(ctx) -> str | None:
     return meta.get(FORMAT_META_KEY)
 
 
-def format_output(data: dict, fmt: str) -> str | None:
+def format_output(data: dict, fmt: str, **kwargs) -> str | None:
     """Format data using the format registry. Returns None for default (rich) output."""
     if fmt == "rich":
         return None
     from ..formats import format_response
 
-    content, _ = format_response(data, fmt)
+    content, _ = format_response(data, fmt, **kwargs)
     return content
 
 
