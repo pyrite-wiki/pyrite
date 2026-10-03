@@ -46,6 +46,7 @@ import errno
 import hashlib
 import logging
 import os
+import re
 import secrets
 import stat
 from collections.abc import Iterator
@@ -54,6 +55,15 @@ from pathlib import Path
 from pyrite.utils.file_lock import file_lock
 
 logger = logging.getLogger(__name__)
+
+
+LOCK_TIMEOUT = 10.0
+"""Seconds ``expect=`` waits for the lock. The lock is held for a compare, a
+rename and a directory fsync (milliseconds), so ten seconds is far beyond
+any healthy wait and short enough that a hung filesystem or a stuck holder
+fails the write with ``LockTimeout`` instead of hanging the caller."""
+
+_DIGEST = re.compile(r"[0-9a-fA-F]{64}")
 
 
 class _Absent:
@@ -136,12 +146,26 @@ def atomic_write_text(
     *,
     encoding: str = "utf-8",
     expect: bytes | str | _Absent | None = None,
+    lock_timeout: float = LOCK_TIMEOUT,
 ) -> None:
     """Replace ``path`` with ``text`` crash-safely; see the module docstring.
 
-    ``expect``: the file's expected current bytes, its sha256 hex digest, or
-    ``ABSENT``. Raises ``FileChanged`` and writes nothing on a mismatch.
+    ``expect``: the file's expected current bytes, its sha256 hex digest (a
+    64-hex ``str``; any other ``str`` is a ``ValueError``, so text is never
+    mistaken for a digest), or ``ABSENT``. Raises ``FileChanged`` and writes
+    nothing on a mismatch, ``LockTimeout`` if the lock is not free in
+    ``lock_timeout`` seconds.
     """
+    if expect is not None and expect is not ABSENT:
+        if isinstance(expect, str):
+            if not _DIGEST.fullmatch(expect):
+                raise ValueError(
+                    "expect as a str must be a 64-hex sha256 digest; pass bytes for content"
+                )
+        elif not isinstance(expect, bytes):
+            raise TypeError(
+                f"expect must be bytes, a sha256 hex digest or ABSENT, not {type(expect).__name__}"
+            )
     data = text.encode(encoding)
     target = Path(os.path.realpath(path))
 
@@ -151,7 +175,7 @@ def atomic_write_text(
         if expect is None:
             yield
             return
-        with file_lock(target):
+        with file_lock(target, timeout=lock_timeout):
             try:
                 on_disk: bytes | None = target.read_bytes()
             except FileNotFoundError:
