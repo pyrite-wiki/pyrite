@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from pyrite.services.access_policy import UNSCOPED
+from pyrite.storage.backends import sqlite_backend
 
 
 # ---------------------------------------------------------------------------
@@ -896,9 +897,8 @@ class TestSemanticFilterConformance:
     def test_search_semantic_fills_limit_despite_selective_filter(self, embedded_backend):
         """A selective filter must not cost recall.
 
-        sqlite-vec applies its ``k`` budget before any join predicate, so an
-        implementation that filters the k nearest afterwards silently
-        under-returns. Two entries share a status; asking for two must get two.
+        Two entries share a status; asking for both must get both after the
+        semantic backend applies the predicate to its KNN candidate set.
         """
         rows = embedded_backend.search_semantic(
             _near_vector(), kb_name="test", limit=2, status="unprocessed"
@@ -923,7 +923,9 @@ class TestSemanticKnnBudget:
     raises on any index bigger than the cap — which reaches users as an HTTP
     400 ``SEARCH_FAILED``, an unhandled exception out of MCP ``kb_search`` and
     a silent keyword-only fallback in the AI endpoint. Postgres has no such
-    ceiling and passes these trivially.
+    ceiling and passes these trivially. Selective SQLite predicates are now
+    applied before KNN, but more than 4096 matching rows or distance culling
+    can still limit recall.
     """
 
     @pytest.fixture
@@ -952,6 +954,36 @@ class TestSemanticKnnBudget:
         )
         assert {r["id"] for r in rows} == {"e0"}
 
+    def test_selective_filter_reaches_candidates_beyond_the_k_cap(self, backend, monkeypatch):
+        """Rows rejected by a selective predicate must not spend sqlite-vec's KNN budget."""
+        if not hasattr(backend, "_raw_conn"):
+            pytest.skip("only SQLite has a hard KNN candidate cap")
+
+        monkeypatch.setattr(sqlite_backend, "_SQLITE_VEC_MAX_K", 8)
+        query = _near_vector()
+        for i in range(20):
+            entry_id = f"distractor-{i}"
+            backend.upsert_entry(_make_entry(entry_id, entry_type="note"))
+            if not backend.upsert_embedding(entry_id, "test", query):
+                pytest.skip("backend cannot store embeddings (no vector support)")
+        for i in range(3):
+            entry_id = f"needle-{i}"
+            backend.upsert_entry(_make_entry(entry_id, entry_type="needle"))
+            if not backend.upsert_embedding(entry_id, "test", _near_vector(i + 1)):
+                pytest.skip("backend cannot store embeddings (no vector support)")
+
+        with backend._raw_cursor() as cur:
+            matching_vectors = cur.execute(
+                "SELECT COUNT(*) FROM vec_entry v JOIN entry e ON v.rowid = e.rowid "
+                "WHERE e.entry_type = ?",
+                ("needle",),
+            ).fetchone()[0]
+        assert matching_vectors == 3, "embedding rowids must match entry rowids for KNN filters"
+
+        rows = backend.search_semantic(query, kb_name="test", limit=2, entry_type="needle")
+        assert len(rows) == 2
+        assert {row["entry_type"] for row in rows} == {"needle"}
+
     def test_unfiltered_search_above_the_k_cap_does_not_raise(self, big_embedded_backend):
         """``max_distance`` culling drives the same escalation with no filter.
 
@@ -966,12 +998,12 @@ class TestSemanticKnnBudget:
 
 
 class TestSemanticKnnEscalation:
-    """The escalation loop must actually run more than once, and be observed.
+    """Filtered recall and distance-driven KNN escalation are both observed.
 
-    The filter-conformance tests above use three entries, where the first ``k``
-    (``limit * 3``) already covers the table — the loop body runs once and the
-    escalation branch is never exercised. These tests put the needle outside
-    the first budget so a second iteration is the only way to find it.
+    The filtered search puts the matching entry beyond the first KNN budget;
+    pushing its predicate into sqlite-vec lets it find that row without
+    unrelated candidates consuming the budget. A separate unfiltered query
+    verifies that distance culling still escalates ``k``.
     """
 
     @pytest.fixture
@@ -1006,19 +1038,19 @@ class TestSemanticKnnEscalation:
         )
         assert {r["id"] for r in rows} == {"h199"}
 
-    def test_escalation_loop_runs_a_second_iteration(self, haystack_backend, monkeypatch):
-        """Pin the mechanism, not just the outcome: ``k`` must grow.
+    def test_unfiltered_distance_culling_escalates(self, haystack_backend, monkeypatch):
+        """Distance culling still requires a larger KNN budget.
 
-        Counts the distinct ``k`` values the backend actually asks for. One
-        value means the loop never escalated and the assertion above passed by
-        accident. Skipped for backends that do not use a KNN budget at all
-        (Postgres puts the predicates in the same ``WHERE`` as the ordering).
+        Selective predicates are now applied inside sqlite-vec's KNN query, so
+        they can find a distant matching row in the first budget. An
+        unfiltered query whose results all fail ``max_distance`` still has to
+        escalate. Count the distinct ``k`` values to pin that behavior.
         """
         sql_log = _spy_on_sql(haystack_backend, monkeypatch)
         rows = haystack_backend.search_semantic(
-            _near_vector(), kb_name="test", limit=1, entry_type="needle"
+            _near_vector(), kb_name="test", limit=1, max_distance=-1.0
         )
-        assert {r["id"] for r in rows} == {"h199"}
+        assert rows == []
         seen_k = [p[1] for s, p in sql_log if "MATCH" in s and "k = ?" in s]
         # The same k can appear twice in one round (the main query plus the
         # filter-independent size probe); what must grow is the sequence of
