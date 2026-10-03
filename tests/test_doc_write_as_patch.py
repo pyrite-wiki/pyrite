@@ -367,8 +367,9 @@ def _expected_diff(ex: Example) -> str:
 #: path takes no lock and reads the file three times before it replaces it,
 #: so a barrier at a read would not force the race. A path that locks only
 #: around compare-and-replace (ADR-0042 decision 10) meets the barrier before
-#: the lock, so it cannot deadlock here. A writer that waits 10 s reports
-#: `timed_out`, and the test then fails as not entered, never as an xpass.
+#: the lock, so it cannot deadlock here. A writer still waiting when the
+#: group's one 60 s deadline passes reports `timed_out`, and the test then
+#: fails as not entered, never as an xpass.
 _CONCURRENT_CHILD = textwrap.dedent(
     """
     import json, os, sys, time
