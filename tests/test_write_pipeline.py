@@ -1204,3 +1204,49 @@ def test_before_save_hook_output_is_validated_on_update_and_preserves_file(env):
         if registry is not None:
             del registry._plugins[plugin_name]
         db.close()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("sources", [{"title": "A source", "url": "https://example.com/ref"}]),
+        ("links", [{"target": "other-entry", "relation": "related_to"}]),
+    ],
+)
+def test_update_accepts_read_shaped_source_and_link_dicts(env, field, value):
+    """An update can echo JSON objects returned for Source and Link fields."""
+    from pyrite.services.kb_service import KBService
+
+    db = PyriteDB(env["db_path"])
+    try:
+        svc = KBService(env["config"], db)
+        svc.create_entry(KB, "echo-json", "Echo JSON", "person", "body", role="author")
+        updated = svc.update_entry("echo-json", KB, **{field: value})
+        assert [item.to_dict() for item in getattr(updated, field)] == value
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("sources", [None]),
+        ("links", [None]),
+    ],
+)
+def test_update_rejects_malformed_source_and_link_items_by_field(env, field, value):
+    from pyrite.exceptions import ValidationError
+    from pyrite.services.kb_service import KBService
+
+    db = PyriteDB(env["db_path"])
+    try:
+        svc = KBService(env["config"], db)
+        svc.create_entry(KB, "bad-json", "Bad JSON", "person", "body", role="author")
+        target = next(env["kb_path"].rglob("bad-json.md"))
+        before = target.read_bytes()
+
+        with pytest.raises(ValidationError, match=field):
+            svc.update_entry("bad-json", KB, **{field: value})
+        assert target.read_bytes() == before
+    finally:
+        db.close()
