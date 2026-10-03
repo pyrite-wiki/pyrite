@@ -757,7 +757,9 @@ Flags: `crlf` writes CRLF; `emitter` asserts that during the update the YAML
 emitter is never handed a top-level key of the file that the operation did
 not name; `echo` sends a `kb_get` result back as the update. The spelling of
 the operations is illustrative: the interfaces are alpha (#303). On today's
-code 6 of the first spike's 7 examples fail.
+code 6 of the first spike's 7 examples fail. The passage and its runner exist
+(#695): all seven examples below fail on today's code, each a strict xfail
+recording how, until the write path honours it.
 
 **One field edit yields that field's lines.**
 

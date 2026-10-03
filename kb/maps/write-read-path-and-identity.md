@@ -91,7 +91,10 @@ violation), `tests/test_roundtrip_identity.py`,
 `tests/test_update_never_loses_a_key.py`,
 `tests/test_truncated_body_refused_on_write.py`,
 `tests/test_writes_never_block_on_embedding.py`, `tests/test_enum_enforcement.py`.
-Proposed, not yet written: `tests/test_doc_write_as_patch.py` (ADR-0042).
+`tests/test_doc_write_as_patch.py` runs ADR-0042's examples from
+`docs/how-pyrite-edits-your-files.md` through `kb_update`; each one today's
+code fails is a strict xfail in its `KNOWN_DIVERGENCES`, with what the code
+does instead (all seven, 2026-10-03). Remove a line when its example passes.
 
 ## Known gaps
 

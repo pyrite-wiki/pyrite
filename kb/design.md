@@ -140,6 +140,9 @@ The design above is ahead of the code in these places. Do not assume the
 code follows it; check, and treat a mismatch as the work to do.
 
 - An update re-serialises the whole file from the model (principle 3).
+  [How Pyrite edits your files](../docs/how-pyrite-edits-your-files.md) holds
+  the examples a fix must pass; `tests/test_doc_write_as_patch.py` runs them
+  and lists each one the code fails today, and how.
 - Save hooks write links and parent status into files (principle 4).
 - An entry with no `id:` takes its identity from its title, and no command
   lists or pins the files missing one (principle 5).

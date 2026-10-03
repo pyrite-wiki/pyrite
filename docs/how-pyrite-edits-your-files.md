@@ -41,11 +41,13 @@ server's `kb_update`, and checks the file's diff against the `diff` block.
 ## Where Pyrite does not keep this promise yet
 
 Today an update re-renders the whole frontmatter from Pyrite's model of the
-entry, so most of these examples fail: the test module lists each one that
-does, with what Pyrite does instead, in `KNOWN_DIVERGENCES`. Those examples
-are marked as expected failures. When the write path is fixed and an example
-starts to pass, the test suite fails until its mark is removed, so this list
-can only shrink, and this page says what is true.
+entry, two writers can overwrite each other, and a file with no `id:` is known
+by its title, so the examples below fail. Until that is fixed, keep your KB in
+git and read `git diff` after Pyrite writes. The test module lists every
+example that fails, in `KNOWN_DIVERGENCES`, with what Pyrite does instead, and
+marks it as an expected failure. When the write path is fixed and an example
+starts to pass, the test suite fails until its mark is removed, so the list
+only shrinks.
 
 ## One field edit yields that field's lines
 
