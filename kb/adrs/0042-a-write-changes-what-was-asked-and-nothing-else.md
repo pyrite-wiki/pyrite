@@ -389,8 +389,29 @@ This amends ADR-0038 (below). The rest follows:
 
   An agent runs the same steps with `--format json` on `kb list`,
   `ids missing`, `ids pin --dry-run`, and `index health`.
-- Not measured: `/` inside an id through routes and wikilinks (see "What
-  remains" below). `_validate_entry_id` refuses `/` today (read, not run).
+- **`/` in an id (spike 3, 2026-10-02; choices decided by the maintainer,
+  2026-10-03).** An id may contain `/`. No segment may be empty, `.`, `..`,
+  `-` or start with `.`; `\` and NUL are refused; the built path is still
+  checked to be inside the KB. Wikilinks accept `/` (`[[posts/intro]]`,
+  `[[kb:posts/intro]]`, Obsidian's spelling). REST routes take the id with the
+  path converter, and **sub-resources go after a `/-/` separator**
+  (`/api/entries/<id>/-/blocks`, `/-/versions`), so no entry id can collide
+  with one; a folder named `-` is refused in ids. The same separator carries
+  site pagination (`/site/{kb}/page/N` moves behind it, or an equivalent
+  reserved segment), so an entry `page/2` cannot collide. The web encodes ids
+  with `encodeURIComponent` everywhere (one `entryHref` helper) and keeps the
+  `[id]` route. The MCP resource URI is percent-decoded. **Create with a `/`
+  id writes `<id>.md` from the KB root**, not under the type's folder, so the
+  path and the pinned id agree. **Ids that differ only in case are reported by
+  `index health`** (APFS is case-insensitive, Linux is not). The site cache
+  names pages without collisions (`posts/intro` and `posts_intro` today both
+  become `posts_intro.html`). Measured on scratch KBs: the storage and index
+  changes are two lines (`_validate_entry_id`, and dropping `/` from the
+  wikilink target check); today REST returns 404 for `posts%2Fintro` because
+  routing decodes `%2F` first; ten web components link to an unencoded id; 3
+  of 925 files in this repo's KB hold a `/` wikilink that is not an entry and
+  will be reported dangling. Rename's link-rewrite gap (`[[x:old]]` and
+  `[[old#H]]` are not rewritten, with plain ids too) is #684.
 - `rename` of an entry that has an `id:` changes the pin; of one that has none
   is a move of the file (the path is the identity). Both rewrite inbound links
   by decision 12.
@@ -485,23 +506,55 @@ writes it into the file. (This is the same property as ADR-0045 decision 3.)
 
 ### 10. A lock and a compare-and-replace guard every write
 
-- A per-file lock guards read-apply-replace across processes (server, CLI and
-  stdio MCP share the files). The lock lives in Pyrite's data directory,
-  outside the KB (decision 5 of ADR-0041). A write that moves a file takes the
-  locks of both paths in path order.
-- Under the lock, the file's bytes are re-checked immediately before the
-  atomic replace; if they differ from what was read (a `git checkout`, an
-  editor), the operation is retried against the new bytes a bounded number of
-  times, then refused. A small window between that check and the rename
-  remains for a writer that does not take Pyrite's lock; it is stated, not
-  claimed away.
+- A per-file lock guards read-apply-replace across processes and threads
+  (server, CLI and stdio MCP share the files). It is an OS lock (`flock`;
+  `msvcrt.locking` on Windows) on a **sidecar lock file that is never replaced
+  or deleted**, named by the SHA-256 of the entry file's real path, in a
+  per-user lock directory outside the KB that does not depend on which config
+  or data directory a process resolved (decision 5 of ADR-0041; not
+  `default_data_dir()`, which varies by working directory). Never on the entry
+  file: the atomic replace changes its inode (spike 3: 52% of increments
+  lost). Never a POSIX record lock alone: it belongs to the process, so the
+  server's threads share it (85% lost). Never an `O_EXCL` file: a killed holder
+  leaves it and recovery races. In front of the OS lock, an in-process lock
+  keyed by the same path. The kernel releases a killed process's lock (0.2 ms
+  to the next acquire); no stale-lock recovery is needed. A write that moves a
+  file takes the locks of both paths in sorted real-path order.
+- The lock is per host. Two machines writing one KB through a network or
+  synced folder share no lock; only the re-check guards them.
+- Under the lock: read, apply, write and fsync the temp file, **then** compare
+  the file's bytes with what was read, immediately before `os.replace`. If
+  they differ (a `git checkout`, an editor), apply again to the new bytes, at
+  most 5 times, then refuse with a conflict. A file missing under the lock is
+  refused ("moved or deleted"), never recreated: only create creates a file.
+  A small window between that compare and the rename remains for a writer that
+  does not take Pyrite's lock; it is stated, not claimed away. Spike 3, an
+  editor saving every 3 ms against 300 locked increments: comparing before
+  `atomic_write_text` still lost 9 to 97 of the human's saves; comparing after
+  the fsync lost 5 to 19. What no lock prevents: an editor that saves an old
+  buffer later.
 - The replace uses `pyrite/utils/atomic_write.py`, which follows symlinks.
 - The index row is built from the bytes written, with their hash, never from
   an in-memory entry.
 - **The claim guard** (`claim_entry`, `kb_service.py:2357-2392`) compares
   `status` against the file's value under the lock, and updates the row after.
   The row is never the tiebreaker. This amends ADR-0029 section 4 (**question
-  3**).
+  3**). Measured on today's code (spike 3): a hand-set claim not yet indexed
+  is overwritten and the agent is told it won. Under the sidecar lock, as a
+  file operation, 8 claimants raced 5 times gave exactly 1 winner each; with
+  no lock, 2 to 4.
+- **Spike 3 (2026-10-02, scratch KBs on macOS APFS, 10 cores, Python 3.12).**
+  8 processes x 50 increments, 3 runs a row. Lost updates of one counter, of
+  400: sidecar `flock` 0, sidecar `lockf` 0, `O_EXCL` file 0; no lock 227 to
+  238 (58%); `flock` on the entry file 203 to 214 (52%); sidecar locks in two
+  different lock directories 172 to 185 (45%). Different keys, 8 writers: 0
+  writers lost updates with the sidecar, 8 of 8 without. 8 threads in one
+  process: sidecar `flock` 0 lost, sidecar `lockf` 346 of 400 (85%). The lock
+  costs about 5% (1 writer 1,071 ops/s unlocked, 1,018 with `flock`; 8
+  contending 582 to 796). A file moved by one writer while another sets a
+  field leaves two files with one id today; with the lock it leaves one and
+  refuses the setter. Linux, Windows, NFS/SMB and synced folders were not
+  run.
 
 ### 11. The token: field operations need none
 
@@ -639,15 +692,20 @@ required spike 2 to cover:
 | 5. Migrations | Inert on this corpus (0 of 365 types declare a version); the "behind schema" report stays, acceptance does not wait on it |
 | 6. Undeclared keys, `metadata:`, aliases | Met, with the alias-target finding (decision 6) |
 | 7. Shapes the corpus lacks | **Remain.** CRLF, BOM, anchors, duplicate keys and Hugo shapes are not in the corpus. The first spike tried 26 hand-made files; they need fixtures in the doc's test |
-| 8. Concurrency | **Remains, not run** (several writers on one file, a checkout between read and replace, a racing templated move, the claim race) |
+| 8. Concurrency | **Measured on macOS APFS (spike 3, decision 10)**: several writers, an editor saving between read and replace, a move race, the claim race. **Not run:** Linux, Windows, NFS/SMB and synced folders, several OS users sharing a lock directory, a real `git checkout` (a rename-style saver stood in), a move race with two real processes |
 | 9. Reads | Simulated in the harness; `get` reading the file is **not implemented**, so its cost per `get` was not measured on the real path |
 
-Also not measured: `/` in an id through routes and wikilinks (decision 5), and
-the git history of the real repos (the 37 rollups rest on a timestamp check).
+`/` in an id was measured by spike 3 for storage, the index, REST, MCP and the
+web route (decision 5); not in a browser, not behind a reverse proxy (Apache
+refuses `%2F` unless `AllowEncodedSlashes` is set), not on Windows separators,
+not in export or the Quartz renderer, not on the public demo KBs. The git
+history of the real repos is still not measured (the 37 rollups rest on a
+timestamp check).
 
 **What remains is a pre-condition of the step it blocks, not of acceptance:**
-concurrency blocks step 4 (wire the update path); the hand-made fixtures block
-step 2's doc; `/` in ids blocks step 7. Spike 2's answer is "mostly yes": the rule
+the hand-made fixtures block step 2's doc. Concurrency (step 4) and `/` in ids
+(step 7) are measured; they now block on implementation, with the criteria
+below, and concurrency on Linux and Windows runs. Spike 2's answer is "mostly yes": the rule
 holds as written for decisions 1, 3, 4, 6, 7, 10 and 13, with the amendments to
 decisions 2, 5, 8, 9, 11 and 12 and the hooks table above. Acceptance is the
 maintainer's.
@@ -848,8 +906,69 @@ field and reports "not moved".
 - *The cascade derivation says whether it resolves actors across KBs*, and a
   test shows which.
 - Fixtures for CRLF, BOM, anchors, duplicate keys and a Hugo post (none are in
-  the corpus), and a concurrency test (two processes, different keys), since
-  spike 2 ran neither.
+  the corpus), since spike 2 had none.
+
+### Acceptance criteria from spike 3 (condensed)
+
+**Concurrency (decision 10; step 4).**
+
+1. New `pyrite/utils/file_lock.py`: `entry_lock(path)` locks
+   `<per-user lock dir>/<sha256(realpath)>.lock` (the directory is not
+   `default_data_dir()`); inside, a `threading.Lock` per real path, then
+   `flock(LOCK_EX)` on POSIX or `msvcrt.locking` with retry on Windows; the
+   lock file is never unlinked. `entry_locks(*paths)` takes several in sorted
+   real-path order.
+2. `atomic_write_text(path, text, *, expect=None)`: when `expect` is given,
+   compare the file's bytes after the temp file's fsync and immediately before
+   `os.replace`; on mismatch remove the temp file and raise
+   `FileChangedError`. Existing callers are unchanged. On Windows, `os.replace`
+   gets a bounded retry on `PermissionError`.
+3. Every entry-file write (decision 12) runs read, apply,
+   `atomic_write_text(expect=before)` inside `entry_lock`, retries on
+   `FileChangedError` up to 5 times, then raises a conflict that the CLI, MCP
+   and REST map to their conflict codes. A file missing under the lock raises
+   not-found and writes nothing.
+4. `claim_entry` compares `status` and `assignee` in the file under the lock,
+   writes the file, then updates the index row.
+5. Tests, process-spawning per `tests/test_task_claim_concurrency.py`: 8
+   processes x 25 increments of one key gives 200, of 8 different keys gives
+   25 each; 8 threads in one process x 25 gives 200; a `SIGKILL`ed holder
+   frees the lock within 1 s; two configs (different `PYRITE_DATA_DIR` or
+   working directory) still exclude each other; 8 claimants give exactly 1
+   winner and the file's assignee is the winner; an unindexed hand claim makes
+   `claim_task` return `claimed: False` with the file byte-identical; the move
+   race leaves no file at the old path; `expect=` raises when the bytes change
+   between read and replace (inject with a monkeypatched `os.fsync`), leaving
+   the file untouched and no temp file.
+
+**`/` in ids (decision 5; step 7).**
+
+1. `_validate_entry_id` accepts `posts/intro` and `a/b/c`; refuses `""`, `/x`,
+   `x/`, `a//b`, `./x`, `a/../b`, `a/.hidden`, `..`, `-` as a segment, `a\b`
+   and a NUL byte.
+2. Wikilinks: `[[posts/intro]]`, `[[kb:posts/intro]]`, with alias and with
+   `#Heading` each index one link to `posts/intro`, and backlinks return the
+   source. The test `test_cross_kb_links.py::test_path_like_targets_are_rejected`
+   is reversed.
+3. REST: GET, PUT, PATCH and DELETE work with `posts%2Fintro` and
+   `posts/intro`; blocks and versions work at `<id>/-/blocks` and
+   `<id>/-/versions`, registered before the entry route; `qa/validate`,
+   `starred` and `tasks/claim` take the path converter; site pagination moves
+   behind the same separator; the two structural route tests
+   (`test_every_entry_point_passes_the_policy.py`,
+   `test_read_scoping_is_structural.py`) are updated.
+4. MCP: `kb_get`, `kb_update`, `kb_delete`, `kb_create` work with
+   `posts/intro`; the `pyrite://entries/{+id}` resource resolves encoded and
+   raw ids.
+5. Web: an `entryHref(id, kb)` helper replaces the ten unencoded links
+   (`EntryCard`, `BacklinksPanel`, `EntryMeta`, `Sidebar`, `StarredSidebar`,
+   `AIPanel`, `ChatSidebar`, `TableView`, `GalleryView`, `KanbanView`); a unit
+   test gives `entryHref("posts/intro","k")` = `/entries/posts%2Fintro?kb=k`;
+   a Playwright step opens a slash-id entry from a card and from backlinks.
+6. Site cache: `posts/intro` and `posts_intro` render two pages.
+7. Create: `posts/new` writes `posts/new.md` from the KB root.
+8. Rename to and from slash ids rewrites the same link forms #684 requires.
+9. `index health` reports ids that differ only in case.
 
 ## Amends
 
@@ -973,7 +1092,11 @@ Ranked by what they block.
 their reasoning): question 4, the id is the path without `.md`, with `/`
 separators (`posts/intro`); question 5, old title-derived ids do not keep
 resolving, files with no `id:` are warned about, and the upgrade notes give
-the migration steps (decision 5).
+the migration steps (decision 5). **Decided 2026-10-03** (spike 3's four
+choices, taking its recommendations; recorded in decision 5): REST
+sub-resources and site pagination go behind a `/-/` separator and a folder
+named `-` is refused; create with a `/` id writes `<id>.md` from the KB root;
+`index health` reports ids that differ only in case.
 
 1. **`updated_at`.** Keep stamping it where the file already has the key and
    something was written, never stamp it, or stamp only on request?

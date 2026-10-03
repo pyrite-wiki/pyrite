@@ -45,7 +45,8 @@ PR #635) or [[adr-0038]]; **not built** = accepted, code absent.
 8. Create is the one place Pyrite chooses spelling, and it never overwrites.
    **proposed** ADR-0042 decision 13; [[adr-0038]] I5 holds today.
 9. A lock and a compare-and-replace guard every write. **proposed** ADR-0042
-   decision 10. No `flock` exists in `pyrite/` today.
+   decision 10 (sidecar `flock`, measured by spike 3). No `flock` exists in
+   `pyrite/` today.
 10. `auto_embed: true` enqueues the entry and returns; it never loads the model
     in the write. **decided** [[adr-0035]].
 11. A truncated body is never valid input to a write. **decided** [[adr-0034]].
@@ -95,8 +96,8 @@ Proposed, not yet written: `tests/test_doc_write_as_patch.py` (ADR-0042).
 
 - Update re-serialises the file; hooks write links and parent status; the id
   comes from the title; a single read comes from the index. ADR-0042 and
-  ADR-0045 address them; ADR-0042 is not accepted; spike 2 is done, and the checks it did not run
-  (concurrency; CRLF, BOM, anchors, Hugo; `/` in ids) are listed in the ADR.
+  ADR-0045 address them; ADR-0042 is not accepted; spike 2 and spike 3 (concurrency, `/` in ids; macOS only) are done, and the checks
+  not run (CRLF, BOM, anchors, Hugo; Linux and Windows locks) are listed in the ADR.
 - `previous_ids` (history across a rename) is absent; most I1 to I10 are
   strict expected failures until [[adr-0038]] steps 2 to 5 land. The ADR is
   still labelled `proposed` though its questions are decided.
