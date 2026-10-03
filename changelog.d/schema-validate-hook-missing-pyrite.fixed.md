@@ -1,0 +1,1 @@
+- The KB-validation commit hook no longer tries to execute the `./pyrite` package directory when no virtualenv is present. It reports that no `pyrite` executable was found and how to get one.
