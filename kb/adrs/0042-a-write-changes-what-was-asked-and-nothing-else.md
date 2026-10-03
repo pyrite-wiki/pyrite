@@ -602,6 +602,50 @@ on a field set or body replace): answered by this decision. Every write
 carries its base, so no separate optional `expect` argument is added to set
 and replace-body for the web editor; the base is the guard.
 
+### 10a. Amendments from the B6 spike (accepted by the maintainer, 2026-10-03)
+
+The B6 spike (#730) built decision 10 and decision 2's splice against real
+files. It found three places where decision 10 cannot work as written, and one
+correction to decision 2. The maintainer accepted all five amendments on
+2026-10-03. They override the text above where the two differ.
+
+- **A1 (decision 10, the lock directory).** The lock directory is per host and
+  shared by every OS user that writes the same tree. Default:
+  `$XDG_RUNTIME_DIR/pyrite/locks` on Linux, `$TMPDIR/pyrite-locks` on macOS,
+  `%LOCALAPPDATA%\pyrite\locks` on Windows. A `lock_dir` setting in the
+  operator's config (ADR-0039) overrides it. An operator who runs a server as
+  a service user next to humans points both at one group-writable directory.
+  `index health` warns when the server's lock directory differs from the
+  CLI's for the same KB. Never `default_data_dir()`, never inside the KB. (A
+  per-user directory, as first written, does not stop a service-user server
+  and a person editing by hand from overwriting each other.)
+- **A2 (decision 10, the lock files).** The sidecar is one of N stripe files,
+  `<lockdir>/<sha256(realpath) mod N>.lock` with N = 1024, created on first
+  use and never deleted. A write that moves a file takes the stripes of both
+  paths in ascending stripe order, deduplicated. Two entries that share a
+  stripe cost one momentary wait. (One lock file per entry, never deleted,
+  grows without bound.)
+- **A3 (decision 10, "same key changed on both sides").** A key that both
+  sides set to equal values merges as unchanged (decision 3). A conflict is a
+  key whose theirs differs from base **and** from yours. An operation that
+  must fail when anyone else changed a key states a precondition (`if status
+  == open`). The claim is such an operation, and its result says `claimed`
+  only when it wrote.
+- **A4 (decision 2, the parser).** Spans, equality and the post-write check
+  use the YAML 1.2 composer that reads use (`ruamel.yaml`), not a YAML 1.1
+  parser. Decision 6's quoting of strings a YAML 1.1 reader would misread
+  applies to bytes Pyrite emits.
+- **A5 (decision 10, the fallback).** Where `atomic_write_text` writes in
+  place (hard links, an unwritable directory, an owner it cannot restore), the
+  compare runs under the lock immediately before the truncate. That write is
+  not atomic for readers, and the result says so, as it does for the editor
+  window.
+
+Measured by the spike on macOS: 8 processes × 50 updates lost 0 of 400 with
+the lock and 67 without it. After `kill -9` of the lock holder, the next writer
+took the lock in about 2 ms. Not yet run: Linux, Windows, NFS/SMB, two OS
+users. #730's questions Q2 to Q5 remain open.
+
 ### 11. The token: field operations need none
 
 An operation on a field carries no token. Only **replace the whole document**
