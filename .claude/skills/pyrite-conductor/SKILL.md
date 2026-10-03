@@ -193,9 +193,40 @@ workflow"), the `Workflow` tool runs the fan-out as a script — groom, then
 parallel builds, then reviews — with the same agents; it is the loop of loops
 written down. Default to the Agent tool and this tick otherwise.
 
+## The Andon cord
+
+Anyone can stop the loop: the maintainer, the conductor, a worker, a
+reviewer, the architect, a contributor. Pull it when the work is churning
+instead of progressing: two themes fail review the same way, a theme passes
+twice its groom, a decision is being re-decided, a fix round would repeat the
+last one, or the work as asked runs against `kb/design.md`. You do not need
+permission or certainty; "this looks like a missing model" is enough.
+
+**How to pull it:** open an issue labelled `andon` stating what you saw, with
+the evidence (PRs, runs, review findings). For anything security-related,
+open it on the private repository instead.
+
+**What happens:** at the start of every tick, before anything else, check for
+an open `andon` issue (`gh issue list --label andon --state open`, and the
+same on the private repository). While one is open, no new theme is
+dispatched and no fix round is sent; work in flight finishes its current step
+and waits. The tick does one thing: get the root cause, five whys down to the
+missing decision, model or invariant, with the architect against
+`kb/design.md`. Then a directed fix that addresses that cause (a design
+statement, an ADR, one enforcement point and its structural test, a changed
+groom), recorded on the issue. Close the issue when the fix is in and say
+what changed; then the loop resumes. A cord pulled and found to be noise is
+closed with the reason, and nobody is faulted for pulling it.
+
+(2026-10-02: a day of fix rounds that failed the same way ran until the
+maintainer stopped the loop himself and asked for root causes; his reading
+was that churn meant no real learning loop, no clear design, no clear goal
+state, and a lost view of the architecture.)
+
 ## The tick
 
 ```
+0. Andon       an open `andon` issue? then root cause and directed fix only
 1. Health      dev green? PRs open/BEHIND? stale worktrees, branches? red anything?
 2. Absorb      review finished branches -> fix/redispatch/cold-read -> PR
 3. Choose      read both trackers; compose the next reviewable themes

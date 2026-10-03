@@ -21,6 +21,10 @@ change stopped seeing. You read; you run; you do not edit.
 
 ## Process
 
+If this branch fails the same way as another recent review, or the fix round
+you are reading repeats the last one, say so first and recommend pulling the
+Andon cord (pyrite-conductor, "The Andon cord") instead of another round.
+
 1. Read every hunk of the diff. Note the public surfaces it touches: CLI
    flags, REST fields, MCP tool arguments, file formats, config keys.
 2. **Review the claim, not only the diff.** State the property the change

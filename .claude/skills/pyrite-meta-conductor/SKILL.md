@@ -117,6 +117,12 @@ not add ceremony.
 
 ## Process — the retrospective
 
+0. **Churn and the cord first.** Count churn in the window: fix rounds per
+   theme, footprint against the groom, decisions reversed or re-decided,
+   tickets reframed, and Andon pulls (by whom, what the root cause was,
+   whether the directed fix held). Check the window's work against
+   `kb/design.md` and the release's goal state before measuring flow. Churn
+   with no cord pulled is itself a finding.
 1. **Measure** the metrics above over the window (last week, or ten ticks),
    and walk the seven wastes.
 2. **What worked.** Say it, with a number: the thing to keep doing is as

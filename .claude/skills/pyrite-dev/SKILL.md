@@ -79,6 +79,11 @@ Find the root cause before any fix: reproduce, trace the bad value to its
 origin, test one hypothesis at a time ([debugging.md](debugging.md)). After
 three failed fixes, stop and question the design in your report.
 
+You may pull the Andon cord (pyrite-conductor, "The Andon cord"): when the
+work is churning, when the fix you are asked for would patch one instance of
+a missing rule, or when it runs against `kb/design.md`, open an `andon` issue
+with the evidence and stop. That is a finding, not a failure.
+
 ## Verification
 
 Run the command that proves the claim, read its output, then claim. "Should
