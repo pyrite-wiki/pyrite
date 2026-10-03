@@ -96,7 +96,7 @@ work" is not evidence.
 |---|---|---|
 | Backend tests pass (local) | `scripts/test-affected --run` | `N passed, 0 failed` |
 | Backend tests pass (all) | the draft PR's CI: `gh pr checks <n>` | `test (3.12)` and `gate` pass |
-| The fix is real | `scripts/verify-red.sh`, once (CI's `verify-red` job runs the same code) | `verify-red: N red · 0 import-only · 0 unexpected pass · 0 n/a`; paste its summary line into the report |
+| The tests guard the change (every branch that changes code, `feat` included) | `scripts/verify-red.sh`, once (CI's `verify-red` job runs the same code) | `verify-red: N red · 0 import-only · 0 unexpected pass · 0 n/a`; paste its summary line into the report |
 | Each guard is tested | delete that guard alone, run the tests | a test fails, for every guard you added |
 | Frontend passes | `cd web && npm run check && npm run test:unit && npm run build` | all green |
 | Lint passes | `.venv/bin/ruff check . && .venv/bin/ruff format --check .` | clean |
@@ -112,8 +112,14 @@ work" is not evidence.
   is mapped experimental. `test_experimental_surface.py` fails on an
   experimental test that touches security vocabulary until you list it there or
   in `REVIEWED_EXPERIMENTAL` with the reason it is not one.
-- A `fix:` branch whose line shows **0 red, or only import-only reds, is not
-  done**: write a test that fails on the bug's behaviour, or say why none can.
+- A branch that changes `pyrite/` or `extensions/` code, `feat:` as much as
+  `fix:`, whose line shows **0 red, or only import-only reds, is not done**:
+  write a test that fails on the bug's or the feature's behaviour without the
+  change, or say why none can. A passing test proves nothing until it has
+  been seen to fail without the change (retro 2026-10-03: in 2 of 3 themes a
+  cold read found tests that passed with the change removed; #701's 15 parity
+  tests passed with alias handling disabled, and its worker had skipped
+  verify-red as "a feat branch with no bug").
 - Commit each passing step as you reach it, with the reason in the message.
   Uncommitted work and the thinking behind it are lost when a session stops
   (2026-10-02: a worker died with eight files edited and no note of why).
