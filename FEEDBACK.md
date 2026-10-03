@@ -566,3 +566,27 @@ The JSON result says `{"updated": true}`, with no hint that a value changed type
 **Worked well:** JSON arrays and objects in `-f` (`-f 'options=[{"label": "A", …}]'`) become clean structured YAML. That made structured records easy once I knew the rule.
 
 **Severity:** slowed, plus silent corruption of free text. Anything an agent writes in prose through `-f` is at risk.
+
+---
+
+## 2026-10-03 · a worker on one storage theme (ADR-0038 step 2, PR #707) in its own worktree · claude-opus-5-5
+
+I built one reconcile for `index build`, `index sync` and `kb reindex`: plan from a groom and an ADR, TDD, `scripts/test-affected`, `scripts/verify-red.sh`, pre-commit and pre-push, `pyrite` on the project KB, and a draft PR. Six frictions below, the most costly first.
+
+**Friction 1: the scratchpad is shared between parallel sessions, and nothing says so.** I ran `git push ... > <scratchpad>/push.log` in the background. The log I read back reported a forced update of `feature/700-ids-missing-and-pin`, another worker's branch. For a minute it looked as if I had force-pushed someone else's work. The cause was another session writing `push.log` in the same directory, which holds about 750 files from other sessions. The system prompt calls the directory "session-specific, isolated". **Would have helped:** a scratchpad that is per session, or that wording removed, and the pyrite-dev skill advising unique file names (`<branch>-push.log`).
+
+**Friction 2: `scripts/test-affected --run` on a storage change is the whole suite, and it takes longer than the tool timeout.** `storage/index.py` is imported by almost everything, so "affected" meant 7021 tests and 15 minutes at `-n 4`. The 10-minute call moved to the background, and my `| tail -15` hid all progress until it finished. Re-running the one failure with `scripts/test-affected --run -- --lf`, as the skill says to, ran all 7021 again (14 minutes). It then printed `passed; not stamped (pytest args ... may narrow the run)`, so the pre-push hook ran a third full suite. **Would have helped:** `--lf` that narrows the run (or a `--rerun-failed` mode that keeps the stamp when the failures pass), and the skill saying "a storage or CLI-core change is the full suite: start it in the background".
+
+**Friction 3: the skill's lint line fails on files nobody touched.** `ruff check . && ruff format --check .` reports 20 errors in `deploy/*/create-user.py` and `scripts/*appointee*.py`. I guessed it should be scoped to the diff (`ruff check $(git diff --name-only origin/dev...HEAD -- '*.py')`). **Would have helped:** that command in the skill's table, or those files excluded in `pyproject.toml`.
+
+**Friction 4: the footprint in the groom and the ADR was smaller than the decision.** "Staleness by mtime or size differs from the indexed one" needs the stat recorded on the row. That meant a schema migration (`models.py`, `migrations.py`, `backends/base_backend.py`), and none of them is in step 2's file list. #494's fix needed `document_manager.py` and `repository.py`. `index_with_attribution`, a fourth walk-and-write that also never retired a row, is not named in the goal, but the structural test the brief asks for has to cover it. I found all three by reading code, not from the ticket. **Would have helped:** a groom line for each decided rule naming the data it needs ("needs the recorded size: schema change").
+
+**Friction 5: `--label <area>` in pyrite-dev names labels that do not exist.** `gh issue create --label bug --label storage` failed with `'storage' not found`. The real labels are `cli server mcp web extensions docs quality ...`, with nothing for storage or index. I filed #711 under `quality`. **Would have helped:** the skill listing the area labels, or a `storage` label.
+
+**Friction 6: per-case controls in a parametrized test were mine to invent.** `verify-red.sh` reported 16 "unexpected pass" cases: the paths dev already got right for a case (`sync_incremental` already retired a deleted file's row). Marking the whole test as a control would hide the real reds, so I wrote a helper that returns `pytest.param(..., marks=pytest.mark.control(reason=...))` for named cases. **Would have helped:** one line in `tdd.md` showing that pattern.
+
+**Found on the way:** #711. A pyrite KB backlog item has `title:` as a YAML list. That is almost certainly the comma split reported in the 2026-09-27 entry above (`_parse_field_value`). The row write failed, and every index path on dev skipped the entry with one log line, so it was missing from search and `sw backlog` with nothing in any result. The split has now caused silent data loss downstream, not only a strange-looking field.
+
+**Worked well:** the strict-xfail invariant harness. Removing five markers gave five red tests that went green one by one, which showed exactly where the work stood. `pyrite kb list` confirmed the worktree's KB before I started. `pyrite update <id> -k pyrite -f status=done` changed one line and nothing else. The coordinator's mid-task decision (duplicates are unhealthy) cost one small commit.
+
+**Severity:** friction 1 alarming (it looked like a destructive action on another branch); friction 2 slowed me by about 30 minutes of suite time; the rest were minor.
