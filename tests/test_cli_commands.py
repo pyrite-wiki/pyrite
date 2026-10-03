@@ -726,4 +726,4 @@ def test_index_sync_verify_rejects_background_mode():
     result = runner.invoke(app, ["index", "sync", "--verify", "--background"])
 
     assert result.exit_code == 2
-    assert "cannot be combined with --background" in result.output
+    assert "cannot be combined with --background" in plain(result.output)
