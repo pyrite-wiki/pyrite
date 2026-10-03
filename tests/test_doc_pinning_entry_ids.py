@@ -51,7 +51,7 @@ def test_the_doc_has_the_upgrade_steps():
     for step in (
         "pyrite ids missing -k notes",
         "pyrite ids pin -k notes --dry-run",
-        "pyrite ids pin -k notes\n",
+        "pyrite ids pin -k notes --format text\n",
         "--rename archive/meeting-notes.md=",
         "git diff --stat",
         "pyrite index build",

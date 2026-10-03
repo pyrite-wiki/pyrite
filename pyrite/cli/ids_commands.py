@@ -13,6 +13,12 @@ Exit codes (also in docs/json-contracts.md):
   run returns the code the real run would. Not ``2``, which is click's usage
   error;
 - ``1``: an error (unknown KB, an invalid ``--rename``); nothing written.
+
+``ids missing`` and ``ids pin --dry-run`` write nothing anywhere: no file,
+no index, no config directory. They find the KB with
+``id_pin_service.find_kb_without_writes``, not ``cli_context`` (which opens,
+and so creates, the index). Output is JSON by default, as for the other read
+commands (docs/json-contracts.md); ``--format text`` is for reading.
 """
 
 from __future__ import annotations
@@ -30,15 +36,18 @@ OUTSIDE_CONTRACT = 3
 
 ids_app = typer.Typer(help="Entry ids: list the files with no id, and pin them")
 
-_FORMAT_HELP = "Output format: text (default) or json"
+_FORMAT_HELP = "Output format: json (default) or text"
 
 
-def _scan(config, kb_name: str, output_format: str) -> id_pin_service.IdScan:
-    kb_config = config.get_kb(kb_name)
+def _err_format(output_format: str) -> str:
+    return "rich" if output_format == "text" else "json"
+
+
+def _scan(kb_config, kb_name: str, output_format: str) -> id_pin_service.IdScan:
     if kb_config is None:
         cli_error(
             f"Knowledge base '{kb_name}' not found",
-            output_format if output_format == "json" else "rich",
+            _err_format(output_format),
             error_code="KB_NOT_FOUND",
             suggestion="Run `pyrite kb list` for the KB names",
         )
@@ -56,20 +65,19 @@ def _print_collisions(collisions: list[dict]) -> None:
 @ids_app.command("missing")
 def ids_missing(
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
-    output_format: str = typer.Option("text", "--format", help=_FORMAT_HELP),
+    output_format: str = typer.Option("json", "--format", help=_FORMAT_HELP),
 ):
     """List the files with no `id:`, with the id each has today.
 
-    Exits 0 when every file states an id, 3 when some do not.
+    Writes nothing. Exits 0 when every file states an id, 3 when some do not.
 
     \b
     Examples:
         pyrite ids missing -k notes
-        pyrite ids missing -k notes --format json
+        pyrite ids missing -k notes --format text
     """
-    with cli_context() as (config, _db, _svc):
-        found = _scan(config, kb_name, output_format)
-    if output_format == "json":
+    found = _scan(id_pin_service.find_kb_without_writes(kb_name), kb_name, output_format)
+    if output_format != "text":
         typer.echo(json.dumps(found.to_dict(), indent=2))
     else:
         if not found.missing and not found.skipped:
@@ -88,6 +96,17 @@ def ids_missing(
         raise typer.Exit(OUTSIDE_CONTRACT)
 
 
+def _pin(kb_config, kb_name: str, rename: list[str], output_format: str, *, write=False) -> dict:
+    found = _scan(kb_config, kb_name, output_format)
+    try:
+        the_plan = id_pin_service.plan(found, id_pin_service.parse_renames(rename))
+    except ValidationError as e:
+        cli_error(str(e), _err_format(output_format), error_code="INVALID_RENAME")
+    if write:
+        return id_pin_service.apply(found, the_plan)
+    return id_pin_service.check(found, the_plan)
+
+
 @ids_app.command("pin")
 def ids_pin(
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
@@ -97,14 +116,15 @@ def ids_pin(
         "--rename",
         help="<path>=<id>: in a collision, give this file a new id (repeatable)",
     ),
-    output_format: str = typer.Option("text", "--format", help=_FORMAT_HELP),
+    output_format: str = typer.Option("json", "--format", help=_FORMAT_HELP),
 ):
     """Add one line, `id: <the id it has today>`, to each file with no id.
 
     No other byte of any file changes. Files that share an id are left alone
     until you choose which keeps it (`--rename` the others). The index is
-    synced afterwards. Exits 0 when everything was pinned, 3 when something
-    was left (the output says what and why), 1 on an error.
+    synced afterwards; `--dry-run` writes nothing anywhere. Exits 0 when
+    everything was pinned, 3 when something was left (the output says what
+    and why), 1 on an error.
 
     \b
     Examples:
@@ -112,27 +132,25 @@ def ids_pin(
         pyrite ids pin -k notes
         pyrite ids pin -k notes --rename drafts/meeting.md=meeting-2026-03
     """
-    err_format = output_format if output_format == "json" else "rich"
-    with cli_context() as (config, _db, svc):
-        found = _scan(config, kb_name, output_format)
-        try:
-            the_plan = id_pin_service.plan(found, id_pin_service.parse_renames(rename))
-        except ValidationError as e:
-            cli_error(str(e), err_format, error_code="INVALID_RENAME")
-        if dry_run:
-            result = id_pin_service.check(found, the_plan)
-        else:
-            result = id_pin_service.apply(found, the_plan)
-        result["dry_run"] = dry_run
+    if dry_run:
+        result = _pin(
+            id_pin_service.find_kb_without_writes(kb_name), kb_name, rename, output_format
+        )
+        result["dry_run"] = True
         result["synced"] = False
-        if not dry_run and result["pinned"]:
-            # A pin changes no id the index holds, except that a resolved
-            # collision makes shadowed files reachable: sync so the next
-            # command agrees with the files.
-            svc.sync_index(kb_name)
-            result["synced"] = True
+    else:
+        with cli_context() as (config, _db, svc):
+            result = _pin(config.get_kb(kb_name), kb_name, rename, output_format, write=True)
+            result["dry_run"] = False
+            result["synced"] = False
+            if result["pinned"]:
+                # A pin changes no id the index holds, except that a resolved
+                # collision makes shadowed files reachable: sync so the next
+                # command agrees with the files.
+                svc.sync_index(kb_name)
+                result["synced"] = True
 
-    if output_format == "json":
+    if output_format != "text":
         typer.echo(json.dumps(result, indent=2))
     else:
         verb = "would pin" if dry_run else "pinned"

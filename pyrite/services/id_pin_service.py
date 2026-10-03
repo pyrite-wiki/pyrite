@@ -6,7 +6,8 @@ the switch to path ids loses no identity.
 
 The pin is a **textual insertion**: one line, ``id: <id>``, added as the last
 line of the frontmatter (ADR-0042 decision 6: "a new key goes on the last
-line of the frontmatter, block style"), in the file's own line ending. It
+line of the frontmatter, block style"), ending like the frontmatter line
+before it. It
 never goes through ``KBService.update`` or a model's ``to_frontmatter``:
 those rewrite the whole file. Every other byte stays as it was, and the
 result is re-parsed before it is written; a file where one more line would
@@ -20,17 +21,24 @@ operator chooses with ``renames``.
 
 from __future__ import annotations
 
+import hashlib
+import logging
+import os
 import re
+import sqlite3
+import stat
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from ..config import KBConfig
+from ..config import KBConfig, PyriteConfig, load_config
 from ..exceptions import ValidationError
-from ..models.core_types import _frontmatter_of, id_text, read_entry_id
+from ..models.core_types import _frontmatter_of, explicit_entry_id, id_text, read_entry_id
 from ..storage.repository import KBRepository
 from ..utils.atomic_write import atomic_write_text
+
+logger = logging.getLogger(__name__)
 
 # A plain YAML scalar that reads back as this exact string, under YAML 1.2
 # and 1.1 readers alike; anything else is single-quoted.
@@ -58,6 +66,9 @@ class IdScan:
     collisions: list[dict[str, Any]] = field(default_factory=list)
     # every id a file holds now (explicit or derived), for --rename checks
     taken: set[str] = field(default_factory=set)
+    # sha256 of each id-less file's bytes as scanned: a pin is written only
+    # to a file that still holds exactly these bytes (so still this id)
+    digests: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -97,11 +108,15 @@ def insert_id_line(text: str, entry_id: str) -> str:
     opening = _OPENING.match(text)
     if not opening:
         raise PinRefusedError("no YAML frontmatter (the file does not start with ---)")
-    eol = opening.group(2)
     closing = _CLOSING.search(text, opening.end())
     if not closing:
         raise PinRefusedError("no closing --- for the frontmatter")
     at = closing.start()
+    # The new line goes between the frontmatter's last line and the closing
+    # `---`, so it takes that last line's ending (the opening line's, when the
+    # frontmatter is empty): in a file with mixed endings it matches its
+    # neighbour. `at` starts a line, so text[:at] always ends in "\n".
+    eol = "\r\n" if text[:at].endswith("\r\n") else "\n"
     new_text = text[:at] + id_line(entry_id, eol) + text[at:]
 
     try:
@@ -130,9 +145,58 @@ def insert_id_line(text: str, entry_id: str) -> str:
     return new_text
 
 
-def _write_pin(path: Path, planned_original: bytes, new_text: str) -> None:
-    """Write ``new_text`` over ``path`` unless the file changed since it was
-    planned: an edit made in between wins (Pyrite is a guest)."""
+def write_refusal(root: Path, path: Path) -> str | None:
+    """Why ``path`` must not be written by a pin, or None.
+
+    A pin writes only a regular file inside the KB root, reached without a
+    symbolic link: ``atomic_write_text`` follows a link (a ``link.md`` to
+    ``../outside.md`` would write outside the KB) and writes a file with
+    several hard links in place (changing every name, wherever it is). Each
+    component under the root is checked with ``lstat``, so a path through a
+    symlinked directory is refused too (``list_files``' ``rglob`` does not
+    descend into one today; this does not rely on that). The KB root itself
+    may be a link.
+    """
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return "outside the KB"
+    if not rel.parts:
+        return "not a file"
+    current = root
+    st = None
+    try:
+        for i, part in enumerate(rel.parts):
+            current = current / part
+            st = os.lstat(current)
+            if stat.S_ISLNK(st.st_mode):
+                if i == len(rel.parts) - 1:
+                    return "a symbolic link; pin writes only regular files inside the KB"
+                where = current.relative_to(root).as_posix()
+                return f"inside a symlinked directory ({where}); pin does not write through links"
+    except OSError as e:
+        return f"cannot be inspected: {e.strerror or e}"
+    if st is None or not stat.S_ISREG(st.st_mode):
+        return "not a regular file"
+    if st.st_nlink > 1:
+        return f"has {st.st_nlink} hard links; writing it would change every name"
+    if not path.resolve().is_relative_to(root.resolve()):
+        return "resolves outside the KB"
+    return None
+
+
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _write_pin(root: Path, path: Path, planned_original: bytes, new_text: str) -> None:
+    """Write ``new_text`` over ``path``, checked again at the last moment: the
+    path is still a regular file inside the KB, and its bytes are still the
+    ones the pin was computed from (an edit made in between wins: Pyrite is a
+    guest)."""
+    refusal = write_refusal(root, path)
+    if refusal:
+        raise PinRefusedError(refusal)
     if path.read_bytes() != planned_original:
         raise PinRefusedError("the file changed after it was read; run the command again")
     atomic_write_text(path, new_text)
@@ -156,6 +220,26 @@ def scan(kb_config: KBConfig) -> IdScan:
 
     for path in sorted(repo.list_files()):
         rel = _rel(root, path)
+        refusal = write_refusal(root, path)
+        if refusal:
+            # Not a file pin may write. Never read before this check: a FIFO
+            # named `x.md` would block the read. Its id (read through the
+            # link, as the index reads it) still counts as taken, but it is
+            # no claimant: a link to a file in the KB would otherwise collide
+            # with its own target.
+            if ("symbolic link" in refusal or "hard links" in refusal) and path.is_file():
+                current = repo.id_of_file(path)
+                if current:
+                    result.taken.add(current)
+                    try:
+                        has_id = explicit_entry_id(path.read_text(encoding="utf-8"))
+                    except (OSError, UnicodeDecodeError):
+                        has_id = None
+                    if has_id:
+                        continue
+                    refusal += f"; its id today is {current!r}: add the line by hand"
+            result.skipped.append({"path": rel, "reason": refusal})
+            continue
         try:
             raw = path.read_bytes()
             text = raw.decode("utf-8")
@@ -179,6 +263,7 @@ def scan(kb_config: KBConfig) -> IdScan:
         if not explicit:
             status = "empty_id" if "id" in meta else "missing"
             result.missing.append({"path": rel, "id": current, "status": status})
+            result.digests[rel] = _digest(raw)
         holders[current].append({"path": rel, "explicit": explicit})
 
     # __collection.yaml files hold ids too (``collection-<folder>``)
@@ -187,7 +272,7 @@ def scan(kb_config: KBConfig) -> IdScan:
         if current and not any(part.startswith(".") for part in path.parts):
             holders[current].append({"path": _rel(root, path), "explicit": True})
 
-    result.taken = set(holders)
+    result.taken |= set(holders)
     for entry_id, claimants in sorted(holders.items()):
         if len(claimants) > 1 and not all(c["explicit"] for c in claimants):
             result.collisions.append({"id": entry_id, "claimants": claimants})
@@ -287,17 +372,29 @@ def plan(found: IdScan, renames: dict[str, str]) -> dict[str, Any]:
     return {"kb": found.kb, "pinned": pinned, "refused": refused, "skipped": skipped}
 
 
+def _prepared(found: IdScan, item: dict[str, str]) -> tuple[Path, bytes, str]:
+    """The path, its bytes and the pinned text for one planned pin, refused
+    unless the file is still one pin may write and still holds the bytes
+    ``scan`` read (so still the id ``scan`` derived)."""
+    path = found.root / item["path"]
+    refusal = write_refusal(found.root, path)
+    if refusal:
+        raise PinRefusedError(refusal)
+    original = path.read_bytes()
+    if _digest(original) != found.digests.get(item["path"]):
+        raise PinRefusedError("the file changed after it was scanned; run the command again")
+    return path, original, insert_id_line(original.decode("utf-8"), item["id"])
+
+
 def apply(found: IdScan, the_plan: dict[str, Any]) -> dict[str, Any]:
     """Write each planned pin. A file that cannot take it moves from
     ``pinned`` to ``skipped`` with the reason; nothing else is written."""
     done: list[dict[str, str]] = []
     for item in the_plan["pinned"]:
-        path = found.root / item["path"]
         try:
-            original = path.read_bytes()
-            new_text = insert_id_line(original.decode("utf-8"), item["id"])
-            _write_pin(path, original, new_text)
-        except PinRefusedError as e:
+            path, original, new_text = _prepared(found, item)
+            _write_pin(found.root, path, original, new_text)
+        except (PinRefusedError, OSError, UnicodeDecodeError) as e:
             the_plan["skipped"].append({"path": item["path"], "reason": str(e)})
             continue
         done.append(item)
@@ -311,10 +408,68 @@ def check(found: IdScan, the_plan: dict[str, Any]) -> dict[str, Any]:
     ok: list[dict[str, str]] = []
     for item in the_plan["pinned"]:
         try:
-            insert_id_line((found.root / item["path"]).read_bytes().decode("utf-8"), item["id"])
-        except PinRefusedError as e:
+            _prepared(found, item)
+        except (PinRefusedError, OSError, UnicodeDecodeError) as e:
             the_plan["skipped"].append({"path": item["path"], "reason": str(e)})
             continue
         ok.append(item)
     the_plan["pinned"] = ok
     return the_plan
+
+
+# --- finding the KB without writing anything -------------------------------
+
+
+def find_kb_without_writes(kb_name: str) -> KBConfig | None:
+    """The KB named ``kb_name``, found the way every command finds it
+    (config.yaml, then the KBs ``pyrite kb add`` registered in the index),
+    without creating or changing a file.
+
+    ``cli_context`` cannot be used for this: it creates the config directory,
+    opens the index (creating ``index.db`` and its ``-wal``/``-shm`` files,
+    running migrations) and may write a registry row back. Here the config
+    directory is not created, and the index is read only if it exists,
+    opened ``immutable`` so SQLite creates no ``-wal``/``-shm`` file. The
+    cost: a registration still in an uncheckpointed WAL (a running server
+    that has not checkpointed) is not seen; the KB is then "not found",
+    never a wrong KB.
+    """
+    config = load_config(create_dir=False)
+    kb = config.get_kb(kb_name)
+    if kb is not None:
+        return kb
+    return _registered_kb(config, kb_name)
+
+
+def _registered_kb(config: PyriteConfig, kb_name: str) -> KBConfig | None:
+    index_path = Path(config.settings.index_path).expanduser()
+    if not index_path.is_file():
+        return None
+    uri = f"{index_path.resolve().as_uri()}?mode=ro&immutable=1"
+    try:
+        conn = sqlite3.connect(uri, uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT name, path, kb_type, description, default_role "
+                "FROM kb WHERE source = 'user' AND name = ?",
+                (kb_name,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        logger.warning("Could not read registered KBs from %s: %s", index_path, e)
+        return None
+    for name, path, kb_type, description, default_role in rows:
+        kb = config.kb_config_from_registry_row(
+            {
+                "name": name,
+                "path": path,
+                "kb_type": kb_type,
+                "description": description or "",
+                "default_role": default_role,
+            }
+        )
+        if kb is not None:
+            kb.load_kb_yaml()
+            return kb
+    return None

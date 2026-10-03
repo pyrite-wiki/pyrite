@@ -72,7 +72,12 @@ def _commit(root: Path) -> None:
 
 
 def _run(config: PyriteConfig, *args: str):
-    with patch("pyrite.cli.context.load_config", return_value=config):
+    # `ids missing` and `pin --dry-run` load the config themselves, without
+    # cli_context (which would open, and so create, the index).
+    with (
+        patch("pyrite.cli.context.load_config", return_value=config),
+        patch("pyrite.services.id_pin_service.load_config", return_value=config),
+    ):
         return runner.invoke(app, list(args))
 
 
@@ -244,7 +249,7 @@ def test_missing_exits_three_and_reports_each_kind(kb):
 def test_missing_text_output_names_paths_and_ids(kb):
     root, config = kb
     _write(root, {"n/one.md": "---\ntitle: One Two\n---\n"})
-    result = _run(config, "ids", "missing", "-k", "notes")
+    result = _run(config, "ids", "missing", "-k", "notes", "--format", "text")
     assert result.exit_code == OUTSIDE_CONTRACT
     assert "n/one.md" in result.output and "one-two" in result.output
 
@@ -384,7 +389,7 @@ def test_dry_run_writes_nothing_and_returns_the_real_runs_exit_code(kb):
     assert _numstat(root) == {}
     assert {p: p.stat().st_mtime_ns for p in root.rglob("*.md")} == stamps
 
-    text = _run(config, "ids", "pin", "-k", "notes", "--dry-run")
+    text = _run(config, "ids", "pin", "-k", "notes", "--dry-run", "--format", "text")
     assert "other.md" in text.output and "same" in text.output
     assert _numstat(root) == {}
 
@@ -440,17 +445,18 @@ def test_ambiguous_ids_are_quoted_so_they_read_back_as_the_same_text(kb):
         assert _run(config, "get", eid, "-k", "notes", "--format", "json").exit_code == 0
 
 
-def test_a_file_changed_after_planning_is_not_overwritten(kb, monkeypatch):
-    """Pyrite is a guest: an edit made between reading and writing wins."""
+def test_a_file_changed_at_the_last_moment_is_not_overwritten(kb, monkeypatch):
+    """Pyrite is a guest: an edit made between computing the pin and writing
+    it wins (the check inside ``_write_pin``)."""
     from pyrite.services import id_pin_service
 
     root, config = kb
     _write(root, {"a.md": "---\ntitle: A\n---\n"})
     real = id_pin_service._write_pin
 
-    def edit_first(path, planned_original, new_text):
+    def edit_first(root_, path, planned_original, new_text):
         path.write_text("---\ntitle: A\n---\nedited by a human\n")
-        return real(path, planned_original, new_text)
+        return real(root_, path, planned_original, new_text)
 
     monkeypatch.setattr(id_pin_service, "_write_pin", edit_first)
     result = _run(config, "ids", "pin", "-k", "notes", "--format", "json")
@@ -508,3 +514,356 @@ def test_the_reparse_check_refuses_a_line_that_reads_back_as_something_else(monk
     monkeypatch.setattr(id_pin_service, "id_line", lambda eid, eol="\n": f"id: {eid}{eol}")
     with pytest.raises(id_pin_service.PinRefusedError):
         id_pin_service.insert_id_line("---\ntitle: '123'\n---\n", "123")
+
+
+# --- fix round 1: the write reaches only what was scanned, inside the KB ----
+
+
+def test_a_file_retitled_between_scan_and_write_keeps_the_edit_and_gets_no_stale_id(
+    kb, monkeypatch
+):
+    """The cold read's probe, through the CLI: the scan derives `alpha`, a
+    human retitles the file before the write; the file must not gain
+    `id: alpha` (an id it no longer holds), and the edit is kept."""
+    from pyrite.services import id_pin_service
+
+    root, config = kb
+    _write(root, {"a.md": "---\ntitle: Alpha\ntype: note\n---\nx\n"})
+    real_plan = id_pin_service.plan
+
+    def plan_then_retitle(found, renames):
+        result = real_plan(found, renames)
+        (root / "a.md").write_text("---\ntitle: Beta Renamed\ntype: note\n---\nx\n")
+        return result
+
+    monkeypatch.setattr(id_pin_service, "plan", plan_then_retitle)
+    result = _run(config, "ids", "pin", "-k", "notes")
+    assert result.exit_code == OUTSIDE_CONTRACT, result.output
+    data = _json(result)
+    assert data["pinned"] == []
+    assert data["skipped"][0]["path"] == "a.md"
+    assert "changed" in data["skipped"][0]["reason"]
+    assert (root / "a.md").read_text() == "---\ntitle: Beta Renamed\ntype: note\n---\nx\n"
+
+
+def test_a_symlink_to_a_file_outside_the_kb_is_reported_and_never_written(kb):
+    root, config = kb
+    outside = root.parent / "outside.md"
+    outside.write_text("---\ntitle: Outside Thing\ntype: note\n---\nsecret\n")
+    os.symlink(outside, root / "link.md")
+    _write(root, {"a.md": "---\ntitle: Alpha\n---\n"})
+    before = _json(_run(config, "ids", "missing", "-k", "notes"))
+    assert [r["path"] for r in before["missing"]] == ["a.md"]
+    [link] = before["skipped"]
+    assert link["path"] == "link.md" and "symbolic link" in link["reason"]
+    assert "outside-thing" in link["reason"]  # the id it has today, for a hand edit
+
+    result = _run(config, "ids", "pin", "-k", "notes")
+    assert result.exit_code == OUTSIDE_CONTRACT, result.output
+    assert [p["path"] for p in _json(result)["pinned"]] == ["a.md"]
+    assert outside.read_text() == "---\ntitle: Outside Thing\ntype: note\n---\nsecret\n"
+    assert (root / "link.md").is_symlink()
+
+
+def test_a_symlink_to_a_file_inside_the_kb_pins_the_target_once_and_no_false_collision(kb):
+    root, config = kb
+    _write(root, {"real.md": "---\ntitle: Real\n---\n"})
+    os.symlink(root / "real.md", root / "alias.md")
+    data = _json(_run(config, "ids", "missing", "-k", "notes"))
+    assert data["collisions"] == []
+    result = _run(config, "ids", "pin", "-k", "notes")
+    assert [p["path"] for p in _json(result)["pinned"]] == ["real.md"]
+    assert (root / "real.md").read_text() == "---\ntitle: Real\nid: real\n---\n"
+    assert (root / "alias.md").is_symlink()
+
+
+def test_files_under_a_symlinked_directory_are_never_written(kb, tmp_path):
+    root, config = kb
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "far.md").write_text("---\ntitle: Far Away\n---\n")
+    os.symlink(elsewhere, root / "linked")
+    _write(root, {"a.md": "---\ntitle: A\n---\n"})
+    result = _run(config, "ids", "pin", "-k", "notes")
+    assert result.exit_code == 0, result.output
+    assert (elsewhere / "far.md").read_text() == "---\ntitle: Far Away\n---\n"
+
+
+def test_write_refusal_refuses_a_path_through_a_symlinked_directory(tmp_path):
+    """``rglob`` does not descend into a symlinked directory today; the guard
+    does not rely on that, so it is tested on the path directly."""
+    from pyrite.services.id_pin_service import write_refusal
+
+    root = tmp_path / "kb"
+    root.mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    (tmp_path / "elsewhere" / "far.md").write_text("---\ntitle: Far\n---\n")
+    os.symlink(tmp_path / "elsewhere", root / "linked")
+    reason = write_refusal(root, root / "linked" / "far.md")
+    assert reason and "symlinked directory" in reason
+    assert write_refusal(root, tmp_path / "elsewhere" / "far.md") == "outside the KB"
+
+
+def test_a_hard_linked_file_is_reported_and_never_written(kb):
+    root, config = kb
+    outside = root.parent / "shared.md"
+    outside.write_text("---\ntitle: Shared\n---\n")
+    os.link(outside, root / "shared.md")
+    data = _json(_run(config, "ids", "pin", "-k", "notes"))
+    [row] = data["skipped"]
+    assert row["path"] == "shared.md" and "hard links" in row["reason"]
+    assert outside.read_text() == "---\ntitle: Shared\n---\n"
+
+
+def test_a_fifo_named_like_an_entry_is_skipped_without_being_read(kb):
+    root, config = kb
+    os.mkfifo(root / "pipe.md")  # reading it would block forever
+    _write(root, {"a.md": "---\ntitle: A\n---\n"})
+    # --dry-run and the service's apply: a real `ids pin` then syncs the index,
+    # and `index sync` itself blocks on a FIFO (#709, not this command's read).
+    data = _json(_run(config, "ids", "pin", "-k", "notes", "--dry-run"))
+    assert {r["path"]: r["reason"] for r in data["skipped"]} == {"pipe.md": "not a regular file"}
+    assert [p["path"] for p in data["pinned"]] == ["a.md"]
+
+    from pyrite.services import id_pin_service
+
+    found = id_pin_service.scan(config.get_kb("notes"))
+    done = id_pin_service.apply(found, id_pin_service.plan(found, {}))
+    assert [p["path"] for p in done["pinned"]] == ["a.md"]
+
+
+def test_a_kb_whose_root_is_a_symlink_still_pins(tmp_path):
+    real = tmp_path / "real-kb"
+    real.mkdir()
+    (real / "a.md").write_text("---\ntitle: A\n---\n")
+    os.symlink(real, tmp_path / "kb-link")
+    config = PyriteConfig(
+        knowledge_bases=[KBConfig(name="notes", path=tmp_path / "kb-link", kb_type="generic")],
+        settings=Settings(index_path=tmp_path / "index.db"),
+    )
+    result = _run(config, "ids", "pin", "-k", "notes")
+    assert result.exit_code == 0, result.output
+    assert (real / "a.md").read_text() == "---\ntitle: A\nid: a\n---\n"
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        # the line takes the ending of the frontmatter line it follows
+        (b"---\ntitle: Mixed\r\ntype: note\r\n---\r\nb\r\n", b"id: mixed\r\n"),
+        (b"---\r\ntitle: Mixed\ntype: note\n---\nb\n", b"id: mixed\n"),
+        # empty frontmatter: the opening line's ending
+        (b"---\r\n---\r\nb\r\n", b"id: empty\r\n"),
+    ],
+)
+def test_the_added_line_ends_like_the_line_before_it(content, expected):
+    from pyrite.services.id_pin_service import insert_id_line
+
+    text = content.decode()
+    eid = expected.split(b" ")[1].strip().decode()
+    new = insert_id_line(text, eid).encode()
+    assert expected in new
+    assert new.replace(expected, b"", 1) == content
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "---\n---\nbody\n",
+        "---\n---",
+        "---\r\n---\r\nb\r\n",
+        "---\n\n---\nb\n",
+        "---\n# only a comment\n---\nb\n",
+    ],
+)
+def test_empty_frontmatter_is_missing_in_the_report_and_pinned_by_pin(kb, content):
+    """`ids missing` and `ids pin` agree on an empty frontmatter: it is a
+    file with no id (the hash fallback), and one line pins it."""
+    root, config = kb
+    _write(root, {"e.md": content})
+    _commit(root)
+    data = _json(_run(config, "ids", "missing", "-k", "notes"))
+    assert [r["path"] for r in data["missing"]] == ["e.md"], data
+    assert data["skipped"] == []
+    result = _run(config, "ids", "pin", "-k", "notes")
+    assert result.exit_code == 0, result.output
+    assert _numstat(root) == {"e.md": ("1", "0")}
+
+
+def test_read_commands_default_to_json(kb):
+    """docs/json-contracts.md: read commands default to `--format json`
+    (`get`, `list-entries`, `tags`, `kb list`, `qa validate` do)."""
+    root, config = kb
+    _write(root, {"a.md": "---\ntitle: A\n---\n"})
+    assert "missing" in _json(_run(config, "ids", "missing", "-k", "notes"))
+    assert _json(_run(config, "ids", "pin", "-k", "notes", "--dry-run"))["dry_run"] is True
+
+
+# --- `ids missing` and `ids pin --dry-run` write nothing anywhere -----------
+
+
+def _tree(top: Path) -> dict[str, tuple[int, int]]:
+    """Every path under ``top`` (files, dirs, links) with size and mtime."""
+    out = {}
+    for dirpath, dirnames, filenames in os.walk(top):
+        for name in dirnames + filenames:
+            p = Path(dirpath) / name
+            st = os.lstat(p)
+            out[str(p.relative_to(top))] = (st.st_size, st.st_mtime_ns)
+    return out
+
+
+def _pyrite(tmp_path: Path, cfg: Path, *args: str) -> subprocess.CompletedProcess:
+    import sys
+
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path / "home"),
+        "PYRITE_CONFIG_DIR": str(cfg),
+        "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}",
+    }
+    env.pop("PYRITE_DATA_DIR", None)
+    return subprocess.run(
+        ["pyrite", *args], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120
+    )
+
+
+READ_ONLY_RUNS = [  # (argv, exit code)
+    (("ids", "missing", "-k", "notes"), OUTSIDE_CONTRACT),
+    (("ids", "missing", "-k", "notes", "--format", "text"), OUTSIDE_CONTRACT),
+    (("ids", "pin", "-k", "notes", "--dry-run"), OUTSIDE_CONTRACT),
+    (("ids", "pin", "-k", "notes", "--dry-run", "--rename", "b.md=beta-2"), 0),
+]
+
+
+def _notes_kb(tmp_path: Path) -> Path:
+    kb = tmp_path / "notes"
+    _write(kb, {"a.md": "---\ntitle: Alpha\n---\n", "b.md": "---\ntitle: Alpha\n---\n"})
+    (tmp_path / "home").mkdir()
+    return kb
+
+
+def test_missing_and_dry_run_create_no_index_and_no_config_dir(tmp_path):
+    """A KB named in config.yaml, no index yet: nothing appears, not even
+    the index cli_context would have created (with -wal/-shm)."""
+    kb = _notes_kb(tmp_path)
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "config.yaml").write_text(
+        f"knowledge_bases:\n- name: notes\n  path: {kb}\n"
+        f"settings:\n  index_path: {tmp_path / 'idx' / 'index.db'}\n  auto_embed: false\n"
+    )
+    before = _tree(tmp_path)
+    for args, code in READ_ONLY_RUNS:
+        run = _pyrite(tmp_path, cfg, *args)
+        assert run.returncode == code, (args, run.stdout, run.stderr)
+        assert _tree(tmp_path) == before, args
+    assert not (tmp_path / "idx").exists()
+
+
+def test_missing_finds_a_kb_registered_in_the_index_without_touching_it(tmp_path):
+    """`pyrite kb add` registers the KB in the index, not config.yaml; the
+    read-only lookup opens the index immutable: no -wal/-shm, no change."""
+    kb = _notes_kb(tmp_path)
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "config.yaml").write_text(
+        f"knowledge_bases: []\nsettings:\n  index_path: {tmp_path / 'index.db'}\n"
+        "  auto_embed: false\n"
+    )
+    added = _pyrite(tmp_path, cfg, "kb", "add", str(kb), "--name", "notes")
+    assert added.returncode == 0, added.stdout + added.stderr
+    before = _tree(tmp_path)
+    for args, code in READ_ONLY_RUNS:
+        run = _pyrite(tmp_path, cfg, *args)
+        assert run.returncode == code, (args, run.stdout, run.stderr)
+        assert _tree(tmp_path) == before, args
+    data = json.loads(_pyrite(tmp_path, cfg, "ids", "missing", "-k", "notes").stdout)
+    assert {r["path"] for r in data["missing"]} == {"a.md", "b.md"}
+
+
+def test_missing_with_no_config_dir_creates_none(tmp_path):
+    _notes_kb(tmp_path)
+    cfg = tmp_path / "no-such-config"
+    before = _tree(tmp_path)
+    run = _pyrite(tmp_path, cfg, "ids", "missing", "-k", "notes")
+    assert run.returncode == 1, run.stdout + run.stderr
+    assert _tree(tmp_path) == before
+    assert not cfg.exists()
+
+
+SAME = "---\ntitle: A\n---\n"
+
+
+def _swap_for_link_to_identical_outside(root: Path) -> Path:
+    """Replace a.md with a link to a file outside the KB holding the same
+    bytes, so only the containment check (not the bytes check) can refuse."""
+    outside = root.parent / "outside-same.md"
+    outside.write_text(SAME)
+    (root / "a.md").unlink()
+    os.symlink(outside, root / "a.md")
+    return outside
+
+
+def test_a_file_swapped_for_a_link_after_the_scan_is_not_written_through(kb, monkeypatch):
+    from pyrite.services import id_pin_service
+
+    root, config = kb
+    _write(root, {"a.md": SAME})
+    real_plan = id_pin_service.plan
+    swapped = {}
+
+    def plan_then_swap(found, renames):
+        result = real_plan(found, renames)
+        swapped["outside"] = _swap_for_link_to_identical_outside(root)
+        return result
+
+    monkeypatch.setattr(id_pin_service, "plan", plan_then_swap)
+    data = _json(_run(config, "ids", "pin", "-k", "notes"))
+    assert data["pinned"] == [] and "symbolic link" in data["skipped"][0]["reason"]
+    assert swapped["outside"].read_text() == SAME
+
+
+def test_a_file_swapped_for_a_link_at_the_last_moment_is_not_written_through(kb, monkeypatch):
+    from pyrite.services import id_pin_service
+
+    root, config = kb
+    _write(root, {"a.md": SAME})
+    real = id_pin_service._write_pin
+    swapped = {}
+
+    def swap_first(root_, path, planned_original, new_text):
+        swapped["outside"] = _swap_for_link_to_identical_outside(root)
+        return real(root_, path, planned_original, new_text)
+
+    monkeypatch.setattr(id_pin_service, "_write_pin", swap_first)
+    data = _json(_run(config, "ids", "pin", "-k", "notes"))
+    assert data["pinned"] == [] and "symbolic link" in data["skipped"][0]["reason"]
+    assert swapped["outside"].read_text() == SAME
+
+
+def test_write_refusal_refuses_a_path_that_climbs_out_of_the_kb(tmp_path):
+    from pyrite.services.id_pin_service import write_refusal
+
+    root = tmp_path / "kb"
+    root.mkdir()
+    (tmp_path / "x.md").write_text(SAME)
+    assert write_refusal(root, root / ".." / "x.md") == "resolves outside the KB"
+
+
+def test_a_dry_run_reports_a_file_swapped_for_a_link_after_the_scan(kb, monkeypatch):
+    """--dry-run never reaches _write_pin, so its own check must refuse."""
+    from pyrite.services import id_pin_service
+
+    root, config = kb
+    _write(root, {"a.md": SAME})
+    real_plan = id_pin_service.plan
+
+    def plan_then_swap(found, renames):
+        result = real_plan(found, renames)
+        _swap_for_link_to_identical_outside(root)
+        return result
+
+    monkeypatch.setattr(id_pin_service, "plan", plan_then_swap)
+    data = _json(_run(config, "ids", "pin", "-k", "notes", "--dry-run"))
+    assert data["pinned"] == [] and "symbolic link" in data["skipped"][0]["reason"]

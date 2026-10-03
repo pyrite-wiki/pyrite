@@ -1221,7 +1221,7 @@ def _contain_untrusted_paths(config: PyriteConfig, root: Path) -> list[str]:
     return refused
 
 
-def load_config() -> PyriteConfig:
+def load_config(*, create_dir: bool = True) -> PyriteConfig:
     """
     Load configuration from config.yaml.
 
@@ -1229,8 +1229,13 @@ def load_config() -> PyriteConfig:
     untrusted (see :func:`resolve_config_source`): only the keys in
     ``_UNTRUSTED_*_KEYS`` are read from it, and only paths inside its own
     tree; the rest is ignored with a warning.
+
+    ``create_dir=False`` reads without creating the config directory, for a
+    command that promises to write nothing (``pyrite ids missing``, ``ids pin
+    --dry-run``).
     """
-    ensure_config_dir()
+    if create_dir:
+        ensure_config_dir()
 
     config_file, trusted = current_config_source()
     if config_file.exists():

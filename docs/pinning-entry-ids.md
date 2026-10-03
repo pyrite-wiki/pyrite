@@ -14,13 +14,14 @@ are. Most KBs have no such files; step 1 tells you.
 
 The commands below use a KB named `notes`; use your own KB's name (`pyrite kb
 list` shows them). Run them from your KB's folder, with the version you have
-now installed.
+now installed. Like Pyrite's other read commands, they print JSON unless you
+ask for `--format text`, which the steps below use.
 
 ## 1. List the files with no id
 
 <!-- expect-exit: 3 -->
 ```bash
-pyrite ids missing -k notes
+pyrite ids missing -k notes --format text
 ```
 
 Each line is a file's path and the id it has today. The command exits `0`
@@ -35,17 +36,17 @@ them is reachable today: the other is shadowed. Step 3 is for those.
 
 <!-- expect-exit: 3 -->
 ```bash
-pyrite ids pin -k notes --dry-run
+pyrite ids pin -k notes --dry-run --format text
 ```
 
-The dry run writes nothing. It shows each file and the line it would gain,
+The dry run writes nothing anywhere: no file, no index, no config. It shows each file and the line it would gain,
 each collision you need to settle, and each file it would leave alone and
 why. Its exit code is the one the real run would have: `3` here, because
 this KB has a collision. Pin everything else:
 
 <!-- expect-exit: 3 -->
 ```bash
-pyrite ids pin -k notes
+pyrite ids pin -k notes --format text
 ```
 
 Files in a collision are left untouched until you choose; everything else is
@@ -59,7 +60,7 @@ never reachable under the old id, so nothing that links to the id changes.
 
 <!-- expect-exit: 0 -->
 ```bash
-pyrite ids pin -k notes --rename archive/meeting-notes.md=meeting-notes-2019
+pyrite ids pin -k notes --rename archive/meeting-notes.md=meeting-notes-2019 --format text
 ```
 
 A new id must be a plain file name (no `/`, no leading `.`) that no other
@@ -85,7 +86,8 @@ pyrite index build -k notes
 
 ## For agents
 
-Every command above takes `--format json` and returns the same as data:
+Without `--format text`, every command above prints the same as JSON (the
+default):
 `ids missing` gives `missing` (`path`, `id`, `status`), `collisions` (`id`,
 `claimants` with `path` and `explicit`) and `skipped` (`path`, `reason`);
 `ids pin` gives `pinned`, `refused`, `skipped`, `dry_run` and `synced`.
@@ -101,6 +103,11 @@ which case nothing was written.
   refused this way: add the line by hand).
 - Choose between two files that share an id.
 - Fill in an empty `id:` line (`id: ''`); it is reported, for you to edit.
-- Overwrite a file that changed after it was read; run the command again.
 - Touch files Pyrite does not index: `README.md`, hidden files and folders,
   `_templates/`.
+- Write through a link. A symbolic link, a file inside a linked folder, a
+  file with more than one hard link and anything that is not a regular file
+  are reported with the id they have today, for you to add by hand: writing
+  them could change a file outside the KB.
+- Write an id a file no longer holds. A file edited after the command read it
+  is left as you left it; run the command again.
