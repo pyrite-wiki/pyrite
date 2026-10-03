@@ -1025,7 +1025,7 @@ def requires_kb_tier(tier: str, *, resolve_kb=None):
 # =============================================================================
 
 
-def negotiate_response(request: Request, data: Any) -> Response | None:
+def negotiate_response(request: Request, data: Any, **kwargs) -> Response | None:
     """Check Accept header and return formatted response, or None for default JSON.
 
     Endpoints call this after computing their result dict. If the client
@@ -1059,7 +1059,7 @@ def negotiate_response(request: Request, data: Any) -> Response | None:
     if fmt == "json":
         return None  # Use default
 
-    content, media_type = format_response(data, fmt)
+    content, media_type = format_response(data, fmt, **kwargs)
     return Response(content=content, media_type=media_type)
 
 
