@@ -401,8 +401,27 @@ CONFLICT_UPDATE_SURFACES = [
     "cli",
     "mcp",
     "rest_put_metadata",
-    "rest_patch",
 ]
+# Not entered: PATCH /api/entries/{id} carries one field per request, so a
+# second spelling cannot be named; POST's `participants` field exists only on
+# the event pair.
+
+
+def _create_cells():
+    return [
+        pytest.param(surface, pair, id=f"{surface}-{pid}")
+        for pair, pid in zip(PAIRS, PAIR_IDS, strict=True)
+        for surface in CONFLICT_CREATE_SURFACES
+        if surface != "rest_participants" or pair[1] == "participants"
+    ]
+
+
+def _update_cells():
+    return [
+        pytest.param(surface, pair, id=f"{surface}-{pid}")
+        for pair, pid in zip(PAIRS, PAIR_IDS, strict=True)
+        for surface in CONFLICT_UPDATE_SURFACES
+    ]
 
 
 def _comma(v) -> str:
@@ -468,24 +487,18 @@ def _conflict_create(tmp_path, surface, pair, equal):
     return config, kb, None, _written(kb)
 
 
-@pytest.mark.parametrize("surface", CONFLICT_CREATE_SURFACES)
-@pytest.mark.parametrize("pair", PAIRS, ids=PAIR_IDS)
+@pytest.mark.parametrize(("surface", "pair"), _create_cells())
 def test_create_naming_both_spellings_with_different_values_is_refused(tmp_path, surface, pair):
     entry_type, alias, target = pair[:3]
-    if surface == "rest_participants" and alias != "participants":
-        pytest.skip("POST /api/entries has one named list field, `participants`")
     config, kb, refusal, fm = _conflict_create(tmp_path, surface, pair, equal=False)
     assert refusal is not None, f"{surface} accepted both spellings with different values: {fm}"
     _assert_refused_naming(refusal, alias, target, surface)
     assert list(kb.rglob("n.md")) == [], "a refused create wrote a file"
 
 
-@pytest.mark.parametrize("surface", CONFLICT_CREATE_SURFACES)
-@pytest.mark.parametrize("pair", PAIRS, ids=PAIR_IDS)
+@pytest.mark.parametrize(("surface", "pair"), _create_cells())
 def test_create_naming_both_spellings_with_equal_values_writes_one_key(tmp_path, surface, pair):
     alias = pair[1]
-    if surface == "rest_participants" and alias != "participants":
-        pytest.skip("POST /api/entries has one named list field, `participants`")
     config, kb, refusal, fm = _conflict_create(tmp_path, surface, pair, equal=True)
     assert refusal is None, refusal
     if pair[0] == "relationship" and surface.startswith("rest"):
@@ -533,13 +546,10 @@ def _conflict_update(tmp_path, surface, pair, equal):
         if status != 200:
             assert status == 400, (status, body)
             refusal = body
-    else:  # PATCH carries one field: a second spelling cannot be named in the request
-        pytest.skip("PATCH /api/entries/{id} names one field per request")
     return kb / rel, text, refusal
 
 
-@pytest.mark.parametrize("surface", CONFLICT_UPDATE_SURFACES)
-@pytest.mark.parametrize("pair", PAIRS, ids=PAIR_IDS)
+@pytest.mark.parametrize(("surface", "pair"), _update_cells())
 def test_update_naming_both_spellings_with_different_values_is_refused(tmp_path, surface, pair):
     path, before, refusal = _conflict_update(tmp_path, surface, pair, equal=False)
     assert refusal is not None, f"{surface} accepted both spellings with different values"
@@ -547,8 +557,7 @@ def test_update_naming_both_spellings_with_different_values_is_refused(tmp_path,
     assert path.read_text(encoding="utf-8") == before, "a refused update changed the file"
 
 
-@pytest.mark.parametrize("surface", CONFLICT_UPDATE_SURFACES)
-@pytest.mark.parametrize("pair", PAIRS, ids=PAIR_IDS)
+@pytest.mark.parametrize(("surface", "pair"), _update_cells())
 def test_update_naming_both_spellings_with_equal_values_writes_one_key(tmp_path, surface, pair):
     path, _, refusal = _conflict_update(tmp_path, surface, pair, equal=True)
     assert refusal is None, refusal
