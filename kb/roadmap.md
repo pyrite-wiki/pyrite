@@ -485,12 +485,13 @@ path is live); B3 the divergence register as expected-failure conformance tests
 identity switch (0.25.9); B5 the index reconcile (ADR-0038 steps 2 to 5); B6 the
 write path in phases (spike first on concurrency, the per-file lock and `/` in
 ids); B7 derived task completion, then the rollup hook goes; B8 the ADR-0045
-protocol inventory spike, then aliases as schema data (before B6 lands).
+protocol inventory (done: spike 2, recorded in ADR-0045), then aliases as schema
+data, `field_aliases:` (#697, before B6 lands; maintainer, 2026-10-03).
 
 **Track C: releases.** 0.25.7: A1, ADR-0041, the tutorial, the alpha
 announcement. 0.25.8: A2, A3, B1, first B2 removals. 0.25.9: passage
-embedding, B4, B3. 0.26: B5, B6, B7. 0.27 and 0.28: the authorization design,
-then B8 and the alpha contracts.
+embedding, B4, B3. 0.26: B8's aliases (#697) ahead of B6, then B5, B6, B7. 0.27 and 0.28: the
+authorization design, then the rest of B8 and the alpha contracts.
 
 **For contributors:** #664, #671, #666, #670, #672, groomed for strangers and
 left unclaimed a few days.
