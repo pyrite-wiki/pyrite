@@ -80,6 +80,12 @@ FAKE_CLAUDE = textwrap.dedent(
 
     if told("FAKE_CLAUDE_HANG"):
         time.sleep(120)
+    if told("FAKE_CLAUDE_GARBLE"):
+        # Bytes no codec can read as text, on both streams.
+        sys.stdout.buffer.write(b"\\xff\\xfe\\x81 garbled\\n")
+        sys.stderr.buffer.write(b"\\xff\\xfe\\x81 garbled\\n")
+        sys.stdout.flush()
+        sys.stderr.flush()
     if told("FAKE_CLAUDE_FAIL"):
         sys.exit(f"fake claude: E_REFUSED {verb}")
     if told("FAKE_CLAUDE_CORRUPT"):
@@ -1590,6 +1596,71 @@ def test_claude_not_runnable_after_remove_reports_exactly_what_was_removed(env, 
     assert item["status"] == "failed", item
     assert item["removed"] == {"command": OLD, "args": ["mcp", "--tier", "admin"]}
     assert f"claude mcp add -s user pyrite -- {OLD} mcp --tier admin" in "\n".join(item["by_hand"])
+
+
+@pytest.mark.parametrize(
+    "fails", ["", "add#1", "add"], ids=["add-succeeds", "restored", "not-restored"]
+)
+def test_undecodable_output_from_claude_is_judged_like_any_other(env, monkeypatch, fails):
+    """`claude` printing bytes that are not text (or Windows reading Node's
+    UTF-8 as cp1252) must not end the sequence after `remove`."""
+    target = _seed_changeable(env)
+    monkeypatch.setenv("FAKE_CLAUDE_GARBLE", "add")
+    monkeypatch.setenv("FAKE_CLAUDE_FAIL", fails)
+
+    result = target.run()
+
+    item = only_client(result)
+    assert item.get("error_code") != "INTERNAL_ERROR", item
+    if fails == "":
+        assert result.exit_code == 0 and item["status"] == "changed", item
+    elif fails == "add#1":
+        assert item["status"] == "stopped" and "restored" in item["error"], item
+        assert target.entry() == OLD_ENTRY
+    else:
+        assert item["status"] == "failed", item
+        assert item["removed"] == {"command": OLD, "args": ["mcp", "--tier", "admin"]}
+        assert f"-- {OLD} mcp --tier admin" in item["by_hand"][0]
+
+
+def test_an_argument_claude_cannot_be_given_after_remove_is_reported(env):
+    """A NUL in the entry's own args (valid JSON: "\\u0000") makes every call
+    that passes it back raise ValueError, the restore included."""
+    target = Target(env, "claude-code")
+    target.seed(member(cmd_text(OLD), args_text("mcp", "a\\u0000b")))
+
+    result = target.run()
+
+    assert result.exit_code == 1, result.output
+    item = only_client(result)
+    assert item["status"] == "failed" and item["error_code"] == "CLIENT_COMMAND_FAILED", item
+    assert item["removed"] == {"command": OLD, "args": ["mcp", "a\x00b"]}
+    assert "ValueError" in item["error"]
+
+
+def test_an_unexpected_error_after_remove_still_reports_what_was_removed(env, monkeypatch):
+    """Whatever goes wrong once `remove` has succeeded, never neither: the
+    report holds what the entry was and the command that puts it back."""
+    target = _seed_changeable(env)
+    monkeypatch.setenv("FAKE_CLAUDE_FAIL", "add")
+    if env.mod is not None:
+        real, reads = env.mod._read_claude_config, []
+
+        def read_then_break(config):
+            reads.append(config)
+            if len(reads) > 2:  # the read and the re-read before any call
+                raise RuntimeError("a bug nobody predicted")
+            return real(config)
+
+        monkeypatch.setattr(env.mod, "_read_claude_config", read_then_break)
+
+    result = target.run()
+
+    assert result.exit_code == 1, result.output
+    item = only_client(result)
+    assert item["status"] == "failed", item
+    assert item["removed"] == {"command": OLD, "args": ["mcp", "--tier", "admin"]}
+    assert f"claude mcp add -s user pyrite -- {OLD} mcp --tier admin" == item["by_hand"][0]
 
 
 def test_a_call_that_times_out_after_doing_its_work_is_judged_by_the_file(env, monkeypatch):

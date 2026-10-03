@@ -799,19 +799,24 @@ def _setup_claude_code(
         )
 
     def run(*cmd: str) -> tuple[bool, str]:
+        """One `claude mcp` call: (exit 0, its last words). Never raises: a
+        call that cannot be made is a failed call, judged like any other."""
         item["_called"] = True
         try:
             proc = subprocess.run(
                 [str(claude), "mcp", *cmd],
                 capture_output=True,
-                text=True,
+                # Not the locale's codec: Windows would read Node's UTF-8 as
+                # cp1252, and one undecodable byte must not end the sequence.
+                encoding="utf-8",
+                errors="replace",
                 timeout=_SUBPROCESS_TIMEOUT,
                 stdin=subprocess.DEVNULL,
             )
         except subprocess.TimeoutExpired:
             return False, f"timed out after {_SUBPROCESS_TIMEOUT}s"
-        except OSError as exc:
-            return False, f"could not be run ({exc})"
+        except Exception as exc:  # noqa: BLE001 - OSError; ValueError for a NUL in an entry's args
+            return False, f"could not be run ({type(exc).__name__}: {exc})"
         return proc.returncode == 0, (proc.stderr or proc.stdout).strip()[-500:]
 
     def holds() -> Any:
@@ -831,6 +836,53 @@ def _setup_claude_code(
             status="failed",
         )
 
+    def not_back(failure: str) -> _StopError:
+        """The entry was removed and is not back: what it held, and the
+        commands that put it back or point it here."""
+        by_hand = [manual]
+        if _add_reproduces(existing):
+            by_hand.insert(0, _add_command(existing))
+        return _StopError(
+            "CLIENT_COMMAND_FAILED",
+            f"{failure}. The previous {SERVER_NAME!r} entry was removed and is not back; "
+            "`removed` is what it held",
+            "run the first command in by_hand to put it back as it was, or the last to "
+            "point it at this install",
+            status="failed",
+            removed=_public(existing),
+            by_hand=by_hand,
+        )
+
+    def add_or_restore() -> None:
+        ok, detail = run("add", "-s", "user", SERVER_NAME, "--", wanted["command"], *wanted["args"])
+        if ok:
+            return
+        failure = f"`claude mcp add` failed: {detail}"
+        now = holds()
+        if is_entry(now, wanted):
+            item["notes"].append(f"{failure}, but {config} holds the new entry.")
+            return
+        if now is _UNKNOWN:
+            raise unconfirmed(failure)
+        if existing is _ABSENT:
+            raise _StopError(
+                "CLIENT_COMMAND_FAILED",
+                f"{failure}; nothing was added",
+                f"run it yourself: {manual}",
+            )
+        # `remove` succeeded and `add` did not: put back what was there.
+        if _add_reproduces(existing):
+            old = ["add", "-s", "user", SERVER_NAME, "--", existing["command"], *existing["args"]]
+            restored, why = run(*old)
+            if restored or is_entry(holds(), existing):
+                raise _StopError(
+                    "CLIENT_COMMAND_FAILED",
+                    f"{failure}; the previous {SERVER_NAME!r} entry was restored",
+                    f"fix the cause and re-run, or run `{_REMOVE}` and then: {manual}",
+                )
+            failure += f"; restoring the previous entry also failed: {why}"
+        raise not_back(failure)
+
     if existing is not _ABSENT:
         ok, detail = run("remove", "-s", "user", SERVER_NAME)
         now = _ABSENT if ok else holds()
@@ -842,52 +894,16 @@ def _setup_claude_code(
                 f"`{_REMOVE}` failed: {detail}; the entry is as it was",
                 f"fix the cause and re-run, or run `{_REMOVE}` and then: {manual}",
             )
-    ok, detail = run("add", "-s", "user", SERVER_NAME, "--", wanted["command"], *wanted["args"])
-    if not ok:
-        failure = f"`claude mcp add` failed: {detail}"
-        now = holds()
-        if is_entry(now, wanted):
-            item["notes"].append(f"{failure}, but {config} holds the new entry.")
-        elif now is _UNKNOWN:
-            raise unconfirmed(failure)
-        elif existing is _ABSENT:
-            raise _StopError(
-                "CLIENT_COMMAND_FAILED",
-                f"{failure}; nothing was added",
-                f"run it yourself: {manual}",
-            )
-        else:
-            # `remove` succeeded and `add` did not: put back what was there.
-            by_hand = [manual]
-            if _add_reproduces(existing):
-                restore = _add_command(existing)
-                by_hand.insert(0, restore)
-                restored, why = run(
-                    "add",
-                    "-s",
-                    "user",
-                    SERVER_NAME,
-                    "--",
-                    existing["command"],
-                    *existing["args"],
-                )
-                if restored or is_entry(holds(), existing):
-                    raise _StopError(
-                        "CLIENT_COMMAND_FAILED",
-                        f"{failure}; the previous {SERVER_NAME!r} entry was restored",
-                        f"fix the cause and re-run, or run `{_REMOVE}` and then: {manual}",
-                    )
-                failure += f"; restoring the previous entry also failed: {why}"
-            raise _StopError(
-                "CLIENT_COMMAND_FAILED",
-                f"{failure}. The previous {SERVER_NAME!r} entry was removed and is not back; "
-                "`removed` is what it held",
-                "run the first command in by_hand to put it back as it was, or the last to "
-                "point it at this install",
-                status="failed",
-                removed=_public(existing),
-                by_hand=by_hand,
-            )
+    try:
+        add_or_restore()
+    except _StopError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        # Criterion 5: once `remove` has succeeded, no failure of any kind may
+        # leave neither the entry restored nor the report of what it held.
+        if existing is _ABSENT:
+            raise
+        raise not_back(f"{type(exc).__name__}: {exc}") from None
     _record(item, plan, existing)
 
 
@@ -901,11 +917,12 @@ def _verify_starts(command: Path) -> None:
         proc = subprocess.run(
             [str(command), "mcp", "--help"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=_SUBPROCESS_TIMEOUT,
             stdin=subprocess.DEVNULL,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
         proc = None
         detail = str(exc)
     else:
