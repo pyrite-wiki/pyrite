@@ -672,6 +672,42 @@ class TestIndexManager:
         assert len(stale) == 1
         assert stale[0]["kb"] == "test-kb"
 
+    def test_sync_verify_reindexes_same_size_edit_with_restored_mtime(self, setup):
+        """Verify catches edits whose size and restored mtime both match."""
+        import os
+
+        index_mgr = setup["index_mgr"]
+        index_mgr.index_kb("test-kb")
+        target = sorted(setup["kb_path"].rglob("*.md"))[0]
+        before = target.stat()
+        original = target.read_bytes()
+        marker = b"title: Event "
+        offset = original.index(marker) + len(marker)
+        changed = original[:offset] + b"X" + original[offset + 1 :]
+        assert len(changed) == len(original)
+
+        target.write_bytes(changed)
+        os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+        after = target.stat()
+        assert after.st_size == before.st_size
+        assert after.st_mtime_ns == before.st_mtime_ns
+
+        ordinary_sync = index_mgr.sync_incremental("test-kb")
+        assert ordinary_sync["updated"] == 0
+
+        verified_sync = index_mgr.sync_incremental("test-kb", verify=True)
+        assert verified_sync["updated"] == 1
+
+        row = (
+            setup["db"]
+            ._raw_conn.execute(
+                "SELECT title FROM entry WHERE file_path = ?",
+                (str(target),),
+            )
+            .fetchone()
+        )
+        assert row[0] == "Event X"
+
     def test_check_health_detects_same_second_content_edit(self, setup):
         """A file edited without its mtime advancing (same-second double
         edit, or a filesystem with coarse mtime resolution) must still show

@@ -204,9 +204,17 @@ def index_sync(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB to sync (all if omitted)"),
     no_embed: bool = typer.Option(False, "--no-embed", help="Skip auto-embedding after sync"),
     background: bool = typer.Option(False, "--background", help="Run in background thread"),
+    verify: bool = typer.Option(
+        False,
+        "--verify",
+        help="Hash all known files whose stat is unchanged and sync changed content (foreground only).",
+    ),
 ):
-    """Incremental sync: update index for changed files only."""
+    """Incremental sync, with optional content-hash verification."""
     from ..storage import IndexManager
+
+    if background and verify:
+        raise typer.BadParameter("--verify cannot be combined with --background")
 
     config, db = get_config_and_db()
 
@@ -221,7 +229,10 @@ def index_sync(
 
     index_mgr = IndexManager(db, config)
 
-    results = index_mgr.sync_incremental(kb_name)
+    if verify:
+        results = index_mgr.sync_incremental(kb_name, verify=True)
+    else:
+        results = index_mgr.sync_incremental(kb_name)
 
     console.print("[green]Sync complete:[/green]")
     console.print(f"  Added: {results['added']}")
