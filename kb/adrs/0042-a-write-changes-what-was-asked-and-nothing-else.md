@@ -571,7 +571,7 @@ optimistic plus the momentary lock".*
   write: "set `status` to claimed if it is still open", decided against the
   file, then the row is updated. Anyone else's claim is a conflict, including
   a human's that is not yet indexed. The row is never the tiebreaker. This
-  amends ADR-0029 section 4 (**question 3**). Measured on today's code (spike
+  amends ADR-0029 section 4 (question 3, decided by the maintainer 2026-10-03: the claim is decided against the file). Measured on today's code (spike
   3): a hand-set claim not yet indexed is overwritten and the agent is told it
   won. As a file operation under the sidecar lock, 8 claimants raced 5 times
   gave exactly 1 winner each; with no lock, 2 to 4.
@@ -1031,8 +1031,7 @@ field and reports "not moved".
   subdirectory, and then only the folder" gains "and only for a file with an
   `id:` pin".
 - **ADR-0029, section 4**: "the claim CAS is unchanged -- it remains the one
-  concurrency guard" is amended by decision 10's last bullet, if question 3
-  is answered yes.
+  concurrency guard" is amended by decision 10's last bullet (question 3, decided 2026-10-03).
 - **ADR-0040**: see ADR-0045. The hook contract (decision 4), the meaning of
   `to_frontmatter` and the round-trip clause of the conformance kit, and
   `FRONTMATTER_ALIASES` change. ADR-0014 and ADR-0017 are not amended here.
@@ -1135,7 +1134,7 @@ are in this ADR's scope and spike 2's list.
 ## Questions for the maintainer
 
 Ranked by what they block. Questions 1 and 2 were answered on 2026-10-03 and
-are recorded in decisions 7 and 10; question 3 is still open.
+are recorded in decisions 7 and 10; question 3 is decided (2026-10-03): the claim is decided against the file, not the index row.
 
 **Decided by the maintainer, 2026-10-02** (the items are kept below for
 their reasoning): question 4, the id is the path without `.md`, with `/`

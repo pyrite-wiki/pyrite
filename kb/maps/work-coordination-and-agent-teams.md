@@ -46,7 +46,7 @@ the software-kb and task design, not the repository's branch flow (see
    worktree. **decided** [[adr-0029]] section 6; ADR-0044 marks them by
    `landing: canonical` (**proposed**).
 9. A claim compares `status` against the file under a lock, not the index row.
-   **decided** ADR-0042 decision 10 (asks to amend [[adr-0029]] section 4; ADR-0042 question 3 is still open).
+   **decided** ADR-0042 decision 10 (amends [[adr-0029]] section 4; ADR-0042 question 3 decided 2026-10-03: the claim is decided against the file).
 10. A parent's completion, a task's blocked or ready state and a subtree's
     evidence are derived, not written by hooks. **decided** ADR-0042 decision 4,
     ADR-0045 decision 7. Today `_parent_rollup` writes the parent after save.
