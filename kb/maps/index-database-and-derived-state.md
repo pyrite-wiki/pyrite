@@ -45,8 +45,10 @@ Answers "what can I delete and rebuild?", "where does this row come from?",
    docs list of what a rebuild loses).
 8. One reconcile serves `index_kb`, `sync_kb` and `sync_incremental`; staleness
    is mtime or size, with a hash on rebuild and in `index health`; duplicate ids
-   are reported and the lexicographically first path wins. **decided**
-   [[adr-0038]] step 2 and decided questions 3 and 4.
+   are reported and the lexicographically first path wins. **built**
+   [[adr-0038]] step 2 and decided questions 3 and 4: `IndexManager.reconcile_kb`,
+   with `plan_reconcile` for a read that writes nothing (delete and `index
+   health` use it).
 9. Indexing writes only `last_indexed` and `entry_count` to a KB's row.
    **decided** ADR-0039 decision 10.
 10. List and search reads may lag the files and say when they were indexed.
@@ -82,7 +84,9 @@ Components [[storage-layer]], [[index-manager]], [[schema-migrations]],
 ## Tests that pin it
 
 `tests/backends/test_backend_conformance.py`,
-`tests/test_storage_invariants.py`, `tests/test_migrations.py`,
+`tests/test_storage_invariants.py`, `tests/test_one_reconcile.py` (every
+reconcile path against hand-authored KBs), `tests/test_one_reconcile_structure.py`
+(fails on a second walk-and-write), `tests/test_migrations.py`,
 `tests/test_layer_boundaries.py` (a surface reaches data only through a
 service; the allowlist only shrinks), `tests/test_overlay_backend.py`.
 
@@ -92,8 +96,8 @@ service; the allowlist only shrinks), `tests/test_overlay_backend.py`.
   KB registry is still bridged through a cache ([[adr-0029]], ADR-0039).
 - About 70 raw-connection uses in core and 89 in extensions remain
   ([[adr-0013]] Phases 2 and 3; [[adr-audit-2026-10]]).
-- `index_kb` never deletes rows; `sync_kb` ignores a moved path; staleness is
-  mtime-only ([[adr-0038]] I2; steps 2 and 3, not landed).
+- A same-size edit that also keeps the mtime is not seen by a sync; `index
+  health` catches it by hash ([[adr-0038]] decided question 4).
 - [[adr-0005]]: which migration mechanism is the live path was not verified.
 - Not decided: separate `state.db` (deferred with named triggers in
   [[adr-0029]] section 4).
