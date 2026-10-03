@@ -25,6 +25,7 @@ import hashlib
 import logging
 import os
 import re
+import secrets
 import sqlite3
 import stat
 from collections import defaultdict
@@ -37,7 +38,6 @@ from ..config import KBConfig, PyriteConfig
 from ..exceptions import ValidationError
 from ..models.core_types import _frontmatter_of, explicit_entry_id, id_text, read_entry_id
 from ..storage.repository import KBRepository
-from ..utils.atomic_write import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -150,9 +150,10 @@ def write_refusal(root: Path, path: Path) -> str | None:
     """Why ``path`` must not be written by a pin, or None.
 
     A pin writes only a regular file inside the KB root, reached without a
-    symbolic link: ``atomic_write_text`` follows a link (a ``link.md`` to
-    ``../outside.md`` would write outside the KB) and writes a file with
-    several hard links in place (changing every name, wherever it is). Each
+    symbolic link (a ``link.md`` to ``../outside.md`` names a file outside
+    the KB), with one name (a file with several hard links is one file under
+    several names, maybe outside the KB: a pin would change it under one name
+    and leave the others behind, so it is reported, not written). Each
     component under the root is checked with ``lstat``, so a path through a
     symlinked directory is refused too (``list_files``' ``rglob`` does not
     descend into one today; this does not rely on that). The KB root itself
@@ -180,7 +181,7 @@ def write_refusal(root: Path, path: Path) -> str | None:
     if st is None or not stat.S_ISREG(st.st_mode):
         return "not a regular file"
     if st.st_nlink > 1:
-        return f"has {st.st_nlink} hard links; writing it would change every name"
+        return f"has {st.st_nlink} hard links; pinning one name would split it from the others"
     if not path.resolve().is_relative_to(root.resolve()):
         return "resolves outside the KB"
     return None
@@ -191,16 +192,115 @@ def _digest(data: bytes) -> str:
 
 
 def _write_pin(root: Path, path: Path, planned_original: bytes, new_text: str) -> None:
-    """Write ``new_text`` over ``path``, checked again at the last moment: the
-    path is still a regular file inside the KB, and its bytes are still the
-    ones the pin was computed from (an edit made in between wins: Pyrite is a
-    guest)."""
+    """Write ``new_text`` over ``path`` without ever following a link.
+
+    Checked again at the last moment: the path is still a regular file
+    inside the KB, and its bytes are still the ones the pin was computed
+    from (an edit made in between wins: Pyrite is a guest). Then every
+    operation goes through a descriptor of the checked directory, never a
+    path that is resolved again:
+
+    - the directory is opened ``O_NOFOLLOW`` and must be the inode
+      ``write_refusal`` checked (``st_dev``/``st_ino``), so a parent swapped
+      for a link after the check is refused, not written into;
+    - the file is re-read ``O_NOFOLLOW`` through that directory (a link
+      swapped in fails with ``ELOOP``) and must still be a regular file with
+      one link and the planned bytes;
+    - the new text goes to a temp file created ``O_CREAT|O_EXCL|O_NOFOLLOW``
+      beside it, written and fsynced through its descriptor;
+    - ``rename`` puts it at the name: rename never follows its target, so a
+      link swapped in after the re-read is itself replaced, and the file it
+      pointed to is untouched.
+
+    Not ``atomic_write_text``: it resolves the path with ``realpath`` and
+    writes a multiply-linked file in place, both of which follow a link.
+
+    Known limit, no lock removes it: an edit that lands between the byte
+    re-read and the rename is overwritten by the pinned text.
+    """
+    if not (os.rename in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW")):
+        raise PinRefusedError("this platform cannot write without following links")
+    # The folder as it is when checked: taken before write_refusal, so a
+    # folder swapped after the check is a different inode (or a link).
+    try:
+        expected_dir = os.lstat(path.parent)
+    except OSError as e:
+        raise PinRefusedError(f"its folder cannot be inspected: {e.strerror or e}") from e
     refusal = write_refusal(root, path)
     if refusal:
         raise PinRefusedError(refusal)
-    if path.read_bytes() != planned_original:
+    try:
+        dir_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as e:
+        raise PinRefusedError(f"cannot open its folder without following a link: {e}") from e
+    try:
+        here = os.fstat(dir_fd)
+        if (here.st_dev, here.st_ino) != (expected_dir.st_dev, expected_dir.st_ino):
+            raise PinRefusedError("its folder changed after it was checked; run the command again")
+        _check_unchanged(dir_fd, path.name, planned_original)
+        _replace_through(dir_fd, path.name, new_text.encode("utf-8"))
+        try:
+            os.fsync(dir_fd)
+        except OSError:  # a filesystem that refuses a directory fsync
+            pass
+    finally:
+        os.close(dir_fd)
+
+
+def _check_unchanged(dir_fd: int, name: str, planned_original: bytes) -> None:
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
+    except OSError as e:
+        raise PinRefusedError(
+            f"cannot be read without following a link ({e.strerror or e}); run the command again"
+        ) from e
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            raise PinRefusedError(
+                "is no longer a regular file with one name; run the command again"
+            )
+        chunks = []
+        while chunk := os.read(fd, 1 << 16):
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+    if b"".join(chunks) != planned_original:
         raise PinRefusedError("the file changed after it was read; run the command again")
-    atomic_write_text(path, new_text)
+
+
+def _replace_through(dir_fd: int, name: str, data: bytes) -> None:
+    """Create a temp file beside ``name`` and rename it over ``name``, both
+    through ``dir_fd``; the rename replaces whatever entry ``name`` is."""
+    st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    tmp = f".{name}.{secrets.token_hex(8)}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
+    try:
+        try:
+            os.fchmod(fd, stat.S_IMODE(st.st_mode))
+            if (st.st_uid, st.st_gid) != (os.getuid(), os.getgid()):
+                os.fchown(fd, st.st_uid, st.st_gid)
+            view = memoryview(data)
+            while view:
+                view = view[os.write(fd, view) :]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        _rename(dir_fd, tmp, name)
+    except BaseException as e:
+        try:
+            os.unlink(tmp, dir_fd=dir_fd)
+        except OSError:
+            pass
+        if isinstance(e, OSError):
+            raise PinRefusedError(f"could not be written: {e.strerror or e}") from e
+        raise
+
+
+def _rename(dir_fd: int, tmp: str, name: str) -> None:
+    """The one step that puts the pinned text at ``name`` (a seam: a test
+    swaps ``name`` for a link right before it)."""
+    os.rename(tmp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
 
 
 # --- scan ------------------------------------------------------------------
@@ -430,10 +530,15 @@ def find_kb_without_writes(kb_name: str) -> KBConfig | None:
     opens the index (creating ``index.db`` and its ``-wal``/``-shm`` files,
     running migrations) and may write a registry row back. Here the config
     directory is not created, and the index is read only if it exists,
-    opened ``immutable`` so SQLite creates no ``-wal``/``-shm`` file. The
-    cost: a registration still in an uncheckpointed WAL (a running server
-    that has not checkpointed) is not seen; the KB is then "not found",
-    never a wrong KB.
+    opened ``immutable`` so SQLite creates no ``-wal``/``-shm`` file.
+
+    The cost: an immutable read ignores the WAL, so a registration still in
+    an uncheckpointed WAL (a running server that has not checkpointed) is
+    not seen. A KB added there is "not found"; a KB whose path was changed
+    there is read at its OLD path, and the report then lists the wrong
+    files. Only ``ids missing`` and ``ids pin --dry-run`` use this lookup,
+    and they only read: they report wrong files, they write nothing. A real
+    ``ids pin`` finds the KB through ``cli_context``, which reads the WAL.
     """
     config = pyrite_config.load_config(create_dir=False)
     kb = config.get_kb(kb_name)

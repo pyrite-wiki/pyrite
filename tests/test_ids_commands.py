@@ -159,9 +159,9 @@ def test_pin_adds_exactly_one_id_line_and_nothing_else(kb, name):
     before = _json(_run(config, "ids", "missing", "-k", "notes", "--format", "json"))
     [row] = before["missing"]
     if expected is None:
-        # no title: the current rule's hash fallback (`entry-xxxxxxxx`)
-        expected = row["id"]
-        assert expected.startswith("entry-")
+        # no title: today's rule hashes the empty title (sha1 of "" starts
+        # da39a3ee), the same id for every such file (#639)
+        expected = "entry-da39a3ee"
     assert row == {"path": rel, "id": expected, "status": "missing"}
 
     result = _run(config, "ids", "pin", "-k", "notes")
@@ -501,7 +501,7 @@ def test_files_with_no_title_share_the_hash_id_and_are_a_collision(kb):
     _commit(root)
     data = _json(_run(config, "ids", "missing", "-k", "notes", "--format", "json"))
     [group] = data["collisions"]
-    assert group["id"].startswith("entry-")
+    assert group["id"] == "entry-da39a3ee"
     result = _run(config, "ids", "pin", "-k", "notes", "--rename", "b.md=note-b")
     assert result.exit_code == 0, result.output
     assert _added_lines(root, "a.md") == [f"id: {group['id']}"]
@@ -617,20 +617,55 @@ def test_a_hard_linked_file_is_reported_and_never_written(kb):
     assert outside.read_text() == "---\ntitle: Shared\n---\n"
 
 
+def _within(seconds: float, fifo: Path, fn):
+    """Run ``fn`` in a thread and fail, not hang, if it is still running after
+    ``seconds`` (a read of ``fifo`` blocks until a writer opens it). On a
+    timeout the FIFO is opened for writing and closed, so the blocked read
+    sees end-of-file and the thread ends."""
+    import threading
+
+    box: dict = {}
+
+    def run():
+        try:
+            box["value"] = fn()
+        except BaseException as e:  # re-raised in the test's thread
+            box["error"] = e
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(seconds)
+    if t.is_alive():
+        try:
+            os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
+        except OSError:
+            pass
+        t.join(5)
+        pytest.fail(f"still running after {seconds}s: something read {fifo.name}")
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
+
+
 def test_a_fifo_named_like_an_entry_is_skipped_without_being_read(kb):
     root, config = kb
-    os.mkfifo(root / "pipe.md")  # reading it would block forever
+    fifo = root / "pipe.md"
+    os.mkfifo(fifo)  # reading it blocks until a writer opens it
     _write(root, {"a.md": "---\ntitle: A\n---\n"})
     # --dry-run and the service's apply: a real `ids pin` then syncs the index,
     # and `index sync` itself blocks on a FIFO (#709, not this command's read).
-    data = _json(_run(config, "ids", "pin", "-k", "notes", "--dry-run"))
+    result = _within(30, fifo, lambda: _run(config, "ids", "pin", "-k", "notes", "--dry-run"))
+    data = _json(result)
     assert {r["path"]: r["reason"] for r in data["skipped"]} == {"pipe.md": "not a regular file"}
     assert [p["path"] for p in data["pinned"]] == ["a.md"]
 
     from pyrite.services import id_pin_service
 
-    found = id_pin_service.scan(config.get_kb("notes"))
-    done = id_pin_service.apply(found, id_pin_service.plan(found, {}))
+    def scan_and_apply():
+        found = id_pin_service.scan(config.get_kb("notes"))
+        return id_pin_service.apply(found, id_pin_service.plan(found, {}))
+
+    done = _within(30, fifo, scan_and_apply)
     assert [p["path"] for p in done["pinned"]] == ["a.md"]
 
 
@@ -869,3 +904,134 @@ def test_a_dry_run_reports_a_file_swapped_for_a_link_after_the_scan(kb, monkeypa
     monkeypatch.setattr(id_pin_service, "plan", plan_then_swap)
     data = _json(_run(config, "ids", "pin", "-k", "notes", "--dry-run"))
     assert data["pinned"] == [] and "symbolic link" in data["skipped"][0]["reason"]
+
+
+# --- fix round 2: the final write never follows a link ----------------------
+
+
+def test_a_link_swapped_in_at_the_rename_is_replaced_and_its_target_untouched(kb, monkeypatch):
+    """The exact moment: after every check, right before the rename. The
+    rename replaces the link itself; the file it pointed to keeps its bytes."""
+    from pyrite.services import id_pin_service
+
+    root, config = kb
+    _write(root, {"d.md": "---\ntitle: Delta\n---\nd\n"})
+    outside = root.parent / "outside.md"
+    outside.write_text("---\ntitle: Out\n---\nx\n")
+    real = id_pin_service._rename
+
+    def swap_then_rename(dir_fd, tmp, name):
+        (root / "d.md").unlink()
+        os.symlink(outside, root / "d.md")
+        return real(dir_fd, tmp, name)
+
+    monkeypatch.setattr(id_pin_service, "_rename", swap_then_rename)
+    result = _run(config, "ids", "pin", "-k", "notes")
+    assert result.exit_code == 0, result.output
+    assert outside.read_text() == "---\ntitle: Out\n---\nx\n"
+    assert not (root / "d.md").is_symlink()
+    assert (root / "d.md").read_text() == "---\ntitle: Delta\nid: delta\n---\nd\n"
+    assert not [p for p in root.iterdir() if p.name.endswith(".tmp")]
+
+
+def test_a_link_swapped_in_after_the_last_check_is_not_read_through(kb, monkeypatch):
+    """After ``write_refusal``, before the re-read: the re-read is
+    ``O_NOFOLLOW``, so the link is refused, even with identical bytes."""
+    from pyrite.services import id_pin_service
+
+    root, config = kb
+    _write(root, {"a.md": SAME})
+    real = id_pin_service.write_refusal
+    calls = {"n": 0}
+    swapped = {}
+
+    def check_then_swap(root_, path):
+        reason = real(root_, path)
+        calls["n"] += 1
+        if calls["n"] == 3:  # scan, _prepared, then _write_pin's last check
+            swapped["outside"] = _swap_for_link_to_identical_outside(root)
+        return reason
+
+    monkeypatch.setattr(id_pin_service, "write_refusal", check_then_swap)
+    data = _json(_run(config, "ids", "pin", "-k", "notes"))
+    assert data["pinned"] == [], data
+    assert "following a link" in data["skipped"][0]["reason"]
+    assert swapped["outside"].read_text() == SAME
+
+
+def test_a_folder_swapped_for_a_link_after_the_last_check_is_not_written_into(
+    kb, monkeypatch, tmp_path
+):
+    from pyrite.services import id_pin_service
+
+    root, config = kb
+    _write(root, {"sub/a.md": SAME})
+    elsewhere = tmp_path / "elsewhere"
+    real = id_pin_service.write_refusal
+    calls = {"n": 0}
+
+    def check_then_swap_folder(root_, path):
+        reason = real(root_, path)
+        calls["n"] += 1
+        if calls["n"] == 3:
+            (root / "sub").rename(elsewhere)
+            os.symlink(elsewhere, root / "sub")
+        return reason
+
+    monkeypatch.setattr(id_pin_service, "write_refusal", check_then_swap_folder)
+    data = _json(_run(config, "ids", "pin", "-k", "notes"))
+    assert data["pinned"] == [], data
+    assert (elsewhere / "a.md").read_text() == SAME
+
+
+def test_the_pinned_file_keeps_its_mode(kb):
+    root, config = kb
+    _write(root, {"a.md": SAME})
+    os.chmod(root / "a.md", 0o640)
+    assert _run(config, "ids", "pin", "-k", "notes").exit_code == 0
+    assert (root / "a.md").stat().st_mode & 0o777 == 0o640
+
+
+def _after_the_last_check(monkeypatch, action):
+    """Run ``action`` right after ``_write_pin``'s own ``write_refusal`` (the
+    third call for a one-file KB: scan, ``_prepared``, ``_write_pin``)."""
+    from pyrite.services import id_pin_service
+
+    real = id_pin_service.write_refusal
+    calls = {"n": 0}
+
+    def check_then_act(root_, path):
+        reason = real(root_, path)
+        calls["n"] += 1
+        if calls["n"] == 3:
+            action()
+        return reason
+
+    monkeypatch.setattr(id_pin_service, "write_refusal", check_then_act)
+
+
+def test_a_folder_replaced_by_another_folder_after_the_last_check_is_refused(kb, monkeypatch):
+    """Same name, same bytes, a different directory: the write goes only
+    into the folder that was checked (its inode), so it is refused."""
+    root, config = kb
+    _write(root, {"sub/a.md": SAME})
+
+    def replace_folder():
+        (root / "sub").rename(root / "sub-old")
+        (root / "sub").mkdir()
+        (root / "sub" / "a.md").write_text(SAME)
+
+    _after_the_last_check(monkeypatch, replace_folder)
+    data = _json(_run(config, "ids", "pin", "-k", "notes"))
+    assert data["pinned"] == [] and "folder changed" in data["skipped"][0]["reason"]
+    assert (root / "sub" / "a.md").read_text() == SAME
+
+
+def test_a_second_name_added_after_the_last_check_is_refused(kb, monkeypatch, tmp_path):
+    root, config = kb
+    _write(root, {"a.md": SAME})
+    other = tmp_path / "second-name.md"
+    _after_the_last_check(monkeypatch, lambda: os.link(root / "a.md", other))
+    data = _json(_run(config, "ids", "pin", "-k", "notes"))
+    assert data["pinned"] == [] and "one name" in data["skipped"][0]["reason"]
+    assert other.read_text() == SAME
