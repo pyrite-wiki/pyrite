@@ -134,7 +134,7 @@ def search(
         resp_data = {"query": q, "count": len(results), "results": results}
         if warnings:
             resp_data["warnings"] = warnings
-        neg = negotiate_response(request, resp_data)
+        neg = negotiate_response(request, resp_data, fields=fields_list)
         if neg is not None:
             return neg
         if fields_list:
