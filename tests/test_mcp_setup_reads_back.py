@@ -1939,10 +1939,6 @@ def test_text_report_gives_old_and_new_as_a_person_would_type_them(env, monkeypa
     assert "args: mcp --tier admin -> mcp --tier read" in result.output
 
 
-@pytest.mark.control(
-    reason="passes on dev, where mcp-setup had no --format at all; guards that the "
-    "local declaration never grows the -f that #303 retires"
-)
 @pytest.mark.parametrize(
     ("args", "tier", "named"),
     [(["mcp", "--tier", "read"], "read", True), (["mcp"], "write", False)],
@@ -1966,6 +1962,10 @@ def test_the_report_gives_the_tier_the_entry_serves_not_the_default(
     assert f"({tier} tier" in text and f"{item['tools']} tools)" in text
 
 
+@pytest.mark.control(
+    reason="passes on dev, where mcp-setup had no --format at all; guards that the "
+    "local declaration never grows the -f that #303 retires"
+)
 def test_there_is_no_short_f_for_format(env):
     """`-f` stops meaning `--format` (#303); here it never did."""
     Target(env, "desktop")
