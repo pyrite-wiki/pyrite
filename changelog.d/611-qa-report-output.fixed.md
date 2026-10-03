@@ -1,1 +1,1 @@
-QA stale and compact reports preserve machine-readable output without terminal wrapping or markup. URL checks scan all entry types by default and report database failures as structured errors instead of claiming no URLs exist.
+QA stale and compact reports preserve machine-readable output without terminal wrapping or markup. URL checks scan all entry types by default and report database failures as structured errors instead of claiming no URLs exist. Database locks use the shared storage error translator and retain retryable status.
