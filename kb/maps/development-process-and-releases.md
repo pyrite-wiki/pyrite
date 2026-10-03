@@ -22,6 +22,38 @@ request, a process finding?", "what does a release require?". Layer 2 under
 `.claude/skills/pyrite-conductor/release-runbook.md`; this map says which ADR
 each rests on.
 
+## How the work is run: the agent loop
+
+Pyrite is built by agents under one maintainer. The rules live in the skills
+under `.claude/skills/` and `.claude/agents/`, which `pyrite search` does not
+index; these are the ones a contributor or an agent asks about, and where each
+is defined.
+
+- **The Andon cord.** Anyone (the maintainer, the conductor, a worker, a
+  reviewer, the architect, a contributor) can stop the loop when work churns
+  instead of progressing: two themes fail review the same way, a theme passes
+  twice its groomed size, a decision is being re-decided, a fix round would
+  repeat the last one, or the work runs against [[design]]. Pull it by opening
+  an issue labelled `andon` (security findings on the private repository).
+  While one is open nothing is dispatched and no fix round is sent; the root
+  cause is found and a directed fix made, then the issue is closed and the loop
+  resumes. Defined in `.claude/skills/pyrite-conductor/SKILL.md`, "The Andon
+  cord". (Named for the Toyota Production System's cord; see the `tps` demo
+  KB.)
+- **The circuit breaker.** A theme that reaches its third worker fix round, two
+  red pushes to `dev`, or a reverted PR stops the loop and goes to the
+  maintainer. Same skill, "Stop conditions".
+- **The groom.** Before work is dispatched the architect reads [[design]],
+  names the principle at stake, challenges the ticket's framing, states the
+  user's model and the implementation model, and raises a request that breaks
+  the architecture while the user's problem is real to the maintainer. A bug
+  report stays a bug report. `.claude/agents/pyrite-architect.md`.
+- **The cold read.** A reviewer that sees only the diff checks the claimed
+  property everywhere it must hold. `.claude/agents/pyrite-reviewer.md`.
+- **A fix round states the property, not the instances.** The conductor skill.
+- **Risk spikes.** Throwaway code to learn before building, used when the scope
+  or approach is uncertain. `.claude/agents/pyrite-spike.md`.
+
 ## The design today
 
 1. `dev` is the integration branch and default; `main` moves only by
