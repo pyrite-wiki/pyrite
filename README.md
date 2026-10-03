@@ -60,8 +60,10 @@ client reads it: `claude mcp add` for Claude Code (or `./.mcp.json` with
 again any time. An entry that already points here is not rewritten; one that
 points elsewhere gets its command path changed (and its tier, if you pass
 `--tier`), and keeps its `env`, extra arguments and other keys. Other servers
-are never touched. If it cannot do that safely it changes nothing, says why
-and exits 1. The JSON report names each client and what changed.
+are never touched. Each client is all or nothing: one it cannot change safely
+is left as it was with the reason, while another may still be changed, and
+the exit code is 1 unless every client ended up pointing here. The JSON report
+names each client and what changed.
 [Getting started](docs/getting-started.md#connect-an-ai-via-mcp) lists the
 cases.
 

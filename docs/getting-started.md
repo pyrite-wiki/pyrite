@@ -149,7 +149,8 @@ A new entry runs this install's `pyrite` by absolute path at the `write` tier
 
 It is safe to run again, and safe on a config you edited by hand:
 
-- An entry that already points here is left alone: nothing is written.
+- An entry that already points here is left alone and nothing is written,
+  unless `--tier` asks for a tier it does not have; then only the tier changes.
 - An entry that points somewhere else has its `command` path changed, and its
   tier only if you pass `--tier`. Everything else you put in the entry (`env`,
   extra arguments, other keys) is kept. The report gives the old and new
