@@ -1,5 +1,8 @@
 # Pyrite field feedback
 
+**New entries go in [`feedback/`](feedback/README.md), one file per entry
+(since 2026-10-03, #727).** This file keeps the entries written before then.
+
 Hallway-testing log. Append entries; do not edit or rewrite someone else's — the
 series is the value. Maintainers: triage visibly with `[fixed <commit>]`,
 `[wontfix — reason]`, or `[tracked]`, and leave the original text intact.

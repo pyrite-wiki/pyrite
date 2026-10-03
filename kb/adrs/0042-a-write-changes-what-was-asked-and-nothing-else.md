@@ -609,12 +609,17 @@ files. It found three places where decision 10 cannot work as written, and one
 correction to decision 2. The maintainer accepted all five amendments on
 2026-10-03. They override the text above where the two differ.
 
-- **A1 (decision 10, the lock directory).** The lock directory is per host and
-  shared by every OS user that writes the same tree. Default:
-  `$XDG_RUNTIME_DIR/pyrite/locks` on Linux, `$TMPDIR/pyrite-locks` on macOS,
-  `%LOCALAPPDATA%\pyrite\locks` on Windows. A `lock_dir` setting in the
-  operator's config (ADR-0039) overrides it. An operator who runs a server as
-  a service user next to humans points both at one group-writable directory.
+- **A1 (decision 10, the lock directory).** The lock directory is per user by
+  default and shared across OS users only when configured (maintainer,
+  2026-10-03, after the P2 build found the first wording contradicted its own
+  defaults). Default: `$XDG_RUNTIME_DIR/pyrite/locks` on Linux,
+  `$TMPDIR/pyrite-locks` on macOS, `%LOCALAPPDATA%\pyrite\locks` on Windows.
+  A `lock_dir` setting in the operator's config (ADR-0039), or
+  `PYRITE_LOCK_DIR`, overrides it. An operator who runs a server as a service
+  user next to humans points both at one shared directory. Pyrite uses a lock
+  directory only if it is not a symlink, is owned by the current user or
+  root, and is not writable by others unless it is sticky; otherwise the write
+  fails closed with an error naming the setting.
   `index health` warns when the server's lock directory differs from the
   CLI's for the same KB. Never `default_data_dir()`, never inside the KB. (A
   per-user directory, as first written, does not stop a service-user server
