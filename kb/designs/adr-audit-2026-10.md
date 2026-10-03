@@ -24,6 +24,8 @@ links:
 
 # ADR audit, 2026-10-02
 
+> **As of `d35eae77` (2026-10-02, before PR #635 merged).** It covers the 39 ADR files then on `dev`. Since then ADR-0039 and ADR-0041 to ADR-0045 have landed (status proposed) and ADR-0038 carries a proposed amendment; for their standing see [[adr-learnings]] and the topic maps under `kb/maps/`. A point-in-time audit: rerun it rather than editing rows.
+
 The maintainer's brief (2026-10-02): "review the existing ADR's. Some have been
 superceded in whole or part, some are possibly misslabeled, and they are part
 of the agent interface for undestanding the codebase." This entry records what
