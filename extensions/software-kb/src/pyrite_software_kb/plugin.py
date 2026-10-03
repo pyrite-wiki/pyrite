@@ -9,6 +9,7 @@ from pyrite.plugins.capabilities import Capability
 from pyrite.plugins.scoping import kb_scope_clause
 from pyrite.schema import generate_entry_id
 
+from .adr_listing import adr_relations, adr_sort_key
 from .entry_types import (
     ADREntry,
     BacklogItemEntry,
@@ -631,6 +632,14 @@ class SoftwareKBPlugin:
                 "inverse": "implements",
                 "description": "Component implements a design doc",
             },
+            "amends": {
+                "inverse": "amended_by",
+                "description": "A later ADR amends an earlier one",
+            },
+            "amended_by": {
+                "inverse": "amends",
+                "description": "An ADR is amended by a later one",
+            },
             "supersedes": {
                 "inverse": "superseded_by",
                 "description": "New ADR supersedes an old one",
@@ -711,12 +720,7 @@ class SoftwareKBPlugin:
     def _mcp_adrs(
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
     ) -> dict[str, Any]:
-        """List ADRs, bounded by `limit`/`offset`.
-
-        The status filter runs against the full result set and the bound is
-        applied after it (#233): limiting first would cut the list before the
-        filter and hand back the wrong page.
-        """
+        """List ADRs in number order with their visible standing relations."""
         import json
 
         db, should_close = self._get_db()
@@ -729,10 +733,7 @@ class SoftwareKBPlugin:
             query = "SELECT * FROM entry WHERE entry_type = 'adr'"
             clause, scope_params = kb_scope_clause("kb_name", kb_name, readable_kbs)
             query += clause
-            params = list(scope_params)
-            query += " ORDER BY created_at DESC"
-
-            rows = db._raw_conn.execute(query, params).fetchall()
+            rows = db._raw_conn.execute(query, list(scope_params)).fetchall()
             adrs = []
             for row in rows:
                 meta = {}
@@ -755,8 +756,11 @@ class SoftwareKBPlugin:
                     }
                 )
 
+            adrs.sort(key=adr_sort_key)
             total = len(adrs)
             page = adrs[offset : offset + limit] if limit is not None else adrs[offset:]
+            for adr in page:
+                adr["relations"] = adr_relations(db, adr, readable_kbs=readable_kbs)
 
             return {
                 "count": len(page),
