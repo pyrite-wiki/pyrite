@@ -118,6 +118,7 @@ links into your file that you did not ask for.
 id: hearing
 title: The hearing
 type: timeline_event
+date: 2026-01-01
 actors: ["[[jane-doe]]"]
 ---
 

@@ -22,19 +22,24 @@ Flags on the ``file`` fence (ADR-0042, "Acceptance"):
 - ``emitter``: during the update, the YAML emitter is never handed a
   top-level key of the file that the operation did not name.
 - ``concurrent``: the ``update`` block is a list; each element is sent by
-  its own process, both starting from the same file. A barrier at the moment
-  of replacing the file holds each writer until all have reached it (or 10
-  s pass), so today's read-modify-write race is entered every run instead of
-  by luck.
+  its own process, both starting from the same file. A barrier holds each
+  writer at its first lock or replace of the file until all have reached it
+  (see ``_CONCURRENT_CHILD``), so the race is entered every run, not by luck.
 - ``stale``: after the read and before the update, the file is edited by hand
-  (a line appended to the body). The update carries ``content_hash`` from the
-  read; the write must be refused and the file left as the hand edit made it.
+  (a line appended to the body). The read must return ``content_hash``, and
+  the update (a whole-document replace, body included) carries it; the write
+  must be refused and the file left as the hand edit made it.
 - ``noid``: the file has no ``id:``; it lives at ``posts/<slug>.md`` and is
   addressed by that path without ``.md`` (ADR-0042 decision 5). After the
   update, a read by that path must still return it.
 
-Flag on the ``update`` fence: ``echo`` sends a ``kb_get`` result back, with
-the block's keys laid over it.
+Flags on the ``update`` fence: ``echo`` sends a ``kb_get`` result back, with
+the block's keys laid over it; ``stale`` repeats the file flag (the ADR puts it on both).
+
+A precondition of a flag's case that does not hold (the file is not CRLF,
+the actor the hook resolves is missing, a writer missed the barrier) raises
+``CaseNotEnteredError``, which no xfail absorbs: an example fails only for the
+divergence it names.
 
 The diff is rendered per line, with ``-`` for a line removed and ``+`` for a
 line added; a block of n lines replaced by n lines is shown as n ``-``/``+``
@@ -88,9 +93,10 @@ KNOWN_DIVERGENCES: dict[str, tuple[str, str]] = {
         r"diff was:\n\(end of diff\)",
     ),
     "a-save-does-not-add-what-a-hook-used-to-add": (
-        "principle 3/decision 8: refused for a missing `date` this write did not cause; "
-        "given a date, cascade's resolve_actor_links adds a `links:` block (principle 4)",
-        r"Timeline event must have a date",
+        "principle 4: cascade's resolve_actor_links writes a `links:` block for the "
+        "actor into the file on an unrelated title edit",
+        r"diff was:\n-title: The hearing\n\+title: The hearing, postponed\n"
+        r"\+links:\n\+- target: jane-doe\n",
     ),
     "two-writers-on-different-keys-both-survive": (
         "decision 10: each writer replaces the whole file from its own read; the last "
@@ -103,9 +109,9 @@ KNOWN_DIVERGENCES: dict[str, tuple[str, str]] = {
         r"diff was:\n----\r\n-# header comment\r\n",
     ),
     "a-stale-whole-document-replace-is-refused": (
-        "decision 10: `content_hash` is set aside (`ignored`) and the replace is "
-        "written over the hand edit",
-        r"a stale replace was written, not refused",
+        "decisions 9 and 11: kb_get returns no `content_hash`, so a replace cannot "
+        "say what it read (kb_update would set the argument aside as `ignored`)",
+        r"the read returned no content_hash",
     ),
     "an-id-less-file-keeps-its-identity-when-its-title-changes": (
         "principle 5: no entry `posts/intro`; an id-less file is known by its title's "
@@ -213,6 +219,20 @@ DOC_EXAMPLES = parse_examples(DOC.read_text(encoding="utf-8")) if DOC.exists() e
 # --------------------------------------------------------------------------
 
 
+class CaseNotEnteredError(Exception):
+    """The run did not enter the case its example is about.
+
+    Not an AssertionError, so no xfail absorbs it: an example may fail only
+    for the divergence KNOWN_DIVERGENCES names, never because the harness
+    missed the case.
+    """
+
+
+def _require(condition: object, message: str) -> None:
+    if not condition:
+        raise CaseNotEnteredError(message)
+
+
 def _front(text: str) -> dict[str, Any]:
     from pyrite.utils.yaml import load_yaml
 
@@ -276,21 +296,35 @@ def _read(config: PyriteConfig, entry_id: str) -> dict[str, Any]:
     return got.get("entry", got)
 
 
+def _file_body(text: str) -> str:
+    return text.replace("\r\n", "\n").split("---\n", 2)[2]
+
+
 def _to_kb_update_args(
-    op: dict[str, Any], config: PyriteConfig, entry_id: str, *, echo: bool
+    op: dict[str, Any], config: PyriteConfig, entry_id: str, file_text: str, *, echo: bool
 ) -> dict[str, Any]:
     """The doc's operation as today's ``kb_update`` arguments.
 
-    ``set`` and ``replace`` name fields, sent as fields. ``append`` has no
-    counterpart today: the item is added to the list a read returned and the
-    whole list is sent. ``content_hash`` travels as the argument of that name.
+    - ``set`` names fields, sent as fields.
+    - ``append`` has no counterpart today. The item is added to the list as
+      the *file* holds it, and the whole list is sent. A read would hand back
+      Pyrite's normalised reading of the items (``target_id``/``target_kb``,
+      ``since`` dropped), and sending that would rewrite them for a reason
+      that is not this example's. Under ADR-0042 decision 2, a set of a whole
+      list copies unchanged items byte for byte, so this mapping can pass.
+      When kb_update grows an ``append`` operation, send that here instead.
+    - ``replace`` is a whole-document write (decision 11): its fields, plus
+      the body as the file holds it, plus ``content_hash``.
     """
     args: dict[str, Any] = dict(_read(config, entry_id)) if echo else {}
     for key, value in op.items():
-        if key in ("set", "replace"):
+        if key == "set":
             args.update(value)
+        elif key == "replace":
+            args.update(value)
+            args["body"] = _file_body(file_text)
         elif key == "append":
-            current = _read(config, entry_id)
+            current = _front(file_text)
             for name, item in value.items():
                 args[name] = [*(current.get(name) or []), item]
         elif key == "content_hash":
@@ -324,6 +358,15 @@ def _expected_diff(ex: Example) -> str:
 # Flags that need more than one call
 # --------------------------------------------------------------------------
 
+#: Each writer is held at its first step into the critical section, until
+#: every writer has reached it: the first exclusive lock it takes (fcntl
+#: flock/lockf, msvcrt.locking) or, with no lock, its first replace of the
+#: entry file. By then each has read the file it will write from. Today's
+#: path takes no lock and reads the file three times before it replaces it,
+#: so a barrier at a read would not force the race. A path that locks only
+#: around compare-and-replace (ADR-0042 decision 10) meets the barrier before
+#: the lock, so it cannot deadlock here. A writer that waits 10 s reports
+#: `timed_out`, and the test then fails as not entered, never as an xpass.
 _CONCURRENT_CHILD = textwrap.dedent(
     """
     import json, os, sys, time
@@ -334,29 +377,55 @@ _CONCURRENT_CHILD = textwrap.dedent(
     spec = json.loads(sys.argv[1])
     target = os.path.realpath(spec["target"])
     barrier = Path(spec["barrier"])
+    state = {"reached": None, "timed_out": False}
+
+    def wait(where):
+        if state["reached"]:
+            return
+        state["reached"] = where
+        (barrier / str(os.getpid())).touch()
+        deadline = time.monotonic() + 10
+        while len(list(barrier.iterdir())) < spec["writers"]:
+            if time.monotonic() > deadline:
+                state["timed_out"] = True
+                return
+            time.sleep(0.01)
+
     real_replace = os.replace
-    held = []
-
     def replace(src, dst, *a, **kw):
-        # Hold the first replace of the entry file until every writer is here.
-        if not held and os.path.realpath(dst) == target:
-            held.append(True)
-            (barrier / str(os.getpid())).touch()
-            deadline = time.monotonic() + 10
-            while len(list(barrier.iterdir())) < spec["writers"] and time.monotonic() < deadline:
-                time.sleep(0.01)
+        if os.path.realpath(dst) == target:
+            wait("replace")
         return real_replace(src, dst, *a, **kw)
-
     os.replace = replace
+
+    try:
+        import fcntl
+        for name in ("flock", "lockf"):
+            real = getattr(fcntl, name)
+            def locked(fd, op, *a, _real=real, _name=name, **kw):
+                if op & fcntl.LOCK_EX:
+                    wait(_name)
+                return _real(fd, op, *a, **kw)
+            setattr(fcntl, name, locked)
+    except ImportError:
+        import msvcrt
+        real_locking = msvcrt.locking
+        def locking(fd, mode, n):
+            if mode in (msvcrt.LK_LOCK, msvcrt.LK_NBLCK):
+                wait("msvcrt.locking")
+            return real_locking(fd, mode, n)
+        msvcrt.locking = locking
+
     config = PyriteConfig(
         knowledge_bases=[KBConfig(name=spec["kb"], path=Path(spec["kb_path"]), kb_type=spec["kb_type"])],
         settings=Settings(index_path=Path(spec["index"])),
     )
     server = PyriteMCPServer(config, tier="write")
     try:
-        print(json.dumps(server._dispatch_tool("kb_update", spec["args"]), default=str))
+        result = server._dispatch_tool("kb_update", spec["args"])
     finally:
         server.close()
+    print(json.dumps({"result": result, **state}, default=str))
     """
 )
 
@@ -377,7 +446,7 @@ def _run_concurrent(
             "kb_path": str(kb.path),
             "kb_type": kb.kb_type,
             "index": str(config.settings.index_path),
-            "args": _to_kb_update_args(op, config, entry_id, echo=False),
+            "args": _to_kb_update_args(op, config, entry_id, path.read_text(), echo=False),
         }
         procs.append(
             subprocess.Popen(
@@ -388,18 +457,19 @@ def _run_concurrent(
                 env={**os.environ, "PYTHONWARNINGS": "ignore"},
             )
         )
-    results = []
+    reports = []
     for proc in procs:
         out, err = proc.communicate(timeout=120)
-        assert proc.returncode == 0, f"writer exited {proc.returncode}: {err[-2000:]}"
-        results.append(json.loads(out.strip().splitlines()[-1]))
-    reached = len(list(barrier.iterdir()))
-    assert reached == len(ops), (
-        f"{reached} of {len(ops)} writers reached the barrier at os.replace of the entry "
-        "file, so the race was not entered; if the write path no longer ends in "
-        "os.replace, move the barrier to where it does replace the file"
-    )
-    return results
+        _require(proc.returncode == 0, f"writer exited {proc.returncode}: {err[-2000:]}")
+        reports.append(json.loads(out.strip().splitlines()[-1]))
+    for report in reports:
+        _require(
+            report["reached"] and not report["timed_out"],
+            f"a writer {'timed out at' if report['timed_out'] else 'never reached'} the barrier "
+            f"({report['reached']}), so the writers did not start from the same file; if the "
+            "write path neither locks nor replaces the entry file, move the barrier",
+        )
+    return [report["result"] for report in reports]
 
 
 def _spy_emitter(monkeypatch: pytest.MonkeyPatch) -> list[set[str]]:
@@ -436,10 +506,37 @@ def _spy_emitter(monkeypatch: pytest.MonkeyPatch) -> list[set[str]]:
 # --------------------------------------------------------------------------
 
 
+def _require_entered(ex: Example, config: PyriteConfig, path: Path, entry_id: str) -> None:
+    """What makes each flag's case the case, checked before the write."""
+    raw = path.read_bytes()
+    meta = _front(ex.file)
+    if "crlf" in ex.file_flags:
+        _require(raw.count(b"\r\n") == raw.count(b"\n"), "the crlf file is not all CRLF")
+    if "noid" in ex.file_flags:
+        _require("id" not in meta, "the noid file has an id: line")
+    if meta.get("type") == "timeline_event":
+        from pyrite.plugins.registry import get_registry
+
+        kb_type = config.knowledge_bases[0].kb_type
+        hooks = get_registry().get_hooks_for_kb(kb_type).get("before_save", [])
+        _require(
+            any(h.__name__ == "resolve_actor_links" for h in hooks),
+            f"no resolve_actor_links before_save hook in a {kb_type} KB",
+        )
+        for ref in meta.get("actors", []):
+            actor = ref.strip("[]")
+            got = _call(config, "kb_get", {"kb_name": KB, "entry_id": actor})
+            _require(
+                not _is_error(got),
+                f"actor {actor} is not in the KB, so the hook has nothing to add",
+            )
+
+
 def _check(ex: Example, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config, path, entry_id = _build_kb(tmp_path, ex)
     op = json.loads(ex.update)
     echo = "echo" in ex.update_flags
+    _require_entered(ex, config, path, entry_id)
 
     if "concurrent" in ex.file_flags:
         before = path.read_bytes().decode("utf-8")
@@ -447,20 +544,31 @@ def _check(ex: Example, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
         for r in results:
             assert not _is_error(r), f"a concurrent writer was refused: {r}"
     elif "stale" in ex.file_flags:
+        file_at_read = path.read_text()
         read = _read(config, entry_id)
-        op = {**op, "content_hash": read.get("content_hash")}
-        args = _to_kb_update_args(op, config, entry_id, echo=echo)
+        # A divergence, not a harness miss: decision 9 says a read returns
+        # content_hash. Without one, nothing can be stale.
+        assert read.get("content_hash"), "the read returned no content_hash"
+        op = {**op, "content_hash": read["content_hash"]}
+        args = _to_kb_update_args(op, config, entry_id, file_at_read, echo=echo)
         with path.open("ab") as fh:
             fh.write(b"Edited by hand after the read.\n")
         before = path.read_bytes().decode("utf-8")
+        _require(before != file_at_read, "the hand edit did not change the file")
         result = _call(config, "kb_update", args)
         assert _is_error(result), (
             "a stale replace was written, not refused; diff:\n"
             + _render_diff(before, path.read_bytes().decode("utf-8"))
         )
     else:
-        args = _to_kb_update_args(op, config, entry_id, echo=echo)
+        args = _to_kb_update_args(op, config, entry_id, path.read_text(), echo=echo)
         before = path.read_bytes().decode("utf-8")
+        for name in op.get("append", {}):
+            _require(
+                args[name][:-1] == _front(before).get(name, []),
+                f"the {name} sent are not the file's own items, so the append is not "
+                "what was measured",
+            )
         emitted = _spy_emitter(monkeypatch) if "emitter" in ex.file_flags else None
         result = _call(config, "kb_update", args)
         if emitted is not None:
@@ -561,7 +669,8 @@ def test_diff_rendering_pairs_equal_replacements() -> None:
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="principle 3: a one-field edit hands the emitter flag, id, links, tags and type",
+    reason="principle 3: a one-field edit hands the emitter flag, id, links, tags and type "
+    "(the list is pinned as observed; a narrower leak fails outright)",
 )
 def test_emitter_flag_on_the_one_field_edit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

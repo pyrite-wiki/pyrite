@@ -821,6 +821,7 @@ with the journalism derivations installed.
 id: hearing
 title: The hearing
 type: timeline_event
+date: 2026-01-01
 actors: ["[[jane-doe]]"]
 ---
 
