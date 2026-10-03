@@ -1582,34 +1582,6 @@ def test_a_failed_remove_changes_nothing_and_no_add_is_tried(env, monkeypatch):
     assert target.path.read_bytes() == before
 
 
-def test_a_failed_call_that_leaves_the_config_unreadable_claims_nothing(env, monkeypatch):
-    """When the file cannot be read back, the report does not say the entry is
-    as it was or that it is gone: it says it could not tell."""
-    target = _seed_changeable(env)
-    monkeypatch.setenv("FAKE_CLAUDE_CORRUPT", "remove")
-
-    result = target.run()
-
-    assert result.exit_code == 1, result.output
-    item = only_client(result)
-    assert item["status"] == "failed" and item["error_code"] == "CLIENT_COMMAND_FAILED", item
-    assert "could not be read back" in item["error"]
-    assert [c[:2] for c in claude_calls(env)] == [["mcp", "remove"]]
-
-
-def test_a_failed_add_after_remove_restores_the_previous_entry(env, monkeypatch):
-    target = _seed_changeable(env)
-    monkeypatch.setenv("FAKE_CLAUDE_FAIL", "add#1")
-
-    result = target.run()
-
-    assert result.exit_code == 1, result.output
-    item = only_client(result)
-    assert item["status"] == "stopped" and item["error_code"] == "CLIENT_COMMAND_FAILED", item
-    assert "restored" in item["error"]
-    assert target.entry() == OLD_ENTRY
-
-
 def test_an_add_that_times_out_after_remove_restores_the_previous_entry(env, monkeypatch):
     target = _seed_changeable(env)
     monkeypatch.setenv("FAKE_CLAUDE_HANG", "add#1")
@@ -1642,21 +1614,6 @@ def test_when_the_restore_fails_too_the_report_holds_exactly_what_was_removed(
     assert item["removed"] == {"command": OLD, "args": ["mcp", "--tier", "admin"]}
     assert f"claude mcp add -s user pyrite -- {OLD} mcp --tier admin" in "\n".join(item["by_hand"])
     assert "pyrite" not in servers_in(target.path)
-
-
-def test_claude_not_runnable_after_remove_reports_exactly_what_was_removed(env, monkeypatch):
-    """`claude` removed the entry and then could not be run at all."""
-    target = _seed_changeable(env)
-    monkeypatch.setenv("FAKE_CLAUDE_VANISH", "remove")
-
-    result = target.run()
-
-    assert result.exit_code == 1, result.output
-    assert result.exception is None or isinstance(result.exception, SystemExit)
-    item = only_client(result)
-    assert item["status"] == "failed", item
-    assert item["removed"] == {"command": OLD, "args": ["mcp", "--tier", "admin"]}
-    assert f"claude mcp add -s user pyrite -- {OLD} mcp --tier admin" in "\n".join(item["by_hand"])
 
 
 @pytest.mark.parametrize(
@@ -1762,6 +1719,7 @@ def test_a_failure_at_any_step_after_remove_restores_or_reports_what_was_removed
     if "unreadable" in step:
         # Claude Code replaces a file it cannot read: it is not called again.
         assert claude_calls(env)[-1][:2] == ["mcp", step.split("-")[0]]
+        assert "could not be read back" in item["error"]
 
 
 def test_a_call_that_times_out_after_doing_its_work_is_judged_by_the_file(env, monkeypatch):
