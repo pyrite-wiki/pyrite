@@ -55,12 +55,12 @@ a protocol?". Layer 2 under [[design]] (P6). For `kb.yaml`-only types see
    section 3.
 10. A protocol is a data contract, derived information, explicit operations and
     refusals; no protocol operation writes a file as a side effect; a hook only
-    refuses; serialising an existing file is not a type's job. **proposed**
+    refuses; serialising an existing file is not a type's job. **decided**
     ADR-0045 decisions 2, 3, 6, 9.
 11. Rollup, unblock and evidence aggregation are derived, not written.
-    **proposed** ADR-0045 decision 7 (maintainer, 2026-10-02).
+    **decided** ADR-0045 decision 7 (maintainer, 2026-10-02).
 12. The contract is alpha; it freezes later than [[adr-0040]] says (0.28 in the
-    release line). ADR-0045 decision 10 (proposed).
+    release line). ADR-0045 decision 10 (accepted).
 
 ## Invariants a test could check
 
@@ -112,5 +112,5 @@ Components [[plugin-system]], [[pyrite-plugin-protocol]], [[protocols-module]],
 - [[adr-0014]] and [[adr-0017]] contradict each other (structural versus
   inherited); ADR-0045 asks the maintainer to reconcile (question 1).
 - [[adr-0040]]'s round-trip conformance check and the "no signature changes"
-  claim conflict with ADR-0042 and ADR-0045 (proposed). A spike over the 37
+  claim conflict with ADR-0042 and ADR-0045 (accepted). A spike over the 37
   extension classes is owed before the contract freezes.

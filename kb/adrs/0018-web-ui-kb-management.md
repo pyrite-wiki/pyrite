@@ -24,6 +24,11 @@ links:
 > multi-user case).** ADR-0024 says this design "remains valid as a future
 > evolution for federated/cross-instance collaboration"; that part stands.
 
+> **Status.** The status stays `accepted` and not `superseded`: [[adr-0024]]
+> supersedes only the single-instance mechanics, and this design stands for
+> cross-instance collaboration. [[adr-0024]] is itself being superseded by
+> [[adr-0044]] (proposed).
+
 # ADR-0018: Web UI KB Management via Git Forks
 
 ## Context

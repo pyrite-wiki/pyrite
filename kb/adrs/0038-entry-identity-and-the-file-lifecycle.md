@@ -3,7 +3,7 @@ id: adr-0038
 type: adr
 title: "Entry identity and the file lifecycle"
 adr_number: 38
-status: proposed
+status: accepted
 date: 2026-09-25
 tags: [architecture, storage, index, history, invariants, testing]
 links:
@@ -17,7 +17,10 @@ links:
 
 # ADR-0038: Entry identity and the file lifecycle
 
-> **Proposed** (spike, 2026-09-25). The maintainer accepts or rejects it. It
+> **Accepted by the maintainer, 2026-10-03.** Accepted as amended by ADR-0042 (the path
+> id, `id:` in the contract); the amendment below is accepted with it.
+>
+> **Written as proposed** (spike, 2026-09-25). The maintainer accepts or rejects it. It
 > answers the root cause of four circuit-breaker trips on 2026-09-25: Pyrite
 > has no single definition of what an entry *is* on disk, so each storage
 > change found another implicit rule, one per cold read (#438, #466, #447).
@@ -337,8 +340,8 @@ Backlog items, one per step: [[storage-invariants-harness-land-the-adr-0038-stat
 
 5. **Derived id when a file has no `id:`. DECIDED (maintainer, 2026-09-26): from the filename, not the title.** Filenames are stable; titles change. This unblocks step 2.
 
-> **Proposed amendment (2026-10-02), to question 5.** Written by the ADR-0042
-> revision; the maintainer accepts or rejects it with that ADR. It amends the
+> **Amendment (2026-10-02), to question 5. Accepted by the maintainer,
+> 2026-10-03, with ADR-0042.** Written by the ADR-0042 revision. It amends the
 > decision above and two sentences of this ADR.
 >
 > **With no `id:` key, an entry's identity is its path relative to the KB

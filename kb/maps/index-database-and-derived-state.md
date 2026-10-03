@@ -41,16 +41,16 @@ Answers "what can I delete and rebuild?", "where does this row come from?",
 7. Rows that are not derived (claim lease times, stars, reviews, users,
    sessions, quotas) are state. A rebuild must not touch them; a declared
    registry of state tables says which they are. **accepted, not built**
-   [[adr-0029]] section 4; **proposed** ADR-0039 decision 7 and S1 (a generated
+   [[adr-0029]] section 4; **decided** ADR-0039 decision 7 and S1 (a generated
    docs list of what a rebuild loses).
 8. One reconcile serves `index_kb`, `sync_kb` and `sync_incremental`; staleness
    is mtime or size, with a hash on rebuild and in `index health`; duplicate ids
-   are reported and the lexicographically first path wins. **proposed**
+   are reported and the lexicographically first path wins. **decided**
    [[adr-0038]] step 2 and decided questions 3 and 4.
 9. Indexing writes only `last_indexed` and `entry_count` to a KB's row.
-   **proposed** ADR-0039 decision 10.
+   **decided** ADR-0039 decision 10.
 10. List and search reads may lag the files and say when they were indexed.
-    **proposed** ADR-0042 decision 9.
+    **decided** ADR-0042 decision 9.
 
 ## Invariants a test could check
 
@@ -68,7 +68,7 @@ Answers "what can I delete and rebuild?", "where does this row come from?",
 ## ADRs in reading order
 
 [[adr-0001]], [[adr-0029]] (sections 1 and 4; read its status first),
-[[adr-0015]], [[adr-0013]], [[adr-0038]], ADR-0039 (proposed). History:
+[[adr-0015]], [[adr-0013]], [[adr-0038]], ADR-0039 (accepted). History:
 [[adr-0016]] (the benchmark that settled LanceDB), [[adr-0005]], [[adr-0003]]
 (superseded by [[adr-0029]]: the engagement tier became "runtime state").
 

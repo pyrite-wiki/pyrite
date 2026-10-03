@@ -3,7 +3,7 @@ id: adr-0042
 type: adr
 title: "A write changes what was asked and nothing else: entries are edited by operation, read from the file"
 adr_number: 42
-status: proposed
+status: accepted
 date: 2026-10-02
 tags: [architecture, storage, write-path, identity, hooks, concurrency, invariants]
 links:
@@ -38,7 +38,9 @@ links:
 
 # ADR-0042: A write changes what was asked and nothing else
 
-> **Proposed** (2026-10-02). The maintainer accepts or rejects it. The rule
+> **Accepted by the maintainer, 2026-10-03.**
+>
+> **Written as proposed** (2026-10-02). The maintainer accepts or rejects it. The rule
 > below (decisions 1 to 13) is the maintainer's, stated 2026-10-02. The first
 > spike measured a text splice, not this rule, and an adversarial read of the
 > first draft found holes that the measurements could not have shown. **Spike
@@ -444,7 +446,10 @@ This amends ADR-0038 (below). The rest follows:
 ### 7. Bookkeeping never rides alone; repairs are commands
 
 - `updated_at` is written only where the file already has the key and only
-  when the write changed something. A no-op writes nothing (**question 1**).
+  when the write changed something. A no-op writes nothing. **Decided by the
+  maintainer, 2026-10-03** (was question 1): `updated_at` is stamped only
+  where the file already carries the key and the write changed something; it
+  is never added to a file that lacks it.
 - Adding `id:`, renaming an alias key, stamping `_schema_version`, dropping a
   stray `body:` key and re-quoting existing values are explicit commands
   (`qa fix`, `schema migrate`), never side effects of an update.
@@ -582,6 +587,11 @@ optimistic plus the momentary lock".*
   field leaves two files with one id today; with the compare it leaves one and
   reports the setter's conflict. Linux, Windows, NFS/SMB and synced folders were not
   run.
+
+**Decided by the maintainer, 2026-10-03** (was question 2, an optional guard
+on a field set or body replace): answered by this decision. Every write
+carries its base, so no separate optional `expect` argument is added to set
+and replace-body for the web editor; the base is the guard.
 
 ### 11. The token: field operations need none
 
@@ -1124,7 +1134,8 @@ are in this ADR's scope and spike 2's list.
 
 ## Questions for the maintainer
 
-Ranked by what they block.
+Ranked by what they block. Questions 1 and 2 were answered on 2026-10-03 and
+are recorded in decisions 7 and 10; question 3 is still open.
 
 **Decided by the maintainer, 2026-10-02** (the items are kept below for
 their reasoning): question 4, the id is the path without `.md`, with `/`
@@ -1136,11 +1147,11 @@ sub-resources and site pagination go behind a `/-/` separator and a folder
 named `-` is refused; create with a `/` id writes `<id>.md` from the KB root;
 `index health` reports ids that differ only in case.
 
-1. **`updated_at`.** Keep stamping it where the file already has the key and
+1. **`updated_at`. DECIDED 2026-10-03** (recorded in decision 7). Keep stamping it where the file already has the key and
    something was written, never stamp it, or stamp only on request?
    *Recommended: keep, as stated.* A write "does what was asked"; a stamp is
    not asked for. Blocks the doc's examples (step 2).
-2. **A guard on a field set or body replace.** Field operations need no
+2. **A guard on a field set or body replace. DECIDED 2026-10-03** (answered by decision 10, recorded there). Field operations need no
    token. A web form held open for ten minutes then replaces a body that a
    hand edit changed. Offer an optional `expect` (the hash of the value or
    body when read) on set and replace-body, which the web editor and agents

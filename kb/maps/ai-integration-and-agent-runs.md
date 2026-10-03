@@ -43,10 +43,10 @@ work?". Layer 2 under [[design]] (P8, P9).
 8. The agent running the work is replaceable; Pyrite is an ACP client; run
    control is a backend service (`RunService`); agent tools reach Pyrite only
    through MCP, scoped per session; enforcement lives in the write path, never
-   in the harness; methodology lives in the intent layer. **proposed** (open)
-   [[adr-0030]]; Phase 0, a spike to verify adapter claims, has not started.
+   in the harness; methodology lives in the intent layer. **proposed** (open;
+   deferred 2026-10-03) [[adr-0030]]; Phase 0, a spike to verify adapter claims, has not started.
 9. An MCP client over HTTP is a user or the operator, and over stdio the
-   operator; the acting identity comes from the session. **proposed** ADR-0043
+   operator; the acting identity comes from the session. **decided** ADR-0043
    decisions 2 and 7.
 10. The thesis the roadmap states: agents write, humans verify; review attention
     is the constraint. [[adr-0019]]; roadmap.
@@ -64,8 +64,8 @@ work?". Layer 2 under [[design]] (P8, P9).
 ## ADRs in reading order
 
 [[adr-0007]], [[adr-0009]], [[adr-0019]], [[adr-0034]], [[adr-0035]];
-[[adr-0030]] (proposed; read its Phase 0 and open questions); [[adr-0031]]
-(draft; run execution as a capability). History only: [[adr-0003]]'s note that
+[[adr-0030]] (deferred, 2026-10-03; read its Phase 0 and open questions); [[adr-0031]]
+(withdrawn, replaced by ADR-0043; run execution as a capability). History only: [[adr-0003]]'s note that
 AI-generated content is content-tier.
 
 ## Where the code starts
@@ -87,9 +87,9 @@ Components [[llm-service]], [[query-expansion-service]],
   `auto-tag`, `suggest-links`, `chat`), `status` lives elsewhere, and
   `/generate`, `/assist`, `/expand-query` were not built. Its skills tree is
   `.claude/skills/`, not `skills/`.
-- No `RunService` or ACP code exists; the go or no-go on [[adr-0030]] is open.
-- [[adr-0031]] is a draft; its capabilities idea (run execution as a grant)
-  conflicts with ADR-0043, which makes egress the operator's (proposed).
+- No `RunService` or ACP code exists; [[adr-0030]] is deferred (2026-10-03).
+- [[adr-0031]] is withdrawn; its capabilities idea (run execution as a grant)
+  conflicts with ADR-0043, which makes egress the operator's (accepted).
 - The alpha supported-surface entry (proposed) marks the AI endpoints and the
   Claude Code plugin experimental.
 - Not decided: the `status:` name used by the [[adr-0028]] query operator, by

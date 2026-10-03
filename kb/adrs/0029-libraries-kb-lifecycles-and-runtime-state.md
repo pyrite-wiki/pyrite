@@ -16,6 +16,14 @@ links:
   kb: pyrite
 ---
 
+> **Amended by [[adr-0039]] (2026-10-03).** Section 1 (the registry), section 3
+> (ephemeral KBs never in the library YAML) and section 4 (the claim guard, with
+> [[adr-0042]]) are amended: the operator's config file is the registry, the
+> server never writes it, and ephemeral KBs are database rows only. Section 6 also
+> amends [[adr-0024]], and [[adr-0043]] amends the authorization parts. Sections
+> 2 to 4's libraries, leases and state tables are still unimplemented (0.26 by
+> their own phasing). Evidence: `kb/designs/adr-audit-2026-10.md`.
+
 ## Context
 
 Every recurrent field bug traces to derived state diverging from its

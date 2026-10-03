@@ -26,6 +26,14 @@ links:
 > worktree GC is the lease reaper (Phase 3 below). See also
 > `kb/designs/adr-audit-2026-10.md` for sections whose standing is open.
 
+> **Being superseded by [[adr-0044]]** (internal pull requests; proposed, not yet
+> accepted). Until it is accepted this ADR keeps `accepted`. Worktree routing is
+> off for now (maintainer decision, 2026-10-02), so the routing and per-user
+> worktree sections describe code that exists but is not switched on. Amended
+> by [[adr-0029]] section 6 (above) and by [[adr-0043]] (the "all KBs readable by
+> all authenticated users" permissions model is replaced by per-KB grants). The
+> evidence is in `kb/designs/adr-audit-2026-10.md`.
+
 # ADR-0024: Git Worktree Collaboration Model
 
 ## Context

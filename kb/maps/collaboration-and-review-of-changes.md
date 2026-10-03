@@ -51,7 +51,7 @@ is off. That decision is not yet in an accepted ADR or in the code.
    ADR-0044 section 5.
 9. The author reads their own change set's blob and a diff-index overlay;
    everyone else reads main. **proposed** ADR-0044 section 4.
-10. Merge is the operator's action. **proposed** ADR-0043 decision 5.
+10. Merge is the operator's action. **decided** ADR-0043 decision 5.
 11. Pyrite's own flow is the model: a branch per batch of work, a PR, checks on
     the commit about to land, a queue that refuses rather than rebases for you.
     **decided** [[adr-0032]]; ADR-0044 mirrors it.

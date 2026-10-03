@@ -9,6 +9,12 @@ date: "2025-10-15"
 tags: [architecture, permissions, collaboration]
 ---
 
+> **Inert until identity reaches hooks (2026-10-03).** The app-layer check is
+> inert today: hooks run with `user=""`, so the author check returns early. Per
+> [[adr-0043]] decision 7, the dispatcher injects the acting identity from the
+> session principal; until then this convention is enforced only at the git layer
+> (CODEOWNERS). Evidence: `kb/designs/adr-audit-2026-10.md`.
+
 ## Context
 
 Multi-author KBs need permission enforcement. We needed a model that works at both the application layer and the git layer without complex ACL infrastructure.

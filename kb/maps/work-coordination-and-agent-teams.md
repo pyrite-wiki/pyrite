@@ -46,9 +46,9 @@ the software-kb and task design, not the repository's branch flow (see
    worktree. **decided** [[adr-0029]] section 6; ADR-0044 marks them by
    `landing: canonical` (**proposed**).
 9. A claim compares `status` against the file under a lock, not the index row.
-   **proposed** ADR-0042 decision 10 (asks to amend [[adr-0029]] section 4).
+   **decided** ADR-0042 decision 10 (asks to amend [[adr-0029]] section 4; ADR-0042 question 3 is still open).
 10. A parent's completion, a task's blocked or ready state and a subtree's
-    evidence are derived, not written by hooks. **proposed** ADR-0042 decision 4,
+    evidence are derived, not written by hooks. **decided** ADR-0042 decision 4,
     ADR-0045 decision 7. Today `_parent_rollup` writes the parent after save.
 
 ## Invariants a test could check
@@ -68,7 +68,7 @@ the software-kb and task design, not the repository's branch flow (see
 
 [[adr-0019]] (the why), [[adr-0020]], [[adr-0021]], [[adr-0027]],
 [[adr-0029]] sections 3 and 4, [[adr-0014]] (the `workflow`, `atomic_claim`,
-`rollup` primitives), ADR-0045 (proposed). [[adr-0030]] (proposed) for runs.
+`rollup` primitives), ADR-0045 (accepted). [[adr-0030]] (proposed) for runs.
 
 ## Where the code starts
 
@@ -91,7 +91,7 @@ Components [[task-service]], [[software-kb-extension]], [[rubric-checkers]],
   [[adr-0029]] work for 0.26 and absent; stale-claim handling still relies on
   conductor procedure.
 - Hooks write parent status and `unblock_dependents` and evidence aggregation
-  have no callers outside tests; ADR-0045 makes them derived (proposed).
+  have no callers outside tests; ADR-0045 makes them derived (accepted).
 - The `status:` word names three things across [[adr-0028]], [[adr-0020]] and a
   milestone ([[adr-0030]] open question 1).
 - The alpha supported-surface entry (proposed) marks `task` and the `task_*`

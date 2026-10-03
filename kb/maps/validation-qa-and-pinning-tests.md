@@ -38,8 +38,8 @@ this one collects the method.
 5. A state-machine test drives the real storage with a property-based harness:
    one strict expected failure per known violation, failing with an
    `AssertionError` that names the invariant; a pinned seed; mutation checks that
-   turn it red; an unexpected pass fails the suite. **proposed** [[adr-0038]]
-   (the harness landed; the ADR is still labelled proposed).
+   turn it red; an unexpected pass fails the suite. **decided** [[adr-0038]]
+   (the harness landed; accepted 2026-10-03).
 6. Plugins run a conformance kit on themselves: structure, signatures, scoping
    through the real dispatcher, writes make files, no imports beyond the façade.
    **accepted, not built** [[adr-0040]] section 6.
@@ -48,11 +48,11 @@ this one collects the method.
    artifact, then release checks. **decided** [[adr-0032]] sections 3 and 3a.
 8. Docs that teach a command run as that command's test; the passage is written
    first and its examples are the test, over files Pyrite did not write.
-   **proposed** ADR-0041 to ADR-0045 acceptance sections; [[design]] P9.
+   **decided** ADR-0041 to ADR-0045 acceptance sections; [[design]] P9.
 9. A benchmark with a pass criterion decides a backend question. **decided**
    [[adr-0016]].
 10. QA reports what Pyrite no longer repairs on save: files with no `id:`,
-    aliases, schema-behind files, links to retired derived ids. **proposed**
+    aliases, schema-behind files, links to retired derived ids. **decided**
     ADR-0042 decisions 7 and 8.
 
 ## Invariants a test could check

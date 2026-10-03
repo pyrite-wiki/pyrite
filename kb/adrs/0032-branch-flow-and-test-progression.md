@@ -22,6 +22,13 @@ links:
   kb: pyrite
 ---
 
+> **Open points (2026-10-03).** Decision 3 says merges are by rebase, while a
+> note in the same file says the queue is set to squash; CLAUDE.md says rebase.
+> The wording is unresolved here, and the live setting is a repository setting
+> not checked. Section 3b (snapshot `.dev0+sha` versions) is marked proposed
+> inside this accepted ADR and `scripts/release.py` does the opposite; 3b is
+> open, not accepted. Evidence: `kb/designs/adr-audit-2026-10.md`.
+
 # ADR-0032: Branch flow and test progression
 
 Amends ADR-0025. ADR-0025's branch roles stand (`dev` integrates, `main`

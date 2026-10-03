@@ -3,7 +3,7 @@ id: adr-0039
 type: adr
 title: "The registry is the operator's file; state is not content"
 adr_number: 39
-status: proposed
+status: accepted
 date: 2026-10-02
 tags: [architecture, registry, config, secrets, state, invariants, testing]
 links:
@@ -35,7 +35,9 @@ links:
 
 # ADR-0039: The registry is the operator's file; state is not content
 
-> **Proposed** (2026-10-02). The maintainer accepts or rejects it. It
+> **Accepted by the maintainer, 2026-10-03.**
+>
+> **Written as proposed** (2026-10-02). The maintainer accepts or rejects it. It
 > **supersedes the earlier proposed text of this number**, "One KB registry: one
 > record per KB, one read path, one change event" (2026-09-26, never merged),
 > which made the database the registry of record. The maintainer decided the
@@ -107,9 +109,19 @@ cross-process file lock, by ADR-0042's rule (an operation on the file's own
 value; comments, order and other keys survive), atomically, and refusing a
 file it cannot change safely.
 
+**Decided by the maintainer, 2026-10-03** (was question 2, the web and REST registry forms): the
+forms that write the registry (subscribe, fork, add KB, the grant forms) are
+removed from REST and the web. The CLI convenience stays. Nothing shows a
+block to paste.
+
 **4. Ephemeral KBs are database rows only** and are never in the file
 (ADR-0029 section 3, restated). Their names carry the reserved `eph-`
 prefix; a name in the file may not.
+
+**Decided by the maintainer, 2026-10-03** (was question 3, accounts): accounts stay database state. Users,
+sessions, invite codes and user API keys live in the database, because they
+carry password hashes and keys that must not be in a reviewable file; grants
+(decision 6) name users.
 
 **5. Secrets are split out of the registry file.** API keys (`api_key`,
 `api_keys`, `ai_api_key` and any other credential the code stores) live in a
@@ -356,23 +368,25 @@ that harder.
 
 ## Questions for the maintainer
 
-Ranked by what they block.
+None open. All three were answered (1 on 2026-10-02, 2 and 3 on 2026-10-03);
+the answers are recorded in decisions 8, 3 and 5. The text is kept below for
+its reasoning.
 
 **Decided by the maintainer, 2026-10-02** (the item is kept below for its
 reasoning): question 1, edit and restart. Editing the config is a documented
 operator task; no change detection is built now (decision 8). R5's
 "no restart" clause does not apply.
 
-1. **Hot reload or restart.** Does a running server and a running MCP process
+1. **Hot reload or restart. DECIDED 2026-10-02** (decision 8). Does a running server and a running MCP process
    pick up an edit of the file's KB list, policy and grants (decision 8), or is
    "edit and restart" the documented rule? *Recommended: hot, by the stat
    check; settings still need a restart.* Otherwise the file is the one input
    whose changes lag. Blocks R5 and step 3.
-2. **The web and REST registry forms.** Subscribe, fork, add KB and the grant
+2. **The web and REST registry forms. DECIDED 2026-10-03** (decision 3). Subscribe, fork, add KB and the grant
    forms stop writing. Remove them for now, or show the block to paste into the
    config file? *Recommended: remove from REST and the web; the CLI convenience
    stays.* Blocks step 5.
-3. **Accounts are database state.** Users, sessions, invite codes and user
+3. **Accounts are database state. DECIDED 2026-10-03** (before decision 5). Users, sessions, invite codes and user
    API keys stay in the database (they carry password hashes and keys, which
    must not be in a reviewable file); grants name users. *Recommended: yes.*
    Blocks step 7.

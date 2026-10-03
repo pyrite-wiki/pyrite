@@ -53,10 +53,10 @@ For code-defined types, protocols and plugins see
    only, a deleted endpoint leaves a broken reference and a QA warning.
    **decided** [[adr-0022]].
 10. Schema versions migrate on load, and `pyrite schema migrate` forces a load
-    of every entry. **decided** [[adr-0015]]. ADR-0042 decision 7 (proposed)
+    of every entry. **decided** [[adr-0015]]. ADR-0042 decision 7 (accepted)
     makes migration an explicit command and never a side effect of a save.
 11. A type's aliases, migrations, create-time defaults and reference fields are
-    declared in its schema, not in class attributes. **proposed** ADR-0045
+    declared in its schema, not in class attributes. **decided** ADR-0045
     decisions 8 and 9.
 
 ## Invariants a test could check
@@ -76,7 +76,7 @@ For code-defined types, protocols and plugins see
 ## ADRs in reading order
 
 [[adr-0008]], [[adr-0009]], [[adr-0027]], [[adr-0022]], [[adr-0017]] and
-[[adr-0026]] (columns), [[adr-0015]] (versioning). ADR-0045 (proposed) for
+[[adr-0026]] (columns), [[adr-0015]] (versioning). ADR-0045 (accepted) for
 aliases and migrations. History only: [[adr-0011]] (collections), [[adr-0020]]
 (an example of deciding entry versus config).
 
@@ -100,9 +100,9 @@ Components [[schema-validation]], [[schema-service]], [[entry-factory]],
   ([[adr-0008]] point 3); a KB made by `pyrite init -t software` is registered
   as generic and gets no status check (#572, named in [[adr-0008]]).
 - Aliases are a `frozenset` on six extension classes with no target; they are
-  not in the schema (ADR-0045 context, decision 8, proposed).
+  not in the schema (ADR-0045 context, decision 8, accepted).
 - On-load migration may write the migrated entry back ([[adr-0015]]) against
-  P3; ADR-0042 decision 7 is proposed.
+  P3; ADR-0042 decision 7 is accepted.
 - Which of [[adr-0011]]'s five phases shipped was not verified
   ([[adr-audit-2026-10]]); "New collection" returns an error in the web UI
   (the alpha supported-surface entry cites #480).

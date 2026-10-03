@@ -33,6 +33,11 @@ links:
 
 # ADR-0030: Agent-Agnostic Run Execution — ACP as the Harness Boundary
 
+> **Deferred by the maintainer, 2026-10-03.** Agent run execution is in no release. Phase 0 (the spike) has not
+> started and no `RunService` or ACP adapter exists. The status stays `proposed`:
+> `deferred` is not an allowed ADR status, and `proposed` is the nearest value
+> (not decided to build, not rejected). Revisit when run execution is scheduled.
+
 ## Context
 
 Pipeline work today runs inside Claude Code. The investigation-conductor,

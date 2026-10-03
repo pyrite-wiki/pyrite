@@ -98,11 +98,11 @@ contracts are alpha.
 | Topic | Governing ADRs |
 |---|---|
 | Files, index, what is derived | [[adr-0001]], [[adr-0029]] |
-| The principle | ADR-0041 (proposed) |
-| Writes, reads, identity, hooks | ADR-0042 (proposed), [[adr-0038]] (proposed) |
-| Registry, config, state | ADR-0039 (proposed), [[adr-0029]] |
-| Who may do what | [[adr-0037]], ADR-0043 (proposed) |
-| Types, protocols, plugins | [[adr-0014]], [[adr-0017]], [[adr-0040]], ADR-0045 (proposed) |
+| The principle | ADR-0041 (accepted) |
+| Writes, reads, identity, hooks | ADR-0042 (accepted), [[adr-0038]] (accepted) |
+| Registry, config, state | ADR-0039 (accepted), [[adr-0029]] |
+| Who may do what | [[adr-0037]], ADR-0043 (accepted) |
+| Types, protocols, plugins | [[adr-0014]], [[adr-0017]], [[adr-0040]], ADR-0045 (accepted) |
 | Review of changes | ADR-0044 (proposed) |
 | What the alpha supports | `alpha-supported-surface` (approved 2026-10-02) |
 | Releases | [[roadmap]], "The release line" |

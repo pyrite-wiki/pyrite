@@ -42,14 +42,14 @@ Multi-user is experimental; local use by one operator comes first.
 8. Two planes: users read and write entries per KB by grant (`read` or
    `write`); everything else (registry, policy, grants, users, settings, secrets,
    repo egress, merge, index) is the operator's, plus a small self category.
-   There is no KB-admin rung. **proposed** ADR-0043 decisions 1, 3, 5.
+   There is no KB-admin rung. **decided** ADR-0043 decisions 1, 3, 5.
 9. The operator is the local process (CLI, stdio MCP) or the holder of the
    operator credential; a plugin or hook has no principal and gets the session's
-   identity injected, never from arguments. **proposed** ADR-0043 decisions 2, 7.
+   identity injected, never from arguments. **decided** ADR-0043 decisions 2, 7.
 10. Anonymous reads exactly what the policy says; `/mcp` admits no anonymous
     principal; derived data is readable only where all its sources are.
-    **proposed** ADR-0043 decisions 4, 8, 9.
-11. The API is the only security boundary; grants, not modes. **draft**
+    **decided** ADR-0043 decisions 4, 8, 9.
+11. The API is the only security boundary; grants, not modes. **withdrawn**
     [[adr-0031]] (parts adopted piecemeal by [[adr-0036]] and [[adr-0037]]).
 
 ## Invariants a test could check
@@ -67,8 +67,8 @@ Multi-user is experimental; local use by one operator comes first.
 
 ## ADRs in reading order
 
-[[adr-0037]] first. ADR-0043 (proposed; amends [[adr-0037]], [[adr-0006]],
-[[adr-0004]]), [[adr-0036]], [[adr-0031]] (draft; read for the reasoning).
+[[adr-0037]] first. ADR-0043 (accepted; amends [[adr-0037]], [[adr-0006]],
+[[adr-0004]]), [[adr-0036]], [[adr-0031]] (withdrawn, replaced by ADR-0043; read for the reasoning).
 History only: [[adr-0006]] (tier contents are stale), [[adr-0004]]
 (folder-per-author, inert at the app layer), [[adr-0024]] (its V1 permissions
 are contradicted by [[adr-0037]]).
@@ -96,12 +96,12 @@ Paths: `pyrite/services/access_policy.py`, `pyrite/server/authz.py`,
   caller; four actions are named and refused until decided; the CLI is
   unscoped by assumption ([[adr-audit-2026-10]]).
 - [[adr-0004]]'s author check is inert: hooks are called with an empty user.
-  ADR-0043 decision 7 addresses it (proposed).
+  ADR-0043 decision 7 addresses it (accepted; not yet in code).
 - [[adr-0024]] says every KB is readable by every authenticated user and has
-  no per-KB permissions; contradicted by [[adr-0037]]; ADR-0043 and ADR-0044
-  replace it (proposed).
+  no per-KB permissions; contradicted by [[adr-0037]]; ADR-0043 (accepted) and ADR-0044
+  (proposed) replace it.
 - Where grants are stored is open: database state in [[adr-0029]], the
-  operator's file in ADR-0039 (proposed). `kb/designs/authorization-matrix.md`
+  operator's file in ADR-0039 (accepted). `kb/designs/authorization-matrix.md`
   (ADR-0043's acceptance) is not authored.
 - Not decided: which HTTP principals are the operator, what `self` includes,
   which MCP tools HTTP users see (ADR-0043 questions 1 to 3).

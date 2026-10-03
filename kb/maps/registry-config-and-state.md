@@ -23,30 +23,30 @@ configuration or content?". Layer 2 under [[design]] (P5, P7).
 
 1. A KB's existence and policy are recorded in one YAML file the operator
    owns; the database `kb` table is a derived cache. **decided** [[adr-0029]]
-   section 1; restated and extended by ADR-0039 decision 1 (**proposed**).
+   section 1; restated and extended by ADR-0039 decision 1 (**decided**).
 2. The server never writes that file. Registry changes are the operator
    editing a documented file; a CLI convenience (`kb add`, `repo subscribe`)
-   may write it under a cross-process lock and ADR-0042's rule. **proposed**
+   may write it under a cross-process lock and ADR-0042's rule. **decided**
    ADR-0039 decision 3, ADR-0043 decision 5.
 3. Ephemeral KBs are database rows only, named `eph-*`, never in the file.
-   **decided** [[adr-0029]] section 3; **proposed** ADR-0039 decision 4.
+   **decided** [[adr-0029]] section 3; **decided** ADR-0039 decision 4.
    The code writes them to the file.
 4. One file per library; a deployment serves one library; a library is a
    closed file with no overlays. **accepted, not built** [[adr-0029]] section 2
-   (0.26); **proposed** ADR-0039 decision 2.
+   (0.26); **decided** ADR-0039 decision 2.
 5. Secrets (API keys, AI keys) live in a separate owner-readable file, with
    environment variables first, so the registry file can be reviewed and put in
-   git. **proposed** ADR-0039 decision 5.
+   git. **decided** ADR-0039 decision 5.
 6. Grants and per-KB policy (`default_role`, `read_only`, `published`,
    `landing`) are the operator's, in the file, never in a KB's own tree.
-   **proposed** ADR-0039 decisions 6 and 11, ADR-0043 decision 5.
+   **decided** ADR-0039 decisions 6 and 11, ADR-0043 decision 5.
    [[adr-0029]] section 4 had grants as database state.
 7. Four classes: KB content (files), operator configuration (files), derived
    (rebuilt), state (database: users, sessions, invites, queues, leases, stars,
    reviews, quotas). A rebuild loses only state, and the docs list it.
-   **proposed** ADR-0039 decision 7; [[adr-0029]] section 4 (**not built**).
+   **decided** ADR-0039 decision 7; [[adr-0029]] section 4 (**not built**).
 8. A registry change reaches every reader at its next decision, by one
-   snapshot per decision and one `KBRegistryChanged` event. **proposed**
+   snapshot per decision and one `KBRegistryChanged` event. **decided**
    ADR-0039 decisions 8 and 9.
 9. KB policy is local: a plugin may recommend a preset, the KB owner adopts it.
    **decided** [[adr-0009]] decision 7.
@@ -72,8 +72,8 @@ configuration or content?". Layer 2 under [[design]] (P5, P7).
 ## ADRs in reading order
 
 [[adr-0029]] (read its audit standing first: contradicted, mostly unbuilt),
-ADR-0039 (proposed; replaces an earlier text of the same number that made the
-database the registry), ADR-0043 (proposed; which plane config belongs to),
+ADR-0039 (accepted; replaces an earlier text of the same number that made the
+database the registry), ADR-0043 (accepted; which plane config belongs to),
 [[adr-0009]], [[adr-0007]]. History only: [[adr-0003]] (superseded),
 [[adr-0018]] (its DB registry outlived it; superseded in part).
 

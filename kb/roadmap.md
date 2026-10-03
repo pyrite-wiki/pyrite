@@ -499,7 +499,7 @@ left unclaimed a few days.
 
 **Design.** A KB is Markdown files with YAML frontmatter on disk, usable by any
 tool. Pyrite is additive to someone maintaining those files by hand (ADR-0041,
-proposed). A write does what was asked, loses nothing, and reports it.
+accepted 2026-10-03). A write does what was asked, loses nothing, and reports it.
 
 **Who it is for now.** Local use by one operator, usually through a terminal
 coding agent. Multi-user stays experimental until its design is right; no new
@@ -537,7 +537,7 @@ milestones carry the issues; this table carries the promise and the gate.
 - **0.26: your files, exactly.** First the index tells the truth: the ADR-0038
   reconcile (#6, #7, #484 to #487, #495, #51, #22), identity (#639, #494, #488
   to #490), health (#593). Then a write changes only what was asked (ADR-0042,
-  proposed; its rule is re-spiked on the real path first): #637, #638, #640,
+  accepted 2026-10-03; its rule is re-spiked on the real path first): #637, #638, #640,
   #178, #628, a stale-read rule, and explicit format and migrate commands.
   *Gate:* ADR-0038 and the ADR-0042 decisions.
 - **0.27: one operator, many users.** Design first: the authorization model
@@ -778,7 +778,7 @@ maintainer.
 - **CodeQL advanced setup (#228).**
 - **A separate `published` flag.** Being on the anonymous `/site` becomes its
   own switch, apart from `default_role: read` for registered users.
-- **One KB registry** (ADR-0039, proposed after a spike). A single source of
+- **One KB registry** (ADR-0039, accepted 2026-10-03 after a spike). A single source of
   truth for KB membership and per-KB policy; it removes the class behind
   private #61/#69 and the characterization-harness leaks.
 - **Plugins out of tree.** The plugin contract becomes the public API.

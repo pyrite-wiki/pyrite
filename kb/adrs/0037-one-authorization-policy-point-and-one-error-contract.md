@@ -20,6 +20,12 @@ links:
 
 # ADR-0037: One authorization policy point and one error contract
 
+> **Status note (2026-10-03).** The KB-admin rung is gone: [[adr-0043]] has
+> no KB-admin and administering a KB is the operator's. `Principal.local()` is
+> defined but no surface calls it yet, and four `Action`s are still undecided and
+> refused. Themes 3b to 5 are not landed. The decisions below are unchanged.
+> Evidence: `kb/designs/adr-audit-2026-10.md`.
+
 > **Accepted** (maintainer, 2026-09-26; see "Accepted" below. First written as
 > a spike proposal, 2026-09-25). It answers the decision #383 asks to have recorded before dispatch ("do services
 > take a principal, or does scoping stay a surface duty with one shared

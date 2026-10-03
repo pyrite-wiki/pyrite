@@ -24,8 +24,10 @@ with the ADRs that taught it and what happened when it was ignored. **Part 2**
 is one row per ADR. **Part 3** lists ADRs whose learnings contradict each other
 and places where [[design]] says something no accepted ADR supports.
 
-"Proposed" means ADR-0039 and ADR-0041 to ADR-0045 (draft PR #635, not yet on
-`dev`), plus [[adr-0038]] and [[adr-0030]], which are `proposed` on `dev`.
+On 2026-10-03 the maintainer accepted ADR-0038 and ADR-0039 and ADR-0041 to
+ADR-0045 except ADR-0044, which stays `proposed`. [[adr-0030]] and [[adr-0028]]
+are deferred (status `proposed`, the nearest allowed value); [[adr-0031]] is
+withdrawn (`superseded` by ADR-0043).
 "New" marks a lesson no ADR states as a lesson; it is read out of two or more
 ADRs.
 
@@ -48,7 +50,7 @@ ADRs.
    in March 2026 ("backlinks are stored in the index only, no cascading
    writes"), eight days after [[adr-0014]] defined `rollup` as a write to the
    parent; the save hooks that write links never followed it;
-   ADR-0042 and ADR-0045 (proposed) apply it to hooks.
+   ADR-0042 and ADR-0045 (accepted) apply it to hooks.
 
 2. **Parsing a file into a model and writing the model back means Pyrite owns
    the file's bytes, and a hand-maintained file loses.** [[adr-0008]] chose
@@ -65,7 +67,7 @@ ADRs.
    (milestone is an entry, lanes are config, the review queue is a view:
    "creating files for 'Backlog', 'In Progress' is make-work"). [[adr-0029]]
    named the fourth class (claim leases, grants, quotas are machinery, "never
-   KB content") and ADR-0039 (proposed) lists all four classes and what a
+   KB content") and ADR-0039 (accepted) lists all four classes and what a
    database rebuild loses. **New:** three ADRs over seven months made the same
    split; P4 and P7 are its general form.
 
@@ -80,7 +82,7 @@ ADRs.
 5. **Identity comes from the least mutable thing the user controls, and a
    design question answered three ways in a week had no stated model.**
    [[adr-0038]] chose `(kb, id)` and, on 2026-09-26, "derive from the filename,
-   not the title"; ADR-0042 (proposed) amends that to the path, because
+   not the title"; ADR-0042 (accepted) amends that to the path, because
    `_index.md`, `index.md` and same-named files in two folders share a
    filename, and a hand edit of a title otherwise orphans every link. The same
    pattern: the registry was a YAML file ([[adr-0029]]), then a DB table (the
@@ -136,7 +138,7 @@ ADRs.
    split is the trust boundary"), [[adr-0037]] (a closed `Action` vocabulary),
    [[adr-0040]] (conformance by AST walk, not by listing plugins). *Ignored by
    its own implementation:* [[adr-0017]] built the protocols by inheritance,
-   which ADR-0045 (proposed) names as the disagreement with [[adr-0014]].
+   which ADR-0045 (accepted) names as the disagreement with [[adr-0014]].
 
 10. **Prefer the failure a caller can see, and refuse rather than guess.**
     [[adr-0034]] rejected a bounded-by-default CLI because its failure is
@@ -196,8 +198,8 @@ ADRs.
     parser exists), [[adr-0029]] sections 2 to 4, [[adr-0004]] (its hook check
     returns early because hooks never know the user), [[adr-0040]] (sequenced),
     [[adr-0013]] Phases 2 and 3. The reverse lag: [[adr-0037]] kept a "Proposed"
-    banner after acceptance; [[adr-0038]] is still `proposed` with all five
-    questions decided and step 1 landed; [[adr-0018]] stayed `accepted` after
+    banner after acceptance; [[adr-0038]] stayed `proposed` with all five
+    questions decided and step 1 landed, until 2026-10-03; [[adr-0018]] stayed `accepted` after
     [[adr-0024]] replaced it. [[adr-0032]] carries a `proposed` section (3b) the
     release script contradicts, inside an accepted ADR. **New:** counts and
     contents written into an ADR rot unless the ADR carries the command that
@@ -236,7 +238,8 @@ ADRs.
 
 ## Part 2. By ADR
 
-Standing is the audit's ([[adr-audit-2026-10]]); "proposed" for the #635 set.
+Standing is the audit's ([[adr-audit-2026-10]]), updated for the acceptances of
+2026-10-03.
 P1 to P9 are the principles in [[design]]. *supports* = the ADR states the
 principle or something it follows from; *amends* = it changes or is changed by
 it; *predates* = it states the idea before the principle existed.
@@ -246,9 +249,9 @@ it; *predates* = it states the idea before the principle existed.
 | [[adr-0001]] | Git-native markdown storage | 2025-06-01 | current | Markdown + YAML in git is the source of truth; SQLite is a derived, rebuildable index. | An index you can delete makes every index bug recoverable; the same promise was never made for the files themselves. | supports P1, P5; predates P2 |
 | [[adr-0002]] | Plugin system via entry points | 2025-10-01 | current, detail stale; amended by 0040 | Plugins register through the `pyrite.plugins` entry-point group; a `capabilities` set tells the registry what to dispatch. | A 19-method protocol with about 12 empty returns per plugin cost dispatch and hid silent failures; declare scope structurally and treat an undeclared plugin as inert. | supports P6, P8 |
 | [[adr-0003]] | Two-tier data durability | 2025-10-15 | superseded by 0029 | Content in git; engagement data in local SQLite. | The engagement tier was the first sighting of "runtime state": neither content nor derived. | predates P7 |
-| [[adr-0004]] | Folder-per-author permissions | 2025-10-15 | accepted, inert at app layer | Author folders; a `before_save` hook checks author against folder; CODEOWNERS at the git layer. | A check that never knows the acting user is inert; identity comes from the session, not an argument. | amended by ADR-0043 (proposed); P7 |
+| [[adr-0004]] | Folder-per-author permissions | 2025-10-15 | accepted, inert at app layer | Author folders; a `before_save` hook checks author against folder; CODEOWNERS at the git layer. | A check that never knows the acting user is inert; identity comes from the session, not an argument. | amended by ADR-0043 (accepted); P7; inert until identity reaches hooks |
 | [[adr-0005]] | SQLAlchemy ORM with Alembic | 2025-09-01 | current | ORM plus Alembic migrations; raw connection kept for FTS5 and plugin tables. | The "raw connection for FTS5" exception is the origin of the raw-connection sprawl [[adr-0013]] tried to retire. | predates P8 |
-| [[adr-0006]] | MCP three-tier tool model | 2025-08-01 | current, detail stale | Read / write / admin tiers; plugins register tools per tier; the server starts at a chosen tier. | A tier is a visibility floor, not an authorization; the tier contents written in the ADR rotted. | amended by ADR-0043 (proposed); P7, P8 |
+| [[adr-0006]] | MCP three-tier tool model | 2025-08-01 | current, detail stale | Read / write / admin tiers; plugins register tools per tier; the server starts at a chosen tier. | A tier is a visibility floor, not an authorization; the tier contents written in the ADR rotted. | amended by ADR-0043 (accepted); P7, P8 |
 | [[adr-0007]] | AI integration: three surfaces, BYOK | 2026-02-23 | current, detail stale | One backend behind CLI, MCP and web; Anthropic and OpenAI SDKs only; keys stay server-side; AI is additive. | Keep the dependency you have and use `base_url` for the rest (LiteLLM rejected); everything must work without a key. | supports P9, P2 |
 | [[adr-0008]] | Structured data and schema-as-config | 2026-02-23 | current | Types and fields in `kb.yaml`; three schema layers; ruamel.yaml; 2026-10-01 amendment: enums read, checked by one function, enforced per KB. | A declared constraint nobody evaluates is worse than none; round-trip YAML reduced but did not end rewrite noise. | supports P6, P8; predates P3 (round-trip YAML) |
 | [[adr-0009]] | Type metadata and AI instructions | 2026-02-23 | current | Types carry `ai_instructions`, field descriptions and display hints; `kb.yaml` overrides plugin defaults; KB policy stays out of plugins. | Types are opaque to agents unless they say how to use them; policy is local, not the plugin's. | supports P6, P7 |
@@ -256,7 +259,7 @@ it; *predates* = it states the idea before the principle existed.
 | [[adr-0011]] | Collections, folder metadata, views | 2026-02-23 | current (phases unchecked) | `__collection.yaml` makes a folder a collection; virtual collections are query entries. | "Folders already are collections": let structure emerge from the file system rather than lay a layer over it. | supports P1, P4 |
 | [[adr-0012]] | Block references and transclusion | 2026-02-24 | current | Obsidian-compatible `[[id#heading]]`, `^block-id`, `![[...]]`; a derived block table. | Compatibility with the format users already have beats a new syntax; headings move, so addressable blocks. | supports P1, P4 |
 | [[adr-0013]] | Unified DB connection and transactions | 2026-02-25 | accepted, partly implemented | ORM for all writes; raw SQL only for read-only search; Phases 2 and 3 (services, plugins off `db.conn`) future. | Two connections were not atomic; the escape hatch was only deprecated with a warning, so it stayed in use. | predates P8 |
-| [[adr-0014]] | Structural protocols for extension types | 2026-03-01 | current (phases 1 to 2 unbuilt, per ADR-0045) | Types satisfy protocols by structure; small primitives compose; platform-backed behaviour; schema as implementation. | Agents can hold many small contracts, so fine-grained structural ones are affordable. | supports P6; amended by ADR-0045 (proposed) |
+| [[adr-0014]] | Structural protocols for extension types | 2026-03-01 | current (phases 1 to 2 unbuilt, per ADR-0045) | Types satisfy protocols by structure; small primitives compose; platform-backed behaviour; schema as implementation. | Agents can hold many small contracts, so fine-grained structural ones are affordable. | supports P6; amended by ADR-0045 (accepted) |
 | [[adr-0015]] | ODM layer and schema versioning | 2026-03-01 | current | `SearchBackend` protocol; on-load schema migration, reviewable as a git diff. | Ship the risk-reducing piece before the refactor; migration that writes back on load is a write nobody asked for. | supports P4; tension with P3 |
 | [[adr-0016]] | LanceDB evaluation | 2026-03-01 | rejected | No-Go on measurement; Postgres adopted as the second backend. | One benchmark settled it; the protocol and its conformance suite outlived the loser. | supports P9 |
 | [[adr-0017]] | Entry protocol mixins | 2026-03-03 | current | Five dataclass mixins carrying `_x_to_frontmatter`; protocol fields promoted to indexed columns; `kb.yaml` `protocols:`. | Promoted columns made cross-type queries cheap; inheritance contradicts [[adr-0014]] and puts serialisation in the type. | predates P6; contradicts P6 (serialisation) |
@@ -266,28 +269,28 @@ it; *predates* = it states the idea before the principle existed.
 | [[adr-0021]] | Definition of ready / done gates | 2026-03-09 | current | Gates in `board.yaml`, evaluated at claim and transition; warn by default. | Judgment criteria always pass, so they are guidance; gates inform before they block. | supports P8 |
 | [[adr-0022]] | Typed relationship entries (edge-entities) | 2026-03-09 | current | Relationships that carry data are entries; derived backlinks live in the index only; all endpoints required; a deleted endpoint leaves a broken reference. | First written derive-don't-write: saving an edge must not rewrite two other files. | predates P4; supports P3 |
 | [[adr-0023]] | Static HTML site cache | 2026-03-25 | current; predates ADR-0043 decision 8 | Python-rendered static HTML under `/site/`, rebuilt on index sync. | Two designs were tried and rejected (Quartz export; SvelteKit SSR needing Node). | supports P4; tension with "not a site generator" |
-| [[adr-0024]] | Git worktree collaboration model | 2026-03-30 | contradicted; amended by 0029; replacement ADR-0044 (proposed) | Worktree per user, branch `user/{name}`, in-app merge queue; V1: every KB readable by every authenticated user. | A long-lived branch per user shares one checkout between sessions; "no per-KB permissions in V1" aged out when grants arrived. | P7, P8; superseded in part by ADR-0043 (proposed) |
+| [[adr-0024]] | Git worktree collaboration model | 2026-03-30 | contradicted; amended by 0029; replacement ADR-0044 (proposed) | Worktree per user, branch `user/{name}`, in-app merge queue; V1: every KB readable by every authenticated user. | A long-lived branch per user shares one checkout between sessions; "no per-KB permissions in V1" aged out when grants arrived. | P7, P8; superseded in part by ADR-0043 (accepted) |
 | [[adr-0025]] | Release workflow | 2026-04-01 | current, amended by 0032 | `dev` integrates, `main` releases, tags ship; deployment tiers. | A gate the owner can bypass is a convention; one required interpreter missed an environment-dependent bug; two copies of a version drift. | supports P9 |
 | [[adr-0026]] | FIPS and state as promoted columns | 2026-04-10 | current | Promote two frontmatter fields to indexed columns and thread them through search. | The promoted-column pattern ([[adr-0017]]) makes a new filter a mechanical change. | supports P4 |
 | [[adr-0027]] | Per-entity-type state machine | 2026-06-11 | current | A `state_machine` block on the type; strict or relaxed transitions; state membership always checked. | The question is type-level, not a KB toggle; loosen transitions, not membership. | supports P6 |
-| [[adr-0028]] | Backend-agnostic query DSL | 2026-06-23 | accepted, not implemented | One DSL to an AST compiled per backend; operators positional; closed field vocabulary. | Callers must not need the backend's syntax; fix at the seam. Never built. | P8 |
-| [[adr-0029]] | Libraries, KB lifecycles, runtime state | 2026-07-03 | contradicted, mostly unbuilt | YAML is the registry; durable versus ephemeral KBs; declared state tables; worktrees as leased ephemerals. | "Every recurrent field bug traces to derived state diverging from its source"; two half-authorities are the disease. | supports P4, P5, P7; amended by ADR-0039, ADR-0042 (proposed) |
-| [[adr-0030]] | Agent-agnostic run execution (ACP) | 2026-09-17 | proposed, open | ACP is the harness boundary; enforcement lives in the write path, never the harness. | A gate an agent can walk around is documentation; verify external claims in a Phase 0 spike. | supports P8 |
-| [[adr-0031]] | The API is the product surface | 2026-09-17 | draft, open | The API is the only security boundary; grants, not modes; frontends are scoped clients. | A mode flag is runtime state; a build split is not a security boundary. | supports P7, P8; amended by ADR-0043 (proposed) |
-| [[adr-0032]] | Branch flow and test progression | 2026-09-17 | current, detail stale | Feature branches; PRs green on top of current `dev`; layered gates; a worktree per session. | Replace remembered disciplines with enforced rules; the assembled artifact needs its own test. | supports P8, P9 |
+| [[adr-0028]] | Backend-agnostic query DSL | 2026-06-23 | deferred 2026-10-03 (status proposed; never built) | One DSL to an AST compiled per backend; operators positional; closed field vocabulary. | Callers must not need the backend's syntax; fix at the seam. Never built. | P8 |
+| [[adr-0029]] | Libraries, KB lifecycles, runtime state | 2026-07-03 | contradicted, mostly unbuilt | YAML is the registry; durable versus ephemeral KBs; declared state tables; worktrees as leased ephemerals. | "Every recurrent field bug traces to derived state diverging from its source"; two half-authorities are the disease. | supports P4, P5, P7; amended by ADR-0039, ADR-0042 (accepted) |
+| [[adr-0030]] | Agent-agnostic run execution (ACP) | 2026-09-17 | deferred 2026-10-03 (status proposed) | ACP is the harness boundary; enforcement lives in the write path, never the harness. | A gate an agent can walk around is documentation; verify external claims in a Phase 0 spike. | supports P8 |
+| [[adr-0031]] | The API is the product surface | 2026-09-17 | withdrawn 2026-10-03 (superseded by ADR-0043) | The API is the only security boundary; grants, not modes; frontends are scoped clients. | A mode flag is runtime state; a build split is not a security boundary. | supports P7, P8; amended by ADR-0043 (accepted) |
+| [[adr-0032]] | Branch flow and test progression | 2026-09-17 | current; rebase-versus-squash wording and proposed 3b open | Feature branches; PRs green on top of current `dev`; layered gates; a worktree per session. | Replace remembered disciplines with enforced rules; the assembled artifact needs its own test. | supports P8, P9 |
 | [[adr-0033]] | Where work is tracked | 2026-09-17 | current | Bugs and requests in GitHub, the roadmap in the KB, one home per item; process findings in the KB. | Two trackers drift; capture must cost less than the thing captured. | supports P4 (process) |
 | [[adr-0034]] | Agent-facing reads are bounded | 2026-09-18 | current | Every agent-reachable read has a bound and a continuation; truncation is visible and never writable. | An unwritten rule applies unevenly; prefer the failure a caller can see. | supports P3, P8 |
 | [[adr-0035]] | Writes are eventually embedded | 2026-09-19 | current | `auto_embed` enqueues and returns; drain on existing paths; no new thread. | Measure first: the fast path existed and was unreachable; make the debt visible. | supports P3, P4 |
-| [[adr-0036]] | Live socket lifetime | 2026-09-25 | current, detail stale | A socket closes when its credential ends or its user's grants change. | A scope cached at connect outlives its source; enforce server-side. | supports P4, P8 |
-| [[adr-0037]] | One authorization policy point, one error contract | 2026-09-25 | accepted, partly implemented | `AccessPolicy`, `Principal`, `Action`; one error contract; a structural guard with a shrinking allowlist. | Shared rule, many deciders; reads were structural because they have one shape. | supports P8; amended by ADR-0043 (proposed) |
-| [[adr-0038]] | Entry identity and the file lifecycle | 2026-09-25 | proposed (label stale: questions decided, step 1 landed) | `(kb, id)` identity, one id reader, one reconcile, sticky location, history by id; invariants I1 to I10. | No single definition of an entry on disk; a state machine plus mutation checks made it measurable. | supports P5; amended by ADR-0042 (proposed) |
-| ADR-0039 | The registry is the operator's file; state is not content | 2026-10-02 | proposed | The operator's config file is the registry; the server never writes it; secrets split out; grants in the file; declared state tables. | Reverses its own earlier text (DB as registry): "several writers" argued against server writes, not against the file. | supports P5, P7; amends [[adr-0029]] |
-| [[adr-0040]] | Extensions out of tree; the plugin contract is the public API | 2026-09-26 | accepted, not implemented | A `pyrite.plugin_api` façade, `PLUGIN_API_VERSION`, a conformance kit, extensions in their own repos, cascade deleted. | Gates that enumerate plugin tools by name cannot follow a plugin out of tree; move the property into a kit each plugin runs. | supports P6, P8; amended by ADR-0045 (proposed) |
-| ADR-0041 | A KB is files any tool can use; Pyrite is additive | 2026-10-02 | proposed | Files belong to the user; additive; a write does what was asked; no record outside a file. | A no-op load and save changed 25.6% of real files. | states P1, P2, P3, P5 |
-| ADR-0042 | A write changes what was asked and nothing else | 2026-10-02 | proposed | Operations on the file's own value; reads from the file; hooks refuse and never write; identity from the path; lock and compare-and-replace. | Writing the model's after-value deletes what the model does not hold; grade with an independent oracle. | states P2, P3, P4, P5; amends [[adr-0038]], [[adr-0029]] |
-| ADR-0043 | Two planes: entries by grant, everything else the operator's | 2026-10-02 | proposed | Entries by per-KB grant; the operator's plane for the rest; identity injected by the dispatcher; no anonymous MCP. | Ownership inside the KB lets its writers grant themselves; a per-KB owner role had one use. | states P7, P8; amends [[adr-0037]], [[adr-0006]], [[adr-0004]] |
+| [[adr-0036]] | Live socket lifetime | 2026-09-25 | current; lags the code (KB-policy epochs exist) | A socket closes when its credential ends or its user's grants change. | A scope cached at connect outlives its source; enforce server-side. | supports P4, P8 |
+| [[adr-0037]] | One authorization policy point, one error contract | 2026-09-25 | accepted, partly implemented | `AccessPolicy`, `Principal`, `Action`; one error contract; a structural guard with a shrinking allowlist. | Shared rule, many deciders; reads were structural because they have one shape. | supports P8; amended by ADR-0043 (accepted) |
+| [[adr-0038]] | Entry identity and the file lifecycle | 2026-09-25 | accepted 2026-10-03 (questions decided, step 1 landed) | `(kb, id)` identity, one id reader, one reconcile, sticky location, history by id; invariants I1 to I10. | No single definition of an entry on disk; a state machine plus mutation checks made it measurable. | supports P5; amended by ADR-0042 (accepted) |
+| ADR-0039 | The registry is the operator's file; state is not content | 2026-10-02 | accepted 2026-10-03 | The operator's config file is the registry; the server never writes it; secrets split out; grants in the file; declared state tables. | Reverses its own earlier text (DB as registry): "several writers" argued against server writes, not against the file. | supports P5, P7; amends [[adr-0029]] |
+| [[adr-0040]] | Extensions out of tree; the plugin contract is the public API | 2026-09-26 | accepted, not implemented; alpha, freezes in 0.28 | A `pyrite.plugin_api` façade, `PLUGIN_API_VERSION`, a conformance kit, extensions in their own repos, cascade deleted. | Gates that enumerate plugin tools by name cannot follow a plugin out of tree; move the property into a kit each plugin runs. | supports P6, P8; amended by ADR-0045 (accepted) |
+| ADR-0041 | A KB is files any tool can use; Pyrite is additive | 2026-10-02 | accepted 2026-10-03 | Files belong to the user; additive; a write does what was asked; no record outside a file. | A no-op load and save changed 25.6% of real files. | states P1, P2, P3, P5 |
+| ADR-0042 | A write changes what was asked and nothing else | 2026-10-02 | accepted 2026-10-03 | Operations on the file's own value; reads from the file; hooks refuse and never write; identity from the path; lock and compare-and-replace. | Writing the model's after-value deletes what the model does not hold; grade with an independent oracle. | states P2, P3, P4, P5; amends [[adr-0038]], [[adr-0029]] |
+| ADR-0043 | Two planes: entries by grant, everything else the operator's | 2026-10-02 | accepted 2026-10-03 | Entries by per-KB grant; the operator's plane for the rest; identity injected by the dispatcher; no anonymous MCP. | Ownership inside the KB lets its writers grant themselves; a per-KB owner role had one use. | states P7, P8; amends [[adr-0037]], [[adr-0006]], [[adr-0004]] |
 | ADR-0044 | Internal pull requests | 2026-10-02 | proposed | A user's write lands in a change set (a git ref); a merge is `merge-tree` plus fast-forward; one landing rule. | Mirror [[adr-0032]] for users; measure git first; reading main while writing a stale copy gave two texts. | supports P7, P8; replaces [[adr-0024]] |
-| ADR-0045 | Types and protocols are the extension interface; serialisation is not | 2026-10-02 | proposed | A protocol is a data contract, derived information, explicit operations and refusals; rollup, unblock and evidence are derived; aliases and migrations live in the schema. | Two accepted ADRs disagree on structural versus nominal; 37 extension classes are structure plus serialisation. | states P4, P6; amends [[adr-0014]], [[adr-0040]] |
+| ADR-0045 | Types and protocols are the extension interface; serialisation is not | 2026-10-02 | accepted 2026-10-03 | A protocol is a data contract, derived information, explicit operations and refusals; rollup, unblock and evidence are derived; aliases and migrations live in the schema. | Two accepted ADRs disagree on structural versus nominal; 37 extension classes are structure plus serialisation. | states P4, P6; amends [[adr-0014]], [[adr-0040]] |
 
 ## Part 3. Contradictions and gaps
 
@@ -295,9 +298,9 @@ it; *predates* = it states the idea before the principle existed.
 
 - **[[adr-0014]] and [[adr-0017]]:** structural, no inheritance, against
   protocols built as inherited mixins that carry their own serialisation.
-  ADR-0045 (proposed) names it ("Two accepted ADRs have to be reconciled").
+  ADR-0045 (accepted) names it ("Two accepted ADRs have to be reconciled").
 - **[[adr-0014]] `rollup` and [[adr-0022]]:** a protocol that writes the parent
-  after save, against "no cascading writes". ADR-0045 decision 7 (proposed)
+  after save, against "no cascading writes". ADR-0045 decision 7 (accepted)
   makes rollup derived.
 - **[[adr-0008]] decision 5 and ADR-0042:** ruamel round-trip as the fix for
   noisy diffs, against the measured 5.5% floor for any re-emit.
@@ -305,7 +308,7 @@ it; *predates* = it states the idea before the principle existed.
   the migrated entry back, against "migrations are reading rules, never writes".
 - **[[adr-0024]] V1 permissions and [[adr-0037]]:** every KB readable by every
   authenticated user, against per-KB grants and concealment. ADR-0043
-  (proposed) supersedes the V1 section.
+  (accepted) supersedes the V1 section.
 - **[[adr-0024]] "index per worktree" and [[adr-0029]] section 6:** a per-worktree
   index against an overlay diff index; [[adr-0029]] wins today.
 - **[[adr-0029]] section 1, ADR-0039 (both texts) and the code:** three
@@ -321,10 +324,10 @@ it; *predates* = it states the idea before the principle existed.
   injects identity.
 - **[[adr-0037]] `KB_ADMIN` and ADR-0043:** the action exists; ADR-0043 deletes
   it. Also "services take a principal: later" is narrowed.
-- **[[adr-0031]] draft (`REPO_EGRESS`, grants) and ADR-0043:** egress as a
+- **[[adr-0031]] withdrawn (`REPO_EGRESS`, grants) and ADR-0043:** egress as a
   capability a grant can carry, against egress as the operator's.
 - **[[adr-0038]] sections 1 and 2 and ADR-0042 decision 5:** title-derived id
-  in the text, filename in decision 5, path in the proposed amendment.
+  in the text, filename in decision 5, path in the amendment (accepted 2026-10-03).
 - **[[adr-0040]] section 6 check 3 (round trip of `to_frontmatter`) and
   ADR-0045 decision 6:** the check is replaced if ADR-0045 is accepted.
   [[adr-0040]] schedules the contract for 0.27; the supported-surface entry and
@@ -353,23 +356,23 @@ have not caught up with it; the proposed ADRs named would close most of them.
 
 - **P2, "Pyrite is additive"; P3, "a write does what was asked", `--force` as
   discard only; "removing Pyrite loses none of its content":** only ADR-0041 and
-  ADR-0042 (proposed) and the standard `pyrite-is-a-guest-in-state-it-does-not-own`.
+  ADR-0042 (accepted) and the standard `pyrite-is-a-guest-in-state-it-does-not-own`.
   [[adr-0001]] supports editing in any editor; nothing accepted binds Pyrite.
 - **P4, "a hook may refuse a write, may not change one":** no accepted ADR.
   [[adr-0002]] and [[adr-0014]] register hooks and a `rollup` that writes.
 - **P5, "identity is its path unless an `id:` pins it" and "the index is never
-  the tiebreaker":** [[adr-0038]] (proposed) says `(kb, id)` and the filename;
+  the tiebreaker":** [[adr-0038]] (accepted) says `(kb, id)` and the filename;
   ADR-0042 says path. [[adr-0029]] section 4 keeps the index as the claim
   tiebreaker.
 - **P6, "serialising a file is not a type's job":** [[adr-0017]] does the
-  opposite; only ADR-0045 (proposed) supports it.
+  opposite; only ADR-0045 (accepted) supports it.
 - **P7, "the registry, grants and keys are in a documented operator config
   file":** [[adr-0029]] section 4 puts grants in database tables; only ADR-0039
-  and ADR-0043 (proposed). "Entries by grant, per KB": [[adr-0037]] has grants
+  and ADR-0043 (accepted). "Entries by grant, per KB": [[adr-0037]] has grants
   but not "the operator's plane" or where grants are stored. "Whoever holds the
   files is the operator": ADR-0041 and ADR-0043 only.
 - **P8, "each rule in one place, with a test that fails":** [[adr-0037]] states
-  it for authorization and errors only; [[adr-0038]] section 5 (proposed) for
+  it for authorization and errors only; [[adr-0038]] section 5 (accepted) for
   identity. Nothing accepted generalises it.
 - **P9, "a small supported surface; a doc that teaches a command is its test":**
   no ADR. [[adr-0032]] runs the tutorial in the smoke job; the supported-surface
@@ -378,7 +381,7 @@ have not caught up with it; the proposed ADRs named would close most of them.
   roadmap only. [[adr-0040]] (accepted) describes a compatibility policy with a
   deprecation window; ADR-0045 calls the contract alpha.
 - **"Built first for one operator working locally":** ADR-0041 decision 7
-  (proposed). [[adr-0007]] and [[adr-0031]] (draft) describe several surfaces
+  (accepted). [[adr-0007]] and [[adr-0031]] (withdrawn) describe several surfaces
   and audiences.
 - **"Not a site generator. Publishing is an export":** contradicted by accepted
   [[adr-0023]], which ships a rendered static site; ADR-0043 decision 8

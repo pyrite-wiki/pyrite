@@ -30,7 +30,7 @@ relationship an entry?", "what formats does Pyrite emit?". Layer 2 under
 2. Backlinks, outlinks and edge endpoints are index rows rebuilt from the
    files; no save rewrites another entry's frontmatter. **decided**
    [[adr-0022]]; the save hooks that write links today are replaced by
-   derivation in ADR-0042 and ADR-0045 (**proposed**).
+   derivation in ADR-0042 and ADR-0045 (**decided**).
 3. A relationship that carries data (an ownership with a percentage, a board
    membership with a term) is an edge-entity entry: two or more declared
    endpoints, all required, optional type constraints; provisional claims are
@@ -52,9 +52,9 @@ relationship an entry?", "what formats does Pyrite emit?". Layer 2 under
    not link into an ephemeral KB. A QA rule enforces it. **accepted, not built**
    [[adr-0029]] section 3.
 10. A rename rewrites inbound links as operations on the other files, under
-    their locks. **proposed** ADR-0042 decision 12.
+    their locks. **decided** ADR-0042 decision 12.
 11. Publishing to a static-site generator is an export; what that generator
-    reserves is the exporter's concern. **proposed** ADR-0041 decision 1. The
+    reserves is the exporter's concern. **decided** ADR-0041 decision 1. The
     accepted `/site/` cache is [[adr-0023]].
 
 ## Invariants a test could check

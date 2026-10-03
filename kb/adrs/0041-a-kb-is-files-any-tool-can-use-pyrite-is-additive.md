@@ -3,7 +3,7 @@ id: adr-0041
 type: adr
 title: "A KB is files any tool can use; Pyrite is additive"
 adr_number: 41
-status: proposed
+status: accepted
 date: 2026-10-02
 tags: [architecture, storage, files, principles]
 links:
@@ -35,7 +35,9 @@ links:
 
 # ADR-0041: A KB is files any tool can use; Pyrite is additive
 
-> **Proposed** (2026-10-02). The maintainer decided the principle below on
+> **Accepted by the maintainer, 2026-10-03.**
+>
+> **Written as proposed** (2026-10-02). The maintainer decided the principle below on
 > 2026-10-02 and accepts or rejects this text. It states the principle only.
 > The mechanics are in ADR-0042 (entry writes and reads, identity), ADR-0039
 > (the registry and state), ADR-0043 (authorization), ADR-0044 (where a

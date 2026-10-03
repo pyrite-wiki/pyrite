@@ -3,7 +3,7 @@ id: adr-0045
 type: adr
 title: "Types and protocols are the extension interface; serialisation is not"
 adr_number: 45
-status: proposed
+status: accepted
 date: 2026-10-02
 tags: [architecture, plugins, types, protocols, extensions, contract]
 links:
@@ -38,7 +38,9 @@ links:
 
 # ADR-0045: Types and protocols are the extension interface; serialisation is not
 
-> **Proposed** (2026-10-02). The maintainer accepts or rejects it. It is
+> **Accepted by the maintainer, 2026-10-03.**
+>
+> **Written as proposed** (2026-10-02). The maintainer accepts or rejects it. It is
 > directional and short: it says what ADR-0042 changes in ADR-0040's alpha
 > contract, what has to be learned before that contract is frozen, and asks
 > the questions that decide the shape. The maintainer's words (2026-10-02):
@@ -203,6 +205,16 @@ schema.** The schema tier of `check_protocol_satisfaction` is the authority.
 The nominal tier (inheriting a mixin) is a convenience for in-Python typing and
 never required (**question 1**).
 
+**Decided by the maintainer, 2026-10-03** (was question 2, names): the protocols keep the code's names
+(`statusable`, `assignable`, ...), because they are already in `kb.yaml` files;
+ADR-0014's bundle names (`claimable`) are bundles of them. A dependency
+protocol and an evidence protocol are defined now, because they replace two
+dead writers. References stays a candidate.
+
+**Decided by the maintainer, 2026-10-03** (was question 4, `to_frontmatter`): it stays in the alpha
+contract as a create and index helper, and is retired when schema-driven emit
+matches for all 37 classes.
+
 **6. Serialisation of an existing file is not part of a type's interface.**
 No class's `to_frontmatter`, and no protocol mixin's `_x_to_frontmatter`,
 decides a byte of an existing file (ADR-0042 decisions 1 and 2). A type's
@@ -252,8 +264,8 @@ investigation conductor's drain check would count it. So:
   re-running it derives nothing for 6,484 events whose actors live in another
   KB (and 8 links for 3 scenes). The References derivation either resolves
   `actors` across KBs, using the one KB registry (ADR-0039), or states in its
-  contract that it does not. Which is a question for the maintainer (question
-  5).
+  contract that it does not. **Decided by the maintainer, 2026-10-03** (was
+  question 5): it resolves actors across the KBs the caller can read.
 
 **8. Aliases and migrations are declared by the schema, not by class
 attributes.** A type's schema names each alias and its target
@@ -427,36 +439,38 @@ contract states whether it resolves an actor in another KB, and a test shows it.
 
 ## Questions for the maintainer
 
-Ranked by what they block.
+None open. Question 1 was answered on 2026-10-02 and questions 2 to 5 on
+2026-10-03; the answers are recorded in the decisions named after each. The
+text is kept below for its reasoning.
 
 **Decided by the maintainer, 2026-10-02** (the item is kept below for its
 reasoning): question 1, ADR-0014 governs. Protocols are structural and the
 schema is the authority, so a type defined only in `kb.yaml` is a full
 citizen; the mixins stay as in-Python conveniences.
 
-1. **Reconciling ADR-0014 and ADR-0017.** Does ADR-0014 govern (structural;
+1. **Reconciling ADR-0014 and ADR-0017. DECIDED 2026-10-02.** Does ADR-0014 govern (structural;
    the schema tier is the authority; protocols defined as data and documented
    as `protocol` entries; mixins kept as in-Python conveniences), or ADR-0017
    (mixins by inheritance first)? *Recommended: ADR-0014 governs.* Blocks the
    conformance kit (check 3).
-2. **Names, and which candidates to define.** ADR-0014's primitives
+2. **Names, and which candidates to define. DECIDED 2026-10-03** (before decision 6). ADR-0014's primitives
    (`has_status`, `workflow`, `atomic_claim`) and bundles (`claimable`), or the
    code's (`statusable`, `assignable`)? And which candidate protocols are
    wanted now: a dependency protocol, an evidence protocol, references?
    *Recommended: the code's names, because they are already in `kb.yaml`
    files, with ADR-0014's bundle names as bundles of them; define dependency
    and evidence now, because they replace two dead writers.*
-3. **Aliases and migrations in the schema before the freeze**, with
+3. **Aliases and migrations in the schema before the freeze. DECIDED (aliases required before the write path lands; decision 8)**, with
    `FRONTMATTER_ALIASES` kept as a shim for one minor release. *Recommended:
    yes.* Blocks the alpha contract (0.28). Spike 2 splits it: **aliases block
    ADR-0042's write path** (decision 8), so they come first; migrations are
    inert on the maintainer's corpus and may follow. The shim has no targets to
    carry, so it can only warn.
-4. **`to_frontmatter` in the contract.** Keep it for the alpha as a create and
+4. **`to_frontmatter` in the contract. DECIDED 2026-10-03** (before decision 6). Keep it for the alpha as a create and
    index helper, and retire it when the inventory shows schema-driven emit
    matches for all 37 classes? *Recommended: yes.* Blocks the same.
 
-5. **Does the References derivation resolve actors across KBs?** Cascade's
+5. **Does the References derivation resolve actors across KBs? DECIDED 2026-10-03** (decision 7, cross-KB paragraph). Cascade's
    hook was same-KB only and derives nothing for 6,484 real events. Resolve
    across the registry's KBs (ADR-0039), or state that it does not and say
    which relation a reader should use for an actor in another KB?

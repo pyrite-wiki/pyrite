@@ -3,7 +3,7 @@ id: adr-0043
 type: adr
 title: "Two planes: entries by grant, everything else the operator's"
 adr_number: 43
-status: proposed
+status: accepted
 date: 2026-10-02
 tags: [architecture, authorization, operator, principals, mcp, invariants, testing]
 links:
@@ -44,7 +44,9 @@ links:
 
 # ADR-0043: Two planes: entries by grant, everything else the operator's
 
-> **Proposed** (2026-10-02). The maintainer decided the model below on
+> **Accepted by the maintainer, 2026-10-03.**
+>
+> **Written as proposed** (2026-10-02). The maintainer decided the model below on
 > 2026-10-02 and accepts or rejects this text. It states the intended model and
 > the required properties. It is written from a survey of the authorization
 > design (the policy point of ADR-0037, the MCP tiers of ADR-0006, the grant
@@ -111,7 +113,10 @@ only where every KB that feeds them is readable.
 **5. The operator's plane, for now.** These are the operator's and no grant
 confers them:
 
-- KB ownership and the grants on a KB; the registry and a KB's policy fields
+- KB ownership and the grants on a KB (KB ownership is operator-only, decided
+  2026-10-02; **decided by the maintainer, 2026-10-03** (was question 2): a
+  user sharing their own ephemeral KB with another user is the operator's grant
+  until capabilities exist, not part of `self`); the registry and a KB's policy fields
   (ADR-0039);
 - commit, push, publish and export; repository subscribe, fork and sync;
 - schema changes made through Pyrite (`kb.yaml` edits through the API);
@@ -121,6 +126,10 @@ confers them:
 Over HTTP the operator reaches these through the operator credential; the web
 app's administration pages are the operator's. The tools and routes for them
 are not shown to users.
+
+**Decided by the maintainer, 2026-10-03** (was question 4, settings split): the settings that are
+`self` are a user's own AI provider key and preferences only. Every other
+instance setting is the operator's.
 
 **6. Direction, not now.** Capabilities (egress, push, publish, creating a KB)
 that the operator grants in a master file and that a user configures in a file
@@ -146,9 +155,10 @@ principal may read. A KB is public when the operator's file says so
 principal and KB (ADR-0044). For now every authorised write lands on the
 canonical files.
 
-**Leaning, not decided.** Over HTTP, the MCP tool list shows write tools to
-anyone who can write any KB, so a per-KB write grant works over MCP as it does
-over REST; every call is still decided per KB. **Question 3.**
+**MCP tool list. Decided by the maintainer, 2026-10-03** (was question 3):
+over HTTP, the MCP tool list shows write tools to anyone who can write any KB,
+so a per-KB write grant works over MCP as it does over REST; every call is
+still decided per KB.
 
 ## What each operation family is
 
@@ -319,25 +329,27 @@ accepted.
 
 ## Questions for the maintainer
 
-Ranked by what they block.
+None open. All four were answered (1 on 2026-10-02, 2 to 4 on 2026-10-03) and
+are recorded in decisions 2, 5, the MCP tool-list paragraph and the settings
+paragraph. The text is kept below for its reasoning.
 
 **Decided by the maintainer, 2026-10-02** (the item is kept below for its
 reasoning): question 1, both. The holder of the operator credential is the
 operator, and so is an account the operator's file lists as an operator.
 
-1. **Which HTTP principals are the operator.** The holder of the operator
+1. **Which HTTP principals are the operator. DECIDED 2026-10-02** (decision 2). The holder of the operator
    credential, and also an instance-admin account (an account the operator's
    file lists as an operator)? *Recommended: both*, so the web's administration
    pages need no second credential. Blocks the matrix.
-2. **What is `self`.** Own profile, keys, tokens, stars and sessions. May a user
+2. **What is `self`. DECIDED 2026-10-03** (decision 5). Own profile, keys, tokens, stars and sessions. May a user
    also share their own ephemeral KB with another user, or is that the
    operator's grant until capabilities exist? *Recommended: the operator's.*
    Blocks the operator-plane list (decision 5).
-3. **MCP over HTTP: which tools are shown.** Today by global role; the leaning
+3. **MCP over HTTP: which tools are shown. DECIDED 2026-10-03** (end of the decisions). Today by global role; the leaning
    is by the highest rung held on any KB. Decide the leaning? *Recommended:
    yes*; every call is decided per KB regardless, so the list is a convenience.
    Blocks nothing before multi-user.
-4. **Settings split.** Instance settings are the operator's; which settings are
+4. **Settings split. DECIDED 2026-10-03** (before decision 6). Instance settings are the operator's; which settings are
    per-user (`self`)? *Recommended: a user's own AI provider key and
    preferences only; everything else the operator's.* Blocks the settings row
    of the matrix.

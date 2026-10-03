@@ -45,7 +45,7 @@ write wait for embedding?". Layer 2 under [[design]] (P4).
 8. LLM query expansion is optional and provider-agnostic. **decided**
    [[adr-0007]]; the `/api/ai/expand-query` endpoint it lists was not built.
 9. Search and list reads may lag the files and report when they were indexed.
-   **proposed** ADR-0042 decision 9.
+   **decided** ADR-0042 decision 9.
 
 ## Invariants a test could check
 
