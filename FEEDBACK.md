@@ -747,16 +747,17 @@ Replaced the parent rollup hook with a derived completion value across `task lis
 - `scripts/new-worktree.sh` gave a worktree, venv and `-k pyrite` pointed at this branch's `kb/`, and `pyrite kb list` confirmed it.
 - The groom and the ADRs had the line numbers right (`task_service.py:594`, `:1016`).
 - Hand-authored trees with `IndexManager(db, config).index_all()` made medium tests across CLI, MCP and REST cheap to write. `verify-red`'s per-test table is exactly what a reviewer needs.
-## 2026-10-03 · B6 P2, the momentary file lock: one worker theme in a worktree (pyrite-dev skill, verify-red, pre-push) · claude-sonnet-5-5
 
-Added `pyrite/utils/file_lock.py` and `atomic_write_text(expect=)`, with process-spawning tests.
+## 2026-10-03 · a pyrite-worker closing three test-harness limits (#703) in `tests/test_doc_write_as_patch.py` · claude-sonnet-5-5
 
-**Friction 1: verify-red cannot be green for a brand-new module. Severity: had to figure out.** Every test that touches a new name (`LOCK_DIR_ENV`, `STRIPES`) is labelled "import-only" however behavioural it is: 12 of 16 here, after I made the file collect without the change. The evidence that the tests guard something came from deleting each guard by hand (compare, stripe bound, in-process lock, flock) and naming the failing test. **Would have helped:** a line in the skill saying that for a new module the mutation table is the evidence, or a verify-red mode that mutates the new code.
+**Task:** make a write example's verdict depend only on the write-path behaviour it names.
 
-**Friction 2: the pre-push suite ran the whole tree for a util change. Severity: slowed.** `atomic_write` is imported widely, so `test-affected` selected about 450 files and held the push for roughly ten minutes, past the tool's two-minute foreground limit, so the commit, push and verify-red ran as one background command. **Would have helped:** the selection size printed first (as in the B7 entry).
+**Got:** the ticket asked for "a KB type whose links are derived". None exists for `actors` (the index derives links from body wikilinks and `references:`, not `actors`; `entry_ref` rows hold the bracket-wrapped value and `kb_backlinks` does not return them). I found that only after probing seven KB types with a script.
 
-**Friction 3: BSD `sed -i` and a missing `timeout` on macOS. Severity: minor.** `sed -i 's/..//'` and `timeout` both failed; the skill's commands assume GNU.
+**Would have helped:** the groom naming the missing production piece, so the limit is stated as "blocked on ADR-0045 reference fields" rather than "use a derived type".
 
-**Friction 4: ADR-0042 and amendment A1 disagree on "shared". Severity: had to figure out.** A1 wants one lock dir shared by every OS user, but its defaults (`$XDG_RUNTIME_DIR`, macOS `$TMPDIR`) are per-user directories, so two OS users resolve different directories. I followed A1's defaults and made `lock_dir` / `PYRITE_LOCK_DIR` the way to share one; flagged in the PR.
+**Severity:** slowed.
 
-**Worked well:** `tests/test_task_claim_concurrency.py` gave the spawn, barrier and group-deadline pattern ready to copy; the spike's measured numbers made the test shapes (distinct values, chain check) unambiguous.
+**Worked well:**
+- The strict-xfail design meant the new controls were unreachable by the real examples; a small model of the correct write path was the only way to see them red and green.
+- `verify-red.sh` said "nothing to verify (no code change)" at once; hand mutations were the evidence.
