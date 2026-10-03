@@ -894,6 +894,9 @@ class TestSemanticFilterConformance:
         )
         assert {r["id"] for r in rows} == {"mech", "theme", "task"}
 
+    @pytest.mark.control(
+        reason="unfiltered semantic search already filled its requested limit on dev"
+    )
     def test_search_semantic_fills_limit_despite_selective_filter(self, embedded_backend):
         """A selective filter must not cost recall.
 
@@ -954,8 +957,48 @@ class TestSemanticKnnBudget:
         )
         assert {r["id"] for r in rows} == {"e0"}
 
-    def test_selective_filter_reaches_candidates_beyond_the_k_cap(self, backend, monkeypatch):
-        """Rows rejected by a selective predicate must not spend sqlite-vec's KNN budget."""
+    @pytest.mark.parametrize(
+        (
+            "filter_name",
+            "target_value",
+            "distractor_value",
+            "target_overrides",
+            "distractor_overrides",
+        ),
+        [
+            ("entry_type", "needle", "note", {}, {}),
+            ("tags", ["target"], ["noise"], {"tags": ["target"]}, {"tags": ["noise"]}),
+            ("state", "MI", "LA", {"state": "MI"}, {"state": "LA"}),
+            ("fips", "26163", "22071", {"fips": "26163"}, {"fips": "22071"}),
+            (
+                "status",
+                "processed",
+                "unprocessed",
+                {"status": "processed"},
+                {"status": "unprocessed"},
+            ),
+            (
+                "date_from",
+                "2026-02-01",
+                "2026-02-01",
+                {"date": "2026-02-15"},
+                {"date": "2026-01-15"},
+            ),
+            ("date_to", "2026-02-28", "2026-02-28", {"date": "2026-02-15"}, {"date": "2026-03-15"}),
+        ],
+        ids=["entry-type", "tags", "state", "fips", "status", "date-from", "date-to"],
+    )
+    def test_selective_filter_reaches_candidates_beyond_the_k_cap(
+        self,
+        backend,
+        monkeypatch,
+        filter_name,
+        target_value,
+        distractor_value,
+        target_overrides,
+        distractor_overrides,
+    ):
+        """Each supported filter keeps matching rows beyond the small KNN cap."""
         if not hasattr(backend, "_raw_conn"):
             pytest.skip("only SQLite has a hard KNN candidate cap")
 
@@ -963,26 +1006,45 @@ class TestSemanticKnnBudget:
         query = _near_vector()
         for i in range(20):
             entry_id = f"distractor-{i}"
-            backend.upsert_entry(_make_entry(entry_id, entry_type="note"))
+            backend.upsert_entry(_make_entry(entry_id, entry_type="note", **distractor_overrides))
             if not backend.upsert_embedding(entry_id, "test", query):
                 pytest.skip("backend cannot store embeddings (no vector support)")
         for i in range(3):
             entry_id = f"needle-{i}"
-            backend.upsert_entry(_make_entry(entry_id, entry_type="needle"))
+            backend.upsert_entry(_make_entry(entry_id, entry_type="needle", **target_overrides))
             if not backend.upsert_embedding(entry_id, "test", _near_vector(i + 1)):
                 pytest.skip("backend cannot store embeddings (no vector support)")
 
         with backend._raw_cursor() as cur:
             matching_vectors = cur.execute(
                 "SELECT COUNT(*) FROM vec_entry v JOIN entry e ON v.rowid = e.rowid "
-                "WHERE e.entry_type = ?",
-                ("needle",),
+                "WHERE e.kb_name = ?",
+                ("test",),
             ).fetchone()[0]
-        assert matching_vectors == 3, "embedding rowids must match entry rowids for KNN filters"
+        assert matching_vectors == 23, "embedding rowids must match entry rowids for KNN filters"
 
-        rows = backend.search_semantic(query, kb_name="test", limit=2, entry_type="needle")
+        rows = backend.search_semantic(
+            query, kb_name="test", limit=2, **{filter_name: target_value}
+        )
         assert len(rows) == 2
-        assert {row["entry_type"] for row in rows} == {"needle"}
+        assert all(row["id"].startswith("needle-") for row in rows)
+
+    def test_zero_matches_beyond_the_k_cap_returns_empty(self, backend, monkeypatch):
+        """A selective filter with no matches returns empty despite nearer distractors."""
+        if not hasattr(backend, "_raw_conn"):
+            pytest.skip("only SQLite has a hard KNN candidate cap")
+
+        monkeypatch.setattr(sqlite_backend, "_SQLITE_VEC_MAX_K", 8)
+        for i in range(20):
+            entry_id = f"distractor-{i}"
+            backend.upsert_entry(_make_entry(entry_id, entry_type="note"))
+            if not backend.upsert_embedding(entry_id, "test", _near_vector(i)):
+                pytest.skip("backend cannot store embeddings (no vector support)")
+
+        rows = backend.search_semantic(
+            _near_vector(), kb_name="test", limit=2, entry_type="no-matches"
+        )
+        assert rows == []
 
     def test_unfiltered_search_above_the_k_cap_does_not_raise(self, big_embedded_backend):
         """``max_distance`` culling drives the same escalation with no filter.
@@ -1038,6 +1100,7 @@ class TestSemanticKnnEscalation:
         )
         assert {r["id"] for r in rows} == {"h199"}
 
+    @pytest.mark.control(reason="distance-culling escalation already held on dev without this fix")
     def test_unfiltered_distance_culling_escalates(self, haystack_backend, monkeypatch):
         """Distance culling still requires a larger KNN budget.
 

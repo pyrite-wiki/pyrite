@@ -71,7 +71,7 @@ ai = [
 ]
 semantic = [
     "sentence-transformers>=2.3.0",  # trust_remote_code (embedding_service._load_model)
-    "sqlite-vec>=0.1.6",
+    "sqlite-vec>=0.1.0",
 ]
 postgres = [
     "psycopg2-binary>=2.9.0",
