@@ -23,6 +23,7 @@ from pyrite.exceptions import EntryExistsError, ValidationError
 from pyrite.models.core_types import entry_id_from_markdown
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
+from pyrite.storage.index import IndexManager
 from pyrite.storage.repository import KBRepository
 
 KB = "idkb"
@@ -156,6 +157,29 @@ def test_484_entry_id_from_markdown_is_the_loaders_id(kb):
     ]
     for f in cases:
         assert entry_id_from_markdown(f.read_text()) == repo.load_entry_from_file(f).id
+
+
+@pytest.mark.parametrize(
+    ("yaml_title", "expected_id"),
+    [("2024", "2024"), ("1e3", "1000-0"), ("true", "true")],
+)
+@pytest.mark.control(
+    reason="YAML scalar titles must remain readable and indexable when their id is derived"
+)
+def test_yaml_scalar_title_is_indexable_as_derived_id(kb, yaml_title, expected_id):
+    kb_path, svc, repo, db = kb
+    entry_file = kb_path / "numeric-title.md"
+    entry_file.write_text(
+        f"---\ntype: note\ntitle: {yaml_title}\n---\n\nBody\n",
+        encoding="utf-8",
+    )
+
+    counts = IndexManager(db, svc.config).index_all()
+    assert counts == {KB: 1}
+
+    entry = repo.load_entry_from_file(entry_file)
+    assert entry.id == expected_id
+    assert repo.find_file(expected_id) == entry_file
 
 
 # -- #494: delete removes every file holding the id, and only those ----------
