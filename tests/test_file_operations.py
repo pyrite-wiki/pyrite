@@ -15,8 +15,10 @@ The oracle is independent of the module under test:
   uses);
 - the expected value is the operations applied to the parsed dict by
   ``_expected`` below;
-- a top-level key's own lines are found by a line scan (``_key_blocks``), not by
-  the module's composer spans;
+- the bytes outside the spans an operation names are compared, before against
+  after, by ``tests/file_operations_oracle.py``: its own span rule and its own
+  mechanism (an indentation scan for where block values end), never the
+  module's (Andon #745: an earlier oracle here was the module's scan copied);
 - equality is ``_eq``, ADR-0042 decision 3 written out again here.
 
 Each guard the module adds has a test that fails when that guard alone is
@@ -32,6 +34,7 @@ import pytest
 
 from pyrite.exceptions import FrontmatterError
 from pyrite.models.core_types import _frontmatter_of
+from tests.file_operations_oracle import op_spans, outside_identical
 from pyrite.storage.file_operations import (
     AddSubkey,
     Append,
@@ -333,45 +336,27 @@ def _expected(meta: dict, op: Any) -> dict:
     return result
 
 
-def _key_blocks(text: str) -> dict[str, str]:
-    """Each top-level key's own lines, by a line scan: a key line starts at
-    column 0 and is not a comment or a list item; its block runs to the next
-    key line, less trailing blank and comment-only lines."""
-    span = span_of(text)
-    assert span is not None
-    lines = text[span.start : span.end].splitlines(keepends=True)
-    blocks: dict[str, list[str]] = {}
-    current = None
-    for line in lines:
-        head = line[:1]
-        if head and head not in " \t#-\r\n" and ":" in line:
-            current = line.split(":", 1)[0].strip().strip("'\"")
-            blocks[current] = [line]
-        elif current is not None:
-            blocks[current].append(line)
-    out = {}
-    for key, block in blocks.items():
-        while len(block) > 1 and (not block[-1].strip() or block[-1].lstrip().startswith("#")):
-            block = block[:-1]
-        out[key] = "".join(block)
-    return out
-
-
-def _top(op: Any) -> str | None:
-    if isinstance(op, ReplaceBody):
-        return None
-    return str(_segments(op.path)[0])
-
-
 def check_contract(before: str, ops: list, after: str) -> None:
-    """Properties 1 and 3 for any result: untouched top-level keys are
-    byte-identical; the reader gets exactly the operations applied; key order
-    holds with new keys last; prefix (BOM), body and line endings are kept."""
-    named = {_top(op) for op in ops}
-    old_blocks, new_blocks = _key_blocks(before), _key_blocks(after)
-    for key, block in old_blocks.items():
-        if key not in named:
-            assert new_blocks.get(key) == block, f"untouched key {key!r} changed"
+    """The contract for any result, one operation at a time:
+
+    - every byte outside the spans the operation names is identical, before
+      against after (``file_operations_oracle``: its own span rule and
+      mechanism, not the module's);
+    - the reader gets exactly the operations applied, with key order kept and
+      new keys last;
+    - the BOM, the body (unless replaced) and the line endings are kept.
+
+    A call with several operations must equal applying them one by one, and
+    each step must pass on its own."""
+    step = before
+    for op in ops:
+        nxt, _ = apply(step, [op], span_of(step))
+        spans = op_spans(step, span_of(step), op)
+        assert outside_identical(step, nxt, spans), (
+            f"{op}: bytes outside its spans {spans} changed:\n{_diff(step, nxt)}"
+        )
+        step = nxt
+    assert after == step, "the call differs from its operations applied one by one"
     meta, body = _reader(before)
     expected = meta
     for op in ops:
@@ -381,7 +366,7 @@ def check_contract(before: str, ops: list, after: str) -> None:
     assert list(got) == list(expected), "key order changed"
     if not any(isinstance(op, ReplaceBody) for op in ops):
         assert after[span_of(after).body :] == before[span_of(before).body :]
-    assert after.startswith("﻿") == before.startswith("﻿")
+    assert after.startswith("\ufeff") == before.startswith("\ufeff")
     if "\r\n" in before:
         assert after.count("\n") == after.count("\r\n"), "a bare LF in a CRLF file"
     else:
@@ -850,3 +835,495 @@ def test_the_oracle_catches_the_round_trip(shape, key, value):
         check_contract(before, [Set(key, value)], _round_trip(before, key, value))
     after, _ = run(before, Set(key, value))
     check_contract(before, [Set(key, value)], after)
+
+
+# --- round 1 (#732): a value-level patch; comments belong to no value ---------
+
+
+def _apply1(text: str, *ops: Any) -> str:
+    return run(text, *ops)[0]
+
+
+def test_unset_of_a_dash_line_pair_keeps_the_comment_below_it():
+    """The comment line between the unset pair and its kept sibling is not
+    the unset pair's (cold read, p1)."""
+    before = "---\nlinks:\n- target: a\n  # note about relation\n  relation: b\n---\nx\n"
+    after = _apply1(before, Unset("links[0].target"))
+    assert "  # note about relation\n" in after
+    assert _reader(after)[0] == {"links": [{"relation": "b"}]}
+    check_contract(before, [Unset("links[0].target")], after)
+
+
+def test_unset_of_a_dash_line_pair_pulls_the_next_key_up():
+    before = "---\nlinks:\n- target: a\n  relation: b\n---\nx\n"
+    assert _apply1(before, Unset("links[0].target")) == "---\nlinks:\n- relation: b\n---\nx\n"
+
+
+@pytest.mark.parametrize(
+    ("value", "line"),
+    [
+        ([], "tags: [] # my tags\n"),
+        ("none", "tags: none # my tags\n"),
+        ({}, "tags: {} # my tags\n"),
+    ],
+)
+def test_a_block_value_set_inline_keeps_the_key_line_comment(value, line):
+    """The comment on a key line is the pair's, not the value's (cold read)."""
+    before = "---\ntags: # my tags\n- a\n- b\nz: 1\n---\nx\n"
+    after = _apply1(before, Set("tags", value))
+    assert after == f"---\n{line}z: 1\n---\nx\n"
+    check_contract(before, [Set("tags", value)], after)
+
+
+def test_a_scalar_set_to_a_block_keeps_its_comment_on_the_key_line():
+    before = "---\ntags: foo  # my tags\nz: 1\n---\nx\n"
+    after = _apply1(before, Set("tags", ["a", "b"]))
+    assert after == "---\ntags:  # my tags\n- a\n- b\nz: 1\n---\nx\n"
+
+
+def test_a_block_scalar_header_comment_stays():
+    before = "---\ns: |  # keep\n  one\nz: 1\n---\nx\n"
+    assert _apply1(before, Set("s", "two\n")) == "---\ns: |  # keep\n  two\nz: 1\n---\nx\n"
+    assert _apply1(before, Set("s", 3)) == "---\ns: 3  # keep\nz: 1\n---\nx\n"
+
+
+def test_unset_of_the_first_key_keeps_the_comment_above_the_next():
+    before = "---\na: 1\n# about b\nb: 2\n---\nx\n"
+    assert _apply1(before, Unset("a")) == "---\n# about b\nb: 2\n---\nx\n"
+
+
+# The post-check compares the bytes outside the named spans, directly. Each
+# fault below is injected into the narrow edit; the result must never carry it.
+
+_GUARDED = '---\na: 1\n# keep me: important\n\n"x:y": 1\nx: 2\n# rule\nlist:\n- a\n---\nbody\n'
+
+
+@pytest.mark.parametrize(
+    ("fault", "target"),
+    [
+        ("delete a comment line between untouched keys", "# keep me: important\n"),
+        ("rewrite a comment", "# rule"),
+        ("re-quote a key the scan would confuse with x", '"x:y": 1'),
+        ("delete a blank line", "\n\n"),
+    ],
+)
+def test_a_narrow_edit_touching_bytes_outside_its_span_is_never_returned(
+    monkeypatch, fault, target
+):
+    from pyrite.storage import file_operations as fo
+
+    real = fo._narrow_edits
+    replacement = {
+        "# keep me: important\n": "",
+        "# rule": "# RULE",
+        '"x:y": 1': "'x:y': 1",
+        "\n\n": "\n",
+    }[target]
+
+    def corrupt(doc, op):
+        at = doc.text.index(target)
+        return [*real(doc, op), (at, at + len(target), replacement)]
+
+    monkeypatch.setattr(fo, "_narrow_edits", corrupt)
+    op = Append("list", "b")
+    after, report = run(_GUARDED, op)
+    assert target in after, fault
+    assert report.widened == ("list",)
+    check_contract(_GUARDED, [op], after)
+
+
+def test_a_fault_on_a_scalar_that_cannot_widen_is_refused(monkeypatch):
+    """A top-level scalar has no item-wise widen: refused, with a reason
+    (the widen used to raise AttributeError here)."""
+    from pyrite.storage import file_operations as fo
+
+    real = fo._narrow_edits
+
+    def corrupt(doc, op):
+        at = doc.text.index("# rule")
+        return [*real(doc, op), (at, at + 1, "")]
+
+    monkeypatch.setattr(fo, "_narrow_edits", corrupt)
+    with pytest.raises(OperationRefusedError) as raised:
+        run(_GUARDED, Set("a", 2))
+    assert "outside" in raised.value.reason or "changed" in raised.value.reason
+
+
+def test_the_final_check_catches_what_the_per_operation_check_missed(monkeypatch):
+    """The second line: once per call, through the reader's split and each
+    operation's spans in the original. With the first line blinded (it allows
+    every byte) a corrupt edit is still refused."""
+    from pyrite.storage import file_operations as fo
+
+    real = fo._narrow_edits
+
+    def corrupt(doc, op):
+        at = doc.text.index("# rule")
+        return [*real(doc, op), (at, at + len("# rule"), "# RULE")]
+
+    monkeypatch.setattr(fo, "_narrow_edits", corrupt)
+    monkeypatch.setattr(fo, "_named_spans", lambda doc, op: [(0, len(doc.text))])
+    with pytest.raises(OperationRefusedError) as raised:
+        run(_GUARDED, Append("list", "b"))
+    assert "post-check" in raised.value.reason
+
+
+@pytest.mark.parametrize(
+    ("before", "op", "after"),
+    [
+        ("---\ns: |-\n  x  \nz: 1\n---\nx\n", Set("s", "y"), "---\ns: |-\n  y\nz: 1\n---\nx\n"),
+        (
+            "---\ndc:title: x\nb: 1\n---\nx\n",
+            Set("dc:title", "y"),
+            "---\ndc:title: y\nb: 1\n---\nx\n",
+        ),
+        ('---\n"a:b": 1\nb: 1\n---\nx\n', Set("a:b", 7), '---\n"a:b": 7\nb: 1\n---\nx\n'),
+    ],
+    ids=["block-scalar-trailing-spaces", "colon-in-plain-key", "colon-in-quoted-key"],
+)
+def test_top_level_scalars_the_cold_read_crashed_on(before, op, after):
+    assert _apply1(before, op) == after
+
+
+# Keys whose loaded type is not a string: one lookup rule (_key_matches).
+
+_TYPED_KEYS = "---\ntrue: 1\nfalse: 2\nnull: 3\n7: seven\n2024-01-01: day\nb: 4\n---\nx\n"
+
+
+@pytest.mark.parametrize(
+    ("key", "line"),
+    [
+        ("true", "true: 1\n"),
+        ("false", "false: 2\n"),
+        ("null", "null: 3\n"),
+        ("7", "7: seven\n"),
+        ("2024-01-01", "2024-01-01: day\n"),
+    ],
+)
+def test_unset_finds_a_key_by_what_it_reads_as(key, line):
+    after, report = run(_TYPED_KEYS, Unset(key))
+    assert report.changed
+    assert after == _TYPED_KEYS.replace(line, "")
+
+
+def test_set_finds_a_bool_key():
+    assert _apply1(_TYPED_KEYS, Set("true", 2)) == _TYPED_KEYS.replace("true: 1", "true: 2")
+
+
+def test_a_segment_naming_two_keys_is_refused():
+    with pytest.raises(OperationRefusedError) as raised:
+        run("---\ntrue: 1\n'true': 2\n---\nx\n", Set("true", 3))
+    assert "two keys" in raised.value.reason
+
+
+def test_a_new_key_spelled_like_a_bool_is_written_as_a_string():
+    after = _apply1("---\na: 1\n---\nx\n", Set("true", 1))
+    assert after == '---\na: 1\n"true": 1\n---\nx\n'
+    assert _reader(after)[0] == {"a": 1, "true": 1}
+
+
+def test_true_and_1_are_duplicate_keys_as_the_loader_sees_them():
+    with pytest.raises(OperationRefusedError) as raised:
+        run("---\ntrue: a\n1: b\n---\nx\n", Set("true", "c"))
+    assert "duplicate key" in raised.value.reason
+
+
+# Limits fixed in round 1, and the ones stated in the module docstring.
+
+
+def test_a_key_starting_with_a_dash():
+    assert _apply1("---\na: 1\n---\nx\n", Set("-x", 1)) == "---\na: 1\n-x: 1\n---\nx\n"
+
+
+def test_an_indentation_indicator_is_kept():
+    before = "---\ns: |2-\n   lead\nz: 1\n---\nx\n"
+    after = _apply1(before, Set("s", " lead2"))
+    assert after == "---\ns: |2-\n   lead2\nz: 1\n---\nx\n"
+    assert _reader(after)[0]["s"] == " lead2"
+
+
+def test_keep_chomping_is_kept():
+    before = "---\ns: |+\n  x\n\nz: 1\n---\nx\n"
+    after = _apply1(before, Set("s", "y\n\n"))
+    assert after == "---\ns: |+\n  y\n\nz: 1\n---\nx\n"
+
+
+def test_an_append_after_a_keep_scalar_keeps_its_blank_lines():
+    before = "---\nl:\n- y\n- |+\n  x\n\n\nz: 1\n---\nx\n"
+    after = _apply1(before, Append("l", "w"))
+    assert after == "---\nl:\n- y\n- |+\n  x\n\n\n- w\nz: 1\n---\nx\n"
+    assert _reader(after)[0]["l"] == ["y", "x\n\n\n", "w"]
+    check_contract(before, [Append("l", "w")], after)
+
+
+def test_a_line_separator_is_escaped_not_written_bare():
+    after = _apply1("---\nt: a\n---\nx\n", Set("t", "a b"))
+    assert after == '---\nt: "a\\u2028b"\n---\nx\n'
+
+
+def test_a_large_float_reads_as_a_float_under_yaml_11_too():
+    import yaml
+
+    after = _apply1("---\nn: 1\n---\nx\n", Set("n", 1e20))
+    assert after == "---\nn: 1.0e+20\n---\nx\n"
+    assert yaml.safe_load(after.split("---")[1]) == {"n": 1e20}
+
+
+def test_an_index_out_of_range_says_so():
+    with pytest.raises(OperationRefusedError) as raised:
+        run(SHAPES["doc-legacy-links"], Set("links[5].x", 1))
+    assert "out of range" in raised.value.reason
+
+
+@pytest.mark.parametrize("path", ["a..b", "", ".a", "a.", "a[x]", "a[0", "a]b", "[0].a"])
+def test_a_path_that_cannot_be_read_is_refused(path):
+    with pytest.raises(OperationRefusedError):
+        run("---\na: {b: 1}\n---\nx\n", Set(path, 2))
+
+
+def test_limit_a_folded_value_with_an_indented_line_is_written_literal():
+    before = "---\ns: >\n  a\nz: 1\n---\nx\n"
+    after = _apply1(before, Set("s", "a\n  indented\n"))
+    assert after.startswith("---\ns: |\n")
+    assert _reader(after)[0]["s"] == "a\n  indented\n"
+
+
+def test_limit_keep_chomping_on_a_clip_scalar_is_written_double_quoted():
+    before = "---\ns: |\n  a\n\nz: 1\n---\nx\n"
+    after = _apply1(before, Set("s", "a\n\n"))
+    assert '\ns: "a\\n\\n"\n' in after
+
+
+def test_limit_a_list_written_directly_in_a_list_item_is_refused():
+    with pytest.raises(OperationRefusedError):
+        run("---\nl:\n- - a\n  - b\n- c\n---\nx\n", Unset("l[0]"))
+
+
+# --- nothing but OperationRefusedError escapes --------------------------------
+
+
+def test_malformed_operations_raise_only_operation_refused():
+    """Fuzz: paths, values and operations built from awkward pieces, on every
+    shape. Each call returns, or raises OperationRefusedError with a reason."""
+    import random
+
+    rng = random.Random(732)
+    parts = [
+        "",
+        ".",
+        "..",
+        "[",
+        "]",
+        "[0]",
+        "[-1]",
+        "[99]",
+        "[x]",
+        "a",
+        "tags",
+        "links",
+        "params",
+        "0",
+        "true",
+        "null",
+        " ",
+        "a.b",
+        "#",
+        ":",
+        "-",
+        "'q'",
+        " ",
+    ]
+    odd = [1.5, None, True, (), [], -1, 0, "", "x", object(), b"bytes", {"k": "v"}]
+    values = [
+        None,
+        1,
+        "s",
+        [1],
+        {"a": 1},
+        {1, 2},
+        float("nan"),
+        float("inf"),
+        object(),
+        {(1, 2): "k"},
+        {"k": object()},
+        b"x",
+        date(2020, 1, 1),
+        [[[]]],
+        {"": ""},
+    ]
+
+    def path():
+        if rng.random() < 0.25:
+            return tuple(rng.choice(odd + parts) for _ in range(rng.randint(0, 3)))
+        return "".join(rng.choice(parts) for _ in range(rng.randint(0, 4)))
+
+    def op():
+        kind = rng.randrange(8)
+        if kind == 0:
+            return Set(path(), rng.choice(values))
+        if kind == 1:
+            return Append(path(), rng.choice(values))
+        if kind == 2:
+            return Remove(path(), rng.choice(values))
+        if kind == 3:
+            return Unset(path())
+        if kind == 4:
+            return AddSubkey(path(), rng.choice(odd + parts), rng.choice(values))
+        if kind == 5:
+            return ReplaceBody(rng.choice(["x", "", None, 3, "---\na: 1\n---"]))
+        if kind == 6:
+            return rng.choice(odd)
+        return Set(
+            rng.choice(["title", "tags", "links[0].relation", "params.social"]), rng.choice(values)
+        )
+
+    reasons: list[str] = []
+    for _ in range(1500):
+        text = rng.choice(list(SHAPES.values()))
+        ops = [op() for _ in range(rng.randint(1, 3))]
+        try:
+            result = apply(text, ops, span_of(text))
+        except OperationRefusedError as e:
+            reasons.append(e.reason)
+            continue
+        assert isinstance(result[0], str)
+    assert all(reasons), "a refusal without a reason"
+
+
+# --- budget -------------------------------------------------------------------
+
+
+def test_budget_many_operations_and_a_long_list():
+    """Generous ceilings (measured 0.4 s and 0.1 s on a laptop, round 1; were
+    30 s and 3.2 s): one parse per batch of distinct keys, a list compared
+    by its common head and tail before any LCS."""
+    import time
+
+    text = "---\n" + "".join(f"k{i}: v{i}\n" for i in range(500)) + "---\nx\n"
+    started = time.perf_counter()
+    apply(text, [Set(f"k{i}", "w") for i in range(500)], span_of(text))
+    assert time.perf_counter() - started < 5
+
+    items = [f"item-{i}" for i in range(2000)]
+    text = "---\ntags:\n" + "".join(f"- {x}\n" for x in items) + "---\nx\n"
+    new = items[:]
+    new[1000] = "changed"
+    started = time.perf_counter()
+    apply(text, [Set("tags", new)], span_of(text))
+    assert time.perf_counter() - started < 5
+
+
+# --- the sweep: every shape, every key, through the byte oracle ---------------
+
+_SWEEP_VALUES = [
+    "new value",
+    "yes",
+    "123",
+    "a: b",
+    "",
+    " lead",
+    "2026-05-05",
+    7,
+    2.5,
+    True,
+    None,
+    ["a", "b"],
+    {"k": "v", "n": {"m": 1}},
+    [],
+    {},
+    "multi\nline\n",
+]
+
+
+def _sweep_ops(meta: dict) -> list:
+    ops: list = [Set("brand_new", {"a": [1, {"b": 2}]}), Set(("x", "y", "z"), "deep")]
+    for k, v in meta.items():
+        ops.append(Unset(k))
+        ops += [Set(k, value) for value in _SWEEP_VALUES]
+        if isinstance(v, list) or v is None:
+            ops.append(Append(k, "zz"))
+        if isinstance(v, list) and v:
+            ops += [
+                Append(k, {"target": "t", "relation": "r"}),
+                Remove(k, v[0]),
+                Remove(k, v[-1]),
+                Unset((k, 0)),
+                Set(k, list(reversed(v))),
+                Set(k, v + v),
+                Set(k, v[1:] + ["new"]),
+            ]
+            if isinstance(v[0], dict):
+                for sub in v[0]:
+                    ops += [Unset((k, 0, sub)), Set((k, 0, sub), "changed")]
+                ops.append(AddSubkey((k, 0), "brandnew", "x"))
+        if isinstance(v, dict):
+            for sub in v:
+                ops += [Unset((k, sub)), Set((k, sub), "c"), Set((k, sub), {"deep": [1, 2]})]
+            ops.append(Set((k, "added"), [1]))
+    return ops
+
+
+# Comments in every place a frontmatter can hold one (the cold read's p6 file,
+# extended): a header, a key line, after an inline value, between items, on a
+# dash line, between a dash-line pair and its sibling, deep in a nested map,
+# on a block scalar's header, between keys, after the last key.
+COMMENTED = (
+    "---\n"
+    "# head\n"
+    "id: x   # the id\n"
+    "tags: # tag list\n"
+    "  - a  # first\n"
+    "  # between\n"
+    "  - b\n"
+    "# before links\n"
+    "links:\n"
+    "- target: t1  # tgt\n"
+    "  # rel note\n"
+    "  relation: r1\n"
+    "- target: t2\n"
+    "  relation: r2\n"
+    "  extra:\n"
+    "    k: v # deep\n"
+    "# before params\n"
+    "params:\n"
+    "  x: 1 # px\n"
+    "  # middle\n"
+    "  y: 2\n"
+    "  z:\n"
+    "  - q\n"
+    "flow: [a, b]  # f\n"
+    "notes: |  # literal\n"
+    "  one\n"
+    "  two\n"
+    "\n"
+    "empty:\n"
+    "n: ~\n"
+    "# tail\n"
+    "---\n"
+    "body\n"
+)
+
+
+@pytest.mark.parametrize("variant", ["lf", "crlf", "bom"])
+def test_sweep_every_shape_through_the_byte_oracle(variant):
+    """Every key of every shape, set to awkward values, unset, appended to,
+    removed from: each result passes ``check_contract`` (the byte oracle and
+    the reader), or is refused with a reason. None may be refused here: these
+    are all edits the module supports."""
+    refused = []
+    for name, text in {**SHAPES, "commented": COMMENTED}.items():
+        if name in ("anchor-alias", "duplicate-keys"):
+            continue
+        if variant == "crlf":
+            text = text.replace("\r\n", "\n").replace("\n", "\r\n")
+        elif variant == "bom" and not text.startswith("﻿"):
+            text = "﻿" + text
+        for op in _sweep_ops(_reader(text)[0]):
+            try:
+                after, _ = run(text, op)
+            except OperationRefusedError as e:
+                refused.append((name, op, e.reason))
+                continue
+            if after is not text:
+                check_contract(text, [op], after)
+    assert not refused, refused[:5]

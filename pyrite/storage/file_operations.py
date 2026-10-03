@@ -5,40 +5,104 @@ unset, replace the body, add a sub-key) to the file's own text and returns the
 new text and a report. It is a pure function. It touches no file and is not
 wired to any write path yet (B6 phase P3 does that).
 
-**How an edit is made.** Each operation is a splice at the span of the value
-it names. Spans come from ruamel.yaml's composer, the YAML 1.2 parser that
-reads use (amendment A4). Existing bytes are never re-emitted through a
-serializer. Only the bytes of the new value are written, by the small
-emitter below. A new key goes last, a new list item copies its neighbour's
-indent and quoting, a replaced scalar keeps its quote style and its trailing
-comment, and new lines use the file's line ending.
+**The model: a value-level patch.** Pyrite patches a file the way git does,
+but at the level of the values it knows the types of. The result of ``apply``
+differs from its input only inside the *spans* of the values the operations
+name. Every other byte is identical: comments, blank lines, other keys, the
+delimiters, the BOM and the body.
 
-**The post-check (decision 2) runs on every call.** After each operation the
-result is parsed by the reader's own split (``_frontmatter_of``). It must
-parse to exactly the operation applied, every top-level key the operation does
-not name must keep its bytes, and the BOM, the delimiters and the body must
-be unchanged. A narrow edit that fails this is widened item-wise: the touched
-top-level key is rebuilt, copying each unchanged item's bytes from the file.
-If that fails too, the call raises ``OperationRefusedError``.
+**Who owns which bytes** (the span rule). For a value named by a set, an
+append, a remove or an add-sub-key:
+
+=====================================================  ==========================
+bytes                                                  owner
+=====================================================  ==========================
+key, ``:`` and the indentation of the key line         the pair (unset only)
+the separator after ``:`` and an inline value          the value
+(scalar or flow), with the spaces/tabs after it
+a comment after an inline value, or on a key line      the pair: kept by a set,
+before a block value, or on a block scalar's header    removed by an unset
+a block scalar's indicators and its content lines      the value
+(a ``|+`` scalar's trailing blank lines are content)
+a block collection's lines, from the end of its key    the value
+line to its last content line, comments between its
+items included
+blank and comment-only lines after a value's last      outside every span
+content line, before the next key or item
+lines before the first key, after the last key         outside every span
+delimiters, BOM; the body                              outside; the body is
+                                                       ReplaceBody's
+=====================================================  ==========================
+
+An unset owns its pair's or item's own lines: from the start of the key (or
+dash) line to the end of the last content line, comments on those lines
+included. A pair that shares a list item's dash line (``- target: x``) also
+owns the indentation of the next key's line when nothing but spaces lies
+between them. Unsetting the only key of a mapping, or the only item of a list,
+is a set of that collection to ``{}`` or ``[]``, so it owns that collection's
+span. A new top-level key is written at the end of the frontmatter; a new
+nested key at the end of its mapping's span.
+
+**How an edit is made.** Each operation is a splice inside those spans.
+Spans come from ruamel.yaml's composer, the YAML 1.2 parser that reads use
+(amendment A4). Existing bytes are never re-emitted through a serializer. Only
+the bytes of a new value are written, by the small emitter below. A new list
+item copies its neighbour's indent and quoting; a replaced scalar keeps its
+quote style; a trailing comment keeps its bytes, and its column when the new
+value fits before it; new lines use the file's line ending. A string a YAML
+1.1 reader would misread is quoted.
+
+**The post-check (decision 2) runs after every operation.** It computes the
+allowed spans *by its own rule* (``_named_spans``: a node's ``end_mark``
+walked back over blank and comment-only lines), not with the code that made
+the edit (``_end``, which recurses into the last child). It then checks that
+the bytes outside those spans are identical, before against after, and that
+the result parses to exactly the operation applied. A narrow edit that fails
+is widened item-wise, rebuilding the named top-level value and copying each
+unchanged item's bytes. If that fails too, the call raises
+``OperationRefusedError``. The whole call is checked once more at the end,
+through the reader's own split (``_frontmatter_of``).
+
+**Keys.** A path segment names the key whose loaded value it equals, the
+segment read as a YAML scalar: ``"true"`` names ``true:`` (a bool) and
+``"true":`` (a string); both in one mapping is refused as ambiguous. A new key
+is always written as a string. ``_key_matches`` is the one rule; ``_walk``
+(the nodes) and ``_lookup`` (the values) both use it.
 
 **Where the frontmatter is** comes from the caller, as a ``FrontmatterSpan``.
-This module has no frontmatter splitter of its own. The backlog item
-"one-frontmatter-splitter" will supply the one function that computes it.
-Until then the post-check calls ``_frontmatter_of`` read-only, so the result
-is verified through the split every read uses.
+This module has no frontmatter splitter. ``split_frontmatter`` (#744) will
+supply it; the final check's ``_frontmatter_of`` repoints there too.
+
+**Limits, refused or restyled, each pinned by a test:**
+
+- A block scalar without keep chomping (``|``, ``|-``) set to a value with two
+  or more trailing newlines is written double-quoted: switching it to ``|+``
+  would make any blank lines after it content
+  (``test_limit_keep_chomping_on_a_clip_scalar_is_written_double_quoted``).
+- A folded (``>``) value with a line that starts with a space is written in
+  literal (``|``) style
+  (``test_limit_a_folded_value_with_an_indented_line_is_written_literal``); a
+  block-scalar value with a control character is written double-quoted.
+- A list item laid out as ``- - x`` (a list directly in a list item) is not
+  edited in place. Refused
+  (``test_limit_a_list_written_directly_in_a_list_item_is_refused``).
+- A comment-looking line inside a literal block scalar, when it is the last
+  line of a collection, ends that collection's span early for the check: an
+  edit there is refused, never wrongly accepted.
 
 Trap, measured on ruamel 0.19.1 (#732): a node's ``end_mark`` is not where its
-bytes end. A block sequence or block mapping ends after the comment line that
-follows it. A block scalar ends after the blank lines that follow it. An
-alias composes to the *same node object* as its anchor, so its span is the
-anchor's bytes. ``_end`` computes the real end, and the anchor refusal covers
-aliases.
+bytes end. A block sequence or mapping ends after the comment line that
+follows it; a block scalar ends after the blank lines that follow it. An alias
+composes to the *same node object* as its anchor, so its span is the anchor's
+bytes. The anchor refusal covers aliases.
 """
 
 from __future__ import annotations
 
 import copy
+import functools
 import math
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -80,7 +144,8 @@ class FrontmatterSpan:
 class Set:
     """Set a key to a value. ``path`` names a top-level key (``"title"``) or a
     nested one (``"links[0].relation"``, ``"params.social.x"``, or a tuple of
-    segments). A missing key is added; missing parents are created."""
+    segments: strings for keys, ints for list indexes). A missing key is
+    added; missing parent mappings are created."""
 
     path: Any
     value: Any
@@ -158,27 +223,37 @@ def apply(text: str, ops: list[Any], span: FrontmatterSpan | None) -> tuple[str,
         return text, Report()
     if span is None:
         raise OperationRefusedError(_why_no_frontmatter(text))
+    for op in ops:
+        _check_op(op)
     original = _parse(text, span)
     current = original
     results: list[OpResult] = []
     widened: list[str] = []
-    for op in ops:
-        new_doc, outcome, was_widened = _apply_one(current, op)
-        results.append(OpResult(op, outcome))
-        if was_widened:
-            widened.append(str(_top_key(op)))
-        current = new_doc
-    if current.text == text:
-        return text, Report(tuple(results), tuple(widened))
-    # the whole call, against the original: untouched keys, values, order
     expected = original.data
     for op in ops:
         expected = _model_apply(expected, op)
-    named = {_top_key(op) for op in ops}
-    problem = _verify(original, current.text, current.span, expected, current.body, named)
+    i = 0
+    while i < len(ops):
+        batch = _batch(current, ops, i)
+        if len(batch) > 1:
+            done = _apply_batch(current, batch)
+            if done is not None:
+                current, outcomes = done
+                results += [OpResult(op, out) for op, out in zip(batch, outcomes, strict=True)]
+                i += len(batch)
+                continue
+        current, outcome, was_widened = _apply_one(current, ops[i])
+        results.append(OpResult(ops[i], outcome))
+        if was_widened:
+            widened.append(str(_top_key(ops[i])))
+        i += 1
+    report = Report(tuple(results), tuple(widened))
+    if current.text == text:
+        return text, report
+    problem = _final_check(original, current, ops, expected)
     if problem:
         raise OperationRefusedError(f"the result failed the post-check: {problem}")
-    return current.text, Report(tuple(results), tuple(widened))
+    return current.text, report
 
 
 # --- decision 3: equality ---------------------------------------------------
@@ -188,6 +263,8 @@ def values_equal(a: Any, b: Any) -> bool:
     """ADR-0042 decision 3. A string equals a date or timestamp when it is
     that value's ISO form or the same instant; int and float compare by value;
     a bool never equals an int; mappings compare unordered; lists in order."""
+    if type(a) is type(b) and type(a) in (str, int):
+        return a == b
     a, b = _plain(a), _plain(b)
     if isinstance(a, bool) or isinstance(b, bool):
         return isinstance(a, bool) and isinstance(b, bool) and a == b
@@ -212,8 +289,11 @@ def values_equal(a: Any, b: Any) -> bool:
     if isinstance(a, Mapping) and isinstance(b, Mapping):
         if len(a) != len(b):
             return False
-        bk = {str(k): v for k, v in b.items()}
-        return all(str(k) in bk and values_equal(v, bk[str(k)]) for k, v in a.items())
+        for k, v in a.items():
+            other = _exact(b, k)
+            if other is _MISSING or not values_equal(v, b[other]):
+                return False
+        return True
     if isinstance(a, list) and isinstance(b, list):
         return len(a) == len(b) and all(values_equal(x, y) for x, y in zip(a, b, strict=True))
     return False
@@ -238,7 +318,7 @@ def _temporal_equals_text(value: date, text: str) -> bool:
 def _plain(value: Any) -> Any:
     """ruamel's round-trip types as plain Python values."""
     if isinstance(value, Mapping):
-        return {(str(k) if isinstance(k, str) else k): _plain(v) for k, v in value.items()}
+        return {_plain(k): _plain(v) for k, v in value.items()}
     if isinstance(value, list | tuple):
         return [_plain(v) for v in value]
     if type(value).__name__ == "ScalarBoolean":
@@ -271,7 +351,80 @@ def _same(got: Any, expected: Any) -> bool:
     """Equal under decision 3, with the top-level key order kept."""
     if not values_equal(got, expected):
         return False
-    return [str(k) for k in got] == [str(k) for k in expected]
+    return [_plain(k) for k in got] == [_plain(k) for k in expected]
+
+
+# --- keys: the one lookup rule ------------------------------------------------
+
+_MISSING = object()
+_LOCAL = threading.local()
+
+
+def _yaml() -> YAML:
+    """One YAML instance per thread, reused: building one per parse was a
+    third of the cost of 500 operations (#732 round 1)."""
+    y = getattr(_LOCAL, "yaml", None)
+    if y is None:
+        y = _LOCAL.yaml = YAML()
+    return y
+
+
+@functools.lru_cache(maxsize=4096)
+def _scalar_of(text: str) -> Any:
+    """What ``text`` reads as when written bare as a YAML 1.2 scalar key."""
+    try:
+        value = YAML().load(f"{text}: 0") if text else None
+    except YAMLError:
+        return text
+    if isinstance(value, Mapping) and len(value) == 1:
+        return _plain(next(iter(value)))
+    return text
+
+
+def _key_matches(seg: Any, key: Any) -> bool:
+    """THE rule for which key a path segment names. A string segment names a
+    string key spelled the same, or a non-string key (``true``, ``null``,
+    ``1``, a date) that the segment reads as. An int segment never names a
+    mapping key; it is a list index."""
+    if isinstance(seg, str) and isinstance(key, str):
+        return seg == key
+    if not isinstance(seg, str) or isinstance(key, str):
+        return False
+    target = _scalar_of(seg)
+    if isinstance(target, str):
+        return False
+    key = _plain(key)
+    return type(target) is type(key) and target == key
+
+
+def _lookup(mapping: Mapping, seg: Any) -> Any:
+    """The key of ``mapping`` that path segment ``seg`` names (``_key_matches``),
+    or ``_MISSING``. Two keys named by one segment: refused as ambiguous."""
+    hits = [k for k in mapping if _key_matches(seg, k)]
+    if len(hits) > 1:
+        raise OperationRefusedError(f"{seg!r} names two keys here ({hits!r}); edit it by hand")
+    return hits[0] if hits else _MISSING
+
+
+def _exact(mapping: Mapping, key: Any) -> Any:
+    """The key of ``mapping`` equal to ``key`` with the same type (``True`` is
+    not ``1``), or ``_MISSING``."""
+    if type(key) is str:
+        return key if key in mapping else _MISSING
+    plain = _plain(key)
+    for k in mapping:
+        if type(k) is not str and type(_plain(k)) is type(plain) and _plain(k) == plain:
+            return k
+    return _MISSING
+
+
+def _node_key(node: Node) -> Any:
+    """A key node's loaded value: a string, or what its plain text reads as."""
+    if not isinstance(node, ScalarNode):
+        return _MISSING  # a complex key (``? [a, b]``): no path names it
+    if node.tag.endswith(":str"):
+        return node.value
+    return _scalar_of(node.value)
 
 
 # --- the parsed document ----------------------------------------------------
@@ -284,6 +437,10 @@ class _Doc:
     root: MappingNode | None
     data: dict
     eol: str
+    # key nodes of top-level pairs that define or use an anchor, found before
+    # construction: constructing a merge (``<<: *b``) removes that pair from
+    # the node, so it cannot be found afterwards
+    anchored: frozenset = frozenset()
 
     def s(self, node: Node) -> int:
         return node.start_mark.index + self.span.start
@@ -306,9 +463,13 @@ def _why_no_frontmatter(text: str) -> str:
 
 
 def _parse(text: str, span: FrontmatterSpan) -> _Doc:
+    """Compose once and construct the values from the same nodes."""
+    if not (0 <= span.start <= span.end <= span.body <= len(text)):
+        raise OperationRefusedError(f"the frontmatter span {span} does not fit the text")
     yaml_text = text[span.start : span.end]
+    y = _yaml()
     try:
-        root = YAML().compose(yaml_text)
+        root = y.compose(yaml_text)
     except YAMLError as e:
         raise OperationRefusedError(f"the frontmatter does not parse: {e}") from e
     if root is not None and not isinstance(root, MappingNode):
@@ -321,26 +482,36 @@ def _parse(text: str, span: FrontmatterSpan) -> _Doc:
             raise OperationRefusedError(
                 f"the frontmatter has a duplicate key {duplicate!r}; not edited"
             )
+    anchored = frozenset(
+        id(k)
+        for k, v in (root.value if root is not None else [])
+        if _has_anchor(k, set()) or _has_anchor(v, set())
+    )
     try:
-        loaded = YAML().load(yaml_text)
+        loaded = y.constructor.construct_document(root) if root is not None else {}
     except YAMLError as e:
         raise OperationRefusedError(f"the frontmatter does not parse: {e}") from e
     eol = "\r\n" if text[max(0, span.start - 2) : span.start] == "\r\n" else "\n"
-    return _Doc(text, span, root, _plain(loaded or {}), eol)
+    return _Doc(text, span, root, _plain(loaded or {}), eol, anchored)
 
 
 def _duplicate_key(node: Node, seen: set[int]) -> str | None:
+    """The first key that appears twice in one mapping, by loaded value (as
+    the loader compares them: ``true`` and ``1`` collide), or None."""
     if id(node) in seen:
         return None
     seen.add(id(node))
     if isinstance(node, MappingNode):
-        keys: set[str] = set()
+        keys: dict[Any, str] = {}
         for k, v in node.value:
-            name = k.value if isinstance(k, ScalarNode) else None
-            if name is not None and name != "<<":
-                if name in keys:
-                    return name
-                keys.add(name)
+            value = _node_key(k)
+            if value is not _MISSING and not (isinstance(k, ScalarNode) and k.value == "<<"):
+                try:
+                    if value in keys:
+                        return k.value
+                    keys[value] = k.value
+                except TypeError:
+                    pass
             found = _duplicate_key(v, seen)
             if found is not None:
                 return found
@@ -352,7 +523,7 @@ def _duplicate_key(node: Node, seen: set[int]) -> str | None:
     return None
 
 
-def _refuse_anchors(doc: _Doc, top: str, op: Any) -> None:
+def _refuse_anchors(doc: _Doc, top: Any, op: Any) -> None:
     """Decision 6: a key that defines or uses an anchor is refused for change.
 
     An alias composes to the anchor's own node object, so checking the touched
@@ -360,12 +531,13 @@ def _refuse_anchors(doc: _Doc, top: str, op: Any) -> None:
     and a merge key (``<<: *b``)."""
     if doc.root is None:
         return
-    for k, v in doc.root.value:
-        if isinstance(k, ScalarNode) and k.value == top:
-            if _has_anchor(k, set()) or _has_anchor(v, set()):
-                raise OperationRefusedError(
-                    f"{top!r} defines or uses a YAML anchor or alias; edit it by hand", op
-                )
+    idx = _key_index(doc.root, top)
+    if idx is None:
+        return
+    if id(doc.root.value[idx][0]) in doc.anchored:
+        raise OperationRefusedError(
+            f"{top!r} defines or uses a YAML anchor or alias; edit it by hand", op
+        )
 
 
 def _has_anchor(node: Node, seen: set[int]) -> bool:
@@ -402,6 +574,12 @@ def _content_end_of_line(text: str, pos: int) -> int:
     return nl - 1 if nl > 0 and text[nl - 1] == "\r" else nl
 
 
+def _skip_blanks(text: str, pos: int) -> int:
+    while pos < len(text) and text[pos] in " \t":
+        pos += 1
+    return pos
+
+
 def _col(doc: _Doc, node: Node) -> int:
     at = doc.s(node)
     return at - _line_start(doc.text, at)
@@ -419,18 +597,46 @@ def _is_block(node: Node) -> bool:
     return isinstance(node, MappingNode | SequenceNode) and not node.flow_style
 
 
+def _is_block_scalar(node: Node) -> bool:
+    return isinstance(node, ScalarNode) and node.style in ("|", ">")
+
+
+def _header_end(doc: _Doc, node: ScalarNode) -> int:
+    """Past a block scalar's indicators (``|``, ``>-``, ``|2+``)."""
+    pos = doc.s(node) + 1
+    while pos < len(doc.text) and doc.text[pos] in "+-0123456789":
+        pos += 1
+    return pos
+
+
+def _header(doc: _Doc, node: ScalarNode) -> str:
+    return doc.text[doc.s(node) : _header_end(doc, node)]
+
+
+def _keeps(doc: _Doc, node: Node) -> bool:
+    """A block scalar with keep chomping: its trailing blank lines are content."""
+    return _is_block_scalar(node) and "+" in _header(doc, node)
+
+
 def _colon_end(doc: _Doc, key: Node) -> int:
     return doc.text.index(":", doc.e(key)) + 1
 
 
 def _end(doc: _Doc, node: Node) -> int:
-    """Just past the last character of ``node``'s own text. Not ``end_mark``:
-    see the module docstring."""
+    """For the edits: just past the last character of ``node``'s own text.
+    Not ``end_mark``: see the module docstring. A keep (``|+``) scalar ends
+    after its blank lines, which are its content."""
     if isinstance(node, ScalarNode):
         start, end = doc.s(node), doc.e(node)
-        if node.style in ("|", ">"):
-            while end > start + 1 and doc.text[end - 1] in " \t\r\n":
-                end -= 1
+        if _is_block_scalar(node) and not _keeps(doc, node):
+            # back over the blank lines after it; a literal's trailing spaces
+            # on its last line are content and stay inside
+            while end > start + 1:
+                line = _line_start(doc.text, end - 1)
+                if line <= start or doc.text[line:end].strip():
+                    break
+                end = line
+            end = _content_end_of_line(doc.text, end - 1)
         return end
     if node.flow_style or not node.value:
         return doc.e(node)
@@ -444,9 +650,7 @@ def _pair_end(doc: _Doc, key: Node, value: Node) -> int:
     if _is_empty(value):
         return _colon_end(doc, key)
     if doc.s(value) < doc.e(key):  # an alias: its own text is `*name`
-        pos = _colon_end(doc, key)
-        while pos < len(doc.text) and doc.text[pos] in " \t":
-            pos += 1
+        pos = _skip_blanks(doc.text, _colon_end(doc, key))
         while pos < len(doc.text) and doc.text[pos] not in " \t\r\n,]}":
             pos += 1
         return pos
@@ -458,62 +662,110 @@ def _own_end(doc: _Doc, end: int) -> int:
     return _line_end(doc.text, end - 1)
 
 
-def _item_range(doc: _Doc, item: Node) -> tuple[int, int]:
+def _dash(doc: _Doc, seq: SequenceNode, i: int) -> int:
+    """The position of item ``i``'s ``-``: the first line at or after the end of
+    the previous item whose first non-space character is a ``-``."""
+    text = doc.text
+    pos = doc.s(seq) if i == 0 else _own_end(doc, _end(doc, seq.value[i - 1]))
+    pos = _line_start(text, pos) if i == 0 else pos
+    while pos < doc.s(seq.value[i]):
+        first = _skip_blanks(text, pos)
+        if text[first : first + 1] == "-":
+            return first
+        pos = _line_end(text, pos)
+    raise OperationRefusedError("cannot find this list item's dash")
+
+
+def _item_range(doc: _Doc, seq: SequenceNode, i: int) -> tuple[int, int]:
     """A block sequence item's own lines, from its dash line."""
-    start = _line_start(doc.text, doc.s(item))
-    if doc.text[start : doc.s(item)].strip() != "-":
-        raise OperationRefusedError("a list item laid out on more than its dash line is not edited")
-    return start, _own_end(doc, _end(doc, item))
+    item = seq.value[i]
+    dash = _dash(doc, seq, i)
+    if (
+        isinstance(item, SequenceNode)
+        and not item.flow_style
+        and doc.s(item) < _line_end(doc.text, dash)
+    ):
+        raise OperationRefusedError("a list written directly in a list item (- - x) is not edited")
+    return _line_start(doc.text, dash), _own_end(doc, _end(doc, item))
 
 
-def _item_cols(doc: _Doc, item: Node) -> tuple[int, int]:
-    start = _line_start(doc.text, doc.s(item))
-    dash = doc.text.index("-", start)
-    return dash - start, doc.s(item) - start
+def _item_cols(doc: _Doc, seq: SequenceNode, i: int) -> tuple[int, int]:
+    dash = _dash(doc, seq, i)
+    dash_col = dash - _line_start(doc.text, dash)
+    return dash_col, max(_col(doc, seq.value[i]), dash_col + 2)
 
 
 # --- paths ------------------------------------------------------------------
 
 
-def _segments(path: Any) -> list[str | int]:
+def _segments(path: Any, op: Any = None) -> list[str | int]:
+    """A path as segments: strings name keys, ints index lists. Refused when
+    it cannot be read: an empty path or segment (``a..b``), a bracket that is
+    not an index, a segment that is neither."""
     if isinstance(path, tuple | list):
         segs = list(path)
+        for seg in segs:
+            if isinstance(seg, bool) or not isinstance(seg, str | int):
+                raise OperationRefusedError(
+                    f"a path segment is a string or an int, not {seg!r}", op
+                )
     elif isinstance(path, str):
         segs = []
         for part in path.split("."):
             name, bracket, rest = part.partition("[")
+            if not name and not (bracket and segs):
+                raise OperationRefusedError(f"the path {path!r} has an empty segment", op)
+            if "]" in name:
+                raise OperationRefusedError(f"cannot read the path {path!r}", op)
             if name:
                 segs.append(name)
             rest = bracket + rest
             while rest:
-                if not rest.startswith("[") or "]" not in rest:
-                    raise OperationRefusedError(f"cannot read the path {path!r}")
-                index, _, rest = rest[1:].partition("]")
+                index, closed, rest = rest[1:].partition("]")
+                if not rest.startswith("[") and rest:
+                    raise OperationRefusedError(f"cannot read the path {path!r}", op)
                 try:
-                    segs.append(int(index))
+                    number = int(index)
                 except ValueError as e:
-                    raise OperationRefusedError(f"cannot read the path {path!r}") from e
+                    raise OperationRefusedError(f"cannot read the path {path!r}", op) from e
+                if not closed:
+                    raise OperationRefusedError(f"cannot read the path {path!r}", op)
+                segs.append(number)
     else:
-        raise OperationRefusedError(f"a path is a string or a tuple, not {type(path).__name__}")
-    if not segs and path != "":
-        raise OperationRefusedError(f"the path {path!r} is empty")
+        raise OperationRefusedError(f"a path is a string or a tuple, not {type(path).__name__}", op)
+    if not segs and not isinstance(op, AddSubkey):
+        raise OperationRefusedError(f"the path {path!r} is empty", op)
+    if segs and isinstance(segs[0], int):
+        raise OperationRefusedError(f"the path {path!r} starts with a list index", op)
     return segs
 
 
-def _top_key(op: Any) -> str | None:
+def _show(segs: list) -> str:
+    out = ""
+    for seg in segs:
+        out += f"[{seg}]" if isinstance(seg, int) else (f".{seg}" if out else str(seg))
+    return out or "(the frontmatter)"
+
+
+def _top_key(op: Any) -> Any:
     if isinstance(op, ReplaceBody):
         return None
-    segs = _segments(op.path)
+    segs = _segments(op.path, op)
     if not segs and isinstance(op, AddSubkey):
-        return str(op.key)
-    return str(segs[0])
+        return op.key
+    return segs[0]
 
 
 def _key_index(node: MappingNode, seg: Any) -> int | None:
-    for i, (k, _) in enumerate(node.value):
-        if isinstance(k, ScalarNode) and k.value == str(seg):
-            return i
-    return None
+    hits = [i for i, (k, _) in enumerate(node.value) if _key_matches_node(seg, k)]
+    if len(hits) > 1:
+        raise OperationRefusedError(f"{seg!r} names two keys here; edit it by hand")
+    return hits[0] if hits else None
+
+
+def _key_matches_node(seg: Any, key: Node) -> bool:
+    value = _node_key(key)
+    return value is not _MISSING and _key_matches(seg, value)
 
 
 def _walk(doc: _Doc, segs: list) -> tuple[list[tuple[Node, int, Node]], int]:
@@ -541,39 +793,41 @@ def _walk(doc: _Doc, segs: list) -> tuple[list[tuple[Node, int, Node]], int]:
 def _data_at(data: Any, segs: list) -> Any:
     for seg in segs:
         if isinstance(data, Mapping):
-            data = {str(k): v for k, v in data.items()}[str(seg)]
+            data = data[_lookup(data, seg)]
         else:
             data = data[seg]
     return data
-
-
-def _find_key(data: Mapping, key: Any) -> Any:
-    for k in data:
-        if str(k) == str(key):
-            return k
-    return None
 
 
 # --- the model: what the operation means on the parsed value ------------------
 
 
 def _model_apply(data: dict, op: Any) -> dict:
-    """The operation applied to the parsed value: what the post-check expects."""
-    result = copy.deepcopy(data)
+    """The operation applied to the parsed value: what the post-check expects.
+    Copies only the touched top-level value."""
     if isinstance(op, ReplaceBody):
-        return result
-    segs = _segments(op.path)
+        return data
+    segs = _segments(op.path, op)
     if isinstance(op, AddSubkey):
         segs = [*segs, op.key]
+    result = dict(data)
+    top = _lookup(result, segs[0])
+    if top is not _MISSING:
+        result[top] = copy.deepcopy(result[top])
+    where = _show(segs)
     parent: Any = result
-    for seg in segs[:-1]:
+    for depth, seg in enumerate(segs[:-1]):
         if isinstance(parent, Mapping):
-            found = _find_key(parent, seg)
-            if found is None or parent[found] is None:
+            found = _lookup(parent, seg)
+            if found is _MISSING or parent[found] is None:
                 if isinstance(op, Unset | Remove):
-                    return result
-                parent[seg if found is None else found] = {}
-                found = seg if found is None else found
+                    return data
+                if isinstance(segs[depth + 1], int):
+                    raise OperationRefusedError(
+                        f"{where}: there is no list at {_show(segs[: depth + 1])}", op
+                    )
+                found = seg if found is _MISSING else found
+                parent[found] = {}
             parent = parent[found]
         elif (
             isinstance(parent, list) and isinstance(seg, int) and -len(parent) <= seg < len(parent)
@@ -581,43 +835,82 @@ def _model_apply(data: dict, op: Any) -> dict:
             parent = parent[seg]
         else:
             if isinstance(op, Unset | Remove):
-                return result
-            raise OperationRefusedError(f"{'.'.join(map(str, segs))}: no such mapping", op)
+                return data
+            if isinstance(parent, list) and isinstance(seg, int):
+                raise OperationRefusedError(
+                    f"{where}: index {seg} is out of range ({_show(segs[:depth])} has {len(parent)} items)",
+                    op,
+                )
+            if isinstance(parent, list):
+                raise OperationRefusedError(
+                    f"{where}: {_show(segs[:depth])} is a list; name an item by index", op
+                )
+            raise OperationRefusedError(
+                f"{where}: {_show(segs[:depth])} is not a mapping or list", op
+            )
     last = segs[-1]
     if isinstance(parent, list):
-        if isinstance(op, Unset) and isinstance(last, int) and -len(parent) <= last < len(parent):
+        if not isinstance(last, int):
+            if isinstance(op, Unset | Remove):
+                return data
+            raise OperationRefusedError(
+                f"{where}: {_show(segs[:-1])} is a list; name an item by index", op
+            )
+        if not -len(parent) <= last < len(parent):
+            if isinstance(op, Unset | Remove):
+                return data
+            raise OperationRefusedError(
+                f"{where}: index {last} is out of range (the list has {len(parent)} items)", op
+            )
+        if isinstance(op, Unset):
             del parent[last]
             return result
-        if isinstance(op, Set) and isinstance(last, int) and -len(parent) <= last < len(parent):
-            if not values_equal(parent[last], op.value):
-                parent[last] = op.value
+        if isinstance(op, Set):
+            if values_equal(parent[last], op.value):
+                return data
+            parent[last] = op.value
             return result
-        if isinstance(op, Unset):
-            return result
-        raise OperationRefusedError("no such list item", op)
-    key = _find_key(parent, last)
+        target, holder, key = parent[last], parent, last
+    elif isinstance(parent, Mapping):
+        if isinstance(last, int):
+            if isinstance(op, Unset | Remove):
+                return data
+            raise OperationRefusedError(f"{where}: {_show(segs[:-1])} is a mapping, not a list", op)
+        key = _lookup(parent, last)
+        target, holder = (None if key is _MISSING else parent[key]), parent
+    else:
+        if isinstance(op, Unset | Remove):
+            return data
+        raise OperationRefusedError(f"{where}: {_show(segs[:-1])} is not a mapping or list", op)
     if isinstance(op, Set | AddSubkey):
-        if key is not None and values_equal(parent[key], op.value):
-            return result
-        parent[last if key is None else key] = op.value
+        if key is not _MISSING and values_equal(target, op.value):
+            return data
+        if isinstance(op, AddSubkey) and key is not _MISSING:
+            raise OperationRefusedError(
+                f"{_show(segs[:-1])} already has {op.key!r}; use set to change it", op
+            )
+        holder[last if key is _MISSING else key] = op.value
     elif isinstance(op, Unset):
-        if key is not None:
-            del parent[key]
+        if key is _MISSING:
+            return data
+        del holder[key]
     elif isinstance(op, Append):
-        if key is None or parent[key] is None:
-            parent[last if key is None else key] = [op.value]
-        elif isinstance(parent[key], list):
-            parent[key].append(op.value)
+        if key is _MISSING or target is None:
+            holder[last if key is _MISSING else key] = [op.value]
+        elif isinstance(target, list):
+            target.append(op.value)
         else:
-            raise OperationRefusedError(f"{op.path!r} is not a list; cannot append to it", op)
+            raise OperationRefusedError(f"{where} is not a list; cannot append to it", op)
     elif isinstance(op, Remove):
-        items = parent.get(key) if key is not None else None
-        if items is not None and not isinstance(items, list):
-            raise OperationRefusedError(f"{op.path!r} is not a list; cannot remove from it", op)
-        for i, item in enumerate(items or []):
+        if target is None:
+            return data
+        if not isinstance(target, list):
+            raise OperationRefusedError(f"{where} is not a list; cannot remove from it", op)
+        for i, item in enumerate(target):
             if values_equal(item, op.value):
-                del items[i]
-                break
+                del target[i]
+                return result
+        return data
     return result
 
 
@@ -629,34 +922,112 @@ def _expected_body(doc: _Doc, op: Any) -> str:
     return doc.body
 
 
+# --- a batch: operations on different top-level keys, one parse ---------------
+
+
+def _top_identity(doc: _Doc, op: Any) -> Any:
+    """Which top-level value ``op`` touches: the body, a key of the file (by
+    position), or a key it does not have yet (by name)."""
+    if isinstance(op, ReplaceBody):
+        return "body"
+    top = _top_key(op)
+    idx = _key_index(doc.root, top) if doc.root is not None else None
+    return ("key", idx) if idx is not None else ("new", top)
+
+
+def _batch(doc: _Doc, ops: list, start: int) -> list:
+    """The longest run from ``start`` whose operations touch different
+    top-level values: their edits cannot interact, so they are spliced
+    against one parse and checked once (500 sets on 500 keys: one parse, not
+    500; #732 round 1)."""
+    seen: set = set()
+    batch = []
+    for op in ops[start:]:
+        identity = _top_identity(doc, op)
+        if identity in seen:
+            break
+        seen.add(identity)
+        batch.append(op)
+    return batch
+
+
+def _apply_batch(doc: _Doc, batch: list) -> tuple[_Doc, list[str]] | None:
+    """The batch spliced at once and checked as one patch: the bytes outside
+    every operation's spans, the values, the body. None when any step fails,
+    and the caller goes one operation at a time (where a failed narrow edit
+    can widen)."""
+    expected = doc.data
+    expected_body = doc.body
+    outcomes: list[str] = []
+    edits: list = []
+    spans: list = []
+    try:
+        for op in batch:
+            top = _top_key(op)
+            if top is not None:
+                _refuse_anchors(doc, top, op)
+            after = _model_apply(expected, op)
+            body = _expected_body(doc, op)
+            if after is expected and body == expected_body:
+                outcomes.append("unchanged")
+                continue
+            expected, expected_body = after, body
+            outcomes.append("changed")
+            spans += _named_spans(doc, op)
+            edits += _narrow_edits(doc, op)
+    except OperationRefusedError:
+        return None
+    if not edits:
+        return (doc, outcomes) if "changed" not in outcomes else None
+    new_doc, _ = _try(doc, edits, spans, expected, expected_body)
+    return None if new_doc is None else (new_doc, outcomes)
+
+
 # --- one operation: narrow, verify, widen -------------------------------------
 
 
 def _apply_one(doc: _Doc, op: Any) -> tuple[_Doc, str, bool]:
-    _check_op(op)
     top = _top_key(op)
     if top is not None:
         _refuse_anchors(doc, top, op)
     expected = _model_apply(doc.data, op)
     expected_body = _expected_body(doc, op)
-    if _same(expected, doc.data) and expected_body == doc.body:
+    if expected is doc.data and expected_body == doc.body:
         return doc, "unchanged", False  # decision 3: asked for what is there
-    named = {top}
+    allowed = _named_spans(doc, op)
     edits = _narrow_edits(doc, op)
     problem = "the narrow edit changed nothing"
     if edits:
-        text, span = _splice(doc, edits)
-        problem = _verify(doc, text, span, expected, expected_body, named)
-        if problem is None:
-            return _parse(text, span), "changed", False
+        after, problem = _try(doc, edits, allowed, expected, expected_body)
+        if after is not None:
+            return after, "changed", False
     edits = _widen_edits(doc, op, expected)
     if edits is None:
         raise OperationRefusedError(f"{problem}, and this operation cannot be widened", op)
-    text, span = _splice(doc, edits)
-    second = _verify(doc, text, span, expected, expected_body, named)
-    if second is not None:
+    after, second = _try(doc, edits, allowed, expected, expected_body)
+    if after is None:
         raise OperationRefusedError(f"{problem}; widened item-wise, {second}", op)
-    return _parse(text, span), "changed", True
+    return after, "changed", True
+
+
+def _try(doc, edits, allowed, expected, expected_body) -> tuple[_Doc | None, str | None]:
+    """Splice, parse and check; the new doc, or None and why not."""
+    try:
+        text, span = _splice(doc, edits)
+    except OperationRefusedError as e:
+        return None, e.reason
+    problem = _outside_changed(doc.text, text, allowed)
+    if problem:
+        return None, problem
+    try:
+        after = _parse(text, span)
+    except OperationRefusedError as e:
+        return None, f"the result does not parse ({e.reason})"
+    if not _same(after.data, expected):
+        return None, "the result does not parse to the operation applied"
+    if after.body != expected_body:
+        return None, "the body is not what was asked"
+    return after, None
 
 
 _SCALARS = (str, int, float, bool, date, type(None))
@@ -669,6 +1040,9 @@ def _check_op(op: Any) -> None:
         if not isinstance(op.body, str):
             raise OperationRefusedError("a body is a string", op)
         return
+    _segments(op.path, op)
+    if isinstance(op, AddSubkey) and (not isinstance(op.key, str) or not op.key):
+        raise OperationRefusedError(f"a key to add is a non-empty string, not {op.key!r}", op)
     if hasattr(op, "value"):
         _check_value(op.value, op)
 
@@ -676,6 +1050,8 @@ def _check_op(op: Any) -> None:
 def _check_value(value: Any, op: Any) -> None:
     if isinstance(value, Mapping):
         for k, v in value.items():
+            if isinstance(k, Mapping | list | tuple):
+                raise OperationRefusedError(f"cannot write a {type(k).__name__} as a key", op)
             _check_value(k, op)
             _check_value(v, op)
     elif isinstance(value, list | tuple):
@@ -697,73 +1073,214 @@ def _splice(doc: _Doc, edits: list[tuple[int, int, str]]) -> tuple[str, Frontmat
         key=lambda ie: (ie[1][0], 1 if ie[1][1] > ie[1][0] else 0, ie[0]),
         reverse=True,
     )
-    text = doc.text
-    bound = len(text)
+    pieces: list[str] = []
+    bound = len(doc.text)
     delta = 0
     for _, (start, end, new) in order:
         if end > bound or start > end:
             raise OperationRefusedError("internal: overlapping edits")
-        text = text[:start] + new + text[end:]
+        pieces.append(doc.text[end:bound])
+        pieces.append(new)
         bound = start
         if start >= doc.span.start and end <= doc.span.end:
             delta += len(new) - (end - start)
+    pieces.append(doc.text[:bound])
+    text = "".join(reversed(pieces))
     span = FrontmatterSpan(doc.span.start, doc.span.end + delta, doc.span.body + delta)
     return text, span
 
 
-def _top_level_blocks(text: str, span: FrontmatterSpan) -> dict[str, str]:
-    """Each top-level key's lines, found by a line scan (independent of the
-    composer spans the edits use): from its key line to the next key line,
-    less trailing blank and comment-only lines."""
-    blocks: dict[str, list[str]] = {}
-    current = None
-    for line in text[span.start : span.end].splitlines(keepends=True):
-        head = line[:1]
-        if head and head not in " \t#-\r\n" and ":" in line:
-            current = line.split(":", 1)[0].strip().strip("'\"")
-            blocks[current] = [line]
-        elif current is not None:
-            blocks[current].append(line)
-    out = {}
-    for key, lines in blocks.items():
-        while len(lines) > 1 and (not lines[-1].strip() or lines[-1].lstrip().startswith("#")):
-            lines = lines[:-1]
-        out[key] = "".join(lines)
-    return out
+# --- the post-check: the bytes outside the named spans -------------------------
 
 
-def _verify(
-    before: _Doc,
-    text: str,
-    span: FrontmatterSpan,
-    expected: dict,
-    expected_body: str,
-    named: set,
-) -> str | None:
-    """Decision 2's check: None when the result is exactly what was asked."""
+def _outside_changed(before: str, after: str, spans: list[tuple[int, int]]) -> str | None:
+    """None when ``after`` is ``before`` with only the bytes inside ``spans``
+    changed: the pieces between the spans appear in ``after``, in order, the
+    first as a prefix and the last as a suffix."""
+    merged: list[list[int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    pieces, at = [], 0
+    for start, end in merged:
+        pieces.append(before[at:start])
+        at = end
+    pieces.append(before[at:])
+    if len(pieces) == 1:
+        return None if after == before else "bytes changed with no span to change"
+    first, *middle, last = pieces
+    if not after.startswith(first):
+        return f"bytes before the edited span changed (near offset {len(first)})"
+    pos = len(first)
+    for piece in middle:
+        found = after.find(piece, pos)
+        if found < 0:
+            return f"bytes between edited spans changed: {piece[:60]!r}"
+        pos = found + len(piece)
+    if len(after) - len(last) < pos or not after.endswith(last):
+        return f"bytes after the edited span changed: {last[:60]!r}"
+    return None
+
+
+def _check_last_line_end(doc: _Doc, node: Node) -> int:
+    """For the check: past the line ending of ``node``'s last content line.
+    Its own rule, not ``_end``'s: ``end_mark`` walked back over blank lines
+    and, for a collection, comment-only lines; a keep (``|+``) scalar at the
+    very end owns its blank lines."""
+    text = doc.text
+    if isinstance(node, ScalarNode):
+        end = doc.e(node)
+        if _is_block_scalar(node):
+            if _keeps(doc, node):
+                return end
+            lines = text[doc.s(node) : end].splitlines(keepends=True)
+            while len(lines) > 1 and not lines[-1].strip():
+                end -= len(lines.pop())
+        return _line_end(text, end - 1)
+    if node.flow_style:
+        return _line_end(text, doc.e(node) - 1)
+    last = node
+    while isinstance(last, MappingNode | SequenceNode) and not last.flow_style and last.value:
+        last = last.value[-1][1] if isinstance(last, MappingNode) else last.value[-1]
+    pos = doc.e(node)
+    while pos > doc.s(node):
+        start = _line_start(text, pos - 1)
+        line = text[start:pos].strip()
+        if line and not line.startswith("#"):
+            break
+        pos = start
+    if _keeps(doc, last):  # its blank lines are content
+        pos = max(pos, doc.e(last))
+    return pos
+
+
+def _value_spans(doc: _Doc, container: Node | None, idx: int, node: Node) -> list[tuple[int, int]]:
+    """The span a value owns (see the table in the module docstring)."""
+    text = doc.text
+    if container is None:  # the root mapping: new keys go at the end
+        return [(doc.span.end, doc.span.end)]
+    if container.flow_style:
+        return [(doc.s(node), doc.e(node))]
+    in_map = isinstance(container, MappingNode)
+    start = _colon_end(doc, container.value[idx][0]) if in_map else doc.s(node)
+    if _is_empty(node):
+        return [
+            (start, start),
+            (_content_end_of_line(text, start), _content_end_of_line(text, start)),
+        ]
+    if _is_block(node):
+        if in_map:
+            return [
+                (start, start),
+                (_content_end_of_line(text, start), _check_last_line_end(doc, node)),
+            ]
+        return [(start, _check_last_line_end(doc, node))]
+    if _is_block_scalar(node):
+        last = _check_last_line_end(doc, node)
+        last = _content_end_of_line(text, last - 1) if last > 0 else last
+        return [(start, _header_end(doc, node)), (_content_end_of_line(text, doc.s(node)), last)]
+    end = _skip_blanks(text, doc.e(node))
+    line_end = _content_end_of_line(text, doc.e(node))
+    return [(start, end), (line_end, line_end)]
+
+
+def _slot_spans(doc: _Doc, trail: list, depth: int) -> list[tuple[int, int]]:
+    """The value spans of the node ``trail`` reaches at ``depth`` (0: root)."""
+    if depth == 0 or doc.root is None:
+        return _value_spans(doc, None, 0, doc.root)
+    container, idx, node = trail[depth - 1]
+    return _value_spans(doc, container, idx, node)
+
+
+def _named_spans(doc: _Doc, op: Any) -> list[tuple[int, int]]:
+    """Where ``op`` may change bytes, by the span rule alone."""
+    if isinstance(op, ReplaceBody):
+        return [(doc.span.body, len(doc.text))]
+    segs = _segments(op.path, op)
+    trail, found = _walk(doc, segs)
+    if isinstance(op, Unset):
+        return _unset_spans(doc, trail) if found == len(segs) else []
+    return _slot_spans(doc, trail, found)
+
+
+def _unset_spans(doc: _Doc, trail: list) -> list[tuple[int, int]]:
+    text = doc.text
+    container, idx, node = trail[-1]
+    parent_depth = len(trail) - 1
+    if container.flow_style:
+        items = container.value
+        start = doc.s(items[idx][0] if isinstance(container, MappingNode) else items[idx])
+        end = doc.e(items[idx][1] if isinstance(container, MappingNode) else items[idx])
+        if idx + 1 < len(items):
+            nxt = items[idx + 1]
+            return [(start, doc.s(nxt[0] if isinstance(container, MappingNode) else nxt))]
+        if idx > 0:
+            prev = items[idx - 1]
+            return [(doc.e(prev[1] if isinstance(container, MappingNode) else prev), end)]
+        return [(start, end)]
+    if len(container.value) == 1 and container is not doc.root:
+        return _slot_spans(doc, trail, parent_depth)
+    if isinstance(container, SequenceNode):
+        dash_line = _line_start(text, doc.s(node))
+        while text[_skip_blanks(text, dash_line) : _skip_blanks(text, dash_line) + 1] != "-":
+            dash_line = _line_start(text, dash_line - 1)
+        return [(dash_line, _check_last_line_end(doc, node))]
+    key = container.value[idx][0]
+    if _is_empty(node):
+        last = _line_end(text, _colon_end(doc, key))
+    elif doc.s(node) < doc.e(key):  # an alias
+        last = _line_end(text, _colon_end(doc, key))
+    else:
+        last = _check_last_line_end(doc, node)
+    line = _line_start(text, doc.s(key))
+    if not text[line : doc.s(key)].strip():
+        return [(line, last)]
+    # the first pair on a list item's dash line
+    end = last
+    if idx + 1 < len(container.value):
+        nxt = doc.s(container.value[idx + 1][0])
+        if not text[last:nxt].strip(" \t"):
+            end = nxt
+    return [(doc.s(key), end)]
+
+
+def _final_check(original: _Doc, current: _Doc, ops: list, expected: dict) -> str | None:
+    """Once per call, through the reader's own split: the values, the body,
+    and the bytes outside every operation's spans in the original."""
     from ..models.core_types import _frontmatter_of
 
     try:
-        parsed = _frontmatter_of(text)
+        parsed = _frontmatter_of(current.text)
     except Exception as e:  # FrontmatterError: the edit broke the YAML
-        return f"the result does not parse ({e})"
+        return f"the reader cannot parse the result ({e})"
     if parsed is None:
         return "the reader finds no frontmatter in the result"
     meta, body = parsed
     if not _same(_plain(meta), expected):
-        return "the result does not parse to the operation applied"
-    if text[: span.start] != before.text[: before.span.start]:
-        return "the bytes before the frontmatter changed"
-    if text[span.end : span.body] != before.text[before.span.end : before.span.body]:
-        return "the closing delimiter changed"
-    if text[span.body :] != expected_body or body != expected_body.strip():
-        return "the body is not what was asked"
-    old_blocks = _top_level_blocks(before.text, before.span)
-    new_blocks = _top_level_blocks(text, span)
-    for key, block in old_blocks.items():
-        if key not in named and new_blocks.get(key) != block:
-            return f"the untouched key {key!r} changed"
-    return None
+        return "the reader does not read the operations applied"
+    if body != current.body.strip():
+        return "the reader's body is not what was asked"
+    spans: list[tuple[int, int]] = []
+    for op in ops:
+        spans += _original_spans(original, op)
+    return _outside_changed(original.text, current.text, spans)
+
+
+def _original_spans(doc: _Doc, op: Any) -> list[tuple[int, int]]:
+    """An operation's spans in the call's original text: its own where its
+    path exists there, else the deepest value of the path that does."""
+    if isinstance(op, ReplaceBody):
+        return [(doc.span.body, len(doc.text))]
+    segs = _segments(op.path, op)
+    trail, found = _walk(doc, segs)
+    if found == len(segs) and isinstance(op, Unset):
+        return _unset_spans(doc, trail)
+    spans = _slot_spans(doc, trail, found)
+    if isinstance(op, Unset):  # unset of a key an earlier operation added
+        spans.append((doc.span.end, doc.span.end))
+    return spans
 
 
 # --- the narrow edit ----------------------------------------------------------
@@ -786,7 +1303,12 @@ def _conventions(doc: _Doc) -> _Conv:
         if isinstance(v, MappingNode) and map_indent is None:
             map_indent = _col(doc, v.value[0][0]) - _col(doc, k)
         if isinstance(v, SequenceNode) and seq_offset is None:
-            seq_offset = _item_cols(doc, v.value[0])[0] - _col(doc, k)
+            try:
+                seq_offset = _item_cols(doc, v, 0)[0] - _col(doc, k)
+            except OperationRefusedError:
+                continue
+        if map_indent is not None and seq_offset is not None:
+            break
     return _Conv(
         map_indent if map_indent and map_indent > 0 else 2,
         seq_offset if seq_offset is not None and seq_offset >= 0 else 0,
@@ -799,7 +1321,7 @@ def _narrow_edits(doc: _Doc, op: Any) -> list[tuple[int, int, str]]:
         written = _written_body(doc, op.body)
         return [] if written is None else [(doc.span.body, len(doc.text), written)]
     conv = _conventions(doc)
-    segs = _segments(op.path)
+    segs = _segments(op.path, op)
     if isinstance(op, Set):
         return _set_path(doc, segs, op.value, conv, op)
     if isinstance(op, AddSubkey):
@@ -818,7 +1340,9 @@ def _set_path(doc: _Doc, segs: list, value: Any, conv: _Conv, op: Any) -> list:
         return _set_node(doc, container, idx, node, _data_at(doc.data, segs), value, conv)
     rest = segs[found:]
     if any(isinstance(seg, int) for seg in rest):
-        raise OperationRefusedError(f"no list item at {'.'.join(map(str, segs))}", op)
+        raise OperationRefusedError(
+            f"{_show(segs)}: no list item at {_show(segs[: found + 1])}", op
+        )
     nested = value
     for seg in reversed(rest[1:]):
         nested = {seg: nested}
@@ -829,7 +1353,7 @@ def _set_path(doc: _Doc, segs: list, value: Any, conv: _Conv, op: Any) -> list:
         return _add_pairs(doc, parent, [(rest[0], nested)], conv)
     if _is_null(parent):
         return _set_node(doc, container, idx, parent, None, {rest[0]: nested}, conv)
-    raise OperationRefusedError(f"{'.'.join(map(str, segs[:found]))} is not a mapping", op)
+    raise OperationRefusedError(f"{_show(segs)}: {_show(segs[:found])} is not a mapping", op)
 
 
 def _add_subkey(doc: _Doc, segs: list, op: AddSubkey, conv: _Conv) -> list:
@@ -837,12 +1361,10 @@ def _add_subkey(doc: _Doc, segs: list, op: AddSubkey, conv: _Conv) -> list:
         return _set_path(doc, [op.key], op.value, conv, op)
     trail, found = _walk(doc, segs)
     if found < len(segs) or not isinstance(trail[-1][2], MappingNode):
-        raise OperationRefusedError(f"no mapping at {op.path!r} to add {op.key!r} to", op)
+        raise OperationRefusedError(f"no mapping at {_show(segs)} to add {op.key!r} to", op)
     current = _data_at(doc.data, segs)
-    if _find_key(current, op.key) is not None:
-        if values_equal(current[_find_key(current, op.key)], op.value):
-            return []
-        raise OperationRefusedError(f"{op.path!r} already has {op.key!r}; use set to change it", op)
+    if _lookup(current, op.key) is not _MISSING:
+        return []  # equal: the model said unchanged; different: the model refused
     return _add_pairs(doc, trail[-1][2], [(op.key, op.value)], conv)
 
 
@@ -854,7 +1376,7 @@ def _append(doc: _Doc, segs: list, op: Append, conv: _Conv) -> list:
     if _is_null(node):
         return _set_node(doc, container, idx, node, None, [op.value], conv)
     if not isinstance(node, SequenceNode):
-        raise OperationRefusedError(f"{op.path!r} is not a list; cannot append to it", op)
+        raise OperationRefusedError(f"{_show(segs)} is not a list; cannot append to it", op)
     items = node.value
     if node.flow_style:
         hint = _style(items[-1]) if items else None
@@ -863,10 +1385,10 @@ def _append(doc: _Doc, segs: list, op: Append, conv: _Conv) -> list:
             return [(doc.s(node) + 1, doc.s(node) + 1, new)]
         end = _end(doc, items[-1])
         return [(end, end, ", " + new)]
-    last = items[-1]
-    dash_col, content_col = _item_cols(doc, last)
-    lines = _emit_item_lines(op.value, dash_col, content_col, _style(last), conv)
-    pos = _item_range(doc, last)[1]
+    last = len(items) - 1
+    dash_col, content_col = _item_cols(doc, node, last)
+    lines = _emit_item_lines(op.value, dash_col, content_col, _style(items[last]), conv)
+    pos = _item_range(doc, node, last)[1]
     return [(pos, pos, "".join(line + doc.eol for line in lines))]
 
 
@@ -875,10 +1397,8 @@ def _remove(doc: _Doc, segs: list, op: Remove, conv: _Conv) -> list:
     if found < len(segs):
         return []
     container, idx, node = trail[-1]
-    if _is_null(node):
-        return []
     if not isinstance(node, SequenceNode):
-        raise OperationRefusedError(f"{op.path!r} is not a list; cannot remove from it", op)
+        return []  # the model refused a non-list or found nothing to remove
     current = _data_at(doc.data, segs)
     for i, item in enumerate(current):
         if values_equal(item, op.value):
@@ -891,7 +1411,7 @@ def _remove_index(doc: _Doc, container: Node, idx: int, seq: SequenceNode, i: in
         return _flow_delete(doc, seq.value, [i], _end)
     if len(seq.value) == 1:
         return _replace_fresh(doc, container, idx, seq, [], conv)
-    start, end = _item_range(doc, seq.value[i])
+    start, end = _item_range(doc, seq, i)
     return [(start, end, "")]
 
 
@@ -901,7 +1421,7 @@ def _unset(doc: _Doc, segs: list, op: Unset, conv: _Conv) -> list:
         return []
     container, idx, _ = trail[-1]
     if isinstance(container, SequenceNode):
-        parent, pidx, _ = trail[-2] if len(trail) > 1 else (doc.root, 0, container)
+        parent, pidx, _ = trail[-2]
         return _remove_index(doc, parent, pidx, container, idx, conv)
     if container is doc.root:
         k, v = container.value[idx]
@@ -940,8 +1460,8 @@ def _style(node: Node) -> str | None:
 
 
 def _scalar_edit(doc: _Doc, node: Node, new_text: str, flow: bool) -> list:
-    """Replace a scalar's text. A trailing comment keeps its bytes; it keeps
-    its column when the new value fits before it, and otherwise its gap."""
+    """Replace an inline scalar's text. A trailing comment keeps its bytes; it
+    keeps its column when the new value fits before it, and otherwise its gap."""
     start, end = doc.s(node), _end(doc, node)
     text = doc.text
     if not flow and "\n" not in text[start:end] and "\n" not in new_text:
@@ -957,42 +1477,75 @@ def _scalar_edit(doc: _Doc, node: Node, new_text: str, flow: bool) -> list:
     return [(start, end, new_text)]
 
 
-def _replace_scalar(doc: _Doc, node: ScalarNode, new: Any, flow: bool) -> list:
-    if node.style in ("|", ">") and isinstance(new, str):
-        indent = _block_indent(doc, node)
-        block = _emit_block_scalar(new, node.style, indent, doc.eol)
-        if block is None and node.style == ">":
-            block = _emit_block_scalar(new, "|", indent, doc.eol)
-        if block is not None:
-            return [(doc.s(node), _end(doc, node), block)]
-    return _scalar_edit(doc, node, _emit_scalar(new, node.style, node.tag, flow), flow)
-
-
-def _block_indent(doc: _Doc, node: ScalarNode) -> int:
+def _block_body_range(doc: _Doc, node: ScalarNode) -> tuple[int, int]:
+    """A block scalar's content: from the end of its header line (the header's
+    line ending included) to the end of its last content line (a keep
+    scalar's last blank line), before that line's ending."""
     text = doc.text
-    pos = _line_end(text, doc.s(node))
+    start = _content_end_of_line(text, doc.s(node))
     end = _end(doc, node)
+    if _keeps(doc, node):
+        end = _content_end_of_line(text, end - 1) if end > start else start
+    return start, max(start, end)
+
+
+def _replace_scalar(doc: _Doc, node: ScalarNode, new: Any, flow: bool) -> list:
+    if not _is_block_scalar(node):
+        return _scalar_edit(doc, node, _emit_scalar(new, node.style, node.tag, flow), flow)
+    body_start, body_end = _block_body_range(doc, node)
+    header = (doc.s(node), _header_end(doc, node))
+    if isinstance(new, str):
+        indent, parent = _block_indents(doc, node)
+        explicit = any(ch.isdigit() for ch in _header(doc, node))
+        for style in (node.style, "|"):
+            block = _emit_block_scalar(
+                new, style, indent, parent, explicit, doc.eol, _keeps(doc, node)
+            )
+            if block is not None:
+                head, body = block
+                return [(header[0], header[1], head), (body_start, body_end, body)]
+    return [
+        (header[0], header[1], _emit_scalar(new, None, None, flow)),
+        (body_start, body_end, ""),
+    ]
+
+
+def _block_indents(doc: _Doc, node: ScalarNode) -> tuple[int, int]:
+    """(content indent, parent indent) of a block scalar."""
+    text = doc.text
+    line = _line_start(text, doc.s(node))
+    head = text[line : doc.s(node)]
+    parent = len(head) - len(head.lstrip(" "))
+    if head.strip().startswith("-"):  # an item: the content sits past the dash
+        parent = head.index("-")
+    digits = "".join(ch for ch in _header(doc, node) if ch.isdigit())
+    if digits:
+        return parent + int(digits), parent
+    pos = _line_end(text, doc.s(node))
+    end = doc.e(node)
     while pos < end:
         line_end = _line_end(text, pos)
-        line = text[pos:line_end]
-        if line.strip():
-            return len(line) - len(line.lstrip(" "))
+        content = text[pos:line_end]
+        if content.strip():
+            return len(content) - len(content.lstrip(" ")), parent
         pos = line_end
-    start = _line_start(text, doc.s(node))
-    head = text[start : doc.s(node)]
-    return len(head) - len(head.lstrip(" ")) + 2
+    return parent + 2, parent
 
 
 def _edit_map(doc, container, idx, node: MappingNode, cur: Mapping, new: Mapping, conv) -> list:
-    curs = {str(k): v for k, v in cur.items()}
-    news = {str(k): (k, v) for k, v in new.items()}
+    """Set a mapping to a new mapping key by key: the file's keys the new
+    value keeps are set in place, the others are deleted, new keys are added
+    at the end. A key of the new value names the file's key it equals with
+    the same type (a string ``"true"`` is not the bool ``true``)."""
     edits: list = []
     deleted: set[int] = set()
     for i, (k, v) in enumerate(node.value):
-        if k.value in news:
-            edits += _set_node(doc, node, i, v, curs.get(k.value), news[k.value][1], conv)
-        else:
+        key = _node_key(k)
+        hit = _MISSING if key is _MISSING else _exact(new, key)
+        if hit is _MISSING:
             deleted.add(i)
+            continue
+        edits += _set_node(doc, node, i, v, cur[_exact(cur, key)], new[hit], conv)
     if len(deleted) == len(node.value):
         if node.flow_style:
             return [(doc.s(node), doc.e(node), _emit_flow(new, None))]
@@ -1002,9 +1555,10 @@ def _edit_map(doc, container, idx, node: MappingNode, cur: Mapping, new: Mapping
             edits += _flow_delete(doc, node.value, sorted(deleted), lambda d, p: _pair_end(d, *p))
         else:
             edits += _delete_pairs(doc, node, deleted)
-    added = [
-        (k, v) for name, (k, v) in news.items() if name not in {p[0].value for p in node.value}
-    ]
+    keys = {
+        id(_exact(new, key)) for key in (_node_key(k) for k, _ in node.value) if key is not _MISSING
+    }
+    added = [(k, v) for k, v in new.items() if id(k) not in keys]
     if added:
         edits += _add_pairs(doc, node, added, conv)
     return edits
@@ -1012,20 +1566,30 @@ def _edit_map(doc, container, idx, node: MappingNode, cur: Mapping, new: Mapping
 
 def _delete_pairs(doc: _Doc, node: MappingNode, deleted: set[int]) -> list:
     """Each deleted pair's own lines. A first pair that shares its line with a
-    list dash (``- target: x``) is cut up to the next kept key instead."""
-    edits = []
+    list dash (``- target: x``) is cut from its key to the end of its last line,
+    and through the next key's indentation when only spaces lie between, so
+    that a comment line between it and the next key stays."""
+    text = doc.text
+    ranges = []
     pairs = node.value
-    skip: set[int] = set()
-    first_k = pairs[0][0]
-    if 0 in deleted and doc.text[_line_start(doc.text, doc.s(first_k)) : doc.s(first_k)].strip():
-        kept = next(i for i in range(len(pairs)) if i not in deleted)
-        edits.append((doc.s(first_k), doc.s(pairs[kept][0]), ""))
-        skip = set(range(kept))
-    for i in sorted(deleted - skip):
+    for i in sorted(deleted):
         k, v = pairs[i]
-        start = _line_start(doc.text, doc.s(k))
-        edits.append((start, _own_end(doc, _pair_end(doc, k, v)), ""))
-    return edits
+        line = _line_start(text, doc.s(k))
+        end = _own_end(doc, _pair_end(doc, k, v))
+        if text[line : doc.s(k)].strip():
+            start = doc.s(k)
+            if i + 1 < len(pairs) and not text[end : doc.s(pairs[i + 1][0])].strip(" \t"):
+                end = doc.s(pairs[i + 1][0])
+        else:
+            start = line
+        ranges.append([start, end])
+    merged: list[list[int]] = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [(start, end, "") for start, end in merged]
 
 
 def _add_pairs(doc: _Doc, node: MappingNode, pairs: list, conv: _Conv) -> list:
@@ -1052,8 +1616,9 @@ def _add_root_key(doc: _Doc, key: Any, value: Any, conv: _Conv) -> list:
 
 def _edit_seq(doc, container, idx, node: SequenceNode, cur: list, new: list, conv) -> list:
     """Reduce a set of a whole list to item edits: items equal in order are
-    kept byte for byte (an LCS under decision 3 equality); paired items of the
-    same kind are set in place; the rest are deleted or inserted."""
+    kept byte for byte (an LCS under decision 3 equality, after the common
+    head and tail); paired items of the same kind are set in place; the rest
+    are deleted or inserted."""
     items = node.value
     plan = _plan(cur, new)
     if plan is None:  # nothing kept: write the list afresh, in its own style
@@ -1077,16 +1642,16 @@ def _edit_seq(doc, container, idx, node: SequenceNode, cur: list, new: list, con
                 edits.append((end, end, ", " + text))
         return edits
     for i in deletes:
-        start, end = _item_range(doc, items[i])
+        start, end = _item_range(doc, node, i)
         edits.append((start, end, ""))
     for anchor, js in inserts:
-        ref = items[first_kept if anchor is None else anchor]
-        start, end = _item_range(doc, ref)
-        dash_col, content_col = _item_cols(doc, ref)
+        ref = first_kept if anchor is None else anchor
+        start, end = _item_range(doc, node, ref)
+        dash_col, content_col = _item_cols(doc, node, ref)
         lines = [
             line
             for j in js
-            for line in _emit_item_lines(new[j], dash_col, content_col, _style(ref), conv)
+            for line in _emit_item_lines(new[j], dash_col, content_col, _style(items[ref]), conv)
         ]
         pos = start if anchor is None else end
         edits.append((pos, pos, "".join(line + doc.eol for line in lines)))
@@ -1097,23 +1662,16 @@ def _plan(old: list, new: list):
     """(replaces {old: new}, deletes [old], inserts [(anchor old or None, [new])],
     first kept old index), or None when no old item is kept."""
     n, m = len(old), len(new)
-    lcs = [[0] * (m + 1) for _ in range(n + 1)]
-    for i in range(n - 1, -1, -1):
-        for j in range(m - 1, -1, -1):
-            if values_equal(old[i], new[j]):
-                lcs[i][j] = lcs[i + 1][j + 1] + 1
-            else:
-                lcs[i][j] = max(lcs[i + 1][j], lcs[i][j + 1])
-    matches = []
-    i = j = 0
-    while i < n and j < m:
-        if values_equal(old[i], new[j]) and lcs[i][j] == lcs[i + 1][j + 1] + 1:
-            matches.append((i, j))
-            i, j = i + 1, j + 1
-        elif lcs[i + 1][j] >= lcs[i][j + 1]:
-            i += 1
-        else:
-            j += 1
+    head = 0
+    while head < min(n, m) and values_equal(old[head], new[head]):
+        head += 1
+    tail = 0
+    while tail < min(n, m) - head and values_equal(old[n - 1 - tail], new[m - 1 - tail]):
+        tail += 1
+    mid_old, mid_new = old[head : n - tail], new[head : m - tail]
+    matches = [(i, i) for i in range(head)]
+    matches += [(head + i, head + j) for i, j in _lcs(mid_old, mid_new)]
+    matches += [(n - tail + i, m - tail + i) for i in range(tail)]
     replaces: dict[int, int] = {}
     deletes: list[int] = []
     inserts: list[tuple[int | None, list[int]]] = []
@@ -1136,6 +1694,30 @@ def _plan(old: list, new: list):
     if not kept:
         return None
     return replaces, deletes, inserts, kept[0]
+
+
+def _lcs(old: list, new: list) -> list[tuple[int, int]]:
+    n, m = len(old), len(new)
+    if not n or not m:
+        return []
+    lcs = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n - 1, -1, -1):
+        for j in range(m - 1, -1, -1):
+            if values_equal(old[i], new[j]):
+                lcs[i][j] = lcs[i + 1][j + 1] + 1
+            else:
+                lcs[i][j] = max(lcs[i + 1][j], lcs[i][j + 1])
+    matches = []
+    i = j = 0
+    while i < n and j < m:
+        if values_equal(old[i], new[j]) and lcs[i][j] == lcs[i + 1][j + 1] + 1:
+            matches.append((i, j))
+            i, j = i + 1, j + 1
+        elif lcs[i + 1][j] >= lcs[i][j + 1]:
+            i += 1
+        else:
+            j += 1
+    return matches
 
 
 def _same_kind(a: Any, b: Any) -> bool:
@@ -1176,8 +1758,8 @@ def _flow_delete(doc: _Doc, items: list, deletes: list[int], end_of) -> list:
 
 def _replace_fresh(doc: _Doc, container: Node, idx: int, node: Node, new: Any, conv) -> list:
     """Write a value whose shape changed (a scalar becomes a list, a list
-    becomes empty) afresh at the node's place. Only the touched value's bytes
-    are emitted; its key line, and a comment on it, stay."""
+    becomes empty) afresh at the node's place. Only the value's own bytes
+    change: its key line, and a comment on it, stay."""
     text, eol = doc.text, doc.eol
     if container.flow_style:
         return [(doc.s(node), _end(doc, node), _emit_flow(new, None))]
@@ -1186,26 +1768,46 @@ def _replace_fresh(doc: _Doc, container: Node, idx: int, node: Node, new: Any, c
     if isinstance(container, MappingNode):
         key = container.value[idx][0]
         colon = _colon_end(doc, key)
+        key_line_end = _content_end_of_line(text, colon)
+        step = conv.map_indent if isinstance(new, Mapping) else conv.seq_offset
+        if _is_block_scalar(node):
+            body_start, body_end = _block_body_range(doc, node)
+            head = (doc.s(node), _header_end(doc, node))
+            if inline:
+                return [(head[0], head[1], _emit_inline(new, None)), (body_start, body_end, "")]
+            lines = _emit_block(new, _col(doc, key) + step, conv)
+            return [(colon, head[1], ""), (body_start, body_end, eol + eol.join(lines))]
         if inline:
             value = _emit_inline(new, _style(node))
             if _is_empty(node):
                 return [(colon, colon, " " + value)]
             if old_block:
-                return [(colon, _content_end_of_line(text, _end(doc, node) - 1), " " + value)]
+                # the new value goes after the colon; the key line, and a
+                # comment on it, stay; the old lines go
+                return [
+                    (colon, colon, " " + value),
+                    (_line_end(text, colon), _own_end(doc, _end(doc, node)), ""),
+                ]
             return _scalar_edit(doc, node, value, False)
-        step = conv.map_indent if isinstance(new, Mapping) else conv.seq_offset
         lines = _emit_block(new, _col(doc, key) + step, conv)
         if old_block:
             first = _line_start(text, doc.s(node))
             return [(first, _own_end(doc, _end(doc, node)), "".join(x + eol for x in lines))]
         if _is_empty(node):
-            at = _content_end_of_line(text, colon)
-            return [(at, at, eol + eol.join(lines))]
+            return [(key_line_end, key_line_end, eol + eol.join(lines))]
         end = _end(doc, node)
-        at = _content_end_of_line(text, end - 1)
+        at = _content_end_of_line(text, end)
         return [(colon, end, ""), (at, at, eol + eol.join(lines))]
     # an item of a block sequence
     col = _col(doc, node)
+    if _is_block_scalar(node):
+        body_start, body_end = _block_body_range(doc, node)
+        head = (doc.s(node), _header_end(doc, node))
+        if inline:
+            return [(head[0], head[1], _emit_inline(new, None)), (body_start, body_end, "")]
+        lines = _emit_block(new, col, conv)
+        first = lines[0][col:] + "".join(eol + x for x in lines[1:])
+        return [(head[0], head[1], first), (body_start, body_end, "")]
     end = _content_end_of_line(text, _end(doc, node) - 1) if old_block else _end(doc, node)
     if inline:
         return [(doc.s(node), end, _emit_inline(new, _style(node)))]
@@ -1217,18 +1819,21 @@ def _replace_fresh(doc: _Doc, container: Node, idx: int, node: Node, new: Any, c
 
 
 def _widen_edits(doc: _Doc, op: Any, expected: dict) -> list | None:
-    """Rebuild the touched top-level key's value, copying every unchanged
-    item's bytes from the file and emitting only what changed. None when there
-    is no item-wise form (a new key, an unset, a scalar, the body)."""
+    """Rebuild the touched top-level value, copying every unchanged item's
+    bytes from the file and emitting only what changed. None when there is no
+    item-wise form (a new key, an unset key, a scalar, the body)."""
     top = _top_key(op)
     if top is None or doc.root is None:
         return None
     idx = _key_index(doc.root, top)
-    new_key = _find_key(expected, top)
-    if idx is None or new_key is None:
+    new_key = _lookup(expected, top)
+    old_key = _lookup(doc.data, top)
+    if idx is None or new_key is _MISSING or old_key is _MISSING:
         return None
-    key, node = doc.root.value[idx]
-    old, new = doc.data[_find_key(doc.data, top)], expected[new_key]
+    _, node = doc.root.value[idx]
+    if not isinstance(node, MappingNode | SequenceNode):
+        return None
+    old, new = doc.data[old_key], expected[new_key]
     conv = _conventions(doc)
     text, eol = doc.text, doc.eol
     if node.flow_style and isinstance(node, SequenceNode) and isinstance(new, list):
@@ -1244,15 +1849,15 @@ def _widen_edits(doc: _Doc, op: Any, expected: dict) -> list | None:
         return [(doc.s(node), doc.e(node), "[" + ", ".join(pieces) + "]")]
     if not _is_block(node) or not new or not isinstance(new, Mapping | list):
         return None
-    region = (_line_start(text, doc.s(node)), _own_end(doc, _end(doc, node)))
     chunks: list[str] = []
     if isinstance(node, SequenceNode) and isinstance(new, list):
-        dash_col, content_col = _item_cols(doc, node.value[0])
+        region = (_item_range(doc, node, 0)[0], _own_end(doc, _end(doc, node)))
+        dash_col, content_col = _item_cols(doc, node, 0)
         used = 0
         for item in new:
             for i in range(used, len(node.value)):
                 if values_equal(old[i], item):
-                    start, end = _item_range(doc, node.value[i])
+                    start, end = _item_range(doc, node, i)
                     chunks.append(text[start:end])
                     used = i + 1
                     break
@@ -1260,11 +1865,11 @@ def _widen_edits(doc: _Doc, op: Any, expected: dict) -> list | None:
                 lines = _emit_item_lines(item, dash_col, content_col, None, conv)
                 chunks.append("".join(x + eol for x in lines))
     elif isinstance(node, MappingNode) and isinstance(new, Mapping):
+        region = (_line_start(text, doc.s(node)), _own_end(doc, _end(doc, node)))
         col = _col(doc, node.value[0][0])
-        olds = {str(k): v for k, v in old.items()}
         for name, value in new.items():
-            i = _key_index(node, name)
-            if i is not None and values_equal(olds.get(str(name)), value):
+            i = _key_index(node, name) if isinstance(name, str) else None
+            if i is not None and values_equal(old[_lookup(old, name)], value):
                 k, v = node.value[i]
                 start = _line_start(text, doc.s(k))
                 chunks.append(text[start : _own_end(doc, _pair_end(doc, k, v))])
@@ -1324,16 +1929,20 @@ def _emit_flow(value: Any, style: str | None) -> str:
 
 
 def _emit_key(key: Any, flow: bool) -> str:
+    """A key as written. A string key is always written so that it loads as
+    that string: ``true``, ``null`` or ``1`` as a new key is quoted."""
     if not isinstance(key, str):
         return _emit_scalar(key, None, None, flow)
-    if key and key == key.strip() and "\n" not in key and not _is_yaml11_ambiguous(key):
+    if key and key == key.strip() and _printable(key) and not _is_yaml11_ambiguous(key):
         probe = f"{{{key}: 0}}" if flow else f"{key}: 0"
         try:
-            loaded = YAML().load(probe)
+            loaded = _yaml().load(probe)
         except YAMLError:
             loaded = None
-        if isinstance(loaded, Mapping) and list(loaded) == [key] and type(str(key)) is str:
-            return key
+        if isinstance(loaded, Mapping) and len(loaded) == 1:
+            got = next(iter(loaded))
+            if type(got) is str and got == key:
+                return key
     return _double(key)
 
 
@@ -1347,9 +1956,7 @@ def _emit_scalar(value: Any, style: str | None, tag: str | None, flow: bool) -> 
     if isinstance(value, int):
         return str(int(value))
     if isinstance(value, float):
-        if math.isinf(value):
-            return ".inf" if value > 0 else "-.inf"
-        return repr(float(value))
+        return _emit_float(value)
     if isinstance(value, date):
         return value.isoformat()
     if style == "'" and _single_ok(value):
@@ -1361,16 +1968,34 @@ def _emit_scalar(value: Any, style: str | None, tag: str | None, flow: bool) -> 
     return _double(value)
 
 
+def _emit_float(value: float) -> str:
+    """A float both YAML 1.2 and YAML 1.1 read as a float: 1.1 needs a dot
+    (``1e+20`` is a string there), so ``1.0e+20``."""
+    if math.isinf(value):
+        return ".inf" if value > 0 else "-.inf"
+    text = repr(float(value))
+    if "e" in text and "." not in text:
+        mantissa, exponent = text.split("e")
+        text = f"{mantissa}.0e{exponent}"
+    return text
+
+
+def _printable(value: str) -> bool:
+    """No character a YAML reader would not take bare: control characters,
+    NEL, the line and paragraph separators, a BOM."""
+    return not any(ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F or ch in "  ﻿" for ch in value)
+
+
 def _plain_ok(value: str, flow: bool, timestamp: bool) -> bool:
     """Does ``value`` written bare read back as itself under YAML 1.2, and not
     as anything else under YAML 1.1? A string written over a date may stay
     bare when it reads back as that same date (decision 3)."""
-    if not value or value != value.strip() or "\n" in value or "\r" in value:
+    if not value or value != value.strip() or not _printable(value):
         return False
     if _is_yaml11_ambiguous(value):
         return False
     try:
-        loaded = YAML().load(f"k: [{value}]" if flow else f"k: {value}")
+        loaded = _yaml().load(f"k: [{value}]" if flow else f"k: {value}")
     except YAMLError:
         return False
     if not isinstance(loaded, Mapping) or list(loaded) != ["k"]:
@@ -1386,7 +2011,7 @@ def _plain_ok(value: str, flow: bool, timestamp: bool) -> bool:
 
 
 def _single_ok(value: str) -> bool:
-    return not any(ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F or ch in "  ﻿" for ch in value)
+    return _printable(value)
 
 
 _ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\t": "\\t", "\r": "\\r", "\0": "\\0"}
@@ -1404,18 +2029,26 @@ def _double(value: str) -> str:
     return '"' + "".join(out) + '"'
 
 
-def _emit_block_scalar(value: str, style: str, indent: int, eol: str) -> str | None:
+def _emit_block_scalar(
+    value: str, style: str, indent: int, parent: int, explicit: bool, eol: str, was_keep: bool
+) -> tuple[str, str] | None:
     """``value`` as a literal (``|``) or folded (``>``) block scalar whose
-    content lines sit at ``indent``. None when the value needs a form this
-    does not write (keep chomping, a first line starting with a space, a
-    folded line that would be read as more-indented)."""
+    content lines sit at ``indent``: (the header, the body that replaces the
+    old content). None when it needs a form this does not write: a control
+    character, a folded line that starts with a space, keep chomping where the
+    old scalar did not keep (blank lines after it would become content)."""
+    if not _printable(value.replace("\n", "").replace("\t", "")):
+        return None
     stripped = value.rstrip("\n")
     trailing = len(value) - len(stripped)
-    if trailing > 1 or not stripped or "\r" in value:
+    if trailing > 1 and not was_keep:
         return None
-    chomp = "-" if trailing == 0 else ""
+    chomp = "-" if trailing == 0 else ("" if trailing == 1 else "+")
+    if not stripped:
+        return None
     parts = stripped.split("\n")
-    if parts[0][:1] in (" ", "\t"):
+    needs_indicator = parts[0][:1] in (" ", "\t")
+    if parts[0][:1] == "\t":
         return None
     if style == ">":
         if any(p[:1] in (" ", "\t") for p in parts) or not parts[0]:
@@ -1429,8 +2062,17 @@ def _emit_block_scalar(value: str, style: str, indent: int, eol: str) -> str | N
             lines += [""] * (empties + 1) + [part]
             empties = 0
         parts = lines
-    body = eol.join((" " * indent + p) if p else "" for p in parts)
-    return f"{style}{chomp}{eol}{body}"
+    if was_keep and trailing <= 1:
+        pass  # the old trailing blank lines are inside the replaced range
+    parts = parts + [""] * max(0, trailing - 1)
+    indicator = ""
+    if needs_indicator or explicit:
+        step = indent - parent
+        if not 1 <= step <= 9:
+            return None
+        indicator = str(step)
+    body = eol + eol.join((" " * indent + p) if p else "" for p in parts)
+    return f"{style}{indicator}{chomp}", body
 
 
 def _written_body(doc: _Doc, new: str) -> str | None:
