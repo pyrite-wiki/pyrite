@@ -630,3 +630,92 @@ PYRITE_CONFIG_DIR=$d/cfg .venv/bin/pyrite ids pin -k notes
 **Worked well:** `KBRepository.id_of_file` and `read_entry_id`'s docstrings pointed straight at the one derivation, and the ADR's spike numbers gave the scratch test a target. `atomic_write_text` does no newline translation, so CRLF survived without special handling. `scripts/verify-red.sh` classified the two import-only tests precisely. The `.pyrite/config.yaml` per worktree made `pyrite kb list` correct with no setup.
 
 **Severity:** slowed. Nothing blocked. Items 2 and 4 could have produced a command that contradicts its ADR, and item 5 is a check the skill asks for but nobody can pass as written.
+
+## 2026-10-03 · a pyrite-worker building a schema-data theme (#697 field aliases) from a groomed draft PR · claude-sonnet-5-5
+
+One theme, start to push, in a worktree made by `scripts/new-worktree.sh`: read the groom, test its riskiest assumption, TDD a new resolver module, switch two readers, run the affected suite, push. The tooling carried it; four things cost time, ordered by cost.
+
+---
+
+**Friction 1 — the verification command the skill prescribes does not fit the tool timeout, and its output is easy to misread.**
+
+**Command:**
+```
+git add <paths> && git commit -q -m "..." && (time scripts/test-affected --run 2>&1 | tail -15)
+```
+(piped through `tail -15`; the commit and the suite were chained in one call)
+
+**Expected:** pyrite-dev says "run `scripts/test-affected --run` in the foreground on a committed tree" and look for `N passed, 0 failed`.
+
+**Got:** 6m29s (`6586 passed, 1 failed`). The agent shell's command timeout is 2 minutes, so the call was moved to the background. The output file I read first held only the commit's pre-commit hook lines (the chain ran the commit hooks first, then the suite), so it looked finished when it was not. Two further unknowns: `pgrep -f pytest` also matched another worker's suite in a sibling worktree, so "is mine done?" needed a worktree-specific pattern; and the suite ran only after I had already committed twice, so the one red test cost a third commit.
+
+**Friction:** the foreground rule and the 2-minute limit contradict each other for an agent. Nothing in the skill says to start it in the background, or how to tell mine from a sibling's.
+
+**Had to figure out:** run it as its own background call, wait on `pgrep -f "<worktree>/.venv/bin/python -m pytest"`, read the summary line from the output file.
+
+**Would have helped:** a line in pyrite-dev: "the suite takes ~6 minutes; start it alone with run_in_background, wait with a worktree-scoped pgrep, never chain it after a commit". Or `scripts/test-affected --run` printing a final one-line `RESULT: N passed, M failed` and writing it to a file I can `cat`.
+
+**Severity:** slowed.
+
+---
+
+**Friction 2 — a groom's "checked: nothing implements X" is true only until the theme implements X, and the test that depended on it was not in the groom's Touches.**
+
+**Command:** (the suite above) failed `tests/test_type_metadata.py::TestPluginTypeMetadata::test_registry_get_all_type_metadata_empty`.
+
+**Expected:** the groom listed 20-odd files to touch and said "no in-tree plugin implements `get_type_metadata`, checked". I expected a clean run apart from my own new tests.
+
+**Got:** that test builds `PluginRegistry()` and asserts `get_all_type_metadata() == {}` under the docstring "registry with no plugins". A bare registry discovers the installed plugins, so the test passes only while no installed plugin returns type metadata. The groom's grep found the implementers (none) but not the test that encoded the same assumption.
+
+**Friction:** a test whose name says "no plugins" and whose setup does not isolate plugins is coupled to what the venv has installed. I found it only at the end of a 6-minute run.
+
+**Had to figure out:** whether the test or the change was wrong (the test: it now sets `_discovered = True`). Fix is in the PR.
+
+**Would have helped:** in grooms, "tests that assert the absence of what this theme adds" next to Touches; a quick `grep -rn "get_all_type_metadata" tests/` is the one command that would have found it before the run.
+
+**Severity:** slowed (one extra run-cycle).
+
+---
+
+**Friction 3 — a groom rule contradicted the data it was applied to.**
+
+**Command:** none; found while writing the failing test for `pyrite schema validate`.
+
+**Expected:** the groom's acceptance says the validate check reports "an alias that is a reserved name or a declared field of the type".
+
+**Got:** core `event` declares `participants` as a field in `CORE_TYPES`, and core `relationship` declares `source` and `target`. Applied literally to the merged map, the rule would flag the two core types the theme exists to describe. I limited the check to fields the operator declares in `kb.yaml`, and said so on the PR.
+
+**Friction:** small, but a worker who follows acceptance text literally ships a validate that warns on a clean install.
+
+**Would have helped:** grooms checking each new rule against the in-tree data it will run on (one loop over `CORE_TYPES`), and saying so under "Checked versus assumed".
+
+**Severity:** annoying.
+
+---
+
+**Friction 4 — the pre-push hook says only "Passed".**
+
+**Command:** `git push -u origin feature/697-field-aliases` (output piped through `tail -8`)
+
+**Expected:** after a 6-minute suite and a later test-file edit, to know whether the hook re-ran, reused a stamp, or ran a subset.
+
+**Got:** `pytest core + affected tests (pre-push, code changes only)....Passed`, in seconds. I cannot tell from the output whether the tree I pushed was tested.
+
+**Would have helped:** one line: `reused stamp for <tree sha>` or `ran N tests in Ns`.
+
+**Severity:** annoying.
+
+---
+
+**Smaller things:**
+- `git diff --name-only origin/dev...HEAD` (the skill's footprint check) lists the claim commit's `kb/backlog/...md`, so "a file not on the list is not yours" needs the reader to know the claim commit adds it.
+- `EventEntry.entry_type` is a property, so a test that wants "all classes for type T" must go through the registry's type-to-class map or instantiate; there is no class-level `entry_type`. I used the registry map.
+- `Entry` is abstract, so a conformance fixture has to subclass a concrete class (`EventEntry`) to be instantiable.
+
+**Worked well:**
+- `.venv/bin/pyrite kb list` showed the worktree's own `kb/` path, which confirmed the CLAUDE.md worktree contract in one command.
+- The groom's "this groom is wrong if" line and its table of alias to target made the riskiest-assumption test a single parametrized test written in minutes (it passed first time, so scope held).
+- The pre-commit stage was seconds and caught a format change and an invalid `parametrize` argument type (`PT006`) before any run.
+- `tests/test_schema_validate_db_only_kb.py` was a ready pattern for driving `schema validate` with a KB held only in `_db_kb_cache`.
+
+**Severity (overall):** slowed. Nothing wrong silently; the costs were all timing and a missed grep.
