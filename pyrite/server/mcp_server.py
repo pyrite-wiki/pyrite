@@ -1586,22 +1586,34 @@ class PyriteMCPServer:
             parent=task_id,
         )
         children = [
-            {"id": c["id"], "title": c["title"], "status": c["status"]} for c in children_list
+            {"id": c["id"], "title": c["title"], "status": c["status"], "derived": c["derived"]}
+            for c in children_list
         ]
+        task_kb = task.get("kb_name", kb_name or "")
+        from ..models.task import coerce_task_priority as _coerce_task_priority
 
         return {
             "id": task["id"],
             "title": task["title"],
-            "status": meta.get("status", "open"),
-            "assignee": meta.get("assignee", ""),
-            "priority": meta.get("priority", 5),
+            # The index row's columns, as `task get` reads them: `status`
+            # is a column, never in `metadata`, so meta.get("status") said
+            # "open" for every task, whatever its file said.
+            "status": task.get("status") or meta.get("status", "open"),
+            "assignee": task.get("assignee") or meta.get("assignee", ""),
+            # The model's reading, as list_tasks gives it (#554): an index row
+            # may still hold a word such as `medium`.
+            "priority": _coerce_task_priority(
+                task.get("priority") or meta.get("priority", 5), task["id"]
+            ),
             "parent": meta.get("parent", ""),
             "dependencies": meta.get("dependencies", []),
             "evidence": meta.get("evidence", []),
             "due_date": meta.get("due_date", ""),
             "agent_context": meta.get("agent_context", {}),
             "children": children,
-            "kb_name": task.get("kb_name", kb_name or ""),
+            "kb_name": task_kb,
+            # Computed from the children; never a field of the file.
+            "derived": self.task_svc.derived_for(task_kb, task["id"]),
         }
 
     def _kb_batch_suggest(
@@ -1708,7 +1720,12 @@ class PyriteMCPServer:
                 kb_name=args["kb_name"],
                 children=args["children"],
             )
-            return {"decomposed": True, "parent_id": args["parent_id"], "children": results}
+            return {
+                "decomposed": True,
+                "parent_id": args["parent_id"],
+                "children": results,
+                "parent_derived": self.task_svc.derived_for(args["kb_name"], args["parent_id"]),
+            }
         except (PyriteError, ValueError) as e:
             return _error("OPERATION_FAILED", _safe_message(e))
 

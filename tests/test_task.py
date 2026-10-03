@@ -59,7 +59,9 @@ class TestCoreRegistration:
 
         svc = KBService(config=MagicMock(), db=MagicMock())
         assert len(svc.hook_runner.core_hooks("before_save")) >= 1
-        assert len(svc.hook_runner.core_hooks("after_save")) >= 1
+        # No core after_save hook: the parent rollup is deleted and a parent's
+        # completion is derived (ADR-0042 decision 4).
+        assert svc.hook_runner.core_hooks("after_save") == []
 
 
 # =========================================================================

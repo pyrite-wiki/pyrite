@@ -478,7 +478,10 @@ class BaseBackend(ABC):
         if entry_type:
             query = query.filter(Entry.entry_type == entry_type)
         if status:
-            query = query.filter(Entry.status == status)
+            from .. import effective_status
+
+            keys = effective_status.derived_done_keys(self._session, kb_name, kb_names)
+            query = query.filter(effective_status.status_orm(keys) == status)
         if min_importance is not None:
             query = query.filter(Entry.importance >= min_importance)
         query = query.distinct()
@@ -528,7 +531,10 @@ class BaseBackend(ABC):
         if entry_type:
             query = query.filter(Entry.entry_type == entry_type)
         if status:
-            query = query.filter(Entry.status == status)
+            from .. import effective_status
+
+            keys = effective_status.derived_done_keys(self._session, kb_name, kb_names)
+            query = query.filter(effective_status.status_orm(keys) == status)
         if min_importance is not None:
             query = query.filter(Entry.importance >= min_importance)
         return query.scalar() or 0

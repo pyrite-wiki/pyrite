@@ -2355,6 +2355,47 @@ class KBService:
     # Protocol-level operations
     # =========================================================================
 
+    def _refuse_claim_of_complete_task(self, entry_id: str, kb_name: str) -> dict[str, Any] | None:
+        """Refuse to claim a task whose children are all resolved.
+
+        ADR-0042 decision 4 allows a refusal; it closes the risk the ADR names
+        when the parent rollup stopped writing (a worker could claim a parent
+        whose work is finished). The answer comes from the same function every
+        other reader uses (``derive_completion``), so a claim, a filter and a
+        read never disagree. A task whose own file says ``done`` or
+        ``cancelled`` is left to the CAS below, which refuses it with the
+        status.
+
+        Check-then-CAS, so the answer can be stale in either direction: a
+        child that resolves between the check and the CAS lets a claim
+        through on a task that has just become complete, and a child that
+        reopens (or is added) in that window gives a refusal that a retry
+        would not. Both windows are the length of one index read.
+        """
+        rows = self.db.execute_sql(
+            "SELECT entry_type FROM entry WHERE id = :entry_id AND kb_name = :kb_name",
+            {"entry_id": entry_id, "kb_name": kb_name},
+        )
+        if not rows or rows[0].get("entry_type") != "task":
+            return None
+        from .task_service import TaskService
+
+        derived = TaskService(self.config, self.db, kb_svc=self).derived_for(kb_name, entry_id)
+        completion = derived["completion"]
+        if not (completion["complete"] and completion["basis"] == "children"):
+            return None
+        return {
+            "claimed": False,
+            "error": (
+                f"Task '{entry_id}' counts as done: all {completion['children']} of its "
+                "children are resolved (derived), so there is nothing left to claim. "
+                "Add a child (task decompose) to reopen the work; to write done into "
+                "its file, walk it with task update (claimed, in_progress, done)."
+            ),
+            "current_status": derived["effective_status"],
+            "derived": derived,
+        }
+
     def claim_entry(
         self,
         entry_id: str,
@@ -2373,6 +2414,10 @@ class KBService:
             Dict with claimed=True on success, or error details.
         """
         from sqlalchemy import text
+
+        refusal = self._refuse_claim_of_complete_task(entry_id, kb_name)
+        if refusal:
+            return refusal
 
         session = self.db.session
 

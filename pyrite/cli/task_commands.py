@@ -255,6 +255,23 @@ def task_create(
         db.close()
 
 
+def _completion_text(derived: dict) -> str:
+    """One cell for a task's derived completion, e.g. ``yes (2/2 children)``."""
+    c = derived["completion"]
+    word = "yes" if c["complete"] else "no"
+    if c["children"]:
+        return f"{word} ({c['children_complete']}/{c['children']} children)"
+    return word
+
+
+def _status_cell(item: dict) -> str:
+    """The file's status, marked when its children make it complete."""
+    c = item["derived"]["completion"]
+    if c["complete"] and c["basis"] == "children":
+        return f"{item['status']} [dim](children done)[/dim]"
+    return item["status"]
+
+
 @task_app.command("list")
 def task_list(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="Knowledge base name"),
@@ -292,7 +309,7 @@ def task_list(
             table.add_row(
                 item["id"][:12],
                 item["title"],
-                item["status"],
+                _status_cell(item),
                 str(item["priority"]),
                 item["assignee"],
                 item["parent"][:12] if item["parent"] else "",
@@ -354,8 +371,10 @@ def _task_get_impl(task_id: str, kb_name: str | None, fmt: str):
 
         children_list = svc.list_tasks(kb_name=kb_name, parent=task_id)
         children = [
-            {"id": c["id"], "title": c["title"], "status": c["status"]} for c in children_list
+            {"id": c["id"], "title": c["title"], "status": c["status"], "derived": c["derived"]}
+            for c in children_list
         ]
+        task_kb = task.get("kb_name", kb_name or "")
 
         result = {
             "id": task["id"],
@@ -369,7 +388,9 @@ def _task_get_impl(task_id: str, kb_name: str | None, fmt: str):
             "due_date": meta.get("due_date", ""),
             "agent_context": meta.get("agent_context", {}),
             "children": children,
-            "kb_name": task.get("kb_name", kb_name or ""),
+            "kb_name": task_kb,
+            # Computed from the children, never read from or written to the file.
+            "derived": svc.derived_for(task_kb, task["id"]),
         }
 
         formatted = _format_output(result, fmt)
@@ -380,11 +401,13 @@ def _task_get_impl(task_id: str, kb_name: str | None, fmt: str):
         console.print(f"\n[bold]{result['title']}[/bold]")
         console.print(f"  ID: [cyan]{result['id']}[/cyan]")
         console.print(f"  Status: [green]{result['status']}[/green]")
+        console.print(f"  Completion (derived): {_completion_text(result['derived'])}")
         console.print(f"  Priority: {result['priority']}")
         if result["assignee"]:
             console.print(f"  Assignee: [yellow]{result['assignee']}[/yellow]")
         if result["parent"]:
-            console.print(f"  Parent: {result['parent']}")
+            missing = " [red](no such entry)[/red]" if result["derived"]["parent_missing"] else ""
+            console.print(f"  Parent: {result['parent']}{missing}")
         if result["due_date"]:
             console.print(f"  Due: {result['due_date']}")
         if result["dependencies"]:
@@ -551,7 +574,14 @@ def task_decompose(
     try:
         results = svc.decompose_task(parent_id, kb_name, children)
 
-        output = {"decomposed": True, "parent_id": parent_id, "children": results}
+        output = {
+            "decomposed": True,
+            "parent_id": parent_id,
+            "children": results,
+            # The parent's file is not written; its completion now counts
+            # the new children.
+            "parent_derived": svc.derived_for(kb_name, parent_id),
+        }
         formatted = _format_output(output, fmt)
         if formatted is not None:
             typer.echo(formatted)

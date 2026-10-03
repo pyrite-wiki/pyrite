@@ -300,7 +300,10 @@ class SQLiteBackend(BaseBackend):
             sql += " AND e.state = ?"
             params.append(state)
         if status:
-            sql += " AND e.status = ?"
+            from .. import effective_status
+
+            keys = effective_status.derived_done_keys(self._session, kb_name, kb_names)
+            sql += f" AND {effective_status.status_sql('e.', keys, params)} = ?"
             params.append(status)
         sql += " ORDER BY rank LIMIT ? OFFSET ?"
         params.extend([limit, offset])
@@ -509,8 +512,8 @@ class SQLiteBackend(BaseBackend):
             k = min(k * 4, _SQLITE_VEC_MAX_K)
         return results
 
-    @staticmethod
     def _semantic_filter_sql(
+        self,
         kb_name: str | None = None,
         entry_type: str | None = None,
         tags: list[str] | None = None,
@@ -571,7 +574,10 @@ class SQLiteBackend(BaseBackend):
             sql += " AND e.state = ?"
             params.append(state)
         if status:
-            sql += " AND e.status = ?"
+            from .. import effective_status
+
+            keys = effective_status.derived_done_keys(self._session, kb_name)
+            sql += f" AND {effective_status.status_sql('e.', keys, params)} = ?"
             params.append(status)
         selective = any((kb_name, entry_type, date_from, date_to, tags, fips, state, status))
         return sql, params, selective

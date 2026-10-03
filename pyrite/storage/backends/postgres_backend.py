@@ -319,7 +319,11 @@ class PostgresBackend(BaseBackend):
             sql += " AND e.state = :state"
             params["state"] = state
         if status:
-            sql += " AND e.status = :status"
+            # The effective status, as the sqlite backend applies it.
+            from .. import effective_status
+
+            keys = effective_status.derived_done_keys(self._session, kb_name)
+            sql += f" AND {effective_status.status_sql('e.', keys, params)} = :status"
             params["status"] = status
 
         sql += " ORDER BY rank DESC LIMIT :limit OFFSET :offset"
@@ -467,7 +471,11 @@ class PostgresBackend(BaseBackend):
             sql += " AND e.state = :state"
             params["state"] = state
         if status:
-            sql += " AND e.status = :status"
+            # The effective status, as the sqlite backend applies it.
+            from .. import effective_status
+
+            keys = effective_status.derived_done_keys(self._session, kb_name)
+            sql += f" AND {effective_status.status_sql('e.', keys, params)} = :status"
             params["status"] = status
         # ``max_distance`` belongs in the WHERE, not in a Python filter after
         # the fact: applied post-LIMIT it culls rows the LIMIT already paid for

@@ -207,8 +207,9 @@ class TestKBServiceWiring:
     """Step 2 of the extraction: KBService delegates to a HookRunner instance.
 
     These tests pin the structural wiring (KBService owns a HookRunner) and the
-    behavioral equivalence (the existing core hooks — task validation and
-    parent rollup — are registered on the runner KBService actually uses). They
+    behavioral equivalence (the core hook — task validation — is registered
+    on the runner KBService actually uses; the parent rollup that once sat
+    beside it is deleted, ADR-0042 decision 4). They
     do NOT re-test hook semantics (covered above); they assert the wiring is
     in place.
     """
@@ -225,10 +226,9 @@ class TestKBServiceWiring:
         assert isinstance(svc.hook_runner, HookRunner)
 
     def test_core_hooks_registered_on_runner(self):
-        """The two core hooks (task validation and parent rollup) must be
-        registered on the runner KBService owns. Step 3 will move them out of
-        kb_service.py, but step 2 keeps the behavior — the runner must carry
-        them either way."""
+        """Task validation is registered on the runner KBService owns, and no
+        core after_save hook writes a parent: the rollup is deleted, and a
+        parent's completion is derived (ADR-0042 decision 4)."""
         from unittest.mock import MagicMock
 
         from pyrite.services.kb_service import KBService
@@ -239,18 +239,21 @@ class TestKBServiceWiring:
         after_save = svc.hook_runner.core_hooks("after_save")
 
         # before_save must include task transition validation; after_save
-        # must include the parent rollup. Check by function name to keep the
-        # assertion robust against the later move into task_service.
+        # must not include the deleted parent rollup.
         before_names = {getattr(fn, "__name__", "") for fn in before_save}
         after_names = {getattr(fn, "__name__", "") for fn in after_save}
 
         assert "_task_validate_transition" in before_names, (
             f"expected _task_validate_transition in before_save hooks, got {before_names}"
         )
-        assert "_parent_rollup" in after_names, (
-            f"expected _parent_rollup in after_save hooks, got {after_names}"
+        assert "_parent_rollup" not in after_names, (
+            f"the parent rollup is deleted; got after_save hooks {after_names}"
         )
 
+    @pytest.mark.control(
+        reason="pins where _task_validate_transition lives; the rollup's deletion "
+        "is tested by test_after_save_hooks_write_no_other_entry"
+    )
     def test_task_hooks_live_in_task_service_after_step_3(self):
         """Step 3 of the extraction: _task_validate_transition and
         _parent_rollup move from kb_service.py to task_service.py where they
@@ -262,9 +265,6 @@ class TestKBServiceWiring:
         # New home — these must be importable from task_service.
         assert hasattr(task_mod, "_task_validate_transition"), (
             "_task_validate_transition should live in task_service.py after step 3"
-        )
-        assert hasattr(task_mod, "_parent_rollup"), (
-            "_parent_rollup should live in task_service.py after step 3"
         )
 
         # Old home — these should be gone from kb_service.
@@ -290,7 +290,7 @@ class TestKBServiceWiring:
         before_names = {fn.__name__ for fn in runner.core_hooks("before_save")}
         after_names = {fn.__name__ for fn in runner.core_hooks("after_save")}
         assert "_task_validate_transition" in before_names
-        assert "_parent_rollup" in after_names
+        assert "_parent_rollup" not in after_names
 
     def test_kb_service_core_dispatch_goes_through_runner(self):
         """KBService's _run_hooks must delegate core-hook dispatch to
