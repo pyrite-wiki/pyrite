@@ -452,8 +452,7 @@ class SQLiteBackend(BaseBackend):
         # would be wasted. That is the exhaustion signal — an unconditional
         # ``COUNT(*) FROM vec_entry`` would instead scan the whole vector table
         # on every semantic search, filtered or not.
-        # sqlite-vec 0.1.6+ accepts a rowid subquery in MATCH's WHERE clause.
-        # Apply caller filters before KNN so unrelated rows cannot exhaust the
+        # Apply caller filters inside the KNN query so unrelated rows cannot exhaust the
         # hard k cap; keep the unfiltered hot path free of this extra query.
         knn_filter = (
             f" AND rowid IN (SELECT e.rowid FROM entry e WHERE 1=1{where})" if selective else ""
