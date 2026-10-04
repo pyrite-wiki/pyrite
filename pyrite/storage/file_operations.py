@@ -102,6 +102,15 @@ tests in ``tests/test_file_operations.py``):
   whose next line is a comment leaves ``-   # comment``: the comment line,
   indentation included, is outside the unset's span
   (``test_limit_unset_of_a_dash_line_pair_before_a_comment_leaves_the_dash_alone``).
+- When a widen runs, the changed top-level child it emits is written fresh:
+  the comments inside that child go with it and its indentation can change.
+  Unchanged items keep their bytes. No natural input reached a widen in the
+  #732 cold reads; it is a backstop.
+- Open before P3 wires this in (#749): a tagged key anywhere raises
+  ``TypeError``/``KeyError`` instead of ``OperationRefusedError``; a ``.nan``
+  value or key blocks every edit of its file or mapping; a key in a different
+  Unicode normalisation is added as a new key; unsetting a list's last item
+  drops the comment lines between its items.
 
 Fixed in round 2, each with a test: a second operation on the same key in
 one call (L1: each operation is checked against the text it applied to); a
