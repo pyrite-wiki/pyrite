@@ -239,6 +239,31 @@ def test_no_filter_returns_everything(svc, mode):
     assert _ids(results) == {"mech-bypass", "theme-capture", "task-ticket"}
 
 
+@pytest.mark.parametrize("mode", MODES)
+def test_kb_name_filter_excludes_other_knowledge_bases(svc_db, mode):
+    """A KB-scoped semantic query must not admit another KB's KNN candidates."""
+    import pyrite.services.embedding_service as es
+
+    svc_db.register_kb("other-kb", KBType.RESEARCH, "/tmp/other-kb")
+    entry = {
+        "id": "other-kb-entry",
+        "kb_name": "other-kb",
+        "entry_type": "mechanism",
+        "title": "Detention item from another knowledge base",
+        "summary": "a detention item",
+        "body": "detention accountability",
+        "tags": [],
+        "sources": [],
+        "links": [],
+    }
+    svc_db.upsert_entry(entry)
+    embedder = es.EmbeddingService(svc_db)
+    svc_db.backend.upsert_embedding(entry["id"], "other-kb", embedder.embed_text(entry["title"]))
+
+    results = SearchService(svc_db).search("detention", kb_name="test-kb", mode=mode, limit=10)
+    assert "other-kb-entry" not in _ids(results), f"mode={mode} leaked another KB"
+
+
 def test_semantic_leg_alone_honours_filters(svc_db):
     """The vector leg itself filters — not just the service that fuses it.
 
