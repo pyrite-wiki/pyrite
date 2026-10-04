@@ -275,18 +275,14 @@ class TestExclusiveSaveFailurePaths:
             return real_unlink(path_arg, *args, **kwargs)
 
         monkeypatch.setattr(os, "unlink", fail_temp_unlink_once)
-        result = NoteEntry(id="note", title="t", body="published").save(
-            path, exclusive=True
-        )
+        result = NoteEntry(id="note", title="t", body="published").save(path, exclusive=True)
 
         assert result == path
         assert state["attempts"] == 2
         assert "published" in path.read_text(encoding="utf-8")
         assert [p.name for p in tmp_path.iterdir()] == ["note.md"]
 
-    @pytest.mark.parametrize(
-        ("platform_name", "should_fallback"), [("nt", True), ("posix", False)]
-    )
+    @pytest.mark.parametrize(("platform_name", "should_fallback"), [("nt", True), ("posix", False)])
     def test_einval_from_hard_link_falls_back_only_on_windows(
         self, tmp_path, monkeypatch, platform_name, should_fallback
     ):
