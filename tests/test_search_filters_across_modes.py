@@ -239,29 +239,38 @@ def test_no_filter_returns_everything(svc, mode):
     assert _ids(results) == {"mech-bypass", "theme-capture", "task-ticket"}
 
 
-@pytest.mark.parametrize("mode", MODES)
-def test_kb_name_filter_excludes_other_knowledge_bases(svc_db, mode):
-    """A KB-scoped semantic query must not admit another KB's KNN candidates."""
+@pytest.mark.parametrize("mode", ["semantic", "hybrid"])
+def test_kb_name_filter_is_applied_before_knn_cap(svc_db, mode, monkeypatch):
+    """Other KBs cannot consume the KNN budget before a KB-scoped search."""
     import pyrite.services.embedding_service as es
+    from pyrite.storage.backends import sqlite_backend
 
+    monkeypatch.setattr(sqlite_backend, "_SQLITE_VEC_MAX_K", 8)
     svc_db.register_kb("other-kb", KBType.RESEARCH, "/tmp/other-kb")
-    entry = {
-        "id": "other-kb-entry",
-        "kb_name": "other-kb",
-        "entry_type": "mechanism",
-        "title": "Detention item from another knowledge base",
-        "summary": "a detention item",
-        "body": "detention accountability",
-        "tags": [],
-        "sources": [],
-        "links": [],
-    }
-    svc_db.upsert_entry(entry)
     embedder = es.EmbeddingService(svc_db)
-    svc_db.backend.upsert_embedding(entry["id"], "other-kb", embedder.embed_text(entry["title"]))
+    # Exact-query vectors from another KB rank ahead of the test-kb entries.
+    # Without filtering inside KNN, these unrelated rows consume the cap and
+    # the outer KB check returns no result.
+    for index in range(20):
+        entry_id = f"other-kb-entry-{index}"
+        svc_db.upsert_entry(
+            {
+                "id": entry_id,
+                "kb_name": "other-kb",
+                "entry_type": "mechanism",
+                "title": "detention",
+                "summary": "unrelated knowledge base candidate",
+                "body": "detention accountability",
+                "tags": [],
+                "sources": [],
+                "links": [],
+            }
+        )
+        svc_db.backend.upsert_embedding(entry_id, "other-kb", embedder.embed_text("detention"))
 
-    results = SearchService(svc_db).search("detention", kb_name="test-kb", mode=mode, limit=10)
-    assert "other-kb-entry" not in _ids(results), f"mode={mode} leaked another KB"
+    results = SearchService(svc_db).search("detention", kb_name="test-kb", mode=mode, limit=1)
+    assert results, f"mode={mode} let another KB exhaust the KNN budget"
+    assert all(row["kb_name"] == "test-kb" for row in results), f"mode={mode} leaked another KB"
 
 
 def test_semantic_leg_alone_honours_filters(svc_db):
@@ -703,6 +712,37 @@ def test_semantic_leg_alone_excludes_archived(archived_svc):
 
     rows = backend.search_semantic(embedding, kb_name="test-kb", limit=10, include_archived=True)
     assert {r["id"] for r in rows} == {"live-one", "gone-one"}
+
+
+def test_archived_entries_do_not_consume_the_knn_cap(archived_svc, monkeypatch):
+    """The default archive exclusion is applied before the vector candidate cap."""
+    import pyrite.services.embedding_service as es
+    from pyrite.storage.backends import sqlite_backend
+
+    monkeypatch.setattr(sqlite_backend, "_SQLITE_VEC_MAX_K", 8)
+    embedder = es.EmbeddingService(archived_svc.db)
+    for index in range(20):
+        entry_id = f"archived-distractor-{index}"
+        archived_svc.db.upsert_entry(
+            {
+                "id": entry_id,
+                "kb_name": "test-kb",
+                "entry_type": "note",
+                "title": "detention",
+                "summary": "archived semantic distractor",
+                "body": "detention accountability note",
+                "tags": [],
+                "sources": [],
+                "links": [],
+                "lifecycle": "archived",
+            }
+        )
+        archived_svc.db.backend.upsert_embedding(
+            entry_id, "test-kb", embedder.embed_text("detention")
+        )
+
+    results = archived_svc.search("detention", kb_name="test-kb", mode="semantic", limit=1)
+    assert _ids(results) == {"live-one"}
 
 
 # =========================================================================
