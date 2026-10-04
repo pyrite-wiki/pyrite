@@ -756,6 +756,10 @@ class Entry(ABC):
         unsupported_errnos = {errno.ENOTSUP, errno.ENOSYS}
         unsupported_errnos.add(getattr(errno, "EOPNOTSUPP", errno.ENOTSUP))
         hardlink_unsupported = unsupported_errnos | {errno.EPERM}
+        if os.name == "nt":
+            # Windows maps ERROR_INVALID_FUNCTION (common on FAT/exFAT) to
+            # EINVAL for CreateHardLinkW.
+            hardlink_unsupported.add(errno.EINVAL)
 
         try:
             os.link(tmp, path)
@@ -767,7 +771,16 @@ class Entry(ABC):
         else:
             # The target is already published. Keep cleanup outside the try
             # above so an unlink error can never be mistaken for a link failure.
-            os.unlink(tmp)
+            # Retry once for transient filesystem/antivirus sharing errors;
+            # publication already succeeded, so persistent cleanup failure
+            # must not turn the save into a reported failure.
+            try:
+                os.unlink(tmp)
+            except OSError:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
             return
 
         try:

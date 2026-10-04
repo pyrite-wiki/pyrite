@@ -256,30 +256,76 @@ class TestExclusiveSaveFailurePaths:
         assert path.read_text(encoding="utf-8") == "concurrent winner"
         assert [p.name for p in tmp_path.iterdir()] == ["note.md"]
 
-    def test_unlink_error_after_successful_link_is_not_a_collision(self, tmp_path, monkeypatch):
+    def test_transient_unlink_error_after_successful_link_still_succeeds(
+        self, tmp_path, monkeypatch
+    ):
         import errno
         from pathlib import Path
 
         path = tmp_path / "note.md"
         real_unlink = os.unlink
-        state = {"failed": False}
+        state = {"attempts": 0}
 
         def fail_temp_unlink_once(path_arg, *args, **kwargs):
             candidate = Path(path_arg)
-            if candidate.parent == tmp_path and candidate.suffix == ".tmp" and not state["failed"]:
-                state["failed"] = True
-                raise OSError(errno.EIO, "simulated temp unlink failure")
+            if candidate.parent == tmp_path and candidate.suffix == ".tmp":
+                state["attempts"] += 1
+                if state["attempts"] == 1:
+                    raise OSError(errno.EIO, "simulated transient temp unlink failure")
             return real_unlink(path_arg, *args, **kwargs)
 
         monkeypatch.setattr(os, "unlink", fail_temp_unlink_once)
-        with pytest.raises(OSError) as exc:
-            NoteEntry(id="note", title="t", body="published").save(path, exclusive=True)
+        result = NoteEntry(id="note", title="t", body="published").save(
+            path, exclusive=True
+        )
 
-        assert state["failed"]
-        assert exc.value.errno == errno.EIO
-        assert not isinstance(exc.value, FileExistsError)
+        assert result == path
+        assert state["attempts"] == 2
         assert "published" in path.read_text(encoding="utf-8")
         assert [p.name for p in tmp_path.iterdir()] == ["note.md"]
+
+    @pytest.mark.parametrize(
+        ("platform_name", "should_fallback"), [("nt", True), ("posix", False)]
+    )
+    def test_einval_from_hard_link_falls_back_only_on_windows(
+        self, tmp_path, monkeypatch, platform_name, should_fallback
+    ):
+        import errno
+        import os
+
+        path = tmp_path / "note.md"
+        temp = tmp_path / "source.tmp"
+        temp.write_text("payload", encoding="utf-8")
+        real_open = os.open
+        open_calls = []
+
+        def fail_link(src, dst):
+            raise OSError(errno.EINVAL, "simulated unsupported Windows hard link")
+
+        def observe_open(path_arg, flags, *args, **kwargs):
+            if os.fspath(path_arg) == os.fspath(path) and flags & os.O_EXCL:
+                open_calls.append(path_arg)
+            return real_open(path_arg, flags, *args, **kwargs)
+
+        monkeypatch.setattr(os, "link", fail_link)
+        monkeypatch.setattr(os, "open", observe_open)
+        with monkeypatch.context() as platform:
+            platform.setattr(os, "name", platform_name)
+            if should_fallback:
+                NoteEntry._publish_exclusive(str(temp), path)
+            else:
+                with pytest.raises(OSError) as exc:
+                    NoteEntry._publish_exclusive(str(temp), path)
+                assert exc.value.errno == errno.EINVAL
+
+        if should_fallback:
+            assert open_calls
+            assert path.read_text(encoding="utf-8") == "payload"
+            assert not temp.exists()
+        else:
+            assert open_calls == []
+            assert not path.exists()
+            assert temp.read_text(encoding="utf-8") == "payload"
 
     def test_enospc_on_exclusive_claim_propagates_and_preserves_winner(self, tmp_path, monkeypatch):
         import errno
