@@ -745,6 +745,41 @@ def test_archived_entries_do_not_consume_the_knn_cap(archived_svc, monkeypatch):
     assert _ids(results) == {"live-one"}
 
 
+@pytest.mark.parametrize("mode", ["semantic", "hybrid"])
+def test_include_archived_entries_fill_the_knn_cap(archived_svc, monkeypatch, mode):
+    """Explicitly included archived entries remain eligible at a small KNN cap."""
+    import pyrite.services.embedding_service as es
+    from pyrite.storage.backends import sqlite_backend
+
+    monkeypatch.setattr(sqlite_backend, "_SQLITE_VEC_MAX_K", 8)
+    embedder = es.EmbeddingService(archived_svc.db)
+    for index in range(20):
+        entry_id = f"archived-included-{index}"
+        archived_svc.db.upsert_entry(
+            {
+                "id": entry_id,
+                "kb_name": "test-kb",
+                "entry_type": "note",
+                "title": "detention",
+                "summary": "archived semantic candidate",
+                "body": "detention accountability note",
+                "tags": [],
+                "sources": [],
+                "links": [],
+                "lifecycle": "archived",
+            }
+        )
+        archived_svc.db.backend.upsert_embedding(
+            entry_id, "test-kb", embedder.embed_text("detention")
+        )
+
+    results = archived_svc.search(
+        "detention", kb_name="test-kb", mode=mode, limit=8, include_archived=True
+    )
+    assert len(results) == 8, f"mode={mode} dropped explicitly included archived matches"
+    assert any(row["id"] != "live-one" for row in results), f"mode={mode} omitted archived matches"
+
+
 # =========================================================================
 # limit validation at the service boundary
 # =========================================================================
