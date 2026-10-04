@@ -609,21 +609,7 @@ files. It found three places where decision 10 cannot work as written, and one
 correction to decision 2. The maintainer accepted all five amendments on
 2026-10-03. They override the text above where the two differ.
 
-- **A1 (decision 10, the lock directory).** The lock directory is per user by
-  default and shared across OS users only when configured (maintainer,
-  2026-10-03, after the P2 build found the first wording contradicted its own
-  defaults). Default: `$XDG_RUNTIME_DIR/pyrite/locks` on Linux,
-  `$TMPDIR/pyrite-locks` on macOS, `%LOCALAPPDATA%\pyrite\locks` on Windows.
-  A `lock_dir` setting in the operator's config (ADR-0039), or
-  `PYRITE_LOCK_DIR`, overrides it. An operator who runs a server as a service
-  user next to humans points both at one shared directory. Pyrite uses a lock
-  directory only if it is not a symlink, is owned by the current user or
-  root, and is not writable by others unless it is sticky; otherwise the write
-  fails closed with an error naming the setting.
-  `index health` warns when the server's lock directory differs from the
-  CLI's for the same KB. Never `default_data_dir()`, never inside the KB. (A
-  per-user directory, as first written, does not stop a service-user server
-  and a person editing by hand from overwriting each other.)
+- **A1 (decision 10, the lock directory). Amended again 2026-10-03 (maintainer, Andon pyrite-security#97): lock where git locks.** The lock directory is `<git-dir>/pyrite/locks`, inside the git directory of the repository that holds the KB, beside git's own `index.lock`. Whoever can write the repository can take the lock, and the lock needs no shared temporary directory, no environment variable and no cross-user trust decision. The git directory is not KB content, so the lock still never lives in the KB's files. A KB that is not in a git repository is refused for `expect=` writes with an error that says so; a per-user fallback can be added later if a real case needs one. (The first two wordings derived the directory from `XDG_RUNTIME_DIR`/`TMPDIR`. Four cold reads of the build each found the directory trusted by a different rule, and the last found one user resolving two lock directories under umask 002, which failed open. That design asked the code to find a safe shared place on a host, the problem git avoids by locking inside the repository it already trusts. This matches the maintainer's model of Pyrite as type-aware git on top of git.)
 - **A2 (decision 10, the lock files).** The sidecar is one of N stripe files,
   `<lockdir>/<sha256(realpath) mod N>.lock` with N = 1024, created on first
   use and never deleted. A write that moves a file takes the stripes of both
