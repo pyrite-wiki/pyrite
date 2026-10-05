@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import hashlib
 import logging
 import os
 from collections.abc import Callable
@@ -553,6 +554,7 @@ class KBService:
                 return None
             result = self.db.get_entry(entry_id, kb_name)
             if result:
+                result = self._refresh_entry_body(result, entry_id, kb_name)
                 self._attach_links(result, entry_id, kb_name, readable_kbs)
             return result
 
@@ -562,9 +564,73 @@ class KBService:
                 continue
             result = self.db.get_entry(entry_id, kb.name)
             if result:
+                result = self._refresh_entry_body(result, entry_id, kb.name)
                 self._attach_links(result, entry_id, kb.name, readable_kbs)
                 return result
         return None
+
+    @staticmethod
+    def _body_from_entry_file(content: bytes) -> str | None:
+        """Return the body's exact text after the YAML frontmatter.
+
+        Consume the closing fence's line ending and the one blank separator
+        emitted by the entry serializer. Preserve body whitespace and its
+        original line endings so get can be echoed to update losslessly.
+        """
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        if text.startswith("\ufeff"):
+            text = text[1:]
+        if not text.startswith(("---\n", "---\r\n")):
+            return None
+
+        cursor = text.find("\n") + 1
+        while cursor > 0 and cursor <= len(text):
+            line_end = text.find("\n", cursor)
+            if line_end < 0:
+                line_end = len(text)
+            line = text[cursor:line_end].removesuffix("\r")
+            if line.strip(" \t") == "---":
+                body_start = line_end + 1 if line_end < len(text) else line_end
+                if text.startswith("\r\n", body_start):
+                    body_start += 2
+                elif text.startswith("\n", body_start):
+                    body_start += 1
+                return text[body_start:]
+            if line_end == len(text):
+                break
+            cursor = line_end + 1
+        return None
+
+    def _refresh_entry_body(
+        self, result: dict[str, Any], entry_id: str, kb_name: str
+    ) -> dict[str, Any]:
+        """Use the current file for a single-entry body's content and hash.
+
+        The index is a search/listing cache and can lag a hand edit. A caller
+        that gets an entry and writes its body back must see the file's current
+        content, even before the next index sync.
+        """
+        kb_config = self.get_kb(kb_name)
+        if kb_config is None:
+            return result
+
+        entry = KBRepository(kb_config).load(entry_id)
+        if entry is None or entry.file_path is None:
+            return result
+        try:
+            content = Path(entry.file_path).read_bytes()
+        except OSError:
+            logger.warning("Could not read current entry file %s", entry.file_path, exc_info=True)
+            return result
+
+        body = self._body_from_entry_file(content)
+        result["body"] = entry.body if body is None else body
+        result["file_path"] = str(entry.file_path)
+        result["content_hash"] = hashlib.sha256(content).hexdigest()
+        return result
 
     def _attach_links(
         self,
