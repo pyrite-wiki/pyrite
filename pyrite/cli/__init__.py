@@ -766,9 +766,13 @@ app.command("mcp-setup")(mcp_setup)
 
 @app.command("import")
 def import_entries(
-    file_path: Path = typer.Argument(..., help="Path to JSON or YAML file"),
+    file_path: Path = typer.Argument(..., help="Path to a JSON, YAML or markdown file"),
     kb_name: str = typer.Option(..., "--kb", "-k", help="Target knowledge base"),
-    fmt: str = typer.Option(None, "--format", help="json or yaml (auto-detected from extension)"),
+    fmt: str = typer.Option(
+        None,
+        "--format",
+        help="json, yaml or markdown (json and yaml are auto-detected from the extension)",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Validate without creating entries"),
     allow_undeclared: bool = typer.Option(
         False,
@@ -776,13 +780,26 @@ def import_entries(
         help="Allow entry types not declared in the KB's kb.yaml (the entries "
         "will be flagged by `pyrite index health`).",
     ),
+    stream: bool = typer.Option(
+        False,
+        "--stream",
+        help="Markdown only: read a file as a stream of entries. A `---` line followed "
+        "directly by `title:`, `type:` or `id:` starts the next entry. Limits: an entry must "
+        "start with one of those keys, and a `---` inside a code block is not understood, so "
+        "a fenced frontmatter example in a body splits or refuses the file. Off by default: "
+        "a markdown file is one entry with its whole body.",
+    ),
 ):
-    """Bulk import entries from a JSON or YAML file.
+    """Bulk import entries from a JSON, YAML or markdown file.
 
     Every record goes through the same write pipeline as `pyrite create`
     (declared type, existing id, schema and plugin validation, the ADR-0034
     truncated-body refusal). A refused record fails on its own, its siblings
     are imported, and the command exits 1.
+    A markdown file is one entry (`--format markdown`); with `--stream` it may
+    hold several (see the option for its limits). A markdown file the importer
+    cannot read (frontmatter it refuses, or with `--stream` an entry whose block
+    does not close or parse) is refused whole before any record is written.
     """
     from ..formats.importers import get_importer_registry
 
@@ -804,6 +821,13 @@ def import_entries(
                 suggestion="Use --format json or --format yaml.",
             )
 
+    if stream and fmt != "markdown":
+        cli_error(
+            "--stream applies to markdown files only.",
+            error_code="VALIDATION_FAILED",
+            suggestion="Use --format markdown, or drop --stream.",
+        )
+
     registry = get_importer_registry()
     importer = registry.get(fmt)
     if importer is None:
@@ -815,7 +839,7 @@ def import_entries(
 
     data = file_path.read_text(encoding="utf-8")
     try:
-        parsed = importer(data)
+        parsed = importer(data, stream=True) if stream else importer(data)
     except Exception as e:
         cli_error(f"Error parsing file: {e}", error_code="VALIDATION_FAILED")
 

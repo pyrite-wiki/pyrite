@@ -11,7 +11,7 @@ newline.
 
 The oracle is independent of the module under test:
 
-- the reader parses before and after (``_frontmatter_of``, the split every read
+- the reader parses before and after (``load_frontmatter``, the split every read
   uses);
 - the expected value is the operations applied to the parsed dict by
   ``_expected`` below;
@@ -33,7 +33,7 @@ from typing import Any
 import pytest
 
 from pyrite.exceptions import FrontmatterError
-from pyrite.models.core_types import _frontmatter_of
+from pyrite.utils.frontmatter import Frontmatter, load_frontmatter, split_frontmatter
 from tests.file_operations_oracle import op_spans, outside_identical
 from pyrite.storage.file_operations import (
     AddSubkey,
@@ -200,28 +200,20 @@ SHAPES: dict[str, str] = {
 
 
 def span_of(text: str) -> FrontmatterSpan | None:
-    """Where ``text``'s YAML frontmatter is: the caller's job in production
-    (the one-frontmatter-splitter theme will own it). Checked against the
-    reader's split so this helper cannot drift from it unnoticed."""
-    at = 1 if text.startswith("﻿") else 0
-    if not text.startswith("---", at):
+    """Where ``text``'s YAML frontmatter is: the caller's job in production, here
+    ``split_frontmatter`` (pyrite.utils.frontmatter), the one rule. Checked against the
+    reader's parse so this helper cannot drift from it unnoticed."""
+    split = split_frontmatter(text)
+    if not isinstance(split, Frontmatter):
         return None
-    start = text.index("\n", at) + 1
-    pos = start
-    while pos < len(text):
-        nl = text.find("\n", pos)
-        line_end = len(text) if nl == -1 else nl + 1
-        if text[pos:line_end].rstrip() == "---":
-            span = FrontmatterSpan(start, pos, line_end)
-            try:
-                parsed = _frontmatter_of(text)
-            except FrontmatterError:  # duplicate keys: the reader refuses
-                return span
-            assert parsed is not None
-            assert parsed[1] == text[line_end:].strip()
-            return span
-        pos = line_end
-    return None
+    span = FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
+    try:
+        parsed = load_frontmatter(text)
+    except FrontmatterError:  # duplicate keys: the reader refuses
+        return span
+    assert parsed is not None
+    assert parsed[1] == text[span.body :].strip()
+    return span
 
 
 def run(text: str, *ops: Any):
@@ -276,7 +268,7 @@ def _plain(value: Any) -> Any:
 
 
 def _reader(text: str) -> tuple[dict, str]:
-    parsed = _frontmatter_of(text)
+    parsed = load_frontmatter(text)
     assert parsed is not None, "the reader finds no frontmatter in the result"
     return _plain(dict(parsed[0])), parsed[1]
 

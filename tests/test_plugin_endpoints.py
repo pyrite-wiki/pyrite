@@ -113,6 +113,32 @@ class TestImportExportEndpoints:
         result = resp.json()
         assert result["imported"] >= 1
 
+    def test_import_markdown_is_one_entry_unless_stream_is_asked_for(self, test_env):
+        md = "---\ntype: note\ntitle: First\n---\nbody\n---\ntype: note\ntitle: Second\n---\nmore\n"
+        client = test_env["client"]
+        one = client.post(
+            "/api/entries/import?kb=test-kb&format=markdown",
+            files={"file": ("s.md", md, "text/markdown")},
+        )
+        two = client.post(
+            "/api/entries/import?kb=test-kb&format=markdown&stream=true",
+            files={
+                "file": (
+                    "s2.md",
+                    md.replace("First", "Third").replace("Second", "Fourth"),
+                    "text/markdown",
+                )
+            },
+        )
+        bad = client.post(
+            "/api/entries/import?kb=test-kb&format=json&stream=true",
+            files={"file": ("s.json", "[]", "application/json")},
+        )
+        assert one.status_code == 200 and one.json()["imported"] == 1
+        assert two.status_code == 200 and two.json()["imported"] == 2
+        assert bad.status_code == 400
+        assert bad.json()["detail"]["code"] == "STREAM_NOT_SUPPORTED"
+
     def test_import_csv(self, test_env):
         csv_data = "title,body,tags\nCSV Entry,Body,tag1;tag2\n"
         resp = test_env["client"].post(

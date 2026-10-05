@@ -14,8 +14,8 @@ from functools import cache
 from pathlib import Path
 from typing import Any, ClassVar
 
-from ..exceptions import FrontmatterError
 from ..schema import Link, Provenance, Source
+from ..utils.frontmatter import require_frontmatter
 from ..utils.yaml import dump_yaml, load_yaml
 
 logger = logging.getLogger(__name__)
@@ -702,34 +702,20 @@ class Entry(ABC):
     def from_markdown(cls, text: str) -> "Entry":
         """Parse from markdown string with YAML frontmatter.
 
-        The opening `---` fence MUST be on line 1. If the file starts
-        with anything else (body prose, a blank line, a BOM), the file is
-        treated as having no frontmatter — even if a stray `---` divider
-        appears later in the body. Pre-fix, ``re.split`` on
-        ``^---\\s*$`` with ``MULTILINE`` would match body horizontal-rule
-        dividers and feed body prose to the YAML loader, producing
-        confusing ``ComposerError``/alias errors deep in ruamel
-        (see Tier A bug r1030).
+        The opening `---` fence must be the first line (a leading BOM and
+        blank lines are ignored, as Hugo ignores them). If the file starts
+        with anything else (body prose), the file is treated as having no
+        frontmatter, even if a stray `---` divider
+        appears later in the body (a split on any ``---`` line used to feed
+        body prose to the YAML loader, producing confusing
+        ``ComposerError``/alias errors deep in ruamel: Tier A bug r1030).
+        The rule is ``pyrite.utils.frontmatter.split_frontmatter``.
         """
-        # Strip a UTF-8 BOM if present so files saved by Windows editors
-        # still match the fence-at-line-1 rule.
-        if text.startswith("﻿"):
-            text = text[1:]
+        # One rule for where the frontmatter ends: pyrite.utils.frontmatter.
+        split = require_frontmatter(text)
 
-        # Require the fence at line 1. Anything else means no frontmatter
-        # block, regardless of body content.
-        if not text.startswith(("---\n", "---\r\n")):
-            raise FrontmatterError("Invalid entry format: missing YAML frontmatter")
-
-        # Drop the opening fence and split on the next `---` line.
-        # maxsplit=1 here so any later `---` lines stay in the body.
-        after_open = text.split("\n", 1)[1] if "\n" in text else ""
-        close_parts = re.split(r"^---\s*$", after_open, flags=re.MULTILINE, maxsplit=1)
-        if len(close_parts) < 2:
-            raise FrontmatterError("Invalid entry format: missing YAML frontmatter")
-
-        meta = load_yaml(close_parts[0])
-        body = close_parts[1].strip()
+        meta = load_yaml(split.text)
+        body = split.body
 
         entry = cls.from_frontmatter(meta, body)
         # Restore lifecycle from frontmatter (base field, not in subclass constructors)

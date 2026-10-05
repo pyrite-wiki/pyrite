@@ -61,7 +61,7 @@ the result parses to exactly the operation applied. A narrow edit that fails
 is widened item-wise, rebuilding the named top-level value and copying each
 unchanged item's bytes. If that fails too, the call raises
 ``OperationRefusedError``. The whole call is checked once more at the end,
-through the reader's own split (``_frontmatter_of``).
+through the reader's own split (``load_frontmatter``).
 
 **Keys.** A path segment names the key whose loaded value it equals, the
 segment read as a YAML scalar: ``"true"`` names ``true:`` (a bool) and
@@ -70,8 +70,9 @@ is always written as a string. ``_key_matches`` is the one rule; ``_walk``
 (the nodes) and ``_lookup`` (the values) both use it.
 
 **Where the frontmatter is** comes from the caller, as a ``FrontmatterSpan``.
-This module has no frontmatter splitter. ``split_frontmatter`` (#744) will
-supply it; the final check's ``_frontmatter_of`` repoints there too.
+This module has no frontmatter splitter: ``split_frontmatter``
+(``pyrite.utils.frontmatter``, #744) supplies the span, and the final check
+reads the result with ``load_frontmatter``.
 
 **Limits, refused or restyled, each pinned by a test** (the ``test_limit_*``
 tests in ``tests/test_file_operations.py``):
@@ -1319,13 +1320,13 @@ def _unset_spans(doc: _Doc, trail: list) -> list[tuple[int, int]]:
 
 def _final_check(current: _Doc, expected: dict) -> str | None:
     """Once per call, a second line behind the per-operation check: the
-    values and the body through the reader's own split (``_frontmatter_of``),
+    values and the body through the reader's own split (``load_frontmatter``),
     compared here without ``_same``. The bytes were checked per operation,
     each against the text it applied to."""
-    from ..models.core_types import _frontmatter_of
+    from ..utils.frontmatter import load_frontmatter
 
     try:
-        parsed = _frontmatter_of(current.text)
+        parsed = load_frontmatter(current.text)
     except Exception as e:  # FrontmatterError: the edit broke the YAML
         return f"the reader cannot parse the result ({e})"
     if parsed is None:

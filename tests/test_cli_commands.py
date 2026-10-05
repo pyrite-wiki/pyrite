@@ -494,6 +494,65 @@ class TestCreateImprovements:
             # Frontmatter block should NOT appear in body
             assert content.count("---") == 2  # only the entry's own frontmatter fences
 
+    def test_create_body_file_frontmatter_with_dashes_in_a_value(self, cli_env):
+        """A `---` inside a quoted value does not end the file's frontmatter."""
+        body_path = cli_env["tmpdir"] / "dashes.md"
+        body_path.write_text(
+            '---\nowner: alice\nnote: "a --- b"\n---\nActual body content.',
+            encoding="utf-8",
+        )
+        with _patch_config(cli_env):
+            result = runner.invoke(
+                app,
+                [
+                    "create",
+                    "--kb",
+                    "test-events",
+                    "--type",
+                    "note",
+                    "--title",
+                    "Dashes Test",
+                    "--body-file",
+                    str(body_path),
+                ],
+            )
+            assert result.exit_code == 0
+            saved = list(cli_env["events_kb"].path.glob("**/*dashes-test*"))
+            assert len(saved) == 1
+            content = saved[0].read_text(encoding="utf-8")
+            assert "owner: alice" in content
+            assert "a --- b" in content
+            assert content.rstrip().endswith("Actual body content.")
+
+    def test_create_body_file_refuses_unclosed_frontmatter(self, cli_env):
+        """A body that opens frontmatter it cannot close is refused, not stored with its YAML as prose."""
+        for name, text in {
+            "unclosed": "---\nowner: alice\nBody text.",
+            "four": "---\nowner: alice\n----\nBody text.",
+            "toml": '+++\nowner = "alice"\n+++\nBody text.',
+            "openfour": "----\nowner: alice\n---\nBody text.",
+            "opentext": "---x\nowner: alice\n---\nBody text.",
+        }.items():
+            body_path = cli_env["tmpdir"] / f"{name}.md"
+            body_path.write_text(text, encoding="utf-8")
+            with _patch_config(cli_env):
+                result = runner.invoke(
+                    app,
+                    [
+                        "create",
+                        "--kb",
+                        "test-events",
+                        "--type",
+                        "note",
+                        "--title",
+                        f"Refused {name}",
+                        "--body-file",
+                        str(body_path),
+                    ],
+                )
+            assert result.exit_code != 0, name
+            assert not list(cli_env["events_kb"].path.glob(f"**/*refused-{name}*")), name
+
     def test_create_body_file_cli_flags_override(self, cli_env):
         """Explicit CLI --field takes precedence over file frontmatter."""
         body_path = cli_env["tmpdir"] / "override.md"

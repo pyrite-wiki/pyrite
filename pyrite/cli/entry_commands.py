@@ -17,6 +17,14 @@ from rich.console import Console
 from ..exceptions import EntryNotFoundError, KBNotFoundError, PyriteError, ValidationError
 from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_fields_param, project_fields
+from ..utils.frontmatter import (
+    Frontmatter,
+    Malformed,
+    Unsupported,
+    Unterminated,
+    describe,
+    split_frontmatter,
+)
 from .context import cli_context
 from .output import validate_output_format
 
@@ -36,6 +44,34 @@ def _cli_error(message: str, output_format: str = "rich", error_code: str | None
     from ..utils.errors import cli_error
 
     cli_error(message, output_format, error_code=error_code or "ERROR")
+
+
+def _body_frontmatter(body: str | None) -> tuple[dict, str | None]:
+    """(fields from the body's own frontmatter, the body without it).
+
+    A body that opens a frontmatter block and cannot close it is refused (exit 1),
+    not stored with its YAML as prose; so is a first line that starts with ``---``
+    and is not a valid opener. A body with no frontmatter is returned as is, and
+    a leading ``{`` is just body text here (a body is not a file)."""
+    if not body:
+        return {}, body
+    split = split_frontmatter(body)
+    if isinstance(split, (Unterminated, Malformed)) or (
+        isinstance(split, Unsupported) and split.format == "toml"
+    ):
+        _cli_error(
+            f"Cannot read the frontmatter in the body: {describe(split)}",
+            "rich",
+            "VALIDATION_FAILED",
+        )
+    if not isinstance(split, Frontmatter):
+        return {}, body
+    from pyrite.utils.yaml import load_yaml
+
+    parsed = load_yaml(split.text)
+    if not (parsed and isinstance(parsed, dict)):
+        return {}, body
+    return {k: v for k, v in parsed.items() if k not in ("id", "type", "title")}, split.body
 
 
 def _refusal_exit(exc: ValidationError, output_format: str = "rich") -> None:
@@ -273,18 +309,7 @@ def register_entry_commands(app: typer.Typer) -> None:
             body = body_file.read_text(encoding="utf-8")
 
         # Extract YAML frontmatter from body content (--body-file or --stdin)
-        _file_meta: dict = {}
-        if body and body.startswith("---"):
-            _fm_end = body.find("---", 3)
-            if _fm_end > 0:
-                from pyrite.utils.yaml import load_yaml
-
-                _parsed = load_yaml(body[3:_fm_end])
-                if _parsed and isinstance(_parsed, dict):
-                    for _k, _v in _parsed.items():
-                        if _k not in ("id", "type", "title"):
-                            _file_meta[_k] = _v
-                    body = body[_fm_end + 3 :].strip()
+        _file_meta, body = _body_frontmatter(body)
 
         extra: dict = {**_file_meta}
         if date:

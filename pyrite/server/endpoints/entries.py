@@ -592,6 +592,12 @@ async def import_entries(
     allow_undeclared: bool = Query(
         False, description="Allow entry types the KB's kb.yaml does not declare"
     ),
+    stream: bool = Query(
+        False,
+        description="Markdown only: read the file as a stream of entries (a --- line followed "
+        "directly by title:, type: or id: starts the next). Off by default: a markdown file "
+        "is one entry. A --- inside a code block is not understood.",
+    ),
     svc: KBService = Depends(get_kb_service),
 ):
     """Import entries from an uploaded file."""
@@ -628,9 +634,14 @@ async def import_entries(
             },
         )
 
+    if stream and fmt != "markdown":
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "STREAM_NOT_SUPPORTED", "message": "stream applies to markdown only"},
+        )
     content = await file.read()
     try:
-        parsed = importer(content)
+        parsed = importer(content, stream=True) if stream else importer(content)
     except Exception as e:
         raise HTTPException(
             status_code=400,

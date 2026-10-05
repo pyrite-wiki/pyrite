@@ -4,6 +4,8 @@ import logging
 import re
 from typing import Any
 
+from pyrite.utils.frontmatter import Frontmatter, NoFrontmatter, describe, split_frontmatter
+
 logger = logging.getLogger(__name__)
 
 # Regex to detect wikilinks: [[some-id]] or [[kb:some-id]]
@@ -74,13 +76,12 @@ def _load_aliases_for_actor(
         import yaml
 
         content = path.read_text(encoding="utf-8")
-        if not content.startswith("---"):
+        split = split_frontmatter(content)
+        if not isinstance(split, Frontmatter):
+            if not isinstance(split, NoFrontmatter):
+                logger.warning("No aliases read from %s: %s", path, describe(split))
             return
-        # Parse YAML frontmatter
-        parts = content.split("---", 2)
-        if len(parts) < 3:
-            return
-        meta = yaml.safe_load(parts[1])
+        meta = yaml.safe_load(split.text)
         if not meta:
             return
         aliases = meta.get("aliases", []) or []
