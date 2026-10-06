@@ -1592,6 +1592,61 @@ def _ruamel_keys(text: str) -> list:
     return keys
 
 
+# Every container ruamel can load a key into, and where a key can sit in it
+# (#749 fix round 1). A new container kind must be added here.
+_KEY_CONTAINERS = {
+    "top-level mapping": "!foo a: 1\nb: 1\n",
+    "nested mapping": "p:\n  !foo k: 1\nb: 1\n",
+    "flow mapping": "p: {!foo k: 1}\nb: 1\n",
+    "mapping in a list item": "l:\n- !foo k: a\nb: 1\n",
+    "flow mapping in a flow list": "l: [{!foo k: 1}]\nb: 1\n",
+    "!!str-tagged key": "!!str x: a\nb: 1\n",
+    "!!float-tagged key": "!!float 1: a\nb: 1\n",
+    "!!binary key": "!!binary aGk=: a\nb: 1\n",
+    "!!set flow member": "s: !!set {? !!str a}\nb: 1\n",
+    "!!set block member": "s: !!set\n  ? !foo a\n  ? b\nb: 1\n",
+    "!!omap key": "o: !!omap\n- !!str a: 1\n- b: 2\nb: 1\n",
+    "!!pairs key": "o: !!pairs\n- !!str a: 1\nb: 1\n",
+    "!!pairs key after a plain one": "o: !!pairs\n- a: 1\n- !foo a: 2\nb: 1\n",
+    "custom-tagged mapping value": "o: !foo\n  !bar k: 1\nb: 1\n",
+    "custom-tagged list value": "o: !foo\n- !bar k: 1\nb: 1\n",
+    "mapping under a set": "o: !!set {a}\np:\n  !foo k: 1\nb: 1\n",
+}
+
+
+@pytest.mark.parametrize("text", _KEY_CONTAINERS.values(), ids=list(_KEY_CONTAINERS))
+def test_a_key_pyrite_cannot_name_is_refused_as_a_tagged_key_in_every_container(text):
+    """Reference: ruamel loads each of these with a ``TaggedScalar`` (or a
+    differently typed) key in a Mapping, a ``CommentedSet`` (an
+    ``collections.abc.Set``, not a ``set``), an ``!!omap``, a ``!!pairs`` list
+    of tuples or a tagged collection. Every operation, the body write
+    included, is refused with a reason that is true for it (cold read of
+    #759: the set gave 'the result does not parse to the operation applied')."""
+    full = f"---\n{text}---\nx\n"
+    for op in [Set("b", 2), Set("brand_new", 1), Unset("b"), ReplaceBody("y")]:
+        with pytest.raises(OperationRefusedError) as raised:
+            run(full, op)
+        assert "tagged key" in raised.value.reason, (op, raised.value.reason)
+        assert "no path" not in raised.value.reason
+
+
+@pytest.mark.control(
+    reason="a plain !!set, !!omap or !!pairs holds no tagged key; pins they stay editable"
+)
+@pytest.mark.parametrize(
+    "text",
+    [
+        "s: !!set {a, b}\nb: 1\n",
+        "o: !!omap\n- a: 1\n- b: 2\nb: 1\n",
+        "o: !!pairs\n- a: 1\n- a: 2\nb: 1\n",
+    ],
+)
+def test_a_set_omap_or_pairs_without_a_tagged_key_is_still_editable(text):
+    full = f"---\n{text}---\nx\n"
+    after, _ = run(full, Set("b", 2))
+    assert after == full.replace("b: 1", "b: 2")
+
+
 @pytest.mark.parametrize("text", TAGGED_KEY_TEXTS)
 def test_a_tagged_key_anywhere_is_refused_with_its_reason(text):
     """Reference: ruamel loads a tagged key as a ``TaggedScalar``, a value that

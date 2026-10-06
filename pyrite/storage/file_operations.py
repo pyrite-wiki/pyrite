@@ -115,18 +115,28 @@ tests in ``tests/test_file_operations.py``):
   is "unchanged", and one can be written (``.nan``). ruamel's NaN is never
   equal to itself; that is the loader's, not a property Pyrite relies on.
 - Tagged keys (#749): a key with an explicit tag (``!foo a: 1``,
-  ``!!str a: 1``, ``!!float 1: a``) anywhere in the frontmatter is refused for
-  every operation, with the reason "tagged key". ruamel loads it as a
-  ``TaggedScalar`` (or a different type than the key reads plain), which no
-  path names. Two guards: ``_has_tagged_key`` (the node's explicit tag against
-  its plain reading) and ``_loaded_tagged_key`` (what ruamel loaded), each
-  with a case the other cannot see
-  (``test_a_tagged_key_*``).
+  ``!!str a: 1``, ``!!float 1: a``, ``!!binary aGk=: a``) anywhere in the
+  frontmatter refuses every operation, ``ReplaceBody`` included, with the
+  reason "tagged key ... Pyrite cannot model, so it edits nothing in this
+  file". ruamel loads it as a ``TaggedScalar`` (or as a different type than
+  the key reads plain), which no path names. Two guards, each with a case the
+  other cannot see: ``_has_tagged_key`` (the node's explicit tag against its
+  plain reading: ``!!float 1``) and ``_loaded_tagged_key`` (what ruamel
+  loaded: ``!!str x``). Every container a key can be loaded into is walked and
+  has a case in ``_KEY_CONTAINERS``: a mapping (``CommentedMap``, ``!!omap``),
+  a set (``CommentedSet``, an ``abc.Set`` not a ``set``; its members are the
+  keys), the ``(key, value)`` tuples of ``!!pairs``, a tagged collection, and
+  any of them nested in lists or each other. Body-only writes on a file whose
+  frontmatter Pyrite cannot model are refused too; allowing them is a
+  separate change.
 - Unicode normalisation (#749): no normalisation. A path segment or new
-  sub-key that differs from an existing key only by NFC/NFD is refused
-  (``_lookup``): ruamel keeps the file's spelling, and an added look-alike
-  would sit beside it. The file's own spelling, and a file holding both
-  spellings, are edited exactly
+  sub-key that differs from an existing *key* only by NFC canonical
+  equivalence (NFD against NFC) is refused (``_lookup``): ruamel keeps the
+  file's spelling, and an added look-alike would sit beside it. Not caught:
+  compatibility look-alikes (full-width, ligatures), case, other scripts
+  (Cyrillic ``a``), zero-width characters, and any list *value* (a
+  ``Remove``/``Append`` compares strings exactly). The file's own spelling,
+  and a file holding both spellings, are edited exactly
   (``test_a_key_in_another_unicode_normalisation_is_refused_not_added_beside_it``).
 - Unsetting a list's last item keeps the comment lines between its items.
   #749 reported otherwise; it did not reproduce on ~16000 generated layouts
@@ -153,6 +163,7 @@ import math
 import threading
 import unicodedata
 from collections.abc import Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
@@ -607,16 +618,16 @@ def _has_complex_key(node: Node, seen: set[int]) -> bool:
 
 
 _TAGGED_KEY = (
-    "the frontmatter has a tagged key (!foo a: 1, !!str a: 1); no path can name it, "
-    "so it is not edited"
+    "the frontmatter has a tagged key (!foo a: 1, !!str a: 1) that Pyrite cannot model, "
+    "so it edits nothing in this file, body included"
 )
 
 
 def _has_tagged_key(node: Node, seen: set[int], y: YAML) -> bool:
-    """A mapping key with an explicit tag whose reading differs from the plain
-    (or quoted) key: ``!!int 1: a``, which ruamel loads as the string '1'
-    while its node says int. ``!foo a`` and ``!!str x`` are found by
-    ``_loaded_tagged_key``: a node cannot tell ``!!str x`` from ``x``."""
+    """A mapping key with an explicit tag whose reading differs from the same
+    key written plain (or quoted): ``!!float 1: a`` (ruamel: float 1.0; plain:
+    int 1), ``!!int "1"``, ``!foo a``, ``!!binary aGk=``. ``!!str x`` reads as
+    ``x`` at node level, so ``_loaded_tagged_key`` finds it."""
     if id(node) in seen:
         return False
     seen.add(id(node))
@@ -636,7 +647,12 @@ def _has_tagged_key(node: Node, seen: set[int], y: YAML) -> bool:
 def _loaded_tagged_key(value: Any, seen: set[int]) -> bool:
     """What ruamel loaded holds a key it wraps as a ``TaggedScalar``. Neither
     ``_plain`` nor a path can handle one: it is not a string, and it is not
-    hashable once ``_plain`` has made it a tuple (#749)."""
+    hashable once ``_plain`` has made it a tuple (#749).
+
+    Every container ruamel loads a key into: a ``Mapping`` (``CommentedMap``,
+    ``!!omap``), a set (``CommentedSet``, ``collections.abc.Set``: its members
+    are the keys), and the ``(key, value)`` tuples of a ``!!pairs`` list.
+    A list or tuple is walked for what it holds."""
     if id(value) in seen:
         return False
     if isinstance(value, Mapping):
@@ -645,7 +661,16 @@ def _loaded_tagged_key(value: Any, seen: set[int]) -> bool:
             type(k).__name__ == "TaggedScalar" or _loaded_tagged_key(v, seen)
             for k, v in value.items()
         )
-    if isinstance(value, list | tuple | set | frozenset):
+    if isinstance(value, AbstractSet):
+        seen.add(id(value))
+        return any(type(m).__name__ == "TaggedScalar" for m in value)
+    if isinstance(value, tuple):  # a !!pairs item: (key, value)
+        seen.add(id(value))
+        key, *rest = value
+        return type(key).__name__ == "TaggedScalar" or any(
+            _loaded_tagged_key(v, seen) for v in rest
+        )
+    if isinstance(value, list):
         seen.add(id(value))
         return any(_loaded_tagged_key(v, seen) for v in value)
     return False

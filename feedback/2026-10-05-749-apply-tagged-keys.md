@@ -13,3 +13,7 @@ Closed the limits a cold read left on `apply()` before it is wired in: every inp
 **Worked well:**
 - Recording what ruamel loads for each input first made every expected value come from the reference, not from the module.
 - A fuzz that already existed took six new texts and five new path pieces and found the second NaN guard on its first run.
+
+**Round 1 (cold read of #759): what my first pass missed.**
+
+**Friction 5: I enumerated the key positions I could think of, not the containers ruamel has. Severity: a refusal with an untrue reason shipped.** `isinstance(x, set)` missed `CommentedSet` (an `abc.Set`, not a `set`), and `!!pairs` loads as a list of tuples, so a tagged key in either got through to a post-check message that blamed the wrong thing. Probing `type(v).__name__` for each tag (`!!set`, `!!omap`, `!!pairs`, custom-tagged map and list) took one script; the enumeration is now the `_KEY_CONTAINERS` table, which a new kind must join. **Would have helped:** the pyrite-dev skill's "every/all" rule applies to the loader's types as well as to callers.
