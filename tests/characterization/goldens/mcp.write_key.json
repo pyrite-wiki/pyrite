@@ -1080,24 +1080,28 @@
   "kb_index_sync | write_key | missing-kb": {
     "added": "<ENUMERATION_CONTENT>",
     "removed": "<ENUMERATION_CONTENT>",
+    "skipped": [],
     "synced": "<ENUMERATION_CONTENT>",
     "updated": "<ENUMERATION_CONTENT>"
   },
   "kb_index_sync | write_key | no-default-role-kb": {
     "added": "<ENUMERATION_CONTENT>",
     "removed": "<ENUMERATION_CONTENT>",
+    "skipped": [],
     "synced": "<ENUMERATION_CONTENT>",
     "updated": "<ENUMERATION_CONTENT>"
   },
   "kb_index_sync | write_key | private-kb": {
     "added": "<ENUMERATION_CONTENT>",
     "removed": "<ENUMERATION_CONTENT>",
+    "skipped": [],
     "synced": "<ENUMERATION_CONTENT>",
     "updated": "<ENUMERATION_CONTENT>"
   },
   "kb_index_sync | write_key | readable-kb": {
     "added": "<ENUMERATION_CONTENT>",
     "removed": "<ENUMERATION_CONTENT>",
+    "skipped": [],
     "synced": "<ENUMERATION_CONTENT>",
     "updated": "<ENUMERATION_CONTENT>"
   },
