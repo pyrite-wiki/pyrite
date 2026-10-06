@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from tests.cli_help import plain
+
 from pyrite.cli import app
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.formats.importers.yaml_importer import import_yaml
@@ -204,7 +206,7 @@ class TestImportCommand:
             result = runner.invoke(app, ["import", str(txt_file), "--kb", "test-kb"])
             assert result.exit_code == 1
             assert "Cannot detect format" in result.output
-            assert "--format markdown" in result.output
+            assert "--format markdown" in plain(result.output)
 
     def test_import_partial_failure(self, import_env):
         # Entry without title should fail
