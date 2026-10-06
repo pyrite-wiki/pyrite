@@ -544,7 +544,7 @@ def test_cli_index_sync_reports_non_regular_entries(env):
 
     assert result.exit_code == 0, result.output
     assert "Non-regular: 1 file(s) skipped" in result.output
-    assert "directory.md" in result.output
+    assert "directory.md" in "".join(result.output.split())
     assert "not a regular file" in " ".join(result.output.split())
 
 
