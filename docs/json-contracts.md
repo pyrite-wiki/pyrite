@@ -16,12 +16,11 @@ table keyed by exception type.
 
 **MCP and the CLI** (MCP tool `_error`/`_refusal`, and CLI commands with a
 `--format` flag via `cli_error`/`cli_error_from`) return the flat structure
-below. Some write commands (`create`, `add`, `delete`, `link`) have no
-`--format` flag and always print Rich-formatted text, never this JSON shape,
-on error or success — see `docs/agent-write-path.md` for the per-command
-table. Making CLI output consistent regardless of TTY is **#303** (open);
-this page describes the shape you get when you do get JSON, not a promise
-that every command gives you the option.
+below. A CLI command with no `--format` flag prints a refusal as Rich text
+(`ERROR [CODE]: message`), never this JSON; the table under "`--format`
+defaults" says which. Making CLI output consistent regardless of TTY is
+**#303** (open); this page describes the shape you get when you do get JSON,
+not a promise that every command gives you the option.
 
 ```json
 {
@@ -101,14 +100,20 @@ Every entry write — REST `POST /api/entries`, `PUT`/`PATCH
 /api/entries/{id}`, `POST /api/entries/import`, `POST /api/clip`; MCP `kb_create`,
 `kb_update`, `kb_bulk_create`; CLI `pyrite create`, `pyrite update`,
 `pyrite add`, `pyrite import` — goes through one pipeline in `KBService`,
-so the same entry is refused with the same `error_code` on every surface:
+so the same entry is refused with the same `error_code` on every surface.
+This is the one table of codes an agent meets while writing; the
+how-to (`docs/agent-write-path.md`) links here instead of repeating it. Each row
+is reproduced by a command in "Reproduce the codes" below, which CI runs.
 
-| `error_code` | Meaning |
-|---|---|
-| `UNDECLARED_TYPE` | the KB's `kb.yaml` declares types and this is not one of them. Core types (`note`, `person`, …) are **not** exempt. Override with `allow_undeclared` (MCP, REST body or import query) / `--allow-undeclared` (CLI). The error carries `declared_types` on MCP and REST. |
-| `ENTRY_EXISTS` | the id (given, or derived from the title) already exists. Create never replaces; use update. REST answers `409`. |
-| `SCHEMA_VIOLATION` | the KB schema or a plugin validator rejected a field: enum, required, range, format. A kb.yaml enum (`options:`/`values:`, list `items:`, rule `enum:`) is refused when `validation.enforce_enums` is on (the default); every other kb.yaml finding when `validation.enforce` is on. The message names the field, the value and the allowed list (`kind: 'chore' is not one of [...]`). An update that leaves an off-list value as it was is not refused (see **Warnings**). |
-| `VALIDATION_FAILED` | anything else the entry model refuses (an event without a date, a missing title), and the ADR-0034 truncated-body refusal below. Unchanged by ADR-0037 theme 2 (2026-09-25): REST, MCP and the CLI already agreed on this code before that theme, and continue to — no `legacy_error_code`. |
+| `error_code` | Meaning | What to do |
+|---|---|---|
+| `KB_NOT_FOUND` | the KB name is not registered (or, for a scoped caller, not readable). Every CLI write command (`create`, `update`, `delete`, `link`) reports it. | `pyrite kb list` shows the registered names; `pyrite orient` lists the KBs you can read. |
+| `NOT_FOUND` | the entry id does not exist: CLI `get`, `update`, `delete`, `link`. The intended MCP and REST code is `ENTRY_NOT_FOUND` (see "MCP only, for one release" above); today MCP `kb_get` answers `NOT_FOUND` and `kb_update` answers `UPDATE_FAILED` with `retryable: true` (#761: a bug, do not rely on it). | `pyrite search <term> -k <kb>` to find the id. |
+| `UNDECLARED_TYPE` | the KB's `kb.yaml` declares types and this is not one of them. Core types (`note`, `person`, …) are **not** exempt. Override with `allow_undeclared` (MCP, REST body or import query) / `--allow-undeclared` (CLI). The error carries `declared_types` on MCP and REST. | Use a declared type (`pyrite kb schema show <kb>`), or pass the override. |
+| `ENTRY_EXISTS` | the id (given, or derived from the title) already exists. Create never replaces; use update. REST answers `409`. | `update` it, or choose another title or id. |
+| `SCHEMA_VIOLATION` | the KB schema or a plugin validator rejected a field: enum, required, range, format. A kb.yaml enum (`options:`/`values:`, list `items:`, rule `enum:`) is refused when `validation.enforce_enums` is on (the default); every other kb.yaml finding when `validation.enforce` is on. The message names the field, the value and the allowed list (`kind: 'chore' is not one of [...]`). An update that leaves an off-list value as it was is not refused (see **Warnings**). | Re-read the message: it names the field and the allowed values. |
+| `VALIDATION_FAILED` | anything else the entry model refuses (an event without a date, a missing title), a `managed_fields` key in an update, and the ADR-0034 truncated-body refusal below. Unchanged by ADR-0037 theme 2 (2026-09-25): REST, MCP and the CLI already agreed on this code, so no `legacy_error_code`. | Fix the named field. For a truncated body, reassemble it with `kb_read_body` and retry without the marker. |
+| `QUERY_SYNTAX` | (`search`, not a write, but what an agent hits right after a failed write) a token containing `-`, `:` or `.` used beside `AND`/`OR`/`NOT` or a quote, unquoted. | Quote the token yourself: `"bar-baz"`. |
 
 All are `retryable: false`. REST reports them as
 `{"detail": {"code", "message", "retryable": false, "hint"?, "declared_types"?}}`
@@ -189,10 +194,147 @@ Source of truth: `pyrite/services/kb_service.py` (`_prepare`,
 `bulk_create_entries`, `update`, `updatable_fields`) and the
 `ValidationError` subclasses in `pyrite/exceptions.py`.
 
-**Success shapes.** What `create`/`update`/`bulk_create` return when they
-*don't* refuse — per surface (CLI, MCP, REST), plus how to discover a
-type's required fields (including the plugin-type gap, #232) and an
-"error X, do Y" table — is `docs/agent-write-path.md`.
+### Reproduce the codes
+
+Each block below is run by `tests/test_doc_agent_contracts.py` in a scratch
+HOME, in order; the exit code and the text it expects are the ones stated.
+A refusal from a command without `--format` is Rich text; from `update`, JSON.
+
+<!-- expect-exit: 0 -->
+```bash
+pyrite init -t empty -p ./notes --name notes --no-examples
+mkdir typed && printf 'name: typed\ntypes:\n  ticket:\n    description: A ticket\n    fields:\n      kind:\n        type: select\n        options: [bug, feature]\n' > typed/kb.yaml
+pyrite kb add ./typed --name typed
+pyrite create -k notes -t note --title "Hello" --body "First."
+```
+
+`KB_NOT_FOUND`, from a command with `--format` and from one without:
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: "error_code": "KB_NOT_FOUND" -->
+```bash
+pyrite update hello -k nokb --title x
+```
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: ERROR [KB_NOT_FOUND] -->
+```bash
+pyrite create -k nokb -t note --title x
+```
+
+`NOT_FOUND`:
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: "error_code": "NOT_FOUND" -->
+```bash
+pyrite update nope -k notes --title x
+```
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: ERROR [NOT_FOUND] -->
+```bash
+pyrite link hello nope -k notes
+```
+
+`ENTRY_EXISTS`, `UNDECLARED_TYPE`, `SCHEMA_VIOLATION`, `VALIDATION_FAILED`:
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: ERROR [ENTRY_EXISTS] -->
+```bash
+pyrite create -k notes -t note --title "Hello" --body "Again."
+```
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: ERROR [UNDECLARED_TYPE] -->
+```bash
+pyrite create -k typed -t note --title "Nope"
+```
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: ERROR [SCHEMA_VIOLATION] -->
+```bash
+pyrite create -k typed -t ticket --title "T1" -f kind=chore
+```
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: ERROR [VALIDATION_FAILED] -->
+```bash
+pyrite create -k notes -t event --title "An event"
+```
+
+`QUERY_SYNTAX`, from `search`:
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: "error_code": "QUERY_SYNTAX" -->
+```bash
+pyrite search 'foo AND bar-baz' -k notes
+```
+
+## Write success shapes
+
+What a write returns when it is not refused, per surface. The CLI rows are
+run in "Reproduce the codes" and in `docs/agent-write-path.md`; the MCP
+blocks marked as output are checked by key against the tool handler's real
+result (`tests/test_doc_agent_contracts.py`). REST rows are reference only:
+they are **not run** (a server would be needed).
+
+### `create`
+
+| Surface | Call | Success shape |
+|---|---|---|
+| CLI | `pyrite create -k <kb> -t <type> --title <t> --body <b>` | **No `--format`.** Rich text: `Created: <id>` / `Type: <type>`, plus a `Warning: ...` line per schema warning. Never JSON. |
+| MCP | `kb_create` | the block below, plus `"warnings": [...]` when any, plus `"qa_issues"` when a QA validator ran and found something. |
+| REST (not run) | `POST /api/entries` | `{"created": true, "id": "<id>", "kb_name": "<kb>", "file_path": "", "warnings": []}`. `file_path` is **always the empty string** here (MCP returns the real path). |
+
+<!-- mcp-output: kb_create -->
+```json
+{"created": true, "entry_id": "hello", "file_path": "/abs/path/hello.md"}
+```
+
+`pyrite add <file>` is the same shape as `create`: Rich text only,
+`Added: <id>` / `Type: <type>`, no `--format`.
+
+### `update`
+
+| Surface | Call | Success shape |
+|---|---|---|
+| CLI | `pyrite update <id> -k <kb> --title <t>` | **`--format` defaults to `json`:** `{"updated": true, "entry_id": "<id>"}`. With `--format rich`: `Updated: <id>`. |
+| MCP | `kb_update` | the block below, plus `"warnings"` when any, `"ignored"` listing keys no update writes, and `"unchanged"` listing fields an echoed read result carried at the value the read returned (not written). |
+| REST (not run) | `PUT /api/entries/{id}` (body carries `kb`) or `PATCH /api/entries/{id}` (body: `kb`, `field`, `value`; one field, `value` a string) | Both return `{"updated": true, "id": "<id>", "warnings": []}`. |
+
+<!-- mcp-output: kb_update -->
+```json
+{"updated": true, "entry_id": "hello", "file_path": "/abs/path/hello.md"}
+```
+
+`update -f key=value` (CLI) and MCP `kb_update` with an extra key store an
+undeclared field under the entry's `metadata` dict, not as a top-level key.
+Which fields an update may set, and which it refuses or sets aside, is the
+**Update fields** paragraph above.
+
+### `bulk_create` / import
+
+| Surface | Call | Success shape |
+|---|---|---|
+| CLI | `pyrite import <file> -k <kb>` | Rich text: one `Created: <id>` / `Failed [CODE]: <title>: <message>` line per record, then `Imported N entries` (or `Imported N entries (M failed)`). Exit `1` if any record failed. Its `--format` selects the *input* file format. |
+| MCP | `kb_bulk_create` | the block below, results in input order. |
+| REST (not run) | `POST /api/entries/import` (multipart) | `{"imported": N, "errors": M, "entries": [{"id", "title"}, ...], "error_details": [{"title", "error", "error_code"}, ...]}`. |
+
+<!-- mcp-output: kb_bulk_create -->
+```json
+{"total": 2, "created": 1, "failed": 1, "results": [{"created": false, "error": "...", "error_code": "ENTRY_EXISTS"}, {"created": true, "entry_id": "two"}]}
+```
+
+### `task create` and `link`
+
+`pyrite task create` takes `--field key=value` (repeatable) for fields a
+KB's task schema allows. Its `-f` is `--format` (`rich` default, or `json`),
+**not** `--field` as on `create`/`update`: check `--help` per command.
+
+`pyrite link <source> <target> -k <kb> -r <relation>` prints
+`Linked: <src> --[<relation>]--> <tgt> (in <kb>)` for a new link, or
+`Already linked: ...` when that `(target, kb, relation)` already exists.
+Another relation between the same two entries is a new link.
 
 ## Repo endpoint errors
 
@@ -415,30 +557,46 @@ allowed, and is never persisted as entry content.
 
 Most *read* commands default to `--format json`. A few interactive/status
 commands (`task` subcommands, `config`) default to a rich terminal
-view instead — pass `--format json` explicitly when scripting against
-those.
+view instead; pass `--format json` explicitly when scripting against
+those. The write commands are not uniform, and the table is checked
+against each command's Typer signature by `tests/test_doc_agent_contracts.py`:
 
-**Write commands are not uniform, and some have no `--format` at all:**
-`create`, `add`, `delete` and `link` always print Rich text, with no flag
-to ask for JSON; `update` and `rename` do have `--format`, defaulting to
-`json`. See `docs/agent-write-path.md` for the full per-command table and
-success shapes, and cite **#303** (open) for the consistency this page
-used to claim already existed.
+| Command | `--format` | Default |
+|---|---|---|
+| `create` | none | Rich text, always |
+| `add` | none | Rich text, always |
+| `delete` | none | Rich text, always |
+| `link` | none | Rich text, always |
+| `update` | yes | `json` |
+| `rename` | yes | `json` |
+| `import` | input file format, not output | Rich text, always |
+| `task create` | yes (`-f`) | `rich` |
 
-## Related contracts
+**#303** (open, "CLI output format is inconsistent when stdout is not a TTY")
+is the decision that would make this one rule. Until it lands, a command with
+none prints its refusals as Rich text too, so branch on the exit code, not on
+JSON.
 
-These aren't JSON shapes but are part of the same "don't relearn this
-the hard way" surface — also returned in `pyrite orient`'s
-`operational_contracts` field:
+## Operational contracts
 
-- **Indexing**: entries are only searchable once indexed. Writes made
-  directly to files under a KB's path (bypassing `pyrite create`/
-  `update`) need `pyrite index sync` afterward — incremental and cheap.
-- **Search auto-quote rule**: special-char tokens (hyphens, dots,
-  colons) are auto-quoted only when the query has no `AND`/`OR`/`NOT`
-  operator and no existing quote. Once you use an operator or a phrase
-  quote, quote special-char tokens yourself or the query can fail with
-  `error_code: QUERY_SYNTAX` (deterministic, not retryable).
-- **Task claims**: atomic. A lost race means the task is already
-  claimed by someone else — don't override; re-run the task list and
-  pick a different item.
+Not JSON shapes, but part of the same "don't relearn this the hard way"
+surface. This is the verbatim `operational_contracts` that `pyrite orient`
+and `kb_orient` return (`KBService.orient`); a test fails when the two
+differ, so edit `KBService.orient` and this block together. `error_contract`
+is the error shape above in one line.
+
+<!-- orient-operational-contracts -->
+```json
+{
+  "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
+  "error_contract": {
+    "shape": "{error, error_code, suggestion?, retryable}",
+    "error": "human-readable message",
+    "error_code": "machine-readable code, e.g. QUERY_SYNTAX, KB_NOT_FOUND",
+    "suggestion": "optional fix hint, omitted when not applicable",
+    "retryable": "bool -- whether retrying the same request could succeed"
+  },
+  "search_quoting": "Special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. '\"family separation\" \"cross-link\"') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).",
+  "task_claims": "Task claims are atomic; a lost race means the task is already claimed by someone else. On conflict, do NOT override the claim -- re-run the task list and pick a different item."
+}
+```
