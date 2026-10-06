@@ -210,6 +210,21 @@ class TestAdminCli:
         assert health.exit_code == 0 and "Index is healthy." in health.output
         assert "Indexed 2 entries from notes" in one.output
 
+    def test_index_sync_reports_non_regular_paths(self, tmp_path):
+        from pyrite.admin_cli import app
+
+        config = _config(tmp_path, indexed=False)
+        path = config.knowledge_bases[0].path / "directory.md"
+        path.mkdir()
+
+        with _patched(config):
+            result = runner.invoke(app, ["index", "sync", "notes"])
+
+        output = " ".join(result.output.split())
+        assert result.exit_code == 0, result.output
+        assert "Non-regular: 1 file(s) skipped" in output
+        assert "directory.md: not a regular file" in output
+
     def test_auth_whoami_local(self, config):
         from pyrite.admin_cli import app
 

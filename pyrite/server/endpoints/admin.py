@@ -136,6 +136,7 @@ def sync_index(
             added=result.get("added", 0),
             updated=result.get("updated", 0),
             removed=result.get("removed", 0),
+            skipped=result.get("skipped", []),
             site_cache=site_cache_status,
         )
 

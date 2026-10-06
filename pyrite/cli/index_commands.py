@@ -236,6 +236,18 @@ def index_sync(
             console.print(f"    [dim]• {entry['path']}[/dim]")
         if len(malformed) > 5:
             console.print(f"    [dim]… and {len(malformed) - 5} more[/dim]")
+    skipped = results.get("skipped", [])
+    if skipped:
+        console.print(f"  [yellow]Non-regular: {len(skipped)} file(s) skipped[/yellow]")
+        for entry in skipped[:5]:
+            console.print(
+                f"    {entry['path']}: {entry['reason']}",
+                markup=False,
+                highlight=False,
+            )
+        if len(skipped) > 5:
+            console.print(f"    [dim]... and {len(skipped) - 5} more[/dim]")
+
     duplicates = results.get("duplicates", [])
     if duplicates:
         console.print(

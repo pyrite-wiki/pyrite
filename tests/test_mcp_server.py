@@ -450,6 +450,16 @@ class TestPyriteMCPServer:
         assert "added" in result
         assert "updated" in result
         assert "removed" in result
+        assert "skipped" in result
+
+    def test_kb_index_sync_reports_non_regular_entries(self, mcp_admin_server):
+        server = mcp_admin_server["server"]
+        path = mcp_admin_server["test-events"].path / "directory.md"
+        path.mkdir()
+
+        result = server._dispatch_tool("kb_index_sync", {})
+
+        assert result["skipped"] == [{"path": str(path), "reason": "not a regular file"}]
 
     # ------------------------------------------------------------------
     # Delete handler

@@ -1762,6 +1762,7 @@ class PyriteMCPServer:
             "added": results["added"],
             "updated": results["updated"],
             "removed": results["removed"],
+            "skipped": results["skipped"],
         }
 
     def _kb_index_job_status(self, args: dict[str, Any]) -> dict[str, Any]:

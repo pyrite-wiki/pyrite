@@ -210,6 +210,17 @@ def index_sync(
         console.print(
             f"[green]Synced:[/green] +{results['added']} -{results['removed']} ~{results['updated']}"
         )
+        skipped = results.get("skipped", [])
+        if skipped:
+            console.print(f"[yellow]Non-regular: {len(skipped)} file(s) skipped[/yellow]")
+            for entry in skipped[:5]:
+                console.print(
+                    f"  {entry['path']}: {entry['reason']}",
+                    markup=False,
+                    highlight=False,
+                )
+            if len(skipped) > 5:
+                console.print(f"  ... and {len(skipped) - 5} more")
 
 
 @index_app.command("stats")
