@@ -785,7 +785,7 @@ def import_entries(
     fmt: str = typer.Option(
         None,
         "--format",
-        help="json, yaml or markdown (json and yaml are auto-detected from the extension)",
+        help="json, yaml or markdown (auto-detected from .json, .yaml, .yml or .md)",
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Validate without creating entries"),
     allow_undeclared: bool = typer.Option(
@@ -826,13 +826,13 @@ def import_entries(
     # Auto-detect format from extension
     if fmt is None:
         suffix = file_path.suffix.lower()
-        format_map = {".json": "json", ".yaml": "yaml", ".yml": "yaml"}
+        format_map = {".json": "json", ".yaml": "yaml", ".yml": "yaml", ".md": "markdown"}
         fmt = format_map.get(suffix)
         if fmt is None:
             cli_error(
                 f"Cannot detect format from extension '{suffix}'.",
                 error_code="VALIDATION_FAILED",
-                suggestion="Use --format json or --format yaml.",
+                suggestion="Use --format json, --format yaml, or --format markdown.",
             )
 
     if stream and fmt != "markdown":

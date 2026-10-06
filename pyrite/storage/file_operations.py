@@ -179,6 +179,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
+from ..utils.frontmatter import Malformed, Unsupported, Unterminated, describe, split_frontmatter
 from ..utils.yaml import _is_yaml11_ambiguous
 
 # --- the public surface -----------------------------------------------------
@@ -560,11 +561,15 @@ class _Doc:
 
 
 def _why_no_frontmatter(text: str) -> str:
-    head = text.lstrip("﻿")
-    if head.startswith("+++"):
-        return "TOML frontmatter (+++) is not edited: Pyrite edits YAML frontmatter only"
-    if head.startswith("{"):
-        return "JSON frontmatter is not edited: Pyrite edits YAML frontmatter only"
+    result = split_frontmatter(text)
+    if isinstance(result, (Malformed, Unterminated)):
+        return describe(result)
+    if isinstance(result, Unsupported):
+        marker = "+++" if result.format == "toml" else "{"
+        return (
+            f"{result.format.upper()} frontmatter ({marker}) is not edited: "
+            "Pyrite edits YAML frontmatter only"
+        )
     return "the file has no YAML frontmatter"
 
 

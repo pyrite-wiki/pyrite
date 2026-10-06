@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 # The first line after a separator that marks it as the start of another entry.
-_ENTRY_START = re.compile(r"\s*(?:title|type|id)\s*:")
+_ENTRY_START = re.compile(r"[ \t]*(?:title|type|id)[ \t]*:")
 
 
 def import_markdown(data: str | bytes, *, stream: bool = False) -> list[dict[str, Any]]:

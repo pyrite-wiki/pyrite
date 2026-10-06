@@ -320,6 +320,8 @@ Which fields an update may set, and which it refuses or sets aside, is the
 | MCP | `kb_bulk_create` | the block below, results in input order. |
 | REST (not run) | `POST /api/entries/import` (multipart) | `{"imported": N, "errors": M, "entries": [{"id", "title"}, ...], "error_details": [{"title", "error", "error_code"}, ...]}`. |
 
+`--format` selects JSON, YAML or Markdown input. Without it, `.json`, `.yaml`/`.yml` and `.md` file extensions are detected; `--stream` applies only to Markdown imports.
+
 <!-- mcp-output: kb_bulk_create -->
 ```json
 {"total": 2, "created": 1, "failed": 1, "results": [{"created": false, "error": "...", "error_code": "ENTRY_EXISTS"}, {"created": true, "entry_id": "two"}]}

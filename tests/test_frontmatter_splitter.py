@@ -1186,10 +1186,21 @@ def test_import_cli_stream_flag(opt_in, tmp_path):
             app, ["import", str(f), "--kb", "k", "--format", "json", "--stream"]
         )
     assert result.exit_code == 0, result.output
-    assert ("B" in result.output) is opt_in, result.output
+    assert "  1. [note] A" in result.output
+    assert ("  2. [note] B" in result.output) is opt_in, result.output
+    assert f"{2 if opt_in else 1} entries parsed" in result.output
     assert (
         bad.exit_code != 0 and "markdown files only" in bad.output
     )  # --stream is for markdown only
+
+
+def test_markdown_stream_does_not_split_after_a_blank_line():
+    from pyrite.formats.importers.markdown_importer import import_markdown
+
+    data = "---\ntitle: A\n---\nfirst\n---\n\ntitle: B\n---\nsecond\n"
+    [entry] = import_markdown(data, stream=True)
+    assert entry["title"] == "A"
+    assert entry["body"] == "first\n---\n\ntitle: B\n---\nsecond"
 
 
 # ---- the rule lives in one place -----------------------------------------------
