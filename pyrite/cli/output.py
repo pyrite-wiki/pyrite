@@ -21,13 +21,13 @@ def validate_output_format(value: str) -> str:
     raise typer.BadParameter(f"unknown format {value!r}; choose one of: {', '.join(available)}")
 
 
-def format_output(data: dict, fmt: str) -> str | None:
+def format_output(data: dict, fmt: str, **kwargs) -> str | None:
     """Format data using the format registry. Returns None for default (rich) output."""
     if fmt == "rich":
         return None
     from ..formats import format_response
 
-    content, _ = format_response(data, fmt)
+    content, _ = format_response(data, fmt, **kwargs)
     return content
 
 

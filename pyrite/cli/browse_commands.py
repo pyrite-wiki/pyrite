@@ -19,10 +19,10 @@ from .output import validate_output_format
 console = Console()
 
 
-def _format_output(data: dict, fmt: str) -> str | None:
+def _format_output(data: dict, fmt: str, **kwargs) -> str | None:
     from .output import format_output
 
-    return format_output(data, fmt)
+    return format_output(data, fmt, **kwargs)
 
 
 def _cli_error(message: str, output_format: str = "rich", error_code: str | None = None) -> None:
@@ -81,13 +81,19 @@ def register_browse_commands(app: typer.Typer) -> None:
                 "has_more": offset + limit < total,
             }
 
-            formatted = _format_output(resp_data, output_format)
+            formatted = _format_output(resp_data, output_format, fields=fields_list)
             if formatted is not None:
                 typer.echo(formatted)
                 return
 
             if not entries:
                 console.print("[yellow]No entries found.[/yellow]")
+                return
+
+            if fields_list:
+                from ..formats.tabular import projected_rich_table
+
+                console.print(projected_rich_table(entries, fields_list, "Entries"))
                 return
 
             table = Table(title=f"Entries ({total} total)")
@@ -149,7 +155,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 "not_found": not_found,
             }
 
-            formatted = _format_output(resp_data, output_format)
+            formatted = _format_output(resp_data, output_format, fields=fields_list)
             if formatted is not None:
                 typer.echo(formatted)
                 return
@@ -158,9 +164,14 @@ def register_browse_commands(app: typer.Typer) -> None:
                 console.print("[yellow]No entries found.[/yellow]")
                 return
 
-            for r in results:
-                console.print(f"\n[bold cyan]{r.get('title', '')}[/bold cyan]")
-                console.print(f"[dim]KB: {r.get('kb_name', '')} | ID: {r.get('id', '')}[/dim]")
+            if fields_list:
+                from ..formats.tabular import projected_rich_table
+
+                console.print(projected_rich_table(results, fields_list, "Entries"))
+            else:
+                for r in results:
+                    console.print(f"\n[bold cyan]{r.get('title', '')}[/bold cyan]")
+                    console.print(f"[dim]KB: {r.get('kb_name', '')} | ID: {r.get('id', '')}[/dim]")
 
             if not_found:
                 console.print(f"\n[yellow]Not found: {len(not_found)} entries[/yellow]")
@@ -349,13 +360,19 @@ def register_browse_commands(app: typer.Typer) -> None:
 
             resp_data = {"entries": entries, "count": len(entries)}
 
-            formatted = _format_output(resp_data, output_format)
+            formatted = _format_output(resp_data, output_format, fields=fields_list)
             if formatted is not None:
                 typer.echo(formatted)
                 return
 
             if not entries:
                 console.print("[yellow]No recent entries found.[/yellow]")
+                return
+
+            if fields_list:
+                from ..formats.tabular import projected_rich_table
+
+                console.print(projected_rich_table(entries, fields_list, "Recent Entries"))
                 return
 
             table = Table(title=f"Recent Entries ({len(entries)})")

@@ -227,6 +227,7 @@ def register_search_command(app: typer.Typer):
                     f"relaxed={search_trace.get('relaxed')}"
                 )
 
+            fields_list = parse_fields_param(fields)
             if not results:
                 if output_format != "rich":
                     # Machine formats get a valid empty-result payload, not a
@@ -234,7 +235,9 @@ def register_search_command(app: typer.Typer):
                     from ..formats import format_response
 
                     content, _ = format_response(
-                        {"query": query, "count": 0, "results": []}, output_format
+                        {"query": query, "count": 0, "results": []},
+                        output_format,
+                        fields=fields_list,
                     )
                     typer.echo(content)
                 else:
@@ -242,7 +245,6 @@ def register_search_command(app: typer.Typer):
                 return
 
             # Apply field projection. One rule for every read surface (#193).
-            fields_list = parse_fields_param(fields)
             if fields_list:
                 results = [project_fields(record, fields_list) for record in results]
             elif not include_body:
@@ -253,8 +255,14 @@ def register_search_command(app: typer.Typer):
                 from ..formats import format_response
 
                 resp_data = {"query": query, "count": len(results), "results": results}
-                content, _ = format_response(resp_data, output_format)
+                content, _ = format_response(resp_data, output_format, fields=fields_list)
                 typer.echo(content)
+                return
+
+            if fields_list:
+                from ..formats.tabular import projected_rich_table
+
+                console.print(projected_rich_table(results, fields_list, "Search Results"))
                 return
 
             table = Table(title=f"Search Results ({len(results)})")
