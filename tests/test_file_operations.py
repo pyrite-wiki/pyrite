@@ -230,7 +230,7 @@ def _eq(a: Any, b: Any) -> bool:
     if a is None or b is None:
         return a is None and b is None
     if isinstance(a, int | float) and isinstance(b, int | float):
-        return a == b
+        return a == b or (a != a and b != b)  # NaN is a value: .nan equals .nan (#749)
     if isinstance(a, str) and isinstance(b, date | datetime):
         a, b = b, a
     if isinstance(a, date | datetime) and isinstance(b, str):
@@ -1104,6 +1104,16 @@ def test_limit_a_list_written_directly_in_a_list_item_is_refused():
 
 # --- nothing but OperationRefusedError escapes --------------------------------
 
+# a tagged key in each place a mapping can sit (#749)
+TAGGED_KEY_TEXTS = [
+    "---\n!foo a: 1\ntags: [a]\n---\nx\n",
+    "---\n!!str x: a\ntags: [a]\n---\nx\n",
+    "---\n!!str 1: a\ntags: [a]\n---\nx\n",
+    "---\nparams:\n  !foo k: 1\n  a: 2\ntags: [a]\n---\nx\n",
+    "---\nl:\n- !foo k: a\n  z: 1\ntags: [a]\n---\nx\n",
+    "---\nparams: {!foo k: 1, a: 2}\ntags: [a]\n---\nx\n",
+]
+
 
 def test_malformed_operations_raise_only_operation_refused():
     """Fuzz: paths, values and operations built from awkward pieces, on every
@@ -1153,6 +1163,9 @@ def test_malformed_operations_raise_only_operation_refused():
         date(2020, 1, 1),
         [[[]]],
         {"": ""},
+        {"caf\u00e9": 1, "cafe\u0301": 2},
+        {float("nan"): 1},
+        [float("nan")],
     ]
 
     def path():
@@ -1189,8 +1202,16 @@ def test_malformed_operations_raise_only_operation_refused():
         "---\na: !custom 1\nb: !!set {x}\nc: !!binary aGk=\n---\nx\n",
         "---\ntrue: 1\nnull: 2\n3: c\n---\nx\n",
         "---\nl:\n- - a\n  - b\n---\nx\n",
+        # #749: tagged keys, complex keys, .nan and Unicode normalisations
+        *TAGGED_KEY_TEXTS,
+        "---\na: .nan\ntags: [a, .nan]\n---\nx\n",
+        "---\np:\n  .nan: a\n  b: 1\nk: 2\n---\nx\n",
+        "---\ncafe\u0301: 1\ncaf\u00e9: 2\ntags: [a]\n---\nx\n",
+        "---\np:\n  cafe\u0301: a\ntags: [a]\n---\nx\n",
+        "---\n? [x, y]\n: v\np:\n  ? {k: 1}\n  : v\n---\nx\n",
+        "---\nl:\n- !tagged {target: t2}\n- target: t1  # tgt\n  # rel\n  relation: r1\n---\nx\n",
     ]
-    for _ in range(3000):
+    for _ in range(6000):
         text = rng.choice(texts)
         ops = [op() for _ in range(rng.randint(1, 3))]
         try:
@@ -1532,3 +1553,210 @@ def test_the_widen_of_a_nested_operation_rebuilds_its_top_level_value(monkeypatc
     # the changed pair is emitted afresh (its own comment goes with it); the
     # kept pair, the comment between them and every byte outside stay
     assert after == before.replace("c: 3  # cee", "c: 4")
+
+
+# --- round 3 (#749): what Pyrite cannot edit narrowly is refused, truthfully ---
+#
+# The reference is ruamel's round-trip loader (what ``load_yaml`` uses): each
+# input below records what it loads, then asserts that ``apply`` edits
+# narrowly or refuses with a reason that matches (Andon #745).
+
+_EVERY_OP = [
+    Set("tags", ["z"]),
+    Set("brand_new", 1),
+    Set("params.k", 2),
+    Append("tags", "z"),
+    Remove("tags", "a"),
+    Unset("tags"),
+    AddSubkey("params", "z", 1),
+    ReplaceBody("new body"),
+]
+
+
+def _ruamel_keys(text: str) -> list:
+    from pyrite.utils.yaml import load_yaml
+
+    span = span_of(text)
+    keys: list = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                keys.append(k)
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(load_yaml(text[span.start : span.end]))
+    return keys
+
+
+@pytest.mark.parametrize("text", TAGGED_KEY_TEXTS)
+def test_a_tagged_key_anywhere_is_refused_with_its_reason(text):
+    """Reference: ruamel loads a tagged key as a ``TaggedScalar``, a value that
+    no path can name and Python cannot hash as the string it looks like. Today
+    every operation raised ``TypeError`` or ``KeyError``."""
+    assert any(type(k).__name__ == "TaggedScalar" for k in _ruamel_keys(text))
+    for op in _EVERY_OP:
+        with pytest.raises(OperationRefusedError) as raised:
+            run(text, op)
+        assert "tagged key" in raised.value.reason, op
+
+
+def test_a_tagged_key_whose_loaded_type_differs_from_its_plain_reading_is_refused():
+    """``!!float 1: a``: ruamel loads the key as the float 1.0 (not a
+    TaggedScalar), while the same key written plain reads as the int 1. Path
+    ``1`` would name the wrong thing (today: ``KeyError``). Guard: a key
+    node's explicit tag against what it resolves to written plain."""
+    text = "---\n!!float 1: a\ntags: [a]\n---\nx\n"
+    keys = _ruamel_keys(text)
+    assert type(keys[0]).__name__ == "ScalarFloat" and keys[0] == 1.0
+    for op in [Set("tags", ["z"]), Set("1", "q")]:
+        with pytest.raises(OperationRefusedError) as raised:
+            run(text, op)
+        assert "tagged key" in raised.value.reason
+
+
+@pytest.mark.control(reason="a tagged value or a quoted key was already editable; pins it stays so")
+def test_a_tagged_value_and_a_quoted_or_anchored_plain_key_are_still_editable():
+    """Control: only a *key's* explicit tag is refused; quoting a key, a tag on
+    a value and a tag spelled as text are edited as before."""
+    for text in [
+        '---\n"!foo": 1\ntags: [a]\n---\nx\n',
+        "---\nk: !foo 1\ntags: [a]\n---\nx\n",
+        "---\n'!!str': 1\ntags: [a]\n---\nx\n",
+    ]:
+        after, _ = run(text, Set("tags", ["z"]))
+        assert after == text.replace("[a]", "[z]")
+
+
+@pytest.mark.control(reason="a new key spelled like a tag was already quoted; pins it stays so")
+@pytest.mark.parametrize("key", ["!foo", "!!str", "!!int 1", "&a", "*a"])
+def test_a_new_key_spelled_like_a_tag_is_written_so_it_reads_back_as_a_string(key):
+    text = "---\ntags: [a]\n---\nx\n"
+    after, _ = run(text, Set((key,), 1))
+    assert _reader(after)[0][key] == 1
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "---\nn: .nan\nb: 1\n---\nx\n",
+        "---\nn: [1, .nan]\nb: 1\n---\nx\n",
+        "---\nn: {x: .nan}\nb: 1\n---\nx\n",
+        "---\np:\n  .nan: a\nb: 1\n---\nx\n",
+        "---\n.nan: a\nb: 1\n---\nx\n",
+        pytest.param(
+            "---\nn: !foo .nan\nb: 1\n---\nx\n",
+            marks=pytest.mark.control(reason="a tagged NaN already compared equal to itself"),
+        ),
+        pytest.param(
+            "---\nn: !!set {.nan}\nb: 1\n---\nx\n",
+            marks=pytest.mark.control(reason="a set holding NaN already compared equal"),
+        ),
+    ],
+    ids=["value", "in-list", "in-flow-map", "nested-key", "top-key", "tagged-value", "in-set"],
+)
+def test_a_nan_anywhere_does_not_block_an_edit_of_another_key(text):
+    """Reference: ruamel loads ``.nan`` as a float that is never equal to
+    itself. Choice (#749): NaN equals NaN, so a file holding one stays
+    editable and an untouched NaN compares equal after the reparse. Today every
+    edit was refused ('does not parse to the operation applied')."""
+    after, report = run(text, Set("b", 2))
+    assert after == text.replace("b: 1", "b: 2")
+    assert report.widened == ()
+    if "!foo" not in text:  # the oracle compares loaded TaggedScalars by identity
+        check_contract(text, [Set("b", 2)], after)
+
+
+def test_a_nan_value_set_to_nan_is_unchanged_and_one_can_be_added_or_removed():
+    text = "---\nn: .nan\nl: [1, .nan, 2]\n---\nx\n"
+    same, report = run(text, Set("n", float("nan")), Set("l", [1, float("nan"), 2]))
+    assert same == text and not report.changed
+    after, _ = run(text, Remove("l", float("nan")))
+    assert after == text.replace("[1, .nan, 2]", "[1, 2]")
+    after, _ = run(text, Append("l", float("nan")))
+    assert _reader(after)[0]["l"][-1] != _reader(after)[0]["l"][-1]  # a NaN went in
+    after, _ = run(text, Set("n", 1.5))
+    assert after == text.replace("n: .nan", "n: 1.5")
+
+
+def test_a_nan_key_is_named_by_its_segment_and_kept_by_a_map_set():
+    """Keys: ``('p', '.nan')`` reads as the float key; a whole-map set that
+    keeps the NaN key leaves its pair alone."""
+    text = "---\np:\n  .nan: a  # n\n  b: 1\n---\nx\n"
+    after, _ = run(text, Set(("p", ".nan"), "q"))
+    assert after == text.replace("a  # n", "q  # n")
+    after, report = run(text, Set("p", {float("nan"): "a", "b": 2}))
+    assert after == text.replace("b: 1", "b: 2") and report.widened == ()
+
+
+_NFD = "cafe\u0301"
+_NFC = "caf\u00e9"
+
+
+def test_a_key_in_another_unicode_normalisation_is_refused_not_added_beside_it():
+    """Reference: ruamel keeps the NFD bytes, so ``load_yaml`` returns a key
+    that is not equal to the NFC string. Choice (#749): do not normalise (the
+    file's spelling is the user's, and a rewrite would change it); refuse a
+    path or a new sub-key that differs from an existing key only by
+    normalisation. Today a second, identical-looking key was added."""
+    text = f"---\np:\n  {_NFD}: a\ntags: [a]\n---\nx\n"
+    assert _ruamel_keys(text)[1] == _NFD != _NFC
+    for op in [
+        Set(f"p.{_NFC}", "q"),
+        Unset(f"p.{_NFC}"),
+        AddSubkey("p", _NFC, "q"),
+        Set(("p", _NFC, "deeper"), 1),
+    ]:
+        with pytest.raises(OperationRefusedError) as raised:
+            run(text, op)
+        assert "normalisation" in raised.value.reason, op
+    top = f"---\n{_NFD}: a\n---\nx\n"
+    with pytest.raises(OperationRefusedError):
+        run(top, Set(_NFC, "q"))
+
+
+@pytest.mark.control(
+    reason="the file's own spelling was already editable; the refusal must not reach it"
+)
+def test_the_files_own_spelling_and_a_file_holding_both_spellings_are_editable():
+    """Control: the NFD path names the NFD key; with both spellings in the file
+    each path names its own (neither is ambiguous), and a whole-map set that
+    changes the spelling is exactly what was asked."""
+    text = f"---\np:\n  {_NFD}: a\ntags: [a]\n---\nx\n"
+    after, _ = run(text, Set(f"p.{_NFD}", "q"))
+    assert after == text.replace(": a", ": q")
+    both = f"---\n{_NFD}: 1\n{_NFC}: 2\n---\nx\n"
+    after, _ = run(both, Set(_NFC, 9))
+    assert after == f"---\n{_NFD}: 1\n{_NFC}: 9\n---\nx\n"
+    after, _ = run(text, Set("p", {_NFC: "a"}))
+    assert _reader(after)[0]["p"] == {_NFC: "a"}
+
+
+@pytest.mark.control(reason="pins that unsetting a list's last item keeps the comment lines")
+@pytest.mark.parametrize(
+    ("before", "path", "after"),
+    [
+        ("l:\n- a\n# c1\n- b\n# c2\n- c\nz: 1\n", "l[2]", "l:\n- a\n# c1\n- b\n# c2\nz: 1\n"),
+        (
+            "p:\n  l:\n    - a\n    # c1\n    - b\n    # c2\n    - c\n    # c3\n  s: 1\n",
+            "p.l[-1]",
+            "p:\n  l:\n    - a\n    # c1\n    - b\n    # c2\n    # c3\n  s: 1\n",
+        ),
+        (
+            "l:\n- t: a\n  # in\n  u: 1\n# c1\n- t: b\n# c2\n- t: c\n  u: 2\nz: 1\n",
+            "l[2]",
+            "l:\n- t: a\n  # in\n  u: 1\n# c1\n- t: b\n# c2\nz: 1\n",
+        ),
+    ],
+    ids=["block", "indented-with-tail", "mapping-items"],
+)
+def test_unsetting_a_lists_last_item_keeps_the_comment_lines_between_its_items(before, path, after):
+    """#749 item 5 said the comment lines were dropped. Not reproduced on
+    ~16000 generated layouts (see the PR); pinned so it stays so."""
+    text = f"---\n{before}---\nx\n"
+    got, report = run(text, Unset(path))
+    assert got == f"---\n{after}---\nx\n" and report.widened == ()
+    check_contract(text, [Unset(path)], got)

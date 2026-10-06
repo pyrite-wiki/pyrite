@@ -103,15 +103,35 @@ tests in ``tests/test_file_operations.py``):
   whose next line is a comment leaves ``-   # comment``: the comment line,
   indentation included, is outside the unset's span
   (``test_limit_unset_of_a_dash_line_pair_before_a_comment_leaves_the_dash_alone``).
-- When a widen runs, the changed top-level child it emits is written fresh:
-  the comments inside that child go with it and its indentation can change.
-  Unchanged items keep their bytes. No natural input reached a widen in the
-  #732 cold reads; it is a backstop.
-- Open before P3 wires this in (#749): a tagged key anywhere raises
-  ``TypeError``/``KeyError`` instead of ``OperationRefusedError``; a ``.nan``
-  value or key blocks every edit of its file or mapping; a key in a different
-  Unicode normalisation is added as a new key; unsetting a list's last item
-  drops the comment lines between its items.
+- When a widen runs, the top-level value is rebuilt item-wise: every
+  unchanged pair or item keeps its bytes, and so do the comment lines between
+  them. Only a *changed* pair (a map) or item (a list) is written fresh, so
+  the comments inside it go with it and its indentation can change
+  (``test_the_widen_of_a_map_keeps_the_files_order_and_its_comments``,
+  ``test_the_widen_of_a_nested_operation_rebuilds_its_top_level_value``). No
+  natural input reached a widen in the #732 cold reads; it is a backstop.
+- NaN (#749): ``.nan`` equals ``.nan`` here (``_scalar_eq``), as a key, a
+  value or a list item, so a file holding one stays editable, an unchanged one
+  is "unchanged", and one can be written (``.nan``). ruamel's NaN is never
+  equal to itself; that is the loader's, not a property Pyrite relies on.
+- Tagged keys (#749): a key with an explicit tag (``!foo a: 1``,
+  ``!!str a: 1``, ``!!float 1: a``) anywhere in the frontmatter is refused for
+  every operation, with the reason "tagged key". ruamel loads it as a
+  ``TaggedScalar`` (or a different type than the key reads plain), which no
+  path names. Two guards: ``_has_tagged_key`` (the node's explicit tag against
+  its plain reading) and ``_loaded_tagged_key`` (what ruamel loaded), each
+  with a case the other cannot see
+  (``test_a_tagged_key_*``).
+- Unicode normalisation (#749): no normalisation. A path segment or new
+  sub-key that differs from an existing key only by NFC/NFD is refused
+  (``_lookup``): ruamel keeps the file's spelling, and an added look-alike
+  would sit beside it. The file's own spelling, and a file holding both
+  spellings, are edited exactly
+  (``test_a_key_in_another_unicode_normalisation_is_refused_not_added_beside_it``).
+- Unsetting a list's last item keeps the comment lines between its items.
+  #749 reported otherwise; it did not reproduce on ~16000 generated layouts
+  and is pinned
+  (``test_unsetting_a_lists_last_item_keeps_the_comment_lines_between_its_items``).
 
 Fixed in round 2, each with a test: a second operation on the same key in
 one call (L1: each operation is checked against the text it applied to); a
@@ -131,6 +151,7 @@ from __future__ import annotations
 import functools
 import math
 import threading
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -301,7 +322,7 @@ def values_equal(a: Any, b: Any) -> bool:
     if a is None or b is None:
         return a is None and b is None
     if isinstance(a, int | float) and isinstance(b, int | float):
-        return a == b
+        return _scalar_eq(a, b)
     if isinstance(a, str) and isinstance(b, date):
         a, b = b, a
     if isinstance(a, date):
@@ -326,7 +347,18 @@ def values_equal(a: Any, b: Any) -> bool:
         return True
     if isinstance(a, list) and isinstance(b, list):
         return len(a) == len(b) and all(values_equal(x, y) for x, y in zip(a, b, strict=True))
-    return type(a) is type(b) and a == b  # a set, a tagged value, bytes
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, frozenset):  # a !!set: its members compare as values (NaN too)
+        return len(a) == len(b) and all(any(values_equal(x, y) for y in b) for x in a)
+    return a == b  # bytes
+
+
+def _scalar_eq(a: Any, b: Any) -> bool:
+    """``a == b``, except that NaN equals NaN. ruamel loads ``.nan`` as a float
+    that is never equal to itself, so a file holding one would fail the
+    post-check on every edit, including of other keys (#749)."""
+    return a == b or (isinstance(a, float) and isinstance(b, float) and a != a and b != b)
 
 
 def _temporal_equals_text(value: date, text: str) -> bool:
@@ -389,7 +421,13 @@ def _same(got: Any, expected: Any) -> bool:
     """Equal under decision 3, with the top-level key order kept."""
     if not values_equal(got, expected):
         return False
-    return [_plain(k) for k in got] == [_plain(k) for k in expected]
+    return _same_keys(got, expected)
+
+
+def _same_keys(got: Mapping, expected: Mapping) -> bool:
+    """The two mappings' keys are equal one by one, in order (NaN equals NaN)."""
+    a, b = [_plain(k) for k in got], [_plain(k) for k in expected]
+    return len(a) == len(b) and all(_scalar_eq(x, y) for x, y in zip(a, b, strict=True))
 
 
 # --- keys: the one lookup rule ------------------------------------------------
@@ -432,7 +470,7 @@ def _key_matches(seg: Any, key: Any) -> bool:
     if isinstance(target, str):
         return False
     key = _plain(key)
-    return type(target) is type(key) and target == key
+    return type(target) is type(key) and _scalar_eq(target, key)
 
 
 def _lookup(mapping: Mapping, seg: Any) -> Any:
@@ -441,6 +479,18 @@ def _lookup(mapping: Mapping, seg: Any) -> Any:
     hits = [k for k in mapping if _key_matches(seg, k)]
     if len(hits) > 1:
         raise OperationRefusedError(f"{seg!r} names two keys here ({hits!r}); edit it by hand")
+    if not hits and isinstance(seg, str):
+        # Choice (#749): no Unicode normalisation. ruamel keeps the file's
+        # spelling, so a key in NFD is not the NFC string it looks like, and
+        # adding the NFC one would put a look-alike beside it. Refuse; edit it
+        # by hand, or use the file's own spelling.
+        form = unicodedata.normalize("NFC", seg)
+        for k in mapping:
+            if isinstance(k, str) and k != seg and unicodedata.normalize("NFC", k) == form:
+                raise OperationRefusedError(
+                    f"{seg!r} is spelled in a different Unicode normalisation than the "
+                    f"key {k!r} here; use the file's spelling, or edit it by hand"
+                )
     return hits[0] if hits else _MISSING
 
 
@@ -451,7 +501,7 @@ def _exact(mapping: Mapping, key: Any) -> Any:
         return key if key in mapping else _MISSING
     plain = _plain(key)
     for k in mapping:
-        if type(k) is not str and type(_plain(k)) is type(plain) and _plain(k) == plain:
+        if type(k) is not str and type(_plain(k)) is type(plain) and _scalar_eq(_plain(k), plain):
             return k
     return _MISSING
 
@@ -518,6 +568,8 @@ def _parse(text: str, span: FrontmatterSpan) -> _Doc:
         raise OperationRefusedError(
             "the frontmatter has a complex key (? [a, b] or ? {a: 1}); not edited"
         )
+    if root is not None and _has_tagged_key(root, set(), y):
+        raise OperationRefusedError(_TAGGED_KEY)
     if root is not None:
         duplicate = _duplicate_key(root, set())
         if duplicate is not None:
@@ -533,6 +585,8 @@ def _parse(text: str, span: FrontmatterSpan) -> _Doc:
         loaded = y.constructor.construct_document(root) if root is not None else {}
     except YAMLError as e:
         raise OperationRefusedError(f"the frontmatter does not parse: {e}") from e
+    if _loaded_tagged_key(loaded, set()):
+        raise OperationRefusedError(_TAGGED_KEY)
     eol = "\r\n" if text[max(0, span.start - 2) : span.start] == "\r\n" else "\n"
     return _Doc(text, span, root, _plain(loaded or {}), eol, anchored)
 
@@ -549,6 +603,51 @@ def _has_complex_key(node: Node, seen: set[int]) -> bool:
         )
     if isinstance(node, SequenceNode):
         return any(_has_complex_key(item, seen) for item in node.value)
+    return False
+
+
+_TAGGED_KEY = (
+    "the frontmatter has a tagged key (!foo a: 1, !!str a: 1); no path can name it, "
+    "so it is not edited"
+)
+
+
+def _has_tagged_key(node: Node, seen: set[int], y: YAML) -> bool:
+    """A mapping key with an explicit tag whose reading differs from the plain
+    (or quoted) key: ``!!int 1: a``, which ruamel loads as the string '1'
+    while its node says int. ``!foo a`` and ``!!str x`` are found by
+    ``_loaded_tagged_key``: a node cannot tell ``!!str x`` from ``x``."""
+    if id(node) in seen:
+        return False
+    seen.add(id(node))
+    if isinstance(node, MappingNode):
+        for k, v in node.value:
+            if isinstance(k, ScalarNode):
+                implicit = (True, False) if k.style is None else (False, True)
+                if k.tag != y.resolver.resolve(ScalarNode, k.value, implicit):
+                    return True
+            if _has_tagged_key(v, seen, y):
+                return True
+    elif isinstance(node, SequenceNode):
+        return any(_has_tagged_key(item, seen, y) for item in node.value)
+    return False
+
+
+def _loaded_tagged_key(value: Any, seen: set[int]) -> bool:
+    """What ruamel loaded holds a key it wraps as a ``TaggedScalar``. Neither
+    ``_plain`` nor a path can handle one: it is not a string, and it is not
+    hashable once ``_plain`` has made it a tuple (#749)."""
+    if id(value) in seen:
+        return False
+    if isinstance(value, Mapping):
+        seen.add(id(value))
+        return any(
+            type(k).__name__ == "TaggedScalar" or _loaded_tagged_key(v, seen)
+            for k, v in value.items()
+        )
+    if isinstance(value, list | tuple | set | frozenset):
+        seen.add(id(value))
+        return any(_loaded_tagged_key(v, seen) for v in value)
     return False
 
 
@@ -1131,8 +1230,6 @@ def _check_value(value: Any, op: Any) -> None:
             _check_value(v, op)
     elif not isinstance(value, _SCALARS):
         raise OperationRefusedError(f"cannot write a {type(value).__name__} value", op)
-    elif isinstance(value, float) and math.isnan(value):
-        raise OperationRefusedError("cannot write NaN: it never equals itself", op)
 
 
 def _splice(doc: _Doc, edits: list[tuple[int, int, str]]) -> tuple[str, FrontmatterSpan]:
@@ -1333,7 +1430,7 @@ def _final_check(current: _Doc, expected: dict) -> str | None:
         return "the reader finds no frontmatter in the result"
     meta, body = parsed
     got = _plain(meta)
-    if not values_equal(got, expected) or [_plain(k) for k in got] != [_plain(k) for k in expected]:
+    if not values_equal(got, expected) or not _same_keys(got, expected):
         return "the reader does not read the operations applied"
     if body != current.body.strip():
         return "the reader's body is not what was asked"
@@ -2081,6 +2178,8 @@ def _emit_scalar(value: Any, style: str | None, tag: str | None, flow: bool) -> 
 def _emit_float(value: float) -> str:
     """A float both YAML 1.2 and YAML 1.1 read as a float: 1.1 needs a dot
     (``1e+20`` is a string there), so ``1.0e+20``."""
+    if math.isnan(value):
+        return ".nan"  # NaN equals NaN here (_scalar_eq), so it can be written (#749)
     if math.isinf(value):
         return ".inf" if value > 0 else "-.inf"
     text = repr(float(value))
