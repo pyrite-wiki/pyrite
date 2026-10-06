@@ -153,7 +153,12 @@ def register_entry_commands(app: typer.Typer) -> None:
     ):
         """Get a specific entry by ID."""
         with cli_context() as (config, db, svc):
-            result = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
+            result = svc.get_entry(
+                entry_id,
+                kb_name=kb_name,
+                readable_kbs=UNSCOPED,
+                read_current_body=True,
+            )
 
             if not result:
                 _cli_error(f"Entry '{entry_id}' not found", output_format, "NOT_FOUND")

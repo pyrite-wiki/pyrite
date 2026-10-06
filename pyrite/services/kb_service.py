@@ -534,9 +534,13 @@ class KBService:
         kb_name: str | None = None,
         *,
         readable_kbs: set[str] | None,
+        read_current_body: bool = False,
     ) -> dict[str, Any] | None:
         """
         Get entry by ID, with its outlinks and backlinks.
+
+        CLI callers may request the exact current file body for a lossless
+        get/update round trip; other read surfaces keep their normal projection.
 
         If kb_name not specified, searches all KBs in config order.
 
@@ -554,7 +558,8 @@ class KBService:
                 return None
             result = self.db.get_entry(entry_id, kb_name)
             if result:
-                result = self._refresh_entry_body(result, entry_id, kb_name)
+                if read_current_body:
+                    result = self._refresh_entry_body(result, entry_id, kb_name)
                 self._attach_links(result, entry_id, kb_name, readable_kbs)
             return result
 
@@ -564,7 +569,8 @@ class KBService:
                 continue
             result = self.db.get_entry(entry_id, kb.name)
             if result:
-                result = self._refresh_entry_body(result, entry_id, kb.name)
+                if read_current_body:
+                    result = self._refresh_entry_body(result, entry_id, kb.name)
                 self._attach_links(result, entry_id, kb.name, readable_kbs)
                 return result
         return None
