@@ -1,0 +1,1 @@
+- **Task dependency tools handle deep and completed chains (#717).** Dependency reads no longer hit the Python recursion limit, and blocker and critical-path results use derived task completion.
