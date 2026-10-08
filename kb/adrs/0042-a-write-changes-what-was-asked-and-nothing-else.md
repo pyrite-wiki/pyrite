@@ -551,12 +551,13 @@ optimistic plus the momentary lock".*
   immediately before `os.replace`, rename, release. Never held while work is
   done. A write that moves a file takes the locks of both paths in sorted
   real-path order. It is an OS lock (`flock`; `msvcrt.locking` on Windows) on
-  a **sidecar lock file that is never replaced or deleted**, named by the
-  SHA-256 of the entry file's real path, in a per-user lock directory outside
-  the KB that does not depend on which config or data directory a process
-  resolved (decision 5 of ADR-0041; not `default_data_dir()`, which varies by
-  working directory), plus an in-process lock keyed by the same path for the
-  server's threads. This gives git's momentary semantics without git's one
+  a **sidecar lock file that is never replaced or deleted**, in a lock
+  directory outside the KB's files that does not depend on which config or
+  data directory a process resolved (decision 5 of ADR-0041; not
+  `default_data_dir()`, which varies by working directory), plus an
+  in-process lock keyed the same way for the server's threads. Where that
+  directory is and how a file maps to its lock file are set by §10a A1 and
+  A2 (the repository's git dir; the entry's directory identity and name). This gives git's momentary semantics without git's one
   wart, a stale `index.lock` after a crash: the kernel releases an OS lock if
   the holder dies (0.2 ms to the next acquire). Spike 3 rules out the
   alternatives: a lock on the entry file lost 52% of increments (the atomic
@@ -610,12 +611,7 @@ correction to decision 2. The maintainer accepted all five amendments on
 2026-10-03. They override the text above where the two differ.
 
 - **A1 (decision 10, the lock directory). Amended again 2026-10-03 (maintainer, Andon pyrite-security#97): lock where git locks.** The lock directory is `<git-dir>/pyrite/locks`, inside the git directory of the repository that holds the KB, beside git's own `index.lock`. Whoever can write the repository can take the lock, and the lock needs no shared temporary directory, no environment variable and no cross-user trust decision. The git directory is not KB content, so the lock still never lives in the KB's files. A KB that is not in a git repository is refused for `expect=` writes with an error that says so; a per-user fallback can be added later if a real case needs one. (The first two wordings derived the directory from `XDG_RUNTIME_DIR`/`TMPDIR`. Four cold reads of the build each found the directory trusted by a different rule, and the last found one user resolving two lock directories under umask 002, which failed open. That design asked the code to find a safe shared place on a host, the problem git avoids by locking inside the repository it already trusts. This matches the maintainer's model of Pyrite as type-aware git on top of git.)
-- **A2 (decision 10, the lock files).** The sidecar is one of N stripe files,
-  `<lockdir>/<sha256(realpath) mod N>.lock` with N = 1024, created on first
-  use and never deleted. A write that moves a file takes the stripes of both
-  paths in ascending stripe order, deduplicated. Two entries that share a
-  stripe cost one momentary wait. (One lock file per entry, never deleted,
-  grows without bound.)
+- **A2 (decision 10, the lock files). Key amended 2026-10-07 (maintainer, after the #752 cold read): one file, one lock, whatever path reaches it.** The sidecar is one of N stripe files, `<lockdir>/<sha256(key) mod N>.lock` with N = 1024, created on first use and never deleted. The **key is the `(st_dev, st_ino)` of the entry's parent directory plus the entry's name, folded as `NFD(casefold(NFD(name)))`** (Unicode's canonical caseless match, D145): the same for every path that reaches the entry (a symlink, a firmlink such as macOS `/System/Volumes/Data`, `..` segments, case and Unicode spelling), and unchanged by the atomic rename that replaces the file. The key is recomputed under the lock, and if the parent directory was replaced meanwhile, the lock is released and retaken on the new key, within the same deadline. An **`expect=` write to a file with more than one hard link is refused**, with a reason: another name for the same inode would be another key. The **link count is read under the lock**, so a link made after the caller's first look still counts. **Every wait for the lock is bounded:** an unbounded timeout (none, zero or negative, infinite, NaN, or above `threading.TIMEOUT_MAX`) is rejected, not capped, because a stopped holder keeps its lock. The fold order was corrected in round 2 of the #752 review: `NFC(name).casefold()` gave two keys for one APFS name for 12 code points such as U+0390, and `NFC(casefold(NFC))` still missed the title case of U+1FB7. `NFD(casefold(NFD))` matched APFS for every code point to U+2FFFF. A write that moves a file takes the stripes of both paths in ascending stripe order, deduplicated. Two entries that share a stripe cost one momentary wait. (One lock file per entry, never deleted, grows without bound.) The first key, `sha256(realpath)`, gave three stripes for one file on macOS (its path, a hard link, the firmlinked path). The cold read lost 64 of 600 updates through the rename path, and corrupted the file through the in-place path with a hard link.
 - **A3 (decision 10, "same key changed on both sides").** A key that both
   sides set to equal values merges as unchanged (decision 3). A conflict is a
   key whose theirs differs from base **and** from yours. An operation that
@@ -996,12 +992,14 @@ field and reports "not moved".
 
 **Concurrency (decision 10; step 4), optimistic plus the momentary lock.**
 
-1. New `pyrite/utils/file_lock.py`: `entry_lock(path)` locks
-   `<per-user lock dir>/<sha256(realpath)>.lock` (the directory is not
-   `default_data_dir()`); inside, a `threading.Lock` per real path, then
-   `flock(LOCK_EX)` on POSIX or `msvcrt.locking` with retry on Windows; the
-   lock file is never unlinked. `entry_locks(*paths)` takes several in sorted
-   real-path order. It is held only for compare-and-replace.
+1. New `pyrite/utils/file_lock.py`: `file_lock(*paths, timeout)` locks a
+   stripe file in `<git-dir>/pyrite/locks` (§10a A1), chosen by the entry's
+   lock key (§10a A2: the parent directory's `(st_dev, st_ino)` plus the name
+   folded as `NFD(casefold(NFD(name)))`); inside, a `threading.Lock` per
+   stripe, then `flock(LOCK_EX)`, with a bounded wait. Windows is refused.
+   Stripe files are never unlinked. A move takes both stripes in ascending
+   order. It is held only for compare-and-replace. (Amended 2026-10-07; the
+   spike's text named a per-user directory and `sha256(realpath)`.)
 2. `atomic_write_text(path, text, *, expect=None)`: with `expect`, compare the
    file's bytes after the temp file's fsync and immediately before
    `os.replace`; on mismatch remove the temp file and raise
