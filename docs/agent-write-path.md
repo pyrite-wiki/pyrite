@@ -129,7 +129,9 @@ Two things this page adds:
   same way. Change the request.
 - A CLI command with no `--format` (`create`, `add`, `delete`, `link`)
   prints a refusal as `ERROR [CODE]: message`, not JSON; branch on exit code
-  `1` and read the code in the brackets. `update` prints the JSON shape:
+  `1` and read the code in the brackets. `create --link` with a link that does
+  not resolve is the one exception: the entry was written, so it exits `3` (not
+  `1`) and says which link failed and what `pyrite link` finishes it. `update` prints the JSON shape:
 
 <!-- expect-exit: 1 -->
 <!-- expect-text: "error_code": "KB_NOT_FOUND" -->

@@ -123,8 +123,14 @@ pyrite search "mathematician" -k my-research --type person
 
 **Writes never wait on it.** `auto_embed` (on by default) promises that an entry *will be* embedded, not that it is embedded by the time the write returns (ADR-0035): a `pyrite create` or a `POST /api/entries` records the entry, makes it keyword-searchable immediately, and notes the embedding as owed. So on a brand-new KB, a semantic search issued straight after a write may not find that entry yet. Settle the debt — and trigger the download — whenever you like:
 
+<!-- runner: expect-exit 0 1 -->
 ```bash
 pyrite index embed                 # embed everything not yet embedded
+```
+
+`pyrite index embed` exits `0` when every entry is embedded. If the model cannot be loaded (no network on the first run, say), it prints `Errors: N`, says the entries are still owed, and exits `1` when none could be embedded (`3` when some were and some were not): what you asked for did not happen. Run it again once the model is reachable. The tutorial's test run is offline, so it sees the `1`; on a machine with the model cached it sees `0`, and the runner accepts either.
+
+```bash
 pyrite index sync                  # incremental index update, then embed
 ```
 
@@ -135,7 +141,7 @@ pyrite search "early computer science pioneers" -k my-research --mode semantic
 ```
 <!-- runner: expect-text pyrite index embed -->
 
-With the embeddings built, that finds Ada Lovelace. Until they are, the search prints `warning: semantic leg skipped ... run pyrite index embed` and returns nothing. The tutorial's test run is offline, so it sees that warning. Without the `semantic` extra the warning says instead that sentence-transformers is not installed and suggests `pip install pyrite[semantic]`; there is no PyPI wheel yet, so install it the way you installed Pyrite: `pip install -e ".[semantic]"` in a clone, or `pyrite[server,cli,semantic] @ git+...` from a release tag (see the [README](../README.md#install)).
+With the embeddings built, that finds Ada Lovelace. Until they are, the search prints `warning: semantic leg skipped ... run pyrite index embed` and returns nothing. The tutorial's test run is offline, so it sees that warning, too. Without the `semantic` extra the warning says instead that sentence-transformers is not installed and suggests `pip install pyrite[semantic]`; there is no PyPI wheel yet, so install it the way you installed Pyrite: `pip install -e ".[semantic]"` in a clone, or `pyrite[server,cli,semantic] @ git+...` from a release tag (see the [README](../README.md#install)).
 
 **Hybrid mode** combines both, and still answers from the keyword leg while the embeddings are missing:
 

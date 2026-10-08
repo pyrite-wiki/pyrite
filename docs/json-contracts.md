@@ -108,7 +108,7 @@ is reproduced by a command in "Reproduce the codes" below, which CI runs.
 | `error_code` | Meaning | What to do |
 |---|---|---|
 | `KB_NOT_FOUND` | the KB name is not registered (or, for a scoped caller, not readable). Every CLI write command (`create`, `update`, `delete`, `link`) reports it. | `pyrite kb list` shows the registered names; `pyrite orient` lists the KBs you can read. |
-| `NOT_FOUND` | the entry id does not exist: CLI `get`, `update`, `delete`, `link`. The intended MCP and REST code is `ENTRY_NOT_FOUND` (see "MCP only, for one release" above); today MCP `kb_get` answers `NOT_FOUND` and `kb_update` answers `UPDATE_FAILED` with `retryable: true` (#761: a bug, do not rely on it). | `pyrite search <term> -k <kb>` to find the id. |
+| `NOT_FOUND` | the entry id does not exist: CLI `get`, `update`, `delete`, `link`. `pyrite backlinks` and `pyrite-read backlinks` on an id that no entry has and nothing links to answer `ENTRY_NOT_FOUND` (the class's code, today; #610 settles the spelling). An id that is only linked to (`[[ghost-page]]`) is answered with its linking entries. The intended MCP and REST code is `ENTRY_NOT_FOUND` (see "MCP only, for one release" above); today MCP `kb_get` answers `NOT_FOUND` and `kb_update` answers `UPDATE_FAILED` with `retryable: true` (#761: a bug, do not rely on it). | `pyrite search <term> -k <kb>` to find the id. |
 | `UNDECLARED_TYPE` | the KB's `kb.yaml` declares types and this is not one of them. Core types (`note`, `person`, …) are **not** exempt. Override with `allow_undeclared` (MCP, REST body or import query) / `--allow-undeclared` (CLI). The error carries `declared_types` on MCP and REST. | Use a declared type (`pyrite kb schema show <kb>`), or pass the override. |
 | `ENTRY_EXISTS` | the id (given, or derived from the title) already exists. Create never replaces; use update. REST answers `409`. | `update` it, or choose another title or id. |
 | `SCHEMA_VIOLATION` | the KB schema or a plugin validator rejected a field: enum, required, range, format. A kb.yaml enum (`options:`/`values:`, list `items:`, rule `enum:`) is refused when `validation.enforce_enums` is on (the default); every other kb.yaml finding when `validation.enforce` is on. The message names the field, the value and the allowed list (`kind: 'chore' is not one of [...]`). An update that leaves an off-list value as it was is not refused (see **Warnings**). | Re-read the message: it names the field and the allowed values. |
@@ -130,11 +130,12 @@ results keep the input order. Each failed item carries `error_code`:
 
 REST import reports the same pair per item in `error_details`
 (`{"title", "error", "error_code"}`). `pyrite import` prints
-`Failed [CODE]: <title>: <message>` per refused record and exits `1` if any
-record was refused (re-importing a file whose entries exist is refused per
-record, so it exits `1`); `--dry-run` prints `Would refuse [CODE]: …`,
-including for a record whose id an earlier record of the same file would
-create, and writes nothing.
+`Failed [CODE]: <title>: <message>` per refused record and exits `3` when some
+records were written and some refused, `1` when none was written
+(re-importing a file whose entries all exist writes nothing, so it exits `1`);
+`--dry-run` prints `Would refuse [CODE]: …`, including for a record whose id
+an earlier record of the same file would create, writes nothing, and exits the
+way the real run would.
 
 **Warnings.** A write that succeeds may still draw non-blocking schema
 findings (an off-list select value when the KB sets
@@ -316,7 +317,7 @@ Which fields an update may set, and which it refuses or sets aside, is the
 
 | Surface | Call | Success shape |
 |---|---|---|
-| CLI | `pyrite import <file> -k <kb>` | Rich text: one `Created: <id>` / `Failed [CODE]: <title>: <message>` line per record, then `Imported N entries` (or `Imported N entries (M failed)`). Exit `1` if any record failed. Its `--format` selects the *input* file format. |
+| CLI | `pyrite import <file> -k <kb>` | Rich text: one `Created: <id>` / `Failed [CODE]: <title>: <message>` line per record, then `Imported N entries` (or `Imported N entries (M failed)`). Exit `3` if some records were written and some failed, `1` if none was written. Its `--format` selects the *input* file format. |
 | MCP | `kb_bulk_create` | the block below, results in input order. |
 | REST (not run) | `POST /api/entries/import` (multipart) | `{"imported": N, "errors": M, "entries": [{"id", "title"}, ...], "error_details": [{"title", "error", "error_code"}, ...]}`. |
 
@@ -544,14 +545,51 @@ allowed, and is never persisted as entry content.
 
 ## Exit codes (CLI)
 
-- `0` — success.
-- `1` — any error surfaced via `cli_error` (parses the JSON error shape
-  above from stdout/stderr depending on `--format`).
-- `3` — the command ran and found files outside the id contract
-  (`pyrite ids missing`: a file has no `id:`, an empty one, or cannot be
-  read; `pyrite ids pin`: a file or collision group was left, and the output
-  says which and why). Not `2`, which is click's usage error.
-  See `docs/pinning-entry-ids.md`.
+- `0` — success: **every effect you asked for happened.** A command that
+  prints a failure and exits `0` is a bug.
+- `1` — refused, or nothing was done: any error surfaced via `cli_error`
+  (parses the JSON error shape above from stdout/stderr depending on
+  `--format`). A subject that does not exist is a not-found error here, in the
+  command's own format, never an empty result (`pyrite backlinks nope` answers
+  `ENTRY_NOT_FOUND` today, the class's code; the spelling is #610's). Also a
+  batch command that did none of its items (below).
+- `2` — usage, click's own.
+- `3` — the command ran and did only part of what was asked, or left items
+  for a retry. It prints what happened and what did not, so a script reads the
+  output instead of repeating the call. For a command that loops over items
+  the rule is one function, `exit_unless_whole(failed, done)`: nothing failed
+  is `0`, some failed and some were done is `3`, none was done is `1`. A dry
+  run that would refuse exits as the real run would.
+  - `pyrite create --link a --link b` with a link that does not resolve: the
+    entry is kept (a retry answers `ENTRY_EXISTS`), the links that resolved
+    are kept, and the output names the `pyrite link <id> <target> -r <relation>`
+    that finishes each failed one (always `3`: the entry was written);
+  - `pyrite link --bidi` whose forward link was written and whose inverse failed;
+  - the batch commands, by the rule above (done = items written, embedded or
+    already fine; `export collection` counts exported entries, `search --files`
+    counts files scanned, `repo sync` repos synced): `index embed` and
+    `pyrite-admin index embed` (`Errors: N`; the entries stay owed and a rerun
+    retries them, so offline with nothing embedded is `1`), `schema migrate`,
+    `index reconcile`, `import`, `links bulk-create`, `export collection`,
+    `search --files`, `repo sync`, `batch-read` (an id not found), `task decompose`,
+    `sw prioritize`, `sw migrate-standards`, `investigation dedup` and
+    `ftm-import`;
+  - `pyrite init` that created the KB but could not index it, and
+    `pyrite extension install --verify` that installed a plugin that would not
+    load (always `3`: the install happened);
+  - `pyrite ids missing` (a file has no `id:`, an empty one, or cannot be
+    read) and `pyrite ids pin` (a file or collision group was left, and the
+    output says which and why). See `docs/pinning-entry-ids.md`.
+
+  Single-effect commands that fail answer `1`: `kb commit` when the commit was
+  rejected (a hook, a staging error; "No changes to commit" is `0`), `task claim`
+  when the claim is lost (in `--format json` too), `investigation network` and
+  `evidence-chain` when the answer is an error.
+
+  This amends the 2026-10-02 decision on #303 ("exit codes stay 0/1/2"),
+  which `ids` had already outgrown; the maintainer's decision of 2026-10-08
+  is recorded on #526. `tests/test_requested_effect_exit_code.py` classifies
+  every command that can do part of its job.
 
 ## `--format` defaults
 
