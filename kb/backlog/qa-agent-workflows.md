@@ -20,7 +20,7 @@ links:
   relation: has_subtask
 importance: 5
 kind: epic
-status: done
+status: in_progress
 priority: medium
 effort: XL
 rank: 0
@@ -28,14 +28,16 @@ rank: 0
 
 ## Progress
 
-**Phases 1-4: COMPLETE.** The QA system is implemented and operational:
+**Phases 1-3 are built, with a defect in Tier 2; Phase 4 is not built.** Corrected 2026-10-08.
 - Phase 1: Structural validation (`pyrite qa validate`) — missing titles, empty bodies, broken links, orphans, date/importance validation, schema checks, rubric evaluation
 - Phase 2: QA assessment entry type and storage
-- Phase 3: Tier 2 LLM-assisted consistency checks
-- Phase 4: Tier 3 factual verification
-- Post-save hook (`qa_on_write: true`) also done
+- Phase 3: Tier 2 LLM-assisted checks exist (`llm_rubric_evaluator.py`, `qa assess --tier 2`), but `qa assess --tier 2` records a pass without calling a model, and a failed model call reads as no issues (#795)
+- Phase 4: Tier 3 factual verification — **not built.** There is no `qa verify` command, no Tier 3 code in `pyrite/services/qa_service.py`, no verification agent. See [[qa-phase-4-tier-3-factual-verification]]
+- Post-save hook (`qa_on_write: true`) is done
 
-**Remaining: Phase 5 only** — scheduled batch runs, QA dashboard in web UI, "entries needing review" virtual collection.
+**Remaining: Phase 4 and Phase 5.** Phase 4 is redirected to [[claim-verification-in-qa-claims-protocol-deterministic-checks-verifier-contract]]; Phase 5 is scheduled batch runs, a QA dashboard in the web UI, and an "entries needing review" virtual collection.
+
+**Related defects found by the claim-verification groom:** #795 (`qa assess --tier 2` records a pass without a model), #796 (`qa check-urls` checks only five hard-coded entry types), #797 (`qa fix` re-serialises entries, bypassing ADR-0042).
 
 ## Problem
 
@@ -215,3 +217,7 @@ This means the QA service accepts pluggable evaluation criteria, and plugins can
 - New: `pyrite/server/endpoints/qa.py`
 - Modified: `pyrite/config.py` (editorial_guidelines in KBConfig)
 - New: `tests/test_qa_service.py`
+
+## Status note (2026-10-08)
+
+Reset from `done` to `in_progress`: the epic said Phases 1-4 were complete, but Phase 4 was never built (the groom in PR #794 found no such code). See ADR-0047 (claims are content; Pyrite checks them deterministically; verifiers are callers), the design `kb/designs/claim-verification-in-qa.md`, and the backlog item [[claim-verification-in-qa-claims-protocol-deterministic-checks-verifier-contract]] (PR #794).

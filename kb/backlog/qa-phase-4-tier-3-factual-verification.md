@@ -7,7 +7,7 @@ tags:
 - quality
 - ai
 kind: feature
-status: done
+status: proposed
 priority: medium
 effort: L
 ---
@@ -45,3 +45,7 @@ A research agent with web search capability that verifies specific claims agains
 - New: verification agent module with web search integration
 - Modified: `pyrite/server/mcp_server.py` (qa verify tool)
 - Modified: `pyrite/cli/__init__.py` (qa verify command)
+
+## Status note (2026-10-08)
+
+Marked `done` in error; reset to `proposed`. The claim-verification groom found that none of this was built: there is no `pyrite qa verify` command (`pyrite/cli/qa_commands.py` registers no `verify`), no Tier 3 logic in `pyrite/services/qa_service.py`, no web-search or verification agent module, and no `qa verify` MCP tool. `grep -rn 'qa verify' pyrite extensions` finds nothing. The shape of this work is now decided in ADR-0047 (claims are content; Pyrite checks them deterministically; verifiers are callers), the design `kb/designs/claim-verification-in-qa.md`, and the backlog item [[claim-verification-in-qa-claims-protocol-deterministic-checks-verifier-contract]] (PR #794). Under ADR-0047 Pyrite checks claims deterministically and verifiers are callers, so the research agent described above is not Pyrite's to ship. That item replaces this one when it is accepted.

@@ -16,7 +16,7 @@ links:
   relation: depends_on
   kb: pyrite
 kind: feature
-status: done
+status: proposed
 priority: medium
 effort: L
 ---
@@ -51,3 +51,7 @@ This is Phase 2 of the source verification pipeline. Phase 1 (URL liveness check
 - Which LLM provider to use? Should respect Pyrite's existing LLMService config (BYOK)
 - What content extraction strategy for web pages? (readability, trafilatura, etc.)
 - How to handle paywalled sources? (skip with warning? use cached content?)
+
+## Status note (2026-10-08)
+
+Marked `done` in error; reset to `proposed`. Not built: there is no `qa verify-sources` command (`pyrite/cli/qa_commands.py` has only `check-urls`, which checks HTTP liveness, not content), no `--max-cost` or `--sample` verification, no verification score and no stored verification assessments. The Phase 1 item it depends on, [[source-url-validation-and-content-verification-for-qa]], delivered liveness checking only. Direction now lives in ADR-0047 (claims are content; Pyrite checks them deterministically; verifiers are callers), the design `kb/designs/claim-verification-in-qa.md`, and the backlog item [[claim-verification-in-qa-claims-protocol-deterministic-checks-verifier-contract]] (PR #794). Under ADR-0047 a model-based content check is a caller of Pyrite, not a Pyrite command.
