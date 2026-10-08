@@ -572,7 +572,7 @@ allowed, and is never persisted as entry content.
     retries them, so offline with nothing embedded is `1`), `schema migrate`,
     `index reconcile`, `import`, `links bulk-create`, `export collection`,
     `search --files`, `repo sync`, `batch-read` (an id not found), `task decompose`,
-    `sw prioritize`, `sw migrate-standards`, `investigation dedup` and
+    `sw prioritize`, `sw migrate-standards`, `investigation bulk-edges` and
     `ftm-import`;
   - `pyrite init` that created the KB but could not index it, and
     `pyrite extension install --verify` that installed a plugin that would not
@@ -583,8 +583,9 @@ allowed, and is never persisted as entry content.
 
   Single-effect commands that fail answer `1`: `kb commit` when the commit was
   rejected (a hook, a staging error; "No changes to commit" is `0`), `task claim`
-  when the claim is lost (in `--format json` too), `investigation network` and
-  `evidence-chain` when the answer is an error.
+  when the claim is lost (in `--format json` too), `social reputation` when it
+  cannot compute the reputation, `investigation network` and `evidence-chain`
+  when the answer is an error.
 
   This amends the 2026-10-02 decision on #303 ("exit codes stay 0/1/2"),
   which `ids` had already outgrown; the maintainer's decision of 2026-10-08

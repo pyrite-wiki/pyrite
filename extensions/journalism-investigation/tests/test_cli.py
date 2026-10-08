@@ -213,7 +213,7 @@ class TestNetworkCommand:
                 "--json",
             ],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == 1  # an error answer is a failure in the exit too (#526)
         data = json.loads(result.output)
         assert "error" in data
 
@@ -230,7 +230,7 @@ class TestEvidenceChainCommand:
                 "--json",
             ],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == 1  # an error answer is a failure in the exit too (#526)
         data = json.loads(result.output)
         assert "error" in data
 
