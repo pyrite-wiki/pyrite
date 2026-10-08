@@ -1,0 +1,1 @@
+`pyrite extension install --verify` now loads the installed distribution's own `pyrite.plugins` entry points in a fresh interpreter, so a correct editable plugin verifies (exit 0), a plugin whose entry point raises exits 3 naming the entry point and its error, and an unrelated broken plugin no longer changes the answer (#786).

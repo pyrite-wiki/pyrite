@@ -4,6 +4,7 @@ Extension management CLI commands.
 Commands: init, install, list, uninstall
 """
 
+import json
 import logging
 import subprocess
 import sys
@@ -296,6 +297,50 @@ class Test{pascal}Plugin:
         console.print(f"\n  Install with: pyrite extension install {out_path}")
 
 
+# Runs in a fresh interpreter. Loads only the named distribution's own
+# ``pyrite.plugins`` entry points, the way the registry does (load, then
+# instantiate), and prints one JSON object: {"found": n, "errors": [...]}.
+_VERIFY_SCRIPT = """
+import json, sys
+from importlib.metadata import distribution
+eps = [e for e in distribution(sys.argv[1]).entry_points if e.group == "pyrite.plugins"]
+errors = []
+for ep in eps:
+    try:
+        ep.load()()
+    except BaseException as exc:
+        errors.append(f"entry point {ep.name!r} ({ep.value}): {type(exc).__name__}: {exc}")
+print(json.dumps({"found": len(eps), "errors": errors}))
+"""
+
+
+def _verify_distribution(dist_name: str) -> list[str]:
+    """Errors from loading ``dist_name``'s own plugin entry points; empty means verified.
+
+    Unrelated installed plugins are not looked at: their failures are not this
+    install's (#786).
+    """
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", _VERIFY_SCRIPT, dist_name],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return [f"could not start the verification interpreter: {e}"]
+    try:
+        report = json.loads(proc.stdout.strip().splitlines()[-1])
+    except (IndexError, ValueError):
+        detail = (proc.stderr.strip().splitlines() or ["no output"])[-1]
+        return [f"verification interpreter failed (exit {proc.returncode}): {detail}"]
+    if report["errors"]:
+        return list(report["errors"])
+    if not report["found"]:
+        return [f"{dist_name} declares no 'pyrite.plugins' entry points"]
+    return []
+
+
 @extension_app.command("install")
 def extension_install(
     path: Path = typer.Argument(..., help="Path to extension directory"),
@@ -341,21 +386,16 @@ def extension_install(
             error_code="ERROR",
         )
 
-    # Verify plugin loads
+    # Verify the plugin loads, in a fresh interpreter: an editable install's
+    # finder only takes effect when an interpreter starts, so this process
+    # cannot see what pip just added (#786).
     verified = False
+    verify_errors: list[str] = []
     if verify:
-        try:
-            from ..plugins import get_registry
-
-            # Force re-discovery
-            registry = get_registry()
-            registry._discovered = False
-            # strict: a plugin whose entry point fails to load raises here,
-            # where plain discover() only logs it and verification would pass.
-            registry.discover(strict=True)
-            verified = True
-        except Exception as e:
-            console.print(f"[yellow]Warning:[/yellow] Plugin verification failed: {e}")
+        verify_errors = _verify_distribution(plugin_name)
+        verified = not verify_errors
+        for err in verify_errors:
+            console.print(f"[yellow]Warning:[/yellow] Plugin verification failed: {err}")
 
     output = {
         "status": "installed",
@@ -363,6 +403,8 @@ def extension_install(
         "path": str(path),
         "verified": verified if verify else None,
     }
+    if verify and verify_errors:
+        output["verify_errors"] = verify_errors
 
     formatted = _format_output(output, output_format)
     if formatted is not None:

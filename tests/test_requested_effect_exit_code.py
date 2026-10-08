@@ -427,60 +427,125 @@ class TestInitIndexing:
         assert out.exit_code == PARTIAL, out.output
 
 
+def _result(stdout: str) -> dict:
+    """The JSON object in the output, after any warnings printed before it."""
+    return json.JSONDecoder().raw_decode(stdout[stdout.index("{") :])[0]
+
+
+class _Venv:
+    """A throwaway interpreter that can see pyrite's dependencies but none of its plugins.
+
+    Verification is about what a *new interpreter* finds after an editable
+    install, so the tests install real editable packages into a real (empty)
+    venv and run the real command line in it. Mocking ``entry_points`` is how
+    the first version of these tests passed with the feature absent (#786).
+    """
+
+    def __init__(self, root: Path):
+        import site
+
+        self.root = root
+        venv = root / "venv"
+        subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, capture_output=True)
+        self.python = venv / "bin" / "python"
+        site_dir = next(venv.glob("lib/python*/site-packages"))
+        # pyrite's dependencies (and setuptools, for the offline editable build).
+        (site_dir / "parent.pth").write_text(
+            "\n".join(p for p in site.getsitepackages() if "site-packages" in p) + "\n"
+        )
+        self.env = {
+            **os.environ,
+            "HOME": str(root / "home"),
+            "PYRITE_CONFIG_DIR": str(root / "cfg"),
+            "PYTHONPATH": str(REPO),
+            "PIP_NO_BUILD_ISOLATION": "0",
+            "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+            "HF_HUB_OFFLINE": "1",
+            "PYRITE_AUTO_EMBED": "0",
+            "NO_COLOR": "1",
+            "COLUMNS": "200",
+        }
+        (root / "home").mkdir()
+
+    def package(self, name: str, plugins: dict[str, str], module_body: str) -> Path:
+        """An extension directory: ``plugins`` maps entry-point name to ``module:attr``."""
+        pkg = name.replace("-", "_")
+        d = self.root / "src" / name
+        d.mkdir(parents=True)
+        eps = "\n".join(f'{k} = "{v}"' for k, v in plugins.items())
+        (d / "pyproject.toml").write_text(
+            '[build-system]\nrequires = ["setuptools"]\nbuild-backend = "setuptools.build_meta"\n'
+            f'[project]\nname = "{name}"\nversion = "0.1"\n'
+            f'[project.entry-points."pyrite.plugins"]\n{eps}\n'
+            f'[tool.setuptools]\npy-modules = ["{pkg}"]\n'
+        )
+        (d / f"{pkg}.py").write_text(module_body)
+        return d
+
+    def install(self, path: Path, *args: str):
+        return subprocess.run(
+            [
+                str(self.python),
+                "-c",
+                "import sys; from pyrite.cli import app; sys.argv[0]='pyrite'; app()",
+                "extension",
+                "install",
+                str(path),
+                *args,
+            ],
+            capture_output=True,
+            text=True,
+            env=self.env,
+            cwd=self.root,
+            timeout=300,
+        )
+
+
+_GOOD = "class Plugin:\n    name = 'good'\n"
+_RAISES = "raise RuntimeError('boom at import')\n"
+
+
+@pytest.fixture
+def venv(tmp_path):
+    return _Venv(tmp_path)
+
+
 class TestExtensionVerify:
-    def test_installed_but_a_plugin_entry_point_raises_exits_partial(self, tmp_path, monkeypatch):
-        """`discover()` only logs a plugin that fails to load; verification has to ask for strict."""
-        import importlib.metadata as md
-        import subprocess as sp
-        from types import SimpleNamespace
+    """`extension install --verify` loads the installed distribution's own
+    ``pyrite.plugins`` entry points in a fresh interpreter (#786)."""
 
-        import pyrite.plugins as plugins
-        from pyrite.plugins.registry import PluginRegistry
+    def test_a_good_editable_plugin_verifies(self, venv):
+        """Control: with the fix absent this fails, because the installing process
+        cannot yet see an editable install's finder (#786)."""
+        good = venv.package("ext-good", {"good": "ext_good:Plugin"}, _GOOD)
+        out = venv.install(good, "--verify")
+        text = out.stdout + out.stderr
+        assert out.returncode == 0, text
+        assert _result(out.stdout)["verified"] is True, text
 
-        ext = tmp_path / "ext"
-        ext.mkdir()
-        (ext / "pyproject.toml").write_text('[project]\nname = "ext-x"\nversion = "0"\n')
-        monkeypatch.setattr(
-            sp, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout="", stderr="")
-        )
+    def test_an_entry_point_that_raises_exits_partial_and_names_it(self, venv):
+        bad = venv.package("ext-bad", {"bad": "ext_bad:Plugin"}, _RAISES)
+        out = venv.install(bad, "--verify")
+        text = out.stdout + out.stderr
+        assert out.returncode == PARTIAL, text
+        assert "bad" in text and "boom at import" in text, text
+        assert _result(out.stdout)["verified"] is False, text
 
-        def load():
-            raise RuntimeError("entry point raises")
+    def test_an_unrelated_broken_plugin_does_not_change_the_answer(self, venv):
+        other = venv.package("ext-other", {"other": "ext_other:Plugin"}, _RAISES)
+        assert venv.install(other).returncode == 0
+        good = venv.package("ext-good", {"good": "ext_good:Plugin"}, _GOOD)
+        out = venv.install(good, "--verify")
+        assert out.returncode == 0, out.stdout + out.stderr
+        assert "ext-other" not in out.stdout + out.stderr
 
-        broken = SimpleNamespace(name="ext-x", load=load)
-        monkeypatch.setattr(
-            md,
-            "entry_points",
-            lambda *a, **k: SimpleNamespace(select=lambda group: [broken]),
-        )
-        registry = PluginRegistry()
-        monkeypatch.setattr(plugins, "get_registry", lambda: registry)
-        out = _invoke("extension", "install", str(ext), "--verify")
-        assert "verification failed" in out.output.lower(), out.output
-        assert out.exit_code == PARTIAL, out.output
-
-    @pytest.mark.control(reason="control: a plugin that loads verifies, exit 0")
-    def test_a_plugin_that_loads_verifies(self, tmp_path, monkeypatch):
-        import importlib.metadata as md
-        import subprocess as sp
-        from types import SimpleNamespace
-
-        import pyrite.plugins as plugins
-        from pyrite.plugins.registry import PluginRegistry
-
-        ext = tmp_path / "ext"
-        ext.mkdir()
-        (ext / "pyproject.toml").write_text('[project]\nname = "ext-x"\nversion = "0"\n')
-        monkeypatch.setattr(
-            sp, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout="", stderr="")
-        )
-        monkeypatch.setattr(
-            md, "entry_points", lambda *a, **k: SimpleNamespace(select=lambda group: [])
-        )
-        registry = PluginRegistry()
-        monkeypatch.setattr(plugins, "get_registry", lambda: registry)
-        out = _invoke("extension", "install", str(ext), "--verify")
-        assert out.exit_code == 0, out.output
+    @pytest.mark.control(
+        reason="control: the old in-process check also exited 3 here (the dist was not importable); pins that the new check keeps refusing"
+    )
+    def test_a_distribution_with_no_plugin_entry_points_is_not_verified(self, venv):
+        bare = venv.package("ext-bare", {}, "X = 1\n")
+        out = venv.install(bare, "--verify")
+        assert out.returncode == PARTIAL, out.stdout + out.stderr
 
 
 class TestSearchFilesScanned:
@@ -1173,6 +1238,7 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
     ("pyrite/cli/entry_commands.py", "create_entry"): ("fixed", "TestCreateWithFailedLink"),
     ("pyrite/cli/export_commands.py", "_load_entry_from_result"): ("fixed", "TestExportCollection"),
     ("pyrite/cli/export_commands.py", "export_collection"): ("fixed", "TestExportCollection"),
+    ("pyrite/cli/extension_commands.py", "_verify_distribution"): ("fixed", "TestExtensionVerify"),
     ("pyrite/cli/extension_commands.py", "extension_install"): ("fixed", "TestExtensionVerify"),
     ("pyrite/cli/extension_commands.py", "extension_list"): (
         "left",
