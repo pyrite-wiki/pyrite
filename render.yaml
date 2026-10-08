@@ -11,8 +11,9 @@ services:
         value: "0.0.0.0"
       - key: PYRITE_DATA_DIR
         value: /data
-      # A public hostname: require accounts. The first account registered
-      # becomes admin, so register yours right after the first deploy.
+      # A public hostname: require accounts. Registration stays closed until
+      # an admin exists: after the first deploy, create yours in the container with
+      # `pyrite-admin user create <username> --role admin`.
       - key: PYRITE_AUTH_ENABLED
         value: "true"
       - key: PYRITE_OPENAI_API_KEY

@@ -14,8 +14,8 @@ pip install -e ".[all]"   # Core + AI + semantic search + dev tools
 Or run the bundled Docker image instead (`docker compose up -d`, serves
 on `http://localhost:8088`, reachable only from your own machine: the compose
 file publishes the port on `127.0.0.1` and runs with no credential) — see the [README](../README.md#install)
-for details, or [pyrite.wiki](https://pyrite.wiki) for hosted/one-click
-cloud options.
+for details, or [pyrite.wiki](https://pyrite.wiki) for a public demo and the
+one-click cloud options.
 
 ## Create Your First Knowledge Base
 
@@ -34,7 +34,9 @@ The SQLite search index lives outside the KB directory, at `~/.pyrite/index.db` 
 `pyrite init` does **not** run `git init` for you. If you want every change versioned from the start (recommended for a git-native product), initialize git yourself:
 
 ```bash
-cd my-research && git init && git add -A && git commit -m "Initial KB"
+git init
+git add -A
+git commit -m "Initial KB"
 ```
 
 Templates available: `research`, `software`, `zettelkasten`, `intellectual-biography`, `movement`, `empty`.
@@ -76,15 +78,24 @@ pyrite create -k my-research --type note --title "Use markdown for all entries" 
   --tags "process"
 ```
 
-Each command creates a markdown file with YAML frontmatter like this:
+Each command creates a markdown file with YAML frontmatter. Here is the person's:
+
+```bash
+cat people/ada-lovelace.md
+```
+<!-- runner: expect-text id: ada-lovelace title: Ada Lovelace type: person -->
+<!-- runner: expect-text tags: - mathematics - computing importance: 5 research_status: stub -->
 
 ```markdown
 ---
 id: ada-lovelace
 title: Ada Lovelace
 type: person
-tags: [mathematics, computing]
-created: 2026-03-03T10:00:00
+tags:
+- mathematics
+- computing
+importance: 5
+research_status: stub
 ---
 
 Mathematician and writer. Wrote the first algorithm intended for a machine.
@@ -98,10 +109,17 @@ The `id` is auto-generated from the title. Pyrite validates fields against the t
 
 ```bash
 pyrite search "algorithm" -k my-research
-pyrite search "mathematics" -k my-research --type person
 ```
+<!-- runner: expect-ids ada-lovelace -->
 
-**Semantic search** finds conceptually related content, not just keyword matches. It uses a local embedding model (`all-MiniLM-L6-v2`, ~90 MB) that is downloaded the first time it is needed — expect that one download to take a minute, once.
+Narrow it to one entry type. Search matches an entry's title and body, not its tags, so this finds Ada by the word "Mathematician" in her body:
+
+```bash
+pyrite search "mathematician" -k my-research --type person
+```
+<!-- runner: expect-ids ada-lovelace -->
+
+**Semantic search** finds conceptually related content, not just keyword matches. It needs the `semantic` extra (in `[all]`; a [release-tag install](../README.md#install) adds it by name) and uses a local embedding model (`all-MiniLM-L6-v2`, ~90 MB) that is downloaded the first time it is needed — expect that one download to take a minute, once.
 
 **Writes never wait on it.** `auto_embed` (on by default) promises that an entry *will be* embedded, not that it is embedded by the time the write returns (ADR-0035): a `pyrite create` or a `POST /api/entries` records the entry, makes it keyword-searchable immediately, and notes the embedding as owed. So on a brand-new KB, a semantic search issued straight after a write may not find that entry yet. Settle the debt — and trigger the download — whenever you like:
 
@@ -114,14 +132,21 @@ pyrite index sync                  # incremental index update, then embed
 
 ```bash
 pyrite index embed -k my-research
-pyrite search "early computer science pioneers" -k my-research --mode semantic
 ```
-
-**Hybrid mode** combines both:
 
 ```bash
-pyrite search "computing history" -k my-research --mode hybrid
+pyrite search "early computer science pioneers" -k my-research --mode semantic
 ```
+<!-- runner: expect-text pyrite index embed -->
+
+With the embeddings built, that finds Ada Lovelace. Until they are, the search prints `warning: semantic leg skipped ... run pyrite index embed` and returns nothing. The tutorial's test run is offline, so it sees that warning.
+
+**Hybrid mode** combines both, and still answers from the keyword leg while the embeddings are missing:
+
+```bash
+pyrite search "algorithm machine" -k my-research --mode hybrid
+```
+<!-- runner: expect-ids ada-lovelace -->
 
 ## Connect an AI via MCP
 
@@ -218,27 +243,34 @@ See also: [Gemini MCP integration](gemini-mcp-integration.md) | [OpenAI MCP inte
 
 ## Use Templates for Domain-Specific KBs
 
-Templates install extensions with specialized entry types and tools tailored to a domain:
+The templates `pyrite init` accepts are the six listed above. Each works with nothing extra installed:
 
 ```bash
+cd ..
 pyrite init --template software --path my-project
 ```
 
-The **software** template adds ADRs, components, backlog items, standards, and runbooks — everything you need to manage a software project's knowledge. Other templates include:
+The **software** template adds ADRs, components, backlog items, standards, and runbooks — everything you need to manage a software project's knowledge. Its `pyrite sw` commands (`sw adrs`, `sw backlog`, ...) come from the software-kb extension, which is a separate install: `pip install -e extensions/software-kb`. Extensions are never installed by a template; the [README](../README.md#install) lists them.
 
-- **`zettelkasten`** — note maturity workflows (capture, elaborate, question, refine, connect); the extension behind this template is an example plugin, showing how a Pyrite plugin adds entry types, CLI commands, MCP tools and a preset, not a supported product
-- **`encyclopedia`** — articles with review and voting workflows; likewise an example plugin, not a supported product
-- **`cascade`** — timeline research with actors and capture lanes
+The `zettelkasten` template gives note-maturity types; the extension behind it is an example plugin, showing how a Pyrite plugin adds entry types, CLI commands, MCP tools and a preset, not a supported product.
 
 ## Launch the Web UI
 
-Pyrite ships an optional web interface for browsing, editing, and visualizing your knowledge base. If you installed with the `server` extra (included in `[all]`):
+Pyrite ships an optional web interface for browsing, editing, and visualizing your knowledge base. It is built from the `web/` directory of a clone, so from the repository root, once:
+
+```bash
+cd web && npm install && npm run build
+```
+
+Then, with the `server` extra (included in `[all]`):
 
 ```bash
 pyrite serve
 ```
 
 Visit [http://localhost:8088](http://localhost:8088). The web UI includes a markdown editor with wikilink autocomplete, an interactive knowledge graph, collections with kanban/table/gallery views, and an AI chat sidebar.
+
+An install from a release tag has no web UI yet: the built frontend is not packaged. `pyrite serve` there starts the API and says so. The CLI and the MCP server are unaffected.
 
 ## Next Steps
 

@@ -347,7 +347,9 @@ pip install "pyrite[server,cli] @ git+https://github.com/pyrite-wiki/pyrite@v0.2
 
 That gives you the CLI, the REST API and the MCP server, but **not the web
 UI** — the built frontend is not packaged yet (tracked in the roadmap; clone
-and `npm run build` above if you want it).
+and `npm run build` above if you want it). Semantic search needs the
+`semantic` extra too (`pyrite[server,cli,semantic] @ git+...`, a large
+download); without it, keyword search works and a semantic search says so.
 
 Narrower extras: `pip install -e ".[server]"` (REST API + web UI),
 `pip install -e ".[ai]"` (OpenAI + Anthropic SDKs),
@@ -369,7 +371,7 @@ pip install -e extensions/journalism-investigation
 
 Prefer not to install anything locally? See [Deploy](#deploy) above for
 Docker, one-click cloud (Railway/Render/Fly.io), and self-hosted VPS
-options — or [pyrite.wiki](https://pyrite.wiki) for a hosted instance.
+options — or [pyrite.wiki](https://pyrite.wiki) for a public demo.
 
 ## Development
 
@@ -379,7 +381,7 @@ pip install -e ".[all]"
 for ext in extensions/*/; do pip install -e "$ext"; done
 pre-commit install
 
-# Tests (~4100, incl. extensions; ~1 min in parallel)
+# Tests (core and extensions; in parallel with -n auto)
 pytest tests/ extensions/ -n auto
 
 # Frontend
@@ -395,7 +397,7 @@ Pyrite's own backlog and architecture docs live in `kb/`:
 
 ```bash
 pyrite sw backlog        # Prioritized backlog
-pyrite sw adrs           # Architecture Decision Records (33 ADRs)
+pyrite sw adrs           # Architecture Decision Records
 pyrite sw components     # Module documentation
 pyrite sw standards      # Coding conventions
 ```

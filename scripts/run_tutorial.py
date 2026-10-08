@@ -21,8 +21,12 @@ What this deliberately does:
 - asserts the doc's own keyword `pyrite search` examples **return at least
   one result**, which forces the example queries to actually match the
   example data -- an exit-0 assertion alone would pass on an empty result
-  set. `--mode semantic`/`--mode hybrid` are exit-code-only for now; see
-  EMBEDDING_MODE_RE and issue #43.
+  set. Each search sits in its own block, so each is asserted on its own.
+  A `--mode semantic`/`--mode hybrid` search with no results passes only when
+  it said why: the `pyrite index embed` warning (#43).
+- refuses a **`&&` list** in a block it runs. Under `set -e` a failing command
+  that is not the last in an `a && b` list does not stop the shell, so a
+  failed `cd` passed a block that did nothing. Write one command per line.
 - finishes with `pyrite index health` and fails on `unhealthy`, printing a
   `warning` rather than failing on it (issue #44). The audit found a fresh
   tutorial KB failing the tool's own health check; it still does, and this
@@ -55,6 +59,7 @@ must not execute, not a line that is allowed to be wrong):
   `pyrite/kb/` read the KB of the code being tested. (Cloning any other
   repository, such as the demo KBs, is run: that is the document's claim.)
 - `pyrite serve`: a long-running server with no terminating condition.
+- `npm install` / `npm run build`: the web UI build, which needs Node and a clone.
 
 Usage:  python scripts/run_tutorial.py [path/to/doc.md]   (default: docs/getting-started.md)
 Exit:   0 if every block ran and every assertion held; 1 otherwise.
@@ -84,17 +89,20 @@ SKIP_MARKERS = (
     "pip install",  # install block: CI already installed the package
     "docker compose",  # not this job's surface
     "pyrite serve",  # long-running server, no terminating condition
+    "npm install",  # the web UI build: a clone's web/, not a CLI step
 )
 
 # Commands whose output shape is asserted, not just their exit code.
 SEARCH_RE = re.compile(r"^\s*pyrite search\b", re.M)
 
 # Semantic and hybrid search need a vector index, which needs the embedding
-# model. Their exit code is still asserted -- a documented flag that does not
-# exist is exactly the `--tier` class of bug this runner exists to prevent --
-# but requiring a non-empty result set would either force a ~90 MB model
-# download in CI or fail for a reason that has nothing to do with the doc.
-EMBEDDING_MODE_RE = re.compile(r"--mode\s+(semantic|hybrid)")
+# model. The runner is offline (HF_HUB_OFFLINE), so such a search finds
+# nothing; what it must do is say why (#43). An empty result is accepted only
+# with this text in the output.
+MODE_RE = re.compile(r"--mode\s+(semantic|hybrid)")
+NO_EMBEDDINGS_WARNING = "pyrite index embed"
+
+_QUOTED = re.compile(r"\"(?:\\.|[^\"\\])*\"|'[^']*'")
 
 
 class TutorialError(Exception):
@@ -264,7 +272,19 @@ def strip_marker(stdout: str) -> str:
     return "\n".join(line for line in stdout.splitlines() if not line.startswith("__CWD__"))
 
 
-def assert_search_returned_results(block: str, stdout: str) -> None:
+def assert_no_and_lists(block: str) -> None:
+    """Refuse `a && b`: errexit does not stop the shell when `a` fails (a
+    failed `cd X && git init` exits 0), so the block would pass having done
+    nothing. One command per line is asserted; a chain is not."""
+    for line in block.splitlines():
+        if "&&" in _QUOTED.sub('""', line.split("#", 1)[0]):
+            raise TutorialError(
+                "a tutorial block chains commands with `&&`, which `set -e` does not "
+                f"enforce (a failing first command still exits 0); one command per line:\n{line}"
+            )
+
+
+def assert_search_returned_results(block: str, stdout: str, stderr: str = "") -> None:
     """A documented search must match the documented data.
 
     `pyrite search` exits 0 on an empty result set, so an exit-code check
@@ -272,18 +292,19 @@ def assert_search_returned_results(block: str, stdout: str) -> None:
     any of its example entries -- which is exactly the failure the audit
     found elsewhere in these docs.
 
-    Exception: `--mode semantic` and `--mode hybrid` (see EMBEDDING_MODE_RE).
-    Their exit code is still asserted. Tighten this to a full result
-    assertion when issue #43 lands -- today a fresh tutorial KB has no
-    embeddings at all, so requiring results here would fail on the product
-    bug rather than on doc drift.
+    A block holds one search, so a zero-result search cannot hide behind a
+    sibling that found something. A semantic or hybrid search with no results
+    passes only when its output carries the NO_EMBEDDINGS_WARNING.
     """
-    if not SEARCH_RE.search(block) or EMBEDDING_MODE_RE.search(block):
+    searches = SEARCH_RE.findall(block)
+    if not searches:
         return
+    if len(searches) > 1:
+        raise TutorialError(
+            f"a block holds {len(searches)} `pyrite search` commands; put each in its own "
+            f"block so each is asserted on its own:\n{block}"
+        )
     text = strip_marker(stdout)
-    # The CLI's default output is JSON; count either a results array or the
-    # rich table's rows. Both shapes are checked so a formatter change is a
-    # visible failure here rather than a silently weakened assertion.
     import json
 
     try:
@@ -295,11 +316,14 @@ def assert_search_returned_results(block: str, stdout: str) -> None:
             ) from None
         return
     results = payload.get("results", payload if isinstance(payload, list) else [])
-    if len(results) < 1:
-        raise TutorialError(
-            f"a documented search returned 0 results -- the tutorial's example "
-            f"query no longer matches its example data:\n{block}\n{text}"
-        )
+    if len(results) >= 1:
+        return
+    if MODE_RE.search(block) and NO_EMBEDDINGS_WARNING in text + "\n" + stderr:
+        return
+    raise TutorialError(
+        f"a documented search returned 0 results -- the tutorial's example "
+        f"query no longer matches its example data:\n{block}\n{text}"
+    )
 
 
 def check_index_health(kb_name: str, cwd: Path, env: dict[str, str]) -> None:
@@ -471,6 +495,7 @@ def main(argv: list[str]) -> int:
 
             first = block.strip().splitlines()[0]
             print(f"  [{number}] {first}")
+            assert_no_and_lists(block)
             proc = run_block(block, cwd, env)
             if proc.returncode != exit_wanted:
                 raise TutorialError(
@@ -480,7 +505,7 @@ def main(argv: list[str]) -> int:
                 )
             exit_wanted = 0
             if proc.returncode == 0:
-                assert_search_returned_results(block, proc.stdout)
+                assert_search_returned_results(block, proc.stdout, proc.stderr)
             last = (block, proc.stdout)
             last_output = proc.stdout + "\n" + proc.stderr
             cwd = resulting_cwd(proc.stdout, cwd)

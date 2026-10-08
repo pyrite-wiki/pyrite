@@ -162,3 +162,102 @@ class TestTheTwentyMinuteTutorial:
         release = (REPO / "scripts" / "release.py").read_text()
         assert "run_tutorial.sh docs/tutorials/pyrite-in-20-minutes.md" in ci
         assert "docs/tutorials/pyrite-in-20-minutes.md" in release
+
+
+class TestSearchesAreAssertedOneByOne:
+    """#583/#43: a zero-result search used to hide behind a sibling, and the
+    semantic and hybrid modes were exempt from any assertion."""
+
+    @staticmethod
+    def _out(count):
+        return json.dumps({"count": count, "results": [{"id": str(i)} for i in range(count)]})
+
+    def test_two_searches_in_one_block_are_refused(self, runner):
+        block = 'pyrite search "algorithm" -k kb\npyrite search "mathematics" -k kb\n'
+        with pytest.raises(runner.TutorialError, match="its own block"):
+            runner.assert_search_returned_results(block, self._out(1))
+
+    def test_a_keyword_search_with_no_results_fails(self, runner):
+        with pytest.raises(runner.TutorialError, match="0 results"):
+            runner.assert_search_returned_results('pyrite search "x" -k kb', self._out(0))
+
+    def test_a_semantic_search_with_no_results_and_no_warning_fails(self, runner):
+        with pytest.raises(runner.TutorialError, match="0 results"):
+            runner.assert_search_returned_results(
+                'pyrite search "x" -k kb --mode semantic', self._out(0)
+            )
+
+    def test_a_semantic_search_with_no_results_passes_when_it_says_why(self, runner):
+        runner.assert_search_returned_results(
+            'pyrite search "x" -k kb --mode semantic',
+            self._out(0),
+            "warning: semantic leg skipped: run `pyrite index embed` to build them",
+        )
+
+    def test_a_keyword_search_does_not_get_the_semantic_pass(self, runner):
+        with pytest.raises(runner.TutorialError, match="0 results"):
+            runner.assert_search_returned_results(
+                'pyrite search "x" -k kb', self._out(0), "run `pyrite index embed`"
+            )
+
+    def test_the_semantic_exemption_is_gone(self, runner):
+        assert not hasattr(runner, "EMBEDDING_MODE_RE")
+
+
+class TestAndListsAreRefused:
+    def test_a_failing_first_command_would_otherwise_pass(self, runner):
+        with pytest.raises(runner.TutorialError, match="&&"):
+            runner.assert_no_and_lists("cd nowhere && true\n")
+
+    def test_and_inside_quotes_or_a_comment_is_text(self, runner):
+        runner.assert_no_and_lists('git commit -m "a && b"  # then c && d\n')
+
+    def test_errexit_really_does_not_stop_a_failed_first_command(self):
+        """The reason for the rule, pinned against the shell itself."""
+        import subprocess
+
+        result = subprocess.run(
+            ["bash", "-c", "set -e; false && true; echo ran"], text=True, capture_output=True
+        )
+        assert result.returncode == 0 and "ran" in result.stdout
+
+    def test_the_pages_the_runner_runs_have_none(self, runner):
+        for doc in (
+            REPO / "docs" / "getting-started.md",
+            REPO / "docs" / "tutorials" / "pyrite-in-20-minutes.md",
+        ):
+            for block in runner.extract_blocks(doc):
+                if not runner.should_skip(block):
+                    runner.assert_no_and_lists(block)
+
+    def test_getting_started_has_one_search_per_block(self, runner):
+        for block in runner.extract_blocks(REPO / "docs" / "getting-started.md"):
+            assert len(runner.SEARCH_RE.findall(block)) <= 1
+
+
+class TestFirstHourClaims:
+    """#583: claims the first hour makes that a test can hold to the code."""
+
+    def test_the_readme_types_no_counts_of_tests_or_adrs(self):
+        readme = (REPO / "README.md").read_text()
+        assert "~4100" not in readme
+        assert not __import__("re").search(r"\(\d+ ADRs\)", readme)
+
+    def test_no_first_hour_page_says_hosted_instance(self):
+        for name in ("README.md", "docs/getting-started.md"):
+            assert "hosted instance" not in (REPO / name).read_text(), name
+
+    @pytest.mark.parametrize("name", ["render.yaml", "fly.toml"])
+    def test_deploy_templates_say_the_operator_creates_the_first_admin(self, name):
+        text = (REPO / name).read_text()
+        assert "pyrite-admin user create" in text
+        assert "first account registered" not in text
+
+    def test_help_opens_with_the_one_tagline(self):
+        from typer.testing import CliRunner
+
+        from pyrite.cli import TAGLINE, app
+
+        assert "citizen journalists" not in TAGLINE
+        out = CliRunner().invoke(app, ["--help"]).output
+        assert TAGLINE in " ".join(out.split())

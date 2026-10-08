@@ -9,8 +9,9 @@ app = "pyrite"  # Change this to your app name
 [env]
   PYRITE_HOST = "0.0.0.0"
   PYRITE_DATA_DIR = "/data"
-  # A public hostname: require accounts. The first account registered becomes
-  # admin, so register yours right after the first deploy.
+  # A public hostname: require accounts. Registration stays closed until an
+  # admin exists: after the first deploy, create yours in the container with
+  # `pyrite-admin user create <username> --role admin`.
   PYRITE_AUTH_ENABLED = "true"
 
 [http_service]

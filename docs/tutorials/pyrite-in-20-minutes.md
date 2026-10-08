@@ -23,7 +23,8 @@ Commands you type are in `bash` blocks. Things you say to Claude are in `text` b
 There is no PyPI package yet, so install from git, into a folder of its own.
 
 ```bash
-mkdir pyrite-tutorial && cd pyrite-tutorial
+mkdir pyrite-tutorial
+cd pyrite-tutorial
 ```
 
 ```bash

@@ -61,10 +61,14 @@ from .task_commands import task_app
 
 logger = logging.getLogger(__name__)
 
+# The one-line description, as the README gives it. Defined once: `--help`
+# prints it, and the callback below carries no docstring of its own.
+TAGLINE = "Knowledge-as-Code for humans and AI agents."
+
 app = typer.Typer(
     cls=PyriteCLIGroup,
     name="pyrite",
-    help="Multi-KB research infrastructure for citizen journalists and AI agents",
+    help=TAGLINE,
     no_args_is_help=True,
     epilog="New to a KB? Run `pyrite orient -k <kb-name>` first -- it summarizes "
     "types, tags, recent changes, and schema in one call.",
@@ -108,7 +112,8 @@ def _main(
         "(any position; PYRITE_LOG_LEVEL sets it without a flag).",
     ),
 ) -> None:
-    """Multi-KB research infrastructure for citizen journalists and AI agents."""
+    # No docstring: `TAGLINE` is the help text.
+    return None
 
 
 def _get_svc():
@@ -461,6 +466,8 @@ def serve(
     web_dir = Path(__file__).parent.parent.parent / "web"
     dist_dir = web_dir / "dist"
 
+    if build and not web_dir.is_dir():
+        console.print("[yellow]--build did nothing: this install has no web/ directory.[/yellow]")
     if build and web_dir.is_dir():
         console.print("[dim]Building frontend...[/dim]")
         result = subprocess.run(
@@ -480,10 +487,17 @@ def serve(
         console.print(f"[dim]Starting Pyrite at http://{host}:{port}[/dim]")
     else:
         console.print(f"[dim]Starting API server at http://{host}:{port}[/dim]")
-        console.print(
-            "[yellow]No web/dist/ found — run 'pyrite serve --build' or "
-            "'cd web && npm run build' first.[/yellow]"
-        )
+        if web_dir.is_dir():
+            console.print(
+                "[yellow]No web/dist/ found — run 'pyrite serve --build' or "
+                "'cd web && npm install && npm run build' first.[/yellow]"
+            )
+        else:
+            console.print(
+                "[yellow]No web UI in this install: the built frontend is not packaged "
+                "yet. The API and MCP server work; to get the UI, clone the repository "
+                "and run 'cd web && npm install && npm run build'.[/yellow]"
+            )
 
     from ..server.api import create_app
 
