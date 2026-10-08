@@ -89,6 +89,8 @@ dev = [
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
     "pytest-xdist==3.8.0",
+    # Bounds every test (#766): a hung retry loop ended nothing for 2h on #752.
+    "pytest-timeout==2.4.0",
     # Diff coverage on the PR's 3.12 leg (advisory; see ci.yml's test job).
     "diff-cover==10.6.0",
     # Pinned exactly: tests/test_storage_invariants.py runs derandomized, and
@@ -121,6 +123,9 @@ include = ["pyrite", "pyrite.*"]
 [tool.pytest.ini_options]
 testpaths = ["tests", "extensions"]
 python_files = ["test_*.py"]
+# Per-test ceiling in seconds (#766); TestEveryTestIsBounded pins it <= 600.
+# A test that needs longer is marked @pytest.mark.timeout(N) with a reason.
+timeout = 600
 addopts = "-v --tb=short -m 'not slow and not e2e'"
 markers = [
     "integration: tests requiring full environment setup (DB, indexing, network)",

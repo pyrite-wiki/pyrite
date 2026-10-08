@@ -387,7 +387,7 @@ class TestPinnedTestRunner:
     silent `uv pip install` drift.
     """
 
-    _PINNED = {"pytest", "pytest-cov", "pytest-xdist"}
+    _PINNED = {"pytest", "pytest-cov", "pytest-xdist", "pytest-timeout"}
 
     def _dev_extra(self, pyproject: dict) -> list[str]:
         return pyproject["project"]["optional-dependencies"]["dev"]
@@ -415,6 +415,30 @@ class TestPinnedTestRunner:
                     assert spec.count("==") == 1 and not any(
                         op in spec for op in (">=", "<=", "~=", "!=")
                     ), spec
+
+
+class TestEveryTestIsBounded:
+    """A hung test must end by itself (#766).
+
+    On #752 a local verify-red run of tests/test_file_lock.py spun for 2h01m:
+    with the guard removed a retry loop never ended, and nothing bounded it.
+    pytest-timeout with a default in pyproject.toml bounds every test, on
+    every machine, without a flag anyone has to remember. 600 s is the ceiling
+    (CI's slowest single test is ~40 s); a test that really needs longer says
+    so with `@pytest.mark.timeout(N)` and a reason.
+    """
+
+    CEILING = 600
+
+    def test_pytest_timeout_is_a_dev_dependency(self, pyproject):
+        specs = pyproject["project"]["optional-dependencies"]["dev"]
+        assert any(s.startswith("pytest-timeout") for s in specs), specs
+
+    def test_default_timeout_is_set_and_not_above_the_ceiling(self, pyproject):
+        opts = pyproject["tool"]["pytest"]["ini_options"]
+        assert "timeout" in opts, "no default `timeout` in [tool.pytest.ini_options]"
+        timeout = opts["timeout"]
+        assert isinstance(timeout, int | float) and 0 < timeout <= self.CEILING, timeout
 
 
 class TestChangeClassifier:
