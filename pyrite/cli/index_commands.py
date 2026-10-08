@@ -327,7 +327,7 @@ def index_embed(
         cli_error(
             "sentence-transformers is not installed.",
             error_code="DEPENDENCY_MISSING",
-            suggestion="install with: pip install pyrite[semantic]",
+            suggestion=semantic_unavailable(False)[2],
         )
 
     config, db = get_config_and_db()

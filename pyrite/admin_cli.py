@@ -243,7 +243,11 @@ def index_embed(kb_name: str = typer.Argument(..., help="KB to generate embeddin
             count = embed_svc.embed_kb(kb_name)
             console.print(f"[green]Generated embeddings for {count} entries[/green]")
         except ImportError:
-            console.print("[red]Error:[/red] Install semantic extras: pip install pyrite[semantic]")
+            from rich.text import Text
+
+            from .utils.install_hints import extra_install_command
+
+            console.print("[red]Error:[/red]", Text(extra_install_command("semantic")))
 
 
 @index_app.command("health")

@@ -4,7 +4,7 @@ Embedding Service for Semantic Search
 Provides vector embeddings via sentence-transformers and sqlite-vec for
 semantic similarity search across knowledge base entries.
 
-Requires optional dependencies: pip install pyrite[semantic]
+Requires the optional semantic extra; remedies use the current source install.
 """
 
 import json
@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from ..storage.database import PyriteDB
+from ..utils.install_hints import extra_install_command
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ def semantic_unavailable(
         return (
             "extra_missing",
             "sentence-transformers is not installed",
-            "install with `pip install pyrite[semantic]`",
+            f"install with `{extra_install_command('semantic')}`",
         )
     if vec_available:
         return None
@@ -83,7 +84,7 @@ def semantic_unavailable(
         return (
             "sqlite_vec_missing",
             "the sqlite-vec package is not installed",
-            "install with `pip install pyrite[semantic]`",
+            f"install with `{extra_install_command('semantic')}`",
         )
     if vec_load_error is not None:
         cause = (
