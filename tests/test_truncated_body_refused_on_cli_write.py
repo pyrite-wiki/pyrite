@@ -108,6 +108,9 @@ def test_cli_import_json_refuses_marked_record_and_imports_the_rest(cli_env):
     assert "cli-marked" not in stems
 
 
+@pytest.mark.control(
+    reason="This pins existing YAML marker stripping; Markdown auto-detection does not change this write path."
+)
 def test_cli_import_yaml_marker_never_reaches_the_write(cli_env):
     """YAML's importer strips the marker, so the record imports -- safely.
 
@@ -403,6 +406,9 @@ def test_cli_update_without_marker_still_works(cli_env):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.control(
+    reason="This pins the existing per-format marker contract, independent of .md filename auto-detection."
+)
 def test_importer_marker_passthrough_is_pinned():
     """Pin which importers carry ADR-0034's marker through to the caller.
 

@@ -512,6 +512,9 @@ CASES: list[tuple[str, list, str]] = [
 ]
 
 
+@pytest.mark.control(
+    reason="This pins test-table coverage; the individual shape cases carry the behavior regressions."
+)
 def test_every_shape_is_in_the_table():
     """Property 7: all original and #756 frontmatter shapes are exercised."""
     assert len(SHAPES) == 20

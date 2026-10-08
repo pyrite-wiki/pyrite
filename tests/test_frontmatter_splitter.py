@@ -1158,6 +1158,12 @@ def test_stream_is_opt_in_and_the_default_keeps_the_whole_body():
     assert len(import_markdown(data, stream=True)) == 2
 
 
+@pytest.mark.control(
+    reason=(
+        "These cases pin the existing default and --stream CLI paths; the blank-line boundary "
+        "regression is covered separately."
+    )
+)
 @pytest.mark.parametrize("opt_in", [False, True], ids=["default", "stream"])
 def test_import_cli_stream_flag(opt_in, tmp_path):
     """`pyrite import --format markdown` reads one entry unless --stream is given."""
