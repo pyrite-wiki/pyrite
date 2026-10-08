@@ -128,18 +128,14 @@ pyrite index embed                 # embed everything not yet embedded
 pyrite index sync                  # incremental index update, then embed
 ```
 
-`pyrite-server` also drains what is owed on every startup and at the end of `POST /api/index/sync`. `GET /api/index/embed-status` reports how much is outstanding, and a semantic search against a KB with no embeddings yet says so in its `warnings` instead of returning a bare empty list. Set `PYRITE_AUTO_EMBED=0` to opt out of embedding entirely and keep keyword search only:
-
-```bash
-pyrite index embed -k my-research
-```
+`pyrite-server` also drains what is owed on every startup and at the end of `POST /api/index/sync`. `GET /api/index/embed-status` reports how much is outstanding, and a semantic search against a KB with no embeddings yet says so in its `warnings` instead of returning a bare empty list. Set `PYRITE_AUTO_EMBED=0` to opt out of embedding entirely and keep keyword search only. Now search by meaning:
 
 ```bash
 pyrite search "early computer science pioneers" -k my-research --mode semantic
 ```
 <!-- runner: expect-text pyrite index embed -->
 
-With the embeddings built, that finds Ada Lovelace. Until they are, the search prints `warning: semantic leg skipped ... run pyrite index embed` and returns nothing. The tutorial's test run is offline, so it sees that warning.
+With the embeddings built, that finds Ada Lovelace. Until they are, the search prints `warning: semantic leg skipped ... run pyrite index embed` and returns nothing. The tutorial's test run is offline, so it sees that warning. Without the `semantic` extra the warning says instead that sentence-transformers is not installed and suggests `pip install pyrite[semantic]`; there is no PyPI wheel yet, so install it the way you installed Pyrite: `pip install -e ".[semantic]"` in a clone, or `pyrite[server,cli,semantic] @ git+...` from a release tag (see the [README](../README.md#install)).
 
 **Hybrid mode** combines both, and still answers from the keyword leg while the embeddings are missing:
 
@@ -256,7 +252,7 @@ The `zettelkasten` template gives note-maturity types; the extension behind it i
 
 ## Launch the Web UI
 
-Pyrite ships an optional web interface for browsing, editing, and visualizing your knowledge base. It is built from the `web/` directory of a clone, so from the repository root, once:
+Pyrite ships an optional web interface for browsing, editing, and visualizing your knowledge base. It is built from the `web/` directory of your clone, so from the repository root, once:
 
 ```bash
 cd web && npm install && npm run build

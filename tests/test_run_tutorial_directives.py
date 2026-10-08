@@ -212,6 +212,10 @@ class TestAndListsAreRefused:
     def test_and_inside_quotes_or_a_comment_is_text(self, runner):
         runner.assert_no_and_lists('git commit -m "a && b"  # then c && d\n')
 
+    def test_a_hash_inside_quotes_does_not_hide_an_and_list(self, runner):
+        with pytest.raises(runner.TutorialError, match="&&"):
+            runner.assert_no_and_lists('echo "a#b" && cd nope\n')
+
     def test_errexit_really_does_not_stop_a_failed_first_command(self):
         """The reason for the rule, pinned against the shell itself."""
         import subprocess

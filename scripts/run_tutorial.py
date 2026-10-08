@@ -275,9 +275,11 @@ def strip_marker(stdout: str) -> str:
 def assert_no_and_lists(block: str) -> None:
     """Refuse `a && b`: errexit does not stop the shell when `a` fails (a
     failed `cd X && git init` exits 0), so the block would pass having done
-    nothing. One command per line is asserted; a chain is not."""
+    nothing. One command per line is asserted; a chain is not. Covers `&&`
+    only, not `||` or `;`. Quoted strings are blanked before comments are cut,
+    so a `#` inside quotes is not a comment."""
     for line in block.splitlines():
-        if "&&" in _QUOTED.sub('""', line.split("#", 1)[0]):
+        if "&&" in _QUOTED.sub('""', line).split("#", 1)[0]:
             raise TutorialError(
                 "a tutorial block chains commands with `&&`, which `set -e` does not "
                 f"enforce (a failing first command still exits 0); one command per line:\n{line}"
