@@ -1594,40 +1594,214 @@ def _ruamel_keys(text: str) -> list:
 
 # Every container ruamel can load a key into, and where a key can sit in it
 # (#749 fix round 1). A new container kind must be added here.
+#
+# #769 item 6: a case here is only evidence if ruamel really loads a
+# ``TaggedScalar`` key into the container it names, so
+# ``test_every_key_container_case_loads_a_tagged_scalar_key`` checks that
+# against ruamel's own loader, independent of the guards under test.
 _KEY_CONTAINERS = {
-    "top-level mapping": "!foo a: 1\nb: 1\n",
-    "nested mapping": "p:\n  !foo k: 1\nb: 1\n",
-    "flow mapping": "p: {!foo k: 1}\nb: 1\n",
-    "mapping in a list item": "l:\n- !foo k: a\nb: 1\n",
-    "flow mapping in a flow list": "l: [{!foo k: 1}]\nb: 1\n",
-    "!!str-tagged key": "!!str x: a\nb: 1\n",
-    "!!float-tagged key": "!!float 1: a\nb: 1\n",
-    "!!binary key": "!!binary aGk=: a\nb: 1\n",
-    "!!set flow member": "s: !!set {? !!str a}\nb: 1\n",
-    "!!set block member": "s: !!set\n  ? !foo a\n  ? b\nb: 1\n",
-    "!!omap key": "o: !!omap\n- !!str a: 1\n- b: 2\nb: 1\n",
-    "!!pairs key": "o: !!pairs\n- !!str a: 1\nb: 1\n",
-    "!!pairs key after a plain one": "o: !!pairs\n- a: 1\n- !foo a: 2\nb: 1\n",
-    "custom-tagged mapping value": "o: !foo\n  !bar k: 1\nb: 1\n",
-    "custom-tagged list value": "o: !foo\n- !bar k: 1\nb: 1\n",
-    "mapping under a set": "o: !!set {a}\np:\n  !foo k: 1\nb: 1\n",
+    "top-level mapping": (
+        "!foo a: 1\nb: 1\n",
+        "CommentedMap",
+    ),
+    "nested mapping": (
+        "p:\n  !foo k: 1\nb: 1\n",
+        "CommentedMap>CommentedMap",
+    ),
+    "flow mapping": (
+        "p: {!foo k: 1}\nb: 1\n",
+        "CommentedMap>CommentedMap",
+    ),
+    "mapping in a list item": (
+        "l:\n- !foo k: a\nb: 1\n",
+        "CommentedMap>CommentedSeq>CommentedMap",
+    ),
+    "flow mapping in a flow list": (
+        "l: [{!foo k: 1}]\nb: 1\n",
+        "CommentedMap>CommentedSeq>CommentedMap",
+    ),
+    "!!str-tagged key": (
+        "!!str x: a\nb: 1\n",
+        "CommentedMap",
+    ),
+    "!!set flow member": (
+        "s: !!set {? !!str a}\nb: 1\n",
+        "CommentedMap>CommentedSet",
+    ),
+    "!!set block member": (
+        "s: !!set\n  ? !foo a\n  ? b\nb: 1\n",
+        "CommentedMap>CommentedSet",
+    ),
+    "!!omap key": (
+        "o: !!omap\n- !!str a: 1\n- b: 2\nb: 1\n",
+        "CommentedMap>CommentedOrderedMap",
+    ),
+    "!!pairs key": (
+        "o: !!pairs\n- !!str a: 1\nb: 1\n",
+        "CommentedMap>list>tuple",
+    ),
+    "!!pairs key after a plain one": (
+        "o: !!pairs\n- a: 1\n- !foo a: 2\nb: 1\n",
+        "CommentedMap>list>tuple",
+    ),
+    "custom-tagged mapping value": (
+        "o: !foo\n  !bar k: 1\nb: 1\n",
+        "CommentedMap>CommentedMap",
+    ),
+    "custom-tagged list value": (
+        "o: !foo\n- !bar k: 1\nb: 1\n",
+        "CommentedMap>CommentedSeq>CommentedMap",
+    ),
+    "mapping under a set": (
+        "o: !!set {a}\np:\n  !foo k: 1\nb: 1\n",
+        "CommentedMap>CommentedMap",
+    ),
+    # a tagged key beside its plain twin (#769 item 1): refused as tagged,
+    # not as a duplicate
+    "tagged key beside its plain twin": (
+        "!!str a: 1\na: 2\nb: 1\n",
+        "CommentedMap",
+    ),
+    "nested tagged key beside its plain twin": (
+        "p:\n  !!str a: 1\n  a: 2\nb: 1\n",
+        "CommentedMap>CommentedMap",
+    ),
+    "set members, tagged and plain": (
+        "s: !!set {? !!str a, ? a}\nb: 1\n",
+        "CommentedMap>CommentedSet",
+    ),
+}
+
+# Keys ruamel loads as a *different type* than the plain reading, not as a
+# TaggedScalar: found by the node-level guard.
+_RETYPED_KEYS = {
+    "!!float-tagged key": ("!!float 1: a\nb: 1\n", float),
+    "!!binary key": ("!!binary aGk=: a\nb: 1\n", bytes),
 }
 
 
-@pytest.mark.parametrize("text", _KEY_CONTAINERS.values(), ids=list(_KEY_CONTAINERS))
+def _tagged_key_paths(value: Any, path: tuple = (), seen: set | None = None) -> list[str]:
+    """The container types from the root down to each container that holds a
+    ``TaggedScalar`` key (a mapping key, a set member, a ``!!pairs`` tuple's
+    first item), e.g. ``CommentedMap>CommentedSet``. Walked generically from
+    ruamel's loaded value; written for the test, not shared with the guard."""
+    seen = set() if seen is None else seen
+    if id(value) in seen:
+        return []
+    seen.add(id(value))
+    here = path + (type(value).__name__,)
+    tagged = lambda k: type(k).__name__ == "TaggedScalar"  # noqa: E731
+    out: list[str] = []
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if tagged(k):
+                out.append(">".join(here))
+            out += _tagged_key_paths(v, here, seen)
+    elif isinstance(value, (set, frozenset)) or type(value).__name__ == "CommentedSet":
+        out += [">".join(here) for m in value if tagged(m)]
+    elif isinstance(value, tuple):
+        if value and tagged(value[0]):
+            out.append(">".join(here))
+        for v in value[1:]:
+            out += _tagged_key_paths(v, here, seen)
+    elif isinstance(value, list):
+        for v in value:
+            out += _tagged_key_paths(v, here, seen)
+    return out
+
+
+@pytest.mark.control(reason="checks the test data against ruamel's loader; no Pyrite code runs")
+@pytest.mark.parametrize("name", list(_KEY_CONTAINERS))
+def test_every_key_container_case_loads_a_tagged_scalar_key(name):
+    """#769 item 6: the list cannot drift from what ruamel loads. Each case
+    names the container path its tagged key sits in; a case whose tag lands
+    in another container (a "!!set block member" that loads into a plain
+    mapping) proves nothing about the guard for the container it names."""
+    from pyrite.utils.yaml import load_yaml
+
+    text, path = _KEY_CONTAINERS[name]
+    assert path in _tagged_key_paths(load_yaml(text)), name
+
+
+@pytest.mark.control(reason="checks the test data against ruamel's loader; no Pyrite code runs")
+@pytest.mark.parametrize("name", list(_RETYPED_KEYS))
+def test_every_retyped_key_case_loads_a_key_of_another_type(name):
+    from pyrite.utils.yaml import load_yaml
+
+    text, kind = _RETYPED_KEYS[name]
+    assert any(isinstance(k, kind) for k in load_yaml(text))
+
+
+def _refused(text, op, *, category):
+    """The oracle comes from the property, not from the code: ``apply()``
+    raises (so it returns no text to write) and the reason names the
+    category, the thing that is wrong."""
+    with pytest.raises(OperationRefusedError) as raised:
+        run(text, op)
+    assert category in raised.value.reason, (op, raised.value.reason)
+    return raised.value.reason
+
+
+_ALL_KEY_CASES = {n: t for n, (t, _) in {**_KEY_CONTAINERS, **_RETYPED_KEYS}.items()}
+
+
+@pytest.mark.parametrize("text", _ALL_KEY_CASES.values(), ids=list(_ALL_KEY_CASES))
 def test_a_key_pyrite_cannot_name_is_refused_as_a_tagged_key_in_every_container(text):
     """Reference: ruamel loads each of these with a ``TaggedScalar`` (or a
     differently typed) key in a Mapping, a ``CommentedSet`` (an
     ``collections.abc.Set``, not a ``set``), an ``!!omap``, a ``!!pairs`` list
     of tuples or a tagged collection. Every operation, the body write
-    included, is refused with a reason that is true for it (cold read of
-    #759: the set gave 'the result does not parse to the operation applied')."""
+    included, is refused as a tagged key (cold
+    read of #759: the set gave 'the result does not parse to the operation
+    applied'; #769: a tagged key beside its plain twin said 'duplicate')."""
     full = f"---\n{text}---\nx\n"
     for op in [Set("b", 2), Set("brand_new", 1), Unset("b"), ReplaceBody("y")]:
-        with pytest.raises(OperationRefusedError) as raised:
-            run(full, op)
-        assert "tagged key" in raised.value.reason, (op, raised.value.reason)
-        assert "no path" not in raised.value.reason
+        _refused(full, op, category="tagged key")
+
+
+def test_limit_a_tag_inside_a_set_members_value_is_not_seen():
+    """#769 item 2, a limit stated in the module doc: ruamel discards the
+    value of a set member, so the tagged key inside it cannot be detected.
+    The edit is applied elsewhere and the member's bytes are kept."""
+    full = "---\ns: !!set {? a: {!!str k: 1}}\nb: 1\n---\nx\n"
+    after, _ = run(full, Set("b", 2))
+    assert after == full.replace("b: 1", "b: 2")
+
+
+_SHAPE_REFUSALS = {
+    "complex key": ("a: 1\n? [x, y]\n: v\n", "complex key"),
+    "duplicate key": ("a: 1\na: 2\n", "duplicate key"),
+    "flow root": ("{a: 1}\n", "flow-style"),
+    "non-mapping root": ("- a\n- b\n", "not a mapping"),
+    "parse error": ("a: [1\n", "does not parse"),
+    "tagged key": ("!foo a: 1\n", "tagged key"),
+}
+
+
+@pytest.mark.parametrize("name", list(_SHAPE_REFUSALS))
+def test_every_frontmatter_shape_refusal_says_the_body_write_is_refused_too(name):
+    """#769 item 3: the body is not edited either when the frontmatter cannot
+    be (allowing body-only writes is #760). A reader of the reason for a
+    ``ReplaceBody`` must be told that, whatever shape stopped it. ``"body"`` is
+    a deliberate wording check: the reason is free text (a parse-error reason
+    can echo the YAML, e.g. ``a: [body``, so the check is made per category
+    too)."""
+    yaml_text, category = _SHAPE_REFUSALS[name]
+    full = f"---\n{yaml_text}---\nx\n"
+    for op in _EVERY_OP:
+        reason = _refused(full, op, category=category)
+        assert "body" in reason, (name, op, reason)
+
+
+def test_a_key_item_with_no_key_is_refused_not_a_crash():
+    """#769 item 5: ruamel never loads an empty ``!!pairs`` item (it refuses
+    the document first), so no file reaches this; the guard is called as the
+    function it is, so a future loader change cannot turn it into a
+    ``ValueError`` from ``key, *rest = ()``."""
+    from pyrite.storage.file_operations import _loaded_tagged_key
+
+    with pytest.raises(OperationRefusedError):
+        _loaded_tagged_key((), set())
 
 
 @pytest.mark.control(

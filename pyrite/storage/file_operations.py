@@ -126,7 +126,14 @@ tests in ``tests/test_file_operations.py``):
   has a case in ``_KEY_CONTAINERS``: a mapping (``CommentedMap``, ``!!omap``),
   a set (``CommentedSet``, an ``abc.Set`` not a ``set``; its members are the
   keys), the ``(key, value)`` tuples of ``!!pairs``, a tagged collection, and
-  any of them nested in lists or each other. Body-only writes on a file whose
+  any of them nested in lists or each other (each case is checked against
+  ruamel's loader by ``test_every_key_container_case_loads_a_tagged_scalar_key``).
+  The tagged check runs before the duplicate-key refusal, so ``!!str a: 1``
+  beside ``a: 2`` is refused as tagged. Limit (#769): a tag inside the
+  *value* of a ``!!set`` member (``s: !!set {? a: {!!str k: 1}}``) is
+  discarded by ruamel, so nothing loaded shows it and it is not refused; an
+  edit elsewhere keeps those bytes
+  (``test_limit_a_tag_inside_a_set_members_value_is_not_seen``). Body-only writes on a file whose
   frontmatter Pyrite cannot model are refused too; allowing them is a
   separate change.
 - Unicode normalisation (#749): no normalisation. A path segment or new
@@ -570,23 +577,20 @@ def _parse(text: str, span: FrontmatterSpan) -> _Doc:
     try:
         root = y.compose(yaml_text)
     except YAMLError as e:
-        raise OperationRefusedError(f"the frontmatter does not parse: {e}") from e
+        raise OperationRefusedError(f"the frontmatter does not parse: {e}{_BODY_TOO}") from e
     if root is not None and not isinstance(root, MappingNode):
-        raise OperationRefusedError("the frontmatter is not a mapping")
+        raise OperationRefusedError(f"the frontmatter is not a mapping{_BODY_TOO}")
     if root is not None and root.flow_style:
-        raise OperationRefusedError("the frontmatter is one flow-style mapping ({...}); not edited")
+        raise OperationRefusedError(
+            f"the frontmatter is one flow-style mapping ({{...}}); not edited{_BODY_TOO}"
+        )
     if root is not None and _has_complex_key(root, set()):
         raise OperationRefusedError(
-            "the frontmatter has a complex key (? [a, b] or ? {a: 1}); not edited"
+            f"the frontmatter has a complex key (? [a, b] or ? {{a: 1}}); not edited{_BODY_TOO}"
         )
     if root is not None and _has_tagged_key(root, set(), y):
         raise OperationRefusedError(_TAGGED_KEY)
-    if root is not None:
-        duplicate = _duplicate_key(root, set())
-        if duplicate is not None:
-            raise OperationRefusedError(
-                f"the frontmatter has a duplicate key {duplicate!r}; not edited"
-            )
+    duplicate = _duplicate_key(root, set()) if root is not None else None
     anchored = frozenset(
         id(k)
         for k, v in (root.value if root is not None else [])
@@ -595,9 +599,16 @@ def _parse(text: str, span: FrontmatterSpan) -> _Doc:
     try:
         loaded = y.constructor.construct_document(root) if root is not None else {}
     except YAMLError as e:
-        raise OperationRefusedError(f"the frontmatter does not parse: {e}") from e
+        if duplicate is not None:
+            raise OperationRefusedError(_DUPLICATE.format(duplicate)) from e
+        raise OperationRefusedError(f"the frontmatter does not parse: {e}{_BODY_TOO}") from e
+    # before the duplicate refusal: a tagged key beside its plain twin
+    # (``!!str a: 1`` / ``a: 2``) is a duplicate to the node walk but, first,
+    # a key Pyrite cannot name (#769)
     if _loaded_tagged_key(loaded, set()):
         raise OperationRefusedError(_TAGGED_KEY)
+    if duplicate is not None:
+        raise OperationRefusedError(_DUPLICATE.format(duplicate))
     eol = "\r\n" if text[max(0, span.start - 2) : span.start] == "\r\n" else "\n"
     return _Doc(text, span, root, _plain(loaded or {}), eol, anchored)
 
@@ -616,6 +627,12 @@ def _has_complex_key(node: Node, seen: set[int]) -> bool:
         return any(_has_complex_key(item, seen) for item in node.value)
     return False
 
+
+# Every frontmatter-shape refusal also refuses ``ReplaceBody``: a body-only
+# write on a file whose frontmatter Pyrite cannot model is refused (#760 may
+# allow it), so each reason says so (#769).
+_BODY_TOO = "; the body is not written either"
+_DUPLICATE = "the frontmatter has a duplicate key {!r}; not edited" + _BODY_TOO
 
 _TAGGED_KEY = (
     "the frontmatter has a tagged key (!foo a: 1, !!str a: 1) that Pyrite cannot model, "
@@ -666,6 +683,10 @@ def _loaded_tagged_key(value: Any, seen: set[int]) -> bool:
         return any(type(m).__name__ == "TaggedScalar" for m in value)
     if isinstance(value, tuple):  # a !!pairs item: (key, value)
         seen.add(id(value))
+        if not value:  # ruamel refuses an empty !!pairs item first; refuse, don't crash
+            raise OperationRefusedError(
+                f"the frontmatter holds a (key, value) item with no key; not edited{_BODY_TOO}"
+            )
         key, *rest = value
         return type(key).__name__ == "TaggedScalar" or any(
             _loaded_tagged_key(v, seen) for v in rest
