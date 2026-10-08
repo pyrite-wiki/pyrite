@@ -95,9 +95,11 @@ the ``threading.Lock`` covers that.
 - **A KB reachable only through ``core.worktree`` or ``GIT_DIR``** (a work tree
   whose git dir is not found by walking up from it) is refused as not in a
   git repository.
-- **The entry's directory moved away during the write** fails closed: the
-  write raises ``FileNotFoundError`` and changes nothing, and its temp file may
-  be left in the moved directory (safe to delete, as after a crash).
+- **The entry's directory moved away during the write**: on the rename path
+  the write raises ``FileNotFoundError`` and changes nothing, and its temp file
+  may be left in the moved directory (safe to delete, as after a crash). On the
+  in-place fallback, a directory swapped after the key recheck can let a second
+  writer hold the new key while this one writes (#774).
 - **A second mount of one filesystem** that reports another ``st_dev`` (two
   NFS mounts of one export, by reasoning; not run) gives other keys. A bind
   mount keeps ``st_dev`` and ``st_ino``, so its key is the same.

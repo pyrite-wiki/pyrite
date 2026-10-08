@@ -34,6 +34,6 @@ The lock key is the `(st_dev, st_ino)` of the entry's parent directory plus its 
 
 - **A stopped holder.** A holder that is stopped rather than dead (`SIGSTOP`, a debugger, a suspended job) keeps its lock, and writers wait until `LockTimeout`. The kernel frees the lock of a holder that dies.
 - **`core.worktree` or `GIT_DIR`.** A KB reachable only through `core.worktree` or `GIT_DIR` (its git dir is not found by walking up from the work tree) is refused as not in a git repository.
-- **The entry's directory moved away during a write** fails closed: `FileNotFoundError`, nothing written, and the temp file may be left in the moved directory (safe to delete).
+- **The entry's directory moved away during a write**: the rename path fails closed (`FileNotFoundError`, nothing written; the temp file may be left in the moved directory, safe to delete). On the in-place fallback, a directory swapped after the key recheck can let two writers hold the lock (#774).
 - **Hosts and mounts.** The lock is per host only. Some NFS/SMB mounts do not support `flock`. A second mount of one filesystem that reports another `st_dev` gives other keys (by reasoning; not run).
 - See the module docstring for the rest.
