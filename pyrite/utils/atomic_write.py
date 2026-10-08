@@ -27,18 +27,96 @@ Not carried across the rename: ACLs and extended attributes (macOS
 A crash between creating the temp file and the rename can leave a
 ``.<name>.<hex>.tmp`` file beside the real one. Nothing reads or removes it;
 it is safe to delete.
+
+**The compare (``expect=``).** With ``expect``, the write is optimistic
+(ADR-0042 decision 10): under ``pyrite.utils.file_lock``, the momentary lock
+in the git dir of the repository holding the file (§10a A1), it compares the file
+with what the caller based its change on, immediately before the rename, and
+writes nothing and raises ``FileChanged`` (carrying what is on disk) when they
+differ. On the in-place paths above the compare runs under the lock
+immediately before the truncate, and the write itself is not atomic (A5).
+A file with more than one hard link is refused for ``expect=`` (``HardLinked``,
+checked under the lock): another name for the inode would take another lock.
+The wait for the lock is bounded (``lock_timeout``, default ``LOCK_TIMEOUT``);
+an unbounded one is a ``ValueError``.
+The lock covers a writer that takes it; an editor that does not can still slip
+in between the compare and the rename. A file that is not in a git work tree
+has no lock, and ``expect=`` raises ``NotInGitRepository`` for it before
+anything is written. Without ``expect`` nothing changes: no lock, no git-dir
+lookup, no compare.
 """
 
 from __future__ import annotations
 
+import contextlib
 import errno
+import hashlib
 import logging
 import os
+import re
 import secrets
 import stat
+from collections.abc import Iterator
 from pathlib import Path
 
+from pyrite.utils.file_lock import LOCK_TIMEOUT, check_timeout, file_lock
+
 logger = logging.getLogger(__name__)
+
+
+__all__ = ["ABSENT", "LOCK_TIMEOUT", "FileChanged", "HardLinked", "atomic_write_text"]
+
+_DIGEST = re.compile(r"[0-9a-fA-F]{64}")
+
+
+class _Absent:
+    def __repr__(self) -> str:
+        return "ABSENT"
+
+
+ABSENT = _Absent()
+"""``expect=ABSENT``: the file must not exist (a create that must not overwrite)."""
+
+
+class FileChanged(Exception):  # noqa: N818 - the name ADR-0042 decision 10 uses
+    """``expect`` did not match the file; nothing was written.
+
+    ``on_disk`` is the file's bytes now, or ``None`` when it does not exist.
+    """
+
+    def __init__(self, path: os.PathLike[str] | str, on_disk: bytes | None) -> None:
+        super().__init__(f"{path} changed since it was read; nothing was written")
+        self.path = str(path)
+        self.on_disk = on_disk
+
+    @property
+    def on_disk_text(self) -> str | None:
+        return None if self.on_disk is None else self.on_disk.decode("utf-8", "replace")
+
+
+class HardLinked(OSError):  # noqa: N818 - reads as the condition, like FileChanged
+    """An ``expect=`` write to a file with more than one hard link; nothing
+    was written. Another name for the same inode would take another lock
+    (ADR-0042 §10a A2, 2026-10-07)."""
+
+    def __init__(self, path: os.PathLike[str] | str, links: int) -> None:
+        super().__init__(
+            f"{path} has {links} hard links; an expect= write is refused, because "
+            "another name for the same file would take a different lock. Break the "
+            "link (copy the file over itself), or write without expect"
+        )
+        self.path = str(path)
+        self.links = links
+
+
+def _matches(expect: bytes | str | _Absent, on_disk: bytes | None) -> bool:
+    if expect is ABSENT:
+        return on_disk is None
+    if on_disk is None:
+        return False
+    if isinstance(expect, bytes):
+        return on_disk == expect
+    return hashlib.sha256(on_disk).hexdigest() == expect.lower()  # str: sha256 hex digest
 
 
 def _fsync_directory(directory: Path) -> None:
@@ -80,10 +158,60 @@ def _owner_restored(tmp: str, fd: int, original: os.stat_result) -> bool:
     return True
 
 
-def atomic_write_text(path: str | os.PathLike[str], text: str, *, encoding: str = "utf-8") -> None:
-    """Replace ``path`` with ``text`` crash-safely; see the module docstring."""
+def atomic_write_text(
+    path: str | os.PathLike[str],
+    text: str,
+    *,
+    encoding: str = "utf-8",
+    expect: bytes | str | _Absent | None = None,
+    lock_timeout: float = LOCK_TIMEOUT,
+) -> None:
+    """Replace ``path`` with ``text`` crash-safely; see the module docstring.
+
+    ``expect``: the file's expected current bytes, its sha256 hex digest (a
+    64-hex ``str``; any other ``str`` is a ``ValueError``, so text is never
+    mistaken for a digest), or ``ABSENT``. Raises ``FileChanged`` and writes
+    nothing on a mismatch, ``LockTimeout`` if the lock is not free in
+    ``lock_timeout`` seconds, ``NotInGitRepository`` (a ``LockDirError``) when
+    the file is not in a git work tree, ``LockDirError`` when the lock
+    directory cannot be used.
+    """
+    if expect is not None:
+        check_timeout(lock_timeout)
+    if expect is not None and expect is not ABSENT:
+        if isinstance(expect, str):
+            if not _DIGEST.fullmatch(expect):
+                raise ValueError(
+                    "expect as a str must be a 64-hex sha256 digest; pass bytes for content"
+                )
+        elif not isinstance(expect, bytes):
+            raise TypeError(
+                f"expect must be bytes, a sha256 hex digest or ABSENT, not {type(expect).__name__}"
+            )
     data = text.encode(encoding)
     target = Path(os.path.realpath(path))
+
+    @contextlib.contextmanager
+    def guard() -> Iterator[None]:
+        """Lock and compare, around the one step that publishes the bytes."""
+        if expect is None:
+            yield
+            return
+        with file_lock(target, timeout=lock_timeout):
+            try:
+                links = os.stat(target).st_nlink
+            except FileNotFoundError:
+                links = 0
+            if links > 1:  # under the lock: a link made since the first stat counts
+                raise HardLinked(target, links)
+            try:
+                on_disk: bytes | None = target.read_bytes()
+            except FileNotFoundError:
+                on_disk = None
+            if not _matches(expect, on_disk):
+                raise FileChanged(target, on_disk)
+            yield
+
     try:
         original: os.stat_result | None = os.stat(target)
     except FileNotFoundError:
@@ -95,7 +223,8 @@ def atomic_write_text(path: str | os.PathLike[str], text: str, *, encoding: str 
         raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), str(target))
 
     if original is not None and original.st_nlink > 1:
-        _write_in_place(target, data, f"it has {original.st_nlink} hard links")
+        with guard():
+            _write_in_place(target, data, f"it has {original.st_nlink} hard links")
         return
 
     tmp = str(target.parent / f".{target.name}.{secrets.token_hex(8)}.tmp")
@@ -106,9 +235,10 @@ def atomic_write_text(path: str | os.PathLike[str], text: str, *, encoding: str 
     except OSError as e:
         if original is None:
             raise
-        _write_in_place(
-            target, data, f"cannot create a file in {target.parent} ({e.strerror or e})"
-        )
+        with guard():
+            _write_in_place(
+                target, data, f"cannot create a file in {target.parent} ({e.strerror or e})"
+            )
         return
 
     fallback: str | None = None
@@ -129,13 +259,15 @@ def atomic_write_text(path: str | os.PathLike[str], text: str, *, encoding: str 
         finally:
             os.close(fd)
         if fallback is None:
-            os.replace(tmp, target)
+            with guard():
+                os.replace(tmp, target)
     except BaseException:
         _remove(tmp)
         raise
     if fallback is not None:
         _remove(tmp)
-        _write_in_place(target, data, fallback)
+        with guard():
+            _write_in_place(target, data, fallback)
         return
     _fsync_directory(target.parent)
 
