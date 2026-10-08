@@ -475,6 +475,10 @@ def sw_prioritize(
             console.print(f"  [red]{item['id']}: {item['error']}[/red]")
         else:
             console.print(f"  {item['id']} → rank {item['rank']}")
+    from pyrite.utils.errors import exit_unless_whole
+
+    failed = sum(1 for item in result.get("updated", []) if "error" in item)
+    exit_unless_whole(failed, len(result.get("updated", [])) - failed)
 
 
 @sw_app.command("standards")
@@ -678,15 +682,18 @@ def sw_migrate_standards(
             return
 
         migrated = 0
+        skipped = 0
         for row in rows:
             file_path = row.get("file_path") or row.get("source_path", "")
             if not file_path:
                 console.print(f"  [red]Skip[/red] {row['title']}: no file_path")
+                skipped += 1
                 continue
 
             path = Path(file_path)
             if not path.exists():
                 console.print(f"  [red]Skip[/red] {row['title']}: file not found at {path}")
+                skipped += 1
                 continue
 
             content = path.read_text()
@@ -727,6 +734,9 @@ def sw_migrate_standards(
 
         console.print(f"\n[green]{migrated}[/green] entries migrated.")
         console.print("[dim]Run `pyrite index sync` to update the index.[/dim]")
+        from pyrite.utils.errors import exit_unless_whole
+
+        exit_unless_whole(skipped, migrated)  # a skipped standard was asked for and not done
     finally:
         db.close()
 

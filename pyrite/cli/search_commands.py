@@ -15,6 +15,7 @@ from ..config import load_config
 from ..exceptions import QuerySyntaxError, QueryTooLongError
 from ..services.read_shaping import parse_fields_param, project_fields
 from ..storage.repository import KBRepository
+from ..utils.errors import exit_unless_whole
 from .context import get_config_with_registered_kbs
 from .output import validate_output_format
 
@@ -349,6 +350,8 @@ def _search_files(config, query, kb_name, entry_type, limit):
     console.print(f"[dim]Searching for '{query}'...[/dim]")
 
     results = []
+    unreadable = 0
+    scanned = 0
     for kb in kbs:
         if not kb.path.exists():
             continue
@@ -357,6 +360,7 @@ def _search_files(config, query, kb_name, entry_type, limit):
         for md_file in repo.list_files():
             try:
                 content = md_file.read_text(encoding="utf-8")
+                scanned += 1
                 if query.lower() in content.lower():
                     entry = repo._load_entry(md_file)
 
@@ -369,13 +373,22 @@ def _search_files(config, query, kb_name, entry_type, limit):
                         break
             except Exception:
                 logger.warning("Search failed for KB %s", kb.name, exc_info=True)
+                unreadable += 1
                 continue
 
         if len(results) >= limit:
             break
 
+    if unreadable:
+        # The answer is incomplete: say so, and do not exit 0 (#526).
+        typer.echo(
+            f"{unreadable} file(s) could not be read; the results below may be incomplete.",
+            err=True,
+        )
+
     if not results:
         console.print("[yellow]No results found.[/yellow]")
+        exit_unless_whole(unreadable, scanned)
         return
 
     table = Table(title=f"Search Results ({len(results)})")
@@ -388,3 +401,4 @@ def _search_files(config, query, kb_name, entry_type, limit):
         table.add_row(kb_name, entry.entry_type, entry.title, entry.id)
 
     console.print(table)
+    exit_unless_whole(unreadable, scanned)

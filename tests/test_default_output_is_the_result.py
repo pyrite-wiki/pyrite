@@ -515,12 +515,11 @@ class TestIndexEmbedReportsTheVectorsItAdded:
         result = CliRunner().invoke(app, ["index", "embed", "--force"])
         assert "Embedded: 2" in result.output, result.output
 
-    @pytest.mark.control(
-        reason="dev exited 0 with Errors named; pins that exit codes are unchanged here (0.25.8 owns them)"
-    )
-    def test_model_unreachable_still_exits_zero_with_errors_named(self, tmp_path, monkeypatch):
-        """Regime: model unreachable. Exit codes are 0.25.8's contract and
-        scripts/release.py asserts exit 0 here, so this pins the *report* only."""
+    def test_model_unreachable_names_the_errors_and_exits_one(self, tmp_path, monkeypatch):
+        """Regime: model unreachable. The report names the errors, and the exit
+        is 1 (#526): none was embedded, and they stay owed (3 when some were). docs/getting-started.md's
+        embed step accepts 0 or 1, which is what keeps the offline tutorial and the
+        release check (scripts/release.py step c) green."""
         from typer.testing import CliRunner
 
         from pyrite.cli import app
@@ -537,7 +536,7 @@ class TestIndexEmbedReportsTheVectorsItAdded:
             lambda self: MagicMock(**{"embed_entry.side_effect": offline}),
         )
         result = CliRunner().invoke(app, ["index", "embed"])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == 1, result.output
         assert "Embedded: 0" in result.output
         assert "Errors: 2" in result.output, result.output
         assert _vector_count(db) == 0

@@ -17,6 +17,7 @@ from rich.console import Console
 from ..exceptions import EntryNotFoundError, KBNotFoundError, PyriteError, ValidationError
 from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_fields_param, project_fields
+from ..utils.errors import PARTIAL_EXIT
 from ..utils.frontmatter import (
     Frontmatter,
     Malformed,
@@ -359,6 +360,7 @@ def register_entry_commands(app: typer.Typer) -> None:
 
             # Add links after creation
             if link:
+                failed_links: list[tuple[str, str]] = []
                 for link_spec in link:
                     if ":" in link_spec:
                         target, relation = link_spec.split(":", 1)
@@ -369,6 +371,22 @@ def register_entry_commands(app: typer.Typer) -> None:
                         console.print(f"  [dim]Linked to {target} ({relation})[/dim]")
                     except (PyriteError, ValueError) as e:
                         console.print(f"  [yellow]Link failed:[/yellow] {e}")
+                        failed_links.append((target.strip(), relation.strip()))
+                if failed_links:
+                    # The entry is kept (maintainer, 2026-10-02), so a retry of the
+                    # create answers ENTRY_EXISTS: say what finishes the job.
+                    console.print(
+                        f"[yellow]Entry '{entry.id}' was created; "
+                        f"{len(failed_links)} of {len(link)} link(s) failed.[/yellow]"
+                    )
+                    for tgt, rel in failed_links:
+                        console.print(
+                            f"  add it once '{tgt}' exists: "
+                            f"pyrite link {entry.id} {tgt} -r {rel} -k {kb_name}",
+                            markup=False,
+                            highlight=False,
+                        )
+                    raise typer.Exit(PARTIAL_EXIT)
 
     @app.command("add")
     def add_entry(
@@ -639,9 +657,21 @@ def register_entry_commands(app: typer.Typer) -> None:
                             f"writing '{inverse}' on {target}."
                         )
                         Console(stderr=True).print(f"[dim]{notice}[/dim]", soft_wrap=True)
-                    inv_result = svc.add_link(
-                        target, tkb, source, inverse, target_kb=kb_name, note=note
-                    )
+                    try:
+                        inv_result = svc.add_link(
+                            target, tkb, source, inverse, target_kb=kb_name, note=note
+                        )
+                    except (PyriteError, ValueError) as inv_err:
+                        # The forward link is on disk: part of --bidi happened (#526).
+                        Console(stderr=True).print(
+                            escape(
+                                f"The forward link was written, but the inverse ({target} "
+                                f"--[{inverse}]--> {source}) failed: {inv_err}"
+                            ),
+                            soft_wrap=True,
+                            style="red",
+                        )
+                        raise typer.Exit(PARTIAL_EXIT) from None
                     _report(inv_result["created"], target, inv_result["relation"], source, kb_name)
             except EntryNotFoundError as e:
                 _cli_error(str(e), "rich", "NOT_FOUND")

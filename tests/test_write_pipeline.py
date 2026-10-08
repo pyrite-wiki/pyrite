@@ -228,7 +228,7 @@ def test_cli_import_refuses_a_schema_violation(env):
         )
     )
     result = _cli(env, ["import", str(path), "-k", KB])
-    assert result.exit_code == 1, result.output
+    assert result.exit_code == 3, result.output  # one written, one refused (#526)
     assert "[SCHEMA_VIOLATION]" in result.output
     assert _file(env, "probe-bulk") is None
     assert "role: editor" in _file(env, "probe-fine").read_text()
@@ -238,7 +238,9 @@ def test_cli_import_dry_run_reports_refusals_without_writing(env):
     path = env["tmp_path"] / "d.json"
     path.write_text(json.dumps([{"type": "person", "title": "Dry Bad", "role": "bogus"}]))
     result = _cli(env, ["import", str(path), "-k", KB, "--dry-run"])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, (
+        result.output
+    )  # a dry run that would refuse exits as the real run would (#526)
     assert "Would refuse [SCHEMA_VIOLATION]" in result.output, result.output
     assert _file(env, "dry-bad") is None
 
@@ -416,7 +418,9 @@ def test_cli_import_dry_run_works_on_a_read_only_kb(env):
     path = env["tmp_path"] / "ro.json"
     path.write_text(json.dumps([{"type": "person", "title": "Ro Check", "role": "bogus"}]))
     result = _cli(env, ["import", str(path), "-k", KB, "--dry-run"])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, (
+        result.output
+    )  # a dry run that would refuse exits as the real run would (#526)
     assert "Would refuse [SCHEMA_VIOLATION]" in result.output, result.output
 
 
@@ -956,7 +960,9 @@ def test_cli_import_dry_run_reports_a_duplicate_within_the_batch(env):
         )
     )
     result = _cli(env, ["import", str(path), "-k", KB, "--dry-run"])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 3, (
+        result.output
+    )  # a dry run that would refuse exits as the real run would (#526)
     assert result.output.count("Would refuse [ENTRY_EXISTS]") == 1, result.output
     assert _file(env, "twin-dry") is None
 

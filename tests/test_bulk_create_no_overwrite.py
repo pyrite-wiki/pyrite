@@ -151,10 +151,10 @@ def test_cli_import_rejects_duplicate_id_without_overwriting(cli_env, tmp_path):
 
         result = runner.invoke(app, ["import", str(import_file), "--kb", "test-kb"])
 
-    # Since #378 `pyrite import` exits 1 when any record is refused
-    # (docs/json-contracts.md, "Write refusals"); the refusal itself is this
-    # test's point and is unchanged.
-    assert result.exit_code == 1, result.output
+    # Since #378 `pyrite import` exits non-zero when any record is refused; since
+    # #526 that is 3 when other records were written (1 when none were). The
+    # refusal itself is this test's point and is unchanged.
+    assert result.exit_code == 3, result.output
     assert "Imported 1 entries" in result.output
     assert "(1 failed)" in result.output
     assert "already exists" in result.output

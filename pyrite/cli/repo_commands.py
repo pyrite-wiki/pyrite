@@ -106,7 +106,8 @@ def repo_sync(
                 retryable=True,
             )
 
-        for repo_name, info in result.get("repos", {}).items():
+        repos = result.get("repos", {})
+        for repo_name, info in repos.items():
             if info["success"]:
                 console.print(f"[green]{repo_name}:[/green] {info['message']}")
                 if info.get("changes", 0) > 0:
@@ -114,6 +115,10 @@ def repo_sync(
                     console.print(f"  Re-indexed: {info.get('reindexed', 0)}")
             else:
                 console.print(f"[red]{repo_name}:[/red] {info['error']}")
+        from ..utils.errors import exit_unless_whole
+
+        failed = sum(1 for info in repos.values() if not info["success"])
+        exit_unless_whole(failed, len(repos) - failed)
     finally:
         db.close()
 

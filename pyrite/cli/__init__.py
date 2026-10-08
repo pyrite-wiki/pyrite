@@ -38,7 +38,7 @@ from ..exceptions import (
 from ..logging import configure_entry_point_logging
 from ..services.access_policy import UNSCOPED
 from ..services.kb_service import KBService
-from ..utils.errors import PyriteCLIGroup, cli_error
+from ..utils.errors import PyriteCLIGroup, cli_error, exit_unless_whole
 from .browse_commands import register_browse_commands
 from .collection_commands import collections_app
 from .context import cli_context, open_index_db
@@ -888,6 +888,9 @@ def import_entries(
                 if not r.get("valid"):
                     console.print(_refusal_line("Would refuse", record, r))
             console.print("\n[dim]No entries were created (--dry-run).[/dim]")
+            # A dry run that would refuse exits as the real run would (#526).
+            would_refuse = sum(1 for r in results if not r.get("valid"))
+            exit_unless_whole(would_refuse, len(results) - would_refuse)
             return
 
         created = 0
@@ -916,8 +919,8 @@ def import_entries(
         # body, an existing id, an undeclared type, a schema violation. Exit
         # non-zero so a script or agent cannot read "Imported N" off a run
         # that silently dropped records.
-        if failed:
-            raise typer.Exit(1)
+        # Some written and some refused is a partial run (3); none written is 1.
+        exit_unless_whole(failed, created)
 
 
 # =============================================================================

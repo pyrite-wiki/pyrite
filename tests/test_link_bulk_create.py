@@ -182,7 +182,7 @@ class TestBulkCreate:
             result = runner.invoke(
                 app, ["links", "bulk-create", str(yaml_file), "--kb", "test-notes"]
             )
-            assert result.exit_code == 0
+            assert result.exit_code == 1  # nothing created or skipped (#526)
             assert "0 created" in result.output
             assert "1 failed" in result.output
             assert "source entry not found" in result.output

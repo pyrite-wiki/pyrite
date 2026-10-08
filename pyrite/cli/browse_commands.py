@@ -149,13 +149,18 @@ def register_browse_commands(app: typer.Typer) -> None:
                 "not_found": not_found,
             }
 
+            from ..utils.errors import exit_unless_whole
+
             formatted = _format_output(resp_data, output_format)
             if formatted is not None:
                 typer.echo(formatted)
+                # An id that was asked for and is not there: some read, some not (#526).
+                exit_unless_whole(len(not_found), len(results))
                 return
 
             if not results:
                 console.print("[yellow]No entries found.[/yellow]")
+                exit_unless_whole(len(not_found), 0)
                 return
 
             for r in results:
@@ -166,6 +171,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 console.print(f"\n[yellow]Not found: {len(not_found)} entries[/yellow]")
                 for nf in not_found:
                     console.print(f"  [dim]{nf['kb_name']}:{nf['entry_id']}[/dim]")
+                exit_unless_whole(len(not_found), len(results))
 
     @app.command("orient")
     def orient_kb(
@@ -476,12 +482,20 @@ def register_browse_commands(app: typer.Typer) -> None:
     ):
         """Find entries that link to a given entry."""
         with cli_context() as (config, db, svc):
+            from ..exceptions import PyriteError
             from ..services.graph_service import GraphService
+            from ..utils.errors import cli_error_from
+
+            # A subject that is not there is NOT_FOUND, not an empty list (#526).
+            try:
+                svc.require_entry(entry_id, kb_name)
+            except PyriteError as e:
+                cli_error_from(e, output_format)
 
             graph_svc = GraphService(db)
             links = graph_svc.get_backlinks(entry_id, kb_name, readable_kbs=UNSCOPED)
 
-            if not links:
+            if not links and output_format == "rich":
                 console.print(f"[yellow]No backlinks found for '{entry_id}'.[/yellow]")
                 return
 

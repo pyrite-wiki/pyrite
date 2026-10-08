@@ -13,7 +13,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from ..utils.errors import cli_error
+from ..utils.errors import PARTIAL_EXIT, cli_error
 
 logger = logging.getLogger(__name__)
 
@@ -350,7 +350,9 @@ def extension_install(
             # Force re-discovery
             registry = get_registry()
             registry._discovered = False
-            registry.discover()
+            # strict: a plugin whose entry point fails to load raises here,
+            # where plain discover() only logs it and verification would pass.
+            registry.discover(strict=True)
             verified = True
         except Exception as e:
             console.print(f"[yellow]Warning:[/yellow] Plugin verification failed: {e}")
@@ -373,6 +375,10 @@ def extension_install(
                 console.print("  [green]Verified: plugin loaded successfully[/green]")
             else:
                 console.print("  [yellow]Verification: could not confirm plugin loaded[/yellow]")
+
+    if verify and not verified:
+        # Installed, but not confirmed to load: the verification was asked for (#526).
+        raise typer.Exit(PARTIAL_EXIT)
 
 
 @extension_app.command("list")

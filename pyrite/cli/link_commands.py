@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.table import Table
 
 from ..services.access_policy import UNSCOPED
+from ..utils.errors import exit_unless_whole
 from .context import cli_context, get_config_and_db
 
 links_app = typer.Typer(help="Link validation and inspection")
@@ -258,6 +259,7 @@ def links_bulk_create(
         )
         for detail in failed_details:
             console.print(f"  [red]{detail}[/red]")
+        exit_unless_whole(failed, created + skipped)
 
 
 def _build_suggest_query(entry: dict) -> str:

@@ -30,6 +30,12 @@ def is_available() -> bool:
         return False
 
 
+def semantic_unavailable_for(db: Any) -> tuple[str, str, str] | None:
+    """`semantic_unavailable` for an open index database: the surface hands over
+    the db and keeps its hands off the connection's attributes."""
+    return semantic_unavailable(db.vec_available, getattr(db, "vec_load_error", None))
+
+
 def _extension_loading_refused(error: Exception) -> bool:
     """Is this the failure of a sqlite3 that cannot load *any* extension?
 

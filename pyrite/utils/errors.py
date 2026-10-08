@@ -43,6 +43,20 @@ def build_error(
     return payload
 
 
+# The command ran and did only part of what was asked, or left items for a retry.
+# 1 stays "refused: nothing was done"; 2 is click's usage error. `ids missing` and
+# `ids pin` shipped this meaning first (docs/json-contracts.md, "Exit codes (CLI)").
+PARTIAL_EXIT = 3
+
+
+def exit_unless_whole(failed: int, done: int) -> None:
+    """Exit for a command that loops over items: 0 when none failed, 3 when
+    some did and some were done, 1 when none was done. Print what happened
+    and what did not before calling it."""
+    if failed:
+        raise typer.Exit(PARTIAL_EXIT if done else 1)
+
+
 def cli_error(
     message: str,
     output_format: str = "rich",

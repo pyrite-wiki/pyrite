@@ -521,6 +521,8 @@ def kb_commit(
     sign_off: bool = typer.Option(False, "--signoff", "-s", help="Add Signed-off-by line"),
 ):
     """Commit changes in a KB's git repository."""
+    from ..utils.errors import cli_error
+
     with cli_context() as (config, db, svc):
         from ..services.export_service import ExportService
 
@@ -533,8 +535,18 @@ def kb_commit(
                 if result.get("files"):
                     for f in result["files"]:
                         console.print(f"  [dim]{f}[/dim]")
+            elif result.get("error") == "No changes to commit":
+                # Nothing to do is the asked-for end state, not a failure.
+                console.print("[yellow]No commit:[/yellow] No changes to commit")
             else:
-                console.print(f"[yellow]No commit:[/yellow] {result.get('error', 'Unknown error')}")
+                # A hook rejected it, staging failed, ...: the commit was asked for
+                # and did not happen (#526).
+                cli_error(
+                    result.get("error", "Unknown error"),
+                    error_code="COMMIT_FAILED",
+                )
+        except typer.Exit:
+            raise
         except Exception as e:
             _kb_error(e)
 

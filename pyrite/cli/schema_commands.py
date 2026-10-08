@@ -10,7 +10,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from ..utils.errors import cli_error
+from ..utils.errors import cli_error, exit_unless_whole
 from ..utils.frontmatter import (
     Frontmatter,
     NoFrontmatter,
@@ -367,8 +367,6 @@ def schema_migrate(
                 if entry_type and entry.entry_type != entry_type:
                     continue
 
-                checked += 1
-
                 # Check if version changed (migration happened on load)
                 type_schema = kb_config.kb_schema.get_type_schema(entry.entry_type)
                 needs_save = (
@@ -377,13 +375,16 @@ def schema_migrate(
                     and entry._schema_version != type_schema.version
                 )
 
+                if needs_save and not dry_run:
+                    entry._schema_version = type_schema.version
+                    entry.kb_name = kb_name
+                    entry.file_path = file_path
+                    entry.save(file_path)
+                # Counted after the save: a file that failed to save was neither
+                # checked nor migrated, whatever the summary used to say.
+                checked += 1
                 if needs_save:
                     migrated += 1
-                    if not dry_run:
-                        entry._schema_version = type_schema.version
-                        entry.kb_name = kb_name
-                        entry.file_path = file_path
-                        entry.save(file_path)
             except Exception as e:
                 errors += 1
                 logger.warning("Migration error for %s: %s", file_path, e)
@@ -393,9 +394,10 @@ def schema_migrate(
         console.print(f"  Checked: {checked}")
         console.print(f"  Migrated: {migrated}")
         if errors:
-            console.print(f"  [red]Errors: {errors}[/red]")
-        if migrated == 0:
+            console.print(f"  [red]Errors: {errors}[/red] (files left as they were)")
+        elif migrated == 0:
             console.print("  [green]All entries are up to date.[/green]")
+        exit_unless_whole(errors, checked)
 
 
 def _collect_md_files(paths: list[Path]) -> list[Path]:

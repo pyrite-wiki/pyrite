@@ -290,10 +290,13 @@ def backlinks_cmd(
     try:
         from .services.graph_service import GraphService
 
+        # A subject that is not there is NOT_FOUND, not an empty list (#526).
+        svc.require_entry(entry_id, kb_name)
+
         graph_svc = GraphService(db)
         links = graph_svc.get_backlinks(entry_id, kb_name, readable_kbs=UNSCOPED)
 
-        if not links:
+        if not links and output_format == "rich":
             console.print(f"[yellow]No backlinks found for '{entry_id}'.[/yellow]")
             return
 
@@ -308,7 +311,7 @@ def backlinks_cmd(
 
         console.print(backlinks_table(entry_id, links))
     except (PyriteError, ValueError) as e:
-        _emit_error(str(e), output_format)
+        _emit_error(str(e), output_format, error_code=getattr(e, "error_code", "ERROR"))
         raise typer.Exit(1) from None
     finally:
         db.close()

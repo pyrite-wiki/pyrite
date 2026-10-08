@@ -10,7 +10,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from ..utils.errors import cli_error
+from ..utils.errors import PARTIAL_EXIT, cli_error, exit_unless_whole
 from .context import cli_db_context, get_config_and_db
 
 logger = logging.getLogger(__name__)
@@ -410,6 +410,12 @@ def index_embed(
         )
     if stats["errors"]:
         console.print(f"  [red]Errors: {stats['errors']}[/red]")
+        console.print(
+            "  [dim]Those entries are still owed an embedding; "
+            "`pyrite index embed` retries them.[/dim]"
+        )
+        # The batch rule (#526): 3 if some were embedded or already were, 1 if none.
+        exit_unless_whole(stats["errors"], embedded + skipped)
 
 
 @index_app.command("health")
@@ -700,6 +706,8 @@ def index_reconcile(
             console.print(
                 f"[yellow]No moves planned; {len(result.errors)} entry path(s) could not be checked.[/yellow]"
             )
+        if result.errors:
+            raise typer.Exit(PARTIAL_EXIT)
         return
 
     table = Table(title=f"{'[DRY RUN] ' if not apply else ''}Files to move")
@@ -721,14 +729,18 @@ def index_reconcile(
 
     if not apply:
         console.print("\n[yellow]Dry run. Use --apply to execute moves.[/yellow]")
+        if result.errors:
+            raise typer.Exit(PARTIAL_EXIT)
         return
 
     if result.read_only:
         console.print("[red]Cannot move files in a read-only KB.[/red]")
-        return
+        raise typer.Exit(1)
 
     console.print(f"\n[green]Moved {result.moved} file(s).[/green]")
     console.print("The index was updated for successfully moved files.")
+    # Moves that failed were reported above; some moved, some did not.
+    exit_unless_whole(len(result.errors), result.moved)
 
 
 @index_app.command("jobs")

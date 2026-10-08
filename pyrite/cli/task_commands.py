@@ -513,6 +513,10 @@ def task_claim(
         formatted = _format_output(result, fmt)
         if formatted is not None:
             typer.echo(formatted)
+            if not result.get("claimed"):
+                # Agents coordinate on this exit: a lost claim is not a success,
+                # in any format (#526).
+                raise typer.Exit(1)
             return
 
         if result.get("claimed"):
@@ -582,9 +586,13 @@ def task_decompose(
             # the new children.
             "parent_derived": svc.derived_for(kb_name, parent_id),
         }
+        from ..utils.errors import exit_unless_whole
+
+        failed = sum(1 for r in results if not r.get("created"))
         formatted = _format_output(output, fmt)
         if formatted is not None:
             typer.echo(formatted)
+            exit_unless_whole(failed, len(results) - failed)
             return
 
         console.print(f"[green]Decomposed:[/green] {parent_id}")
@@ -593,6 +601,7 @@ def task_decompose(
                 console.print(f"  [green]+[/green] {r['entry_id']}")
             else:
                 console.print(f"  [red]x[/red] {r.get('error', 'Unknown error')}")
+        exit_unless_whole(failed, len(results) - failed)
     except (PyriteError, ValueError) as e:
         _task_error(e, fmt)
     finally:

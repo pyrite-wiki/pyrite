@@ -8,6 +8,7 @@ from rich.console import Console
 
 from ..cli.context import cli_context
 from ..services.access_policy import UNSCOPED
+from ..utils.errors import exit_unless_whole
 from ..utils.frontmatter import Frontmatter, split_frontmatter
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ def export_collection(
 
     with cli_context() as (config, db, svc):
         entries: list[Entry] = []
+        unreadable: list[object] = []  # matched, but could not be loaded for the export
 
         if collection_id.startswith("q:"):
             # Query mode — resolve entries via collection query DSL
@@ -99,6 +101,8 @@ def export_collection(
                 entry = _load_entry_from_result(result, svc, kb)
                 if entry:
                     entries.append(entry)
+                else:
+                    unreadable.append(result)
         else:
             # Collection ID mode — load collection, resolve its entries
             collection = svc.load_entry_from_disk(collection_id, kb or "")
@@ -123,6 +127,8 @@ def export_collection(
                     entry = _load_entry_from_result(result, svc, kb)
                     if entry:
                         entries.append(entry)
+                    else:
+                        unreadable.append(result)
             elif collection.folder_path:
                 # Folder-based: list entries in that folder
                 kb_config = config.get_kb(kb or "")
@@ -138,6 +144,7 @@ def export_collection(
                                     entries.append(entry)
                             except Exception as e:
                                 logger.warning("Could not load %s: %s", md_file, e)
+                                unreadable.append(md_file)
 
         # Follow links to depth N
         if depth > 0 and entries:
@@ -145,6 +152,7 @@ def export_collection(
 
         if not entries:
             console.print("[yellow]No entries to export.[/yellow]")
+            exit_unless_whole(len(unreadable), 0)  # matched but unloadable: nothing exported
             raise typer.Exit(0)
 
         # Export
@@ -161,6 +169,12 @@ def export_collection(
         console.print(f"  Files created: {result['files_created']}")
         console.print(f"  Manifest: {output / '_manifest.md'}")
         console.print(f"  Output: {output}")
+        if unreadable:
+            console.print(
+                f"[yellow]{len(unreadable)} matched entr(ies) could not be loaded "
+                f"and are not in the export.[/yellow]"
+            )
+        exit_unless_whole(len(unreadable), result["entries_exported"])
 
 
 @export_app.command("site")

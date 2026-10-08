@@ -223,7 +223,9 @@ class TestAdminCli:
 
         with _patched(config):
             result = runner.invoke(app, ["repo", "sync", "org/none"])
-        assert "org/none" in result.output or "not found" in result.output.lower()
+        # `sync` answers {"success": False} for a repo it has none of; that is now an exit 1 (#526).
+        assert result.exit_code == 1, result.output
+        assert "org/none" in result.output or "no repos found" in result.output.lower()
 
 
 def test_patched_restores_the_real_load_config_even_when_admin_cli_is_unimported():

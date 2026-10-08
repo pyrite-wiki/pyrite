@@ -2333,6 +2333,30 @@ class KBService:
                 dates.append(entry_id[6:])  # strip "daily-"
         return dates
 
+    def require_entry(self, entry_id: str, kb_name: str) -> None:
+        """Raise unless ``entry_id`` exists in ``kb_name``: an empty answer about
+        a subject that is not there is a lie, so a reader asks this first.
+
+        Index first, disk as the verdict, as ``add_link``'s target check does:
+        the index is a derived cache, so a miss in it is a reason to ask the
+        repository, not an answer (design principle 5). Raises
+        ``KBNotFoundError`` for an unknown KB, ``EntryNotFoundError`` for an
+        absent entry.
+        """
+        kb_config = self.config.get_kb(kb_name)
+        if kb_config is None:
+            raise KBNotFoundError(f"KB not found: {kb_name}")
+        if self.db.get_entry(entry_id, kb_name) is not None:
+            return
+        if KBRepository(kb_config).load(entry_id) is not None:
+            return
+        # A link to a page that does not exist yet is stored and answered (a
+        # red link, `[[ghost-page]]`): the subject is absent, but the question
+        # "what links here" has an answer. Refuse only when nothing links to it.
+        if self.db.get_backlinks(entry_id, kb_name, limit=1, readable_kbs=None):
+            return
+        raise EntryNotFoundError(f"Entry not found: {entry_id}")
+
     def load_entry_from_disk(self, entry_id: str, kb_name: str) -> Entry | None:
         """Load an entry from disk via KBRepository."""
         kb_config = self.config.get_kb(kb_name)

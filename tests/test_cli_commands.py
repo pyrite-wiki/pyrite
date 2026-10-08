@@ -153,7 +153,24 @@ class TestTyperBacklinksCommand:
                 app, ["backlinks", "2025-01-10--test-event-0", "--kb", "test-events"]
             )
             assert result.exit_code == 0
-            assert "No backlinks" in result.output
+            assert json.loads(result.output) == {
+                "entry_id": "2025-01-10--test-event-0",
+                "entries": [],
+                "total": 0,
+            }
+            rich = runner.invoke(
+                app,
+                [
+                    "backlinks",
+                    "2025-01-10--test-event-0",
+                    "--kb",
+                    "test-events",
+                    "--format",
+                    "rich",
+                ],
+            )
+            assert rich.exit_code == 0
+            assert "No backlinks" in rich.output
 
 
 @pytest.mark.cli

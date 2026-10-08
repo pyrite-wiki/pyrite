@@ -414,14 +414,16 @@ def init_kb(
 
     # Index the KB
     entries_indexed = 0
+    index_error: str | None = None
     try:
         config = load_config()  # reload to get the newly added KB
         db = open_index_db(config)
         index_mgr = IndexManager(db, config)
         entries_indexed = index_mgr.index_kb(kb_name)
         db.close()
-    except Exception:
+    except Exception as exc:
         logger.warning("Initial indexing failed for %s", kb_name, exc_info=True)
+        index_error = str(exc) or type(exc).__name__
 
     # Result
     type_names = list(preset.get("types", {}).keys())
@@ -433,6 +435,8 @@ def init_kb(
         "types": type_names,
         "entries_indexed": entries_indexed,
     }
+    if index_error:
+        result["indexing_error"] = index_error
 
     formatted = _format_output(result, output_format)
     if formatted is not None:
@@ -444,3 +448,14 @@ def init_kb(
         if type_names:
             console.print(f"  Types: {', '.join(type_names)}")
         console.print(f"  Entries indexed: {entries_indexed}")
+
+    if index_error:
+        # The KB exists and is registered; the index is what is missing (#526).
+        from ..utils.errors import PARTIAL_EXIT
+
+        typer.echo(
+            f"KB '{kb_name}' was created, but its initial indexing failed: {index_error}\n"
+            f"Run `pyrite index sync -k {kb_name}` to index it.",
+            err=True,
+        )
+        raise typer.Exit(PARTIAL_EXIT)

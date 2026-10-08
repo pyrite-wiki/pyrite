@@ -530,7 +530,7 @@ class TestIndexReconcile:
         ):
             result = runner.invoke(app, ["index", "reconcile", "project", "--apply"])
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == 1, result.output  # nothing moved, one error (#526)
         assert "Could not reconcile my-task" in result.output
         assert source.exists()
         assert destination.read_text(encoding="utf-8") == "created by concurrent writer"
@@ -549,7 +549,7 @@ class TestIndexReconcile:
         ):
             result = runner.invoke(app, ["index", "reconcile", "project"])
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == 3, result.output  # an entry could not be checked (#526)
         assert "my-task" in result.output
         assert "outside KB" in result.output
         assert "Traceback" not in result.output
