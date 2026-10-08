@@ -99,6 +99,10 @@ Components [[qa-service]], [[rubric-checkers]], [[llm-rubric-evaluator]],
 - [[adr-0037]] themes 3b to 5 have not landed, so its allowlist is not empty and
   the four older structural tests have not folded in.
 - `judgment` criteria cannot fail by design ([[adr-0021]]).
+- No QA command checks a claim against its source. The factual-verification
+  backlog items are marked done, but nothing was built. The CLI's
+  `qa assess --tier 2` records `pass` without calling a model. Proposed:
+  [[claim-verification-in-qa]] and ADR-0047.
 - [[adr-0032]] section 3b is `proposed` inside an accepted ADR and
   `scripts/release.py` does the opposite; the merge method is stated two ways
   ([[adr-audit-2026-10]]); the live repository settings were not verified.
