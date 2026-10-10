@@ -27,3 +27,15 @@ def kb_name_in_use(config: PyriteConfig, db: PyriteDB, name: str) -> bool:
     if config.get_kb(name) is not None:
         return True
     return bool(db.execute_sql("SELECT 1 FROM kb WHERE name = :name", {"name": name}))
+
+
+# Fixed first segments under /api/kbs; reserving a name keeps every KB route reachable.
+RESERVED_KB_NAMES = frozenset({"ephemeral", "gc"})
+
+
+def refuse_reserved_kb_name(name: str) -> None:
+    """Refuse route-literal collisions when a new KB is registered."""
+    if name in RESERVED_KB_NAMES:
+        from ..exceptions import ConfigError
+
+        raise ConfigError(f"KB name '{name}' is reserved for an API route; choose another name")

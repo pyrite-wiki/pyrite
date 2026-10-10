@@ -156,7 +156,9 @@ class KBRegistryService:
         name already exists.
         """
         from ..storage.models import KB
+        from .kb_names import refuse_reserved_kb_name
 
+        refuse_reserved_kb_name(name)
         existing = self.db.session.get(KB, name)
         if existing:
             raise KBAlreadyExistsError(f"KB '{name}' already exists")

@@ -336,6 +336,15 @@ def init_kb(
 
     path = path.expanduser().resolve()
     kb_name = name or path.name
+    from ..exceptions import ConfigError
+    from ..services.kb_names import refuse_reserved_kb_name
+
+    try:
+        refuse_reserved_kb_name(kb_name)
+    except ConfigError as exc:
+        from ..utils.errors import cli_error
+
+        cli_error(str(exc), error_code="INVALID_KB_NAME")
 
     # Idempotency: if kb.yaml exists, warn and return
     kb_yaml_path = path / "kb.yaml"
