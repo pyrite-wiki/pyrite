@@ -16,20 +16,48 @@
     "count": "<ENUMERATION_CONTENT>"
   },
   "cascade_capture_lanes | read_key | missing-kb": {
+    "canonical": [],
     "count": "<ENUMERATION_CONTENT>",
-    "lanes": []
+    "entries_has_more": false,
+    "lanes": [],
+    "normalization": "trim, lowercase, replace underscores and spaces with hyphens; exact match only",
+    "other": [],
+    "other_has_more": false,
+    "other_total": 0,
+    "scanned_entries": 0
   },
   "cascade_capture_lanes | read_key | no-default-role-kb": {
+    "canonical": [],
     "count": "<ENUMERATION_CONTENT>",
-    "lanes": []
+    "entries_has_more": false,
+    "lanes": [],
+    "normalization": "trim, lowercase, replace underscores and spaces with hyphens; exact match only",
+    "other": [],
+    "other_has_more": false,
+    "other_total": 0,
+    "scanned_entries": 1
   },
   "cascade_capture_lanes | read_key | private-kb": {
+    "canonical": [],
     "count": "<ENUMERATION_CONTENT>",
-    "lanes": []
+    "entries_has_more": false,
+    "lanes": [],
+    "normalization": "trim, lowercase, replace underscores and spaces with hyphens; exact match only",
+    "other": [],
+    "other_has_more": false,
+    "other_total": 0,
+    "scanned_entries": 1
   },
   "cascade_capture_lanes | read_key | readable-kb": {
+    "canonical": [],
     "count": "<ENUMERATION_CONTENT>",
-    "lanes": []
+    "entries_has_more": false,
+    "lanes": [],
+    "normalization": "trim, lowercase, replace underscores and spaces with hyphens; exact match only",
+    "other": [],
+    "other_has_more": false,
+    "other_total": 0,
+    "scanned_entries": 1
   },
   "cascade_network | read_key | missing-kb": {
     "error": "Entry 'characterization-missing-entry' not found"

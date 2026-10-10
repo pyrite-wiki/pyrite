@@ -1,0 +1,1 @@
+Cascade capture-lane counts now include schema-derived canonical vocabulary and an ordered, bounded other bucket, with formatting normalization and explicit scan/truncation metadata. Legacy raw lane counts are retained.

@@ -509,16 +509,69 @@ class CascadePlugin:
         kb_name = args.get("kb_name")
 
         try:
-            results = db.list_entries(kb_name=kb_name, kb_names=readable_kbs, limit=5000)
+            from pyrite.config import KBConfig, load_config
+            from pyrite.services.kb_registry_service import KBRegistryService
+
+            config = self.ctx.config if self.ctx is not None else load_config()
+            canonical: dict[str, str] = {}
+            # Read only schemas in the caller's requested/readable scope,
+            # including registered KBs absent from config.yaml.
+            for kb in KBRegistryService(config, db).list_kbs():
+                name = kb["name"]
+                if (kb_name is not None and name != kb_name) or (
+                    readable_kbs is not None and name not in readable_kbs
+                ):
+                    continue
+                cfg = config.get_kb(name) or KBConfig(name=name, path=kb["path"])
+                for type_schema in cfg.kb_schema.types.values():
+                    field = type_schema.fields.get("capture_lanes")
+                    if field is None:
+                        continue
+                    options = field.options or field.items.get(
+                        "options", field.items.get("values", [])
+                    )
+                    for value in options:
+                        canonical.setdefault(_normalize_lane(value), value)
+
+            # Preserve the legacy raw counts; the new canonical/other fields
+            # make vocabulary and drift distinguishable without a breaking change.
+            results = db.list_entries(kb_name=kb_name, kb_names=readable_kbs, limit=5001)
             lane_counts: dict[str, int] = {}
-            for r in results:
+            canonical_counts = dict.fromkeys(canonical.values(), 0)
+            other_counts: dict[str, int] = {}
+            for r in results[:5000]:
                 meta = parse_meta(r)
-                for lane in meta.get("capture_lanes") or []:
+                # Count entries, not duplicate/variant spellings within one entry.
+                seen_canonical = set()
+                values = meta.get("capture_lanes") or []
+                for lane in values:
                     lane_counts[lane] = lane_counts.get(lane, 0) + 1
-            lanes = [
-                {"lane": k, "count": v} for k, v in sorted(lane_counts.items(), key=lambda x: -x[1])
-            ]
-            return {"count": len(lanes), "lanes": lanes}
+                for lane in set(values):
+                    match = canonical.get(_normalize_lane(lane))
+                    if match is None:
+                        other_counts[lane] = other_counts.get(lane, 0) + 1
+                    elif match not in seen_canonical:
+                        canonical_counts[match] += 1
+                        seen_canonical.add(match)
+
+            def rows(counts):
+                return [
+                    {"lane": lane, "count": count}
+                    for lane, count in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
+                ]
+
+            lanes = rows(lane_counts)
+            return {
+                "count": len(lanes),
+                "lanes": lanes,
+                "canonical": rows(canonical_counts),
+                "other": rows(other_counts)[:50],
+                "other_total": len(other_counts),
+                "other_has_more": len(other_counts) > 50,
+                "normalization": "trim, lowercase, replace underscores and spaces with hyphens; exact match only",
+                "scanned_entries": min(len(results), 5000),
+                "entries_has_more": len(results) > 5000,
+            }
         finally:
             if should_close:
                 db.close()
@@ -560,3 +613,8 @@ def _validate_cascade_entry(entry_type: str, fields: dict, ctx: dict) -> list[di
             )
 
     return errors
+
+
+def _normalize_lane(value: str) -> str:
+    """Formatting variants only; do not guess semantic synonyms."""
+    return value.strip().lower().replace("_", "-").replace(" ", "-")

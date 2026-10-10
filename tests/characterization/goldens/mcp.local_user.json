@@ -46,8 +46,15 @@
     "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
   },
   "cascade_capture_lanes | local_user | readable-kb": {
+    "canonical": [],
     "count": "<ENUMERATION_CONTENT>",
-    "lanes": []
+    "entries_has_more": false,
+    "lanes": [],
+    "normalization": "trim, lowercase, replace underscores and spaces with hyphens; exact match only",
+    "other": [],
+    "other_has_more": false,
+    "other_total": 0,
+    "scanned_entries": 1
   },
   "cascade_network | local_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
