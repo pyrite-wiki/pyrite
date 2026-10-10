@@ -10,6 +10,7 @@ import hashlib
 import logging
 import time
 from dataclasses import asdict, dataclass
+from weakref import WeakKeyDictionary
 
 from ..storage.database import PyriteDB
 from ..utils.metadata import parse_metadata
@@ -305,7 +306,9 @@ def _get_metadata_field(entry: dict, field_name: str) -> str | None:
 # Query caching
 # =============================================================================
 
-_query_cache: dict[str, tuple[float, list[dict], int]] = {}
+_query_cache: WeakKeyDictionary[PyriteDB, dict[str, tuple[float, list[dict], int]]] = (
+    WeakKeyDictionary()
+)
 CACHE_TTL = 60  # seconds
 
 
@@ -328,23 +331,29 @@ def evaluate_query_cached(
     *,
     readable_kbs: set[str] | list[str] | None,
 ) -> tuple[list[dict], int]:
-    """Cached version of evaluate_query, keyed by query and scope."""
+    """Cache queries per database instance and caller scope.
+
+    Writes may remain invisible for up to ``ttl`` seconds (60 by default).
+    Call ``clear_cache`` when immediate freshness is required. Weak database
+    keys prevent retaining a closed database just to keep its cached rows.
+    """
+    cache = _query_cache.setdefault(db, {})
     key = _cache_key(query, readable_kbs=readable_kbs)
     now = time.time()
 
-    if key in _query_cache:
-        cached_time, cached_entries, cached_total = _query_cache[key]
+    if key in cache:
+        cached_time, cached_entries, cached_total = cache[key]
         if now - cached_time < ttl:
             return cached_entries, cached_total
 
     entries, total = evaluate_query(query, db, readable_kbs=readable_kbs)
-    _query_cache[key] = (now, entries, total)
+    cache[key] = (now, entries, total)
 
     # Prune expired entries periodically
-    if len(_query_cache) > 100:
-        expired = [k for k, (t, _, _) in _query_cache.items() if now - t >= ttl]
+    if len(cache) > 100:
+        expired = [k for k, (t, _, _) in cache.items() if now - t >= ttl]
         for k in expired:
-            del _query_cache[k]
+            del cache[k]
 
     return entries, total
 
