@@ -72,39 +72,40 @@ class URLChecker:
 
         Returns {url: [entry_id, ...]} mapping.
         """
-        if entry_types is None:
-            entry_types = [
-                "timeline_event",
-                "solidarity_event",
-                "scene",
-                "investigation_event",
-                "note",
-            ]
-
+        # None means all indexed types, including core and plugin-defined types.
+        filters = [None] if entry_types is None else entry_types
         url_entries: dict[str, list[str]] = defaultdict(list)
 
-        for etype in entry_types:
-            try:
-                results = self.db.list_entries(kb_name=kb_name, entry_type=etype, limit=10000)
-            except Exception:
-                continue
+        for etype in filters:
+            offset = 0
+            while True:
+                try:
+                    results = self.db.list_entries(
+                        kb_name=kb_name, entry_type=etype, limit=10000, offset=offset
+                    )
+                except Exception:
+                    break
 
-            for r in results:
-                entry_id = r.get("id", "")
-                # list_entries doesn't include sources; fetch full entry
-                full = self.db.get_entry(entry_id, kb_name)
-                if not full:
-                    continue
-                sources = full.get("sources") or []
+                for r in results:
+                    entry_id = r.get("id", "")
+                    # list_entries doesn't include sources; fetch full entry
+                    full = self.db.get_entry(entry_id, kb_name)
+                    if not full:
+                        continue
+                    sources = full.get("sources") or []
 
-                for src in sources:
-                    url = ""
-                    if isinstance(src, dict):
-                        url = src.get("url", "")
-                    elif isinstance(src, str):
-                        url = src
-                    if url and url.startswith("http"):
-                        url_entries[url].append(entry_id)
+                    for src in sources:
+                        url = ""
+                        if isinstance(src, dict):
+                            url = src.get("url", "")
+                        elif isinstance(src, str):
+                            url = src
+                        if url and url.startswith("http"):
+                            url_entries[url].append(entry_id)
+
+                if len(results) < 10000:
+                    break
+                offset += len(results)
 
         return dict(url_entries)
 
