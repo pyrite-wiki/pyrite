@@ -1,0 +1,5677 @@
+{
+  "admin": {
+    "kb_backlinks": {
+      "arguments": {
+        "entry_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "entry_id": {
+            "description": "Entry ID to find backlinks for",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 100)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entry_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_batch_read": {
+      "arguments": {
+        "entries": []
+      },
+      "inputSchema": {
+        "properties": {
+          "body_limit": {
+            "description": "Max body chars to return per entry (default 8000, max 20000), within the 40000-char response budget.",
+            "type": "integer"
+          },
+          "body_offset": {
+            "description": "Start position in body text (default 0). Applied to all entries.",
+            "type": "integer"
+          },
+          "entries": {
+            "description": "List of entries to fetch (max 50)",
+            "items": {
+              "properties": {
+                "entry_id": {
+                  "description": "Entry ID",
+                  "type": "string"
+                },
+                "kb_name": {
+                  "description": "KB name",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "entry_id",
+                "kb_name"
+              ],
+              "type": "object"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "fields": {
+            "description": "Return only these fields per entry. Omit for all fields. Body chunking and the response budget still apply, and a projection that keeps `body` also keeps the truncation markers. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_batch_suggest": {
+      "arguments": {
+        "source_kb": "example",
+        "target_kb": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "exclude_linked": {
+            "description": "Exclude already-linked pairs (default: true)",
+            "type": "boolean"
+          },
+          "limit_per_entry": {
+            "description": "Max matches per source entry (default 3)",
+            "type": "integer"
+          },
+          "mode": {
+            "description": "Search mode (default: keyword)",
+            "enum": [
+              "keyword",
+              "semantic",
+              "hybrid"
+            ],
+            "type": "string"
+          },
+          "source_kb": {
+            "description": "KB to find connections FROM",
+            "type": "string"
+          },
+          "target_kb": {
+            "description": "KB to find connections TO",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_kb",
+          "target_kb"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_bulk_create": {
+      "arguments": {
+        "entries": [],
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "allow_undeclared": {
+            "description": "Allow entry types the KB's kb.yaml does not declare (each such item is refused otherwise).",
+            "type": "boolean"
+          },
+          "entries": {
+            "description": "Array of entry specs (max 50)",
+            "items": {
+              "properties": {
+                "body": {
+                  "description": "Entry body content (markdown)",
+                  "type": "string"
+                },
+                "date": {
+                  "description": "Date (YYYY-MM-DD)",
+                  "type": "string"
+                },
+                "entry_type": {
+                  "description": "Entry type: note, person, organization, event, etc.",
+                  "type": "string"
+                },
+                "importance": {
+                  "description": "Importance 1-10",
+                  "type": "integer"
+                },
+                "metadata": {
+                  "description": "Additional fields",
+                  "type": "object"
+                },
+                "tags": {
+                  "description": "Tags for categorization",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "title": {
+                  "description": "Entry title",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "kb_name": {
+            "description": "Target KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kb_name",
+          "entries"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_commit": {
+      "arguments": {
+        "kb": "example",
+        "message": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb": {
+            "description": "Knowledge base name",
+            "type": "string"
+          },
+          "message": {
+            "description": "Commit message describing the changes",
+            "type": "string"
+          },
+          "paths": {
+            "description": "Specific file paths to commit (commits all changes if omitted)",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "sign_off": {
+            "description": "Add Signed-off-by line to commit",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kb",
+          "message"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_create": {
+      "arguments": {
+        "entry_type": "example",
+        "kb_name": "example",
+        "title": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "allow_undeclared": {
+            "description": "Allow an entry_type the KB's kb.yaml does not declare (refused otherwise, core types included). The entry will be flagged by index health.",
+            "type": "boolean"
+          },
+          "body": {
+            "description": "Entry body content (markdown)",
+            "type": "string"
+          },
+          "date": {
+            "description": "Date (YYYY-MM-DD) - required for events",
+            "type": "string"
+          },
+          "entry_type": {
+            "description": "Entry type: note, person, organization, event, document, topic, relationship, timeline, or custom type from kb.yaml",
+            "type": "string"
+          },
+          "importance": {
+            "description": "Importance score 1-10 (default 5)",
+            "type": "integer"
+          },
+          "kb_name": {
+            "description": "Target KB name",
+            "type": "string"
+          },
+          "metadata": {
+            "description": "Additional fields for custom types or extension fields",
+            "type": "object"
+          },
+          "participants": {
+            "description": "Participants involved (for events)",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "role": {
+            "description": "Role description (for person entries)",
+            "type": "string"
+          },
+          "tags": {
+            "description": "Tags for categorization",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "description": "Entry title",
+            "type": "string"
+          },
+          "validate": {
+            "description": "Run QA validation after save and return issues. Also runs automatically if KB has qa_on_write: true in kb.yaml.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kb_name",
+          "entry_type",
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_delete": {
+      "arguments": {
+        "entry_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "entry_id": {
+            "description": "Entry ID to delete",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_discover_neighbors": {
+      "arguments": {
+        "entry_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "entry_id": {
+            "description": "Source entry ID to find neighbors for",
+            "type": "string"
+          },
+          "exclude_linked": {
+            "description": "Exclude entries that already have a link to the source (default: true)",
+            "type": "boolean"
+          },
+          "kb_name": {
+            "description": "KB containing the source entry",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 10)",
+            "type": "integer"
+          },
+          "mode": {
+            "description": "Search mode (default: hybrid, falls back to keyword if no embeddings)",
+            "enum": [
+              "keyword",
+              "semantic",
+              "hybrid"
+            ],
+            "type": "string"
+          },
+          "target_kb": {
+            "description": "Limit candidates to this KB (omit to search all KBs, including the source KB)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_find_by_assignee": {
+      "arguments": {
+        "assignee": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Assignee identifier (e.g. 'agent:researcher', 'alice')",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "Limit to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 50)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          },
+          "status": {
+            "description": "Filter by status (optional)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "assignee"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_find_by_location": {
+      "arguments": {
+        "location": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "Limit to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 50)",
+            "type": "integer"
+          },
+          "location": {
+            "description": "Location to search for (substring match)",
+            "type": "string"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "location"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_find_by_status": {
+      "arguments": {
+        "status": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "entry_type": {
+            "description": "Filter by entry type (optional)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "Limit to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 50)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          },
+          "status": {
+            "description": "Status value to match (e.g. 'open', 'in_progress', 'done', 'draft')",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_find_overdue": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "as_of": {
+            "description": "Reference date in YYYY-MM-DD format (default: today)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "Limit to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 50)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_get": {
+      "arguments": {
+        "entry_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "body_limit": {
+            "description": "Max body chars to return (default 8000, max 20000). Values above the max are clamped to it.",
+            "type": "integer"
+          },
+          "body_offset": {
+            "description": "Start position in body text (default 0). Use to paginate large bodies.",
+            "type": "integer"
+          },
+          "entry_id": {
+            "description": "The entry ID (e.g., '2025-01-20--event-slug' or 'alice-smith')",
+            "type": "string"
+          },
+          "fields": {
+            "description": "Return only these fields (e.g. ['id','title','body']). Omit for all fields. Body chunking still applies, and a projection that keeps `body` also keeps the truncation markers. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_name": {
+            "description": "KB name (optional - searches all KBs if not provided)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_index_job_status": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "job_id": {
+            "description": "Job ID to check (optional - lists active jobs if not provided)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_index_sync": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "background": {
+            "default": false,
+            "description": "Run in background (returns job_id for polling). Default: false",
+            "type": "boolean"
+          },
+          "kb_name": {
+            "description": "Sync specific KB (optional - syncs all if not provided)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_link": {
+      "arguments": {
+        "source_id": "example",
+        "source_kb": "example",
+        "target_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "allow_dangling": {
+            "default": false,
+            "description": "If true, permit linking to a target that doesn't exist yet (forward reference). Default false.",
+            "type": "boolean"
+          },
+          "note": {
+            "description": "Optional note about the link",
+            "type": "string"
+          },
+          "relation": {
+            "description": "Relationship type (default: related_to)",
+            "type": "string"
+          },
+          "source_id": {
+            "description": "Source entry ID",
+            "type": "string"
+          },
+          "source_kb": {
+            "description": "KB containing the source entry",
+            "type": "string"
+          },
+          "target_id": {
+            "description": "Target entry ID",
+            "type": "string"
+          },
+          "target_kb": {
+            "description": "KB containing the target entry (defaults to source_kb)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "source_kb",
+          "target_id"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_list": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_list_entries": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "entry_type": {
+            "description": "Filter by entry type",
+            "type": "string"
+          },
+          "fields": {
+            "description": "Return only these fields per entry. Omit for all fields. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_name": {
+            "description": "KB to browse (optional \u2014 lists all KBs if omitted)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max entries to return (default 50, max 200)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          },
+          "sort_by": {
+            "description": "Sort column (default: updated_at)",
+            "enum": [
+              "title",
+              "updated_at",
+              "created_at",
+              "entry_type"
+            ],
+            "type": "string"
+          },
+          "sort_order": {
+            "description": "Sort direction (default: desc)",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "type": "string"
+          },
+          "tag": {
+            "description": "Filter by tag",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_manage": {
+      "arguments": {
+        "action": "discover"
+      },
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "description": "Management action",
+            "enum": [
+              "discover",
+              "validate",
+              "show_schema",
+              "add_type",
+              "remove_type",
+              "set_schema"
+            ],
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (for validate)",
+            "type": "string"
+          },
+          "schema": {
+            "description": "Schema object with types, policies, validation keys (for set_schema)",
+            "type": "object"
+          },
+          "type_def": {
+            "description": "Type definition with description, required, optional, subdirectory (for add_type)",
+            "type": "object"
+          },
+          "type_name": {
+            "description": "Type name (for add_type, remove_type)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_orient": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "detail": {
+            "description": "full (default; null is the same): everything. brief: omits ai_instructions, evaluation_rubric, guidelines and goals.",
+            "enum": [
+              "brief",
+              "full",
+              null
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kb_name": {
+            "description": "KB to orient in. Omit (or null) to list the KBs you can read.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recent_limit": {
+            "description": "Number of recent entries to include (default 5)",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "kb_push": {
+      "arguments": {
+        "kb": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "branch": {
+            "description": "Branch name to push (default: current branch)",
+            "type": "string"
+          },
+          "kb": {
+            "description": "Knowledge base name",
+            "type": "string"
+          },
+          "remote": {
+            "description": "Name of a remote configured in the KB's repository (default: origin); URLs and paths are refused",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kb"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_qa_assess": {
+      "arguments": {
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "create_tasks": {
+            "description": "Create tasks for failed assessments (default false)",
+            "type": "boolean"
+          },
+          "entry_id": {
+            "description": "Specific entry to assess (assesses entire KB if omitted)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB to assess",
+            "type": "string"
+          },
+          "max_age_hours": {
+            "description": "Skip entries assessed within this many hours (default 24, 0 to reassess all)",
+            "type": "integer"
+          },
+          "tier": {
+            "description": "Assessment tier: 1=structural (default)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_qa_status": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB to check (checks all if not provided)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_qa_validate": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "entry_id": {
+            "description": "Validate a single entry (requires kb_name)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB to validate (validates all if not provided)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum issues to return (default 50)",
+            "type": "integer"
+          },
+          "severity": {
+            "description": "Minimum severity to include (default: warning)",
+            "enum": [
+              "error",
+              "warning",
+              "info"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_read_body": {
+      "arguments": {
+        "entry_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "body_limit": {
+            "description": "Max chars to return (default 8000, max 20000). Values above the max are clamped to it.",
+            "type": "integer"
+          },
+          "body_offset": {
+            "description": "Start position in body text (default 0)",
+            "type": "integer"
+          },
+          "entry_id": {
+            "description": "Entry ID to read body from",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional - searches all KBs if not provided)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_recent": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "entry_type": {
+            "description": "Filter by entry type",
+            "type": "string"
+          },
+          "fields": {
+            "description": "Return only these fields per entry. Omit for all fields. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_name": {
+            "description": "KB to query (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max entries to return (default 20)",
+            "type": "integer"
+          },
+          "since": {
+            "description": "Only entries updated after this ISO datetime (e.g. 2025-01-01T00:00:00)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_registry_add": {
+      "arguments": {
+        "name": "example",
+        "path": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "description": {
+            "description": "Optional description",
+            "type": "string"
+          },
+          "kb_type": {
+            "description": "KB type (default: generic)",
+            "type": "string"
+          },
+          "name": {
+            "description": "Name for the new KB",
+            "type": "string"
+          },
+          "path": {
+            "description": "Filesystem path to the KB directory",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "path"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_registry_health": {
+      "arguments": {
+        "name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "description": "Name of the KB to check",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_registry_reindex": {
+      "arguments": {
+        "name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "description": "Name of the KB to reindex",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_registry_remove": {
+      "arguments": {
+        "name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "description": "Name of the KB to remove",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_schema": {
+      "arguments": {
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name to get schema for",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_search": {
+      "arguments": {
+        "query": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "date_from": {
+            "description": "Start date (YYYY-MM-DD)",
+            "type": "string"
+          },
+          "date_to": {
+            "description": "End date (YYYY-MM-DD)",
+            "type": "string"
+          },
+          "entry_type": {
+            "description": "Filter by entry type: note, person, organization, event, document, topic, etc.",
+            "type": "string"
+          },
+          "expand": {
+            "description": "Use AI query expansion for additional search terms. Default: false",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per result (e.g. ['id','title','tags']). Omit for default fields. Overrides include_body; asking for 'body' returns the same bounded body, with its truncation markers. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "fips": {
+            "description": "Filter by county FIPS code (5-digit, e.g. '12086' for Miami-Dade). Works across all KBs.",
+            "type": "string"
+          },
+          "include_body": {
+            "description": "Include body text in results, bounded to 8000 chars per body within a 40000-char response budget. Default: false (returns snippet instead, saving tokens). Truncated bodies carry body_truncated; continue them with kb_read_body.",
+            "type": "boolean"
+          },
+          "kb_name": {
+            "description": "Limit search to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results to return (default 20)",
+            "type": "integer"
+          },
+          "mode": {
+            "description": "Search mode: keyword (FTS5), semantic (vector), or hybrid. Default: hybrid",
+            "enum": [
+              "keyword",
+              "semantic",
+              "hybrid"
+            ],
+            "type": "string"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          },
+          "query": {
+            "description": "Search query (FTS5 syntax supported)",
+            "type": "string"
+          },
+          "state": {
+            "description": "Filter by US state abbreviation (e.g. 'FL', 'TX'). Works across all KBs.",
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by the indexed 'status' frontmatter field (e.g. 'unprocessed', 'draft', 'done'). Works across all KBs and entry types. Other metadata fields (e.g. 'readiness') are NOT reachable via this parameter.",
+            "type": "string"
+          },
+          "tags": {
+            "description": "Filter by tags (entries must have ALL specified tags)",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_stats": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_tags": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "Filter to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum tags to return (default 100)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          },
+          "prefix": {
+            "description": "Filter tags starting with prefix",
+            "type": "string"
+          },
+          "tree": {
+            "description": "Return hierarchical tree instead of flat list",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_timeline": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "date_from": {
+            "description": "Start date (YYYY-MM-DD)",
+            "type": "string"
+          },
+          "date_to": {
+            "description": "End date (YYYY-MM-DD)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 50)",
+            "type": "integer"
+          },
+          "min_importance": {
+            "description": "Minimum importance score (1-10)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_update": {
+      "arguments": {
+        "entry_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "body": {
+            "description": "New body content (markdown)",
+            "type": "string"
+          },
+          "date": {
+            "description": "Date (YYYY-MM-DD)",
+            "type": "string"
+          },
+          "entry_id": {
+            "description": "Entry ID to update",
+            "type": "string"
+          },
+          "importance": {
+            "description": "Importance score 1-10",
+            "type": "integer"
+          },
+          "kb_name": {
+            "description": "KB containing the entry",
+            "type": "string"
+          },
+          "location": {
+            "description": "Location/venue",
+            "type": "string"
+          },
+          "metadata": {
+            "description": "Additional/extension fields to update",
+            "type": "object"
+          },
+          "participants": {
+            "description": "Participants involved (for events)",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "Status field (e.g. draft, confirmed, done)",
+            "type": "string"
+          },
+          "summary": {
+            "description": "Short summary or subtitle",
+            "type": "string"
+          },
+          "tags": {
+            "description": "Replacement tags (overwrites existing)",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "description": "New title",
+            "type": "string"
+          },
+          "validate": {
+            "description": "Run QA validation after save and return issues. Also runs automatically if KB has qa_on_write: true in kb.yaml.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entry_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "list_edge_types": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB to query. If omitted, checks all KBs.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_adrs": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max ADRs to return (default 50). Pass null for the full, unbounded list.",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Skip this many ADRs before returning (default 0).",
+            "type": "integer"
+          },
+          "status": {
+            "description": "Filter by ADR status",
+            "enum": [
+              "proposed",
+              "accepted",
+              "deprecated",
+              "superseded"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_backlog": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "epic": {
+            "description": "Filter to subtasks of this epic ID",
+            "type": "string"
+          },
+          "group_by": {
+            "description": "Group results by epic",
+            "enum": [
+              "epic"
+            ],
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "kind": {
+            "description": "Filter by kind",
+            "enum": [
+              "feature",
+              "bug",
+              "tech_debt",
+              "improvement",
+              "spike",
+              "epic"
+            ],
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max items to return (default 50). Pass null for the full, unbounded list. Ignored when group_by=epic (groups are always complete).",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Skip this many items before returning (default 0)",
+            "type": "integer"
+          },
+          "priority": {
+            "description": "Filter by priority",
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ],
+            "type": "string"
+          },
+          "sort": {
+            "description": "Sort order (default: priority)",
+            "enum": [
+              "priority",
+              "rank",
+              "created"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by status",
+            "enum": [
+              "proposed",
+              "accepted",
+              "in_progress",
+              "review",
+              "done",
+              "wont_do"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_board": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max items to embed per lane (default 50; lane `count` is always the true total). Pass null for every item in every lane.",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_check_ready": {
+      "arguments": {
+        "item_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "item_id": {
+            "description": "Backlog item ID",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_claim": {
+      "arguments": {
+        "assignee": "example",
+        "item_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Who is claiming the item",
+            "type": "string"
+          },
+          "item_id": {
+            "description": "Backlog item ID",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "kb_name",
+          "assignee"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_component": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max components to return (default 50). Pass null for the full, unbounded list.",
+            "type": "integer"
+          },
+          "name": {
+            "description": "Component name to search for",
+            "type": "string"
+          },
+          "offset": {
+            "description": "Skip this many components before returning (default 0).",
+            "type": "integer"
+          },
+          "path": {
+            "description": "Code path to search for",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_context_for_item": {
+      "arguments": {
+        "item_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "item_id": {
+            "description": "Backlog item ID",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_conventions": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "category": {
+            "description": "Filter by category",
+            "enum": [
+              "coding",
+              "testing",
+              "api",
+              "git",
+              "documentation",
+              "security",
+              "deployment"
+            ],
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_create_adr": {
+      "arguments": {
+        "title": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "consequences": {
+            "description": "Consequences section",
+            "type": "string"
+          },
+          "context": {
+            "description": "Context section",
+            "type": "string"
+          },
+          "deciders": {
+            "description": "List of deciders",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "decision": {
+            "description": "Decision section",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "status": {
+            "description": "Initial status (default: proposed)",
+            "enum": [
+              "proposed",
+              "accepted"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "description": "ADR title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_create_backlog_item": {
+      "arguments": {
+        "kb_name": "example",
+        "kind": "feature",
+        "title": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "body": {
+            "description": "Item description",
+            "type": "string"
+          },
+          "effort": {
+            "description": "Effort estimate",
+            "enum": [
+              "XS",
+              "S",
+              "M",
+              "L",
+              "XL"
+            ],
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "kind": {
+            "description": "Item kind",
+            "enum": [
+              "feature",
+              "bug",
+              "tech_debt",
+              "improvement",
+              "spike",
+              "epic"
+            ],
+            "type": "string"
+          },
+          "priority": {
+            "description": "Priority level",
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ],
+            "type": "string"
+          },
+          "tags": {
+            "description": "Tags for categorization",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "description": "Item title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "kind",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_epic_detail": {
+      "arguments": {
+        "epic_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "epic_id": {
+            "description": "Epic ID",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "epic_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_epics": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by epic status",
+            "enum": [
+              "proposed",
+              "planned",
+              "accepted",
+              "in_progress",
+              "done"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_log": {
+      "arguments": {
+        "item_id": "example",
+        "kb_name": "example",
+        "summary": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "decisions": {
+            "description": "Design choices made and rationale",
+            "type": "string"
+          },
+          "item_id": {
+            "description": "Backlog item ID this session is for",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "open_questions": {
+            "description": "Unresolved issues for next session",
+            "type": "string"
+          },
+          "rejected": {
+            "description": "Approaches tried and abandoned",
+            "type": "string"
+          },
+          "summary": {
+            "description": "Session summary (becomes the entry body)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "kb_name",
+          "summary"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_milestones": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by milestone status",
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_prioritize": {
+      "arguments": {
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "after": {
+            "description": "Place item after this item ID",
+            "type": "string"
+          },
+          "before": {
+            "description": "Place item before this item ID",
+            "type": "string"
+          },
+          "item_id": {
+            "description": "Single item to reposition (use with after/before)",
+            "type": "string"
+          },
+          "item_ids": {
+            "description": "Ordered list of item IDs (highest priority first), assigned ranks 100, 200, 300, ...",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_pull_next": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_refine": {
+      "arguments": {
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by status (default: both proposed and accepted)",
+            "enum": [
+              "proposed",
+              "accepted"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_review": {
+      "arguments": {
+        "item_id": "example",
+        "kb_name": "example",
+        "outcome": "approved",
+        "reviewer": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "feedback": {
+            "description": "Review notes/feedback",
+            "type": "string"
+          },
+          "item_id": {
+            "description": "Backlog item ID",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "outcome": {
+            "description": "Review outcome",
+            "enum": [
+              "approved",
+              "changes_requested"
+            ],
+            "type": "string"
+          },
+          "reviewer": {
+            "description": "Who is reviewing",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "kb_name",
+          "outcome",
+          "reviewer"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_review_queue": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_standards": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "category": {
+            "description": "Filter by category",
+            "enum": [
+              "coding",
+              "testing",
+              "api",
+              "git",
+              "documentation",
+              "security",
+              "deployment"
+            ],
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max standards to return (default 50). Pass null for the full, unbounded list.",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Skip this many standards before returning (default 0).",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_submit": {
+      "arguments": {
+        "item_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "item_id": {
+            "description": "Backlog item ID",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_transition": {
+      "arguments": {
+        "item_id": "example",
+        "kb_name": "example",
+        "to_status": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "item_id": {
+            "description": "Backlog item ID",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Required for some transitions (wont_do, reopen, rework)",
+            "type": "string"
+          },
+          "to_status": {
+            "description": "Target status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "kb_name",
+          "to_status"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_validations": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "category": {
+            "description": "Filter by category",
+            "enum": [
+              "coding",
+              "testing",
+              "api",
+              "git",
+              "documentation",
+              "security",
+              "deployment"
+            ],
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "task_ancestors": {
+      "arguments": {
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_blocked_by": {
+      "arguments": {
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_checkpoint": {
+      "arguments": {
+        "kb_name": "example",
+        "message": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "confidence": {
+            "description": "Confidence 0.0-1.0",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "message": {
+            "description": "Checkpoint message",
+            "type": "string"
+          },
+          "partial_evidence": {
+            "description": "Evidence entry IDs",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name",
+          "message"
+        ],
+        "type": "object"
+      }
+    },
+    "task_claim": {
+      "arguments": {
+        "assignee": "example",
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name",
+          "assignee"
+        ],
+        "type": "object"
+      }
+    },
+    "task_create": {
+      "arguments": {
+        "kb_name": "example",
+        "title": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "type": "string"
+          },
+          "body": {
+            "description": "Task description",
+            "type": "string"
+          },
+          "dependencies": {
+            "description": "Dependency entry IDs",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "parent": {
+            "description": "Parent task entry ID",
+            "type": "string"
+          },
+          "priority": {
+            "description": "Priority 1-10 (default 5)",
+            "maximum": 10,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tags": {
+            "description": "Tags for the new task",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "description": "Task title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kb_name",
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    "task_critical_path": {
+      "arguments": {
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_decompose": {
+      "arguments": {
+        "children": [],
+        "kb_name": "example",
+        "parent_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "children": {
+            "description": "Child task specs",
+            "items": {
+              "properties": {
+                "assignee": {
+                  "type": "string"
+                },
+                "body": {
+                  "type": "string"
+                },
+                "priority": {
+                  "maximum": 10,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "title"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "parent_id": {
+            "description": "Parent task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parent_id",
+          "kb_name",
+          "children"
+        ],
+        "type": "object"
+      }
+    },
+    "task_list": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "parent": {
+            "description": "Filter by parent task ID",
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by task status",
+            "enum": [
+              "open",
+              "claimed",
+              "in_progress",
+              "blocked",
+              "review",
+              "done",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "task_status": {
+      "arguments": {
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_subtree": {
+      "arguments": {
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Root task ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_update": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "New assignee",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "priority": {
+            "description": "New priority 1-10",
+            "maximum": 10,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "status": {
+            "description": "New status",
+            "enum": [
+              "open",
+              "claimed",
+              "in_progress",
+              "blocked",
+              "review",
+              "done",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "read": {
+    "kb_backlinks": {
+      "arguments": {
+        "entry_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "entry_id": {
+            "description": "Entry ID to find backlinks for",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 100)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entry_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_batch_read": {
+      "arguments": {
+        "entries": []
+      },
+      "inputSchema": {
+        "properties": {
+          "body_limit": {
+            "description": "Max body chars to return per entry (default 8000, max 20000), within the 40000-char response budget.",
+            "type": "integer"
+          },
+          "body_offset": {
+            "description": "Start position in body text (default 0). Applied to all entries.",
+            "type": "integer"
+          },
+          "entries": {
+            "description": "List of entries to fetch (max 50)",
+            "items": {
+              "properties": {
+                "entry_id": {
+                  "description": "Entry ID",
+                  "type": "string"
+                },
+                "kb_name": {
+                  "description": "KB name",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "entry_id",
+                "kb_name"
+              ],
+              "type": "object"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "fields": {
+            "description": "Return only these fields per entry. Omit for all fields. Body chunking and the response budget still apply, and a projection that keeps `body` also keeps the truncation markers. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_batch_suggest": {
+      "arguments": {
+        "source_kb": "example",
+        "target_kb": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "exclude_linked": {
+            "description": "Exclude already-linked pairs (default: true)",
+            "type": "boolean"
+          },
+          "limit_per_entry": {
+            "description": "Max matches per source entry (default 3)",
+            "type": "integer"
+          },
+          "mode": {
+            "description": "Search mode (default: keyword)",
+            "enum": [
+              "keyword",
+              "semantic",
+              "hybrid"
+            ],
+            "type": "string"
+          },
+          "source_kb": {
+            "description": "KB to find connections FROM",
+            "type": "string"
+          },
+          "target_kb": {
+            "description": "KB to find connections TO",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_kb",
+          "target_kb"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_discover_neighbors": {
+      "arguments": {
+        "entry_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "entry_id": {
+            "description": "Source entry ID to find neighbors for",
+            "type": "string"
+          },
+          "exclude_linked": {
+            "description": "Exclude entries that already have a link to the source (default: true)",
+            "type": "boolean"
+          },
+          "kb_name": {
+            "description": "KB containing the source entry",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 10)",
+            "type": "integer"
+          },
+          "mode": {
+            "description": "Search mode (default: hybrid, falls back to keyword if no embeddings)",
+            "enum": [
+              "keyword",
+              "semantic",
+              "hybrid"
+            ],
+            "type": "string"
+          },
+          "target_kb": {
+            "description": "Limit candidates to this KB (omit to search all KBs, including the source KB)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_find_by_assignee": {
+      "arguments": {
+        "assignee": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Assignee identifier (e.g. 'agent:researcher', 'alice')",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "Limit to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 50)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          },
+          "status": {
+            "description": "Filter by status (optional)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "assignee"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_find_by_location": {
+      "arguments": {
+        "location": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "Limit to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 50)",
+            "type": "integer"
+          },
+          "location": {
+            "description": "Location to search for (substring match)",
+            "type": "string"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "location"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_find_by_status": {
+      "arguments": {
+        "status": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "entry_type": {
+            "description": "Filter by entry type (optional)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "Limit to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 50)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          },
+          "status": {
+            "description": "Status value to match (e.g. 'open', 'in_progress', 'done', 'draft')",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_find_overdue": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "as_of": {
+            "description": "Reference date in YYYY-MM-DD format (default: today)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "Limit to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 50)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_get": {
+      "arguments": {
+        "entry_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "body_limit": {
+            "description": "Max body chars to return (default 8000, max 20000). Values above the max are clamped to it.",
+            "type": "integer"
+          },
+          "body_offset": {
+            "description": "Start position in body text (default 0). Use to paginate large bodies.",
+            "type": "integer"
+          },
+          "entry_id": {
+            "description": "The entry ID (e.g., '2025-01-20--event-slug' or 'alice-smith')",
+            "type": "string"
+          },
+          "fields": {
+            "description": "Return only these fields (e.g. ['id','title','body']). Omit for all fields. Body chunking still applies, and a projection that keeps `body` also keeps the truncation markers. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_name": {
+            "description": "KB name (optional - searches all KBs if not provided)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_index_job_status": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "job_id": {
+            "description": "Job ID to check (optional - lists active jobs if not provided)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_list": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_list_entries": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "entry_type": {
+            "description": "Filter by entry type",
+            "type": "string"
+          },
+          "fields": {
+            "description": "Return only these fields per entry. Omit for all fields. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_name": {
+            "description": "KB to browse (optional \u2014 lists all KBs if omitted)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max entries to return (default 50, max 200)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          },
+          "sort_by": {
+            "description": "Sort column (default: updated_at)",
+            "enum": [
+              "title",
+              "updated_at",
+              "created_at",
+              "entry_type"
+            ],
+            "type": "string"
+          },
+          "sort_order": {
+            "description": "Sort direction (default: desc)",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "type": "string"
+          },
+          "tag": {
+            "description": "Filter by tag",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_orient": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "detail": {
+            "description": "full (default; null is the same): everything. brief: omits ai_instructions, evaluation_rubric, guidelines and goals.",
+            "enum": [
+              "brief",
+              "full",
+              null
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kb_name": {
+            "description": "KB to orient in. Omit (or null) to list the KBs you can read.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recent_limit": {
+            "description": "Number of recent entries to include (default 5)",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "kb_qa_status": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB to check (checks all if not provided)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_qa_validate": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "entry_id": {
+            "description": "Validate a single entry (requires kb_name)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB to validate (validates all if not provided)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum issues to return (default 50)",
+            "type": "integer"
+          },
+          "severity": {
+            "description": "Minimum severity to include (default: warning)",
+            "enum": [
+              "error",
+              "warning",
+              "info"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_read_body": {
+      "arguments": {
+        "entry_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "body_limit": {
+            "description": "Max chars to return (default 8000, max 20000). Values above the max are clamped to it.",
+            "type": "integer"
+          },
+          "body_offset": {
+            "description": "Start position in body text (default 0)",
+            "type": "integer"
+          },
+          "entry_id": {
+            "description": "Entry ID to read body from",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional - searches all KBs if not provided)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_recent": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "entry_type": {
+            "description": "Filter by entry type",
+            "type": "string"
+          },
+          "fields": {
+            "description": "Return only these fields per entry. Omit for all fields. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_name": {
+            "description": "KB to query (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max entries to return (default 20)",
+            "type": "integer"
+          },
+          "since": {
+            "description": "Only entries updated after this ISO datetime (e.g. 2025-01-01T00:00:00)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_schema": {
+      "arguments": {
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name to get schema for",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_search": {
+      "arguments": {
+        "query": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "date_from": {
+            "description": "Start date (YYYY-MM-DD)",
+            "type": "string"
+          },
+          "date_to": {
+            "description": "End date (YYYY-MM-DD)",
+            "type": "string"
+          },
+          "entry_type": {
+            "description": "Filter by entry type: note, person, organization, event, document, topic, etc.",
+            "type": "string"
+          },
+          "expand": {
+            "description": "Use AI query expansion for additional search terms. Default: false",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per result (e.g. ['id','title','tags']). Omit for default fields. Overrides include_body; asking for 'body' returns the same bounded body, with its truncation markers. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "fips": {
+            "description": "Filter by county FIPS code (5-digit, e.g. '12086' for Miami-Dade). Works across all KBs.",
+            "type": "string"
+          },
+          "include_body": {
+            "description": "Include body text in results, bounded to 8000 chars per body within a 40000-char response budget. Default: false (returns snippet instead, saving tokens). Truncated bodies carry body_truncated; continue them with kb_read_body.",
+            "type": "boolean"
+          },
+          "kb_name": {
+            "description": "Limit search to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results to return (default 20)",
+            "type": "integer"
+          },
+          "mode": {
+            "description": "Search mode: keyword (FTS5), semantic (vector), or hybrid. Default: hybrid",
+            "enum": [
+              "keyword",
+              "semantic",
+              "hybrid"
+            ],
+            "type": "string"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          },
+          "query": {
+            "description": "Search query (FTS5 syntax supported)",
+            "type": "string"
+          },
+          "state": {
+            "description": "Filter by US state abbreviation (e.g. 'FL', 'TX'). Works across all KBs.",
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by the indexed 'status' frontmatter field (e.g. 'unprocessed', 'draft', 'done'). Works across all KBs and entry types. Other metadata fields (e.g. 'readiness') are NOT reachable via this parameter.",
+            "type": "string"
+          },
+          "tags": {
+            "description": "Filter by tags (entries must have ALL specified tags)",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_stats": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_tags": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "Filter to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum tags to return (default 100)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          },
+          "prefix": {
+            "description": "Filter tags starting with prefix",
+            "type": "string"
+          },
+          "tree": {
+            "description": "Return hierarchical tree instead of flat list",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_timeline": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "date_from": {
+            "description": "Start date (YYYY-MM-DD)",
+            "type": "string"
+          },
+          "date_to": {
+            "description": "End date (YYYY-MM-DD)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 50)",
+            "type": "integer"
+          },
+          "min_importance": {
+            "description": "Minimum importance score (1-10)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "list_edge_types": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB to query. If omitted, checks all KBs.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_adrs": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max ADRs to return (default 50). Pass null for the full, unbounded list.",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Skip this many ADRs before returning (default 0).",
+            "type": "integer"
+          },
+          "status": {
+            "description": "Filter by ADR status",
+            "enum": [
+              "proposed",
+              "accepted",
+              "deprecated",
+              "superseded"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_backlog": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "epic": {
+            "description": "Filter to subtasks of this epic ID",
+            "type": "string"
+          },
+          "group_by": {
+            "description": "Group results by epic",
+            "enum": [
+              "epic"
+            ],
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "kind": {
+            "description": "Filter by kind",
+            "enum": [
+              "feature",
+              "bug",
+              "tech_debt",
+              "improvement",
+              "spike",
+              "epic"
+            ],
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max items to return (default 50). Pass null for the full, unbounded list. Ignored when group_by=epic (groups are always complete).",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Skip this many items before returning (default 0)",
+            "type": "integer"
+          },
+          "priority": {
+            "description": "Filter by priority",
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ],
+            "type": "string"
+          },
+          "sort": {
+            "description": "Sort order (default: priority)",
+            "enum": [
+              "priority",
+              "rank",
+              "created"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by status",
+            "enum": [
+              "proposed",
+              "accepted",
+              "in_progress",
+              "review",
+              "done",
+              "wont_do"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_board": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max items to embed per lane (default 50; lane `count` is always the true total). Pass null for every item in every lane.",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_check_ready": {
+      "arguments": {
+        "item_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "item_id": {
+            "description": "Backlog item ID",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_component": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max components to return (default 50). Pass null for the full, unbounded list.",
+            "type": "integer"
+          },
+          "name": {
+            "description": "Component name to search for",
+            "type": "string"
+          },
+          "offset": {
+            "description": "Skip this many components before returning (default 0).",
+            "type": "integer"
+          },
+          "path": {
+            "description": "Code path to search for",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_context_for_item": {
+      "arguments": {
+        "item_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "item_id": {
+            "description": "Backlog item ID",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_conventions": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "category": {
+            "description": "Filter by category",
+            "enum": [
+              "coding",
+              "testing",
+              "api",
+              "git",
+              "documentation",
+              "security",
+              "deployment"
+            ],
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_epic_detail": {
+      "arguments": {
+        "epic_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "epic_id": {
+            "description": "Epic ID",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "epic_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_epics": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by epic status",
+            "enum": [
+              "proposed",
+              "planned",
+              "accepted",
+              "in_progress",
+              "done"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_milestones": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by milestone status",
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_pull_next": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_refine": {
+      "arguments": {
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by status (default: both proposed and accepted)",
+            "enum": [
+              "proposed",
+              "accepted"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_review_queue": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_standards": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "category": {
+            "description": "Filter by category",
+            "enum": [
+              "coding",
+              "testing",
+              "api",
+              "git",
+              "documentation",
+              "security",
+              "deployment"
+            ],
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max standards to return (default 50). Pass null for the full, unbounded list.",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Skip this many standards before returning (default 0).",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_validations": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "category": {
+            "description": "Filter by category",
+            "enum": [
+              "coding",
+              "testing",
+              "api",
+              "git",
+              "documentation",
+              "security",
+              "deployment"
+            ],
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "task_ancestors": {
+      "arguments": {
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_blocked_by": {
+      "arguments": {
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_critical_path": {
+      "arguments": {
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_list": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "parent": {
+            "description": "Filter by parent task ID",
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by task status",
+            "enum": [
+              "open",
+              "claimed",
+              "in_progress",
+              "blocked",
+              "review",
+              "done",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "task_status": {
+      "arguments": {
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_subtree": {
+      "arguments": {
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Root task ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "write": {
+    "kb_backlinks": {
+      "arguments": {
+        "entry_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "entry_id": {
+            "description": "Entry ID to find backlinks for",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 100)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entry_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_batch_read": {
+      "arguments": {
+        "entries": []
+      },
+      "inputSchema": {
+        "properties": {
+          "body_limit": {
+            "description": "Max body chars to return per entry (default 8000, max 20000), within the 40000-char response budget.",
+            "type": "integer"
+          },
+          "body_offset": {
+            "description": "Start position in body text (default 0). Applied to all entries.",
+            "type": "integer"
+          },
+          "entries": {
+            "description": "List of entries to fetch (max 50)",
+            "items": {
+              "properties": {
+                "entry_id": {
+                  "description": "Entry ID",
+                  "type": "string"
+                },
+                "kb_name": {
+                  "description": "KB name",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "entry_id",
+                "kb_name"
+              ],
+              "type": "object"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "fields": {
+            "description": "Return only these fields per entry. Omit for all fields. Body chunking and the response budget still apply, and a projection that keeps `body` also keeps the truncation markers. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_batch_suggest": {
+      "arguments": {
+        "source_kb": "example",
+        "target_kb": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "exclude_linked": {
+            "description": "Exclude already-linked pairs (default: true)",
+            "type": "boolean"
+          },
+          "limit_per_entry": {
+            "description": "Max matches per source entry (default 3)",
+            "type": "integer"
+          },
+          "mode": {
+            "description": "Search mode (default: keyword)",
+            "enum": [
+              "keyword",
+              "semantic",
+              "hybrid"
+            ],
+            "type": "string"
+          },
+          "source_kb": {
+            "description": "KB to find connections FROM",
+            "type": "string"
+          },
+          "target_kb": {
+            "description": "KB to find connections TO",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_kb",
+          "target_kb"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_bulk_create": {
+      "arguments": {
+        "entries": [],
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "allow_undeclared": {
+            "description": "Allow entry types the KB's kb.yaml does not declare (each such item is refused otherwise).",
+            "type": "boolean"
+          },
+          "entries": {
+            "description": "Array of entry specs (max 50)",
+            "items": {
+              "properties": {
+                "body": {
+                  "description": "Entry body content (markdown)",
+                  "type": "string"
+                },
+                "date": {
+                  "description": "Date (YYYY-MM-DD)",
+                  "type": "string"
+                },
+                "entry_type": {
+                  "description": "Entry type: note, person, organization, event, etc.",
+                  "type": "string"
+                },
+                "importance": {
+                  "description": "Importance 1-10",
+                  "type": "integer"
+                },
+                "metadata": {
+                  "description": "Additional fields",
+                  "type": "object"
+                },
+                "tags": {
+                  "description": "Tags for categorization",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "title": {
+                  "description": "Entry title",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "kb_name": {
+            "description": "Target KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kb_name",
+          "entries"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_create": {
+      "arguments": {
+        "entry_type": "example",
+        "kb_name": "example",
+        "title": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "allow_undeclared": {
+            "description": "Allow an entry_type the KB's kb.yaml does not declare (refused otherwise, core types included). The entry will be flagged by index health.",
+            "type": "boolean"
+          },
+          "body": {
+            "description": "Entry body content (markdown)",
+            "type": "string"
+          },
+          "date": {
+            "description": "Date (YYYY-MM-DD) - required for events",
+            "type": "string"
+          },
+          "entry_type": {
+            "description": "Entry type: note, person, organization, event, document, topic, relationship, timeline, or custom type from kb.yaml",
+            "type": "string"
+          },
+          "importance": {
+            "description": "Importance score 1-10 (default 5)",
+            "type": "integer"
+          },
+          "kb_name": {
+            "description": "Target KB name",
+            "type": "string"
+          },
+          "metadata": {
+            "description": "Additional fields for custom types or extension fields",
+            "type": "object"
+          },
+          "participants": {
+            "description": "Participants involved (for events)",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "role": {
+            "description": "Role description (for person entries)",
+            "type": "string"
+          },
+          "tags": {
+            "description": "Tags for categorization",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "description": "Entry title",
+            "type": "string"
+          },
+          "validate": {
+            "description": "Run QA validation after save and return issues. Also runs automatically if KB has qa_on_write: true in kb.yaml.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kb_name",
+          "entry_type",
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_delete": {
+      "arguments": {
+        "entry_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "entry_id": {
+            "description": "Entry ID to delete",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_discover_neighbors": {
+      "arguments": {
+        "entry_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "entry_id": {
+            "description": "Source entry ID to find neighbors for",
+            "type": "string"
+          },
+          "exclude_linked": {
+            "description": "Exclude entries that already have a link to the source (default: true)",
+            "type": "boolean"
+          },
+          "kb_name": {
+            "description": "KB containing the source entry",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 10)",
+            "type": "integer"
+          },
+          "mode": {
+            "description": "Search mode (default: hybrid, falls back to keyword if no embeddings)",
+            "enum": [
+              "keyword",
+              "semantic",
+              "hybrid"
+            ],
+            "type": "string"
+          },
+          "target_kb": {
+            "description": "Limit candidates to this KB (omit to search all KBs, including the source KB)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_find_by_assignee": {
+      "arguments": {
+        "assignee": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Assignee identifier (e.g. 'agent:researcher', 'alice')",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "Limit to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 50)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          },
+          "status": {
+            "description": "Filter by status (optional)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "assignee"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_find_by_location": {
+      "arguments": {
+        "location": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "Limit to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 50)",
+            "type": "integer"
+          },
+          "location": {
+            "description": "Location to search for (substring match)",
+            "type": "string"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "location"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_find_by_status": {
+      "arguments": {
+        "status": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "entry_type": {
+            "description": "Filter by entry type (optional)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "Limit to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 50)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          },
+          "status": {
+            "description": "Status value to match (e.g. 'open', 'in_progress', 'done', 'draft')",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_find_overdue": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "as_of": {
+            "description": "Reference date in YYYY-MM-DD format (default: today)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "Limit to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 50)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_get": {
+      "arguments": {
+        "entry_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "body_limit": {
+            "description": "Max body chars to return (default 8000, max 20000). Values above the max are clamped to it.",
+            "type": "integer"
+          },
+          "body_offset": {
+            "description": "Start position in body text (default 0). Use to paginate large bodies.",
+            "type": "integer"
+          },
+          "entry_id": {
+            "description": "The entry ID (e.g., '2025-01-20--event-slug' or 'alice-smith')",
+            "type": "string"
+          },
+          "fields": {
+            "description": "Return only these fields (e.g. ['id','title','body']). Omit for all fields. Body chunking still applies, and a projection that keeps `body` also keeps the truncation markers. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_name": {
+            "description": "KB name (optional - searches all KBs if not provided)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_index_job_status": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "job_id": {
+            "description": "Job ID to check (optional - lists active jobs if not provided)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_link": {
+      "arguments": {
+        "source_id": "example",
+        "source_kb": "example",
+        "target_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "allow_dangling": {
+            "default": false,
+            "description": "If true, permit linking to a target that doesn't exist yet (forward reference). Default false.",
+            "type": "boolean"
+          },
+          "note": {
+            "description": "Optional note about the link",
+            "type": "string"
+          },
+          "relation": {
+            "description": "Relationship type (default: related_to)",
+            "type": "string"
+          },
+          "source_id": {
+            "description": "Source entry ID",
+            "type": "string"
+          },
+          "source_kb": {
+            "description": "KB containing the source entry",
+            "type": "string"
+          },
+          "target_id": {
+            "description": "Target entry ID",
+            "type": "string"
+          },
+          "target_kb": {
+            "description": "KB containing the target entry (defaults to source_kb)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "source_kb",
+          "target_id"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_list": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_list_entries": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "entry_type": {
+            "description": "Filter by entry type",
+            "type": "string"
+          },
+          "fields": {
+            "description": "Return only these fields per entry. Omit for all fields. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_name": {
+            "description": "KB to browse (optional \u2014 lists all KBs if omitted)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max entries to return (default 50, max 200)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          },
+          "sort_by": {
+            "description": "Sort column (default: updated_at)",
+            "enum": [
+              "title",
+              "updated_at",
+              "created_at",
+              "entry_type"
+            ],
+            "type": "string"
+          },
+          "sort_order": {
+            "description": "Sort direction (default: desc)",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "type": "string"
+          },
+          "tag": {
+            "description": "Filter by tag",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_orient": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "detail": {
+            "description": "full (default; null is the same): everything. brief: omits ai_instructions, evaluation_rubric, guidelines and goals.",
+            "enum": [
+              "brief",
+              "full",
+              null
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kb_name": {
+            "description": "KB to orient in. Omit (or null) to list the KBs you can read.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recent_limit": {
+            "description": "Number of recent entries to include (default 5)",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "kb_qa_assess": {
+      "arguments": {
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "create_tasks": {
+            "description": "Create tasks for failed assessments (default false)",
+            "type": "boolean"
+          },
+          "entry_id": {
+            "description": "Specific entry to assess (assesses entire KB if omitted)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB to assess",
+            "type": "string"
+          },
+          "max_age_hours": {
+            "description": "Skip entries assessed within this many hours (default 24, 0 to reassess all)",
+            "type": "integer"
+          },
+          "tier": {
+            "description": "Assessment tier: 1=structural (default)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_qa_status": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB to check (checks all if not provided)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_qa_validate": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "entry_id": {
+            "description": "Validate a single entry (requires kb_name)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB to validate (validates all if not provided)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum issues to return (default 50)",
+            "type": "integer"
+          },
+          "severity": {
+            "description": "Minimum severity to include (default: warning)",
+            "enum": [
+              "error",
+              "warning",
+              "info"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_read_body": {
+      "arguments": {
+        "entry_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "body_limit": {
+            "description": "Max chars to return (default 8000, max 20000). Values above the max are clamped to it.",
+            "type": "integer"
+          },
+          "body_offset": {
+            "description": "Start position in body text (default 0)",
+            "type": "integer"
+          },
+          "entry_id": {
+            "description": "Entry ID to read body from",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional - searches all KBs if not provided)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_recent": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "entry_type": {
+            "description": "Filter by entry type",
+            "type": "string"
+          },
+          "fields": {
+            "description": "Return only these fields per entry. Omit for all fields. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_name": {
+            "description": "KB to query (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max entries to return (default 20)",
+            "type": "integer"
+          },
+          "since": {
+            "description": "Only entries updated after this ISO datetime (e.g. 2025-01-01T00:00:00)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_schema": {
+      "arguments": {
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name to get schema for",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_search": {
+      "arguments": {
+        "query": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "date_from": {
+            "description": "Start date (YYYY-MM-DD)",
+            "type": "string"
+          },
+          "date_to": {
+            "description": "End date (YYYY-MM-DD)",
+            "type": "string"
+          },
+          "entry_type": {
+            "description": "Filter by entry type: note, person, organization, event, document, topic, etc.",
+            "type": "string"
+          },
+          "expand": {
+            "description": "Use AI query expansion for additional search terms. Default: false",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per result (e.g. ['id','title','tags']). Omit for default fields. Overrides include_body; asking for 'body' returns the same bounded body, with its truncation markers. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "fips": {
+            "description": "Filter by county FIPS code (5-digit, e.g. '12086' for Miami-Dade). Works across all KBs.",
+            "type": "string"
+          },
+          "include_body": {
+            "description": "Include body text in results, bounded to 8000 chars per body within a 40000-char response budget. Default: false (returns snippet instead, saving tokens). Truncated bodies carry body_truncated; continue them with kb_read_body.",
+            "type": "boolean"
+          },
+          "kb_name": {
+            "description": "Limit search to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results to return (default 20)",
+            "type": "integer"
+          },
+          "mode": {
+            "description": "Search mode: keyword (FTS5), semantic (vector), or hybrid. Default: hybrid",
+            "enum": [
+              "keyword",
+              "semantic",
+              "hybrid"
+            ],
+            "type": "string"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          },
+          "query": {
+            "description": "Search query (FTS5 syntax supported)",
+            "type": "string"
+          },
+          "state": {
+            "description": "Filter by US state abbreviation (e.g. 'FL', 'TX'). Works across all KBs.",
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by the indexed 'status' frontmatter field (e.g. 'unprocessed', 'draft', 'done'). Works across all KBs and entry types. Other metadata fields (e.g. 'readiness') are NOT reachable via this parameter.",
+            "type": "string"
+          },
+          "tags": {
+            "description": "Filter by tags (entries must have ALL specified tags)",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    "kb_stats": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_tags": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "Filter to specific KB (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum tags to return (default 100)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          },
+          "prefix": {
+            "description": "Filter tags starting with prefix",
+            "type": "string"
+          },
+          "tree": {
+            "description": "Return hierarchical tree instead of flat list",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_timeline": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "date_from": {
+            "description": "Start date (YYYY-MM-DD)",
+            "type": "string"
+          },
+          "date_to": {
+            "description": "End date (YYYY-MM-DD)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 50)",
+            "type": "integer"
+          },
+          "min_importance": {
+            "description": "Minimum importance score (1-10)",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "kb_update": {
+      "arguments": {
+        "entry_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "body": {
+            "description": "New body content (markdown)",
+            "type": "string"
+          },
+          "date": {
+            "description": "Date (YYYY-MM-DD)",
+            "type": "string"
+          },
+          "entry_id": {
+            "description": "Entry ID to update",
+            "type": "string"
+          },
+          "importance": {
+            "description": "Importance score 1-10",
+            "type": "integer"
+          },
+          "kb_name": {
+            "description": "KB containing the entry",
+            "type": "string"
+          },
+          "location": {
+            "description": "Location/venue",
+            "type": "string"
+          },
+          "metadata": {
+            "description": "Additional/extension fields to update",
+            "type": "object"
+          },
+          "participants": {
+            "description": "Participants involved (for events)",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "Status field (e.g. draft, confirmed, done)",
+            "type": "string"
+          },
+          "summary": {
+            "description": "Short summary or subtitle",
+            "type": "string"
+          },
+          "tags": {
+            "description": "Replacement tags (overwrites existing)",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "description": "New title",
+            "type": "string"
+          },
+          "validate": {
+            "description": "Run QA validation after save and return issues. Also runs automatically if KB has qa_on_write: true in kb.yaml.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entry_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "list_edge_types": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB to query. If omitted, checks all KBs.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_adrs": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max ADRs to return (default 50). Pass null for the full, unbounded list.",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Skip this many ADRs before returning (default 0).",
+            "type": "integer"
+          },
+          "status": {
+            "description": "Filter by ADR status",
+            "enum": [
+              "proposed",
+              "accepted",
+              "deprecated",
+              "superseded"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_backlog": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "epic": {
+            "description": "Filter to subtasks of this epic ID",
+            "type": "string"
+          },
+          "group_by": {
+            "description": "Group results by epic",
+            "enum": [
+              "epic"
+            ],
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "kind": {
+            "description": "Filter by kind",
+            "enum": [
+              "feature",
+              "bug",
+              "tech_debt",
+              "improvement",
+              "spike",
+              "epic"
+            ],
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max items to return (default 50). Pass null for the full, unbounded list. Ignored when group_by=epic (groups are always complete).",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Skip this many items before returning (default 0)",
+            "type": "integer"
+          },
+          "priority": {
+            "description": "Filter by priority",
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ],
+            "type": "string"
+          },
+          "sort": {
+            "description": "Sort order (default: priority)",
+            "enum": [
+              "priority",
+              "rank",
+              "created"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by status",
+            "enum": [
+              "proposed",
+              "accepted",
+              "in_progress",
+              "review",
+              "done",
+              "wont_do"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_board": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max items to embed per lane (default 50; lane `count` is always the true total). Pass null for every item in every lane.",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_check_ready": {
+      "arguments": {
+        "item_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "item_id": {
+            "description": "Backlog item ID",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_claim": {
+      "arguments": {
+        "assignee": "example",
+        "item_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Who is claiming the item",
+            "type": "string"
+          },
+          "item_id": {
+            "description": "Backlog item ID",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "kb_name",
+          "assignee"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_component": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max components to return (default 50). Pass null for the full, unbounded list.",
+            "type": "integer"
+          },
+          "name": {
+            "description": "Component name to search for",
+            "type": "string"
+          },
+          "offset": {
+            "description": "Skip this many components before returning (default 0).",
+            "type": "integer"
+          },
+          "path": {
+            "description": "Code path to search for",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_context_for_item": {
+      "arguments": {
+        "item_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "item_id": {
+            "description": "Backlog item ID",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_conventions": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "category": {
+            "description": "Filter by category",
+            "enum": [
+              "coding",
+              "testing",
+              "api",
+              "git",
+              "documentation",
+              "security",
+              "deployment"
+            ],
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_create_adr": {
+      "arguments": {
+        "title": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "consequences": {
+            "description": "Consequences section",
+            "type": "string"
+          },
+          "context": {
+            "description": "Context section",
+            "type": "string"
+          },
+          "deciders": {
+            "description": "List of deciders",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "decision": {
+            "description": "Decision section",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "status": {
+            "description": "Initial status (default: proposed)",
+            "enum": [
+              "proposed",
+              "accepted"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "description": "ADR title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_create_backlog_item": {
+      "arguments": {
+        "kb_name": "example",
+        "kind": "feature",
+        "title": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "body": {
+            "description": "Item description",
+            "type": "string"
+          },
+          "effort": {
+            "description": "Effort estimate",
+            "enum": [
+              "XS",
+              "S",
+              "M",
+              "L",
+              "XL"
+            ],
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "kind": {
+            "description": "Item kind",
+            "enum": [
+              "feature",
+              "bug",
+              "tech_debt",
+              "improvement",
+              "spike",
+              "epic"
+            ],
+            "type": "string"
+          },
+          "priority": {
+            "description": "Priority level",
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ],
+            "type": "string"
+          },
+          "tags": {
+            "description": "Tags for categorization",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "description": "Item title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "kind",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_epic_detail": {
+      "arguments": {
+        "epic_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "epic_id": {
+            "description": "Epic ID",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "epic_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_epics": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by epic status",
+            "enum": [
+              "proposed",
+              "planned",
+              "accepted",
+              "in_progress",
+              "done"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_log": {
+      "arguments": {
+        "item_id": "example",
+        "kb_name": "example",
+        "summary": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "decisions": {
+            "description": "Design choices made and rationale",
+            "type": "string"
+          },
+          "item_id": {
+            "description": "Backlog item ID this session is for",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "open_questions": {
+            "description": "Unresolved issues for next session",
+            "type": "string"
+          },
+          "rejected": {
+            "description": "Approaches tried and abandoned",
+            "type": "string"
+          },
+          "summary": {
+            "description": "Session summary (becomes the entry body)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "kb_name",
+          "summary"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_milestones": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by milestone status",
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_prioritize": {
+      "arguments": {
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "after": {
+            "description": "Place item after this item ID",
+            "type": "string"
+          },
+          "before": {
+            "description": "Place item before this item ID",
+            "type": "string"
+          },
+          "item_id": {
+            "description": "Single item to reposition (use with after/before)",
+            "type": "string"
+          },
+          "item_ids": {
+            "description": "Ordered list of item IDs (highest priority first), assigned ranks 100, 200, 300, ...",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_pull_next": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_refine": {
+      "arguments": {
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by status (default: both proposed and accepted)",
+            "enum": [
+              "proposed",
+              "accepted"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_review": {
+      "arguments": {
+        "item_id": "example",
+        "kb_name": "example",
+        "outcome": "approved",
+        "reviewer": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "feedback": {
+            "description": "Review notes/feedback",
+            "type": "string"
+          },
+          "item_id": {
+            "description": "Backlog item ID",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "outcome": {
+            "description": "Review outcome",
+            "enum": [
+              "approved",
+              "changes_requested"
+            ],
+            "type": "string"
+          },
+          "reviewer": {
+            "description": "Who is reviewing",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "kb_name",
+          "outcome",
+          "reviewer"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_review_queue": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_standards": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "category": {
+            "description": "Filter by category",
+            "enum": [
+              "coding",
+              "testing",
+              "api",
+              "git",
+              "documentation",
+              "security",
+              "deployment"
+            ],
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max standards to return (default 50). Pass null for the full, unbounded list.",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Skip this many standards before returning (default 0).",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "sw_submit": {
+      "arguments": {
+        "item_id": "example",
+        "kb_name": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "item_id": {
+            "description": "Backlog item ID",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_transition": {
+      "arguments": {
+        "item_id": "example",
+        "kb_name": "example",
+        "to_status": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "item_id": {
+            "description": "Backlog item ID",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Required for some transitions (wont_do, reopen, rework)",
+            "type": "string"
+          },
+          "to_status": {
+            "description": "Target status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "kb_name",
+          "to_status"
+        ],
+        "type": "object"
+      }
+    },
+    "sw_validations": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "category": {
+            "description": "Filter by category",
+            "enum": [
+              "coding",
+              "testing",
+              "api",
+              "git",
+              "documentation",
+              "security",
+              "deployment"
+            ],
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "task_ancestors": {
+      "arguments": {
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_blocked_by": {
+      "arguments": {
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_checkpoint": {
+      "arguments": {
+        "kb_name": "example",
+        "message": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "confidence": {
+            "description": "Confidence 0.0-1.0",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "message": {
+            "description": "Checkpoint message",
+            "type": "string"
+          },
+          "partial_evidence": {
+            "description": "Evidence entry IDs",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name",
+          "message"
+        ],
+        "type": "object"
+      }
+    },
+    "task_claim": {
+      "arguments": {
+        "assignee": "example",
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name",
+          "assignee"
+        ],
+        "type": "object"
+      }
+    },
+    "task_create": {
+      "arguments": {
+        "kb_name": "example",
+        "title": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "type": "string"
+          },
+          "body": {
+            "description": "Task description",
+            "type": "string"
+          },
+          "dependencies": {
+            "description": "Dependency entry IDs",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "parent": {
+            "description": "Parent task entry ID",
+            "type": "string"
+          },
+          "priority": {
+            "description": "Priority 1-10 (default 5)",
+            "maximum": 10,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "tags": {
+            "description": "Tags for the new task",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "description": "Task title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kb_name",
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    "task_critical_path": {
+      "arguments": {
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_decompose": {
+      "arguments": {
+        "children": [],
+        "kb_name": "example",
+        "parent_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "children": {
+            "description": "Child task specs",
+            "items": {
+              "properties": {
+                "assignee": {
+                  "type": "string"
+                },
+                "body": {
+                  "type": "string"
+                },
+                "priority": {
+                  "maximum": 10,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "title"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "parent_id": {
+            "description": "Parent task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parent_id",
+          "kb_name",
+          "children"
+        ],
+        "type": "object"
+      }
+    },
+    "task_list": {
+      "arguments": {},
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "parent": {
+            "description": "Filter by parent task ID",
+            "type": "string"
+          },
+          "status": {
+            "description": "Filter by task status",
+            "enum": [
+              "open",
+              "claimed",
+              "in_progress",
+              "blocked",
+              "review",
+              "done",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "task_status": {
+      "arguments": {
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_subtree": {
+      "arguments": {
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name (optional)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Root task ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_update": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "New assignee",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "priority": {
+            "description": "New priority 1-10",
+            "maximum": 10,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "status": {
+            "description": "New status",
+            "enum": [
+              "open",
+              "claimed",
+              "in_progress",
+              "blocked",
+              "review",
+              "done",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    }
+  }
+}
