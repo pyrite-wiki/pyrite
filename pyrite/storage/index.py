@@ -1096,21 +1096,15 @@ class IndexManager:
         if rows:
             health["broken_links"] = rows[0]["cnt"]
 
-        # Entries using an undeclared `entry_type` — drift detector.
-        # For each KB that ships a kb.yaml, build the set of declared types
-        # (kb.yaml types + CORE_TYPES) and report any (kb, type, count) not
-        # in that set. KBs without a kb.yaml are skipped: we can't enforce
-        # what isn't configured.
-        from ..schema.core_types import CORE_TYPES
-
+        # The schema owns the type vocabulary; an empty declaration is
+        # unrestricted, including plugin types and core types.
         for kb in kbs:
             if not kb.path.exists() or not kb.kb_yaml_path.exists():
                 continue
 
-            declared: set[str] = set(CORE_TYPES.keys())
-            kb_schema = kb.kb_schema
-            if kb_schema and kb_schema.types:
-                declared.update(kb_schema.types.keys())
+            declared = set(kb.kb_schema.declared_types())
+            if not declared:
+                continue
 
             type_rows = self.db.execute_sql(
                 "SELECT entry_type, COUNT(*) AS cnt FROM entry "

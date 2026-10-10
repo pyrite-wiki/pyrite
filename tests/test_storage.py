@@ -1563,9 +1563,8 @@ class TestUndeclaredTypesInHealth:
             finally:
                 db.close()
 
-    def test_core_types_treated_as_declared(self):
-        """Entries using core types (e.g. `note`) should not be flagged,
-        even if kb.yaml doesn't explicitly redeclare them."""
+    def test_core_types_require_declaration(self):
+        """Core types are reported when a typed KB does not declare them."""
         with tempfile.TemporaryDirectory() as raw_tmp:
             tmp = Path(raw_tmp)
             kb_path = tmp / "core-kb"
@@ -1589,8 +1588,9 @@ class TestUndeclaredTypesInHealth:
 
                 index_mgr = IndexManager(db, config)
                 health = index_mgr.check_health()
-                for row in health.get("undeclared_types", []):
-                    assert row["type"] != "note", f"core type 'note' must not be flagged: {row}"
+                assert {"kb": kb_path.name, "type": "note", "count": 1} in health[
+                    "undeclared_types"
+                ]
             finally:
                 db.close()
 
