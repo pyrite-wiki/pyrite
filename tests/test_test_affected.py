@@ -651,6 +651,7 @@ class TestThisRepository:
         "tests/test_cli_commands.py::TestTyperGetCommand",
         "tests/test_cli_commands.py::TestTyperCreateCommand",
         "tests/test_cli_commands.py::TestTopLevelHelpAdvertisesOrient",
+        "tests/test_cli_json_output.py::test_get_reads_current_file_body_and_body_round_trip_is_clean",
     }
 
     def test_core_set_is_exactly_the_named_surfaces(self):

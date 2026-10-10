@@ -3,7 +3,10 @@
 Verifies that commands with --format json return valid JSON with expected keys.
 """
 
+import hashlib
 import json
+import os
+import subprocess
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -431,6 +434,76 @@ def test_search_error_logged_at_debug(cli_env, caplog):
     ), (
         f"expected exception logged; got records: {[(r.levelname, r.getMessage()) for r in caplog.records]}"
     )
+
+
+@pytest.mark.cli
+@pytest.mark.core
+def test_get_reads_current_file_body_and_body_round_trip_is_clean(cli_env):
+    """A stale index must not hide a section present in the file from get."""
+    kb = cli_env["config"].knowledge_bases[0]
+    repo = KBRepository(kb)
+    entry, entry_path = next(repo.list_entries())
+    entry_id = entry.id
+    model_body = (
+        "  Body text.  \n\n### Conductor QC (2026-10-05)\n\nThe existing section remains intact.  "
+    )
+    expected_body = model_body.replace("\n", os.linesep) + os.linesep
+    entry.body = model_body
+    entry_path.write_text(entry.to_markdown(), encoding="utf-8")
+    committed_content = entry_path.read_bytes()
+
+    # The fixture's index still has the old body; commit the current file as the
+    # baseline so the get/update round trip must leave it unchanged.
+    db = PyriteDB(cli_env["config"].settings.index_path)
+    try:
+        indexed = db.get_entry(entry_id, kb.name)
+    finally:
+        db.close()
+    assert indexed is not None
+    assert indexed["body"] == "Body text."
+
+    for args in (
+        ["git", "init", "--quiet"],
+        ["git", "config", "user.name", "Pyrite test"],
+        ["git", "config", "user.email", "pyrite-test@example.invalid"],
+        ["git", "add", "--all"],
+        ["git", "commit", "--quiet", "-m", "baseline"],
+    ):
+        subprocess.run(args, cwd=kb.path, check=True, capture_output=True)
+
+    with _patch_config("pyrite.cli.entry_commands.load_config", cli_env):
+        result = runner.invoke(app, ["get", entry_id, "--kb", kb.name, "--format", "json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["body"] == expected_body
+    assert data["content_hash"] == hashlib.sha256(committed_content).hexdigest()
+
+    body_file = cli_env["tmpdir"] / "round-trip-body.md"
+    body_file.write_text(data["body"], encoding="utf-8", newline="")
+    with _patch_config("pyrite.cli.entry_commands.load_config", cli_env):
+        updated = runner.invoke(
+            app,
+            [
+                "update",
+                entry_id,
+                "--kb",
+                kb.name,
+                "--body-file",
+                str(body_file),
+                "--format",
+                "json",
+            ],
+        )
+    assert updated.exit_code == 0, updated.output
+    assert entry_path.read_bytes() == committed_content
+    diff = subprocess.run(
+        ["git", "diff", "--exit-code"],
+        cwd=kb.path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert diff.returncode == 0, diff.stdout + diff.stderr
 
 
 @pytest.mark.cli

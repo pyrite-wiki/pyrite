@@ -1,0 +1,1 @@
+- **`pyrite get` reads the current body from its Markdown file (#753).** The JSON body and SHA-256 now reflect edits made since the index was built, so echoing the body through `pyrite update --body-file` no longer discards a newer section.
