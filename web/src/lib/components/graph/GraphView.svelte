@@ -22,6 +22,8 @@
 	let tooltipEl: HTMLDivElement;
 	// Cytoscape must stay unproxied, but async readiness is a reactive value.
 	let cy = $state.raw<cytoscape.Core>();
+	let initializing = false;
+	let disposed = false;
 
 	function buildElements() {
 		const nodeElements = nodes.map((n) => {
@@ -111,127 +113,143 @@
 	}
 
 	async function initCytoscape() {
-		const cytoscape = (await import('cytoscape')).default;
-		const coseBilkent = (await import('cytoscape-cose-bilkent')).default;
-		cytoscape.use(coseBilkent);
+		if (initializing || disposed || cy) return;
+		initializing = true;
+		try {
+			const cytoscape = (await import('cytoscape')).default;
+			const coseBilkent = (await import('cytoscape-cose-bilkent')).default;
+			if (disposed) return;
+			cytoscape.use(coseBilkent);
 
-		cy = cytoscape({
-			container,
-			elements: buildElements(),
-			style: [
-				{
-					selector: 'node',
-					style: {
-						'background-color': 'data(color)',
-						label: 'data(label)',
-						'font-size': compact ? '10px' : '11px',
-						'text-valign': 'bottom',
-						'text-halign': 'center',
-						'text-margin-y': 5,
-						color: '#a1a1aa',
-						width: 'data(size)',
-						height: 'data(size)',
-						opacity: 'data(nodeOpacity)',
-						'border-width': 0,
-						'overlay-padding': 4
-					} as unknown as cytoscape.Css.Node
-				},
-				{
-					selector: 'node[?isCenter]',
-					style: {
-						'border-width': 3,
-						'border-color': '#facc15'
+			cy = cytoscape({
+				container,
+				elements: buildElements(),
+				style: [
+					{
+						selector: 'node',
+						style: {
+							'background-color': 'data(color)',
+							label: 'data(label)',
+							'font-size': compact ? '10px' : '11px',
+							'text-valign': 'bottom',
+							'text-halign': 'center',
+							'text-margin-y': 5,
+							color: '#a1a1aa',
+							width: 'data(size)',
+							height: 'data(size)',
+							opacity: 'data(nodeOpacity)',
+							'border-width': 0,
+							'overlay-padding': 4
+						} as unknown as cytoscape.Css.Node
+					},
+					{
+						selector: 'node[?isCenter]',
+						style: {
+							'border-width': 3,
+							'border-color': '#facc15'
+						}
+					},
+					{
+						selector: 'node:active',
+						style: {
+							'overlay-opacity': 0.1
+						}
+					},
+					{
+						selector: 'edge',
+						style: {
+							width: 1.5,
+							'line-color': '#3f3f46',
+							'target-arrow-color': '#3f3f46',
+							'target-arrow-shape': 'triangle',
+							'curve-style': 'bezier',
+							'arrow-scale': 0.8,
+							opacity: 0.6
+						}
+					},
+					{
+						selector: 'edge:active',
+						style: {
+							opacity: 1,
+							width: 2.5
+						}
 					}
-				},
-				{
-					selector: 'node:active',
-					style: {
-						'overlay-opacity': 0.1
-					}
-				},
-				{
-					selector: 'edge',
-					style: {
-						width: 1.5,
-						'line-color': '#3f3f46',
-						'target-arrow-color': '#3f3f46',
-						'target-arrow-shape': 'triangle',
-						'curve-style': 'bezier',
-						'arrow-scale': 0.8,
-						opacity: 0.6
-					}
-				},
-				{
-					selector: 'edge:active',
-					style: {
-						opacity: 1,
-						width: 2.5
-					}
-				}
-			],
-			layout: getLayoutConfig(layoutName),
-			minZoom: 0.2,
-			maxZoom: 4,
-			wheelSensitivity: 0.3
-		});
-
-		cy.on('tap', 'node', (evt: cytoscape.EventObject) => {
-			const data = evt.target.data();
-			goto(`/entries/${encodeURIComponent(data.entryId)}`);
-		});
-
-		cy.on('mouseover', 'node', (evt: cytoscape.EventObject) => {
-			container.style.cursor = 'pointer';
-			const data = evt.target.data();
-			evt.target.style({
-				'border-width': 2,
-				'border-color': '#facc15',
-				'underlay-color': '#facc15',
-				'underlay-opacity': 0.15,
-				'underlay-padding': 8
+				],
+				layout: getLayoutConfig(layoutName),
+				minZoom: 0.2,
+				maxZoom: 4,
+				wheelSensitivity: 0.3
 			});
-			const pos = evt.renderedPosition;
-			showTooltip(pos.x, pos.y, buildNodeTooltipLines(data));
-		});
 
-		cy.on('mouseout', 'node', (evt: cytoscape.EventObject) => {
-			container.style.cursor = 'default';
-			const isCenter = evt.target.data('isCenter');
-			if (!isCenter) {
+			cy.on('tap', 'node', (evt: cytoscape.EventObject) => {
+				const data = evt.target.data();
+				goto(`/entries/${encodeURIComponent(data.entryId)}`);
+			});
+
+			cy.on('mouseover', 'node', (evt: cytoscape.EventObject) => {
+				container.style.cursor = 'pointer';
+				const data = evt.target.data();
 				evt.target.style({
-					'border-width': 0,
-					'underlay-opacity': 0
+					'border-width': 2,
+					'border-color': '#facc15',
+					'underlay-color': '#facc15',
+					'underlay-opacity': 0.15,
+					'underlay-padding': 8
 				});
-			}
-			hideTooltip();
-		});
+				const pos = evt.renderedPosition;
+				showTooltip(pos.x, pos.y, buildNodeTooltipLines(data));
+			});
 
-		cy.on('mouseover', 'edge', (evt: cytoscape.EventObject) => {
-			const relation = evt.target.data('relation');
-			if (relation) {
-				const pos = evt.renderedPosition || evt.target.midpoint();
-				showTooltip(pos.x, pos.y, buildEdgeTooltipLines(relation));
-			}
-		});
+			cy.on('mouseout', 'node', (evt: cytoscape.EventObject) => {
+				container.style.cursor = 'default';
+				const isCenter = evt.target.data('isCenter');
+				if (!isCenter) {
+					evt.target.style({
+						'border-width': 0,
+						'underlay-opacity': 0
+					});
+				}
+				hideTooltip();
+			});
 
-		cy.on('mouseout', 'edge', () => {
-			hideTooltip();
-		});
+			cy.on('mouseover', 'edge', (evt: cytoscape.EventObject) => {
+				const relation = evt.target.data('relation');
+				if (relation) {
+					const pos = evt.renderedPosition || evt.target.midpoint();
+					showTooltip(pos.x, pos.y, buildEdgeTooltipLines(relation));
+				}
+			});
+
+			cy.on('mouseout', 'edge', () => {
+				hideTooltip();
+			});
+		} finally {
+			initializing = false;
+		}
 	}
 
 	onMount(() => {
-		return () => cy?.destroy();
+		return () => {
+			disposed = true;
+			cy?.destroy();
+		};
 	});
 
 	$effect(() => {
-		if (cy && nodes.length > 0) {
-			cy.json({ elements: buildElements() });
-			cy.layout(getLayoutConfig(layoutName)).run();
-			// New elements need the existing query without relaying out on typing.
-			untrack(applySearchHighlight);
-		} else if (!cy && nodes.length > 0 && container) {
-			initCytoscape();
-		}
+		const elements = buildElements();
+		const layout = getLayoutConfig(layoutName);
+		const populated = nodes.length > 0;
+		const readyContainer = container;
+		untrack(() => {
+			if (cy && populated) {
+				cy.json({ elements });
+				cy.layout(layout).run();
+				// New elements need the existing query without relaying out on typing.
+				untrack(applySearchHighlight);
+			} else if (!cy && populated && readyContainer) {
+				initCytoscape();
+			}
+		});
 	});
 
 	function applySearchHighlight() {
