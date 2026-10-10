@@ -1,0 +1,1 @@
+- **The entry page has a Delete button (#117).** The entry toolbar now offers Delete beside Edit (same visibility, hidden while editing). It asks for confirmation in place (Confirm delete / Cancel), calls the existing `DELETE /api/entries/{id}` endpoint, and goes to `/entries` on success.

@@ -21,6 +21,8 @@
 	import { onMount } from 'svelte';
 	import { parseWikilinks } from '$lib/editor/wikilink-utils';
 	import SkeletonLoader from '$lib/components/common/SkeletonLoader.svelte';
+	import DeleteEntryButton from '$lib/components/entry/DeleteEntryButton.svelte';
+	import { goto } from '$app/navigation';
 
 	const canEdit = $derived(
 		!authStore.authConfig.enabled || authStore.isAuthenticated
@@ -271,6 +273,13 @@
 											{editing ? 'View' : 'Edit'}
 										</button>
 										{/if}
+									{#if canEdit && !editing}
+										<DeleteEntryButton
+											entryId={entryStore.current?.id ?? ''}
+											kbName={entryStore.current?.kb_name ?? ''}
+											onDeleted={() => goto('/entries')}
+										/>
+									{/if}
 										{#if editing}
 											<button
 												onclick={() => uiStore.toggleEditorMode()}
