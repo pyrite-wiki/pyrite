@@ -63,7 +63,11 @@ Usage
   --files A B ...     use these changed paths instead of asking git
 
 Under the pre-push hook (PRE_COMMIT_FROM_REF / PRE_COMMIT_TO_REF set) the
-changed paths are those of the pushed range, not the working tree.
+changed paths are those of the pushed range, not the working tree. Selection
+uses a two-dot diff; pre-commit's trigger uses a three-dot diff. A history-only
+force-push can therefore trigger a run that selects core only. pre-commit
+checks only the first non-deletion ref in a multi-ref push: push one branch
+at a time when relying on the local hook.
 
 Pass stamps: each tree is tested once
   A ``--run`` that exits 0 on a clean tree (no uncommitted change to a
@@ -127,7 +131,7 @@ _FULL_SUITE_PATHS = {".pre-commit-config.yaml"}
 _FULL_SUITE_PREFIXES = (".github/workflows/",)
 # Content trees: a change here is matched by basename only, never by its
 # directory's name ("backlog", "docs" are words half the suite uses).
-_CONTENT_TOPS = {"kb", "docs", "web"}
+_CONTENT_TOPS = {"kb", "docs", "web", ".claude"}
 # Directory names too common to stand for a file in them: "tests" and
 # "scripts" appear in a third of the suite.
 _GENERIC_DIRS = {"tests", "scripts"}
@@ -1043,22 +1047,30 @@ def main(argv: list[str] | None = None) -> int:
     if opts.full or env_full:
         selection = Selection(files={}, core=[], full="--full" if opts.full else "PYRITE_PUSH_FULL")
     else:
+        diff_context = f"base {opts.base!r}"
+        diff_hint = "fetch origin dev, or push with PYRITE_PUSH_FULL=1"
         try:
             if opts.files is not None:
                 changed = opts.files
             elif to_ref:
                 # Under the pre-push hook: what is being pushed, not the tree.
                 base = _default_base(root, opts.base)
-                changed = pushed_files(root, os.environ.get("PRE_COMMIT_FROM_REF"), to_ref, base)
+                from_ref = os.environ.get("PRE_COMMIT_FROM_REF")
+                diff_context = f"pushed range {from_ref!r}..{to_ref!r} (fallback base {base!r})"
+                diff_hint = (
+                    "check PRE_COMMIT_FROM_REF and PRE_COMMIT_TO_REF, "
+                    "fetch missing refs, or push with PYRITE_PUSH_FULL=1"
+                )
+                changed = pushed_files(root, from_ref, to_ref, base)
             else:
                 changed = changed_files(root, _default_base(root, opts.base), opts.committed)
         except subprocess.CalledProcessError as exc:
             # Fail closed: selecting nothing would pass a push untested.
             detail = (exc.stderr or "").strip().splitlines()
             print(
-                f"test-affected: could not diff against {opts.base!r}"
+                f"test-affected: could not diff {diff_context}"
                 + (f" ({detail[-1]})" if detail else "")
-                + " -- fetch origin dev, or push with PYRITE_PUSH_FULL=1",
+                + f" -- {diff_hint}",
                 file=sys.stderr,
             )
             return 2

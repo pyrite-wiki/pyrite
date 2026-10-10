@@ -63,6 +63,7 @@ class TestRegister:
 
 
 class TestLogin:
+    @pytest.mark.core
     def test_login_success(self, auth_env):
         service, _ = auth_env
         service.register("alice", "password123")
@@ -70,6 +71,7 @@ class TestLogin:
         assert user["username"] == "alice"
         assert len(token) > 20
 
+    @pytest.mark.core
     def test_login_wrong_password(self, auth_env):
         service, _ = auth_env
         service.register("alice", "password123")
@@ -83,6 +85,7 @@ class TestLogin:
 
 
 class TestSessions:
+    @pytest.mark.core
     def test_verify_session_valid(self, auth_env):
         service, _ = auth_env
         service.register("alice", "password123")

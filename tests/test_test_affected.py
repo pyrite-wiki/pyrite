@@ -637,6 +637,10 @@ class TestThisRepository:
         "tests/test_entry_lifecycle.py",
         # the KB service
         "tests/test_services.py::TestKBService",
+        # authentication, including refusal and session verification
+        "tests/test_auth_service.py::TestLogin::test_login_success",
+        "tests/test_auth_service.py::TestLogin::test_login_wrong_password",
+        "tests/test_auth_service.py::TestSessions::test_verify_session_valid",
         # auth / read scoping, and every entry point passing the policy (ADR-0037 §5)
         "tests/test_read_scoping_is_structural.py",
         "tests/test_every_entry_point_passes_the_policy.py",

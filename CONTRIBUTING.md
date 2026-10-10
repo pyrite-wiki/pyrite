@@ -355,6 +355,12 @@ uv pip install --python .venv/bin/python -e ".[all,dev]"
 | commit-msg | a `fix:` commit must touch `tests/` | — |
 | pre-push | `scripts/test-affected --run`: core + affected tests on `PYRITE_PUSH_WORKERS` (default 4) workers, only when the push touches code, tests, scripts or test config (a docs- or KB-only push skips it); `PYRITE_PUSH_FULL=1` runs the full suite | Seconds to minutes, depending on what changed |
 
+The hook trigger uses a three-dot diff; `scripts/test-affected` selects from
+the two-dot pushed range. A history-only force-push can trigger a core-only
+run. pre-commit checks the first non-deletion ref of a multi-ref push only;
+push one branch at a time when relying on the local hook. CI remains the gate.
+
+
 CI runs the same checks plus the full Python matrix, Postgres, the frontend
 build and Playwright, so the pre-push run does not have to be perfect. If it
 fails in a test your change does not touch, re-run that test alone
