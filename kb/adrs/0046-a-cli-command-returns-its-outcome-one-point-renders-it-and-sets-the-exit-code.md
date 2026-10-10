@@ -4,7 +4,7 @@ title: A CLI command returns its outcome; one point renders it and sets the exit
 type: adr
 importance: 5
 adr_number: 46
-status: proposed
+status: accepted
 date: '2026-10-08'
 tags: [architecture, cli, contract, errors, exit-codes, plugins]
 links:
@@ -23,6 +23,8 @@ links:
 ---
 
 # ADR-0046: A CLI command returns its outcome; one point renders it and sets the exit code
+
+> **Accepted by the maintainer, 2026-10-10**, with the enforcement-point amendment below (decisions 6 to 8; Andon #822, PR #823).
 
 ## Context
 
@@ -99,7 +101,7 @@ the same root (`pyrite/cli/__init__.py`, `get_all_cli_commands`).
 - Corrects ADR-0037 §3's "maps code to exit code": the CLI exits 1 for every
   refusal, and the code is in the output.
 
-## Enforcement point (amendment 2026-10-10, Andon #822; proposed)
+## Enforcement point (amendment 2026-10-10, Andon #822; accepted by the maintainer, 2026-10-10)
 
 Decisions 3 and 4 said the root group renders the outcome and that a scan of
 source shapes keeps commands from going around it. Three cold reads found
