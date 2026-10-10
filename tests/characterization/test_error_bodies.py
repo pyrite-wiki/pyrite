@@ -1,7 +1,7 @@
 """Golden error bodies for every `PyriteError` subclass, per transport (ADR-0037 theme 0).
 
 Regenerate: ``PYRITE_CHARACTERIZATION_REGENERATE=1 .venv/bin/pytest
-tests/characterization/test_error_bodies.py -n4``, then review the diff to
+tests/characterization/test_error_bodies.py -n 0``, then review the diff to
 ``tests/characterization/goldens/error_bodies.json`` and commit it as its
 own reviewed change (never in the same commit as a behaviour change --
 ADR-0037's migration rule). Never set in CI or the pre-push hook.

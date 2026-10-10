@@ -10,7 +10,7 @@ merged `dict` back). `rest`/`mcp` shard by principal (one of `world.py`'s
 seven principal names is always the middle segment of every key here, so
 this needs no new grouping logic); `error_bodies` (12KB) never shards.
 Regeneration (`PYRITE_CHARACTERIZATION_REGENERATE=1 pytest
-tests/characterization/ -n4`, documented in each test module's docstring)
+tests/characterization/ -n 0`, documented in each test module's docstring)
 writes these files; every other run only reads and compares. **Never gated
 to run in CI** -- the regenerate path is opt-in per the environment
 variable, off by default, and nothing in `scripts/test-affected`, the
@@ -18,9 +18,10 @@ pre-push hook or CI sets it.
 
 **`save` replaces the file's keys in its scope, under a lock.**
 `test_rest_matrix.py` and `test_mcp_matrix.py` parametrize one test per
-principal, and `-n4` (the regenerate command every module's docstring
-documents) runs those in separate worker processes -- each with its own
-in-memory `golden` dict from its own `load()` call at the start of ITS test.
+principal. Regeneration must run serially: the root pytest hook refuses an
+opted-in run with xdist workers before collection or writes. Normal golden
+comparison remains safe to run in parallel. The scoped read/merge/write
+below still preserves each principal's previously recorded cases.
 A blind merge-only overwrite is a lost-update race across workers (worker
 B's save must not erase worker A's already-written keys for A's own
 principal) AND leaves a route/tool that dropped out of the LIVE run set
@@ -31,7 +32,7 @@ run reproduced -- a key nothing produced this run is deleted, not left
 behind -- while every OTHER principal's shard/keys are untouched. `save`
 re-reads the file immediately before writing, inside a cross-process
 advisory lock (`fcntl.flock`, POSIX-only -- matching this repo's dev
-platforms), so two workers' read-merge-write cannot interleave.
+platforms), as an additional safeguard for independent processes.
 """
 
 from __future__ import annotations

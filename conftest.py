@@ -103,6 +103,28 @@ _isolate_hypothesis_storage()
 
 
 @pytest.hookimpl(tryfirst=True)
+def pytest_configure(config):
+    """Refuse distributed golden regeneration before collection or any writes.
+
+    xdist resolves auto/logical and command-line overrides before configure;
+    its worker count here is effective, rather than a guess from argv. Keep
+    this at the root: characterization's conftest loads too late in workers.
+    Do not import golden_io here (its POSIX file locks are not portable).
+    """
+    if os.environ.get("PYRITE_CHARACTERIZATION_REGENERATE") != "1":
+        return
+    workers = config.getoption("numprocesses", default=0)
+    distributed = config.getoption("dist", default="no") != "no" and bool(
+        config.getoption("tx", default=[])
+    )
+    if workers or distributed or hasattr(config, "workerinput"):
+        raise pytest.UsageError(
+            "PYRITE_CHARACTERIZATION_REGENERATE=1 cannot run with xdist workers; "
+            "run serially with -n 0, review the golden diff, then commit it."
+        )
+
+
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
     """Mark experimental tests, from the one mapping (#657).
 

@@ -3,7 +3,7 @@ matrix and the {readable, private, missing, no_default_role} KB axis
 (ADR-0037 theme 0).
 
 Regenerate: ``PYRITE_CHARACTERIZATION_REGENERATE=1 .venv/bin/pytest
-tests/characterization/test_mcp_matrix.py -n4``, then review the diff to
+tests/characterization/test_mcp_matrix.py -n 0``, then review the diff to
 ``tests/characterization/goldens/mcp.*.json`` and commit it as its own
 reviewed change. Never set in CI or the pre-push hook.
 

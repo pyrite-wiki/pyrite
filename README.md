@@ -402,6 +402,20 @@ pyrite sw components     # Module documentation
 pyrite sw standards      # Coding conventions
 ```
 
+### Regenerating characterization goldens
+
+Run golden updates serially, including when your pytest defaults use xdist:
+
+```bash
+PYRITE_CHARACTERIZATION_REGENERATE=1 .venv/bin/pytest tests/characterization/ -n 0
+```
+
+Review the golden diff and commit it as its own reviewed change. The pytest
+startup hook refuses regeneration with xdist workers before any tests run;
+`-n 0` overrides parallel defaults. Ordinary comparison runs can still use
+`pytest tests/characterization/ -n 4` without the regeneration variable.
+Golden saving uses POSIX file locks; regeneration requires a POSIX platform.
+
 ## Documentation
 
 - [Getting Started](docs/getting-started.md) — install, create a KB, connect an AI
