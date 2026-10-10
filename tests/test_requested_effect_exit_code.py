@@ -674,6 +674,49 @@ class TestTasks:
         children = json.loads(out.stdout)["children"]
         assert [c.get("created") for c in children] == [True, False], children
         assert out.returncode == PARTIAL, out.stdout + out.stderr
+        assert json.loads(out.stdout)["outcome"] == "partial"
+
+    # The regimes below are ADR-0046 slice 1's: the task module returns an
+    # Outcome and the root group renders it, through the real entry point.
+
+    def test_children_that_all_failed_are_refused_and_say_so_in_json(self, cli):
+        cli.pyrite("task", "create", "Parent", "-k", "demo")
+        cli.pyrite("task", "decompose", "parent", "-k", "demo", "-c", "Same")
+        out = cli.pyrite("task", "decompose", "parent", "-k", "demo", "-c", "Same")
+        assert out.returncode == REFUSED, out.stdout + out.stderr
+        # `decomposed: true` was all a JSON reader saw when every child failed.
+        assert json.loads(out.stdout)["outcome"] == "nothing"
+
+    @pytest.mark.control(reason="regime: a batch of zero items stays click's usage error")
+    def test_decompose_with_no_child_is_a_usage_error(self, cli):
+        out = cli.pyrite("task", "decompose", "parent", "-k", "demo")
+        assert out.returncode == 2, out.stdout + out.stderr
+
+    def test_a_lost_claim_says_nothing_happened_in_json(self, cli):
+        cli.pyrite("task", "create", "T1", "-k", "demo")
+        cli.pyrite("task", "claim", "t1", "-k", "demo", "-a", "me")
+        out = cli.pyrite("task", "claim", "t1", "-k", "demo", "-a", "you")
+        assert out.returncode == REFUSED, out.stdout + out.stderr
+        body = json.loads(out.stdout)
+        assert (body["claimed"], body["outcome"]) == (False, "nothing")
+
+    def test_a_missing_kb_is_refused_in_json_and_in_rich(self, cli):
+        out = cli.pyrite("task", "create", "T", "-k", "nope")
+        assert out.returncode == REFUSED, out.stdout + out.stderr
+        body = json.loads(out.stdout)
+        assert (body["error_code"], body["outcome"]) == ("KB_NOT_FOUND", "error")
+        rich = cli.pyrite("task", "create", "T", "-k", "nope", "--format", "rich")
+        assert rich.returncode == REFUSED
+        assert "ERROR [KB_NOT_FOUND]" in rich.stdout
+
+    def test_json_is_the_default_and_pyrite_format_sets_another(self, cli):
+        """#303, folded into slice 1 for the task module."""
+        cli.pyrite("task", "create", "T1", "-k", "demo")
+        listed = cli.pyrite("task", "list", "-k", "demo")
+        assert listed.returncode == 0, listed.stdout + listed.stderr
+        assert json.loads(listed.stdout)["count"] == 1
+        rich = cli.pyrite("task", "list", "-k", "demo", env={"PYRITE_FORMAT": "rich"})
+        assert "Tasks" in rich.stdout and not rich.stdout.lstrip().startswith("{")
 
 
 class TestRepoSync:
@@ -1147,6 +1190,232 @@ def test_a_command_whose_function_swallows_a_failure_is_guarded():
 
 
 # --------------------------------------------------------------------------
+# The outcome contract (ADR-0046): the rule the tables above stand in for
+# --------------------------------------------------------------------------
+#
+# A command is on the contract when it declares the shared --format option
+# (pyrite.cli.output.declares_shared_format). What such a command can and
+# cannot do is not checked here, or anywhere, by reading source: the root group
+# enforces it when the command runs, and tests/test_cli_outcome.py walks every
+# command on the contract with each way out planted (ADR-0046, decisions 6-8).
+# This section holds what the registry can say: which commands are still
+# legacy, and that a command on the contract is declared the way the root
+# expects.
+
+# Commands that still print their own result and choose their own exit code:
+# for each module, how many of its registered commands (across the three CLIs)
+# do not declare the shared option. The numbers match the registry exactly, so
+# they move only in a diff a reviewer sees: a slice that migrates commands
+# lowers its module's number (and deletes the line at zero; slice 11 deletes
+# the table), and a new command is on the contract unless someone raises a
+# number here. A module with no line has none: a new command module is born on
+# the contract.
+LEGACY_COMMANDS = {
+    "extensions/cascade/src/pyrite_cascade/cli.py": 5,
+    "extensions/encyclopedia/src/pyrite_encyclopedia/cli.py": 4,
+    "extensions/journalism-investigation/src/pyrite_journalism_investigation/cli.py": 18,
+    "extensions/social/src/pyrite_social/cli.py": 4,
+    "extensions/software-kb/src/pyrite_software_kb/cli.py": 23,
+    "extensions/zettelkasten/src/pyrite_zettelkasten/cli.py": 4,
+    "pyrite/admin_cli.py": 27,
+    "pyrite/cli/__init__.py": 14,
+    "pyrite/cli/browse_commands.py": 7,
+    "pyrite/cli/collection_commands.py": 2,
+    "pyrite/cli/db_commands.py": 2,
+    "pyrite/cli/entry_commands.py": 7,
+    "pyrite/cli/export_commands.py": 2,
+    "pyrite/cli/extension_commands.py": 4,
+    "pyrite/cli/ids_commands.py": 2,
+    "pyrite/cli/index_commands.py": 7,
+    "pyrite/cli/init_command.py": 1,
+    "pyrite/cli/kb_commands.py": 15,
+    "pyrite/cli/link_commands.py": 7,
+    "pyrite/cli/mcp_setup_command.py": 1,
+    "pyrite/cli/protocol_commands.py": 2,
+    "pyrite/cli/qa_commands.py": 10,
+    "pyrite/cli/repo_commands.py": 6,
+    "pyrite/cli/schema_commands.py": 3,
+    "pyrite/cli/search_commands.py": 2,
+    "pyrite/read_cli.py": 6,
+}
+
+# The total when slice 1 introduced the table. It may only get smaller.
+LEGACY_COMMANDS_AT_SLICE_1 = 185
+
+
+def _on_the_contract(cmd) -> bool:
+    """By name, not by importing the helper at module level: so this file still
+    collects on a tree without the contract."""
+    from pyrite.cli.output import declares_shared_format
+
+    return declares_shared_format(cmd)
+
+
+def _returns_outcome(cmd) -> bool:
+    import inspect
+
+    ann = inspect.signature(inspect.unwrap(cmd.callback), eval_str=True).return_annotation
+    return (getattr(ann, "__module__", None), getattr(ann, "__name__", None)) == (
+        "pyrite.cli.outcome",
+        "Outcome",
+    )
+
+
+def _legacy_by_module() -> dict[str, list[str]]:
+    found: dict[str, list[str]] = {}
+    for name, cmd in _commands().items():
+        loc = _location(cmd) if cmd.callback is not None else None
+        # A command defined outside the repo is a third-party plugin's
+        # (decision 5): not this table's to count.
+        if loc is not None and not _on_the_contract(cmd):
+            found.setdefault(loc[0], []).append(name)
+    return found
+
+
+def _contract_modules() -> set[str]:
+    return {
+        loc[0]
+        for cmd in _commands().values()
+        if _on_the_contract(cmd) and (loc := _location(cmd)) is not None
+    }
+
+
+def test_the_legacy_commands_are_exactly_the_ones_counted():
+    """A command that is not on the contract is counted in LEGACY_COMMANDS, and
+    the count is exact in both directions. A new command in a legacy module
+    does not join the legacy path unnoticed (the number would have to go up),
+    and a slice that migrates commands has to take them off (the number has to
+    go down)."""
+    actual = {module: len(names) for module, names in _legacy_by_module().items()}
+    wrong = []
+    for module in sorted(set(actual) | set(LEGACY_COMMANDS)):
+        counted, found = LEGACY_COMMANDS.get(module, 0), actual.get(module, 0)
+        if found > counted:
+            wrong.append(
+                f"{module}: {found} commands without the shared --format, {counted} counted. "
+                "A new command declares OUTPUT_FORMAT and returns an Outcome: "
+                f"{sorted(_legacy_by_module()[module])}"
+            )
+        elif found < counted:
+            wrong.append(
+                f"{module}: {found} legacy commands left, {counted} counted: lower the number"
+                + (" (delete the line)" if not found else "")
+            )
+    assert not wrong, "\n".join(wrong)
+
+
+@pytest.mark.control(
+    reason="tests the table in this file: red when a number is raised past the slice-1 total"
+)
+def test_the_legacy_count_only_goes_down():
+    assert sum(LEGACY_COMMANDS.values()) <= LEGACY_COMMANDS_AT_SLICE_1
+    assert all(LEGACY_COMMANDS.values()), "a module with no legacy command has no line"
+
+
+def test_a_command_on_the_contract_is_declared_the_way_the_root_expects():
+    """The registry's half of the contract, for every command that declares
+    the shared option:
+
+    - it is annotated ``-> Outcome`` (documentation the registry can check; the
+      root checks the value itself on every run);
+    - none of its parameters has a callback but the shared option's own. A
+      parameter callback runs while click is parsing, before the root watches
+      (that is how ``--help`` works), so it could print a result and exit 0.
+    """
+    from pyrite.cli import output
+
+    shared = {output._record_format, output._record_short_format}
+    offences = []
+    for name, cmd in sorted(_commands().items()):
+        if not _on_the_contract(cmd):
+            continue
+        if not _returns_outcome(cmd):
+            offences.append(f"{name} is not annotated -> Outcome")
+        for param in cmd.params:
+            callback = getattr(param.callback, "__wrapped__", param.callback)
+            if callback is not None and callback not in shared:
+                offences.append(f"{name}: parameter {param.name!r} has its own callback")
+    assert not offences, "\n".join(offences)
+
+
+def test_the_task_commands_are_on_the_contract():
+    """Slice 1 migrated `task`: all ten declare the shared option."""
+    on = sorted(n for n, cmd in _commands().items() if _on_the_contract(cmd))
+    assert len(on) == 10 and all(n.startswith("pyrite task ") for n in on), on
+    assert _contract_modules() == {"pyrite/cli/task_commands.py"}
+
+
+# A HINT, NOT THE GUARD. What follows reads source, so it knows only the
+# spellings it was given: an alias, a `getattr` or a helper in another module
+# gets past it, and that is not a finding against the contract. It exists for
+# the three things no check inside the process can see, because they act after
+# the root has returned (ADR-0046, "What no check in the process can see"), and
+# for one thing the root has no reason to see (a command that reads its format
+# has made the format change what runs). The property itself is enforced by
+# PyriteCLIGroup.invoke and proved by the walk in tests/test_cli_outcome.py.
+AFTER_THE_ROOT_HAS_RETURNED = {
+    "_exit": "os._exit ends the process with no outcome: exit 0 and empty stdout",
+    "register": "an atexit handler runs after the root has printed and set the exit code",
+    "Thread": "a thread that outlives the command writes after the root has printed",
+    "Timer": "a timer thread that outlives the command writes after the root has printed",
+}
+
+
+def _hints(source: str, rel: str = "<module>") -> list[str]:
+    hints = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call) and _name(node) in AFTER_THE_ROOT_HAS_RETURNED:
+            hints.append(f"{rel}:{node.lineno} {AFTER_THE_ROOT_HAS_RETURNED[_name(node)]}")
+    return hints
+
+
+def test_hint_a_module_on_the_contract_does_nothing_the_root_cannot_see():
+    """A hint (see above): the plain spellings of ``os._exit``,
+    ``atexit.register`` and a started thread in a module with a command on the
+    contract, and a command that reads its own format parameter."""
+    import inspect
+
+    hints = []
+    for rel in sorted(_contract_modules()):
+        hints += _hints((REPO / rel).read_text(), rel)
+    for name, cmd in _commands().items():
+        if not _on_the_contract(cmd) or _location(cmd) is None:
+            continue
+        fmt_params = {p.name for p in cmd.params if "--format" in p.opts or "-f" in p.opts}
+        func = ast.parse(inspect.getsource(inspect.unwrap(cmd.callback)).lstrip())
+        for node in ast.walk(func):
+            if isinstance(node, ast.Name) and node.id in fmt_params:
+                if isinstance(node.ctx, ast.Load):
+                    hints.append(f"{name} reads its format parameter {node.id!r}")
+    assert not hints, "\n".join(hints)
+
+
+@pytest.mark.control(reason="tests the hint in this file, not pyrite code")
+def test_hint_finds_the_plain_spellings_and_only_those():
+    plain = "import os, atexit, threading\nos._exit(0)\natexit.register(print)\n"
+    assert len(_hints(plain + "threading.Thread(target=print).start()\n")) == 3
+    # An alias is past it. That is what makes it a hint.
+    assert _hints("from os import _exit as leave\nleave(0)\n") == []
+
+
+def _renderers(tree: ast.AST) -> set[str]:
+    """Functions the root calls for --format rich: one named ``_render_*`` or
+    passed as ``rich=``. Used by the #779 scan below, which skips them in a
+    module on the contract."""
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("_render_"):
+            names.add(node.name)
+        if isinstance(node, ast.Call):
+            names |= {
+                k.value.id
+                for k in node.keywords
+                if k.arg == "rich" and isinstance(k.value, ast.Name)
+            }
+    return names
+
+
+# --------------------------------------------------------------------------
 # The scans: what the registry cannot see
 # --------------------------------------------------------------------------
 
@@ -1360,7 +1629,6 @@ PRINTS: dict[tuple[str, str], tuple[str, str]] = {
     ("pyrite/cli/repo_commands.py", "repo_sync"): ("fixed", "TestRepoSync"),
     ("pyrite/cli/schema_commands.py", "schema_migrate"): ("fixed", "TestSchemaMigrate"),
     ("pyrite/cli/search_commands.py", "search"): ("fixed", "TestSearchFiles"),
-    ("pyrite/cli/task_commands.py", "task_decompose"): ("fixed", "TestTasks"),
     ("pyrite/read_cli.py", "_emit_error"): (
         "safe",
         "the helper that prints the error; its callers raise Exit(1)",
@@ -1389,9 +1657,14 @@ def _func_of(node: ast.AST, parents: dict) -> str:
 def _scan() -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
     handlers: set[tuple[str, str]] = set()
     prints: set[tuple[str, str]] = set()
+    # A renderer in a module on the contract prints failures by design: the
+    # exit code comes from the Outcome the command returned, which the root
+    # reads, not from what was printed.
+    migrated = _contract_modules()
     for path in SCANNED:
         rel = str(path.relative_to(REPO))
         tree = ast.parse(path.read_text())
+        renderers = _renderers(tree) if rel in migrated else set()
         parents = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
 
         for node in ast.walk(tree):
@@ -1415,6 +1688,8 @@ def _scan() -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
                         if isinstance(c, ast.Constant) and isinstance(c.value, str)
                     )
                     failure = "[red]" in text or "failed" in text.lower() or "Error" in text
+                    if _func_of(stmt, parents) in renderers:
+                        continue
                     if failure and not any(_exits(s) for s in block[i + 1 :]):
                         prints.add((rel, _func_of(stmt, parents)))
     return handlers, prints

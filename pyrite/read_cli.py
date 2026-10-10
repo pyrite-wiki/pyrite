@@ -19,8 +19,12 @@ from .exceptions import PyriteError
 from .logging import configure_entry_point_logging, logging_epilog
 from .services.access_policy import UNSCOPED
 from .services.kb_service import KBService
+from .utils.errors import PyriteCLIGroup
 
+# The same root as `pyrite` and `pyrite-admin`: the one point a command's
+# Outcome is rendered and its exit code set (ADR-0046).
 app = typer.Typer(
+    cls=PyriteCLIGroup,
     name="pyrite-read",
     help="Pyrite read-only CLI — search, browse, retrieve (safe for AI agents)",
     no_args_is_help=True,
