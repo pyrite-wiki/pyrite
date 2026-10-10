@@ -14,7 +14,13 @@ from typing import Any
 import typer
 from rich.console import Console
 
-from ..exceptions import EntryNotFoundError, KBNotFoundError, PyriteError, ValidationError
+from ..exceptions import (
+    AmbiguousEntryError,
+    EntryNotFoundError,
+    KBNotFoundError,
+    PyriteError,
+    ValidationError,
+)
 from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_fields_param, project_fields
 from ..utils.errors import PARTIAL_EXIT
@@ -190,7 +196,18 @@ def register_entry_commands(app: typer.Typer) -> None:
     ):
         """Get a specific entry by ID."""
         with cli_context() as (config, db, svc):
-            result = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
+            try:
+                result = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
+            except AmbiguousEntryError as exc:
+                from ..utils.errors import cli_error
+
+                cli_error(
+                    str(exc),
+                    output_format,
+                    error_code=exc.error_code,
+                    suggestion="Pass -k <kb-name> to select one KB.",
+                    extra={"candidate_kbs": exc.candidate_kbs},
+                )
 
             if not result:
                 _cli_error(f"Entry '{entry_id}' not found", output_format, "NOT_FOUND")

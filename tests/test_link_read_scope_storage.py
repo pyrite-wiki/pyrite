@@ -207,10 +207,14 @@ def test_get_entry_links_are_scoped(w, scope):
     assert "Private note" not in json.dumps(pointer["outlinks"])
 
 
-@pytest.mark.control(reason="unscoped lookup keeps config order and unfiltered links")
-def test_get_entry_unscoped_unchanged(w):
+def test_get_entry_unscoped_refuses_ambiguous_id(w):
+    from pyrite.exceptions import PyriteError
+
     svc = KBService(w.config, w.db)
-    assert svc.get_entry(SHADOWED, readable_kbs=UNSCOPED)["kb_name"] == PRIVATE
+    with pytest.raises(PyriteError) as raised:
+        svc.get_entry(SHADOWED, readable_kbs=UNSCOPED)
+    assert raised.value.error_code == "AMBIGUOUS"
+    assert set(raised.value.candidate_kbs) == {PRIVATE, READ_ONLY}
     note = svc.get_entry(READABLE_ENTRY, kb_name=READABLE, readable_kbs=UNSCOPED)
     assert PRIVATE_SPY in {r["id"] for r in note["backlinks"]}
 

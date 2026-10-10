@@ -41,6 +41,17 @@ not a promise that every command gives you the option.
   succeed on retry (e.g. a transient lock); `false` means the request
   itself needs to change first (e.g. a malformed query).
 
+For an unqualified entry ID in multiple readable KBs, `pyrite get`,
+`pyrite-read get`, and MCP `kb_get` refuse with `error_code: "AMBIGUOUS"`.
+The message lists the candidate KBs and suggests supplying a KB name. The
+`pyrite get` and MCP JSON errors also carry `candidate_kbs`, containing only
+KBs that caller can read. Zero matches still return `NOT_FOUND`; one match
+still returns the entry. A blank KB name is treated as an omitted one.
+
+REST `GET /api/entries/{id}` without `kb` retains its first readable match
+temporarily because web entry links can omit `?kb=`. REST callers that need
+unambiguous identity should supply `kb` until those web links are updated.
+
 **MCP only, for one release: `legacy_error_code`.** Where a class's code
 changed on MCP because REST's more specific code won (ADR-0037 theme 2:
 `ENTRY_NOT_FOUND`/`KB_NOT_FOUND` replacing `NOT_FOUND`, `KB_READ_ONLY`

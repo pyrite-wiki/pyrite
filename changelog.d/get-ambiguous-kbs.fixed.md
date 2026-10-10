@@ -1,0 +1,1 @@
+Unqualified entry reads through `pyrite get`, `pyrite-read get`, and MCP `kb_get` now report an `AMBIGUOUS` error with readable candidate KB names when an ID exists in multiple KBs. Specify a KB to select one.

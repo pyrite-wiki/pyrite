@@ -708,12 +708,20 @@ def get_entry(
     # NOT_FOUND exactly as a missing id does and cannot shadow a readable
     # twin (P-R5); its outlinks and backlinks cover readable KBs only (P-R4).
     readable = scope.as_set()
+    # The web client still generates entry links without ?kb= in several
+    # places. Keep REST's first-readable-match behaviour until those links
+    # consistently carry KB identity; CLI and MCP refuse ambiguity (#528).
+    legacy_first_match = not kb or not kb.strip()
     if with_links:
         # get_entry already includes outlinks/backlinks
-        result = svc.get_entry(entry_id, kb_name=kb, readable_kbs=readable)
+        result = svc.get_entry(
+            entry_id, kb_name=kb, readable_kbs=readable, legacy_first_match=legacy_first_match
+        )
     else:
         # For non-link requests, get entry without links
-        result = svc.get_entry(entry_id, kb_name=kb, readable_kbs=readable)
+        result = svc.get_entry(
+            entry_id, kb_name=kb, readable_kbs=readable, legacy_first_match=legacy_first_match
+        )
         if result:
             result.setdefault("outlinks", [])
             result.setdefault("backlinks", [])

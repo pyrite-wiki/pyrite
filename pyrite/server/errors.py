@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 # class whose code nobody added below yet) maps to 500 INTERNAL_ERROR --
 # fails safe, the same way an unrecognised exception type used to.
 _STATUS_BY_CODE: dict[str, int] = {
+    "AMBIGUOUS": 409,
     "ENTRY_NOT_FOUND": 404,
     "KB_NOT_FOUND": 404,
     "KB_READ_ONLY": 403,
@@ -184,6 +185,9 @@ def error_response(exc: PyriteError) -> tuple[int, dict]:
     suggestion = getattr(exc, "suggestion", None)
     if suggestion:
         detail["hint"] = suggestion
+    candidate_kbs = getattr(exc, "candidate_kbs", None)
+    if candidate_kbs is not None:
+        detail["candidate_kbs"] = candidate_kbs
     return status_code, {"detail": detail}
 
 

@@ -15,7 +15,7 @@ from rich.table import Table
 from .cli.context import open_index_db
 from .cli.search_commands import register_search_command
 from .config import CONFIG_FILE, load_config
-from .exceptions import PyriteError
+from .exceptions import AmbiguousEntryError, PyriteError
 from .logging import configure_entry_point_logging, logging_epilog
 from .services.access_policy import UNSCOPED
 from .services.kb_service import KBService
@@ -31,7 +31,13 @@ console = Console()
 err_console = Console(stderr=True)
 
 
-def _emit_error(message: str, output_format: str, *, error_code: str = "ERROR") -> None:
+def _emit_error(
+    message: str,
+    output_format: str,
+    *,
+    error_code: str = "ERROR",
+    candidate_kbs: list[str] | None = None,
+) -> None:
     """Report a CLI error without polluting stdout in machine formats.
 
     In a non-rich format, write a valid JSON error object to stdout so a
@@ -41,9 +47,13 @@ def _emit_error(message: str, output_format: str, *, error_code: str = "ERROR") 
     if output_format and output_format != "rich":
         import json
 
-        typer.echo(json.dumps({"error": message, "error_code": error_code}))
+        payload = {"error": message, "error_code": error_code}
+        if candidate_kbs is not None:
+            payload["candidate_kbs"] = candidate_kbs
+        typer.echo(json.dumps(payload))
     else:
-        err_console.print(f"[red]Error:[/red] {message}")
+        code = f" [{error_code}]" if error_code == "AMBIGUOUS" else ""
+        err_console.print(f"[red]Error{code}:[/red] {message}")
 
 
 def _get_svc():
@@ -112,7 +122,12 @@ def get_entry(
                 else:
                     console.print(f"  • {src.title}: {src.url}")
     except (PyriteError, ValueError) as e:
-        _emit_error(str(e), output_format)
+        _emit_error(
+            str(e),
+            output_format,
+            error_code=getattr(e, "error_code", "ERROR"),
+            candidate_kbs=e.candidate_kbs if isinstance(e, AmbiguousEntryError) else None,
+        )
         raise typer.Exit(1) from None
     finally:
         db.close()

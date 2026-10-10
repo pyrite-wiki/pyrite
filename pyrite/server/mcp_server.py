@@ -131,7 +131,9 @@ _LEGACY_OWN_ERROR_CODE: dict[str, str] = {
 #: job -- so there is no old MCP behaviour to disagree with, and no
 #: ``legacy_error_code`` should be reported for them even though they are
 #: not explicitly in the tables above either.
-_NEW_IN_THIS_THEME = frozenset({"AccessDenied", "NotAuthenticated", "Forbidden"})
+_NEW_IN_THIS_THEME = frozenset(
+    {"AccessDenied", "NotAuthenticated", "Forbidden", "AmbiguousEntryError"}
+)
 
 
 def _legacy_mcp_code(exc: PyriteError) -> str | None:
@@ -239,6 +241,9 @@ def _refusal(exc: PyriteError) -> dict:
         retryable=retryable,
         legacy_error_code=legacy_code,
     )
+    candidate_kbs = getattr(exc, "candidate_kbs", None)
+    if candidate_kbs is not None:
+        err["candidate_kbs"] = candidate_kbs
     declared = getattr(exc, "declared_types", None)
     if declared is not None:
         err["declared_types"] = declared
@@ -665,11 +670,10 @@ class PyriteMCPServer:
     ) -> dict[str, Any]:
         """Get entry by ID.
 
-        With `kb_name` omitted, `KBService.get_entry` walks the KBs in
-        config order and returns the first hit -- so it is handed the
-        caller's readable set, and an entry in an unreadable KB is a plain
-        miss (naming the KB would reveal which private KB holds it) that
-        never hides a readable entry with the same id.
+        With `kb_name` omitted, `KBService.get_entry` considers only the
+        caller's readable KBs and refuses an ID found in more than one.
+        An entry in an unreadable KB neither answers nor becomes an
+        ambiguity candidate.
         """
         entry_id = args.get("entry_id")
         kb_name = args.get("kb_name")

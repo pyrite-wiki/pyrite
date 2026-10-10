@@ -76,6 +76,17 @@ class EntryNotFoundError(PyriteError):
     error_code = "ENTRY_NOT_FOUND"
 
 
+class AmbiguousEntryError(PyriteError):
+    """An unqualified entry ID names more than one readable knowledge base."""
+
+    error_code = "AMBIGUOUS"
+
+    def __init__(self, entry_id: str, candidate_kbs: list[str]):
+        self.candidate_kbs = candidate_kbs
+        self.suggestion = "Name one of these KBs explicitly."
+        super().__init__(f"Entry '{entry_id}' exists in multiple KBs: {', '.join(candidate_kbs)}")
+
+
 class KBNotFoundError(PyriteError):
     """Raised when a knowledge base cannot be found."""
 

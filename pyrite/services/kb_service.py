@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 from ..config import KBConfig, PyriteConfig
 from ..exceptions import (
+    AmbiguousEntryError,
     EntryExistsError,
     EntryNotFoundError,
     IndexSyncRecoveryHintError,
@@ -534,11 +535,14 @@ class KBService:
         kb_name: str | None = None,
         *,
         readable_kbs: set[str] | None,
+        legacy_first_match: bool = False,
     ) -> dict[str, Any] | None:
         """
         Get entry by ID, with its outlinks and backlinks.
 
-        If kb_name not specified, searches all KBs in config order.
+        If kb_name is omitted, searches readable KBs and refuses duplicate IDs.
+        ``legacy_first_match`` is for REST GET without ``kb`` until its web
+        links consistently carry KB names; it preserves the old first-hit read.
 
         ``readable_kbs`` is the caller's ``ReadScope`` set (``None``:
         unscoped). With it, a lookup without a KB walks only readable KBs,
@@ -557,15 +561,26 @@ class KBService:
                 self._attach_links(result, entry_id, kb_name, readable_kbs)
             return result
 
-        # Search all KBs the caller can read
+        # Search all KBs the caller can read. Never reveal an unreadable KB as
+        # an ambiguity candidate. Only the REST compatibility path may still
+        # return the first match.
+        matches: list[tuple[str, dict[str, Any]]] = []
         for kb in self.config.all_kbs():
             if readable_kbs is not None and kb.name not in readable_kbs:
                 continue
             result = self.db.get_entry(entry_id, kb.name)
             if result:
-                self._attach_links(result, entry_id, kb.name, readable_kbs)
-                return result
-        return None
+                if legacy_first_match:
+                    self._attach_links(result, entry_id, kb.name, readable_kbs)
+                    return result
+                matches.append((kb.name, result))
+        if len(matches) > 1:
+            raise AmbiguousEntryError(entry_id, [name for name, _ in matches])
+        if not matches:
+            return None
+        name, result = matches[0]
+        self._attach_links(result, entry_id, name, readable_kbs)
+        return result
 
     def _attach_links(
         self,

@@ -104,6 +104,47 @@ class TestTyperListCommand:
 @pytest.mark.cli
 @pytest.mark.core
 class TestTyperGetCommand:
+    @pytest.mark.parametrize("output_format", ["json", "rich"])
+    def test_get_unscoped_duplicate_id_reports_all_kbs(self, cli_env, output_format):
+        entry = EventEntry.create(date="2025-01-10", title="Test Event 0", body="Other KB")
+        KBRepository(cli_env["config"].get_kb("test-research")).save(entry)
+        db = PyriteDB(cli_env["config"].settings.index_path)
+        IndexManager(db, cli_env["config"]).index_all()
+        db.close()
+
+        with _patch_config(cli_env):
+            result = runner.invoke(app, ["get", entry.id, "--format", output_format])
+
+        assert result.exit_code == 1
+        if output_format == "json":
+            payload = json.loads(result.output)
+            assert payload["error_code"] == "AMBIGUOUS"
+            assert payload["candidate_kbs"] == ["test-events", "test-research"]
+            assert "test-events" in payload["error"]
+            assert "test-research" in payload["error"]
+            assert "-k" in payload["suggestion"]
+        else:
+            assert "AMBIGUOUS" in result.output
+            assert "test-events" in result.output
+            assert "test-research" in result.output
+
+        with _patch_config(cli_env):
+            selected = runner.invoke(
+                app, ["get", entry.id, "-k", "test-research", "--format", "json"]
+            )
+        assert selected.exit_code == 0
+        assert json.loads(selected.output)["kb_name"] == "test-research"
+
+    @pytest.mark.control(reason="Existing unique and missing unscoped reads must stay unchanged")
+    def test_get_unscoped_unique_and_missing(self, cli_env):
+        with _patch_config(cli_env):
+            found = runner.invoke(app, ["get", "2025-01-10--test-event-0", "--format", "json"])
+            missing = runner.invoke(app, ["get", "missing-id", "--format", "json"])
+        assert found.exit_code == 0
+        assert json.loads(found.output)["kb_name"] == "test-events"
+        assert missing.exit_code == 1
+        assert json.loads(missing.output)["error_code"] == "NOT_FOUND"
+
     def test_get_entry_found(self, cli_env):
         with _patch_config(cli_env):
             result = runner.invoke(app, ["get", "2025-01-10--test-event-0", "--kb", "test-events"])

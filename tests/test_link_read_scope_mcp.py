@@ -106,10 +106,10 @@ def test_lookup_without_kb_private_answers_like_missing(w, scope, tool):
     )
 
 
-@pytest.mark.control(reason="unscoped lookup keeps config order: the private twin answers")
-def test_lookup_without_kb_unscoped_unchanged(w):
+def test_lookup_without_kb_unscoped_refuses_ambiguity(w):
     result = _call(w, "kb_get", {"entry_id": SHADOWED}, None)
-    assert result["entry"]["kb_name"] == PRIVATE
+    assert result["error_code"] == "AMBIGUOUS"
+    assert set(result["candidate_kbs"]) == {PRIVATE, READ_ONLY}
 
 
 # -- link data (#39) ---------------------------------------------------------
