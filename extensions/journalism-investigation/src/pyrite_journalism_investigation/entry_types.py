@@ -303,7 +303,7 @@ class InvestigationEventEntry(EventEntry):
             location=meta.get("location", ""),
             participants=meta.get("actors", meta.get("participants", [])) or [],
             notes=meta.get("notes", ""),
-            actors=meta.get("actors", []) or [],
+            actors=meta.get("actors", meta.get("participants", [])) or [],
             source_refs=meta.get("source_refs", []) or [],
             verification_status=meta.get("verification_status", "unverified"),
         )

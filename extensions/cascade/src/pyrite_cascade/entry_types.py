@@ -215,7 +215,7 @@ class TimelineEventEntry(InvestigationEventEntry):
             participants=meta.get("actors", meta.get("participants", [])) or [],
             notes=meta.get("notes", ""),
             # JI-inherited fields
-            actors=meta.get("actors", []) or [],
+            actors=meta.get("actors", meta.get("participants", [])) or [],
             source_refs=meta.get("source_refs", []) or [],
             verification_status=meta.get("verification_status", "unverified"),
             # Cascade-specific fields
@@ -288,7 +288,7 @@ class SolidarityEventEntry(EventEntry):
             participants=meta.get("actors", meta.get("participants", [])) or [],
             notes=meta.get("notes", ""),
             infrastructure_types=meta.get("infrastructure_types", []) or [],
-            actors=meta.get("actors", []) or [],
+            actors=meta.get("actors", meta.get("participants", [])) or [],
             lineage=meta.get("lineage", []) or [],
             lineage_notes=meta.get("lineage_notes", ""),
             legacy=meta.get("legacy", []) or [],
