@@ -56,6 +56,12 @@ class TestPluginRegistration:
         cmd_names = [name for name, _ in commands]
         assert "zettel" in cmd_names
 
+    def test_zettel_graph_depth_schema_is_bounded(self):
+        tool = ZettelkastenPlugin().get_mcp_tools("read")["zettel_graph"]
+        depth = tool["inputSchema"]["properties"]["depth"]
+        assert depth["minimum"] == 1
+        assert depth["maximum"] == 3
+
     def test_mcp_tools_registered(self):
         registry = PluginRegistry()
         registry.register(ZettelkastenPlugin())
