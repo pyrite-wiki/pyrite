@@ -571,3 +571,229 @@ Cold read:    no
    yes, additive, so `decompose`'s `"decomposed": true` with every child
    refused is no longer the only thing a JSON reader sees. Not needed for
    slice 1.
+
+## Groom 2026-10-10 (Andon #822)
+
+Spike, time-boxed to one run, against #793 at 5fca819e (Typer 0.27.3,
+Python 3.12, macOS). **This replaces slice 1's acceptance for the guard**
+("Registry test ... a module not on the list may not call ..."). The rest of
+slice 1's acceptance stands. ADR-0046 has the model ("Enforcement point",
+decisions 6 to 8, proposed).
+
+**Answer: buildable.** A guard in `PyriteCLIGroup.invoke`, armed by the
+shared `--format` option when the command's body is entered, answered
+`NO_OUTCOME` (exit 1) for 16 of the 18 shapes the delta read named, through
+the real `pyrite` root, with every existing task test green. The code was
+thrown away; nothing below is a patch.
+
+### The design that survived
+
+The root decides; the shared option tells it when the body starts. The root
+alone cannot do it: `--help` (`Exit(0)`), an unknown option (`UsageError`)
+and a body's own `raise typer.Exit(0)` reach `invoke` as the same exception
+types, and a legacy command that prompts or streams must not have its stdout
+held back. The shared option's callback is the one thing every command on the
+contract already runs, and it has the leaf's context, so it marks body entry
+there; the root starts watching stdout at that moment and makes every
+decision. Alternatives tried or weighed:
+
+- **`sys.stdout` replacement only** (`contextlib.redirect_stdout`): 0.9
+  microseconds, but misses five planted shapes (`os.write(1, ...)`, a child
+  process, `sys.__stdout__`, `/dev/stdout`, `Console(file=sys.stdout)` made
+  at import). Lost to replacing `sys.stdout` and pointing descriptor 1 at a
+  temporary file: 119 microseconds per command, all five caught.
+- **The command never receives a console**: already true on the branch (the
+  renderer gets the root's), and it stops nothing, since `print` needs none.
+- **A command class per call site** (`cls=`): a rule kept call site by call
+  site (design principle 8). Not built.
+- **Run the body in a child process**: the only thing that would see
+  `os._exit`. Not built; the cost is a process per command.
+
+### Shapes, through the real root in a real process (`--format json`)
+
+| Shape planted in a migrated command | Result |
+|---|---|
+| `raise _Done(0)` with `from typer import Exit as _Done` | caught |
+| `sys.exit` through an alias, and through `getattr` | caught |
+| `ctx.abort()`, `ctx.exit(0)`, `raise SystemExit(0)` | caught |
+| a `ClickException` subclass with `exit_code = 7` (Typer's click and PyPI's) | caught |
+| `ctx.fail()`, `typer.BadParameter` from the body | caught under the strict rule; exit 2 as a usage error under the lenient one (both run) |
+| `KeyboardInterrupt` | allowed: exit 130; a person's Ctrl-C looks the same |
+| `print`, `typer.echo`, `sys.stdout.write`, `json.dump(..., sys.stdout)` | caught |
+| `console.log` / `.out` / `.rule` / `.print` on a module-level `Console()` | caught (Rich resolves `sys.stdout` at write time) |
+| `os.write(1, ...)`, `subprocess.run(['echo', ...])` | caught, by the descriptor swap only |
+| a renderer called from the body (alone, or followed by `raise _Done(0)`) | caught |
+| a `_render_*` helper printing a failure, called from the body | caught |
+| the same helper passed as `rich=` on a `done` outcome | **not caught**: the root cannot judge a renderer's words; kind, exit code and machine formats are still the root's |
+| a red failure on `Console(stderr=True)`, then a normal return | **not caught**: stderr is open (warnings, progress) |
+| the same, then a `ClickException` with its own code | caught (by the exception) |
+| an `Outcome` subclass overriding `exit_code` | caught (exact type) |
+| a renderer that raises, or calls `sys.exit(0)` (`--format rich`) | caught; text it printed first stays above the `NO_OUTCOME` line |
+| a return of `None`, a dict, `0`; a `KeyError` | caught |
+
+Of the 18 named: 16 caught, 1 not (stderr failure then a normal return), 1
+allowed (`KeyboardInterrupt`). Found beyond the list, **not caught**:
+`os._exit(0)` (exit 0, empty stdout), an `atexit` handler that prints, a
+non-daemon thread that prints after the command returns. All three act after
+`invoke` has returned. Not run: a write to `/dev/tty`.
+
+### The behavioural acceptance test (replaces the scan as the guard)
+
+- It walks the registry: every leaf of `pyrite`, `pyrite-admin` and
+  `pyrite-read` that declares the shared option (10 of 161 leaves of `pyrite`
+  today; 83 have some `--format`). A slice adds no case by hand; a migrated
+  command is in the walk because it declares the option.
+- For each such command and each class of way out, it replaces the command's
+  body with the planted shape, runs the **real root**, and expects exit 1 and
+  `NO_OUTCOME` (the only document on stdout in JSON). Classes, at least: an
+  exit (`Exit`, `SystemExit`, `Abort`, a `ClickException` with a code), a
+  crash, a write to `sys.stdout`, a write to descriptor 1, a child process, a
+  wrong return (`None`, a dict, an `Outcome` subclass), a renderer that
+  raises, a renderer that exits. Controls: a returned `Outcome` renders and
+  exits by its kind; a `PyriteError` is a refusal; `--help` exits 0; an
+  unknown option exits 2; `KeyboardInterrupt` exits 130.
+- The prototype: 10 commands x 14 classes x 2 formats plus 30 renderer cases,
+  271 cases, 5.1 s in-process under `CliRunner`. 251 passed. The 20 that did
+  not are one class, a `Console(file=sys.stdout)` made at import: under
+  pytest the stream captured at import is pytest's own, not descriptor 1.
+  That class is caught in a real process, so it gets one subprocess test.
+- A real command that goes around the root now fails its own functional
+  tests with `NO_OUTCOME`, and fails the same way for a user on a path no
+  test covers. That is the difference from the scan: it fails closed.
+
+Three things the prototype had to learn, which the worker will meet:
+
+1. **Typer builds a new click tree on every call.** A body planted on the
+   click command the test walked is not the body that runs. Plant on the
+   Typer registration (`registered_commands[i].callback`), keeping the
+   signature (`functools.wraps`), since Typer reads the parameters from it.
+2. **Typer wraps option callbacks.** `param.callback is _record_format` is
+   false for every command; the original is at `__wrapped__`. "Declares the
+   shared option" needs one helper, used by the root and by the test.
+3. **`typer.testing.CliRunner` takes the Typer app, not a click command.**
+
+### What the scan is still for
+
+A hint, named as one, for what no check in the process can see: `os._exit`,
+`atexit.register`, a thread started by a command, a failure written to
+stderr before a normal return. Its tests stop asserting "a migrated module
+cannot ..."; a shape it misses is no longer a finding against the property.
+It may also go: the registry test (`-> Outcome`, the shared option, the
+legacy mark) and the behavioural walk carry the rule without it. Slice 11
+deletes it with the rest of the scaffolding either way.
+
+### Measured footprint of the guard
+
+| | |
+|---|---|
+| Spike diff | 2 files, +129 / -20: `pyrite/utils/errors.py` +109 / -20, `pyrite/cli/output.py` +20 |
+| Of which | stdout watch about 45 lines, `invoke` 28 lines to about 50, the `NO_OUTCOME` helper 10, arming in the shared option 14 |
+| Cost per command on the contract | 119 microseconds (0.9 without the descriptor swap) |
+| Legacy commands | untouched: one unused object per run; `tests/test_requested_effect_exit_code.py` 279 passed with the guard in |
+| Existing tests with the guard in | `tests/test_task_cli_outcome.py` + `tests/test_cli_outcome.py` 34 passed; `TestTasks` 7 passed (real processes); the same under the strict usage rule |
+| Real process, checked by hand | `task --help` and `task list --help` exit 0; `--format xml`, an unknown option, a missing argument exit 2; `-f json` warns on stderr and prints JSON; `--version`; stdout closed (`>&-`) exits 0 as on the branch; a pipe |
+
+A worker's footprint for round 2: `pyrite/utils/errors.py`,
+`pyrite/cli/output.py`, `pyrite/cli/outcome.py` (if rich rendering is made
+all-or-nothing), `tests/test_cli_outcome.py` (the walk),
+`tests/test_requested_effect_exit_code.py` (the scan demoted),
+`docs/json-contracts.md`, `kb/components/cli-system.md`, and ADR-0046 rebased
+onto the amendment (the PR edits decisions 3 and 4; the amendment is appended
+after "Consequences", so the two do not overlap). Model: opus (the last round
+before the breaker, and the option callback and the root share one
+invariant). Cold read: yes.
+
+### Surprises
+
+- **Typer 0.27.3 vendors click** (`typer._click`). `click.ClickException`
+  from the PyPI package is an unrelated class: Typer's `main` does not treat
+  it as a click error, and `typer.Exit` is not `click.exceptions.Exit`.
+  `pyproject.toml` allows `typer>=0.12.3`, where they are the same classes.
+  The allow-list's "usage error" has to be the class Typer runs, found
+  without a private import path. ADR-0046's context says "checked on Typer
+  0.24.1".
+- **Prompts cannot pass.** `typer.confirm("...")` writes to stdout, and with
+  `err=True` `input()` still writes one space there. No task command
+  prompts; ten sites in six other CLI modules do.
+- **A crash loses its traceback** on a migrated command: one `NO_OUTCOME`
+  line names the exception, the traceback is at DEBUG.
+- **Everything the body's children write is the body's.** A child process
+  that inherits stdout (git, pip) is caught. Nine `subprocess` calls in four
+  CLI modules; a grep suggests each passes `capture_output` or `stdout=`,
+  not checked one by one.
+- **The body can re-enter.** `ctx.invoke(other_command)` from a body passes
+  through the same hook; starting the watch twice in the throwaway code
+  would have lost the saved stream. The watch must start once.
+- Close callbacks (`ctx.call_on_close`) run inside the root's `invoke`, so a
+  print there is caught; `atexit` is not.
+
+### What round 2 of #793 must do (properties, not a patch)
+
+1. For a command that declares the shared option, from body entry until the
+   root has decided, the only outcomes are: the root renders a value of
+   exact type `Outcome`; the root renders a refusal for `PyriteError` (and
+   `ValueError`, transitional); `KeyboardInterrupt` passes; everything else
+   is `NO_OUTCOME`, exit 1, in the format asked for. No `except` clause in
+   `invoke` lists what is forbidden; it lists what is allowed.
+2. Nothing the body wrote to stdout reaches stdout. It reaches stderr, and
+   the answer is `NO_OUTCOME`. Holds for `sys.stdout` and for descriptor 1,
+   under `CliRunner` and in a real process, and when descriptor 1 cannot be
+   duplicated the `sys.stdout` half still holds.
+3. Rendering is inside the guard. In a machine format stdout holds exactly
+   one document whatever the renderer or the payload does.
+4. Before body entry nothing changes: `--help`, `--version`, usage errors,
+   an unknown format. For a command that does not declare the shared option
+   nothing changes at all, and its stdout is never held back.
+5. The exit code of a rendered outcome comes from the one table, read by the
+   root, never from an attribute a subclass or an instance can replace.
+6. The acceptance test is the registry walk above, with the controls. It is
+   green with no per-command list in it.
+7. Every sentence in `PyriteCLIGroup`'s docstring, `docs/json-contracts.md`,
+   `kb/components/cli-system.md` and `pyrite/cli/outcome.py` about what a
+   command cannot do is one the walk proves, or it names its exception
+   (stderr, a renderer's words, `os._exit`, `atexit`, threads, prompts).
+8. The scan's tests are marked as a hint or removed; none is the evidence
+   for properties 1 to 5.
+
+The delta read's other findings (the `repr` under `--format markdown|csv`,
+`Outcome.partial` overwriting a payload's own `outcome` key, the filtered
+input in `tests/test_cli_outcome.py:69-80`, the legacy mark) are not part of
+the guard and still stand for round 2.
+
+### What changes for slices 2 to 11
+
+- **No slice writes a guard test.** Declaring the shared option puts a
+  command in the walk. A slice's "no raw `typer.Exit`" acceptance line is
+  replaced by: the module's commands are in the walk and the walk is green.
+  102 `typer.Exit` sites in 22 CLI modules remain to be removed by moving
+  the result into an `Outcome`, not by hiding them from a scan.
+- **Prompts** (slices 2, 4, 5, 6, 7: `entry delete`, `kb remove`, `repo`,
+  `extension uninstall`, the auth commands): a command that prompts cannot
+  declare the shared option until the maintainer picks a rule (ADR-0046,
+  open questions). Until then those commands stay on the legacy list and the
+  slice says so.
+- **Progress** (slice 5: `index_commands.py`, two Rich `Progress`/`status`
+  uses): on a stderr console, or the command stays legacy.
+- **Module-level `console = Console()`** (23 CLI modules): caught without
+  change, since Rich resolves `sys.stdout` when it writes.
+- **Commands that stream or never return** (a server, a watcher): not
+  surveyed here. They cannot return one `Outcome`; they stay off the shared
+  option, and the slice that meets one lists it.
+- **Slices 8 to 10 (plugins):** a plugin command that declares the shared
+  option gets the guard; one that returns `None` without it is untouched.
+  The plugin contract (ADR-0040) should say that declaring the option is
+  what opts in.
+- **Slice 11:** deletes the scan with the tables, or keeps it as the named
+  hint.
+
+### Checked versus assumed
+
+Checked by running: every row of the shapes table (real process, JSON; the
+renderer rows also in rich), the walk under `CliRunner`, the three test
+files, the timings, the help and usage paths. Assumed, not run: Windows
+(`os.dup2` on descriptor 1); Python 3.11 and 3.13; Typer below 0.27; a real
+terminal (colour and width of the rich rendering were not compared, though
+rendering happens after the watch ends, on the real stdout); making rich
+rendering all-or-nothing by rendering to a buffer; `pyrite-admin` and
+`pyrite-read` roots (no command of theirs is on the contract yet); the
+strict usage rule against commands outside `task`.
