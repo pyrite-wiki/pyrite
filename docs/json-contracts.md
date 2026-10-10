@@ -18,18 +18,25 @@ table keyed by exception type.
 `--format` flag via `cli_error`/`cli_error_from`) return the flat structure
 below. A CLI command with no `--format` flag prints a refusal as Rich text
 (`ERROR [CODE]: message`), never this JSON; the table under "`--format`
-defaults" says which. Making CLI output consistent regardless of TTY is
-**#303** (open); this page describes the shape you get when you do get JSON,
-not a promise that every command gives you the option.
+defaults" says which. Each CLI module takes the one shared `--format`
+(JSON by default; #303, decided 2026-10-02) as it moves to the outcome
+contract; until then this page describes the shape you get when you do get
+JSON, not a promise that every command gives you the option.
 
 ```json
 {
   "error": "human-readable message",
   "error_code": "MACHINE_CODE",
   "suggestion": "optional fix hint",
-  "retryable": false
+  "retryable": false,
+  "outcome": "error"
 }
 ```
+
+- `outcome` — on the CLI, from a command on the outcome contract (the `task`
+  commands today; see "Exit codes (CLI)"): always `"error"` on a refusal, as
+  `"done"`, `"partial"` or `"nothing"` is on a result. Additive: absent from
+  MCP and from a CLI command that has not migrated, so do not require it.
 
 - `error` — always present, human-readable.
 - `error_code` — always present, machine-readable (`QUERY_SYNTAX`,
@@ -329,8 +336,9 @@ Which fields an update may set, and which it refuses or sets aside, is the
 ### `task create` and `link`
 
 `pyrite task create` takes `--field key=value` (repeatable) for fields a
-KB's task schema allows. Its `-f` is `--format` (`rich` default, or `json`),
-**not** `--field` as on `create`/`update`: check `--help` per command.
+KB's task schema allows. It has no short flag: `-f` was `--format` on the
+`task` commands and is deprecated there (see "`--format` defaults"), and is
+**not** `--field` as on `create`/`update`.
 
 `pyrite link <source> <target> -k <kb> -r <relation>` prints
 `Linked: <src> --[<relation>]--> <tgt> (in <kb>)` for a new link, or
@@ -545,6 +553,47 @@ allowed, and is never persisted as entry content.
 
 ## Exit codes (CLI)
 
+**One point sets them** (ADR-0046). A command on the outcome contract
+returns what happened -- `done`, `partial` or `nothing` -- or raises a
+refusal; the root group every command runs inside (`PyriteCLIGroup`, in
+`pyrite`, `pyrite-admin` and `pyrite-read`) prints it in the requested
+`--format` and exits `0`, `3` or `1`. Its JSON carries an additive `outcome`
+key: `"done"`, `"partial"`, `"nothing"`, or `"error"` on the error shape of a
+refusal, so a caller that cannot see the exit code can still tell. Every
+result is an object, so the key always has somewhere to go.
+
+A command is on the contract when it declares the shared `--format` option;
+the `task` commands are today, and the other modules move one slice at a time
+and keep the behaviour below until they do (`LEGACY_COMMANDS` in
+`tests/test_requested_effect_exit_code.py` counts them). For a command on the
+contract the root is also the only way *out*, checked on every run: once the
+command's own code has started, anything but a returned outcome or a raised
+refusal is answered `NO_OUTCOME`, exit `1`, in the format you asked for. That
+covers an exit of its own with any code, a crash (one line naming the
+exception; `-vv` shows the traceback), a return of anything else, and any
+byte it wrote to stdout itself, which is moved to stderr. So for these
+commands, in a machine format:
+
+- stdout holds exactly one document, and its `outcome` agrees with the exit
+  code;
+- `NO_OUTCOME` means a bug in the command, not in your request: what it did
+  is unknown, so check before you retry;
+- exit `0` with empty stdout is never an answer. If you see it, the process
+  ended without reaching the root (`os._exit`); treat it as a failure.
+
+What the root does not decide: stderr (progress, warnings and deprecation
+notices go there; do not parse it for failures), the words of `--format rich`
+(a renderer writes for a person; the exit code is still the root's), and
+`--help` or a usage error (`2`), which click answers before the command
+starts. `-f` together with `--format` is a usage error (`2`). Ctrl-C exits
+`130`.
+
+**Check commands** (a command whose answer is a verdict: `kb validate`, `ids
+missing`, `index health`, `qa validate`, `protocol check`) exit `0` when the
+check is clean and `1` when it fails; warnings never change the exit code
+(maintainer, 2026-10-08). A check command adopts this when its module
+migrates; until then `kb validate` drift exits `2` and `ids missing` `3`.
+
 - `0` — success: **every effect you asked for happened.** A command that
   prints a failure and exits `0` is a bug.
 - `1` — refused, or nothing was done: any error surfaced via `cli_error`
@@ -571,7 +620,8 @@ allowed, and is never persisted as entry content.
     `pyrite-admin index embed` (`Errors: N`; the entries stay owed and a rerun
     retries them, so offline with nothing embedded is `1`), `schema migrate`,
     `index reconcile`, `import`, `links bulk-create`, `export collection`,
-    `search --files`, `repo sync`, `batch-read` (an id not found), `task decompose`,
+    `search --files`, `repo sync`, `batch-read` (an id not found), `task decompose`
+    (every child refused is `1`, `"outcome": "nothing"`),
     `sw prioritize`, `sw migrate-standards`, `investigation bulk-edges` and
     `ftm-import`;
   - `pyrite init` that created the KB but could not index it, and
@@ -594,11 +644,21 @@ allowed, and is never persisted as entry content.
 
 ## `--format` defaults
 
-Most *read* commands default to `--format json`. A few interactive/status
-commands (`task` subcommands, `config`) default to a rich terminal
-view instead; pass `--format json` explicitly when scripting against
-those. The write commands are not uniform, and the table is checked
-against each command's Typer signature by `tests/test_doc_agent_contracts.py`:
+The rule (#303, decided 2026-10-02) is one shared `--format` option
+(`pyrite/cli/output.py`): `json` by default, `PYRITE_FORMAT` sets your own
+default (`PYRITE_FORMAT=rich` in a terminal), an explicit `--format`
+overrides it, and an unknown format is a usage error (`2`). It takes `json`,
+`yaml` and `rich`. `markdown` and `csv` are not offered by the shared option:
+they exist for the shapes the REST API serves (entries, search results) and
+print a Python `repr` for anything else. A refusal is printed in the format
+asked for, YAML included. `-f` no longer
+means `--format`: where it did (the `task` commands) it still works for one
+release and prints a deprecation line on stderr. Each module takes the
+shared option when it moves to the outcome contract; the `task` commands
+have it. Until then most *read* commands default to `--format json`, `config`
+to a rich terminal view, and the write commands are not uniform. The table is
+checked against each command's Typer signature by
+`tests/test_doc_agent_contracts.py`:
 
 | Command | `--format` | Default |
 |---|---|---|
@@ -609,12 +669,10 @@ against each command's Typer signature by `tests/test_doc_agent_contracts.py`:
 | `update` | yes | `json` |
 | `rename` | yes | `json` |
 | `import` | input file format, not output | Rich text, always |
-| `task create` | yes (`-f`) | `rich` |
+| `task create` | yes (shared; `-f` deprecated) | `json` |
 
-**#303** (open, "CLI output format is inconsistent when stdout is not a TTY")
-is the decision that would make this one rule. Until it lands, a command with
-none prints its refusals as Rich text too, so branch on the exit code, not on
-JSON.
+A command with no `--format` prints its refusals as Rich text too, so branch
+on the exit code, not on JSON, until its module takes the shared option.
 
 ## Operational contracts
 

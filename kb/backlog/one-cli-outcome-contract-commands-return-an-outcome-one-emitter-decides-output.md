@@ -14,6 +14,7 @@ effort: L
 rank: 0
 ---
 
+
 Retro 2026-10-08 quality theme (Mark approved). Groom with Opus after #779 lands, then slice by module.
 
 ## Why
@@ -797,3 +798,54 @@ rendering happens after the watch ends, on the real stdout); making rich
 rendering all-or-nothing by rendering to a buffer; `pyrite-admin` and
 `pyrite-read` roots (no command of theirs is on the contract yet); the
 strict usage rule against commands outside `task`.
+
+## Build notes, round 2 of #793 (2026-10-10)
+
+What building the guard found that the groom above does not say. Slices 2 to
+11 should read this with `kb/components/cli-system.md` ("Outcomes") and
+`PyriteCLIGroup`'s docstring, which lists what the guard does not cover.
+
+- **The shared option's callback is not body entry.** Click calls it while it
+  is still parsing: with `--format json` given and a required option missing,
+  the callback runs and `MissingParameter` is raised after it. A watch
+  started there answers `NO_OUTCOME` for a usage error. The callback hands
+  the root's guard the leaf context, and the guard wraps `ctx.command.callback`
+  (`_BodyGuard.watch_body_of`, `pyrite/utils/errors.py`); the wrapper is body
+  entry. Typer builds a new click tree per call, so the wrap lasts one run.
+- **Buffers are the other half of descriptor 1.** Text written before the
+  body is still in the stream's buffer when the watch starts (into a pipe),
+  and would be taken for the body's: a false `NO_OUTCOME`. Text the body
+  wrote through a stream kept from import, `sys.__stdout__` or C's `printf`
+  is still in a buffer when the body returns, and would land after the
+  root's document. `_StdoutWatch` flushes the Python streams and C stdio
+  before it starts and before it stops. The spike's table has
+  `sys.__stdout__` as "caught by the descriptor swap"; unflushed, it was not.
+- **A group's `result_callback` sits between the command and the root** and
+  can swap `nothing` for `done`. The root renders only the object the body
+  returned (`guard.returned`).
+- **The format is read when the body starts.** A body that rewrote
+  `ctx.meta` could otherwise be rendered by its own renderer when JSON was
+  asked for.
+- **A parameter callback runs unwatched** (it is how `--help` works). The
+  registry test allows a command on the contract no callback but the shared
+  option's. A custom parameter type or a default factory is the same class
+  and is not checked.
+- **An Outcome's data is a mapping or `None`, with no `outcome` key.** A
+  slice whose command returns a list puts it under a key
+  (`{"entries": [...]}`), as the task commands already do.
+- **The shared option takes `json`, `yaml`, `rich`.** `markdown` and `csv`
+  printed a Python `repr` for a task payload. Slice 3 (`search`, the browse
+  commands) has data those formats were written for; it needs a way for a
+  command to offer them (the Outcome naming a table, or the option taking a
+  per-command set). Not designed here.
+- **Not caught, found by probing beyond the groom's list:** a child the
+  command forks (it returns through the root too: two documents), a write to
+  the root's own saved duplicate of descriptor 1 or one taken at import, a
+  buffer of the command's own over descriptor 1 flushed at exit, and a
+  command that reaches into the guard (`ctx.meta`, `EXIT_CODES`). All named
+  in `PyriteCLIGroup`'s docstring.
+- **Numbers.** 10 commands on the contract and 47 ways out: 43 under
+  `CliRunner` in `json` and `rich` (810 cases), 4 that need the process's
+  own stdout in a real process. With the controls `tests/test_cli_outcome.py`
+  is about 1,000 tests in about 20 s at `-n 4`. Against the round-1 root,
+  660 of the walk's first 720 cases were red.
