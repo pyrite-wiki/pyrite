@@ -254,6 +254,25 @@ def test_a_scalar_id_reads_as_the_index_stores_it(kb, raw, spelled):
     assert repo.find_file(row_id) == f
 
 
+# -- #704: a non-string title is indexed under its stringified slug -----------
+
+
+@pytest.mark.parametrize(
+    ("raw_title", "derived"),
+    [("2024", "2024"), ("1e3", "1000-0"), ("true", "true")],
+)
+def test_704_numeric_title_is_indexed_and_findable(kb, raw_title, derived):
+    kb_path, svc, repo, db = kb
+    f = kb_path / f"num-{derived}.md"
+    f.write_text(f"---\ntype: note\ntitle: {raw_title}\n---\n\nb\n")
+    _index(svc, db)
+    (row_id,) = [r["id"] for r in db.list_entries(kb_name=KB)]
+
+    assert row_id == derived
+    assert repo.id_of_file(f) == row_id
+    assert repo.find_file(row_id) == f
+
+
 # -- a rejected filename hit says which id the file holds ----------------------
 
 

@@ -230,7 +230,7 @@ def test_missing_exits_three_and_reports_each_kind(kb):
             "bad.md": "---\ntitle: [unclosed\n---\n",
             "nofm.md": "just text\n",
             "latin1.md": b"---\ntitle: caf\xe9\n---\n",
-            # a title YAML reads as a number: today's derivation raises
+            # a title YAML reads as a number: stringified before slugging (#704)
             "numtitle.md": "---\ntitle: 1e3\n---\n",
             ".hidden/x.md": "---\ntitle: Hidden\n---\n",
             "_templates/t.md": "---\ntitle: Template\n---\n",
@@ -243,8 +243,10 @@ def test_missing_exits_three_and_reports_each_kind(kb):
         ("none.md", "missing"),
         ("empty.md", "empty_id"),
         ("nullid.md", "empty_id"),
+        # #704: a numeric YAML title is stringified and indexed, not skipped
+        ("numtitle.md", "missing"),
     }
-    assert {r["path"] for r in data["skipped"]} == {"bad.md", "nofm.md", "latin1.md", "numtitle.md"}
+    assert {r["path"] for r in data["skipped"]} == {"bad.md", "nofm.md", "latin1.md"}
     assert all(r["reason"] for r in data["skipped"])
 
 

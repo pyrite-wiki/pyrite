@@ -44,6 +44,18 @@ def test_ascii_ids_are_unchanged():
     assert generate_entry_id("Use A/B testing: now, or later?") == "use-a-b-testing-now-or-later"
 
 
+def test_non_string_yaml_scalar_titles_are_stringified_before_slugging():
+    # #704: `title: 1e3` / `title: 2024` / `title: true` load as non-strings.
+    assert generate_entry_id(2024) == "2024"
+    assert generate_entry_id(1000.0) == "1000-0"
+    assert generate_entry_id(True) == "true"
+    assert generate_entry_id(False) == "false"
+    assert generate_entry_id(0) == "0"
+    assert generate_entry_id(None).startswith("entry-")
+    for value in (2024, 1000.0, True, False, 0):
+        assert SAFE.match(generate_entry_id(value)), repr(value)
+
+
 def test_accents_transliterate_instead_of_vanishing():
     assert generate_entry_id("Café résumé naïve") == "cafe-resume-naive"
 
