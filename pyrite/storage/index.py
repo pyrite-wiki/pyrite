@@ -27,22 +27,12 @@ from ..models.protocols import (
     Temporal,
 )
 from ..utils.metadata import parse_metadata
+from ..utils.wikilinks import TRANSCLUSION_RE as _TRANSCLUSION_RE
+from ..utils.wikilinks import WIKILINK_RE as _WIKILINK_RE
 from .database import PyriteDB
 from .repository import KBRepository
 
 logger = logging.getLogger(__name__)
-
-# Matches wikilinks: [[target]], [[kb:target]], [[target#heading]], [[target^block-id]], [[target|display]]
-# Groups: (1) kb prefix, (2) target, (3) heading, (4) block-id, (5) display text
-_WIKILINK_RE = re.compile(
-    r"\[\[(?:([a-z0-9-]+):)?([^\]|#^]+?)(?:#([^\]|^]+?))?(?:\^([^\]|]+?))?(?:\|([^\]]+?))?\]\]"
-)
-
-# Matches transclusions: ![[target]], ![[target#heading]], ![[target^block-id]]
-# Same groups as _WIKILINK_RE: (1) kb prefix, (2) target, (3) heading, (4) block-id, (5) display text
-_TRANSCLUSION_RE = re.compile(
-    r"!\[\[(?:([a-z0-9-]+):)?([^\]|#^]+?)(?:#([^\]|^]+?))?(?:\^([^\]|]+?))?(?:\|([^\]]+?))?\]\]"
-)
 
 # Matches fenced code blocks (``` ... ```, ~~~ ... ~~~) including the fence lines.
 # Non-greedy so adjacent blocks don't collapse. DOTALL so . matches newlines.

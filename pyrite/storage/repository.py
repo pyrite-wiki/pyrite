@@ -562,9 +562,9 @@ class KBRepository:
         Args:
             old_id: Current entry id.
             new_id: Target entry id. Must not already exist.
-            update_links: When True (default), rewrite ``[[<old_id>]]``
-                and ``[[<old_id>|alias]]`` wikilinks in every entry
-                body in this KB. When False, only the renamed file
+            update_links: When True (default), rewrite all indexed wikilink
+                forms targeting this KB, preserving prefixes and fragments.
+                When False, only the renamed file
                 changes — references stay dangling (rarely useful,
                 kept for parity with the ticket spec).
             dry_run: When True, return what would happen without
@@ -600,22 +600,41 @@ class KBRepository:
                 f"Cannot rename '{old_id}' to '{new_id}': target already exists in KB '{self.name}'"
             )
 
-        # Plan the link rewrite. We scan every body once and substitute
-        # `[[<old_id>]]` and `[[<old_id>|...]]`. Substring matches at
-        # arbitrary positions are NOT touched (the spec calls for exact
-        # wikilink-id match only).
+        # Plan the rewrite using the index's grammar and exact target ids.
+        # Substrings and links explicitly targeting another KB stay intact.
         files_rewritten = 0
         links_rewritten = 0
         body_rewrites: list[tuple[Path, str]] = []  # (path, new_text)
+        entry = self._load_entry(src)
+        source_body = entry.body
 
         if update_links:
-            import re
+            from ..utils.wikilinks import WIKILINK_RE
 
-            # Build the two patterns so we can both COUNT and REPLACE.
-            # Group 1 of `aliased` is the alias text we preserve.
-            bare = re.compile(rf"\[\[{re.escape(old_id)}\]\]")
-            aliased = re.compile(rf"\[\[{re.escape(old_id)}\|([^\]]*)\]\]")
-            new_bare = f"[[{new_id}]]"
+            def rewrite(text: str) -> tuple[str, int]:
+                count = 0
+
+                def replace(match):
+                    nonlocal count
+                    if match.group(1) not in (None, self.name):
+                        return match.group(0)
+                    target = match.group(2)
+                    if target.strip() != old_id:
+                        return match.group(0)
+                    count += 1
+                    # Only the id's span changes: keep whitespace, prefix,
+                    # fragment and display text byte-for-byte.
+                    start = match.start(2) - match.start() + len(target) - len(target.lstrip())
+                    end = start + len(old_id)
+                    return match.group(0)[:start] + new_id + match.group(0)[end:]
+
+                result = WIKILINK_RE.sub(replace, text)
+                return result, count
+
+            source_body, source_count = rewrite(entry.body)
+            if source_count:
+                files_rewritten += 1
+                links_rewritten += source_count
 
             for md_file in self.list_files():
                 # The source file itself will get a fresh write below;
@@ -626,11 +645,9 @@ class KBRepository:
                     text = md_file.read_text(encoding="utf-8")
                 except OSError:
                     continue
-                count = len(bare.findall(text)) + len(aliased.findall(text))
+                new_text, count = rewrite(text)
                 if count == 0:
                     continue
-                new_text = bare.sub(new_bare, text)
-                new_text = aliased.sub(lambda m, _n=new_id: f"[[{_n}|{m.group(1)}]]", new_text)
                 files_rewritten += 1
                 links_rewritten += count
                 body_rewrites.append((md_file, new_text))
@@ -655,7 +672,7 @@ class KBRepository:
         # delete old file. Using load+save preserves frontmatter shape
         # via the model layer instead of doing a regex on the source's
         # own YAML.
-        entry = self._load_entry(src)
+        entry.body = source_body
         entry.id = new_id
         # File pattern in some plugin schemas can pull subdir from id;
         # keep the entry in the same subdir it lived in by saving with
