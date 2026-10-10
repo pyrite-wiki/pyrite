@@ -55,8 +55,8 @@ pyrite mcp-setup                  # write tier; --tier read|admin, --client, --p
 ```
 
 `pyrite mcp-setup` points a `pyrite` server entry at this install where each
-client reads it: `claude mcp add` for Claude Code (or `./.mcp.json` with
-`--project`), and Claude Desktop's own `claude_desktop_config.json`. Run it
+client reads it: `claude mcp add -s user` for Claude Code (or `./.mcp.json`
+with `--project`), and Claude Desktop's own `claude_desktop_config.json`. Run it
 again any time. An entry that already points here is not rewritten; one that
 points elsewhere gets its command path changed (and its tier, if you pass
 `--tier`), and keeps its `env`, extra arguments and other keys. Other servers
