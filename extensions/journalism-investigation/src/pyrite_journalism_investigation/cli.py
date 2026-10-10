@@ -16,6 +16,13 @@ investigation_app = typer.Typer(help=f"{_EXPERIMENTAL_NOTICE}\n\nJournalism inve
 console = Console()
 
 
+def _emit_json_result(result: dict) -> None:
+    """Render a result and preserve the failure exit status."""
+    typer.echo(json_mod.dumps(result, indent=2))
+    if "error" in result:
+        raise typer.Exit(1)
+
+
 def _get_plugin_with_db():
     """Create a plugin instance with DB context for CLI usage."""
     config = load_config()
@@ -526,7 +533,7 @@ def start_investigation(
         )
 
         if output_json:
-            typer.echo(json_mod.dumps(result, indent=2))
+            _emit_json_result(result)
             return
 
         if "error" in result:
@@ -1029,7 +1036,7 @@ def promote_claim(
         )
 
         if output_json:
-            typer.echo(json_mod.dumps(result, indent=2))
+            _emit_json_result(result)
             return
 
         if "error" in result:

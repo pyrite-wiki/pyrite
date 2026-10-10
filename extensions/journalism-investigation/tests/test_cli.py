@@ -269,18 +269,14 @@ class TestPromoteClaimCommand:
     def test_promote_claim_without_endpoint_fields_is_refused(self, populated_kb):
         """No --owner/--asset: refused with a clear error, not a raw traceback.
 
-        `--json` mode echoes the result dict and exits 0 regardless of
-        "error" (matching the rest of this file's `network`/`evidence-chain`
-        JSON-mode tests -- the error key, not the exit code, is the
-        machine-readable signal); the non-JSON path is what exits 1, covered
-        by test_promote_claim_dry_run_reports_the_same_refusal below.
+        JSON errors preserve their payload and return exit status 1.
         """
         self._create_claim(populated_kb["svc"])
         result = runner.invoke(
             investigation_app,
             ["promote-claim", "claim-x-owns-y", "--edge-type", "ownership", "-k", "test", "--json"],
         )
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         data = json.loads(result.output)
         assert "error" in data
         assert "owner" in data["error"] and "asset" in data["error"]
