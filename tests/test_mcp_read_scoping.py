@@ -214,7 +214,8 @@ class TestPeerCannotReachPrivateKBOverMCP:
         # order, so omitting it was itself a way to reach private content.
         out = _call(env, "peer", "kb_get", {"entry_id": "secret-note"})
         assert "zebra behind the wall" not in json.dumps(out)
-        assert out.get("error_code") == "NOT_FOUND"
+        assert out.get("error_code") == "ENTRY_NOT_FOUND"
+        assert out.get("legacy_error_code") == "NOT_FOUND"
 
     def test_kb_list_entries_on_a_private_kb(self, env):
         out = _call(env, "peer", "kb_list_entries", {"kb_name": PRIVATE})

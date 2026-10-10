@@ -970,10 +970,10 @@
     "entries": []
   },
   "kb_get | admin_key | missing-kb": {
-    "error": "Entry 'characterization-missing-entry' not found",
-    "error_code": "NOT_FOUND",
+    "error": "KB not found: missing-kb",
+    "error_code": "KB_NOT_FOUND",
     "retryable": false,
-    "suggestion": "Use kb_list_entries or kb_search to find entries"
+    "legacy_error_code": "NOT_FOUND"
   },
   "kb_get | admin_key | no-default-role-kb": {
     "entry": {
@@ -3470,8 +3470,9 @@
   },
   "kb_update | admin_key | missing-kb": {
     "error": "KB not found: missing-kb",
-    "error_code": "UPDATE_FAILED",
-    "retryable": true
+    "error_code": "KB_NOT_FOUND",
+    "retryable": false,
+    "legacy_error_code": "UPDATE_FAILED"
   },
   "kb_update | admin_key | no-default-role-kb": {
     "entry_id": "characterization-disposable-mutation-target",
