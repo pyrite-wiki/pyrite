@@ -52,7 +52,7 @@ For something to read it against, there are 26 more, mostly written about the th
 git clone https://github.com/pyrite-wiki/pyrite-kb-demo.git
 ```
 
-Tell Pyrite where all of them are. Use `--format rich` here: in the default format this command lists what it found and registers nothing ([#660](https://github.com/pyrite-wiki/pyrite/issues/660)).
+Tell Pyrite where all of them are. Use `--format rich` here to see a table and registration summary; `--add` also registers KBs in the default JSON format and the other output formats.
 
 ```bash
 pyrite kb discover pyrite-kb-demo --add --format rich

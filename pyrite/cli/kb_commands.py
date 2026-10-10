@@ -177,7 +177,10 @@ def kb_discover(
     search_path: Path | None = typer.Argument(None, help="Path to search for KBs"),
     add: bool = typer.Option(False, "--add", "-a", help="Add discovered KBs to registry"),
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Auto-discover knowledge bases by finding kb.yaml files."""
@@ -190,20 +193,41 @@ def kb_discover(
         console.print("[yellow]No KB configurations found.[/yellow]")
         return
 
-    formatted = _format_output(
-        {
-            "discovered": [
-                {
-                    "name": kb.name,
-                    "type": kb.kb_type,
-                    "path": str(kb.path),
-                    "already_registered": config.get_kb(kb.name) is not None,
-                }
-                for kb in discovered
-            ]
-        },
-        output_format,
-    )
+    # Snapshot discovery before registration so output keeps its original status.
+    data = {
+        "discovered": [
+            {
+                "name": kb.name,
+                "type": kb.kb_type,
+                "path": str(kb.path),
+                "already_registered": config.get_kb(kb.name) is not None,
+            }
+            for kb in discovered
+        ]
+    }
+
+    added = 0
+    if add:
+        from ..exceptions import KBAlreadyExistsError
+
+        with cli_registry_context() as (_, _, _, registry):
+            for kb in discovered:
+                if not config.get_kb(kb.name):
+                    try:
+                        registry.add_kb(
+                            name=kb.name,
+                            path=str(kb.path),
+                            kb_type=kb.kb_type,
+                            description=kb.description,
+                        )
+                        added += 1
+                    except KBAlreadyExistsError:
+                        pass  # Already registered, including duplicate discovered names.
+                    except (PyriteError, ValueError) as exc:
+                        _kb_error(exc, output_format)
+
+    # The requested write must finish before any presentation branch can return.
+    formatted = _format_output(data, output_format)
     if formatted is not None:
         typer.echo(formatted)
         return
@@ -224,23 +248,8 @@ def kb_discover(
 
     console.print(table)
 
-    if add:
-        with cli_registry_context() as (_, _, _, registry):
-            added = 0
-            for kb in discovered:
-                if not config.get_kb(kb.name):
-                    try:
-                        registry.add_kb(
-                            name=kb.name,
-                            path=str(kb.path),
-                            kb_type=kb.kb_type,
-                            description=kb.description,
-                        )
-                        added += 1
-                    except (PyriteError, ValueError):
-                        pass  # Already exists in DB
-            if added:
-                console.print(f"[green]Added {added} KB(s) to registry.[/green]")
+    if added:
+        console.print(f"[green]Added {added} KB(s) to registry.[/green]")
 
 
 @kb_app.command("validate")
