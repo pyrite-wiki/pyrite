@@ -329,6 +329,8 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     "extensions/journalism-investigation/tests/test_single_kb_readable_set.py": SCOPE,
     "extensions/journalism-investigation/tests/test_dedup.py::*readable*": SCOPE,
     "extensions/software-kb/tests/test_sw_readable_set.py": SCOPE,
+    "extensions/software-kb/tests/test_adr_listing.py::test_mcp_adrs_are_numbered_and_show_standing_relations": SCOPE,
+    "extensions/software-kb/tests/test_adr_listing.py::test_mcp_adrs_do_not_reveal_unreadable_link_sources": SCOPE,
     "extensions/encyclopedia/tests/test_encyclopedia.py::TestWikiListsNarrowToTheReadableSet::*": SCOPE,
     "extensions/social/tests/test_social.py::TestReadableSetFiltering::*": SCOPE,
     "extensions/zettelkasten/tests/test_zettelkasten.py::TestInboxNarrowsToTheReadableSet::*": SCOPE,

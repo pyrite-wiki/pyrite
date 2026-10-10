@@ -12,6 +12,8 @@ from pyrite.config import load_config
 from pyrite.services.access_policy import UNSCOPED
 from pyrite.storage.database import PyriteDB
 
+from .adr_listing import adr_relations, adr_sort_key, format_adr_relations
+
 sw_app = typer.Typer(help="Software KB commands (ADRs, backlog, standards, components)")
 console = Console()
 logger = logging.getLogger(__name__)
@@ -104,6 +106,8 @@ def sw_adrs(
                 if (r.get("status") or r["_meta"].get("status", "proposed")) == status
             ]
 
+        rows.sort(key=adr_sort_key)
+
         # Bound AFTER filtering, never before (#233): limiting first would cut
         # the list before the filter and return the wrong page.
         rows = rows[offset : offset + effective_limit] if effective_limit else rows[offset:]
@@ -119,10 +123,13 @@ def sw_adrs(
             _json_output(
                 [
                     {
+                        "id": r["id"],
+                        "kb_name": r["kb_name"],
                         "adr_number": r["_meta"].get("adr_number", ""),
                         "title": r["title"],
                         "status": r.get("status") or r["_meta"].get("status", "proposed"),
                         "date": r.get("date") or r["_meta"].get("date", ""),
+                        "relations": adr_relations(db, r, readable_kbs=None),
                     }
                     for r in rows
                 ]
@@ -130,19 +137,26 @@ def sw_adrs(
             return
 
         table = Table(title="Architecture Decision Records")
+        table.add_column("KB", style="dim")
+        table.add_column("ID", style="dim")
         table.add_column("#", style="cyan", justify="right")
         table.add_column("Title")
         table.add_column("Status", style="yellow")
         table.add_column("Date", style="dim")
+        table.add_column("Relations")
 
         for row in rows:
             meta = row["_meta"]
             num = str(meta.get("adr_number", ""))
+            relations = adr_relations(db, row, readable_kbs=None)
             table.add_row(
+                row["kb_name"],
+                row["id"],
                 num,
                 row["title"],
                 row.get("status") or meta.get("status", "proposed"),
                 row.get("date") or meta.get("date", ""),
+                format_adr_relations(relations),
             )
 
         console.print(table)
