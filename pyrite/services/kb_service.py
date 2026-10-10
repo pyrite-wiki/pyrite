@@ -36,6 +36,7 @@ from ..models import Entry
 from ..models.base import parse_datetime
 from ..models.factory import build_entry
 from ..plugins.context import PluginContext
+from ..schema import Link, Source
 from ..schema.enum_check import is_off_list, is_per_element
 from ..storage.database import PyriteDB
 from ..storage.document_manager import DocumentManager
@@ -2827,14 +2828,32 @@ class KBService:
 
 
 def _as_field_type(entry: Entry, key: str, value: Any) -> Any:
-    """``value`` as the type an Enum-valued field holds, or refused.
+    """Coerce an update value to the model type expected for its field.
 
-    Every surface sends a field's value as a string (`status: disputed`), and
-    an Enum field (`EventEntry.status`) assigned a str failed later, at
-    `to_frontmatter`'s `.value`, as `INTERNAL: 'str' object has no attribute
-    'value'` -- for a deliberate set and for an echoed read result alike
-    (#561). An unknown value is refused before anything is written.
+    Enum fields arrive as strings such as status values, and assigning a
+    string to EventEntry.status failed later during frontmatter serialization
+    (#561). Source and Link lists arrive as JSON dictionaries on reads and are
+    restored to typed objects here, before validation or serialization.
+    Unsupported input is refused before anything is written.
     """
+    if key in ("sources", "links"):
+        item_type = Source if key == "sources" else Link
+        if not isinstance(value, list):
+            raise ValidationError(
+                f"Cannot set {key} on {entry.entry_type} '{entry.id}': expected a list of objects."
+            )
+        converted = []
+        for index, item in enumerate(value):
+            if isinstance(item, item_type):
+                converted.append(item)
+            elif isinstance(item, dict):
+                converted.append(item_type.from_dict(item))
+            else:
+                raise ValidationError(
+                    f"Cannot set {key}[{index}] on {entry.entry_type} '{entry.id}': expected an object."
+                )
+        return converted
+
     current = getattr(entry, key, None)
     if not isinstance(current, Enum) or isinstance(value, type(current)):
         return value
