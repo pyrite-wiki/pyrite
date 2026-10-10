@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { entryHref } from '$lib/utils/entry-href';
 	import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import type { GraphNode, GraphEdge } from '$lib/api/types';
@@ -177,7 +178,7 @@
 
 		cy.on('tap', 'node', (evt: cytoscape.EventObject) => {
 			const data = evt.target.data();
-			goto(`/entries/${encodeURIComponent(data.entryId)}`);
+			goto(entryHref(data.entryId, data.kbName));
 		});
 
 		cy.on('mouseover', 'node', (evt: cytoscape.EventObject) => {

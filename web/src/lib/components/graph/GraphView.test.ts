@@ -18,6 +18,7 @@ vi.mock('cytoscape', async () => {
 	return { default: create };
 });
 import GraphView from './GraphView.svelte';
+import { goto } from '$app/navigation';
 
 const nodes: GraphNode[] = [
 	{ id: 'hub', kb_name: 'test', title: 'Alpha Hub', entry_type: 'note', link_count: 1, centrality: 0.5 },
@@ -31,6 +32,18 @@ async function initialized() {
 	return graph.instances.at(-1)!;
 }
 afterEach(() => { cleanup(); graph.instances = []; });
+
+it('opens a tapped node in its own KB and omits missing KB names', async () => {
+	render(GraphView, { nodes, edges, layoutName: 'grid' });
+	const cy = await initialized();
+	vi.mocked(goto).mockClear();
+	cy.getElementById('test/hub').emit('tap');
+	expect(goto).toHaveBeenLastCalledWith('/entries/hub?kb=test');
+	cy.getElementById('test/hub').data('entryId', 'space / id');
+	cy.getElementById('test/hub').removeData('kbName');
+	cy.getElementById('test/hub').emit('tap');
+	expect(goto).toHaveBeenLastCalledWith('/entries/space%20%2F%20id');
+});
 
 describe('GraphView search reactivity', () => {
 	it('initializes once for an initially populated graph and destroys it on unmount', async () => {
