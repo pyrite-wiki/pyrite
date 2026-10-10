@@ -347,7 +347,7 @@ cd web && npm ci && npm run build && cd ..   # the web UI (optional)
 Or straight from a release tag, no clone:
 
 ```bash
-pip install "pyrite[server,cli] @ git+https://github.com/pyrite-wiki/pyrite@v0.25.6"
+pip install "pyrite[server,cli] @ git+https://github.com/pyrite-wiki/pyrite@v0.25.7"
 ```
 
 That gives you the CLI, the REST API and the MCP server, but **not the web
