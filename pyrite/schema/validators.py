@@ -43,7 +43,7 @@ def generate_event_id(date: str, title: str) -> str:
 _ID_MAX_LEN = 80
 
 
-def generate_entry_id(title: str) -> str:
+def generate_entry_id(title: Any) -> str:
     """Generate an entry id (and therefore a filename stem) from a title.
 
     Always non-empty, always matches ``^[a-z0-9][a-z0-9-]{0,79}$``:
@@ -55,6 +55,8 @@ def generate_entry_id(title: str) -> str:
       than an empty id and a confusing "Entry must have an ID";
     - the slug is capped at 80 characters, cut at a word boundary, so the
       filename always fits.
+    - non-string scalar titles (such as numbers and booleans) are stringified
+      before slugging, so plain YAML scalars remain indexable.
 
     Plain ASCII titles produce exactly what they always did, so existing ids
     do not change. Every place that turns a title into a filename must use
@@ -64,7 +66,8 @@ def generate_entry_id(title: str) -> str:
     import hashlib
     import unicodedata
 
-    text = unicodedata.normalize("NFKD", title or "")
+    title_text = "" if title is None else str(title)
+    text = unicodedata.normalize("NFKD", title_text)
     text = "".join(c for c in text if not unicodedata.combining(c))
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     if len(slug) > _ID_MAX_LEN:
@@ -72,6 +75,6 @@ def generate_entry_id(title: str) -> str:
         slug = head.rsplit("-", 1)[0] if "-" in head else head
         slug = slug.strip("-")
     if not slug:
-        digest = hashlib.sha1((title or "").encode("utf-8")).hexdigest()[:8]
+        digest = hashlib.sha1(title_text.encode("utf-8")).hexdigest()[:8]
         slug = f"entry-{digest}"
     return slug
