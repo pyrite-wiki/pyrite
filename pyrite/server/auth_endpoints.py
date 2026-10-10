@@ -279,7 +279,7 @@ async def login(
 
 
 @auth_router.post("/logout")
-async def logout(
+def logout(
     request: Request,
     response: Response,
     auth_service: AuthService = Depends(get_auth_service),
@@ -293,7 +293,7 @@ async def logout(
 
 
 @auth_router.get("/me")
-async def get_current_user(
+def get_current_user(
     request: Request,
     auth_service: AuthService = Depends(get_auth_service),
 ) -> AuthUserResponse:
@@ -319,7 +319,7 @@ async def get_current_user(
 
 
 @auth_router.get("/github")
-async def github_oauth_start(
+def github_oauth_start(
     request: Request,
     config: PyriteConfig = Depends(get_config),
     auth_service: AuthService = Depends(get_auth_service),
@@ -455,7 +455,7 @@ CONNECT_SCOPES = "read:user read:org public_repo"
 
 
 @auth_router.get("/github/connect")
-async def github_connect_start(
+def github_connect_start(
     request: Request,
     config: PyriteConfig = Depends(get_config),
     auth_service: AuthService = Depends(get_auth_service),
@@ -494,7 +494,7 @@ async def github_connect_start(
 
 
 @auth_router.get("/github/status")
-async def github_connection_status(
+def github_connection_status(
     request: Request,
     config: PyriteConfig = Depends(get_config),
     auth_service: AuthService = Depends(get_auth_service),
@@ -540,7 +540,7 @@ async def github_connection_status(
 
 
 @auth_router.delete("/github/connect")
-async def github_disconnect(
+def github_disconnect(
     request: Request,
     auth_service: AuthService = Depends(get_auth_service),
 ) -> dict:
@@ -586,7 +586,7 @@ def _require_session_auth(request: Request, auth_service: AuthService) -> dict:
 
 
 @auth_router.get("/api-keys")
-async def list_user_api_keys(
+def list_user_api_keys(
     request: Request,
     auth_service: AuthService = Depends(get_auth_service),
 ) -> dict:
@@ -597,7 +597,7 @@ async def list_user_api_keys(
 
 
 @auth_router.post("/api-keys")
-async def store_user_api_key(
+def store_user_api_key(
     body: StoreApiKeyRequest,
     request: Request,
     auth_service: AuthService = Depends(get_auth_service),
@@ -615,7 +615,7 @@ async def store_user_api_key(
 
 
 @auth_router.delete("/api-keys/{provider}")
-async def delete_user_api_key(
+def delete_user_api_key(
     provider: str,
     request: Request,
     auth_service: AuthService = Depends(get_auth_service),
