@@ -181,6 +181,16 @@ class EmbeddingWorker:
             logger.debug("Embedding service not available, skipping batch")
             return 0
 
+        if not svc.prewarm(log_failure=False):
+            logger.warning(
+                "Could not load the embedding model %r; leaving %d queued entries pending "
+                "without spending attempts. Check the configured model and Hugging Face "
+                "cache/network access, then rerun pyrite index embed.",
+                svc.model_name,
+                len(rows),
+            )
+            return 0
+
         success_count = 0
         retired_count = 0
         for row in rows:
