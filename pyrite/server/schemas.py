@@ -60,6 +60,7 @@ class KBReindexResponse(BaseModel):
     updated: int
     removed: int
     malformed: list[dict[str, str]] = Field(default_factory=list)
+    skipped: list[dict[str, str]] = Field(default_factory=list)
     # Ids held by more than one file: {"kb", "id", "winner", "paths"}, the
     # winner (the lexicographically first KB-relative path) indexed (ADR-0038).
     duplicates: list[dict[str, Any]] = Field(default_factory=list)
@@ -391,6 +392,7 @@ class SyncResponse(BaseModel):
     added: int
     updated: int
     removed: int
+    skipped: list[dict[str, str]] = Field(default_factory=list)
     site_cache: SiteCacheSyncStatus | None = None
 
 

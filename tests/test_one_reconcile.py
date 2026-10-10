@@ -29,6 +29,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -38,6 +40,7 @@ from typer.testing import CliRunner
 from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
+from pyrite.storage.repository import KBRepository
 
 KB = "k"
 
@@ -282,6 +285,75 @@ def test_unparseable_file_is_reported_and_its_row_retired(env, path):
         assert _counts(again) == {}
 
 
+@pytest.mark.parametrize("sync", SYNCS)
+def test_non_regular_entry_is_reported_before_parse(env, sync):
+    path = env.root / "not-a-file.md"
+    path.mkdir()
+
+    with patch.object(
+        KBRepository,
+        "load_entry_from_file",
+        side_effect=AssertionError("non-regular entry must not be opened"),
+    ):
+        result = SYNCS[sync](env)
+
+    assert result["skipped"] == [{"path": str(path), "reason": "not a regular file"}]
+    assert result["malformed"] == []
+    assert env.rows() == {}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink creation is not reliable on Windows")
+def test_symlink_to_regular_markdown_remains_indexable(env):
+    target = env.write("real.md", _note("real", "Real"))
+    (env.root / "alias.md").symlink_to(target)
+
+    result = env.im.sync_incremental(KB)
+
+    assert result["skipped"] == []
+    assert env.rows() == {"real": "alias.md"}
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes are POSIX-only")
+def test_fifo_does_not_block_incremental_sync(tmp_path):
+    kb_path = tmp_path / "k"
+    kb_path.mkdir()
+    fifo = kb_path / "p.md"
+    os.mkfifo(fifo)
+    db_path = tmp_path / "index.db"
+    project_root = Path(__file__).resolve().parents[1]
+    child = """
+import json
+import sys
+from pathlib import Path
+from pyrite.config import KBConfig, PyriteConfig, Settings
+from pyrite.storage.database import PyriteDB
+from pyrite.storage.index import IndexManager
+
+kb_path, db_path = map(Path, sys.argv[1:])
+config = PyriteConfig(
+    knowledge_bases=[KBConfig(name="k", path=kb_path, kb_type="generic")],
+    settings=Settings(index_path=db_path, auto_embed=False),
+)
+db = PyriteDB(db_path)
+try:
+    result = IndexManager(db, config).sync_incremental("k")
+    print(json.dumps(result["skipped"]))
+finally:
+    db.close()
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", child, str(kb_path), str(db_path)],
+        cwd=project_root,
+        env={**os.environ, "PYTHONPATH": str(project_root)},
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    )
+
+    assert json.loads(completed.stdout) == [{"path": str(fifo), "reason": "not a regular file"}]
+
+
 # ---------------------------------------------------------------------------
 # Staleness: mtime or size, the hash as tiebreaker.
 # ---------------------------------------------------------------------------
@@ -463,6 +535,19 @@ def test_cli_index_sync_prints_duplicates(env):
     assert "a: b.md (indexed), notes/a.md" in result.output
 
 
+def test_cli_index_sync_reports_non_regular_entries(env):
+    path = env.root / "directory.md"
+    path.mkdir()
+    env.db.close()
+
+    result = _cli(env.config, "index", "sync", "-k", KB, "--no-embed")
+
+    assert result.exit_code == 0, result.output
+    assert "Non-regular: 1 file(s) skipped" in result.output
+    assert "directory.md" in "".join(result.output.split())
+    assert "not a regular file" in " ".join(result.output.split())
+
+
 def test_cli_index_health_is_unhealthy_with_a_duplicate(env):
     """Maintainer, 2026-10-03: a duplicate id is unhealthy, not a warning --
     the losing file is invisible to search. Exit 1, both paths and the winner."""
@@ -505,6 +590,28 @@ def test_migration_v27_adds_the_stat_columns(tmp_path):
     assert {"file_mtime_ns", "file_size"} <= columns
     MigrationManager(conn)._apply_v27()  # idempotent
     conn.close()
+
+
+def test_kb_reindex_reports_skipped_paths_through_the_registry_and_models(env):
+    from pyrite.server.schemas import KBReindexResponse, SyncResponse
+    from pyrite.services.kb_registry_service import KBRegistryService
+
+    path = env.root / "directory.md"
+    path.mkdir()
+
+    result = KBRegistryService(env.config, env.db, env.im).reindex_kb(KB)
+    expected = [{"path": str(path), "reason": "not a regular file"}]
+
+    assert result["skipped"] == expected
+    assert KBReindexResponse(name=KB, **result).skipped == expected
+    response = SyncResponse(
+        synced=True,
+        added=result["added"],
+        updated=result["updated"],
+        removed=result["removed"],
+        skipped=result["skipped"],
+    )
+    assert response.model_dump()["skipped"] == expected
 
 
 def test_kb_reindex_reports_duplicates_through_the_registry_and_rest_model(env):

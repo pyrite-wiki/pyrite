@@ -9,6 +9,7 @@ import hashlib
 import logging
 import os
 import re
+import stat as stat_module
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -187,6 +188,7 @@ class ReconcilePlan:
     winners: dict[str, _Claim] = field(default_factory=dict)
     duplicates: list[dict[str, Any]] = field(default_factory=list)
     malformed: list[dict[str, str]] = field(default_factory=list)
+    skipped: list[dict[str, str]] = field(default_factory=list)
     holders: dict[str, list[_Claim]] = field(default_factory=dict)
     walked: int = 0
 
@@ -608,13 +610,18 @@ class IndexManager:
         for rel, file_path in files:
             plan.walked += 1
             try:
-                stat = file_path.stat()
+                # Follow symlinks to preserve existing reads from regular-file targets.
+                file_stat = file_path.stat()
             except OSError:
                 continue  # removed while walking: as if never seen
+            if not stat_module.S_ISREG(file_stat.st_mode):
+                plan.skipped.append({"path": str(file_path), "reason": "not a regular file"})
+                logger.warning("Skipping %s: not a regular file", file_path)
+                continue
             known = path_to_row.get(str(file_path))
             must_read = force is True or (forced is not None and file_path in forced)
-            if known and not must_read and not _file_changed(known[1], stat):
-                claim = _Claim(rel, file_path, known[0], stat)
+            if known and not must_read and not _file_changed(known[1], file_stat):
+                claim = _Claim(rel, file_path, known[0], file_stat)
             else:
                 try:
                     entry = repo.load_entry_from_file(file_path)
@@ -624,7 +631,7 @@ class IndexManager:
                     plan.malformed.append({"path": str(file_path), "error": str(e)})
                     logger.warning("Could not parse %s: %s", file_path, e)
                     continue
-                claim = _Claim(rel, file_path, id_text(entry.id), stat, entry)
+                claim = _Claim(rel, file_path, id_text(entry.id), file_stat, entry)
             plan.holders.setdefault(claim.entry_id, []).append(claim)
 
         for entry_id, claims in plan.holders.items():
@@ -664,15 +671,16 @@ class IndexManager:
         return a callable to run after (attribution writes ``entry_version``).
 
         Returns ``added``, ``updated``, ``removed`` (row counts), ``malformed``
-        (``{"path", "error"}``), ``duplicates`` (``{"kb", "id", "winner",
-        "paths"}``, KB-relative paths, the winner first) and ``written`` (rows
-        written, counted or not).
+        (``{"path", "error"}``), ``skipped`` (non-regular paths and reasons),
+        ``duplicates`` (``{"kb", "id", "winner", "paths"}``, KB-relative
+        paths, the winner first) and ``written`` (rows written, counted or not).
         """
         results: dict[str, Any] = {
             "added": 0,
             "updated": 0,
             "removed": 0,
             "malformed": [],
+            "skipped": [],
             "duplicates": [],
             "written": 0,
         }
@@ -690,6 +698,7 @@ class IndexManager:
         indexed = self._load_indexed_state(kb_config.name)
         plan = self.plan_reconcile(kb_config, force=force, indexed=indexed)
         results["malformed"] = plan.malformed
+        results["skipped"] = plan.skipped
         results["duplicates"] = plan.duplicates
 
         total = len(plan.winners)
@@ -1389,16 +1398,17 @@ class IndexManager:
         """Reconcile one KB, or every configured KB, reading only files whose
         stat moved and paths the index does not know (``reconcile_kb``).
 
-        Returns ``added``, ``updated``, ``removed``, ``malformed`` and
-        ``duplicates`` summed over the KBs. The CLI prints the malformed and
-        duplicate files as a summary rather than per-file tracebacks (Tier A
-        1080).
+        Returns ``added``, ``updated``, ``removed``, ``malformed``,
+        ``skipped`` non-regular files and ``duplicates`` summed over the KBs.
+        The CLI prints malformed, skipped and duplicate files as a summary
+        rather than per-file tracebacks (Tier A 1080).
         """
         results: dict[str, Any] = {
             "added": 0,
             "updated": 0,
             "removed": 0,
             "malformed": [],
+            "skipped": [],
             "duplicates": [],
         }
         kbs = [self.config.get_kb(kb_name)] if kb_name else self.config.all_kbs()
@@ -1412,6 +1422,7 @@ class IndexManager:
             for key in ("added", "updated", "removed"):
                 results[key] += one[key]
             results["malformed"].extend(one["malformed"])
+            results["skipped"].extend(one["skipped"])
             results["duplicates"].extend(one["duplicates"])
             if progress_callback and len(kbs) > 1:
                 progress_callback(n, len(kbs))

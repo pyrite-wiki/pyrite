@@ -426,7 +426,8 @@ class KBRegistryService:
         """Reindex a specific KB. Works for both config and user KBs.
 
         The one reconcile (``IndexManager.sync_kb``): ``added``, ``updated``,
-        ``removed``, ``malformed`` and ``duplicates``.
+        ``removed``, ``malformed``, non-regular ``skipped`` files and
+        ``duplicates``.
         """
         # Try config first
         kb_config = self.config.get_kb(name)
