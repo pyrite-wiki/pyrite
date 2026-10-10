@@ -402,16 +402,16 @@ class PyriteMCPServer:
         self.db = PyriteDB(self.config.settings.index_path)
         self.db.merge_registered_kbs(self.config)
         self.index_mgr = IndexManager(self.db, self.config)
-        self.svc = KBService(self.config, self.db)
-        self.graph_svc = GraphService(self.db)
-        self.export_svc = ExportService(self.config, self.db)
-        self._index_worker = None  # Lazy-init
 
         # KB registry (seeded from config on init)
         from ..services.kb_registry_service import KBRegistryService
 
         self.registry = KBRegistryService(self.config, self.db, self.index_mgr)
         self.registry.seed_from_config()
+        self.svc = KBService(self.config, self.db, registry=self.registry)
+        self.graph_svc = GraphService(self.db)
+        self.export_svc = ExportService(self.config, self.db)
+        self._index_worker = None  # Lazy-init
 
         # Rate limiter and tool→tier map
         self.rate_limiter = MCPRateLimiter(self.config.settings)
@@ -1040,7 +1040,12 @@ class PyriteMCPServer:
             if kb_name is not None and not isinstance(kb_name, str):
                 raise ValidationError(f"kb_name must be a string, not {type(kb_name).__name__}")
             if not named_kb(kb_name):
-                return self.svc.orient_overview(readable_kbs=readable_kbs, detail=detail)
+                return self.svc.orient_overview(
+                    readable_kbs=readable_kbs,
+                    detail=detail,
+                    limit=args.get("limit", 50),
+                    offset=args.get("offset", 0),
+                )
             return self.svc.orient(kb_name, recent_limit=args.get("recent_limit", 5), detail=detail)
         except KBNotFoundError as e:
             # A scoped caller is refused by the dispatcher before this for any
