@@ -574,6 +574,7 @@ class IndexManager:
         *,
         force: bool | Iterable[Path] = False,
         indexed: dict[str, dict[str, Any]] | None = None,
+        verify: bool = False,
     ) -> ReconcilePlan:
         """Read the files and decide which file holds each id. Writes nothing.
 
@@ -583,7 +584,8 @@ class IndexManager:
         other file is parsed -- new paths, changed files, and the losing copies
         of a duplicate, which never have a row -- and one that fails to parse
         is listed in ``malformed``. ``force`` (True, or a set of paths) parses
-        those files whatever their stat says.
+        those files whatever their stat says. With verify=True, known files
+        whose stat still matches are hashed and reparsed when content differs.
         """
         repo = KBRepository(kb_config)
         if indexed is None:
@@ -613,7 +615,20 @@ class IndexManager:
                 continue  # removed while walking: as if never seen
             known = path_to_row.get(str(file_path))
             must_read = force is True or (forced is not None and file_path in forced)
-            if known and not must_read and not _file_changed(known[1], stat):
+            stat_changed = known is None or _file_changed(known[1], stat)
+            if known and not must_read and not stat_changed and verify:
+                current_hash = _hash_file(file_path)
+                if current_hash is None:
+                    error = (
+                        "Could not hash file for verification; keeping the existing indexed entry"
+                    )
+                    plan.malformed.append({"path": str(file_path), "error": error})
+                    logger.warning("%s: %s", error, file_path)
+                    claim = _Claim(rel, file_path, known[0], stat)
+                    plan.holders.setdefault(claim.entry_id, []).append(claim)
+                    continue
+                must_read = current_hash != known[1].get("content_hash")
+            if known and not must_read and not stat_changed:
                 claim = _Claim(rel, file_path, known[0], stat)
             else:
                 try:
@@ -647,6 +662,7 @@ class IndexManager:
         kb_config: KBConfig,
         *,
         force: bool | Iterable[Path] = False,
+        verify: bool = False,
         enrich: Callable[[Entry, Path, dict[str, Any]], Callable[[], None] | None] | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> dict[str, Any]:
@@ -688,7 +704,10 @@ class IndexManager:
             description=kb_config.description,
         )
         indexed = self._load_indexed_state(kb_config.name)
-        plan = self.plan_reconcile(kb_config, force=force, indexed=indexed)
+        if verify:
+            plan = self.plan_reconcile(kb_config, force=force, indexed=indexed, verify=True)
+        else:
+            plan = self.plan_reconcile(kb_config, force=force, indexed=indexed)
         results["malformed"] = plan.malformed
         results["duplicates"] = plan.duplicates
 
@@ -1385,9 +1404,14 @@ class IndexManager:
         self,
         kb_name: str | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
+        *,
+        verify: bool = False,
     ) -> dict[str, Any]:
         """Reconcile one KB, or every configured KB, reading only files whose
         stat moved and paths the index does not know (``reconcile_kb``).
+
+        When verify=True, also hash known files whose stat is unchanged and re-read
+        those whose content hash differs.
 
         Returns ``added``, ``updated``, ``removed``, ``malformed`` and
         ``duplicates`` summed over the KBs. The CLI prints the malformed and
@@ -1408,7 +1432,10 @@ class IndexManager:
             callback = None
             if progress_callback and len(kbs) == 1:
                 callback = progress_callback
-            one = self.reconcile_kb(kb, progress_callback=callback)
+            if verify:
+                one = self.reconcile_kb(kb, progress_callback=callback, verify=True)
+            else:
+                one = self.reconcile_kb(kb, progress_callback=callback)
             for key in ("added", "updated", "removed"):
                 results[key] += one[key]
             results["malformed"].extend(one["malformed"])
