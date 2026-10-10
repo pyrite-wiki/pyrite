@@ -651,8 +651,8 @@ class KBRepository:
         for path, new_text in body_rewrites:
             path.write_text(new_text, encoding="utf-8")
 
-        # Load the source entry, rewrite its id, save under new id,
-        # delete old file. Using load+save preserves frontmatter shape
+        # Load the source entry, rewrite its id in the same file.
+        # Using load+save preserves frontmatter shape
         # via the model layer instead of doing a regex on the source's
         # own YAML.
         entry = self._load_entry(src)
@@ -661,24 +661,12 @@ class KBRepository:
         # keep the entry in the same subdir it lived in by saving with
         # the explicit relative subdir of the old file.
         rel = src.parent.relative_to(self.path)
-        subdir = str(rel) if str(rel) != "." else None
+        subdir = str(rel) if str(rel) != "." else ""
 
-        # #391 cold read (round 2): a file's name is fixed at creation, so a
-        # `file_pattern` type's filename is NOT re-derived from the new id on
-        # rename -- only the frontmatter `id:` changes, exactly as an update
-        # already keeps the file where it is. Without this, a pattern with
-        # no `{id}`/`{slug}` placeholder (e.g. the software-kb `adr` type's
-        # `{adr_number:04d}-{title}.md`) re-resolves to the SAME path as the
-        # source (neither field changes on a rename), and the unconditional
-        # `src.unlink()` below used to delete the file it had just written.
-        schema = self.config.kb_schema
-        type_schema = schema.get_type_schema(entry.entry_type)
-        has_file_pattern = bool(type_schema and type_schema.file_pattern)
-        if has_file_pattern:
-            entry.file_path = src
-            file_path = self.save(entry, subdir=subdir, keep_filename=True)
-        else:
-            file_path = self.save(entry, subdir=subdir)
+        # Identity changes do not move files: preserve every filename,
+        # including id-named files and schema file patterns (ADR-0038 I6).
+        entry.file_path = src
+        file_path = self.save(entry, subdir=subdir, keep_filename=True)
 
         # Delete the old file only AFTER the new one is on disk, and only if
         # the rename actually produced a DIFFERENT file -- never unlink a

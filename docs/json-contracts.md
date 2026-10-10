@@ -639,3 +639,10 @@ is the error shape above in one line.
   "task_claims": "Task claims are atomic; a lost race means the task is already claimed by someone else. On conflict, do NOT override the claim -- re-run the task list and pick a different item."
 }
 ```
+
+### Entry rename and file placement
+
+Renaming an entry changes its id while preserving its filename and folder.
+A subsequent update or delete resolves the new id in the existing file.
+Updates preserve deliberate placement, including the KB root; a schema with
+a templated subdirectory may still move the file when its folder fields change.

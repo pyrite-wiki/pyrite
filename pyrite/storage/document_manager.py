@@ -128,14 +128,13 @@ class DocumentManager:
 
     @staticmethod
     def _subdir_of(path: Path, kb_root: Path) -> str | None:
-        """Subdirectory of ``path`` relative to the KB root, or None if the file
-        sits at the KB root. Used to keep an entry in its existing location."""
+        """Return the relative folder (empty for root), or None outside the KB."""
         try:
             rel = path.resolve().relative_to(kb_root.resolve())
         except (ValueError, OSError):
             return None
         parent = rel.parent
-        return None if str(parent) == "." else str(parent)
+        return "" if str(parent) == "." else str(parent)
 
     def _remove_old_file(self, old_path: Path, kb_root: Path) -> None:
         """Remove old file after a template-driven path change. Git-aware."""
