@@ -1,0 +1,47 @@
+name: Contributor setup
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    paths:
+      - CONTRIBUTING.md
+      - CLAUDE.md
+      - AGENTS.md
+      - kb/runbooks/setting-up-dev-environment.md
+      - scripts/**
+      - pyproject.toml
+      - extensions/**/pyproject.toml
+      - .github/workflows/contributor-setup.yml
+  workflow_dispatch:
+jobs:
+  walkthrough:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        installer: [uv, pip]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+        if: matrix.installer == 'uv'
+      - name: Run the documented setup in a fresh clone
+        # Setup's supported lightweight option avoids downloading embeddings.
+        env:
+          PYRITE_SETUP_EXTRAS: cli,server,dev
+          INSTALLER: ${{ matrix.installer }}
+        run: |
+          if [ "$INSTALLER" = pip ]; then
+            # Keep the selected Python plus system Bash/Git, without the
+            # optional uv installed in runner-local or /usr/local/bin paths.
+            export PATH="$(dirname "$(command -v python)"):/usr/bin:/bin"
+            if command -v uv >/dev/null; then
+              echo 'pip walkthrough must run without uv' >&2
+              exit 1
+            fi
+          fi
+          python scripts/run_setup.py

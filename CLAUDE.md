@@ -84,12 +84,12 @@ Use correct `type` frontmatter so plugin tools can find entries:
 - **`main`** — releases only; moves by fast-forward to a commit CI already verified (see the release runbook in `.claude/skills/pyrite-conductor/release-runbook.md`).
 - **Your branch** — every batch of work lives on `feature/*`, `fix/*` or `kb/*`, in **its own worktree**. Commit there at whatever pace the work needs.
 
-**Start of a session** (one command; creates the worktree, branch, venv, hooks, and a `.pyrite/config.yaml` so `pyrite -k pyrite` means *this* worktree's `kb/` — check with `pyrite kb list`):
+**First clone:** follow [the canonical setup](CONTRIBUTING.md#initial-setup)
+before using the KB commands above. It also explains fork remotes and the
+shared integration-base policy.
 
-```bash
-scripts/new-worktree.sh fix/what-it-fixes        # from origin/dev
-cd ../pyrite-wt/fix-what-it-fixes
-```
+**Parallel sessions:** use `scripts/new-worktree.sh <branch>` from your main
+checkout; each branch gets its own venv, KB config, index, and ports.
 
 **End of a batch:**
 
@@ -138,11 +138,11 @@ Each session has its own worktree and branch, so the old shared-tree hazards (a 
 - **Stage explicit paths.** Never `git add -A` or `git add .` — sub-agents of this session may have unrelated edits in the same tree.
 - **Re-read before editing** when the Edit tool reports "modified since read"; a sub-agent moved the file.
 
-If you find yourself in `/Users/markr/pyrite` on `dev` with uncommitted work, you are in the wrong place: `scripts/new-worktree.sh <branch>` and move the work there (`git stash` → `git stash pop` in the worktree).
+If you find yourself in `the main checkout` on `dev` with uncommitted work, you are in the wrong place: `scripts/new-worktree.sh <branch>` and move the work there (`git stash` → `git stash pop` in the worktree).
 
 ## Pre-commit Hooks
 
-One-time setup on a fresh clone: `.venv/bin/pip install -e ".[dev]"` (installs `pre-commit`), then `.venv/bin/pre-commit install`. If that fails with "Cowardly refusing to install hooks with core.hooksPath set", run `git config --unset-all core.hooksPath` first — some environments set it to a directory of unused `.sample` files, which blocks installation.
+The [canonical setup](CONTRIBUTING.md#initial-setup) installs dependencies and hooks. If that fails with "Cowardly refusing to install hooks with core.hooksPath set", run `git config --unset-all core.hooksPath` first — some environments set it to a directory of unused `.sample` files, which blocks installation.
 
 `pre-commit install` installs all three hook types (`default_install_hook_types` in `.pre-commit-config.yaml`). On a clone that installed hooks before 2026-09-17, re-run it once to pick up `commit-msg` and `pre-push`.
 

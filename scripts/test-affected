@@ -58,7 +58,7 @@ Usage
   scripts/test-affected --run -- --lf          re-run only the last run's failures
                                                (anything after -- goes to pytest)
   --force             ignore pass stamps (or PYRITE_PUSH_FORCE=1|true|yes)
-  --base REF          compare against REF's merge base (default origin/dev)
+  --base REF          compare against REF's merge base (default PYRITE_BASE, upstream/dev, origin/dev, dev)
   --committed         ignore uncommitted and untracked changes
   --files A B ...     use these changed paths instead of asking git
 
@@ -118,7 +118,9 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
-DEFAULT_BASE = "origin/dev"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from base_ref import HINT, BaseRefError, resolve_base
+
 DEFAULT_WORKERS = 4
 DEFAULT_HELPER_THRESHOLD = 20
 
@@ -148,7 +150,7 @@ def _git(root: Path, *args: str) -> str:
     ).stdout
 
 
-def changed_files(root: Path, base: str = DEFAULT_BASE, committed_only: bool = False) -> list[str]:
+def changed_files(root: Path, base: str | None = None, committed_only: bool = False) -> list[str]:
     """Paths changed since the merge base of ``base`` and HEAD.
 
     Renames are reported as both paths (a module that moved still has
@@ -156,7 +158,7 @@ def changed_files(root: Path, base: str = DEFAULT_BASE, committed_only: bool = F
     uncommitted edits and untracked files count too -- during work, the test
     you want run is the one for the edit you have not committed yet.
     """
-    merge_base = _git(root, "merge-base", base, "HEAD").strip()
+    merge_base = _git(root, "merge-base", resolve_base(root, base), "HEAD").strip()
     # -z: without it git quotes and octal-escapes non-ASCII paths, which
     # then match nothing.
     if committed_only:
@@ -998,14 +1000,8 @@ def _python(root: Path) -> str:
     return str(venv) if os.access(venv, os.X_OK) else sys.executable
 
 
-def _default_base(root: Path, base: str) -> str:
-    try:
-        _git(root, "rev-parse", "--verify", "--quiet", base)
-        return base
-    except subprocess.CalledProcessError:
-        if base == DEFAULT_BASE:
-            return "dev"
-        raise
+def _default_base(root: Path, base: str | None) -> str:
+    return resolve_base(root, base)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1019,7 +1015,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "-n", "--workers", type=_workers, default=str(DEFAULT_WORKERS), help="N or auto"
     )
-    parser.add_argument("--base", default=DEFAULT_BASE)
+    parser.add_argument(
+        "--base", help="explicit integration ref (else PYRITE_BASE, upstream/dev, origin/dev, dev)"
+    )
     parser.add_argument("--committed", action="store_true")
     parser.add_argument("--files", nargs="*", help="changed paths (skip git)")
     parser.add_argument("--full", action="store_true", help="select the full suite")
@@ -1052,13 +1050,13 @@ def main(argv: list[str] | None = None) -> int:
                 changed = pushed_files(root, os.environ.get("PRE_COMMIT_FROM_REF"), to_ref, base)
             else:
                 changed = changed_files(root, _default_base(root, opts.base), opts.committed)
-        except subprocess.CalledProcessError as exc:
+        except (subprocess.CalledProcessError, BaseRefError) as exc:
             # Fail closed: selecting nothing would pass a push untested.
-            detail = (exc.stderr or "").strip().splitlines()
+            detail = (getattr(exc, "stderr", None) or str(exc)).strip().splitlines()
             print(
                 f"test-affected: could not diff against {opts.base!r}"
                 + (f" ({detail[-1]})" if detail else "")
-                + " -- fetch origin dev, or push with PYRITE_PUSH_FULL=1",
+                + f" -- {HINT}, or push with PYRITE_PUSH_FULL=1",
                 file=sys.stderr,
             )
             return 2

@@ -13,42 +13,13 @@ tags: [setup, development]
 
 ## Steps
 
-### 1. Clone and create venv
-```bash
-git clone <repo-url>
-cd pyrite
-python3 -m venv .venv
-source .venv/bin/activate
-```
+Follow [the canonical contributor setup](../../CONTRIBUTING.md#initial-setup).
+It is run as a walkthrough test; the install, extension registration and KB
+configuration commands live there so the recipes cannot drift.
 
-### 2. Install pyrite with all optional dependencies plus dev tooling
-```bash
-pip install -e ".[all]"
-```
-`dev` alone (pytest, ruff, mypy, build, pre-commit) is tooling only — it has
-no `fastapi` and no CLI deps, so it cannot even collect the suite. `all` is
-the meta-extra `pyrite[server,cli,ai,semantic,dev]` and is what CONTRIBUTING
-uses.
-
-### 3. Install all extensions
-```bash
-for ext in extensions/*/; do pip install -e "$ext"; done
-```
-This installs every directory under `extensions/` as it exists today, so the
-list here cannot drift out of sync the way an enumerated one has before.
-
-### 4. Install pre-commit hooks
-```bash
-pre-commit install
-```
-
-### 5. Verify
-```bash
-python -m pytest tests/ extensions/ --collect-only -q
-```
-The suite is in the thousands and grows with every PR — run the command
-above rather than trusting a number written here. If it errors instead of
-reporting a collected count, step 2 or 3 above did not take.
+For parallel sessions, use `scripts/new-worktree.sh <branch>` after that
+initial setup. The main checkout's venv owns the shared hooks and outlives
+any individual worktree.
 
 ## Troubleshooting
 - If pre-commit pytest fails: ensure extensions are installed in `.venv/` not just system Python

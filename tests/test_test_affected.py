@@ -509,7 +509,8 @@ class TestNoBase:
         )
         assert out.returncode != 0
         assert "Traceback" not in out.stderr
-        assert "fetch origin dev" in out.stderr and "PYRITE_PUSH_FULL=1" in out.stderr
+        assert "fetch upstream dev" in out.stderr and "PYRITE_PUSH_FULL=1" in out.stderr
+        assert "--base" in out.stderr
 
 
 class TestCLI:

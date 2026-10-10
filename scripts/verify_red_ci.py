@@ -44,6 +44,9 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from base_ref import BaseRefError, resolve_base
+
 RED, IMPORT_ONLY, UNEXPECTED, NA, CONTROL = (
     "red",
     "import-only",
@@ -476,18 +479,13 @@ LEGEND = (
 
 
 def _default_base(top: Path) -> str:
-    probe = ["git", "rev-parse", "-q", "--verify", "origin/dev"]
-    return (
-        "origin/dev"
-        if subprocess.run(probe, cwd=top, capture_output=True).returncode == 0
-        else "dev"
-    )
+    return resolve_base(top)
 
 
 def report(args: argparse.Namespace) -> tuple[dict, str]:
     """(the evidence, the markdown for stdout and the step summary)."""
     top = Path(git("rev-parse", "--show-toplevel", cwd=Path.cwd()).strip())
-    mb = git("merge-base", args.base or _default_base(top), "HEAD", cwd=top).strip()
+    mb = git("merge-base", resolve_base(top, args.base), "HEAD", cwd=top).strip()
     change = read_change(top, mb)
     subjects = git("log", "--format=%s", f"{mb}..HEAD", cwd=top).splitlines()
     checked_out = git("rev-parse", "HEAD", cwd=top).strip()
@@ -545,7 +543,9 @@ def report(args: argparse.Namespace) -> tuple[dict, str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
-    parser.add_argument("--base", help="the integration ref (default origin/dev, else dev)")
+    parser.add_argument(
+        "--base", help="the integration ref (else PYRITE_BASE, upstream/dev, origin/dev, dev)"
+    )
     parser.add_argument("--python", default=os.environ.get("VERIFY_RED_PYTHON", sys.executable))
     parser.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"))
     parser.add_argument("--timeout", type=float, default=600, help="seconds per pytest run")
@@ -556,7 +556,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         evidence, text = report(args)
-    except InfraError as exc:
+    except (InfraError, BaseRefError) as exc:
         print(f"verify-red: could not run: {exc}", file=sys.stderr)
         if args.summary:
             with open(args.summary, "a", encoding="utf-8") as fh:
