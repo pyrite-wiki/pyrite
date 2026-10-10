@@ -405,11 +405,12 @@ pyrite sw standards      # Coding conventions
 ## Documentation
 
 - [Getting Started](docs/getting-started.md) — install, create a KB, connect an AI
+- [Pyrite in 20 minutes](docs/tutorials/pyrite-in-20-minutes.md) — a hands-on first tutorial
 - [Configuration](docs/configuration.md) — `config.yaml` and every `PYRITE_*` environment variable
-- [Plugin Writing Tutorial](docs/tutorials/plugin-writing.md) — build a custom plugin step by step
+- [JSON contracts](docs/json-contracts.md) — result and error shapes for agent integrators
 - [Plugins Directory](docs/plugins.md) — official and community plugins
-- [OpenAI / Codex MCP Integration](docs/openai-mcp-integration.md)
-- [Gemini CLI MCP Integration](docs/gemini-mcp-integration.md)
+
+[All documentation](docs/README.md) — pages grouped by reader and task
 
 ## Background
 

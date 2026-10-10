@@ -5,6 +5,8 @@ Claude Code, any agent framework that reads `AGENTS.md`.
 
 ## Start here
 
+The [documentation index](docs/README.md) groups guides and contracts by reader and task.
+
 1. Read `CLAUDE.md` — the full development guide (git workflow,
    testing, KB usage, pre-commit hooks). It applies regardless of
    which agent is reading it.
