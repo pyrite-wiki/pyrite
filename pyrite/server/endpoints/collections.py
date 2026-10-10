@@ -156,7 +156,7 @@ def create_collection(
     )
 
     return CollectionResponse(
-        id=result["id"],
+        id=result.id,
         title=body.title,
         description=body.description or "",
         source_type="query",

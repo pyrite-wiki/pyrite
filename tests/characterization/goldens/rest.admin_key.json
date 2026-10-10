@@ -7453,13 +7453,52 @@
     "status": 404
   },
   "POST /api/collections | admin_key | no-default-role-kb": {
-    "unhandled_exception": "TypeError: 'CollectionEntry' object is not subscriptable"
+    "body": {
+      "description": "",
+      "entry_count": 0,
+      "folder_path": "",
+      "icon": "",
+      "id": "characterization-collection-admin-key-no-default-role-kb",
+      "kb_name": "no-default-role-kb",
+      "query": "*",
+      "source_type": "query",
+      "tags": [],
+      "title": "characterization collection admin_key-no-default-role-kb",
+      "view_config": {}
+    },
+    "status": 200
   },
   "POST /api/collections | admin_key | private-kb": {
-    "unhandled_exception": "TypeError: 'CollectionEntry' object is not subscriptable"
+    "body": {
+      "description": "",
+      "entry_count": 0,
+      "folder_path": "",
+      "icon": "",
+      "id": "characterization-collection-admin-key-private-kb",
+      "kb_name": "private-kb",
+      "query": "*",
+      "source_type": "query",
+      "tags": [],
+      "title": "characterization collection admin_key-private-kb",
+      "view_config": {}
+    },
+    "status": 200
   },
   "POST /api/collections | admin_key | readable-kb": {
-    "unhandled_exception": "TypeError: 'CollectionEntry' object is not subscriptable"
+    "body": {
+      "description": "",
+      "entry_count": 0,
+      "folder_path": "",
+      "icon": "",
+      "id": "characterization-collection-admin-key-readable-kb",
+      "kb_name": "readable-kb",
+      "query": "*",
+      "source_type": "query",
+      "tags": [],
+      "title": "characterization collection admin_key-readable-kb",
+      "view_config": {}
+    },
+    "status": 200
   },
   "POST /api/collections/query-preview | admin_key | missing-kb": {
     "body": {
