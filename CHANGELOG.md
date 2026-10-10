@@ -13,6 +13,12 @@ asserts that `[Unreleased]` stays empty.
 
 ## [Unreleased]
 
+## [0.25.7] - 2026-10-10
+
+The first hour works. Following the README and getting-started on a clean machine, then connecting Claude Code or Claude Desktop with `pyrite mcp-setup`, now does what the docs say: `mcp-setup` writes the config each client reads, at the write tier; default output is the command's result, without log lines; `kb_orient` is true as an agent's first call; and the tutorial is run as a test. This is the alpha release for one operator working locally with a terminal agent. Multi-user stays experimental.
+
+**Upgrade notes.** Run `pyrite index build` once after upgrading: a save could delete a body's first line when it looked like a frontmatter field (#636), and an index built before the fix still serves the shortened body. `pyrite-admin mcp` with no `--tier` now runs the write tier, not admin. The local Docker compose file publishes on 127.0.0.1 only. A parent task is no longer written `done` when its last child resolves; completion is derived where it is read. The journalism-investigation tools are marked experimental.
+
 ## [0.25.6] - 2026-10-01
 
 Fix release for frontmatter integrity. **Upgrade if you run `pyrite update`, `task update`, `link`, MCP `kb_update` or REST `PATCH`/`PUT` on entries with hand-written frontmatter:** 0.25.5 could delete or rewrite keys the request did not name.
