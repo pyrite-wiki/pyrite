@@ -736,51 +736,74 @@ class Entry(ABC):
     def _publish_exclusive(tmp: str, path: Path) -> None:
         """Publish ``tmp`` to ``path``, refusing if ``path`` already exists.
 
-        Tries, in order, the first mechanism this filesystem supports:
-
-        1. ``os.link`` -- atomic, and leaves ``tmp`` a second name for the
-           same inode, unlinked below once ``path`` is published.
-        2. ``os.link`` raises ``OSError`` other than ``FileExistsError`` on a
-           filesystem with no hard-link support (FAT/exFAT, some SMB/FUSE
-           mounts) -- every create would fail there, not just a colliding
-           one (#391 cold read round 3). Fall back to claiming the NAME
-           exclusively (``O_CREAT | O_EXCL``, which every filesystem that
-           can create files at all supports), then ``os.replace`` the
-           already-fully-written temp file over it: the claim is what is
-           exclusive, and the replace that follows only ever targets a path
-           this call itself just created, so it cannot overwrite a
-           concurrent winner.
-        3. If ``O_EXCL`` itself is unsupported (not ``FileExistsError``),
-           there is no atomic mechanism left on this filesystem: fall back
-           to an ordinary ``os.replace``, guarded only by the write
-           pipeline's own ``exists()`` check, same as before this method
-           existed.
-
-        Raises ``FileExistsError`` whenever any step finds ``path`` already
-        taken; never silently overwrites it. Always consumes ``tmp`` --
-        either as the second name ``os.link`` gave it (unlinked here so only
-        ``path`` remains), or by moving it via ``os.replace`` -- so the
-        caller never has its own cleanup to do on a successful return.
+        Keep the hard-link path first: it publishes the complete file atomically
+        without exposing a placeholder. Only errors that mean the operation is
+        unsupported enter a fallback; space, quota, and ordinary I/O errors
+        must not turn into a non-exclusive replace.
         """
+        import errno
         import os
+
+        unsupported_errnos = {errno.ENOTSUP, errno.ENOSYS}
+        unsupported_errnos.add(getattr(errno, "EOPNOTSUPP", errno.ENOTSUP))
+        hardlink_unsupported = unsupported_errnos | {errno.EPERM}
+        if os.name == "nt":
+            # Windows maps ERROR_INVALID_FUNCTION (common on FAT/exFAT) to
+            # EINVAL for CreateHardLinkW.
+            hardlink_unsupported.add(errno.EINVAL)
 
         try:
             os.link(tmp, path)
-            os.unlink(tmp)
-            return
         except FileExistsError:
             raise
-        except OSError:
-            pass
+        except OSError as exc:
+            if exc.errno not in hardlink_unsupported:
+                raise
+        else:
+            # The target is already published. Keep cleanup outside the try
+            # above so an unlink error can never be mistaken for a link failure.
+            # Retry once for transient filesystem/antivirus sharing errors;
+            # publication already succeeded, so persistent cleanup failure
+            # must not turn the save into a reported failure.
+            try:
+                os.unlink(tmp)
+            except OSError:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+            return
 
         try:
-            os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            claim_fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
             raise
-        except OSError:
-            pass
+        except OSError as exc:
+            if exc.errno not in unsupported_errnos:
+                raise
+            # This filesystem supports neither atomic mechanism. Preserve the
+            # historical best-effort behavior only for that explicit case.
+            os.replace(tmp, path)
+            return
 
-        os.replace(tmp, path)
+        try:
+            claim_stat = os.fstat(claim_fd)
+        finally:
+            os.close(claim_fd)
+
+        try:
+            os.replace(tmp, path)
+        except BaseException:
+            # O_EXCL proves this call created the placeholder. It is safe to
+            # remove only while the path still names that same file; a writer
+            # that replaced it in the meantime owns the new target.
+            try:
+                current_stat = os.stat(path)
+                if os.path.samestat(claim_stat, current_stat):
+                    os.unlink(path)
+            except OSError:
+                pass
+            raise
 
     def save(self, path: Path | None = None, *, exclusive: bool = False) -> Path:
         """Save entry to file.

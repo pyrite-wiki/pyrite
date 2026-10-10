@@ -204,3 +204,189 @@ class TestExclusiveSaveFallsBackWithoutHardLinks:
 
         assert path.exists()
         assert "b" in path.read_text()
+
+
+class TestExclusiveSaveFailurePaths:
+    """#477: every fallback failure must preserve exclusive-publish semantics."""
+
+    def _make_link_raise(self, monkeypatch, err):
+        def fail_link(src, dst):
+            raise OSError(err, "simulated: hard links not supported")
+
+        monkeypatch.setattr(os, "link", fail_link)
+
+    def test_failed_replace_removes_the_placeholder_claim(self, tmp_path, monkeypatch):
+        import errno
+
+        self._make_link_raise(monkeypatch, errno.EPERM)
+        path = tmp_path / "note.md"
+        real_replace = os.replace
+
+        def fail_publish(src, dst):
+            if os.fspath(dst) == os.fspath(path):
+                raise OSError(errno.ENOSPC, "simulated full filesystem")
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", fail_publish)
+        with pytest.raises(OSError) as exc:
+            NoteEntry(id="note", title="t", body="payload").save(path, exclusive=True)
+
+        assert exc.value.errno == errno.ENOSPC
+        assert not path.exists(), "a failed publish must not leave an empty claimed path"
+        assert list(tmp_path.iterdir()) == []
+
+    def test_failed_replace_preserves_a_concurrent_replacement(self, tmp_path, monkeypatch):
+        import errno
+
+        self._make_link_raise(monkeypatch, errno.EPERM)
+        path = tmp_path / "note.md"
+        winner = tmp_path / "winner.tmp"
+        real_replace = os.replace
+
+        def publish_winner_then_fail(src, dst):
+            winner.write_text("concurrent winner", encoding="utf-8")
+            real_replace(winner, dst)
+            raise OSError(errno.ENOSPC, "simulated publish failure after replacement")
+
+        monkeypatch.setattr(os, "replace", publish_winner_then_fail)
+        with pytest.raises(OSError) as exc:
+            NoteEntry(id="note", title="t", body="candidate").save(path, exclusive=True)
+
+        assert exc.value.errno == errno.ENOSPC
+        assert path.read_text(encoding="utf-8") == "concurrent winner"
+        assert [p.name for p in tmp_path.iterdir()] == ["note.md"]
+
+    def test_transient_unlink_error_after_successful_link_still_succeeds(
+        self, tmp_path, monkeypatch
+    ):
+        import errno
+        from pathlib import Path
+
+        path = tmp_path / "note.md"
+        real_unlink = os.unlink
+        state = {"attempts": 0}
+
+        def fail_temp_unlink_once(path_arg, *args, **kwargs):
+            candidate = Path(path_arg)
+            if candidate.parent == tmp_path and candidate.suffix == ".tmp":
+                state["attempts"] += 1
+                if state["attempts"] == 1:
+                    raise OSError(errno.EIO, "simulated transient temp unlink failure")
+            return real_unlink(path_arg, *args, **kwargs)
+
+        monkeypatch.setattr(os, "unlink", fail_temp_unlink_once)
+        result = NoteEntry(id="note", title="t", body="published").save(path, exclusive=True)
+
+        assert result == path
+        assert state["attempts"] == 2
+        assert "published" in path.read_text(encoding="utf-8")
+        assert [p.name for p in tmp_path.iterdir()] == ["note.md"]
+
+    @pytest.mark.parametrize(("platform_name", "should_fallback"), [("nt", True), ("posix", False)])
+    def test_einval_from_hard_link_falls_back_only_on_windows(
+        self, tmp_path, monkeypatch, platform_name, should_fallback
+    ):
+        import errno
+        import os
+
+        path = tmp_path / "note.md"
+        temp = tmp_path / "source.tmp"
+        temp.write_text("payload", encoding="utf-8")
+        real_open = os.open
+        open_calls = []
+
+        def fail_link(src, dst):
+            raise OSError(errno.EINVAL, "simulated unsupported Windows hard link")
+
+        def observe_open(path_arg, flags, *args, **kwargs):
+            if os.fspath(path_arg) == os.fspath(path) and flags & os.O_EXCL:
+                open_calls.append(path_arg)
+            return real_open(path_arg, flags, *args, **kwargs)
+
+        monkeypatch.setattr(os, "link", fail_link)
+        monkeypatch.setattr(os, "open", observe_open)
+        with monkeypatch.context() as platform:
+            platform.setattr(os, "name", platform_name)
+            if should_fallback:
+                NoteEntry._publish_exclusive(str(temp), path)
+            else:
+                with pytest.raises(OSError) as exc:
+                    NoteEntry._publish_exclusive(str(temp), path)
+                assert exc.value.errno == errno.EINVAL
+
+        if should_fallback:
+            assert open_calls
+            assert path.read_text(encoding="utf-8") == "payload"
+            assert not temp.exists()
+        else:
+            assert open_calls == []
+            assert not path.exists()
+            assert temp.read_text(encoding="utf-8") == "payload"
+
+    def test_enospc_on_exclusive_claim_propagates_and_preserves_winner(self, tmp_path, monkeypatch):
+        import errno
+
+        self._make_link_raise(monkeypatch, errno.EPERM)
+        path = tmp_path / "note.md"
+        real_open = os.open
+
+        def fail_claim_after_racer(path_arg, flags, *args, **kwargs):
+            if os.fspath(path_arg) == os.fspath(path) and flags & os.O_EXCL:
+                path.write_text("concurrent winner", encoding="utf-8")
+                raise OSError(errno.ENOSPC, "simulated full filesystem")
+            return real_open(path_arg, flags, *args, **kwargs)
+
+        monkeypatch.setattr(os, "open", fail_claim_after_racer)
+        with pytest.raises(OSError) as exc:
+            NoteEntry(id="note", title="t", body="candidate").save(path, exclusive=True)
+
+        assert exc.value.errno == errno.ENOSPC
+        assert path.read_text(encoding="utf-8") == "concurrent winner"
+
+    def test_edquot_on_exclusive_claim_propagates_and_preserves_winner(self, tmp_path, monkeypatch):
+        import errno
+
+        error_number = getattr(errno, "EDQUOT", None)
+        if error_number is None:
+            pytest.skip("EDQUOT is not available on this platform")
+
+        self._make_link_raise(monkeypatch, errno.EPERM)
+        path = tmp_path / "note.md"
+        real_open = os.open
+
+        def fail_claim_after_racer(path_arg, flags, *args, **kwargs):
+            if os.fspath(path_arg) == os.fspath(path) and flags & os.O_EXCL:
+                path.write_text("concurrent winner", encoding="utf-8")
+                raise OSError(error_number, "simulated quota exceeded")
+            return real_open(path_arg, flags, *args, **kwargs)
+
+        monkeypatch.setattr(os, "open", fail_claim_after_racer)
+        with pytest.raises(OSError) as exc:
+            NoteEntry(id="note", title="t", body="candidate").save(path, exclusive=True)
+
+        assert exc.value.errno == error_number
+        assert path.read_text(encoding="utf-8") == "concurrent winner"
+
+    def test_unrelated_link_error_does_not_enter_fallback(self, tmp_path, monkeypatch):
+        import errno
+
+        path = tmp_path / "note.md"
+        open_calls = []
+        real_open = os.open
+
+        def fail_link(src, dst):
+            raise OSError(errno.EIO, "simulated I/O failure")
+
+        def observe_open(path_arg, flags, *args, **kwargs):
+            if os.fspath(path_arg) == os.fspath(path) and flags & os.O_EXCL:
+                open_calls.append(path_arg)
+            return real_open(path_arg, flags, *args, **kwargs)
+
+        monkeypatch.setattr(os, "link", fail_link)
+        monkeypatch.setattr(os, "open", observe_open)
+        with pytest.raises(OSError) as exc:
+            NoteEntry(id="note", title="t", body="candidate").save(path, exclusive=True)
+
+        assert exc.value.errno == errno.EIO
+        assert open_calls == []
+        assert not path.exists()
