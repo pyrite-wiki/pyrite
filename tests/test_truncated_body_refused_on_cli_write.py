@@ -108,10 +108,13 @@ def test_cli_import_json_refuses_marked_record_and_imports_the_rest(cli_env):
     assert "cli-marked" not in stems
 
 
+@pytest.mark.control(
+    reason="This pins existing YAML marker stripping; Markdown auto-detection does not change this write path."
+)
 def test_cli_import_yaml_marker_never_reaches_the_write(cli_env):
     """YAML's importer strips the marker, so the record imports -- safely.
 
-    `pyrite import` accepts json and yaml. The yaml importer's key whitelist
+    `pyrite import` accepts JSON, YAML, and Markdown. The yaml importer's key whitelist
     drops `body_truncated` before the write, so there is nothing for the guard
     to refuse: the record is written, and the marker is not persisted. The
     audit test below pins that stripping, and the guard runs on every record
@@ -403,6 +406,9 @@ def test_cli_update_without_marker_still_works(cli_env):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.control(
+    reason="This pins the existing per-format marker contract, independent of .md filename auto-detection."
+)
 def test_importer_marker_passthrough_is_pinned():
     """Pin which importers carry ADR-0034's marker through to the caller.
 
@@ -418,7 +424,7 @@ def test_importer_marker_passthrough_is_pinned():
     - **yaml** and **csv** strip it through their key whitelists, so a marker
       in those formats never reaches a write.
 
-    `pyrite import` accepts json and yaml; REST `/entries/import` also accepts
+    `pyrite import` accepts JSON, YAML, and Markdown; REST `/entries/import` also accepts
     markdown and csv. Both call the guard on every record regardless of format,
     so a whitelist that gains the key later is already covered.
     """
