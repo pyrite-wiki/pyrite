@@ -1,9 +1,6 @@
 ---
 id: the-cli-is-the-agent-interface-one-output-error-contract-a-fresh-index-a-zero
-title:
-- 'The CLI is the core of the terminal agent interface: one contract in the service layer'
-- a fresh index
-- a zero-setup local KB
+title: 'The CLI is the core of the terminal agent interface: one contract in the service layer, a fresh index, a zero-setup local KB'
 type: backlog_item
 tags:
 - cli

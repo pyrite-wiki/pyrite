@@ -1,0 +1,1 @@
+- **A file with a list `title` is reported by `pyrite qa` (`non_string_title`) and refused by validation instead of failing the index write (#711).**

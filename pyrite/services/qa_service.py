@@ -932,6 +932,7 @@ class QAService:
                 shown = file_path
             self._check_reserved_key_collisions(issues, kb_name, entry, shown)
             self._check_task_priority(issues, kb_name, entry, shown)
+            self._check_non_string_title(issues, kb_name, entry, shown)
             if entry._source_frontmatter is not None:
                 sources[entry.id] = entry._source_frontmatter
         return sources
@@ -1003,6 +1004,40 @@ class QAService:
                     f"{shown}: task priority {value!r} {problem}; a task's priority "
                     f"is an integer from 1 to 10 (higher is more urgent). Pyrite "
                     f"reads it as {getattr(entry, 'priority', '')}."
+                ),
+            }
+        )
+
+    @staticmethod
+    def _check_non_string_title(
+        issues: list[dict[str, Any]], kb_name: str, entry: Any, shown: Any
+    ) -> None:
+        """Report a file whose ``title`` is not a string (#711).
+
+        A YAML-list title (often the old comma split in ``-f``/``--title``
+        parsing) loads as a list. The model keeps it as-is so validation
+        can report it; only the file shows what was written, since the
+        index row write fails. Scalar non-strings (``title: 2024``) are
+        stringified at id time (#704) and are not reported here.
+        """
+        source = entry._source_frontmatter or {}
+        value = source.get("title", getattr(entry, "title", ""))
+        if isinstance(value, str) or value is None or value == "":
+            return
+        if isinstance(value, (list, tuple, dict)):
+            kind = type(value).__name__
+        else:
+            return
+        issues.append(
+            {
+                "entry_id": entry.id,
+                "kb_name": kb_name,
+                "rule": "non_string_title",
+                "severity": "error",
+                "field": "title",
+                "message": (
+                    f"{shown}: title is a {kind}, not a string; quote it "
+                    f"as a single line so it can be indexed (#711)."
                 ),
             }
         )

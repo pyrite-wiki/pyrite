@@ -854,6 +854,8 @@ class Entry(ABC):
             errors.append("Entry must have an ID")
         if not self.title:
             errors.append("Entry must have a title")
+        elif not isinstance(self.title, str):
+            errors.append(f"Entry title must be a string, got {type(self.title).__name__} (#711)")
         return errors
 
     def __repr__(self) -> str:
