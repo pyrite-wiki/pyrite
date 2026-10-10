@@ -9,6 +9,24 @@ from pathlib import Path
 
 import pytest
 
+_COLOR_ENV = pytest.StashKey[pytest.MonkeyPatch]()
+
+
+def pytest_configure(config):
+    # Rich caches colour capability when module-level consoles are created.
+    # Normalize before collection imports CLI modules, not only before tests.
+    patch = pytest.MonkeyPatch()
+    patch.delenv("FORCE_COLOR", raising=False)
+    patch.delenv("TTY_COMPATIBLE", raising=False)
+    config.stash[_COLOR_ENV] = patch
+
+
+def pytest_unconfigure(config):
+    patch = config.stash.get(_COLOR_ENV, None)
+    if patch is not None:
+        patch.undo()
+
+
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models import EventEntry
 from pyrite.models.core_types import PersonEntry
@@ -23,6 +41,18 @@ try:
     _HAS_FASTAPI = True
 except ImportError:
     _HAS_FASTAPI = False
+
+
+@pytest.fixture(autouse=True)
+def _plain_cli_environment(monkeypatch):
+    """Keep raw CLI assertions independent of the caller's terminal settings.
+
+    NO_COLOR alone does not prevent Rich from emitting style escapes when
+    FORCE_COLOR wins. Tests that exercise styling can still opt in by setting
+    FORCE_COLOR inside their own fixture/test, or using force_terminal=True.
+    """
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.delenv("TTY_COMPATIBLE", raising=False)
 
 
 @pytest.fixture(autouse=True)
