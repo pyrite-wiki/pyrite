@@ -557,14 +557,6 @@ async def github_disconnect(
     return {"ok": True, "message": "GitHub disconnected"}
 
 
-def _require_auth(request: Request) -> dict:
-    """Extract authenticated user from request or raise 401."""
-    user = getattr(request.state, "auth_user", None)
-    if not user:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    return user
-
-
 # ── User API Key Management (BYOK) ────────────────────────────────────
 
 
@@ -644,7 +636,7 @@ async def create_invite_code(
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """Create a new invite code (admin only)."""
-    user = _require_auth(request)
+    user = _require_session_auth(request, auth_service)
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     return auth_service.create_invite_code(
@@ -661,7 +653,7 @@ async def list_invite_codes(
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """List all invite codes (admin only)."""
-    user = _require_auth(request)
+    user = _require_session_auth(request, auth_service)
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     return {"codes": auth_service.list_invite_codes()}
@@ -674,7 +666,7 @@ async def delete_invite_code(
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """Delete an unused invite code (admin only)."""
-    user = _require_auth(request)
+    user = _require_session_auth(request, auth_service)
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     try:
