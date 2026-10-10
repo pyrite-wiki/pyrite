@@ -1,0 +1,1 @@
+Filtered semantic searches on SQLite now apply caller filters inside sqlite-vec's KNN query, so unrelated nearby entries no longer use the candidate budget before a selective filter is applied (#194).
