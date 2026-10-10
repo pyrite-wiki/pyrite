@@ -339,8 +339,10 @@ def repo_fork(url: str = typer.Argument(..., help="GitHub repo URL to fork")):
     config = load_config()
     with index_db_context(config) as db:
         svc = RepoService(config, db)
-        result = svc.fork(url)
-        console.print(f"[green]Forked and cloned:[/green] {result['name']}")
+        result = svc.fork_and_subscribe(url)
+    if not result.get("success"):
+        cli_error(result.get("error", "Fork failed"), error_code="FORK_FAILED")
+    console.print(f"[green]Forked and cloned:[/green] {result['repo']}")
 
 
 @repo_app.command("sync")
