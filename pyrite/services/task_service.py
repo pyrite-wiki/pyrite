@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import PyriteConfig
 from ..exceptions import EntryNotFoundError, KBNotFoundError, ValidationError
-from ..models.task import coerce_task_priority
+from ..models.task import TASK_RESOLVED_STATUSES, coerce_task_priority
 from ..models.task_completion import derive_completion, no_derived
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
@@ -831,83 +831,131 @@ class TaskService:
         return result
 
     def get_blocked_by(self, task_id: str, kb_name: str) -> list[dict[str, Any]]:
-        """Get transitive dependency chain — all tasks blocking this one."""
+        """Get unresolved tasks in the transitive dependency chain."""
+        derived = self.derived_completion(kb_name)
+        root = self.get_task(task_id, kb_name, readable_kbs=UNSCOPED)
+        if not root or _effective_status(task_id, derived) in TASK_RESOLVED_STATUSES:
+            return []
+
         result: list[dict[str, Any]] = []
-        visited: set[str] = set()
+        visited = {task_id}
+        stack = [(root, iter(_task_dependency_ids(root)))]
 
-        def _collect_deps(tid: str) -> None:
-            if tid in visited:
-                return
-            visited.add(tid)
+        # Explicit iterator frames preserve the recursive pre-order while
+        # keeping both the call stack and dependency queries bounded by depth.
+        while stack:
+            current, dependencies = stack[-1]
+            try:
+                dep_id = next(dependencies)
+            except StopIteration:
+                stack.pop()
+                continue
 
-            task = self.get_task(tid, kb_name, readable_kbs=UNSCOPED)
-            if not task:
-                return
+            if dep_id in visited:
+                continue
+            visited.add(dep_id)
+            dep = self.get_task(dep_id, kb_name, readable_kbs=UNSCOPED)
+            if not dep or _effective_status(dep_id, derived) in TASK_RESOLVED_STATUSES:
+                continue
 
-            meta = _parse_metadata(task.get("metadata") or {})
-            deps = meta.get("dependencies", []) or task.get("dependencies", []) or []
+            result.append(_task_dependency_summary(dep, derived))
+            stack.append((dep, iter(_task_dependency_ids(dep))))
 
-            for dep_id in deps:
-                if dep_id in visited:
-                    continue
-                dep = self.get_task(dep_id, kb_name, readable_kbs=UNSCOPED)
-                if dep:
-                    result.append(
-                        {
-                            "id": dep["id"],
-                            "title": dep.get("title", ""),
-                            "status": dep.get("status", ""),
-                            "entry_type": dep.get("entry_type", "task"),
-                        }
-                    )
-                    _collect_deps(dep_id)
-
-        _collect_deps(task_id)
         return result
 
     def critical_path(self, task_id: str, kb_name: str) -> list[dict[str, Any]]:
-        """Find the longest chain of unresolved dependencies (critical path).
+        """Find the longest chain of unresolved dependencies iteratively.
 
-        Returns the ordered list of tasks in the longest blocking chain.
-        Handles cycles gracefully via visited set.
+        Returns dependency tasks in order, excluding resolved tasks. A
+        post-order DFS with memoization preserves the longest path through a
+        shared DAG, while active-path detection bounds cycles.
         """
-        visited: set[str] = set()
+        derived = self.derived_completion(kb_name)
+        root = self.get_task(task_id, kb_name, readable_kbs=UNSCOPED)
+        if not root or _effective_status(task_id, derived) in TASK_RESOLVED_STATUSES:
+            return []
 
-        def _longest_chain(tid: str) -> list[dict[str, Any]]:
-            if tid in visited:
-                return []
-            visited.add(tid)
+        tasks = {task_id: root}
+        dependencies_by_task = {task_id: _task_dependency_ids(root)}
+        longest_length: dict[str, int] = {}
+        next_dependency: dict[str, str | None] = {}
+        active = {task_id}
+        frames = [(task_id, iter(dependencies_by_task[task_id]))]
 
-            task = self.get_task(tid, kb_name, readable_kbs=UNSCOPED)
-            if not task:
-                return []
+        while frames:
+            current_id, dependencies = frames[-1]
+            try:
+                dep_id = next(dependencies)
+            except StopIteration:
+                best_id = None
+                best_length = 0
+                for candidate_id in dependencies_by_task[current_id]:
+                    if (
+                        candidate_id not in longest_length
+                        or _effective_status(candidate_id, derived) in TASK_RESOLVED_STATUSES
+                    ):
+                        continue
+                    candidate_length = 1 + longest_length[candidate_id]
+                    if candidate_length > best_length:
+                        best_id = candidate_id
+                        best_length = candidate_length
+                longest_length[current_id] = best_length
+                next_dependency[current_id] = best_id
+                active.remove(current_id)
+                frames.pop()
+                continue
 
-            meta = _parse_metadata(task.get("metadata") or {})
-            deps = meta.get("dependencies", []) or task.get("dependencies", []) or []
+            if (
+                dep_id in active
+                or dep_id in longest_length
+                or _effective_status(dep_id, derived) in TASK_RESOLVED_STATUSES
+            ):
+                continue
 
-            if not deps:
-                return []
+            dep = self.get_task(dep_id, kb_name, readable_kbs=UNSCOPED)
+            if not dep:
+                continue
+            tasks[dep_id] = dep
+            dependencies_by_task[dep_id] = _task_dependency_ids(dep)
+            active.add(dep_id)
+            frames.append((dep_id, iter(dependencies_by_task[dep_id])))
 
-            best_chain: list[dict[str, Any]] = []
-            for dep_id in deps:
-                dep = self.get_task(dep_id, kb_name, readable_kbs=UNSCOPED)
-                if not dep:
-                    continue
-                sub_chain = _longest_chain(dep_id)
-                candidate = [
-                    {
-                        "id": dep["id"],
-                        "title": dep.get("title", ""),
-                        "status": dep.get("status", ""),
-                        "entry_type": dep.get("entry_type", "task"),
-                    }
-                ] + sub_chain
-                if len(candidate) > len(best_chain):
-                    best_chain = candidate
+        result: list[dict[str, Any]] = []
+        current_id = next_dependency[task_id]
+        while current_id is not None:
+            result.append(_task_dependency_summary(tasks[current_id], derived))
+            current_id = next_dependency[current_id]
+        return result
 
-            return best_chain
 
-        return _longest_chain(task_id)
+def _task_dependency_ids(task: dict[str, Any]) -> list[str]:
+    """Return a task's dependency IDs in their stored order."""
+    metadata = _parse_metadata(task.get("metadata") or {})
+    dependencies = metadata.get("dependencies") or task.get("dependencies") or []
+    if isinstance(dependencies, str):
+        return [dependencies] if dependencies else []
+    if not isinstance(dependencies, list | tuple):
+        return []
+    return [dependency for dependency in dependencies if isinstance(dependency, str)]
+
+
+def _effective_status(task_id: str, derived: dict[str, dict[str, Any]]) -> str:
+    """Return the status task readers should use for dependency decisions."""
+    return (derived.get(task_id) or no_derived()).get("effective_status", "open")
+
+
+def _task_dependency_summary(
+    task: dict[str, Any], derived: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """Build the read-only row returned by dependency tools."""
+    task_id = task["id"]
+    return {
+        "id": task_id,
+        "title": task.get("title", ""),
+        "status": task.get("status", ""),
+        "entry_type": task.get("entry_type", "task"),
+        "derived": derived.get(task_id) or no_derived(),
+    }
 
 
 def _parse_metadata(raw) -> dict[str, Any]:
