@@ -458,6 +458,7 @@ class _Venv:
             "HOME": str(root / "home"),
             "PYRITE_CONFIG_DIR": str(root / "cfg"),
             "PYTHONPATH": str(REPO),
+            # pip's negative boolean option is inverted: 0 disables build isolation.
             "PIP_NO_BUILD_ISOLATION": "0",
             "PIP_DISABLE_PIP_VERSION_CHECK": "1",
             "HF_HUB_OFFLINE": "1",

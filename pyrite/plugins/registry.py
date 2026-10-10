@@ -12,6 +12,7 @@ Plugins register via pyproject.toml:
 import inspect
 import logging
 from collections.abc import Callable
+from importlib.metadata import EntryPoint
 from typing import Any
 
 from ..exceptions import PluginError
@@ -20,6 +21,15 @@ from .context import PluginContext
 from .protocol import PyritePlugin
 
 logger = logging.getLogger(__name__)
+
+
+def load_plugin_entry_point(ep: EntryPoint) -> PyritePlugin:
+    """Instantiate an entry point using the discovery contract."""
+    plugin = ep.load()()
+    if not hasattr(plugin, "name"):
+        raise ValueError(f"Plugin {ep.name} has no 'name' attribute")
+    return plugin
+
 
 # Probe arguments used only to check that a callable's signature *binds* the
 # plugin contract's arity (inspect.signature(...).bind never calls the
@@ -263,16 +273,9 @@ class PluginRegistry:
 
             for ep in plugin_eps:
                 try:
-                    plugin_class = ep.load()
-                    plugin = plugin_class()
-                    if hasattr(plugin, "name"):
-                        self._plugins[plugin.name] = plugin
-                        logger.info("Loaded plugin: %s", plugin.name)
-                    else:
-                        msg = f"Plugin {ep.name} has no 'name' attribute"
-                        if strict:
-                            raise PluginError(msg)
-                        logger.warning("%s, skipping", msg)
+                    plugin = load_plugin_entry_point(ep)
+                    self._plugins[plugin.name] = plugin
+                    logger.info("Loaded plugin: %s", plugin.name)
                 except PluginError:
                     raise
                 except Exception as e:
