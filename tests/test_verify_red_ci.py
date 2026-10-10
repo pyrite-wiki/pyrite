@@ -54,11 +54,11 @@ class TestTestSide:
     """Test-side files are overlaid into the run without the fix; everything
     else the PR changes is the fix."""
 
+    @pytest.mark.control(reason="unchanged test, fixture and production-path boundaries")
     @pytest.mark.parametrize(
         ("path", "test_side"),
         [
             ("tests/test_x.py", True),
-            ("tests/unit/helpers.py", True),
             ("tests/fixtures/data.json", True),
             ("conftest.py", True),
             ("extensions/cascade/tests/test_plugin.py", True),
@@ -74,6 +74,13 @@ class TestTestSide:
     )
     def test_split(self, vr, path, test_side):
         assert vr.is_test_side(path) is test_side
+
+    @pytest.mark.parametrize(
+        "path",
+        ["tests/unit/helpers.py", "tests/__init__.py", "extensions/cascade/tests/helpers.py"],
+    )
+    def test_helpers_are_code_under_test(self, vr, path):
+        assert not vr.is_test_side(path)
 
     def test_only_test_modules_are_run(self, vr):
         assert vr.is_test_file("tests/unit/test_nested.py")
@@ -654,7 +661,9 @@ def test_a_test_only_pr_with_a_fragment_kb_and_docs_is_nothing_to_verify(
     commit_all(repo, "test: add(0, 0)")
     result, summary = run_vr(repo, tmp_path)
     assert result.returncode == 0, (result.stdout, result.stderr)
-    assert "verify-red: nothing to verify (no code change)" in summary, summary
+    assert (
+        "verify-red: nothing to verify (tests-only change: nothing to grade against)" in summary
+    ), summary
     assert "::warning" not in result.stdout
 
 
@@ -1170,3 +1179,17 @@ def test_a_new_test_that_does_not_run_with_the_fix_is_no_claim_not_an_infra_erro
     result, summary = run_vr(repo, tmp_path)
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert "verify-red: 0 red" in summary, summary
+
+
+def test_changed_helper_under_tests_is_the_fix(repo: Path, tmp_path: Path) -> None:
+    (repo / "tests" / "helpers.py").write_text("def answer():\n    return 0\n")
+    commit_all(repo, "base: helper")
+    git(repo, "branch", "-f", "dev", "HEAD")
+    (repo / "tests" / "helpers.py").write_text("def answer():\n    return 42\n")
+    (repo / "tests" / "test_helper.py").write_text(
+        "from helpers import answer\n\n\ndef test_answer():\n    assert answer() == 42\n"
+    )
+    commit_all(repo, "fix: test helper")
+    result, summary = run_vr(repo, tmp_path)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "verify-red: 1 red \u00b7 0 import-only \u00b7 0 unexpected pass \u00b7 0 n/a" in summary

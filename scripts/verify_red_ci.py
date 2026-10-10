@@ -69,10 +69,14 @@ class InfraError(Exception):
 
 def is_test_side(path: str) -> bool:
     parts = PurePosixPath(path).parts
-    return (
-        parts[0] == "tests"
-        or (len(parts) > 3 and parts[0] == "extensions" and parts[2] == "tests")
-        or parts[-1] == "conftest.py"
+    in_tests = parts[0] == "tests" or (
+        len(parts) > 3 and parts[0] == "extensions" and parts[2] == "tests"
+    )
+    # Helpers are executable code under test, even when housed beside tests.
+    # Test modules, pytest configuration and non-Python fixtures belong in both runs.
+    p = PurePosixPath(path)
+    return p.name == "conftest.py" or (
+        in_tests and (p.suffix != ".py" or p.name.startswith("test_"))
     )
 
 
@@ -506,7 +510,10 @@ def report(args: argparse.Namespace) -> tuple[dict, str]:
     ci = os.environ.get("GITHUB_ACTIONS") == "true"
     code = [p for p in change.code if not is_inert(p)]
     if not code or not change.selected:
-        why = "no code change" if not code else "no new or edited test"
+        why = "no new or edited test"
+        if not code:
+            kind = "tests-only change" if change.test_side else "inert-only change"
+            why = f"{kind}: nothing to grade against"
         out.append(f"verify-red: nothing to verify ({why}).")
         if code and ci:
             print(f"::warning title=verify-red::this PR changes code but has {why}", flush=True)
