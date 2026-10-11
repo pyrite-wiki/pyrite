@@ -14,7 +14,6 @@ effort: L
 rank: 0
 ---
 
-
 Retro 2026-10-08 quality theme (Mark approved). Groom with Opus after #779 lands, then slice by module.
 
 ## Why
