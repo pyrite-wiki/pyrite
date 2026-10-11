@@ -39,6 +39,13 @@ class KBListResponse(BaseModel):
     total: int
 
 
+class KBMetadataUpdateRequest(BaseModel):
+    """Omitted fields stay unchanged; null clears description or resets type to generic."""
+
+    description: str | None = None
+    kb_type: str | None = None
+
+
 class KBHealthResponse(BaseModel):
     """Response for KB health check."""
 
