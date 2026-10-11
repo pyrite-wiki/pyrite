@@ -64,14 +64,30 @@ the same root (`pyrite/cli/__init__.py`, `get_all_cli_commands`).
 3. **One point renders both.** `PyriteCLIGroup.invoke` takes the leaf's
    return value or exception and is the only place that prints a result in
    the requested format, renders a refusal in the canonical error shape
-   (`cli_error_from`), and sets the exit code: `done` 0, `partial` 3,
-   `nothing` 1, refusal 1, usage 2 (click). `pyrite-read` adopts the same
-   group. A command that returns `None` has rendered itself; that is the
-   legacy path, allowed only for commands on a list that may only shrink.
+   (plus `"outcome": "error"`), and sets the exit code: `done` 0, `partial`
+   3, `nothing` 1, refusal 1, usage 2 (click). `pyrite-read` adopts the same
+   group. A command that declares the shared `--format` option is on the
+   contract: if it returns anything but an `Outcome` (`None` included), the
+   root answers `NO_OUTCOME`, exit 1, never a silent 0 (decision 6 gives the
+   whole rule). A command that declares no shared option and returns `None`
+   has rendered itself; that is the legacy path, allowed only for commands
+   counted in a table that may only shrink, and for plugins (decision 5).
+
+   *Transitional:* a `ValueError` out of a command on the contract is
+   rendered as code `ERROR`, exit 1, as every CLI command rendered it before,
+   with the original traceback logged at DEBUG. This ends when the services
+   those commands call raise `ValidationError` (or another `PyriteError`)
+   for bad input; then the root stops catching `ValueError`.
 4. **The registry is the enumeration.** A test walks every registered command
-   of the three CLIs and requires its callback to be annotated `-> Outcome`,
-   or to be on the legacy list. A module with no legacy command may not call
-   `typer.Exit`, `sys.exit`, `cli_error` or `exit_unless_whole`.
+   of the three CLIs. One that declares the shared `--format` is annotated
+   `-> Outcome` and has no parameter callback of its own (a callback runs
+   while click parses, before the root watches). One that does not is
+   counted, per module, in a table that must match the registry exactly: the
+   number of legacy commands moves only in a diff a reviewer sees, a slice
+   lowers it, and a new command is on the contract unless someone raises it.
+   What a command on the contract may do is not a list of calls a scan looks
+   for. That was this decision's first form; the amendment below replaces it
+   with decision 6, enforced when the command runs.
 5. **The plugin CLI contract gains `Outcome`.** ADR-0040's "CLI helpers" row
    becomes `cli_error` and `Outcome`. A plugin command may keep returning
    `None` (it then owns its output and exit code, as today); one that returns
@@ -79,15 +95,22 @@ the same root (`pyrite/cli/__init__.py`, `get_all_cli_commands`).
 
 ## Questions this ADR leaves open
 
-- Does a machine-format payload of a `partial` or `nothing` outcome carry an
-  `outcome` key (`"partial"`), so a caller that cannot see the exit code can
-  tell? Recommended: yes, additive, for dict payloads; decided before the
-  first slice that changes a payload, not in the first slice.
 - Is a lost `task claim` a `nothing` (today: payload `{"claimed": false}`,
   exit 1) or a refusal with a code? Kept as `nothing` until decided.
-- Where the format comes from: the leaf's own `--format` parameter until #303
-  lands its shared option (`PYRITE_FORMAT`, JSON default, no `-f`); then that
-  option, declared once.
+
+## Questions decided (maintainer, 2026-10-08, PR #790)
+
+- **The `outcome` key:** yes, additive. A machine-format payload carries
+  `"outcome"`: `done`, `partial`, `nothing`, or `error` on a refusal's error
+  shape.
+- **Where the format comes from:** #303 folds in. One shared `--format`
+  option (`pyrite/cli/output.py`): JSON by default, `PYRITE_FORMAT` sets a
+  person's default, no `-f` (accepted with a warning for one release where
+  it meant `--format`; `-f` with `--format` is a usage error). Each slice
+  applies it to the module it migrates; the option writes the format to
+  `ctx.meta`, where the root reads it.
+- **Check commands:** exit 0 when clean and 1 when they fail; warnings never
+  change the exit code. A module adopts this when its slice migrates it.
 
 ## Consequences
 

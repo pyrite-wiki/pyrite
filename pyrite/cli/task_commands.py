@@ -1,4 +1,14 @@
-"""Task CLI commands."""
+"""Task CLI commands.
+
+The first module on the outcome contract (ADR-0046): each command declares
+the shared ``--format`` option and returns an ``Outcome`` -- what happened,
+the data machine formats print, and a renderer for ``--format rich`` -- or
+raises a ``PyriteError``. ``PyriteCLIGroup.invoke`` prints the result and sets
+the exit code, and it is the only way out of these commands: one that printed
+its own result or exited by itself would be answered ``NO_OUTCOME``, exit 1,
+when it ran (``tests/test_cli_outcome.py`` plants each such way out in every
+one of them). Notices go to stderr, which the root leaves open.
+"""
 
 import json
 from typing import Any
@@ -7,42 +17,14 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from ..exceptions import PyriteError
+from ..exceptions import EntryNotFoundError, ValidationError
 from ..services.access_policy import UNSCOPED
 from ..services.task_service import TaskService
 from ..storage.database import PyriteDB
+from .outcome import Outcome
+from .output import LEGACY_FORMAT_SHORT, OUTPUT_FORMAT
 
 task_app = typer.Typer(help="Task management commands")
-console = Console()
-
-
-def _format_output(data: dict, fmt: str) -> str | None:
-    from .output import format_output
-
-    return format_output(data, fmt)
-
-
-def _task_error(exc: Exception, fmt: str = "rich") -> None:
-    """Emit a structured error for a caught task-command exception and exit.
-
-    Maps the exception type to a machine code so scripts/agents get a stable
-    error_code, and routes through the shared cli_error so JSON callers get the
-    canonical shape (cli-error-shape-consistency)."""
-    from ..exceptions import (
-        EntryNotFoundError,
-        KBNotFoundError,
-        ValidationError,
-    )
-    from ..utils.errors import cli_error
-
-    code = "ERROR"
-    if isinstance(exc, EntryNotFoundError):
-        code = "NOT_FOUND"
-    elif isinstance(exc, KBNotFoundError):
-        code = "KB_NOT_FOUND"
-    elif isinstance(exc, ValidationError):
-        code = "VALIDATION_FAILED"
-    cli_error(str(exc), fmt, error_code=code)
 
 
 def _get_service() -> tuple[TaskService, PyriteDB]:
@@ -135,45 +117,36 @@ def _parse_task_create_fields(
     fields: dict[str, Any] = {}
     for fv in field or []:
         if "=" not in fv:
-            console.print(f"[red]Error:[/red] --field must be key=value, got '{fv}'")
-            raise typer.Exit(1)
+            raise ValidationError(f"--field must be key=value, got '{fv}'")
         k, v = fv.split("=", 1)
         if k in _FIELD_OWN_OPTION:
-            console.print(
-                f"[red]Error:[/red] --field {k}=... is refused: use {_FIELD_OWN_OPTION[k]} instead."
+            raise ValidationError(
+                f"--field {k}=... is refused: use {_FIELD_OWN_OPTION[k]} instead."
             )
-            raise typer.Exit(1)
         if k == "status":
-            console.print(
-                "[red]Error:[/red] --field status=... is refused: a new task is "
-                "always created open; use `task update --status` to change it."
+            raise ValidationError(
+                "--field status=... is refused: a new task is always created open; "
+                "use `task update --status` to change it."
             )
-            raise typer.Exit(1)
         if k in TaskEntry.managed_fields:
-            console.print(
-                f"[red]Error:[/red] --field {k}=... is refused: Pyrite maintains "
-                f"this field as part of the task's audit trail."
+            raise ValidationError(
+                f"--field {k}=... is refused: Pyrite maintains this field as part of "
+                f"the task's audit trail."
             )
-            raise typer.Exit(1)
         if k in _MANAGED_FIELDS:
-            console.print(
-                f"[red]Error:[/red] --field {k}=... is refused: Pyrite maintains "
-                f"this field; `update` refuses it too."
+            raise ValidationError(
+                f"--field {k}=... is refused: Pyrite maintains this field; `update` refuses it too."
             )
-            raise typer.Exit(1)
         if k in _FIELD_CREATE_ENTRY_COLLISION:
-            console.print(
-                f"[red]Error:[/red] --field {k}=... is refused: this name collides "
-                f"with a parameter `task create` itself needs."
+            raise ValidationError(
+                f"--field {k}=... is refused: this name collides with a parameter "
+                f"`task create` itself needs."
             )
-            raise typer.Exit(1)
         if k in _FIELD_CREATE_NEVER_TAKES_EFFECT:
-            console.print(
-                f"[red]Error:[/red] --field {k}=... is refused: a freshly created "
-                f"task cannot carry this value; it would report success and set "
-                f"nothing."
+            raise ValidationError(
+                f"--field {k}=... is refused: a freshly created task cannot carry this "
+                f"value; it would report success and set nothing."
             )
-            raise typer.Exit(1)
         fields[k] = _parse_field_value(v, _field_type_for(config, kb_name, "task", k))
     return fields
 
@@ -195,8 +168,9 @@ def task_create(
     field: list[str] | None = typer.Option(
         None, "--field", help="Extra field as key=value (repeatable)"
     ),
-    fmt: str = typer.Option("rich", "--format", "-f", help="Output format: rich, json"),
-):
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
     """Create a new task.
 
     The title may be given either positionally (``task create "Title"``) or via
@@ -205,21 +179,16 @@ def task_create(
 
     ``--field key=value`` (repeatable) sets any field a KB's schema requires
     or allows for ``task`` beyond the built-in options -- e.g. the desk
-    schema's ``project``/``kind``. ``-f`` is already ``--format`` on this
-    command (#303), so this is ``--field`` only, with no short flag.
+    schema's ``project``/``kind``. It has no short flag: ``-f`` was
+    ``--format`` on this command and is deprecated (#303).
     """
     if title_arg and title_opt:
-        console.print(
-            "[red]Error:[/red] Provide the title either positionally or with --title, not both."
-        )
-        raise typer.Exit(1)
+        raise ValidationError("Provide the title either positionally or with --title, not both.")
     title = title_arg or title_opt
     if not title:
-        console.print(
-            "[red]Error:[/red] A task title is required: "
-            "`pyrite task create <title> ...` or `--title <title>`."
+        raise ValidationError(
+            "A task title is required: `pyrite task create <title> ...` or `--title <title>`."
         )
-        raise typer.Exit(1)
 
     svc, db = _get_service()
     try:
@@ -234,12 +203,10 @@ def task_create(
             tags=[t.strip() for t in tags.split(",")] if tags else None,
             fields=fields or None,
         )
+    finally:
+        db.close()
 
-        formatted = _format_output(result, fmt)
-        if formatted is not None:
-            typer.echo(formatted)
-            return
-
+    def rich(console, result):
         console.print(f"[green]Task created:[/green] {result['title']}")
         console.print(f"  ID: [cyan]{result['entry_id']}[/cyan]")
         console.print(f"  Status: open, Priority: {priority}")
@@ -249,10 +216,8 @@ def task_create(
             console.print(f"  Assignee: {assignee}")
         for warning in result.get("warnings", []):
             console.print("[yellow]Warning:[/yellow]", json.dumps(warning, default=str))
-    except (PyriteError, ValueError) as e:
-        _task_error(e, fmt)
-    finally:
-        db.close()
+
+    return Outcome.done(result, rich=rich)
 
 
 def _completion_text(derived: dict) -> str:
@@ -272,15 +237,37 @@ def _status_cell(item: dict) -> str:
     return item["status"]
 
 
+def _render_list(console, data: dict) -> None:
+    table = Table(title="Tasks")
+    table.add_column("ID", style="cyan", max_width=12)
+    table.add_column("Title")
+    table.add_column("Status", style="green")
+    table.add_column("Pri", justify="right")
+    table.add_column("Assignee", style="yellow")
+    table.add_column("Parent", style="dim", max_width=12)
+
+    for item in data["tasks"]:
+        table.add_row(
+            item["id"][:12],
+            item["title"],
+            _status_cell(item),
+            str(item["priority"]),
+            item["assignee"],
+            item["parent"][:12] if item["parent"] else "",
+        )
+    console.print(table)
+
+
 @task_app.command("list")
 def task_list(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="Knowledge base name"),
     status: str | None = typer.Option(None, "--status", "-s", help="Filter by status"),
     assignee: str | None = typer.Option(None, "--assignee", "-a", help="Filter by assignee"),
     parent: str | None = typer.Option(None, "--parent", "-p", help="Filter by parent task"),
-    fmt: str = typer.Option("rich", "--format", "-f", help="Output format: rich, json"),
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
     priority: int | None = typer.Option(None, "--priority", help="Filter by priority"),
-):
+) -> Outcome:
     """List tasks with optional filters."""
     svc, db = _get_service()
     try:
@@ -291,52 +278,29 @@ def task_list(
             parent=parent,
             priority=priority,
         )
-
-        formatted = _format_output({"count": len(items), "tasks": items}, fmt)
-        if formatted is not None:
-            typer.echo(formatted)
-            return
-
-        table = Table(title="Tasks")
-        table.add_column("ID", style="cyan", max_width=12)
-        table.add_column("Title")
-        table.add_column("Status", style="green")
-        table.add_column("Pri", justify="right")
-        table.add_column("Assignee", style="yellow")
-        table.add_column("Parent", style="dim", max_width=12)
-
-        for item in items:
-            table.add_row(
-                item["id"][:12],
-                item["title"],
-                _status_cell(item),
-                str(item["priority"]),
-                item["assignee"],
-                item["parent"][:12] if item["parent"] else "",
-            )
-        console.print(table)
-    except (PyriteError, ValueError) as e:
-        _task_error(e, fmt)
     finally:
         db.close()
+    return Outcome.done({"count": len(items), "tasks": items}, rich=_render_list)
 
 
 @task_app.command("get")
 def task_get(
     task_id: str = typer.Argument(..., help="Task entry ID"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="Knowledge base name"),
-    fmt: str = typer.Option("rich", "--format", "-f", help="Output format: rich, json"),
-):
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
     """Show task details with children, dependencies, and evidence."""
-    _task_get_impl(task_id, kb_name, fmt)
+    return _task_get_impl(task_id, kb_name)
 
 
 @task_app.command("status")
 def task_status(
     task_id: str = typer.Argument(..., help="Task entry ID"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="Knowledge base name"),
-    fmt: str = typer.Option("rich", "--format", "-f", help="Output format: rich, json"),
-):
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
     """[Deprecated] Alias for `task get`. Use `task get` instead."""
     # Deprecation notice goes to stderr so it never corrupts JSON on stdout.
     Console(stderr=True).print(
@@ -344,23 +308,42 @@ def task_status(
         "removed in a future release; use `task get` instead.",
         style="dim",
     )
-    _task_get_impl(task_id, kb_name, fmt)
+    return _task_get_impl(task_id, kb_name)
 
 
-def _task_get_impl(task_id: str, kb_name: str | None, fmt: str):
+def _render_task(console, result: dict) -> None:
+    console.print(f"\n[bold]{result['title']}[/bold]")
+    console.print(f"  ID: [cyan]{result['id']}[/cyan]")
+    console.print(f"  Status: [green]{result['status']}[/green]")
+    console.print(f"  Completion (derived): {_completion_text(result['derived'])}")
+    console.print(f"  Priority: {result['priority']}")
+    if result["assignee"]:
+        console.print(f"  Assignee: [yellow]{result['assignee']}[/yellow]")
+    if result["parent"]:
+        missing = " [red](no such entry)[/red]" if result["derived"]["parent_missing"] else ""
+        console.print(f"  Parent: {result['parent']}{missing}")
+    if result["due_date"]:
+        console.print(f"  Due: {result['due_date']}")
+    if result["dependencies"]:
+        console.print(f"  Dependencies: {', '.join(result['dependencies'])}")
+    if result["evidence"]:
+        console.print(f"  Evidence: {', '.join(result['evidence'])}")
+    children = result["children"]
+    if children:
+        console.print(f"\n  [bold]Children ({len(children)}):[/bold]")
+        for c in children:
+            console.print(f"    {c['id'][:12]}  {c['status']:12}  {c['title']}")
+
+
+def _task_get_impl(task_id: str, kb_name: str | None) -> Outcome:
     """Shared implementation for `task get` and the deprecated `task status`."""
     svc, db = _get_service()
     try:
         task = svc.get_task(task_id, kb_name, readable_kbs=UNSCOPED)
         if not task:
-            from ..utils.errors import cli_error
-
-            cli_error(
-                f"Task '{task_id}' not found",
-                fmt,
-                error_code="NOT_FOUND",
-                suggestion=f"run `pyrite task list -k {kb_name or '<kb>'}` to find task IDs",
-            )
+            missing = EntryNotFoundError(f"Task '{task_id}' not found")
+            missing.suggestion = f"run `pyrite task list -k {kb_name or '<kb>'}` to find task IDs"
+            raise missing
 
         meta = task.get("metadata", {})
         if isinstance(meta, str):
@@ -392,36 +375,9 @@ def _task_get_impl(task_id: str, kb_name: str | None, fmt: str):
             # Computed from the children, never read from or written to the file.
             "derived": svc.derived_for(task_kb, task["id"]),
         }
-
-        formatted = _format_output(result, fmt)
-        if formatted is not None:
-            typer.echo(formatted)
-            return
-
-        console.print(f"\n[bold]{result['title']}[/bold]")
-        console.print(f"  ID: [cyan]{result['id']}[/cyan]")
-        console.print(f"  Status: [green]{result['status']}[/green]")
-        console.print(f"  Completion (derived): {_completion_text(result['derived'])}")
-        console.print(f"  Priority: {result['priority']}")
-        if result["assignee"]:
-            console.print(f"  Assignee: [yellow]{result['assignee']}[/yellow]")
-        if result["parent"]:
-            missing = " [red](no such entry)[/red]" if result["derived"]["parent_missing"] else ""
-            console.print(f"  Parent: {result['parent']}{missing}")
-        if result["due_date"]:
-            console.print(f"  Due: {result['due_date']}")
-        if result["dependencies"]:
-            console.print(f"  Dependencies: {', '.join(result['dependencies'])}")
-        if result["evidence"]:
-            console.print(f"  Evidence: {', '.join(result['evidence'])}")
-        if children:
-            console.print(f"\n  [bold]Children ({len(children)}):[/bold]")
-            for c in children:
-                console.print(f"    {c['id'][:12]}  {c['status']:12}  {c['title']}")
-    except (PyriteError, ValueError) as e:
-        _task_error(e, fmt)
     finally:
         db.close()
+    return Outcome.done(result, rich=_render_task)
 
 
 @task_app.command("update")
@@ -453,8 +409,9 @@ def task_update(
     by: str | None = typer.Option(
         None, "--by", help="Who made the change, for the status_change_log entry"
     ),
-    fmt: str = typer.Option("rich", "--format", "-f", help="Output format: rich, json"),
-):
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
     """Update task fields (status, assignee, priority, reason)."""
     updates: dict[str, Any] = {}
     if status is not None:
@@ -475,25 +432,23 @@ def task_update(
         updates["by"] = by
 
     if not updates:
-        console.print("[yellow]No updates specified.[/yellow]")
-        raise typer.Exit(1)
+        raise ValidationError(
+            "No updates specified: pass --status, --assignee, --priority, --reason, "
+            "--comment or --by."
+        )
 
     svc, db = _get_service()
     try:
         result = svc.update_task(task_id, kb_name, **updates)
+    finally:
+        db.close()
 
-        formatted = _format_output(result, fmt)
-        if formatted is not None:
-            typer.echo(formatted)
-            return
-
+    def rich(console, _result):
         console.print(f"[green]Updated task:[/green] {task_id}")
         for k, v in updates.items():
             console.print(f"  {k}: {v}")
-    except (PyriteError, ValueError) as e:
-        _task_error(e, fmt)
-    finally:
-        db.close()
+
+    return Outcome.done(result, rich=rich)
 
 
 @task_app.command("claim")
@@ -503,32 +458,28 @@ def task_claim(
     assignee: str = typer.Option(
         ..., "--assignee", "-a", help="Assignee (e.g. agent:claude-code-7a3f)"
     ),
-    fmt: str = typer.Option("rich", "--format", "-f", help="Output format: rich, json"),
-):
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
     """Atomically claim an open task."""
     svc, db = _get_service()
     try:
         result = svc.claim_task(task_id, kb_name, assignee)
+    finally:
+        db.close()
 
-        formatted = _format_output(result, fmt)
-        if formatted is not None:
-            typer.echo(formatted)
-            if not result.get("claimed"):
-                # Agents coordinate on this exit: a lost claim is not a success,
-                # in any format (#526).
-                raise typer.Exit(1)
-            return
-
+    def rich(console, result):
         if result.get("claimed"):
             console.print(f"[green]Claimed:[/green] {task_id}")
             console.print(f"  Assignee: {assignee}")
         else:
             console.print(f"[red]Failed:[/red] {result.get('error', 'Unknown error')}")
-            raise typer.Exit(1)
-    except (PyriteError, ValueError) as e:
-        _task_error(e, fmt)
-    finally:
-        db.close()
+
+    # Agents coordinate on this exit: a lost claim is not a success, in any
+    # format (#526). ADR-0046 keeps it `nothing` with the service's payload.
+    if result.get("claimed"):
+        return Outcome.done(result, rich=rich)
+    return Outcome.nothing(result, rich=rich)
 
 
 @task_app.command("reset")
@@ -541,8 +492,9 @@ def task_reset(
     operator: str = typer.Option(
         "operator", "--operator", help="Who is performing the reset (e.g. conductor)"
     ),
-    fmt: str = typer.Option("rich", "--format", "-f", help="Output format: rich, json"),
-):
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
     """Release a stale in_progress/blocked claim back to `open`.
 
     For tasks whose worker crashed or aged out: returns the task to `open` so it
@@ -551,18 +503,23 @@ def task_reset(
     svc, db = _get_service()
     try:
         result = svc.reset_task(task_id, kb_name, reason=reason, operator=operator)
-
-        formatted = _format_output(result, fmt)
-        if formatted is not None:
-            typer.echo(formatted)
-            return
-
-        console.print(f"[green]Reset:[/green] {task_id} ({result['prior_status']} → open)")
-        console.print(f"  Reason: {result['reason']}")
-    except (PyriteError, ValueError) as e:
-        _task_error(e, fmt)
     finally:
         db.close()
+
+    def rich(console, result):
+        console.print(f"[green]Reset:[/green] {task_id} ({result['prior_status']} → open)")
+        console.print(f"  Reason: {result['reason']}")
+
+    return Outcome.done(result, rich=rich)
+
+
+def _render_decompose(console, output: dict) -> None:
+    console.print(f"[green]Decomposed:[/green] {output['parent_id']}")
+    for r in output["children"]:
+        if r.get("created"):
+            console.print(f"  [green]+[/green] {r['entry_id']}")
+        else:
+            console.print(f"  [red]x[/red] {r.get('error', 'Unknown error')}")
 
 
 @task_app.command("decompose")
@@ -570,14 +527,14 @@ def task_decompose(
     parent_id: str = typer.Argument(..., help="Parent task entry ID"),
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
     child: list[str] = typer.Option(..., "--child", "-c", help="Child task title (repeatable)"),
-    fmt: str = typer.Option("rich", "--format", "-f", help="Output format: rich, json"),
-):
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
     """Decompose a parent task into child tasks."""
     children = [{"title": t} for t in child]
     svc, db = _get_service()
     try:
         results = svc.decompose_task(parent_id, kb_name, children)
-
         output = {
             "decomposed": True,
             "parent_id": parent_id,
@@ -586,34 +543,20 @@ def task_decompose(
             # the new children.
             "parent_derived": svc.derived_for(kb_name, parent_id),
         }
-        from ..utils.errors import exit_unless_whole
-
-        failed = sum(1 for r in results if not r.get("created"))
-        formatted = _format_output(output, fmt)
-        if formatted is not None:
-            typer.echo(formatted)
-            exit_unless_whole(failed, len(results) - failed)
-            return
-
-        console.print(f"[green]Decomposed:[/green] {parent_id}")
-        for r in results:
-            if r.get("created"):
-                console.print(f"  [green]+[/green] {r['entry_id']}")
-            else:
-                console.print(f"  [red]x[/red] {r.get('error', 'Unknown error')}")
-        exit_unless_whole(failed, len(results) - failed)
-    except (PyriteError, ValueError) as e:
-        _task_error(e, fmt)
     finally:
         db.close()
+
+    failed = sum(1 for r in results if not r.get("created"))
+    return Outcome.from_counts(len(results) - failed, failed, output, rich=_render_decompose)
 
 
 @task_app.command("migrate-relaxed-mode")
 def task_migrate_relaxed_mode(
     kb_name: str = typer.Argument(..., help="Knowledge base to migrate"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show the plan without writing"),
-    fmt: str = typer.Option("rich", "--format", "-f", help="Output format: rich, json"),
-):
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
     """Backfill status_reason='pre-relaxed-mode' for tasks of types
     that have opted into relaxed-reason mode but lack a reason.
 
@@ -623,12 +566,10 @@ def task_migrate_relaxed_mode(
     svc, db = _get_service()
     try:
         result = svc.migrate_relaxed_mode(kb_name, dry_run=dry_run)
+    finally:
+        db.close()
 
-        formatted = _format_output(result, fmt)
-        if formatted is not None:
-            typer.echo(formatted)
-            return
-
+    def rich(console, result):
         verb = "Would migrate" if dry_run else "Migrated"
         console.print(f"[green]{verb}[/green] in '{kb_name}':")
         console.print(f"  Scanned: {result['scanned']}")
@@ -636,10 +577,8 @@ def task_migrate_relaxed_mode(
         console.print(f"  Skipped: {result['skipped']}")
         if dry_run:
             console.print("[yellow]Dry run — no files modified.[/yellow]")
-    except (PyriteError, ValueError) as e:
-        _task_error(e, fmt)
-    finally:
-        db.close()
+
+    return Outcome.done(result, rich=rich)
 
 
 @task_app.command("checkpoint")
@@ -651,8 +590,9 @@ def task_checkpoint(
     evidence: list[str] | None = typer.Option(
         None, "--evidence", "-e", help="Evidence entry IDs (repeatable)"
     ),
-    fmt: str = typer.Option("rich", "--format", "-f", help="Output format: rich, json"),
-):
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
     """Log a checkpoint on a task."""
     svc, db = _get_service()
     try:
@@ -663,17 +603,13 @@ def task_checkpoint(
             confidence=confidence,
             partial_evidence=evidence,
         )
+    finally:
+        db.close()
 
-        formatted = _format_output(result, fmt)
-        if formatted is not None:
-            typer.echo(formatted)
-            return
-
+    def rich(console, _result):
         console.print(f"[green]Checkpoint logged:[/green] {task_id}")
         console.print(f"  {message}")
         if confidence > 0:
             console.print(f"  Confidence: {int(confidence * 100)}%")
-    except (PyriteError, ValueError) as e:
-        _task_error(e, fmt)
-    finally:
-        db.close()
+
+    return Outcome.done(result, rich=rich)
