@@ -51,7 +51,7 @@ from .index_commands import index_app
 from .init_command import init_kb
 from .kb_commands import kb_app
 from .link_commands import links_app
-from .mcp_setup_command import mcp_setup, mcp_tool_counts
+from .mcp_setup_command import MCP_CHECK_OK, mcp_setup, mcp_tool_counts
 from .protocol_commands import protocol_app
 from .qa_commands import qa_app
 from .repo_commands import repo_collab_app
@@ -750,6 +750,9 @@ def mcp_server(
         "--tier",
         help="Tool tier to expose: read, write, or admin",
     ),
+    # For `pyrite mcp-setup`'s start check, not part of the CLI surface: read
+    # the arguments exactly as a start would, then stop before the server.
+    check: bool = typer.Option(False, "--check", hidden=True),
 ):
     from ..server.mcp_server import PyriteMCPServer
 
@@ -760,6 +763,9 @@ def mcp_server(
             error_code="INVALID_TIER",
             suggestion=f"choose one of: {', '.join(PyriteMCPServer.VALID_TIERS)}",
         )
+    if check:
+        typer.echo(f"{MCP_CHECK_OK} (tier {tier})")
+        return
 
     # stderr, not stdout -- stdout carries the MCP protocol stream itself.
     Console(stderr=True).print(f"[dim]Starting MCP server ({tier} tier) on stdio...[/dim]")

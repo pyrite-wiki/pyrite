@@ -23,8 +23,12 @@ Where each client reads its entry:
 - Claude Code, user scope: ``~/.claude.json``. Claude Code rewrites that file
   continually, so Pyrite only reads it and changes it through ``claude mcp``.
   There is no update subcommand: a change is ``remove`` then ``add``, done
-  only for an entry ``add`` can reproduce; after any failed call the file is
-  read back, so the report says what it holds, not what was hoped.
+  only for an entry ``add`` can reproduce. The file is read back after the
+  calls whatever their exit codes, so every status and every ``by_hand``
+  command is true of the file as last read (#690): ``created`` and
+  ``changed`` mean a read saw the entry, and a file that cannot be read gets
+  no ``claude`` command, run or printed. A ``pyrite`` entry in another of
+  Claude Code's scopes is reported, never changed.
 - Claude Code, project scope (``--project``): ``./.mcp.json``.
 - Claude Desktop: its per-OS ``claude_desktop_config.json``.
 - ``--config PATH``: any client's ``mcpServers`` file.
@@ -55,7 +59,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import typer
 from rich.console import Console
@@ -84,6 +88,13 @@ _ABSENT = object()  # no `pyrite` member (a member holding null is not absent)
 _UNKNOWN = object()  # Claude Code's file could not be read back
 _JSON_WHITESPACE = " \t\r\n"
 _REMOVE = f"claude mcp remove -s user {SERVER_NAME}"
+_RERUN = "re-run `pyrite mcp-setup`"
+#: What `pyrite mcp <args> --check` prints when a client could start those
+#: arguments. `_verify_starts` requires it: exit 0 alone is also what
+#: `--help` among an entry's arguments gives.
+MCP_CHECK_OK = "pyrite mcp: arguments ok"
+#: The Claude Code version the scope notes were checked against (#690).
+_SCOPES_SEEN_WITH = "2.1.296"
 
 
 def mcp_tool_counts() -> dict[str, int]:
@@ -159,10 +170,6 @@ def pyrite_executable() -> Path | None:
             if candidate.is_file() and os.access(candidate, os.X_OK):
                 return candidate.absolute()
     return None
-
-
-class _CallFailedError(Exception):
-    """A `claude mcp` call that did not exit 0, timed out or could not run."""
 
 
 class _StopError(Exception):
@@ -730,8 +737,8 @@ def _setup_file(
 # -- Claude Code user scope: read its file, change it only through `claude` ----------
 
 
-def _read_claude_config(config: Path) -> tuple[Any, list[str]]:
-    """(the user-scope `pyrite` entry or _ABSENT, stale trio names), read the
+def _read_claude_config(config: Path) -> tuple[Any, dict]:
+    """(the user-scope `pyrite` entry or _ABSENT, the whole file), read the
     way the client reads it. Stops when the file exists and the client would
     not accept it: Claude Code 2.1.287 declares an empty or unparseable
     ``~/.claude.json`` corrupted and replaces it with fresh state on any
@@ -739,7 +746,7 @@ def _read_claude_config(config: Path) -> tuple[Any, list[str]]:
     try:
         raw = config.read_bytes()
     except FileNotFoundError:
-        return _ABSENT, []
+        return _ABSENT, {}
     except OSError as exc:
         raise _StopError(
             "CONFIG_NOT_READABLE", f"Cannot read {config}: {exc}", "`claude` was not run"
@@ -753,11 +760,18 @@ def _read_claude_config(config: Path) -> tuple[Any, list[str]]:
             f"{config} is empty or is not the JSON object Claude Code expects. Claude Code "
             "replaces such a file with fresh state on any `claude mcp` call, so `claude` was "
             "not run",
-            "repair or restore the file (Claude Code keeps backups in ~/.claude/backups/), "
-            "or move it aside and start Claude Code once; then re-run `pyrite mcp-setup`",
+            _restore_the_file(config),
         )
-    servers = data.get("mcpServers", {})
-    return servers.get(SERVER_NAME, _ABSENT), [name for name in STALE_TRIO if name in servers]
+    return data.get("mcpServers", {}).get(SERVER_NAME, _ABSENT), data
+
+
+def _restore_the_file(config: Path) -> str:
+    """What to do about a Claude Code file that cannot be read. It names no
+    `claude mcp` command: any of them would replace the file."""
+    return (
+        f"repair or restore {config} (Claude Code keeps backups in ~/.claude/backups/), "
+        f"or move it aside and start Claude Code once; then {_RERUN}"
+    )
 
 
 def _add_command(entry: dict, env_keys: tuple = ()) -> str:
@@ -769,22 +783,39 @@ def _add_command(entry: dict, env_keys: tuple = ()) -> str:
 def _add_reproduces(entry: Any) -> bool:
     """Whether `claude mcp add -- command args` writes this entry back whole:
     nothing but a stdio command and args. Env would need its values on a
-    command line, and unknown keys cannot be passed at all."""
+    command line, unknown keys cannot be passed at all, and no command line,
+    run or printed, can carry a NUL."""
     try:
-        _command_and_args(entry)
+        command, args = _command_and_args(entry)
     except _StopError:
         return False
-    return set(_normal(entry)) <= {"command", "args"}
+    return set(_normal(entry)) <= {"command", "args"} and "\0" not in "".join([command, *args])
 
 
-def _setup_claude_code(
-    item: dict, claude: Path, default: dict, tier: str | None, force: bool
-) -> None:
-    """Change the user-scope entry through `claude mcp`, all or nothing: each
-    call is judged by its exit code and, when that is not 0, by reading the
-    file back. Never by message text."""
-    config = Path(item["location"])
-    existing, stale = _read_claude_config(config)
+def _runs(entry: Any) -> str:
+    """What an entry runs, for a note: its command line, never its env."""
+    try:
+        command, args = _command_and_args(entry)
+    except _StopError:
+        return "is not a stdio server entry"
+    return f"runs `{shlex.join([command, *args])}`"
+
+
+def _note_rest_of_claude_config(item: dict, data: dict) -> None:
+    """What else Claude Code's file, as last read, holds that bears on the
+    user-scope entry: the stale trio, and a `pyrite` entry in another scope
+    that differs from the user-scope one. Reported, never changed.
+
+    Scopes, seen with Claude Code 2.1.296 in a temp HOME (#690): a local-scope
+    entry (`projects[<directory>].mcpServers`, what a bare `claude mcp add`
+    writes) is the one `claude mcp get` reports in that directory, over the
+    user-scope entry. A `./.mcp.json` entry (project scope) waits for the
+    user's approval and did not displace the user-scope one before it, so its
+    note says only "may". `data` was read with no error, so naming a `claude`
+    command here is safe."""
+    config = item["location"]
+    servers = data.get("mcpServers", {})
+    stale = [name for name in STALE_TRIO if name in servers]
     if stale:
         item["stale"] = stale
         item["notes"].append(
@@ -792,39 +823,122 @@ def _setup_claude_code(
             "`pyrite-admin mcp-setup` used. mcp-setup never removes them; if they are not "
             "yours, run `claude mcp remove -s user <name>` for each."
         )
+    mine = servers.get(SERVER_NAME, _ABSENT)
+    if mine is _ABSENT:
+        return
+    others = []
+    here = os.path.realpath(Path.cwd())
+    projects = data.get("projects")
+    for directory, project in projects.items() if isinstance(projects, dict) else ():
+        local = project.get("mcpServers") if isinstance(project, dict) else None
+        if not isinstance(local, dict) or SERVER_NAME not in local:
+            continue
+        entry = local[SERVER_NAME]
+        if _normal(entry) == _normal(mine):
+            continue
+        others.append({"scope": "local", "directory": directory, "entry": _public(entry)})
+        where = (
+            f"this directory ({directory})" if os.path.realpath(directory) == here else directory
+        )
+        item["notes"].append(
+            f"Claude Code also has a {SERVER_NAME!r} entry in its local scope for {where}, "
+            f'under "projects" in {config}, and it differs from the user-scope one: it '
+            f"{_runs(entry)}. There it takes precedence over the user-scope entry (seen with "
+            f"Claude Code {_SCOPES_SEEN_WITH}), so sessions started in that directory use it. "
+            f"mcp-setup never changes another scope; `claude mcp get {SERVER_NAME}`, run in "
+            "that directory, shows the entry in use and how to remove it."
+        )
+    project_file = Path.cwd() / ".mcp.json"
+    entry: Any = _ABSENT
+    with contextlib.suppress(OSError, ValueError, RecursionError):
+        in_project = json.loads(project_file.read_bytes().decode("utf-8-sig"))
+        in_project = in_project.get("mcpServers") if isinstance(in_project, dict) else None
+        if isinstance(in_project, dict):
+            entry = in_project.get(SERVER_NAME, _ABSENT)
+    if entry is not _ABSENT and _normal(entry) != _normal(mine):
+        others.append({"scope": "project", "location": str(project_file), "entry": _public(entry)})
+        item["notes"].append(
+            f"{project_file} (Claude Code's project scope) also has a {SERVER_NAME!r} entry, "
+            f"and it differs from the user-scope one: it {_runs(entry)}. Once approved in "
+            "Claude Code it may take precedence in this directory. mcp-setup changes that "
+            "file only with --project."
+        )
+    if others:
+        item["other_scopes"] = others
+
+
+def _setup_claude_code(
+    item: dict, claude: Path, default: dict, tier: str | None, force: bool
+) -> None:
+    """Change the user-scope entry through `claude mcp`, all or nothing.
+
+    A call is judged by reading the file back, whatever its exit code, and
+    never by message text. Every exit reports the file as the last read saw
+    it. `by_hand` is one sequence: each line is a command that works on that
+    state, they are run in order, and the suggestion says where that ends.
+    `tests/test_mcp_setup_reads_back.py` reads the exits out of this
+    function's source and runs each report's commands against the file."""
+    config = Path(item["location"])
+
+    def read() -> Any:
+        """The user-scope entry now. What this read saw of the rest of the
+        file is kept for `_note_rest_of_claude_config`; a read that fails saw
+        nothing."""
+        item["_seen"] = None
+        entry, item["_seen"] = _read_claude_config(config)
+        return entry
+
+    existing = read()
     plan = _decide(existing, default, tier, force)
     if plan.entry is None:
         _record(item, plan, existing)
         return
     wanted = plan.entry
     manual = _add_command(wanted)
+    replace = {
+        "suggestion": f"fix the cause and {_RERUN}, or run the commands in by_hand, in order, "
+        "to point it at this install",
+        "by_hand": [_REMOVE, manual],
+    }
     if existing is not _ABSENT and not force and not _add_reproduces(existing):
-        env = existing.get("env") if isinstance(existing.get("env"), dict) else {}
+        env = existing.get("env")
         other = [k for k in _normal(existing) if k not in ("command", "args", "env")]
-        by_hand = [_REMOVE, _add_command(wanted, tuple(env))]
-        if other:
-            by_hand.append(f"then put back in {config} by hand: {', '.join(other)}")
+        if env is not None and not isinstance(env, dict):
+            other.insert(0, "env")
+        edit = f"edit the command path in {config} yourself (--force discards what it carries)"
+        if "\0" in "".join(wanted["args"]):
+            # No command line can carry it, so none is printed.
+            hand: dict = {"suggestion": edit}
+        else:
+            names = tuple(env) if isinstance(env, dict) else ()
+            steps = "run the commands in by_hand yourself, in order, to point it at this install"
+            if names:
+                steps += f"; replace each `<its value>` with that variable's value from {config}"
+            if other:
+                steps += f"; then put back in the entry by hand: {', '.join(other)}"
+            hand = {
+                "suggestion": f"{steps}. Or {edit}",
+                "by_hand": [_REMOVE, _add_command(wanted, names)],
+            }
         raise _StopError(
             "CLIENT_ENTRY_NEEDS_HAND_EDIT",
             f"the user-scope {SERVER_NAME!r} entry carries {'; '.join(plan.kept)}. Claude Code "
             "has no command that changes an entry: it must be removed and added again, and "
-            "`claude mcp add` would need env values on a command line and drops other keys. "
-            "`claude` was not run",
-            "run the commands in by_hand yourself, or edit the command path in "
-            f"{config} (--force discards what the entry carries)",
-            by_hand=by_hand,
+            "`claude mcp add` would need env values on a command line, drops other keys and "
+            "cannot be given a NUL character. `claude` was not run",
             entry=_public(existing),
+            **hand,
         )
     if plan.merged:
         _verify_starts(Path(wanted["command"]), wanted["args"], entry=True)
     # Claude Code rewrites this file all the time, so what must not have moved
     # since the decision is the entry, not the bytes.
-    again, _ = _read_claude_config(config)
+    again = read()
     if (again is _ABSENT) != (existing is _ABSENT) or (again is not _ABSENT and again != existing):
         raise _StopError(
             "CONFIG_CHANGED",
             f"the {SERVER_NAME!r} entry in {config} changed while mcp-setup was running",
-            "`claude` was not run; re-run `pyrite mcp-setup`",
+            f"`claude` was not run; {_RERUN}",
         )
 
     def run(*cmd: str) -> tuple[bool, str]:
@@ -848,99 +962,162 @@ def _setup_claude_code(
             return False, f"could not be run ({type(exc).__name__}: {exc})"
         return proc.returncode == 0, (proc.stderr or proc.stdout).strip()[-500:]
 
+    def failed(*cmd: str) -> str | None:
+        """Why the call did not exit 0, or None when it did. Exit 0 is not
+        yet success: the caller reads the file back."""
+        ok, detail = run(*cmd)
+        return None if ok else f"`claude mcp {cmd[0]}` failed: {detail}"
+
     def holds() -> Any:
         """What the file holds now. Never raises: unreadable is _UNKNOWN."""
         try:
-            return _read_claude_config(config)[0]
+            return read()
         except Exception:  # noqa: BLE001
             return _UNKNOWN
 
     def is_entry(now: Any, entry: Any) -> bool:
         return isinstance(now, dict) and _normal(now) == _normal(entry)
 
-    def call(*cmd: str) -> None:
-        ok, detail = run(*cmd)
-        if not ok:
-            raise _CallFailedError(f"`claude mcp {cmd[0]}` failed: {detail}")
+    def unseen(calls: str) -> str:
+        """An exit 0 the file does not bear out. `claude` is not called again
+        on the strength of it: whatever wrote over the file may do so again."""
+        return (
+            f"{calls} exited 0, but {config} does not hold the entry asked for (Claude Code "
+            "rewrites this file while it runs; another session may have written over it)"
+        )
 
-    def why(exc: Exception) -> str:
-        return str(exc) if isinstance(exc, _CallFailedError) else f"{type(exc).__name__}: {exc}"
+    def left(failure: str, now: Any) -> NoReturn:
+        """The one way out when the entry is neither as it was nor as asked.
+        The report is built from `now`, the last read, and the read decides
+        which commands may be printed."""
+        gone = {} if existing is _ABSENT else {"removed": _public(existing)}
+        restorable = existing is not _ABSENT and _add_reproduces(existing)
+        lost = ""
+        if gone and not restorable:
+            lost = (
+                ". `removed` names what the previous entry held; no command can add it back "
+                "(`claude mcp add` cannot write env without its values, or other keys)"
+            )
+        if now is _UNKNOWN:
+            # Claude Code replaces a file it cannot read, so it was not called
+            # again and no command that would call it is printed.
+            was = ". `removed` is what the entry held before this run" if gone else ""
+            raise _StopError(
+                "CLIENT_COMMAND_FAILED",
+                f"{failure}; {config} could not be read back, so what it holds now is not "
+                f"known and `claude` was not run again{was}",
+                _restore_the_file(config) + ". No command is given here because Claude Code "
+                "replaces a file it cannot read",
+                status="failed",
+                **gone,
+            )
+        if now is not _ABSENT:
+            was = " and not the one this run removed (`removed`)" if gone else ""
+            back = {}
+            hint = f"{_RERUN}, which decides from the entry as it is{lost}"
+            if restorable:
+                back = {"by_hand": [_REMOVE, _add_command(existing)]}
+                hint = (
+                    "to put the previous entry back, run the commands in by_hand, in order "
+                    f"(the first removes the entry that is there now); or {_RERUN}, which "
+                    "decides from the entry as it is"
+                )
+            raise _StopError(
+                "CLIENT_COMMAND_FAILED",
+                f"{failure}; {config} now holds another {SERVER_NAME!r} entry (`entry`), not "
+                f"this install's{was}",
+                hint,
+                status="failed",
+                entry=_public(now),
+                **gone,
+                **back,
+            )
+        back = {}
+        hint = f"{_RERUN} to add this install's entry{lost}"
+        if restorable:
+            back = {"by_hand": [_add_command(existing)]}
+            hint = (
+                "to put the previous entry back, run the command in by_hand; "
+                f"or {_RERUN} to add this install's entry"
+            )
+        raise _StopError(
+            "CLIENT_COMMAND_FAILED",
+            f"{failure}. The previous {SERVER_NAME!r} entry is not back; `removed` is what it held",
+            hint,
+            status="failed",
+            **gone,
+            **back,
+        )
 
     add_new = ["add", "-s", "user", SERVER_NAME, "--", wanted["command"], *wanted["args"]]
     if existing is _ABSENT:
-        try:
-            call(*add_new)
-        except Exception as exc:  # noqa: BLE001 - nothing was removed; say what the file holds
-            failure, now = why(exc), holds()
-            if now is _ABSENT:
-                raise _StopError(
-                    "CLIENT_COMMAND_FAILED",
-                    f"{failure}; nothing was added",
-                    f"run it yourself: {manual}",
-                ) from None
-            if not is_entry(now, wanted):
-                raise _StopError(
-                    "CLIENT_COMMAND_FAILED",
-                    f"{failure}, and {config} could not be read back to see what it holds",
-                    f"check with `claude mcp get {SERVER_NAME}`; to add it: {manual}",
-                    status="failed",
-                ) from None
-            item["notes"].append(f"{failure}, but {config} holds the new entry.")
-        _record(item, plan, existing)
-        return
+        failure = failed(*add_new)
+        now = holds()
+        if is_entry(now, wanted):
+            if failure:
+                item["notes"].append(f"{failure}, but {config} holds the new entry.")
+            _record(item, plan, existing)
+            return
+        failure = failure or unseen("`claude mcp add`")
+        if now is _ABSENT:
+            raise _StopError(
+                "CLIENT_COMMAND_FAILED",
+                f"{failure}; nothing was added",
+                f"fix the cause and {_RERUN}, or run the command in by_hand to point it at "
+                "this install",
+                by_hand=[manual],
+            )
+        left(failure, now)
 
-    def settle(failure: str) -> None:
-        """The one way out of a failed remove-then-add, for any failure at any
-        step (a call, its output, a read-back, the restore, a bug): returns
-        only when the file holds the new entry; otherwise the entry is as it
-        was (restored if need be), or the report holds what was removed and
-        the commands that put it back. Criterion 5: never neither."""
+    def settle(failure: str | None) -> None:
+        """The one way out of remove-then-add, whatever happened at any step
+        (a call, its output, a read-back, the restore, a bug). It reads the
+        file and returns only when the file holds the new entry; otherwise the
+        entry is as it was (restored if need be), or the report holds what was
+        removed and the commands that work on what the file holds now.
+        Criterion 5 of #582: never neither."""
         # holds() and run() never raise, and the rest is plain logic over
         # values already checked, so nothing below can escape this function.
         now = holds()
         if is_entry(now, wanted):
-            item["notes"].append(f"{failure}, but {config} holds the new entry.")
+            if failure:
+                item["notes"].append(f"{failure}, but {config} holds the new entry.")
             return
+        # The restore is one more `claude` call. It is made only after a call
+        # failed and the read shows the entry gone: not after an exit 0 the
+        # file does not bear out, not on a file that cannot be read, and not
+        # over another entry (`add` refuses a name that exists).
+        restore = failure is not None and now is _ABSENT and _add_reproduces(existing)
+        failure = failure or unseen("`claude mcp remove` and `claude mcp add`")
         if is_entry(now, existing):
             raise _StopError(
                 "CLIENT_COMMAND_FAILED",
                 f"{failure}; the previous {SERVER_NAME!r} entry is in place",
-                f"fix the cause and re-run, or run `{_REMOVE}` and then: {manual}",
+                **replace,
             )
-        if now is _UNKNOWN:
-            # Claude Code replaces a file it cannot read, so it is not called
-            # again: the report carries what to put back.
-            failure += f"; {config} could not be read back, so `claude` was not run again"
-        elif _add_reproduces(existing):
+        if restore:
             old = ["add", "-s", "user", SERVER_NAME, "--", existing["command"]]
             restored, detail = run(*old, *existing["args"])
-            if restored or is_entry(holds(), existing):
+            now = holds()
+            if is_entry(now, existing):
                 raise _StopError(
                     "CLIENT_COMMAND_FAILED",
                     f"{failure}; the previous {SERVER_NAME!r} entry was restored",
-                    f"fix the cause and re-run, or run `{_REMOVE}` and then: {manual}",
+                    **replace,
                 )
+            if restored:
+                detail = "`claude mcp add` exited 0, but the entry is not there"
             failure += f"; restoring the previous entry also failed: {detail}"
-        by_hand = [manual]
-        if _add_reproduces(existing):
-            by_hand.insert(0, _add_command(existing))
-        raise _StopError(
-            "CLIENT_COMMAND_FAILED",
-            f"{failure}. The previous {SERVER_NAME!r} entry is not back; `removed` is what it held",
-            "run the first command in by_hand to put it back as it was, or the last to "
-            "point it at this install",
-            status="failed",
-            removed=_public(existing),
-            by_hand=by_hand,
-        )
+        left(failure, now)
 
-    # From the moment `remove` is attempted, settle() is the only exit that is
-    # not success. Not covered: KeyboardInterrupt and signals.
+    # From the moment `remove` is attempted, settle() is the only exit, and it
+    # returns only when a read saw the new entry. Not covered:
+    # KeyboardInterrupt and signals.
     try:
-        call("remove", "-s", "user", SERVER_NAME)
-        call(*add_new)
+        failure = failed("remove", "-s", "user", SERVER_NAME) or failed(*add_new)
     except Exception as exc:  # noqa: BLE001
-        settle(why(exc))
+        failure = f"{type(exc).__name__}: {exc}"
+    settle(failure)
     _record(item, plan, existing)
 
 
@@ -948,11 +1125,19 @@ def _setup_claude_code(
 
 
 def _verify_starts(command: Path, args: list[str], entry: bool = False) -> None:
-    """Run `command args --help` before any client is told to start it: a
+    """Run `command args --check` before any client is told to start it: a
     client that cannot start a server says so only in its own log. With
     `entry`, these are an existing entry's own arguments as they will be
-    written, so any option this install's pyrite rejects stops the write."""
-    argv = [str(command), *args, "--help"]
+    written, so anything this install's `pyrite mcp` rejects stops the write.
+
+    `--check` (hidden, `pyrite/cli/__init__.py`) reads the arguments with the
+    command's own parser, checks the tier, prints MCP_CHECK_OK and exits
+    without starting a server. `--help` did not do: click prints help before
+    it rejects a leftover argument, and the tier is checked in the command
+    body, so `mcp --tier admin bogus` and `mcp --tier nonsense` both passed
+    (#690). The line is required too, because `--help` among an entry's own
+    arguments exits 0 and starts nothing."""
+    argv = [str(command), *args, "--check"]
     try:
         proc = subprocess.run(
             argv,
@@ -967,13 +1152,15 @@ def _verify_starts(command: Path, args: list[str], entry: bool = False) -> None:
         detail = str(exc)
     else:
         detail = (proc.stderr or proc.stdout).strip()[-2000:]
-    if proc is not None and proc.returncode == 0:
-        return
+        if proc.returncode == 0:
+            if MCP_CHECK_OK in proc.stdout:
+                return
+            detail = "it exits 0 and starts nothing (its arguments ask for something else)"
     if entry:
         raise _StopError(
             "ENTRY_WOULD_NOT_START",
             f"with this install's path the {SERVER_NAME!r} entry would run "
-            f"`{shlex.join(argv[:-1])}`, which fails: {detail}",
+            f"`{shlex.join(argv[:-1])}`, which would not start a server: {detail}",
             "nothing was written; edit the entry's arguments by hand, or re-run with "
             "--force to write the default entry",
         )
@@ -1033,6 +1220,8 @@ def _print_report(out: Console, report: dict) -> None:
             line("    pinned: " + ", ".join(f"{k}={v}" for k, v in item["pinned"].items()))
         if "removed" in item:
             line(f"    removed: {item['removed']}")
+        if "error" in item and "entry" in item:
+            line(f"    entry: {item['entry']}")
         for command in item.get("by_hand", []):
             line(f"    run: {command}")
         for note in item["notes"]:
@@ -1102,7 +1291,8 @@ def mcp_setup(
     that cannot be done safely the command stops, leaves that client as it
     was and says why. Each client is reported as created, unchanged, changed,
     stopped or failed; the exit code is 1 unless every client ended up
-    pointing at this install. Restart the client afterwards.
+    pointing at this install. A stopped or failed client may give by_hand:
+    commands to run yourself, in order. Restart the client afterwards.
 
     A file a client wrote comes back byte for byte outside the entry. A
     hand-formatted file keeps every value, but one-line arrays open out and
@@ -1266,14 +1456,20 @@ def mcp_setup(
                 status="failed" if called else "stopped",
                 error_code="INTERNAL_ERROR",
                 error=f"{type(exc).__name__}: {exc}",
+                # Nothing here knows what the file holds, so no `claude`
+                # command is named: the re-run reads it before deciding.
                 suggestion=(
-                    f"check with `claude mcp get {SERVER_NAME}`; "
+                    f"`claude` was called, so the entry may have changed: {_RERUN}, which "
+                    "reads the file again and reports what it holds; "
                     if called
                     else "this client was not changed; "
                 )
                 + "please report this at https://github.com/pyrite-wiki/pyrite/issues",
             )
         item.pop("_called", None)
+        seen = item.pop("_seen", None)
+        if seen is not None:
+            _note_rest_of_claude_config(item, seen)
 
     if any(i["status"] == "created" and i["client"] != CLAUDE_CODE for i, _ in work) and not pins:
         from ..config import resolve_config_source

@@ -1538,6 +1538,15 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "safe",
         "an absent file reads as empty",
     ),
+    ("pyrite/cli/mcp_setup_command.py", "_runs"): (
+        "safe",
+        "wording of a note about another scope's entry",
+    ),
+    ("pyrite/cli/mcp_setup_command.py", "_setup_claude_code"): (
+        "safe",
+        "the failure goes to settle(), which reads the file back and reports the client failed "
+        "unless it holds the new entry (#690)",
+    ),
     ("pyrite/cli/mcp_setup_command.py", "_setup_file"): ("safe", "absent file: created"),
     ("pyrite/cli/mcp_setup_command.py", "_verify_starts"): (
         "safe",

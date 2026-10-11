@@ -63,7 +63,10 @@ points elsewhere gets its command path changed (and its tier, if you pass
 are never touched. Each client is all or nothing: one it cannot change safely
 is left as it was with the reason, while another may still be changed, and
 the exit code is 1 unless every client ended up pointing here. The JSON report
-names each client and what changed.
+names each client and what changed, says what the file holds when a change
+could not be finished, and names a `pyrite` entry in another Claude Code scope
+(one project's, from `claude mcp add` without `-s user`) that would be used
+instead of this one.
 [Getting started](docs/getting-started.md#connect-an-ai-via-mcp) lists the
 cases.
 

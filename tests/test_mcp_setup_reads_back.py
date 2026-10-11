@@ -23,22 +23,31 @@ with ``PATH`` narrowed to a scratch ``bin/``, where a fake ``claude`` stands in
 for Claude Code. The fake copies what Claude Code 2.1.287 was observed to do:
 ``mcp add -s user`` rewrites ``$HOME/.claude.json`` in its own style; adding a
 name that exists, or removing one that does not, exits 1. It can also be told
-to fail, hang or stop being runnable. ``test_real_claude_code_reads_back_the_entry``
+to fail, hang, stop being runnable, exit 0 having written nothing, or write
+another entry than the one asked for. ``test_real_claude_code_reads_back_the_entry``
 checks the same contract against the real binary when one is installed.
+
+The report is true of the file (#690): the last section reads the exits of
+the two setup functions out of the source, requires a case for each, and
+judges each report against the file as the test reads it, running every
+``by_hand`` command against the fake ``claude``.
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import random
 import re
+import shlex
 import shutil
 import stat
 import subprocess
 import sys
 import sysconfig
 import textwrap
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -91,23 +100,41 @@ FAKE_CLAUDE = textwrap.dedent(
     if told("FAKE_CLAUDE_CORRUPT"):
         cfg.write_text("")
         sys.exit(f"fake claude: E_CORRUPT {verb}")
-    data = json.loads(cfg.read_text(encoding="utf-8")) if cfg.exists() else {}
+    if told("FAKE_CLAUDE_NOOP"):
+        # Exit 0 having written nothing: what a caller sees when another
+        # Claude Code process writes its own copy of the file over this one.
+        print(f"File modified: {cfg}")
+        sys.exit(0)
+    # utf-8-sig: Claude Code 2.1.296 reads a file with a BOM and drops the BOM.
+    data = json.loads(cfg.read_text(encoding="utf-8-sig")) if cfg.exists() else {}
     servers = data.setdefault("mcpServers", {})
     if args[:2] == ["mcp", "add"]:
         sep = args.index("--")
         opts, (command, *rest) = args[2:sep], args[sep + 1 :]
-        name, scope, i = opts[-1], "local", 0
-        while i < len(opts) - 1:
+        scope, variables, names, i = "local", {}, [], 0
+        while i < len(opts):
             if opts[i] in ("-s", "--scope"):
                 scope = opts[i + 1]
-            i += 2 if opts[i].startswith("-") else 1
+            elif opts[i] in ("-e", "--env"):
+                key, _, value = opts[i + 1].partition("=")
+                variables[key] = value
+            else:
+                names.append(opts[i])
+                i -= 1
+            i += 2
+        name = names[0]
         if scope != "user":
             sys.exit(f"fake claude: only user scope is emulated, got {scope}")
         if name in servers:
             # Deliberately not Claude Code's wording: mcp-setup must not
             # depend on message text.
             sys.exit(f"fake claude: E_DUPLICATE {name}")
-        servers[name] = {"type": "stdio", "command": command, "args": rest, "env": {}}
+        servers[name] = {"type": "stdio", "command": command, "args": rest, "env": variables}
+        if told("FAKE_CLAUDE_OTHER"):
+            # Not the entry asked for: another writer's, or a client that
+            # stores it differently.
+            servers[name] = {"type": "stdio", "command": "/third/bin/pyrite"}
+            servers[name].update(args=["mcp"], env={})
     elif args[:2] == ["mcp", "remove"]:
         name = [a for a in args[2:] if not a.startswith("-") and a != "user"][0]
         if name not in servers:
@@ -1643,21 +1670,25 @@ def test_undecodable_output_from_claude_is_judged_like_any_other(env, monkeypatc
         assert "E_REFUSED add" in item["error"] and "garbled" in item["error"], item
 
 
-def test_an_argument_claude_cannot_be_given_after_remove_is_reported(env):
-    """A NUL in the entry's own args (valid JSON: "\\u0000") makes every call
-    that passes it back raise ValueError, the restore included."""
+def test_an_entry_with_an_argument_no_command_line_can_carry_stops_before_remove(env):
+    """A NUL in the entry's own args (valid JSON: "\\u0000") cannot be passed
+    to `claude mcp add`, so the entry could be removed and never added again,
+    by this command or by a printed one. It stops before `remove` (#690; it
+    used to remove the entry and report `failed`)."""
     target = Target(env, "claude-code")
     target.seed(member(cmd_text(OLD), args_text("mcp", "a\\u0000b")))
+    before = snapshot(target.path)
 
     result = target.run()
 
     assert result.exit_code == 1, result.output
     item = only_client(result)
-    assert item["status"] == "failed" and item["error_code"] == "CLIENT_COMMAND_FAILED", item
-    assert item["removed"] == {"command": OLD, "args": ["mcp", "a\x00b"]}
-    # A call that cannot be made is a failed call: the restore is still tried.
-    assert "`claude mcp add` failed: could not be run (ValueError" in item["error"]
-    assert "restoring the previous entry also failed" in item["error"], item
+    assert item["status"] == "stopped", item
+    assert item["error_code"] == "CLIENT_ENTRY_NEEDS_HAND_EDIT", item
+    assert item["entry"] == {"command": OLD, "args": ["mcp", "a\x00b"]}
+    assert "by_hand" not in item and str(target.path) in item["suggestion"], item
+    assert claude_calls(env) == []
+    assert snapshot(target.path) == before
 
 
 #: Each step after `remove` where something can go wrong, and how to make it
@@ -1680,13 +1711,29 @@ AFTER_REMOVE = {
 }  # fmt: skip
 
 
-@pytest.mark.parametrize("step", AFTER_REMOVE)
+#: Steps whose outcome #690 did not change (it edited what this test asserts
+#: where the last read of the file fails, and what `by_hand` holds).
+_SAME_AS_BEFORE_690 = pytest.mark.control(
+    reason="passes on dev: #690 did not change what these steps end in; the test body was "
+    "edited for the steps that end with the entry gone"
+)
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        pytest.param(step, marks=_SAME_AS_BEFORE_690) if outcome != "failed" else step
+        for step, (_, _, outcome) in AFTER_REMOVE.items()
+    ],
+)
 def test_a_failure_at_any_step_after_remove_restores_or_reports_what_was_removed(
     env, monkeypatch, step
 ):
     """Criterion 5, by construction: whatever fails after `remove` is
     attempted, the entry is in place (as it was, or restored), or the report
-    holds exactly what was removed and the command that puts it back."""
+    holds exactly what was removed and the command that puts it back. Where
+    the last read of the file failed there is no command: Claude Code
+    replaces a file it cannot read (#690)."""
     stub, reads_ok, outcome = AFTER_REMOVE[step]
     target = _seed_changeable(env)
     for var, value in stub.items():
@@ -1715,11 +1762,14 @@ def test_a_failure_at_any_step_after_remove_restores_or_reports_what_was_removed
         assert target.entry() == OLD_ENTRY
     else:
         assert item["removed"] == {"command": OLD, "args": ["mcp", "--tier", "admin"]}
-        assert item["by_hand"][0] == f"claude mcp add -s user pyrite -- {OLD} mcp --tier admin"
+    if outcome == "failed" and ("unreadable" in step or reads_ok is not None):
+        assert "could not be read back" in item["error"]
+        assert "by_hand" not in item and not CLAUDE_COMMAND.search(item["suggestion"]), item
+    elif outcome == "failed":
+        assert item["by_hand"] == [f"claude mcp add -s user pyrite -- {OLD} mcp --tier admin"]
     if "unreadable" in step:
         # Claude Code replaces a file it cannot read: it is not called again.
         assert claude_calls(env)[-1][:2] == ["mcp", step.split("-")[0]]
-        assert "could not be read back" in item["error"]
 
 
 def test_a_call_that_times_out_after_doing_its_work_is_judged_by_the_file(env, monkeypatch):
@@ -2357,7 +2407,7 @@ def test_pyrite_mcp_package_serve_defaults_to_write(started, monkeypatch):
 # -- the docs are the acceptance test ------------------------------------------------
 
 
-def _tutorial(tmp_path: Path, doc_text: str) -> subprocess.CompletedProcess:
+def _tutorial(tmp_path: Path, doc_text: str, **more_env: str) -> subprocess.CompletedProcess:
     doc = tmp_path / "doc.md"
     doc.write_text(doc_text)
     path = os.pathsep.join([str(Path(sys.executable).parent), "/usr/bin", "/bin"])
@@ -2365,7 +2415,13 @@ def _tutorial(tmp_path: Path, doc_text: str) -> subprocess.CompletedProcess:
         [sys.executable, str(REPO / "scripts" / "run_tutorial.py"), str(doc)],
         # PYTHONPATH: the `pyrite` the tutorial runs is this tree's, not the
         # one the editable install points at (verify-red runs another tree).
-        env={"PATH": path, "HOME": str(tmp_path), "NO_COLOR": "1", "PYTHONPATH": str(REPO)},
+        env={
+            "PATH": path,
+            "HOME": str(tmp_path),
+            "NO_COLOR": "1",
+            "PYTHONPATH": str(REPO),
+            **more_env,
+        },
         capture_output=True,
         text=True,
         timeout=300,
@@ -2383,6 +2439,26 @@ def test_tutorial_mcp_setup_block_passes_on_a_runner_with_no_client(tmp_path):
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
+@pytest.mark.control(
+    reason="passes on dev, where the stub claude wrote nothing and mcp-setup took its "
+    "exit 0 as success; guards that the stub now writes the temp HOME's file, never "
+    "the caller's, once mcp-setup reads the file back (#690)"
+)
+def test_tutorial_stub_claude_never_touches_the_callers_claude_config(tmp_path):
+    """A caller with CLAUDE_CONFIG_DIR set (a cloud session) runs the
+    tutorial: its own Claude Code file is neither read nor written."""
+    theirs = tmp_path / "their-claude"
+    theirs.mkdir()
+    config = theirs / ".claude.json"
+    config.write_text('{"numStartups": 3}')
+    before = snapshot(config)
+
+    proc = _tutorial(tmp_path, "```bash\npyrite mcp-setup\n```\n", CLAUDE_CONFIG_DIR=str(theirs))
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert snapshot(config) == before
+
+
 def test_tutorial_reads_back_what_was_asked_of_claude(tmp_path):
     """The tutorial's stub claude records each call, and the runner checks
     every `claude mcp add` it recorded: an absolute command that exists, and
@@ -2398,3 +2474,864 @@ def test_docs_name_no_path_that_no_client_reads(doc):
     text = (REPO / doc).read_text()
 
     assert "~/.claude/claude_desktop_config.json" not in text
+
+
+# -- the report is true of the file (#690) -------------------------------------------
+#
+# Every status and every `by_hand` line is true of the file as last read. The
+# oracle below is the file as this test reads it after the run, and again
+# after running each printed command against the fake `claude`: never a
+# restatement of the branch the command took.
+
+MODULE = REPO / "pyrite" / "cli" / "mcp_setup_command.py"
+ABSENT, UNREADABLE = "no entry", "unreadable"
+#: A `claude` call a person could copy out of a report.
+CLAUDE_COMMAND = re.compile(r"claude mcp (add|remove|get|list)\b")
+RESTORES, POINTS_HERE = "put the previous entry back", "point it at this install"
+
+
+def exits_of(function: str) -> dict[str, tuple[int, int]]:
+    """Every way out of `function` that reports an outcome, read from its
+    source: each `raise` and each `_record(...)` call, nested functions
+    included, as {name: (first line, last line)}. A `_StopError` is named for
+    what it reports (`CODE status`); names are numbered in source order."""
+    tree = ast.parse(MODULE.read_text())
+    func = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == function)
+    found = []
+    for node in ast.walk(func):
+        if isinstance(node, ast.Raise):
+            exc = node.exc
+            if exc is None:
+                label = "re-raise"
+            elif isinstance(exc, ast.Call) and ast.unparse(exc.func) == "_StopError":
+                status = [ast.literal_eval(k.value) for k in exc.keywords if k.arg == "status"]
+                label = f"{ast.literal_eval(exc.args[0])} {(status or ['stopped'])[0]}"
+            else:
+                label = "raise " + ast.unparse(exc.func if isinstance(exc, ast.Call) else exc)
+        elif isinstance(node, ast.Call) and ast.unparse(node.func) == "_record":
+            label = "_record"
+        else:
+            continue
+        found.append((node.lineno, node.end_lineno, label))
+    exits: dict[str, tuple[int, int]] = {}
+    count: dict[str, int] = {}
+    for first, last, label in sorted(found):
+        count[label] = count.get(label, 0) + 1
+        exits[f"{label} #{count[label]}"] = (first, last)
+    return exits
+
+
+@pytest.fixture
+def exit_taken(env, monkeypatch):
+    """Call it after a run: the name (as `exits_of` gives it) of the exit of
+    `_setup_claude_code` (or the function named) the run left by, or
+    `via <function>` when a function it calls stopped the run. Found by where each `_StopError` was built and
+    `_record` was called, so a case cannot claim an exit it did not take."""
+    mod = env.mod
+    hits: list[tuple[str, int, str]] = []
+
+    def here(code: str = "") -> None:
+        frame = sys._getframe(2)
+        hits.append((frame.f_code.co_name, frame.f_lineno, code))
+
+    class Recorded(mod._StopError):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            here(self.error_code)
+
+    real_record = mod._record
+
+    def record(*args, **kwargs):
+        here()
+        return real_record(*args, **kwargs)
+
+    monkeypatch.setattr(mod, "_StopError", Recorded)
+    monkeypatch.setattr(mod, "_record", record)
+
+    def taken(item: dict, function: str = "_setup_claude_code") -> str:
+        exits = exits_of(function)
+        inside = [name for _, line, _ in hits for name, (a, b) in exits.items() if a <= line <= b]
+        if inside:
+            return inside[-1]
+        # Some helpers build a _StopError that a caller swallows; the one that
+        # ended the run is the last with the code the report carries.
+        outside = [name for name, _, code in hits if code == item.get("error_code")]
+        return f"via {outside[-1]}" if outside else "no exit seen"
+
+    return taken
+
+
+def user_scope_entry(config: Path):
+    """The user-scope `pyrite` entry as this test reads Claude Code's file:
+    the entry, ABSENT, or UNREADABLE (what Claude Code would replace)."""
+    try:
+        data = json.loads(config.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return ABSENT
+    except (OSError, ValueError):
+        return UNREADABLE
+    if not isinstance(data, dict) or not isinstance(data.get("mcpServers", {}), dict):
+        return UNREADABLE
+    return data.get("mcpServers", {}).get("pyrite", ABSENT)
+
+
+def shown(entry: dict) -> dict:
+    """How a report shows an entry: env and unknown keys by name only."""
+    out = {"command": entry["command"], "args": entry["args"]}
+    if entry.get("env"):
+        out["env_keys"] = list(entry["env"])
+    other = [k for k in entry if k not in ("command", "args", "env", "type")]
+    if other:
+        out["other_keys"] = other
+    return out
+
+
+def same_entry(a, b) -> bool:
+    """Equal as a client reads them: `"type": "stdio"` and an empty env say nothing."""
+
+    def plain(entry):
+        if not isinstance(entry, dict):
+            return entry
+        return {k: v for k, v in entry.items() if (k, v) not in (("type", "stdio"), ("env", {}))}
+
+    return plain(a) == plain(b)
+
+
+def run_by_hand(env, commands: list[str], old) -> None:
+    """Run each printed command, in order, as a person would once the cause
+    is fixed: the fake `claude`, runnable, with nothing told to fail. An env
+    value the report never prints (`KEY=<its value>`) is filled in from the
+    entry that was there, as the suggestion says to."""
+    fake = install_fake_claude(env)
+    clean = {k: v for k, v in os.environ.items() if not k.startswith("FAKE_CLAUDE_")}
+    for command in commands:
+        argv = shlex.split(command)
+        assert argv[:2] == ["claude", "mcp"], f"not a command: {command}"
+        for i, arg in enumerate(argv):
+            if arg.endswith("=<its value>"):
+                key = arg.removesuffix("=<its value>")
+                argv[i] = f"{key}={old['env'][key]}"
+        proc = subprocess.run(
+            [str(fake), *argv[1:]], env=clean, capture_output=True, text=True, timeout=60
+        )
+        assert proc.returncode == 0, (
+            f"`{command}` fails on the state the report describes: {proc.stderr}"
+        )
+
+
+PLAIN = ('"type": "stdio"', cmd_text(OLD), args_text("mcp", "--tier", "admin"), '"env": {}')
+HERE = ('"type": "stdio"', cmd_text(NEW), args_text("mcp", "--tier", "write"), '"env": {}')
+WITH_ENV = (
+    cmd_text(OLD),
+    args_text("mcp", "--tier", "admin"),
+    '"env": {\n        "OPENAI_API_KEY": "' + SECRET + '"\n      }',
+)
+ANOTHER = {"type": "stdio", "command": "/third/bin/pyrite", "args": ["mcp"], "env": {}}
+ANOTHER_FILE = json.dumps({"mcpServers": {"pyrite": ANOTHER}}, indent=2).encode()
+
+
+@dataclass
+class Case:
+    """One run of `mcp-setup --client claude-code` and what must be true after it."""
+
+    exit: str  # the exit of _setup_claude_code it must leave by (`exits_of`)
+    status: str
+    file: str  # what the file holds afterwards: old | new | other | ABSENT | UNREADABLE
+    seed: object = PLAIN  # the entry's fields; None: no entry; bytes: the whole file
+    args: tuple = ()
+    stub: dict = field(default_factory=dict)  # what the fake `claude` is told
+    by_hand: int = 0  # how many commands the report gives
+    #: (n, bytes): another writer replaces the file just before the n-th read.
+    writer: tuple | None = None
+    probe: bool = False  # run the real start check
+    claude: str = "fake"  # or "no-interpreter": installed, and cannot be run
+    locked: bool = False  # the file's mode is 000 when the command runs
+    #: This exit was true of the file before #690 (safe by reading): the case
+    #: passes on dev, and is here so the exit stays true and stays enumerated.
+    was_true: bool = False
+    calls: list | None = None  # the `claude mcp` verbs the run may make
+    more: str = ""  # members seeded beside the entry
+
+
+S1, S2, S3 = (f"CLIENT_COMMAND_FAILED stopped #{n}" for n in (1, 2, 3))
+F_UNREADABLE, F_OTHER, F_ABSENT = (f"CLIENT_COMMAND_FAILED failed #{n}" for n in (1, 2, 3))
+HAND_EDIT = "CLIENT_ENTRY_NEEDS_HAND_EDIT stopped #1"
+FORCE = ("--force",)
+
+CLAUDE_CODE_CASES = {
+    # Regimes of the existing entry: absent | reproducible | with env | with
+    # unknown keys | a third entry in place; the read-back unreadable;
+    # --force; `claude` that cannot be run, times out, exits 0 without writing.
+    "equal": Case("_record #1", "unchanged", "new", seed=HERE, was_true=True),
+    "env-and-the-path-must-change": Case(HAND_EDIT, "stopped", "old", seed=WITH_ENV, by_hand=2),
+    "env-args-and-unknown-keys": Case(HAND_EDIT, "stopped", "old", seed=CARRIES_EXTRA, by_hand=2),
+    "an-argument-no-command-line-can-carry": Case(
+        HAND_EDIT, "stopped", "old", seed=(cmd_text(OLD), args_text("mcp", "a\\u0000b")), calls=[]
+    ),
+    "entry-moved-before-any-call": Case(
+        "CONFIG_CHANGED stopped #1",
+        "stopped",
+        "other",
+        writer=(2, ANOTHER_FILE),
+        calls=[],
+        was_true=True,
+    ),
+    "absent": Case("_record #2", "created", "new", seed=None, was_true=True),
+    "absent, add-exits-1-having-written": Case(
+        "_record #2", "created", "new", seed=None, stub={"FAKE_CLAUDE_LIE": "add"}, was_true=True
+    ),
+    "absent, add-fails": Case(
+        S1, "stopped", ABSENT, seed=None, stub={"FAKE_CLAUDE_FAIL": "add"}, by_hand=1
+    ),
+    "absent, add-exits-0-without-writing": Case(
+        S1, "stopped", ABSENT, seed=None, stub={"FAKE_CLAUDE_NOOP": "add"}, by_hand=1
+    ),
+    "absent, claude-cannot-be-run": Case(
+        S1, "stopped", ABSENT, seed=None, claude="no-interpreter", by_hand=1
+    ),
+    "absent, add-times-out": Case(
+        S1, "stopped", ABSENT, seed=None, stub={"FAKE_CLAUDE_HANG": "add"}, by_hand=1
+    ),
+    "absent, add-leaves-the-file-unreadable": Case(
+        F_UNREADABLE, "failed", UNREADABLE, seed=None, stub={"FAKE_CLAUDE_CORRUPT": "add"}
+    ),
+    "absent, add-writes-another-entry": Case(
+        F_OTHER, "failed", "other", seed=None, stub={"FAKE_CLAUDE_OTHER": "add"}, calls=["add"]
+    ),
+    "absent, add-writes-another-entry-and-exits-1": Case(
+        F_OTHER,
+        "failed",
+        "other",
+        seed=None,
+        stub={"FAKE_CLAUDE_OTHER": "add", "FAKE_CLAUDE_LIE": "add"},
+    ),
+    "differs": Case("_record #3", "changed", "new", was_true=True),
+    "differs, add-exits-1-having-written": Case(
+        "_record #3", "changed", "new", stub={"FAKE_CLAUDE_LIE": "add"}, was_true=True
+    ),
+    "force-over-env": Case(
+        "_record #3", "changed", "new", seed=CARRIES_EXTRA, args=FORCE, was_true=True
+    ),
+    "remove-fails": Case(S2, "stopped", "old", stub={"FAKE_CLAUDE_FAIL": "remove"}, by_hand=2),
+    "remove-and-add-exit-0-without-writing": Case(
+        S2,
+        "stopped",
+        "old",
+        stub={"FAKE_CLAUDE_NOOP": "remove,add"},
+        by_hand=2,
+        calls=["remove", "add"],
+    ),
+    "force-over-env, remove-fails": Case(
+        S2,
+        "stopped",
+        "old",
+        seed=CARRIES_EXTRA,
+        args=FORCE,
+        stub={"FAKE_CLAUDE_FAIL": "remove"},
+        by_hand=2,
+    ),
+    "add-fails-and-the-entry-is-restored": Case(
+        S3, "stopped", "old", stub={"FAKE_CLAUDE_FAIL": "add#1"}, by_hand=2
+    ),
+    "add-fails-and-so-does-the-restore": Case(
+        F_ABSENT, "failed", ABSENT, stub={"FAKE_CLAUDE_FAIL": "add"}, by_hand=1
+    ),
+    "add-fails-and-the-restore-exits-0-without-writing": Case(
+        F_ABSENT,
+        "failed",
+        ABSENT,
+        stub={"FAKE_CLAUDE_FAIL": "add#1", "FAKE_CLAUDE_NOOP": "add#2"},
+        by_hand=1,
+    ),
+    "add-exits-0-without-writing-after-remove": Case(
+        F_ABSENT,
+        "failed",
+        ABSENT,
+        stub={"FAKE_CLAUDE_NOOP": "add"},
+        by_hand=1,
+        calls=["remove", "add"],  # an exit 0 is not followed by another `claude` call
+    ),
+    "claude-stops-being-runnable-after-remove": Case(
+        F_ABSENT, "failed", ABSENT, stub={"FAKE_CLAUDE_VANISH": "remove"}, by_hand=1
+    ),
+    "force-over-env, add-fails": Case(
+        F_ABSENT,
+        "failed",
+        ABSENT,
+        seed=CARRIES_EXTRA,
+        args=FORCE,
+        stub={"FAKE_CLAUDE_FAIL": "add"},
+        calls=["remove", "add"],
+    ),
+    "add-writes-another-entry-after-remove": Case(
+        F_OTHER,
+        "failed",
+        "other",
+        stub={"FAKE_CLAUDE_OTHER": "add"},
+        by_hand=2,
+        calls=["remove", "add"],
+    ),
+    "add-writes-another-entry-and-exits-1-after-remove": Case(
+        F_OTHER,
+        "failed",
+        "other",
+        stub={"FAKE_CLAUDE_OTHER": "add", "FAKE_CLAUDE_LIE": "add"},
+        by_hand=2,
+        calls=["remove", "add"],
+    ),
+    "force-over-env, add-writes-another-entry": Case(
+        F_OTHER,
+        "failed",
+        "other",
+        seed=CARRIES_EXTRA,
+        args=FORCE,
+        stub={"FAKE_CLAUDE_OTHER": "add"},
+    ),
+    "remove-leaves-the-file-unreadable": Case(
+        F_UNREADABLE,
+        "failed",
+        UNREADABLE,
+        stub={"FAKE_CLAUDE_CORRUPT": "remove"},
+        calls=["remove"],
+    ),
+    "add-leaves-the-file-unreadable": Case(
+        F_UNREADABLE,
+        "failed",
+        UNREADABLE,
+        stub={"FAKE_CLAUDE_CORRUPT": "add"},
+        calls=["remove", "add"],
+    ),
+    "old-trio-beside-it, add-leaves-the-file-unreadable": Case(
+        F_UNREADABLE, "failed", UNREADABLE, stub={"FAKE_CLAUDE_CORRUPT": "add"}, more=OLD_TRIO
+    ),
+    # Exits of the functions it calls: nothing was changed.
+    "file-empty": Case(
+        "via _read_claude_config", "stopped", UNREADABLE, seed=b"", calls=[], was_true=True
+    ),
+    "file-mode-000": Case(
+        "via _read_claude_config", "stopped", UNREADABLE, locked=True, calls=[], was_true=True
+    ),
+    "file-unreadable-at-the-re-read": Case(
+        "via _read_claude_config", "stopped", UNREADABLE, writer=(2, b""), calls=[], was_true=True
+    ),
+    "args-do-not-begin-with-mcp": Case(
+        "via _read_entry", "stopped", "old", seed=OLD_PYTHON_M, was_true=True
+    ),
+    "entry-is-not-a-server": Case(
+        "via _command_and_args", "stopped", "old", seed=('"command": 7',), was_true=True
+    ),
+    "arguments-this-install-rejects": Case(
+        "via _verify_starts",
+        "stopped",
+        "old",
+        seed=(cmd_text(OLD), args_text("mcp", "--tier", "admin", "bogus")),
+        probe=True,
+        calls=[],
+    ),
+}
+
+
+def _break(mod, monkeypatch, name: str, exc: Exception) -> None:
+    def broken(*args, **kwargs):
+        raise exc
+
+    monkeypatch.setattr(mod, name, broken)
+
+
+def _move_the_file_before_the_replace(mod, monkeypatch, path: Path) -> None:
+    real = mod._check_replaceable
+
+    def moved(real_path):
+        real(real_path)
+        path.write_text('{"mcpServers": {}, "another": "writer"}')
+
+    monkeypatch.setattr(mod, "_check_replaceable", moved)
+
+
+#: The exits of `_setup_file` (Desktop, --project, --config), which #690 did
+#: not change: {exit: (the `pyrite` member there before or the whole file,
+#: what to break, status, error code)}. None prints a `claude` command, and a
+#: write is `atomic_write_text`, which raises or has replaced the file.
+FILE_EXITS = {
+    "_record #1": (member(cmd_text(NEW), args_text("mcp", "--tier", "write")), None, "unchanged", None),
+    "CONFIG_INVALID stopped #1": ("", ("_serialize", RecursionError()), "stopped", "CONFIG_INVALID"),
+    "raise _not_preserved #1": ("", ("_serialize", ValueError("inf")), "stopped", "CONFIG_NOT_PRESERVED"),
+    "CONFIG_CHANGED stopped #1": ("", "another writer", "stopped", "CONFIG_CHANGED"),
+    "re-raise #1": ("", ("atomic_write_text", RuntimeError("a bug")), "stopped", "INTERNAL_ERROR"),
+    "CONFIG_WRITE_FAILED stopped #1": ("", ("atomic_write_text", OSError("disk full")), "stopped", "CONFIG_WRITE_FAILED"),
+    "_record #2": ("", None, "created", None),
+}  # fmt: skip
+
+
+@pytest.mark.control(
+    reason="_setup_file is not changed by #690: its exits were already true of the file. "
+    "This is the classification the groom asked for, kept as a test so a new exit of "
+    "_setup_file needs a case too (test_every_exit_of_the_two_setup_functions_has_a_case)"
+)
+@pytest.mark.parametrize("name", FILE_EXITS)
+def test_every_exit_of_setup_file_leaves_the_file_whole_and_names_no_claude_command(
+    env, monkeypatch, exit_taken, name
+):
+    seed, breakage, status, code = FILE_EXITS[name]
+    target = Target(env, "config")
+    if isinstance(seed, bytes):
+        target.path.write_bytes(seed)
+    else:
+        target.seed(seed)
+    before = target.path.read_bytes()
+    if breakage == "another writer":
+        _move_the_file_before_the_replace(env.mod, monkeypatch, target.path)
+    elif breakage:
+        _break(env.mod, monkeypatch, *breakage)
+
+    result = target.run()
+
+    item = only_client(result)
+    assert (item["status"], item.get("error_code")) == (status, code), item
+    # Where the _StopError is built: at the exit, in the helper the exit
+    # raises the result of, or (a bare `raise`) nowhere: the caller's
+    # catch-all reports that one.
+    seen = {"re-raise #1": "no exit seen", "raise _not_preserved #1": "via _not_preserved"}
+    assert exit_taken(item, "_setup_file") == seen.get(name, name)
+    assert not CLAUDE_COMMAND.search(json.dumps(item)), item
+    if status == "created":
+        assert_starts_pyrite_at(target.entry(), "write")
+    elif breakage != "another writer":
+        assert target.path.read_bytes() == before
+
+
+def test_every_exit_of_the_two_setup_functions_has_a_case():
+    """The list of exits is the source's, not this file's: add a `raise` or a
+    `_record` to either function and this fails until a case leaves by it."""
+    covered = {case.exit for case in CLAUDE_CODE_CASES.values() if not case.exit.startswith("via ")}
+
+    assert set(exits_of("_setup_claude_code")) == covered
+    assert set(exits_of("_setup_file")) == set(FILE_EXITS)
+
+
+_WAS_TRUE = pytest.mark.control(
+    reason="passes on dev: this exit of _setup_claude_code was already true of the file "
+    "(classified safe by reading on #690); the case keeps it true and enumerated"
+)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param(name, marks=_WAS_TRUE) if case.was_true else name
+        for name, case in CLAUDE_CODE_CASES.items()
+    ],
+)
+def test_the_report_is_true_of_the_file_and_every_printed_command_works(
+    env, monkeypatch, exit_taken, name
+):
+    """Acceptance 1 and 3 of #690, for every exit of `_setup_claude_code`:
+    the status and the entries the report shows are what the file holds; each
+    `by_hand` command, run in order on that state, leaves the file as the
+    suggestion says; and a file that cannot be read gets no `claude` command."""
+    case = CLAUDE_CODE_CASES[name]
+    target = Target(env, "claude-code")
+    config = target.path
+    if isinstance(case.seed, bytes):
+        config.write_bytes(case.seed)
+    else:
+        target.seed(case.more + (member(*case.seed) if case.seed else ""))
+    if case.claude == "no-interpreter":
+        (env.bin / "claude").write_text("#!/nonexistent/python\n")
+    old = user_scope_entry(config)
+    if case.locked:
+        if os.name != "posix" or os.geteuid() == 0:
+            pytest.skip("needs mode bits to bind")
+        config.chmod(0)
+    for var, value in case.stub.items():
+        monkeypatch.setenv(var, value)
+    if "FAKE_CLAUDE_HANG" in case.stub:
+        monkeypatch.setattr(env.mod, "_SUBPROCESS_TIMEOUT", 8)
+    if case.probe:
+        monkeypatch.setattr(env.mod, "_verify_starts", env.real_verify)
+    if case.writer:
+        nth, content = case.writer
+        real, reads = env.mod._read_claude_config, []
+
+        def read(path):
+            reads.append(path)
+            if len(reads) == nth:
+                config.write_bytes(content)
+            return real(path)
+
+        monkeypatch.setattr(env.mod, "_read_claude_config", read)
+
+    result = target.run(*case.args)
+
+    item = only_client(result)
+    assert exit_taken(item) == case.exit, item
+    assert item["status"] == case.status, item
+    assert result.exit_code == (0 if case.status in ("created", "unchanged", "changed") else 1)
+    assert SECRET not in result.output
+    if case.calls is not None:
+        assert [call[1] for call in claude_calls(env)] == case.calls
+    now = user_scope_entry(config)
+    if case.locked:
+        config.chmod(0o600)
+    as_it_was = same_entry(now, old)
+    if now in (ABSENT, UNREADABLE):
+        state = now
+    else:
+        state = "new" if now.get("command") == NEW else "old" if as_it_was else "other"
+    assert state == case.file, (now, item)
+
+    suggestion = item.get("suggestion", "")
+    by_hand = item.get("by_hand", [])
+    if now is UNREADABLE:
+        # Claude Code replaces a file it cannot read: no command that runs it.
+        said = [suggestion, *by_hand, *item["notes"]]
+        assert not [text for text in said if CLAUDE_COMMAND.search(text)], item
+        assert "by_hand" not in item and "entry" not in item, item
+        return
+    if case.status in ("created", "changed"):
+        assert item["entry"] == shown(now), item
+    elif case.status == "failed":
+        assert not as_it_was, item
+        assert item.get("removed") == (None if old is ABSENT else shown(old)), item
+        assert item.get("entry") == (None if now is ABSENT else shown(now)), item
+    else:  # unchanged, stopped: this run changed nothing
+        assert as_it_was or case.writer, item
+        if "entry" in item:
+            assert item["entry"] == shown(now), item
+
+    assert len(by_hand) == case.by_hand, item
+    restores, points_here = RESTORES in suggestion, POINTS_HERE in suggestion
+    if not by_hand:
+        assert "by_hand" not in item and "by_hand" not in suggestion, item
+        if "to add this install's entry" in suggestion:
+            for var in case.stub:
+                monkeypatch.delenv(var)
+            again = only_client(setup("--client", "claude-code"))
+            assert again["status"] == "created", again
+        return
+    assert "by_hand" in suggestion and restores != points_here, suggestion
+    if "<its value>" in " ".join(by_hand):
+        # Run as printed it would store the placeholder: the report says so.
+        assert "replace each `<its value>`" in suggestion, suggestion
+    run_by_hand(env, by_hand, old)
+    after = user_scope_entry(config)
+    if restores:
+        assert same_entry(after, old), (after, item)
+    elif case.args == FORCE or old is ABSENT:
+        assert same_entry(after, {"command": NEW, "args": ["mcp", "--tier", "write"]}), after
+    else:
+        # The path moved; what the entry carried is there, or the suggestion
+        # names each key `claude mcp add` could not write back.
+        writable = {k: v for k, v in old.items() if k in ("command", "args", "env", "type")}
+        assert same_entry(after, {**writable, "command": NEW}), (after, item)
+        assert all(key in suggestion for key in old if key not in writable), suggestion
+
+
+def test_a_bug_after_a_claude_call_names_no_claude_command(env, monkeypatch):
+    """The catch-all report for one client knows nothing of the file, so it
+    sends the user to the one command that reads it before deciding."""
+    install_fake_claude(env)
+
+    def bug(*args, **kwargs):
+        raise RuntimeError("a bug nobody predicted")
+
+    monkeypatch.setattr(env.mod, "_record", bug)
+
+    result = setup("--client", "claude-code")
+
+    item = only_client(result)
+    assert (item["status"], item["error_code"]) == ("failed", "INTERNAL_ERROR"), item
+    assert not CLAUDE_COMMAND.search(item["suggestion"]), item
+    assert "re-run `pyrite mcp-setup`" in item["suggestion"]
+
+
+def test_the_text_report_prints_each_by_hand_command_and_the_entry_in_the_way(env, monkeypatch):
+    target = _seed_changeable(env)
+    monkeypatch.setenv("FAKE_CLAUDE_OTHER", "add")
+
+    result = target.run("--format", "rich")
+
+    assert result.exit_code == 1, result.output
+    lines = [line.strip() for line in result.output.splitlines()]
+    assert "run: claude mcp remove -s user pyrite" in lines
+    assert f"run: claude mcp add -s user pyrite -- {OLD} mcp --tier admin" in lines
+    assert lines.index("run: claude mcp remove -s user pyrite") < lines.index(
+        f"run: claude mcp add -s user pyrite -- {OLD} mcp --tier admin"
+    )
+    assert any(line.startswith("entry:") and "/third/bin/pyrite" in line for line in lines)
+
+
+# -- the start check: this install's `pyrite mcp`, with its own parser ---------------
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("mcp", "--tier", "admin", "bogus"),
+        ("mcp", "--tier", "nonsense"),
+        ("mcp", "--tier", "admin", "--help"),
+    ],
+    ids=["stray-positional", "invalid-tier", "help-instead-of-a-server"],
+)
+@pytest.mark.parametrize("kind", ["config", "claude-code"])
+def test_an_entry_this_installs_pyrite_mcp_would_not_start_is_not_written(
+    env, monkeypatch, kind, args
+):
+    """Acceptance 2 of #690. `pyrite mcp <args> --help` exits 0 for all three:
+    click prints help before it rejects a leftover argument, and the tier is
+    checked in the command body. A client starting any of them gets no server."""
+    monkeypatch.setattr(env.mod, "_verify_starts", env.real_verify)
+    target = Target(env, kind)
+    target.seed(target.client_written(OLD, *args))
+    before = snapshot(target.path)
+
+    result = target.run()
+
+    assert result.exit_code == 1, result.output
+    item = only_client(result)
+    assert (item["status"], item["error_code"]) == ("stopped", "ENTRY_WOULD_NOT_START"), item
+    assert shlex.join(args) in item["error"] and "--force" in item["suggestion"]
+    assert snapshot(target.path) == before
+    assert claude_calls(env) == []
+
+
+def test_pyrite_mcp_check_reads_its_arguments_and_starts_nothing(started):
+    result = runner.invoke(app, ["mcp", "--tier", "admin", "--check"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.strip() == "pyrite mcp: arguments ok (tier admin)"
+    assert started == []
+
+
+_CLICK_REJECTS = pytest.mark.control(
+    reason="passes on dev, where --check is itself an unknown option (exit 2): click "
+    "rejects these arguments with or without it. Guards that --check does not relax that"
+)
+
+
+@pytest.mark.parametrize(
+    ("args", "code"),
+    [
+        (["--tier", "nonsense"], 1),
+        pytest.param(["--tier", "admin", "bogus"], 2, marks=_CLICK_REJECTS),
+        pytest.param(["--no-such-option"], 2, marks=_CLICK_REJECTS),
+    ],
+)
+def test_pyrite_mcp_check_fails_where_starting_would(started, args, code):
+    result = runner.invoke(app, ["mcp", *args, "--check"])
+
+    assert result.exit_code == code, result.output
+    assert "arguments ok" not in result.output
+    assert started == []
+
+
+@pytest.mark.control(
+    reason="passes on dev, where there is no --check: guards that adding it does not "
+    "add to the documented CLI surface"
+)
+def test_pyrite_mcp_check_is_not_a_documented_option():
+    """It exists for mcp-setup's start check, not as part of the CLI surface.
+    The help is compared as plain text: Rich can put styling between the two
+    dashes, and then a raw `not in` would pass whatever the help said."""
+    from tests.cli_help import plain
+
+    shown = plain(runner.invoke(app, ["mcp", "--help"]).output)
+
+    assert "--tier" in shown, shown
+    assert "--check" not in shown
+
+
+# -- a `pyrite` entry in another Claude Code scope ----------------------------------
+
+LOCAL = {"type": "stdio", "command": OLD, "args": ["mcp", "--tier", "read"], "env": {"K": SECRET}}
+AS_ADDED = {"type": "stdio", "command": NEW, "args": ["mcp", "--tier", "write"], "env": {}}
+
+
+def seed_claude_json(env, **keys) -> Path:
+    """`~/.claude.json` in the client's style, holding `keys` and startup state."""
+    config = env.home / ".claude.json"
+    data = {"numStartups": 7, **keys}
+    config.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    return config
+
+
+@pytest.mark.parametrize("where", ["this-directory", "another-directory"])
+def test_a_local_scope_entry_that_differs_is_named_and_never_changed(env, where):
+    """Acceptance 4 of #690. A bare `claude mcp add` (the README's wording
+    until this change) writes `projects[<dir>].mcpServers`, Claude Code's
+    local scope, and in that directory it wins over the user-scope entry
+    (`test_real_claude_code_prefers_the_local_scope_entry`). The run still
+    says `created`, which is true of the user scope; the report now says what
+    that project will start instead."""
+    install_fake_claude(env)
+    directory = os.path.realpath(env.work) if where == "this-directory" else "/srv/elsewhere"
+    projects = {directory: {"allowedTools": [], "mcpServers": {"pyrite": LOCAL}}}
+    config = seed_claude_json(env, projects=projects)
+
+    result = setup("--client", "claude-code")
+
+    assert result.exit_code == 0, result.output
+    item = only_client(result)
+    assert item["status"] == "created", item
+    assert item["other_scopes"] == [
+        {
+            "scope": "local",
+            "directory": directory,
+            "entry": {"command": OLD, "args": ["mcp", "--tier", "read"], "env_keys": ["K"]},
+        }
+    ]
+    (note,) = [n for n in item["notes"] if "local scope" in n]
+    assert directory in note and "takes precedence" in note and OLD in note
+    assert ("this directory" in note) == (where == "this-directory")
+    assert SECRET not in result.output
+    assert json.loads(config.read_text())["projects"] == projects
+    assert [call[:4] for call in claude_calls(env)] == [["mcp", "add", "-s", "user"]]
+
+
+@pytest.mark.control(
+    reason="passes on dev, which reports no other scope at all: guards that the new notes "
+    "appear only for an entry that differs as a client reads it, and that no shape of "
+    '"projects" breaks the run'
+)
+@pytest.mark.parametrize(
+    "keys",
+    [
+        {},
+        {"projects": {}},
+        {"projects": {"/srv/a": {"allowedTools": []}}},
+        {"projects": {"/srv/a": {"mcpServers": {"filesystem": {"command": "npx"}}}}},
+        {"projects": {"/srv/a": {"mcpServers": {"pyrite": AS_ADDED}}}},
+        {"projects": {"/srv/a": {"mcpServers": {"pyrite": {"command": NEW, "args": AS_ADDED["args"]}}}}},
+        {"projects": []},
+        {"projects": {"/srv/a": None, "/srv/b": {"mcpServers": []}}},
+    ],
+    ids=[
+        "no-projects-key", "no-projects", "project-without-servers", "another-server-only",
+        "an-equal-entry", "equal-as-a-client-reads-it", "projects-not-an-object", "odd-shapes",
+    ],
+)  # fmt: skip
+def test_no_other_scope_is_reported_when_none_differs(env, keys):
+    install_fake_claude(env)
+    seed_claude_json(env, **keys)
+
+    result = setup("--client", "claude-code")
+
+    assert result.exit_code == 0, result.output
+    item = only_client(result)
+    assert item["status"] == "created" and "other_scopes" not in item, item
+    assert item["notes"] == []
+
+
+def test_a_differing_entry_in_this_directorys_mcp_json_is_named(env):
+    """`./.mcp.json` is Claude Code's project scope. It is read, never
+    written, when the user scope is the target; one that is not valid JSON is
+    not this run's business."""
+    install_fake_claude(env)
+    seed_claude_json(env, mcpServers={"pyrite": AS_ADDED})
+    project = env.work / ".mcp.json"
+    project.write_text('{"mcpServers": {"pyrite": {"command": "pyrite", "args": ["mcp"]}}}')
+    before = snapshot(project)
+
+    result = setup("--client", "claude-code")
+
+    assert result.exit_code == 0, result.output
+    item = only_client(result)
+    assert item["status"] == "unchanged", item
+    assert item["other_scopes"] == [
+        {
+            "scope": "project",
+            "location": str(project),
+            "entry": {"command": "pyrite", "args": ["mcp"]},
+        }
+    ]
+    (note,) = item["notes"]
+    assert str(project) in note and "may take precedence" in note and "--project" in note
+    assert snapshot(project) == before
+
+    project.write_text("{ not json")
+    again = only_client(setup("--client", "claude-code"))
+    assert again["status"] == "unchanged" and "other_scopes" not in again, again
+
+
+def test_other_scopes_are_compared_with_the_entry_the_file_holds_at_the_end(env, monkeypatch):
+    """A local-scope entry equal to the old user-scope entry differs once the
+    user scope is changed, and one equal to the new entry does not."""
+    install_fake_claude(env)
+    was = {"type": "stdio", "command": OLD, "args": ["mcp", "--tier", "write"], "env": {}}
+    projects = {
+        "/srv/a": {"mcpServers": {"pyrite": was}},
+        "/srv/b": {"mcpServers": {"pyrite": AS_ADDED}},
+    }
+    seed_claude_json(env, mcpServers={"pyrite": was}, projects=projects)
+
+    item = only_client(setup("--client", "claude-code"))
+
+    assert item["status"] == "changed", item
+    assert [other["directory"] for other in item["other_scopes"]] == ["/srv/a"]
+
+
+@pytest.mark.skipif(REAL_CLAUDE is None, reason="Claude Code is not installed")
+@pytest.mark.control(
+    reason="a fact about Claude Code, not about Pyrite: it holds on any branch. It is "
+    "what lets the note say a local-scope entry takes precedence"
+)
+def test_real_claude_code_prefers_the_local_scope_entry(env):
+    """Observed with Claude Code 2.1.296 in a temp HOME: `claude mcp get`
+    reports the entry under `projects[<cwd>].mcpServers` in that directory,
+    and the user-scope entry elsewhere. An unapproved `./.mcp.json` entry did
+    not displace the user-scope one, so that note says only "may"."""
+    user = {"type": "stdio", "command": "/usr/bin/true", "args": ["USER-SCOPE"], "env": {}}
+    local = {"type": "stdio", "command": "/usr/bin/true", "args": ["LOCAL-SCOPE"], "env": {}}
+    here = os.path.realpath(env.work)
+    seed_claude_json(
+        env, mcpServers={"pyrite": user}, projects={here: {"mcpServers": {"pyrite": local}}}
+    )
+    elsewhere = env.tmp / "elsewhere-project"
+    elsewhere.mkdir()
+
+    def get(cwd) -> str:
+        return subprocess.run(
+            [REAL_CLAUDE, "mcp", "get", "pyrite"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        ).stdout
+
+    assert "LOCAL-SCOPE" in get(here) and "USER-SCOPE" not in get(here)
+    assert "USER-SCOPE" in get(elsewhere)
+
+
+# -- docs/getting-started.md shows a failed report -----------------------------------
+
+GETTING_STARTED = REPO / "docs" / "getting-started.md"
+
+
+def test_the_failed_report_in_getting_started_is_what_a_failed_run_prints(env, monkeypatch):
+    """Acceptance 5 of #690. The page shows what a `failed` client looks like;
+    this is that run, with the page's stand-ins for this machine's paths and
+    for `claude`'s own words. Following the page (run `by_hand`) puts the
+    previous entry back."""
+    text = GETTING_STARTED.read_text()
+    marker = "<!-- mcp-setup: a failed client -->\n```json\n"
+    assert marker in text, "the failed-report example is missing from getting-started.md"
+    documented = json.loads(text.split(marker, 1)[1].split("\n```", 1)[0])
+    install_fake_claude(env)
+    config = seed_claude_json(env, mcpServers={"pyrite": OLD_ENTRY})
+    monkeypatch.setenv("FAKE_CLAUDE_FAIL", "add")
+
+    result = setup("--client", "claude-code")
+
+    item = only_client(result)
+    printed = json.dumps(item)
+    for real, stand_in in (
+        (NEW, "/home/you/.venv/bin/pyrite"),
+        (str(env.home), "/home/you"),
+        ("fake claude: E_REFUSED add", "<what claude printed>"),
+    ):
+        printed = printed.replace(real, stand_in)
+    assert json.loads(printed) == documented
+    assert user_scope_entry(config) is ABSENT
+    run_by_hand(env, item["by_hand"], OLD_ENTRY)
+    assert user_scope_entry(config) == OLD_ENTRY
+    assert "`claude` is never run on a `~/.claude.json` it cannot read" in text
