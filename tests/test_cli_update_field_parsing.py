@@ -16,6 +16,7 @@ from pyrite.cli import app
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.storage.database import PyriteDB
 from pyrite.utils.yaml import load_yaml
+from pyrite.utils.frontmatter import split_frontmatter, Frontmatter
 
 runner = CliRunner()
 
@@ -93,6 +94,59 @@ def test_update_field_matches_the_dedicated_tags_flag(tmp_path):
 
     payload = _json_payload(_invoke(config, ["get", entry_id, "-k", "notes", "--format", "json"]))
     assert payload["tags"] == ["alpha", "beta"], payload
+
+
+def test_cli_update_tags_preserves_a_body_that_starts_like_frontmatter(tmp_path):
+    config, kb_path = _make_env(tmp_path)
+    result = _invoke(
+        config,
+        [
+            "create",
+            "-k",
+            "notes",
+            "-t",
+            "note",
+            "--title",
+            "Probe",
+            "-b",
+            "title: this line is body text\nsecond line",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    path = next(kb_path.rglob("*.md"))
+    before = path.read_bytes()
+    entry_id = path.stem
+
+    result = _invoke(config, ["update", entry_id, "-k", "notes", "--tags", "x"])
+    assert result.exit_code == 0, result.output
+    after = path.read_bytes()
+    assert isinstance(split_frontmatter(after.decode()), Frontmatter)
+    assert split_frontmatter(after.decode()).body == split_frontmatter(before.decode()).body
+
+
+def test_index_sync_then_get_preserves_a_single_frontmatter_looking_body_line(tmp_path):
+    config, kb_path = _make_env(tmp_path)
+    result = _invoke(
+        config,
+        [
+            "create",
+            "-k",
+            "notes",
+            "-t",
+            "note",
+            "--title",
+            "Probe",
+            "-b",
+            "title: this line is body text",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    path = next(kb_path.rglob("*.md"))
+    entry_id = path.stem
+    result = _invoke(config, ["index", "sync", "-k", "notes"])
+    assert result.exit_code == 0, result.output
+    payload = _json_payload(_invoke(config, ["get", entry_id, "-k", "notes", "--format", "json"]))
+    assert payload["body"] == "title: this line is body text"
 
 
 def test_update_field_still_parses_scalars_and_json(tmp_path):

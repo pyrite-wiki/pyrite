@@ -906,6 +906,7 @@ class QAService:
         from pathlib import Path
 
         from ..storage.repository import KBRepository
+        from ..utils.frontmatter import leaked_frontmatter_line
 
         sources: dict[str, dict[str, Any]] = {}
         kb_config = self.config.get_kb(kb_name)
@@ -933,6 +934,23 @@ class QAService:
             self._check_reserved_key_collisions(issues, kb_name, entry, shown)
             self._check_task_priority(issues, kb_name, entry, shown)
             if entry._source_frontmatter is not None:
+                leaked = leaked_frontmatter_line(entry._source_frontmatter, entry.body or "")
+                if leaked is not None:
+                    key, value = leaked
+                    issues.append(
+                        {
+                            "entry_id": entry.id,
+                            "kb_name": kb_name,
+                            "rule": "frontmatter_line_in_body",
+                            "severity": "warning",
+                            "field": key,
+                            "message": (
+                                f"Entry '{entry.id}' body starts with '{key}: {value}', "
+                                "which repeats a frontmatter field; inspect the file "
+                                "for a migrated frontmatter leak."
+                            ),
+                        }
+                    )
                 sources[entry.id] = entry._source_frontmatter
         return sources
 

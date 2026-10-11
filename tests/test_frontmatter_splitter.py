@@ -162,6 +162,16 @@ def test_no_frontmatter_is_typed(case):
 
 def test_load_frontmatter():
     assert _mod().load_frontmatter("---\ntype: note\n---\nhi\n") == ({"type": "note"}, "hi")
+
+
+def test_leaked_frontmatter_line_is_reported_without_repairing_body():
+    from pyrite.utils.frontmatter import leaked_frontmatter_line
+
+    assert leaked_frontmatter_line({"type": "timeline_event"}, "type: timeline_event\n") == (
+        "type",
+        "timeline_event",
+    )
+    assert leaked_frontmatter_line({"title": "Probe"}, "title: body text\n") is None
     assert _mod().load_frontmatter("---\n---\nbody") == ({}, "body")
     assert _mod().load_frontmatter("plain") is None
     with pytest.raises(FrontmatterError):  # YAML that is not a mapping

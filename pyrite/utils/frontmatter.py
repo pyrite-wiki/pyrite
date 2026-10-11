@@ -59,6 +59,8 @@ from typing import Any
 
 from ..exceptions import FrontmatterError
 
+_BODY_FIELD_LINE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):[ \t]*(.*?)\s*$")
+
 _BOM = "﻿"
 _LEADING = re.compile(r"(?:[ \t\r]*\n)*")
 # What may follow `---` on a delimiter line: blanks, or blanks and a comment.
@@ -193,3 +195,28 @@ def load_frontmatter(text: str) -> tuple[dict[str, Any], str] | None:
     if not isinstance(split, Frontmatter):
         return None
     return load_yaml(split.text), split.body
+
+
+def leaked_frontmatter_line(frontmatter: dict[str, Any], body: str) -> tuple[str, Any] | None:
+    """Return a body line that repeats one exact scalar frontmatter field.
+
+    A migration can leave the first frontmatter field rendered as prose.  The
+    line is valid body text and must be preserved; this helper only detects and
+    reports the shape, so callers can surface it without repairing the file.
+    """
+    from .yaml import load_yaml
+
+    first = body.splitlines()[0] if body else ""
+    match = _BODY_FIELD_LINE.match(first)
+    if not match:
+        return None
+    key, raw_value = match.groups()
+    if key not in frontmatter or not isinstance(frontmatter[key], (str, int, float, bool)):
+        return None
+    try:
+        parsed = load_yaml(f"{key}: {raw_value}\n")[key]
+    except Exception:
+        return None
+    if parsed == frontmatter[key]:
+        return key, parsed
+    return None
