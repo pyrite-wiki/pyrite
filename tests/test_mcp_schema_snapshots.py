@@ -29,6 +29,8 @@ PLUGINS = {
 
 def schema_registry(profile):
     registry = PluginRegistry()
+    # Explicit profiles must not lazily discover installed entry points.
+    registry._discovered = True
     if profile == "in-tree":
         for module, cls in PLUGINS.items():
             registry.register(getattr(pytest.importorskip(module), cls)())
