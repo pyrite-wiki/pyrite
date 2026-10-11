@@ -22,6 +22,38 @@
       "status": 500
     }
   },
+  "AmbiguousEntryError": {
+    "cli": {
+      "error": "Entry 'characterization-entry' exists in multiple KBs: kb-a, kb-b",
+      "error_code": "ERROR",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "Entry 'characterization-entry' exists in multiple KBs: kb-a, kb-b",
+      "error_code": "AMBIGUOUS",
+      "retryable": false,
+      "suggestion": "Name one of these KBs explicitly.",
+      "candidate_kbs": [
+        "kb-a",
+        "kb-b"
+      ]
+    },
+    "rest": {
+      "status": 409,
+      "body": {
+        "detail": {
+          "code": "AMBIGUOUS",
+          "message": "Entry 'characterization-entry' exists in multiple KBs: kb-a, kb-b",
+          "retryable": false,
+          "hint": "Name one of these KBs explicitly.",
+          "candidate_kbs": [
+            "kb-a",
+            "kb-b"
+          ]
+        }
+      }
+    }
+  },
   "BrandingInvalidError": {
     "cli": {
       "error": "The server's branding configuration is invalid and could not be loaded. An administrator needs to fix branding.yaml; the server log names the file and the problem.",
