@@ -118,6 +118,22 @@ class TestValidateCleanKB:
             i["severity"] == "warning" for i in body_issues if i["entry_id"] == "empty-body-entry"
         )
 
+    def test_validate_reports_a_body_line_leaking_frontmatter(self, qa_setup):
+        path = qa_setup["events_kb"].path / "events" / "leaked.md"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(
+            "---\nid: leaked\ntype: event\ndate: '2025-02-01'\ntitle: Leaked\n"
+            "importance: 5\nstatus: confirmed\n---\ntype: event\n",
+            encoding="utf-8",
+        )
+        qa_setup["index_mgr"].index_kb("test-events")
+
+        issues = qa_setup["qa"].validate_kb("test-events", readable_kbs=UNSCOPED)["issues"]
+        leak = [i for i in issues if i["rule"] == "frontmatter_line_in_body"]
+        assert len(leak) == 1
+        assert leak[0]["entry_id"] == "leaked"
+        assert leak[0]["field"] == "type"
+
     def test_validate_skips_body_check_for_collections(self, qa_setup):
         """Collections exempt from empty body check."""
         db = qa_setup["db"]
