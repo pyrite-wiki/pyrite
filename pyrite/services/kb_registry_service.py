@@ -512,6 +512,10 @@ class KBRegistryService:
 
         entry_count = kb.entry_count or 0
         healthy = path_exists and abs(file_count - entry_count) <= max(1, entry_count * 0.1)
+        from ..storage.index import IndexManager
+
+        cfg = self.get_kb_config(name)
+        drift = IndexManager(self.db, self.config)._type_name_drift([cfg] if cfg else [])
 
         return {
             "name": name,
@@ -522,6 +526,7 @@ class KBRegistryService:
             "entry_count": entry_count,
             "last_indexed": kb.last_indexed,
             "source": kb.source or "user",
+            **drift,
         }
 
     def get_kb_config(self, name: str) -> KBConfig | None:

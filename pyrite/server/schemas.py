@@ -50,6 +50,9 @@ class KBHealthResponse(BaseModel):
     entry_count: int
     last_indexed: str | None = None
     source: str = "user"
+    type_name_drift: list[dict[str, Any]] = Field(default_factory=list)
+    type_name_drift_total: int = 0
+    type_name_drift_has_more: bool = False
 
 
 class KBReindexResponse(BaseModel):

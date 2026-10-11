@@ -532,6 +532,10 @@ def kb_health(
         console.print(f"  Files: {result['file_count']}, Indexed entries: {result['entry_count']}")
         console.print(f"  Last indexed: {result['last_indexed'] or 'never'}")
         console.print(f"  Source: {result['source']}")
+        if result.get("type_name_drift_total"):
+            console.print(
+                f"  [yellow]Type name drift: {result['type_name_drift_total']} group(s); use --format json for spellings[/yellow]"
+            )
 
 
 @kb_app.command("commit")

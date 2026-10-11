@@ -1304,6 +1304,8 @@ class IndexManager:
                         {"kb": kb.name, "type": etype, "count": row["cnt"]}
                     )
 
+        health.update(self._type_name_drift(kbs))
+
         # Required-field + subdirectory checks. Per KB with a kb.yaml,
         # compare each entry against its type's `required:` list (default
         # ["title"]) and its `subdirectory:` hint. Skip KBs with no kb.yaml.
@@ -1385,6 +1387,46 @@ class IndexManager:
                 self._check_off_list_values(kb, health, file_values, validators_for(kb))
 
         return health
+
+    def _type_name_drift(self, kbs: Iterable[KBConfig]) -> dict[str, Any]:
+        """Report exact case/underscore/space variants, independently per KB.
+
+        Only the derived index is read; this does not normalize stored types.
+        JSON is bounded to 100 groups and 50 spellings per group, with totals.
+        """
+        groups = []
+        for kb in sorted(kbs, key=lambda item: item.name):
+            declared = kb.kb_schema.declared_types() if kb.kb_yaml_path.exists() else set()
+            by_name: dict[str, list[dict[str, Any]]] = {}
+            rows = self.db.execute_sql(
+                "SELECT entry_type, COUNT(*) AS cnt FROM entry "
+                "WHERE kb_name = :kb_name GROUP BY entry_type ORDER BY entry_type",
+                {"kb_name": kb.name},
+            )
+            for row in rows:
+                spelling = row["entry_type"]
+                if not spelling:
+                    continue
+                normalized = spelling.lower().replace("_", "-").replace(" ", "-")
+                by_name.setdefault(normalized, []).append(
+                    {"type": spelling, "count": row["cnt"], "declared": spelling in declared}
+                )
+            for normalized, spellings in sorted(by_name.items()):
+                if len(spellings) > 1:
+                    groups.append(
+                        {
+                            "kb": kb.name,
+                            "normalized": normalized,
+                            "spellings": spellings[:50],
+                            "spellings_total": len(spellings),
+                            "spellings_has_more": len(spellings) > 50,
+                        }
+                    )
+        return {
+            "type_name_drift": groups[:100],
+            "type_name_drift_total": len(groups),
+            "type_name_drift_has_more": len(groups) > 100,
+        }
 
     #: Index columns that are never an enum-constrained field value.
     _NOT_FIELD_COLUMNS = frozenset(

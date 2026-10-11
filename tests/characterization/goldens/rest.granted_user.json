@@ -2612,7 +2612,10 @@
       "name": "private-kb",
       "path": "<TMPDIR>/private-kb",
       "path_exists": true,
-      "source": "config"
+      "source": "config",
+      "type_name_drift": [],
+      "type_name_drift_has_more": false,
+      "type_name_drift_total": 0
     },
     "status": 200
   },
@@ -2625,7 +2628,10 @@
       "name": "readable-kb",
       "path": "<TMPDIR>/readable-kb",
       "path_exists": true,
-      "source": "config"
+      "source": "config",
+      "type_name_drift": [],
+      "type_name_drift_has_more": false,
+      "type_name_drift_total": 0
     },
     "status": 200
   },
