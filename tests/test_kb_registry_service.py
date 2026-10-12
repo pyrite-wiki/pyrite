@@ -31,6 +31,11 @@ def config_with_kb(tmp_path, tmp_kb_path):
     kb = KBConfig(name="test-kb", path=tmp_kb_path, kb_type="research", description="Test KB")
     config.knowledge_bases = [kb]
     config.get_kb.side_effect = lambda name: kb if name == "test-kb" else None
+    # DB-only KBs must resolve to real scalar fields, not a MagicMock that
+    # can accidentally reach SQL bindings when health queries their types.
+    config.kb_config_from_registry_row.side_effect = PyriteConfig(
+        settings=config.settings
+    ).kb_config_from_registry_row
     return config
 
 
@@ -260,6 +265,7 @@ class TestHealthKB:
         result = registry.health_kb("missing-kb")
         assert result["path_exists"] is False
         assert result["healthy"] is False
+        assert result["type_name_drift"] == []
 
     def test_health_missing_kb_raises(self, registry):
         """health_kb on a missing KB raises KBNotFoundError."""
