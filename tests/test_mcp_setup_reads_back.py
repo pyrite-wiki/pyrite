@@ -2856,7 +2856,12 @@ CLAUDE_CODE_CASES = {
         calls=["remove", "add"],
     ),
     "force-over-a-string-entry": Case(
-        "_record #3", "changed", "new", seed=NOT_AN_OBJECT["a string"], args=FORCE
+        "_record #3",
+        "changed",
+        "new",
+        seed=NOT_AN_OBJECT["a string"],
+        args=FORCE,
+        was_true=True,
     ),
     # The NUL is in the part this run replaces (the command), so nothing it
     # keeps is lost: not a hand edit. (A NUL in a kept argument still is.)
@@ -2866,6 +2871,7 @@ CLAUDE_CODE_CASES = {
         "new",
         seed=('"command": "/old/\\u0000bin/pyrite"', args_text("mcp", "--tier", "admin")),
         calls=["remove", "add"],
+        was_true=True,  # a plain change on dev; this branch's first commit refused it
     ),
     # Another writer put the new entry there while the restore ran: the
     # report says what the last read saw, not "another entry".
@@ -3510,6 +3516,10 @@ def test_a_bug_anywhere_after_a_client_changed_still_prints_every_clients_report
         assert "created" in result.stdout, result.output
 
 
+@pytest.mark.control(
+    reason="a guard on the plants: it passes wherever each call is made, with or without "
+    "the fix; the plants themselves are the red tests"
+)
 def test_every_plant_is_reached_in_at_least_one_format(env, monkeypatch):
     """The parametrized test above skips a point the format never calls; this
     one fails if a point is never called in either, so none is vacuous."""
