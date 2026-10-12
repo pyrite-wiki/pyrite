@@ -1538,6 +1538,15 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "safe",
         "an absent file reads as empty",
     ),
+    ("pyrite/cli/mcp_setup_command.py", "_note_rest_of_claude_config"): (
+        "safe",
+        "a deleted current directory only drops the project-scope note; the client's change "
+        "and its status are already settled (#690)",
+    ),
+    ("pyrite/cli/mcp_setup_command.py", "_real"): (
+        "safe",
+        "a path that cannot be resolved is not the current directory; it only words a note",
+    ),
     ("pyrite/cli/mcp_setup_command.py", "_runs"): (
         "safe",
         "wording of a note about another scope's entry",
