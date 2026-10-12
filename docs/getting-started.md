@@ -212,17 +212,21 @@ default one. The report names what was discarded.
 
 | `status` | What it means |
 |---|---|
-| `created`, `changed` | The entry is there. For Claude Code, the command read `~/.claude.json` again after `claude mcp` ran and saw it; an exit code alone is not taken as success. |
+| `created`, `changed` | The entry is there. For Claude Code, the command read `~/.claude.json` again after `claude mcp` ran and saw it; an exit code alone is not taken as success. For a file Pyrite writes itself (Claude Desktop, `--project`, `--config`) it replaced the file in one step and did not read it back. |
 | `unchanged` | The entry already pointed here. Nothing was written. |
 | `stopped` | Nothing in that client was changed. `error_code`, `error` and `suggestion` say why. |
-| `failed` | Claude Code only: `claude mcp` was run, and the entry is neither as it was nor as you asked. |
+| `failed` | Claude Code only: `claude mcp` was run, and the file as last read does not hold the entry as it was or as you asked (or, for `INTERNAL_ERROR`, a bug followed a call and the file was not read again). |
 
 A `stopped` or `failed` client may carry `by_hand`: commands to run yourself,
 all of them, in order. `suggestion` says what they do. They are built from
 what the file held when it was last read, so each one works on the state the
-report describes. `removed` is the entry a `failed` run took out. `entry` is
-the entry the file holds now, when that is neither the old one nor the new
-one. A `failed` client looks like this:
+report describes. `removed` is the entry a `failed` run took out of an
+existing entry's place (a `failed` client with `INTERNAL_ERROR` has none).
+`entry` is the entry as the file holds it: on `created`, `changed` and
+`unchanged` the entry that is there, on a `stopped` client that needs a hand
+edit the entry that is there, and on a `failed` client the other entry in the
+way, when it is neither the old one nor the new one. A `failed` client looks
+like this:
 
 <!-- mcp-setup: a failed client -->
 ```json
@@ -235,7 +239,7 @@ one. A `failed` client looks like this:
   "status": "failed",
   "error_code": "CLIENT_COMMAND_FAILED",
   "error": "`claude mcp add` failed: <what claude printed>; restoring the previous entry also failed: <what claude printed>. The previous 'pyrite' entry is not back; `removed` is what it held",
-  "suggestion": "to put the previous entry back, run the command in by_hand; or re-run `pyrite mcp-setup` to add this install's entry",
+  "suggestion": "to put the previous entry back, run the command in by_hand; or re-run `pyrite mcp-setup` to add this install's entry (the write tier and no extra arguments, not what the previous entry held)",
   "removed": {
     "command": "/old/venv/bin/pyrite",
     "args": ["mcp", "--tier", "admin"]

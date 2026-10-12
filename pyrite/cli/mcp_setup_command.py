@@ -89,6 +89,8 @@ _UNKNOWN = object()  # Claude Code's file could not be read back
 _JSON_WHITESPACE = " \t\r\n"
 _REMOVE = f"claude mcp remove -s user {SERVER_NAME}"
 _RERUN = "re-run `pyrite mcp-setup`"
+#: What a re-run writes when no entry is there: not what the entry held.
+_AS_NEW = "the write tier and no extra arguments, not what the previous entry held"
 #: What `pyrite mcp <args> --check` prints when a client could start those
 #: arguments. `_verify_starts` requires it: exit 0 alone is also what
 #: `--help` among an entry's arguments gives.
@@ -801,6 +803,15 @@ def _runs(entry: Any) -> str:
     return f"runs `{shlex.join([command, *args])}`"
 
 
+def _real(path: Any) -> str | None:
+    """`os.path.realpath`, or None for a path that cannot be resolved (a NUL
+    byte is a ValueError)."""
+    try:
+        return os.path.realpath(path)
+    except (OSError, ValueError):
+        return None
+
+
 def _note_rest_of_claude_config(item: dict, data: dict) -> None:
     """What else Claude Code's file, as last read, holds that bears on the
     user-scope entry: the stale trio, and a `pyrite` entry in another scope
@@ -827,7 +838,11 @@ def _note_rest_of_claude_config(item: dict, data: dict) -> None:
     if mine is _ABSENT:
         return
     others = []
-    here = os.path.realpath(Path.cwd())
+    try:
+        cwd: Path | None = Path.cwd()
+    except OSError:  # the directory was deleted under this process
+        cwd = None
+    here = _real(cwd) if cwd is not None else None
     projects = data.get("projects")
     for directory, project in projects.items() if isinstance(projects, dict) else ():
         local = project.get("mcpServers") if isinstance(project, dict) else None
@@ -838,7 +853,9 @@ def _note_rest_of_claude_config(item: dict, data: dict) -> None:
             continue
         others.append({"scope": "local", "directory": directory, "entry": _public(entry)})
         where = (
-            f"this directory ({directory})" if os.path.realpath(directory) == here else directory
+            f"this directory ({directory})"
+            if here is not None and _real(directory) == here
+            else directory
         )
         item["notes"].append(
             f"Claude Code also has a {SERVER_NAME!r} entry in its local scope for {where}, "
@@ -848,7 +865,11 @@ def _note_rest_of_claude_config(item: dict, data: dict) -> None:
             f"mcp-setup never changes another scope; `claude mcp get {SERVER_NAME}`, run in "
             "that directory, shows the entry in use and how to remove it."
         )
-    project_file = Path.cwd() / ".mcp.json"
+    if cwd is None:
+        if others:
+            item["other_scopes"] = others
+        return
+    project_file = cwd / ".mcp.json"
     entry: Any = _ABSENT
     with contextlib.suppress(OSError, ValueError, RecursionError):
         in_project = json.loads(project_file.read_bytes().decode("utf-8-sig"))
@@ -900,7 +921,10 @@ def _setup_claude_code(
         "to point it at this install",
         "by_hand": [_REMOVE, manual],
     }
-    if existing is not _ABSENT and not force and not _add_reproduces(existing):
+    # What `claude mcp add` must write is `wanted`, not `existing`: a NUL in the
+    # command this run replaces is gone from `wanted`; one in a kept argument,
+    # env or another key is not, and `plan.kept` names it.
+    if existing is not _ABSENT and not force and not _add_reproduces(wanted):
         env = existing.get("env")
         other = [k for k in _normal(existing) if k not in ("command", "args", "env")]
         if env is not None and not isinstance(env, dict):
@@ -976,7 +1000,9 @@ def _setup_claude_code(
             return _UNKNOWN
 
     def is_entry(now: Any, entry: Any) -> bool:
-        return isinstance(now, dict) and _normal(now) == _normal(entry)
+        """Whether the file holds `entry`. An entry that is a string or null
+        is an entry too (`--force` replaces one), unlike no entry or no read."""
+        return now is not _ABSENT and now is not _UNKNOWN and _normal(now) == _normal(entry)
 
     def unseen(calls: str) -> str:
         """An exit 0 the file does not bear out. `claude` is not called again
@@ -1033,12 +1059,12 @@ def _setup_claude_code(
                 **back,
             )
         back = {}
-        hint = f"{_RERUN} to add this install's entry{lost}"
+        hint = f"{_RERUN} to add this install's entry ({_AS_NEW}){lost}"
         if restorable:
             back = {"by_hand": [_add_command(existing)]}
             hint = (
                 "to put the previous entry back, run the command in by_hand; "
-                f"or {_RERUN} to add this install's entry"
+                f"or {_RERUN} to add this install's entry ({_AS_NEW})"
             )
         raise _StopError(
             "CLIENT_COMMAND_FAILED",
@@ -1105,6 +1131,10 @@ def _setup_claude_code(
                     f"{failure}; the previous {SERVER_NAME!r} entry was restored",
                     **replace,
                 )
+            if is_entry(now, wanted):
+                # Something else wrote the new entry while the restore ran.
+                item["notes"].append(f"{failure}, but {config} holds the new entry.")
+                return
             if restored:
                 detail = "`claude mcp add` exited 0, but the entry is not there"
             failure += f"; restoring the previous entry also failed: {detail}"
@@ -1193,10 +1223,8 @@ def _print_report(out: Console, report: dict) -> None:
         out.print(Text(text))
 
     new = report["new_entry"]
-    line(
-        f"A new entry runs: {shlex.join(new['command'])} "
-        f"({new['tools']} tools at the {new['tier']} tier)"
-    )
+    served = f"{new['tools']} tools at the " if new["tools"] is not None else ""
+    line(f"A new entry runs: {shlex.join(new['command'])} ({served}{new['tier']} tier)")
     for item in report["clients"]:
         code = f" [{item['error_code']}]" if "error_code" in item else ""
         serves = ""
@@ -1469,19 +1497,40 @@ def mcp_setup(
         item.pop("_called", None)
         seen = item.pop("_seen", None)
         if seen is not None:
-            _note_rest_of_claude_config(item, seen)
+            # The client is already changed (or stopped) and its status is what
+            # a read saw; a bug in the notes must not end the command before
+            # its report is printed (#690). Notes added before the bug stay:
+            # each was true when it was added.
+            try:
+                _note_rest_of_claude_config(item, seen)
+            except Exception as exc:  # noqa: BLE001
+                item["notes"].append(
+                    "The rest of Claude Code's config was not checked for a 'pyrite' entry "
+                    f"in another scope ({type(exc).__name__}: {exc}); please report this at "
+                    "https://github.com/pyrite-wiki/pyrite/issues"
+                )
 
     if any(i["status"] == "created" and i["client"] != CLAUDE_CODE for i, _ in work) and not pins:
         from ..config import resolve_config_source
 
-        source, trusted = resolve_config_source()
+        try:
+            source, trusted = resolve_config_source()
+        except Exception as exc:  # noqa: BLE001 - a hint; the clients' reports come first
+            source, trusted = None, True
+            notes.append(
+                f"Which config a GUI client loads was not checked ({type(exc).__name__}: {exc})."
+            )
         if not trusted:
             notes.append(
                 "A GUI client starts the server outside this directory, so it loads "
                 f"~/.pyrite, not {source}."
             )
 
-    counts = mcp_tool_counts()
+    try:
+        counts = mcp_tool_counts()
+    except Exception as exc:  # noqa: BLE001 - counts decorate the report; they are not it
+        counts = {}
+        notes.append(f"The tool counts are not shown ({type(exc).__name__}: {exc}).")
     for item, _ in work:
         if item.get("tier") in counts:
             item["tools"] = counts[item["tier"]]
@@ -1489,7 +1538,7 @@ def mcp_setup(
         "ok": all(item["status"] in ("created", "unchanged", "changed") for item, _ in work),
         # What a new entry gets. Each client's own `tier` and `tools` say what
         # its entry serves, which for a kept entry may be another tier.
-        "new_entry": {"command": args, "tier": new_tier, "tools": counts[new_tier]},
+        "new_entry": {"command": args, "tier": new_tier, "tools": counts.get(new_tier)},
         "clients": [item for item, _ in work],
         "notes": notes,
     }
