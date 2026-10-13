@@ -67,7 +67,10 @@ is defined.
 4. Layers by cost: commit hooks, local pre-push, PR check (one interpreter),
    push-to-`dev` smoke and matrix, `main` e2e, release install checks. Each layer
    adds information the cheaper one cannot. **decided** [[adr-0032]] sections 3
-   and 3a.
+   and 3a. A layer does not repeat a dearer one's answer: a commit is
+   *verified* when `gate` is green on that exact SHA on GitHub, and the
+   pre-push hook skips a verified tip. One definition,
+   `scripts/verified_commit.py`, read by the hook and by `scripts/release.py`.
 5. `main` may move without a release; a tag is a release. **decided**
    [[adr-0032]] section 3a. Snapshot (`.dev0+sha`) versions between releases:
    **proposed** inside the accepted ADR (3b) and not what `scripts/release.py`
@@ -94,6 +97,13 @@ is defined.
 - The required checks (`gate` and the jobs it needs) keep their names;
   a renamed job cannot silently unprotect a branch ([[adr-0032]] migration step
   5; `tests/test_dev_process_config.py`).
+- Whether a commit is verified is decided in one place, and it fails closed:
+  a lookup that fails, or answers ambiguously, is "not verified" for the hook
+  and the release alike (`tests/test_verified_commit.py` and the two files
+  that run its case list through each caller).
+- A release dry run that reports ready means `--execute` does not stop on the
+  checkout, the changelog date, the branch, the commit's verdict or the
+  pre-push hook (`tests/test_release_rehearsal.py`).
 - `main` moves only by fast-forward to a commit that passed the push-to-`dev`
   layer; `v*` tags cannot be updated or deleted ([[adr-0032]]).
 - A `fix:` commit touches `tests/` (commit-msg hook, [[adr-0032]]).
@@ -111,12 +121,16 @@ roadmap's release line. History only: [[adr-0025]]'s migration list.
 
 No component doc covers the process. Paths: `.github/workflows/`,
 `.pre-commit-config.yaml`, `scripts/new-worktree.sh`, `scripts/release.py`,
-`scripts/test-affected`, `scripts/check_fix_commit_has_tests.py`,
+`scripts/test-affected`, `scripts/verified_commit.py`,
+`scripts/check_fix_commit_has_tests.py`,
 `changelog.d/`, `.claude/skills/pyrite-conductor/release-runbook.md`.
 
 ## Tests that pin it
 
 `tests/test_dev_process_config.py` (hook layout and required-check names),
+`tests/test_verified_commit.py`, `tests/test_test_affected_verified.py` and
+`tests/test_release_rehearsal.py` (the verified-commit rule at its three
+surfaces; the lookup's failure modes are one list, `tests/verified_commit_cases.py`),
 `tests/test_task_claim_concurrency.py` (the xdist-safe pattern the pre-push
 suite needs), `tests/test_readme_install_tag.py`, `tests/test_readme.py`.
 

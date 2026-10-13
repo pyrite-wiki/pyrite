@@ -275,6 +275,27 @@ tree and the Python version, not the environment: a pass where the Postgres
 tests skipped (`PYRITE_TEST_PG_URL` unset) covers a later run where it is
 set. When what changed is the environment, use `--force`.
 
+**A verified commit is not tested again at the push.** A commit is
+*verified* when the required check (`gate`) is green on that exact SHA on
+GitHub. That rule lives in one place, `scripts/verified_commit.py`, and
+`scripts/release.py` and the pre-push hook both use it. When the tip of the
+ref you push is verified, the hook prints `<sha> is verified (gate=success
+on <owner>/<repo>); not re-running the local suite` and exits 0. You will
+meet this when you push a commit GitHub has already tested to another
+branch; the release's push of `dev`'s tip to `main` is the usual case. An
+ordinary push of new commits is unaffected and makes no request: GitHub
+cannot have tested a commit it has not been sent.
+
+The lookup fails closed. If `gh` is missing or not logged in, the network
+is down, the request takes more than 8 seconds, the API errors, the check
+is pending, red, renamed or absent, or the answer is not one the script
+understands, the commit is *not verified* and the hook runs the tests as it
+always has. Only the pushed tip is asked about: a verified commit says
+nothing for commits on top of it. `--force` or `PYRITE_PUSH_FORCE=1` runs
+the tests anyway, and so does `PYRITE_PUSH_EXPERIMENTAL=1` (`gate` does not
+need the experimental job). `git push` of several refs at once is examined
+by pre-commit for its first ref only, as before.
+
 **After a failure that looks load-caused** (a timeout, a flaky port), re-run
 only what failed rather than the whole selection:
 
@@ -292,10 +313,10 @@ and stamps it.
 |---|---|
 | While editing | the test file you are changing; `scripts/test-affected --run` |
 | Before a commit | nothing extra: the commit hooks run ruff and the fast checks in seconds |
-| Before a push | the pre-push hook runs `scripts/test-affected --run` on `PYRITE_PUSH_WORKERS` (default 4) workers, unless your own `--run` already passed on the tree being pushed (see *Each tree is tested once* below). It already runs everything for conftest, fixtures, pyproject and config changes; set `PYRITE_PUSH_FULL=1` yourself for storage or migration changes and cross-cutting refactors |
+| Before a push | the pre-push hook runs `scripts/test-affected --run` on `PYRITE_PUSH_WORKERS` (default 4) workers, unless your own `--run` already passed on the tree being pushed (see *Each tree is tested once* above) or the commit being pushed is already verified by CI (see *A verified commit is not tested again at the push*). It already runs everything for conftest, fixtures, pyproject and config changes; set `PYRITE_PUSH_FULL=1` yourself for storage or migration changes and cross-cutting refactors |
 | On the pull request | nothing: CI runs the backend suite on one interpreter (all three Pythons when test infrastructure changes), KB validation, the frontend job when `web/` changes, the advisory `verify-red` job (your new tests, without and with your change) and diff coverage; the merge queue runs the full three-Python matrix on the exact commit about to land (#400); the push to `dev` after the merge runs the e2e smoke and the tutorial, and the matrix and frontend again only if the queue did not already pass that SHA |
 | A frontend change | `cd web && npm run check && npm run test:unit && npm run build` |
-| A release | the large tests: `scripts/release.py` installs the release commit into a fresh venv and runs the tutorial against it; Playwright and the smoke layer per the release runbook |
+| A release | first the rehearsal: `scripts/release.py <version>` (a dry run) runs every check and names each one that would stop `--execute` on this machine -- untracked files, the changelog section's date, the branch, whether the commit is verified, and what the pre-push hook will do for the pushes. Then the large tests: `scripts/release.py` installs the release commit into a fresh venv and runs the tutorial against it; Playwright and the smoke layer per the release runbook |
 
 **What CI guarantees:** no pull request merges until the full backend suite
 has passed on top of current `dev`. Run the full suite locally to reproduce a
@@ -353,7 +374,7 @@ uv pip install --python .venv/bin/python -e ".[all,dev]"
 |---|---|---|
 | commit | ruff, formatting, file hygiene, import-cycle check, KB schema validation | seconds |
 | commit-msg | a `fix:` commit must touch `tests/` | — |
-| pre-push | `scripts/test-affected --run`: core + affected tests on `PYRITE_PUSH_WORKERS` (default 4) workers, only when the push touches code, tests, scripts or test config (a docs- or KB-only push skips it); `PYRITE_PUSH_FULL=1` runs the full suite | Seconds to minutes, depending on what changed |
+| pre-push | `scripts/test-affected --run`: core + affected tests on `PYRITE_PUSH_WORKERS` (default 4) workers, only when the push touches code, tests, scripts or test config (a docs- or KB-only push skips it); skipped when the pushed tree already passed here or the pushed tip is verified by CI; `PYRITE_PUSH_FULL=1` runs the full suite | Seconds to minutes, depending on what changed |
 
 CI runs the same checks plus the full Python matrix, Postgres, the frontend
 build and Playwright, so the pre-push run does not have to be perfect. If it

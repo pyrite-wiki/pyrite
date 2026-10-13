@@ -11,6 +11,12 @@ tags: [testing, pytest]
 - pytest with rich output
 - The commit hooks run no tests; the pre-push hook runs the core plus the
   affected tests (`scripts/test-affected --run`); CI is the authority
+- The pre-push hook does not run when the pushed tree already passed here
+  (a pass stamp) or the pushed tip commit is verified: the required check
+  (`gate`) green on that exact SHA on GitHub, by the one definition in
+  `scripts/verified_commit.py` that `scripts/release.py` also uses. That
+  lookup fails closed: anything short of a readable green answer for that
+  SHA means the tests run
 - Tests of experimental surfaces carry the `experimental` marker, applied by
   path from `tests/experimental_surface.py` (never by hand). They do not gate a
   merge or a push; CI's `experimental` job runs them against

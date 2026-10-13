@@ -1374,3 +1374,83 @@ class TestExperimentalLayer:
             ]
         )
         assert any(fnmatch.fnmatch(path, g.replace("**", "*")) for g in filt["infra"]), path
+
+
+class TestAVerifiedCommitIsNotTestedAgain:
+    """One definition of a verified commit (scripts/verified_commit.py), read
+    by the pre-push hook and the release script. The behaviour is pinned in
+    tests/test_verified_commit.py, test_test_affected_verified.py and
+    test_release_rehearsal.py; this pins the layout and that each document
+    describing the hook says what it now does."""
+
+    @pytest.mark.control(
+        reason="pins that the hook layout did NOT change with the verified-commit skip; true before it too"
+    )
+    def test_the_hook_entry_is_unchanged_and_the_decision_is_the_scripts(self, precommit):
+        """The skip is not a second hook, a shell condition or a variable in
+        the entry: any of those would be a way around the suite that
+        `scripts/test-affected --preflight` could not report."""
+        (hook,) = [h for h in _hooks(precommit) if _runs_tests(h)]
+        entry = " ".join(hook["entry"].split())
+        assert entry.endswith(
+            'exec "$PY" scripts/test-affected --run -n "${PYRITE_PUSH_WORKERS:-4}"\''
+        )
+        for word in ("gh ", "verified", "gate", "SKIP", "curl"):
+            assert word not in entry, f"{word!r} in the hook entry"
+        pushed = [h for h in _hooks(precommit) if "pre-push" in _stages(h, precommit)]
+        assert [h["id"] for h in pushed] == ["pytest-full"]
+
+    @pytest.mark.control(
+        reason="pins that the hook layout did NOT change with the verified-commit skip; true before it too"
+    )
+    def test_the_shared_module_is_inside_the_hooks_files_filter(self, precommit):
+        import re
+
+        (hook,) = [h for h in _hooks(precommit) if _runs_tests(h)]
+        assert re.search(hook["files"], "scripts/verified_commit.py")
+
+    def test_the_required_check_the_definition_names_is_a_ci_job(self, ci):
+        """A renamed job must not silently mean "nothing is ever verified" --
+        or, worse, leave the definition pointing at a job that no longer
+        gates."""
+        import sys
+
+        sys.path.insert(0, str(REPO / "scripts"))
+        import verified_commit
+
+        for name in verified_commit.REQUIRED_CHECKS:
+            assert name in ci["jobs"], f"{name} is not a job in ci.yml"
+        # `gate` must always report: a skipped gate would count as a pass.
+        assert ci["jobs"]["gate"]["if"] == "always()"
+
+    @pytest.mark.parametrize(
+        "doc",
+        [
+            "CLAUDE.md",
+            "CONTRIBUTING.md",
+            "kb/standards/testing-standards.md",
+            "kb/maps/development-process-and-releases.md",
+            ".pre-commit-config.yaml",
+        ],
+    )
+    def test_every_doc_that_says_what_the_hook_runs_says_when_it_does_not(self, doc):
+        text = " ".join((REPO / doc).read_text().replace("#", " ").split())
+        assert "scripts/verified_commit.py" in text, doc
+        assert "verified" in text and "`gate`" in text and "exact SHA" in text, doc
+
+    @pytest.mark.parametrize("doc", ["CLAUDE.md", "CONTRIBUTING.md"])
+    def test_the_docs_say_it_fails_closed_and_quote_the_real_timeout(self, doc):
+        import sys
+
+        sys.path.insert(0, str(REPO / "scripts"))
+        import verified_commit
+
+        text = " ".join((REPO / doc).read_text().split())
+        assert "fails closed" in text, doc
+        assert f"{verified_commit.LOOKUP_TIMEOUT_SECONDS} seconds" in text, doc
+        assert "PYRITE_PUSH_FORCE" in text and "PYRITE_PUSH_EXPERIMENTAL" in text
+
+    def test_the_docs_say_what_the_dry_run_rehearses(self):
+        for doc in ("CLAUDE.md", "CONTRIBUTING.md"):
+            text = " ".join((REPO / doc).read_text().split())
+            assert "names each one that would stop `--execute`" in text, doc
