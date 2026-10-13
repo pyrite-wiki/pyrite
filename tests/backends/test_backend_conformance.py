@@ -1170,7 +1170,7 @@ class TestSemanticKnnEscalation:
     def haystack_backend(self, backend):
         """200 rows where only the *farthest* one matches the filter.
 
-        The first ``k`` (``limit * 3`` = 3) cannot reach it, so a correct
+        The first ``k`` (``limit * 2`` = 2) cannot reach it, so a correct
         implementation escalates; one that filters the k nearest afterwards
         returns nothing.
         """
@@ -1226,7 +1226,7 @@ class TestSemanticKnnEscalation:
         """The filtered query's pinned shape: the predicate rides inside the KNN.
 
         Before the fix a filtered search over the haystack escalated ``k``
-        (3, 12, 48, 192, ...) until the far needle came into range. With the
+        (2, 8, 32, 128, ...) until the far needle came into range. With the
         candidate rowids passed into the KNN the needle is found at the first
         budget: one distinct ``k``, and every ``MATCH`` query carries the
         ``rowid IN (...)`` restriction. This replaces the filtered query-count

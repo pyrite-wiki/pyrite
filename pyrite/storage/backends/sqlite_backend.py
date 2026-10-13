@@ -488,10 +488,11 @@ class SQLiteBackend(BaseBackend):
         """
         sql = sql_template.format(knn_filter=knn_filter, where=where)
         size_sql = size_template.format(knn_filter=knn_filter)
-        # Over-fetch more when a caller-supplied filter may cull the k nearest.
-        # The archived exclusion is not counted: it applies to every search, so
-        # treating it as a filter would triple the budget of every query.
-        k = min(limit * 3 if selective else limit * 2, _SQLITE_VEC_MAX_K)
+        # Over-fetch for ``max_distance`` culling only. A caller filter no
+        # longer needs a larger first budget: it is applied inside the KNN, so
+        # every candidate it returns already satisfies it (it used to triple
+        # the budget to survive a post-KNN filter).
+        k = min(limit * 2, _SQLITE_VEC_MAX_K)
         results: list[dict[str, Any]] = []
         while True:
             with self._raw_cursor() as cur:
@@ -553,9 +554,10 @@ class SQLiteBackend(BaseBackend):
 
         Returns ``(sql, params, selective)``. ``selective`` says whether any
         *caller-supplied* filter is present; the archived exclusion does not
-        count, because it is the default on both legs and sizing every KNN
-        budget as if it were a filter would triple the work of an ordinary
-        search.
+        count, because it is the default on both legs and putting its subquery
+        inside the KNN of every ordinary search would be a cost they do not
+        need; :meth:`search_semantic` pushes it in only when a search reaches
+        the cap short.
         """
         sql = ""
         params: list[Any] = []
