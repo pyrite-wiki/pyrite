@@ -19,6 +19,174 @@ The first hour works. Following the README and getting-started on a clean machin
 
 **Upgrade notes.** Run `pyrite index build` once after upgrading: a save could delete a body's first line when it looked like a frontmatter field (#636), and an index built before the fix still serves the shortened body. `pyrite-admin mcp` with no `--tier` now runs the write tier, not admin. The local Docker compose file publishes on 127.0.0.1 only. A parent task is no longer written `done` when its last child resolves; completion is derived where it is read. The `task` commands print JSON by default: pass `--format rich`, or set `PYRITE_FORMAT=rich`, for text. The journalism-investigation tools are marked experimental.
 
+### Added
+
+- `docs/how-pyrite-edits-your-files.md` says what Pyrite promises when it edits one of your files: it changes what it was asked to change and nothing else. Its seven examples run as tests against the real `kb_update`. Today Pyrite keeps none of them: an update re-renders the whole frontmatter, an echo of a read rewrites the file, two concurrent writers lose a change, a read carries no content hash, so a stale replace cannot be refused, and an id-less file is addressed by its title. Each is recorded as an expected failure, and the page says so. (#695)
+
+A type can declare `field_aliases: {participants: actors}` in `kb.yaml` or in a plugin's `get_type_metadata()`, naming the key older files use and the field it stands for. `pyrite schema validate` reports a malformed map, and a target that is not a declared field. The declaration is read and validated now; Pyrite honours a `kb.yaml` alias when it writes a file in a later release (B6), and a plugin's alias is what the type's class already reads. The `FRONTMATTER_ALIASES` class attribute is deprecated and logs a warning; it will be removed after one release.
+
+A create or update that names a field and its alias with different values (`participants` and `actors`, `source` and `source_entity`) is refused with an error naming both keys and writes nothing; equal values are accepted and write one key. An empty value sent counts as given, and one spelling sent at the top level and again in `metadata` is held to the same rule; REST create no longer fills `participants`, `tags` or `metadata` the client did not send (ADR-0042 decision 6, #720).
+
+- `pyrite ids missing -k <kb>` lists every file with no `id:` line, with the id it has today (from its title), files that share an id, and files it could not read. `pyrite ids pin -k <kb>` adds exactly one line, `id: <that id>`, as the last line of each such file's frontmatter, and changes no other byte (CRLF, comments, key order and quoting are kept; the result is re-read and the file refused if anything else would change). `--dry-run` prints the plan and writes nothing. Files that share an id are never resolved for you: the group is left untouched until you keep one and `--rename <path>=<id>` the others. `ids missing` and `--dry-run` write nothing anywhere (no file, no index, no config directory). A symbolic link, a file in a linked folder, a hard-linked or non-regular file, and a file edited after it was read are reported and never written. Both print JSON by default (`--format text` for reading); both exit `0` when nothing is left, `3` when files remain outside the id contract, `1` on an error. **Before the release that switches id-less files to path ids, follow [docs/pinning-entry-ids.md](docs/pinning-entry-ids.md)** so nothing that links to them changes (ADR-0042). (#700)
+
+`atomic_write_text` takes `expect=` (the file's expected bytes, a sha256 hex digest, or `ABSENT`). Under a new momentary lock (`pyrite.utils.file_lock`) it compares the file with `expect` immediately before replacing it, and when they differ it writes nothing and raises `FileChanged`. The lock lives where git locks: in `<git-dir>/pyrite/locks` of the repository whose work tree holds the file (a linked worktree uses its own git dir). It is found by git's own discovery rules, independent of `GIT_DIR` and other environment variables, and created with the git dir's permissions, never wider. One file has one lock whatever path reaches it (symlink, `..`, case or Unicode spelling, the macOS `/System/Volumes/Data` firmlink): the key is the parent directory's identity plus the name. An `expect=` write to a file with more than one hard link is refused (`HardLinked`), and every wait for the lock is bounded (`LockTimeout`; an unbounded timeout is a `ValueError`). A KB that is not in a git work tree is refused for `expect=` writes with `NotInGitRepository`, as is a git dir this user cannot write. Not supported on Windows. Nothing calls it yet (ADR-0042 §10a A1, B6 P2).
+
+- Claude Code on the web sessions set themselves up for Pyrite work: a SessionStart hook in the now checked-in `.claude/settings.json` runs `scripts/cloud-session-start.sh` (venv, extensions, repo-local KB config, index, git hooks). `scripts/setup-checkout.sh` is the one install path it shares with `scripts/new-worktree.sh`. See "Developing in Claude Code on the web" in CONTRIBUTING.md.
+- Cloud environments take a one-line setup script, `scripts/cloud-env-setup.sh`, that builds the venv, hook environments and Postgres image once (cached as a snapshot); the session hook then only updates and starts services. Cloud sessions run the Postgres conformance tests against the same `pgvector/pgvector:pg16` container CI uses (`PYRITE_SETUP_POSTGRES=0` opts out).
+
+- **"Pyrite in 20 minutes", a tutorial that is its own acceptance test.** `docs/tutorials/pyrite-in-20-minutes.md` takes a newcomer from nothing to asking Claude about Pyrite's own knowledge base and the 26 demo KBs, to a research KB of their own written by an agent, to building a third. CI and the release check run it with `scripts/run_tutorial.sh docs/tutorials/pyrite-in-20-minutes.md`, which now also reads `<!-- runner: -->` comments for the entries a search must find, a command that must be refused, and a fixture that stands in for the agent's step.
+
+### Changed
+
+- `pyrite-admin mcp`, `python -m pyrite.server.mcp_server` and `pyrite-mcp serve` now default to the `write` tier, like `pyrite mcp` (ADR-0006). `pyrite-admin mcp` was `admin` and the other two were `read`. `pyrite-admin mcp` also rejects an unknown tier with `INVALID_TIER`. A hand-written MCP config that runs `pyrite-admin mcp` with no `--tier` and relied on the admin tools (`kb_push`, `kb_registry_*`, `kb_commit`, ...) must add `"--tier", "admin"` to its args. A config that runs `pyrite-mcp serve` or `python -m pyrite.server.mcp_server` with no `--tier` was read-only and now also gets the create, update and delete tools; add `"--tier", "read"` to its args to keep it read-only. `pyrite-admin mcp-setup` is removed (it now exits 1 and points to `pyrite mcp-setup`): it ignored `--tier` and wrote three servers (`pyrite-read`, `pyrite-write`, `pyrite-admin`) to a file no client reads. Use `pyrite mcp-setup --tier <tier>`. It leaves those three entries where they are and names them in its report; remove them by hand if they are not yours. (#582)
+
+- A command's default output is its result. `pyrite`, `pyrite-admin` and
+  `pyrite-read` now log at WARNING by default through one shared function, so
+  `init`, `create`, `search` and `index embed` no longer print one
+  `Applied migration` line per migration, a `search.query` line per search or
+  the sqlite-vec line on stderr; stdio `pyrite mcp` stops filling the MCP
+  client's server log the same way. `-v` (INFO) and `-vv` (DEBUG) restore the
+  lines from any position on the command line, and `PYRITE_LOG_LEVEL` sets the
+  level without a flag. `pyrite serve` and `pyrite-server` keep INFO as the
+  operator's log. `pyrite-admin`, `pyrite-read` and `pyrite-server` now print
+  warnings, formatted like `pyrite`'s; before, the package's inert handler
+  swallowed them. (#584)
+- `pyrite search --mode semantic|hybrid` without the `[semantic]` extra (or
+  without the sqlite-vec extension) now returns a `warnings` entry naming
+  `pip install pyrite[semantic]` on the CLI, REST and MCP, instead of a silent
+  empty leg. The "no embeddings yet" warning no longer says "only the keyword
+  leg ran" in pure semantic mode, where no keyword leg runs. The CLI prints
+  warnings that contain brackets, such as the install line, intact. (#43, #584)
+- `pyrite index embed` counts the entries it settled from the embed queue as
+  embedded instead of skipped: after writes it printed `Embedded: 0, Skipped: 4`
+  for a run that added four vectors. (#584)
+- A `-v` that is an option's value (`pyrite create -b -v`) stays the value, as
+  before; it is not read as the verbosity flag. `pyrite search --debug` now
+  reports the same skip cause as the warning (`reason=semantic_extra_missing`,
+  and `actual=none` for a semantic search that did not run). `pyrite index
+  embed --kb A` says how many entries in other KBs the queue drain also
+  embedded, and its sqlite-vec message no longer suggests installing a package
+  that is already installed. `PYRITE_LOG_LEVEL` and `-v` are in
+  `docs/configuration.md`. (#584)
+
+- **`kb_orient` / `pyrite orient` is true as the first call** (#66, and the
+  declared-types part of #232).
+  - **Public shape change, MCP error codes.** A KB name that is not a KB, or
+    that the caller may not read, now answers `KB_NOT_FOUND` over MCP, the
+    code REST and the CLI already used (ADR-0037). Two older codes are
+    replaced: the `NOT_FOUND` every MCP tool, prompt and resource gave a
+    caller with per-KB scoping for a KB outside its readable set, and the
+    `OPERATION_FAILED` `kb_orient` gave everyone else. The old code is
+    carried in `legacy_error_code` for this release only and is removed in
+    the next; match on `error_code`. Entry-level `NOT_FOUND` answers and the
+    other tools' own not-found answers are unchanged.
+  - `kb_orient` with no `kb_name` (and `pyrite orient` with no `-k`, which
+    used to be a usage error) lists the knowledge bases the caller may read,
+    with the operational contracts and what to call next.
+  - A bad name on `kb_orient` and `pyrite orient` carries `did_you_mean`
+    (up to three near matches, an empty list when there are none) and a
+    `suggestion`; names come only from the KBs the caller may read, never
+    from a KB the caller may not read. A scoped caller's refusal (above)
+    carries a static hint instead, "Call kb_orient with no kb_name to list the
+    KBs you can read.", the same for an absent and an unreadable name, with no
+    near matches. A `kb_name` that is not a string is `VALIDATION_FAILED`;
+    `null` is accepted for `kb_name` and `detail` and means "not given".
+  - New `detail` argument (`--detail`, `?detail=`): `brief` omits
+    `ai_instructions`, `evaluation_rubric`, `guidelines` and `goals` from
+    `schema` (and the top-level `guidelines`), keeps `relationship_types`, and
+    says where to get them (`pyrite orient -k <kb> --detail full`, `kb_schema`); `full`
+    is the default and is what a call without `detail` returned before. Any
+    other value is `VALIDATION_FAILED` (422 over REST). Blocks a plugin adds
+    to orient are returned whole under `brief`, so `brief` does not bound the
+    response of a KB whose plugin supplement is large.
+  - For a KB whose `kb.yaml` declares types, orient, `kb_schema`,
+    `GET /api/kbs/{kb}/schema` and `pyrite-admin schema` list only those
+    types: the ones `create` accepts. They used to list every core type as
+    well, so a software KB offered `note` and then refused it as
+    `UNDECLARED_TYPE`. A KB that declares no types is unchanged.
+
+Every test now has a 600 s default timeout (pytest-timeout), so a hung test ends instead of spinning for hours (#766).
+
+- A parent task is no longer marked `done` in its file when its last child resolves. The `after_save` parent rollup hook is removed; nothing writes a parent's file as a side effect of saving a child. Instead a task's completion is computed from its children wherever it is read: `task list`, `task get`, `task decompose`, the MCP `task_list`, `task_status`, `task_subtree`, `task_ancestors` and `task_decompose` tools, and `GET /api/tasks` return it under `derived` (`derived.completion` with `complete`, `basis`, `children`, `children_complete`; `derived.effective_status`; `derived.parent_missing` when a `parent` names no entry), beside the file's own `status`. **Every status filter now matches the effective status**: a task whose own file says `done`, `cancelled` or `failed` keeps that; otherwise a task whose children are all done or cancelled counts as `done`. So `task list --status open` (and `--status in_progress`, and `status=` on MCP and REST) no longer lists a finished parent, and `--status done` does. The same holds for the generic status filters: MCP `kb_find_by_status`, `kb_find_by_assignee` and `kb_search`, `pyrite search --status`, `GET /api/entries?status=` (and its total), the semantic and hybrid search filters, `kb_find_overdue` (a finished parent is not overdue) and the QA queue. **Claiming a task that counts as done by its children is refused** (`task claim`, MCP `task_claim`, `POST /api/tasks/{id}/claim`, and every other `claim_entry` caller), with a message saying why. A parent's own `status` is only what a person or an explicit command set: one closed by hand counts as complete, and one still `open` keeps saying `open` in its file. Files the old hook already set to `done` keep it. A script that read a parent's `status` field to learn whether its children were finished should read `derived.effective_status`. MCP `task_status` now reports the task's real `status`, `assignee` and `priority` (read as `task list` reads it); it said `open` for every task. (ADR-0042 decision 4, #713)
+
+- MCP tool descriptions now begin with `[read]`, `[write]`, or `[admin]` for each tool's own tier, including plugin tools, so agents can distinguish reads, writes, and administrative operations (#68).
+
+**The `task` commands print JSON by default, `-f` is deprecated there (#303), and nothing but the root decides their output and exit code (ADR-0046).** `pyrite task create|list|get|status|update|claim|reset|decompose|checkpoint|migrate-relaxed-mode` now share one `--format` option: `json` unless you pass `--format rich` or `--format yaml`, and `PYRITE_FORMAT=rich` makes text your default. `--format markdown` and `--format csv` are now a usage error (exit 2) on these commands: they printed a Python `repr` of the result. `-f` still means `--format` on these commands for this release and prints a deprecation line on stderr; use `--format`. Their JSON gains an additive `outcome` key (`done`, `partial`, `nothing`, or `error` on a refusal), so `task decompose` with every child refused now says `"outcome": "nothing"` beside `"decomposed": true`, and exits 1. A refused `--field`, both title forms, or `task update` with nothing to update is printed in the requested format (YAML under `--format yaml`) as `VALIDATION_FAILED` (still exit 1); a refusal reports its own class's code rather than `VALIDATION_FAILED` or `ERROR` for every subclass. These are the first commands on the outcome contract: the command returns what happened, and the root group prints it and sets the exit code. For a command on the contract that is checked on every run: if its own code exits, crashes, returns something else or writes to stdout itself, the answer is one `NO_OUTCOME` error (exit 1) in the format you asked for, what it wrote is moved to stderr, and a crash is one line naming the exception (`-vv` for the traceback), so in a machine format stdout holds exactly one document that agrees with the exit code.
+
+### Fixed
+
+`pyrite index build`, `pyrite index sync` and `pyrite kb reindex` now share one reconcile, so each leaves the index equal to the files: a build retires the rows of deleted or re-id'd files (#486), reindex follows a moved file (#487), and an edit that keeps the file's mtime but changes its size is picked up (#495). A file is re-read when its mtime or size differs from the values recorded at index time; the content hash decides whether it changed, so a `git checkout` that only touches files reports nothing. When two files hold one id, the lexicographically first KB-relative path is indexed every time, and `index sync` and `kb reindex` list the duplicates instead of flipping the row on every sync, and `index health` reports them as unhealthy (exit 1), naming every path and the indexed one (#485). `pyrite delete` removes every file that states the id, including a copy written by hand since the last sync, and refuses when one of them only derives it from its title (#494). A file that stops parsing now loses its row (it is reported as malformed) rather than keeping a stale one. The first sync after upgrading reads each file once to record its size and mtime.
+
+Known limits: a sync now rewrites a row from its file whenever the row's recorded size and mtime are missing, so data a tool added to an index row and not to the file (for example journalism dedup's `same_as` links) is gone after the next sync, as it already was after `index build`. An edit that keeps a file's size and restores its old mtime (`rsync -t`, `cp -p`) is not re-read by sync; `index health` reports it as `content_changed` until the next build. Duplicates and unparseable files are reported on every sync, not only the first.
+
+A command that ran but did only part of what was asked no longer exits 0 (#526). Exit `3` now means "ran, did part, said which" (as `ids missing` and `ids pin` already did) and `1` means nothing was done; this amends the 0/1/2 decision on #303. `create --link` with a link that does not resolve keeps the entry and the good links, names each failed link with the `pyrite link` that finishes it, and exits 3. `index embed`, `pyrite-admin index embed`, `schema migrate`, `index reconcile`, `import`, `links bulk-create`, `init` (KB created, not indexed), `extension install --verify`, `export collection` and `search --files` exit 3 when they did some of the items and skipped or failed others, and 1 when they did none (so an offline `index embed` exits 1). The same holds for `kb commit` (a rejected commit), `task claim` (a lost claim, in JSON too), `task decompose`, `repo sync`, `link --bidi` (3 if only the forward link landed), `batch-read`, `sw prioritize`, `sw migrate-standards`, `investigation network`, `evidence-chain`, `bulk-edges` and `ftm-import`, `social reputation` (exits 1 when it cannot compute the reputation), and `pyrite-admin repo sync`, `repo unsubscribe` and `index health`. `backlinks` on an entry that does not exist is a not-found error (exit 1) in the command's format instead of "No backlinks found" with exit 0; on an entry with none, or one only linked to as `[[ghost-page]]`, it answers (an empty list or the linking entries). `pyrite-admin index embed` crashed with the semantic extra installed (it called a method that does not exist) and exited 0 without it; it now embeds, or exits 1 naming the missing extra. `schema migrate` no longer counts a file it failed to save as checked or says "All entries are up to date" after errors.
+
+Backlinks now report the relation as written: each row carries `forward_relation` (what the source's file says), alongside `relation` (the target's reading) and `inverse_relation` (the declared inverse; `null` when no inverse is declared for that relation, which includes custom relations and a few built-in ones such as `transclusion`, `references` and the legacy `related`). A custom relation such as `informs` is no longer hidden behind `related_to`: the JSON rows carry it, and the backlinks table (`pyrite-read backlinks`, `pyrite backlinks --format rich`) shows it in a new "Written as" column. `pyrite link --bidi` with a relation that has no declared inverse still writes `related_to` on the target, and now says so on stderr. Thanks to @berkay-byte for the diagnosis (#527, #562).
+
+- When the web UI is built, a request to `/api`, `/mcp`, `/auth` or `/ws` itself,
+  or to any path under one that no real route handles, answers 404 in the
+  API's error shape (`{"detail": {"code", "message", "retryable"}}`) for every
+  HTTP method, instead of the web app's page (for example `/mcp/info` when MCP
+  is disabled). Real routes under these prefixes still win, a WebSocket upgrade
+  to such a path is closed before accept as before, and `/docs-old`-style paths
+  still answer 404. Without a web build nothing changes. The guard side of this
+  (the static routes a build adds to the access-policy completeness check) is
+  #563. (#538)
+
+- **Scalar `tags` and `aliases` in `__collection.yaml` are treated as one-item lists (#567).**
+
+- **`pyrite qa check-urls` no longer crashes on start (#574).** The command used the database context manager as if it were the database. It now reads the source URLs inside the `with cli_context()` block, so the database is open for the read and closed afterwards.
+
+- **`pyrite qa stale` and `pyrite qa compact` no longer crash on start (#574).** Both used the database context manager as if it were the database. They now run inside `with cli_context()`, so the database is open for the report and closed afterwards.
+
+- `pyrite mcp-setup` now points a `pyrite` MCP server entry at this install where each client reads it. Before, it wrote `~/.claude/claude_desktop_config.json`, which no client reads, and registered `pyrite-admin mcp` (the admin tier), or a bare `python` when `pyrite-admin` was not on `PATH`. Claude Code is set up through `claude mcp add -s user` (or `./.mcp.json` with `--project`), Claude Desktop in its own `claude_desktop_config.json`, any other client with `--config PATH`. A new entry runs this install's `pyrite` by absolute path with an explicit `--tier` (default `write`). It is safe to re-run and safe on a config you edited: an entry that already points here is not rewritten; one that points elsewhere has its command path changed, and its tier only if you pass `--tier`; its `env`, extra arguments and other keys are kept; other servers and keys are never touched, and old `pyrite-read`/`pyrite-write`/`pyrite-admin` entries are reported, not removed. When that cannot be done safely (invalid JSON, a duplicate key, a read-only or hard-linked file, a file that changed meanwhile, an entry whose arguments do not begin with `mcp`, a Claude Code entry with `env` whose path must change, an empty `~/.claude.json`) it changes nothing for that client and says why. `--force` discards the existing entry and writes the default one. A config a client wrote comes back byte for byte outside the entry; a hand-formatted one keeps every value but may have arrays opened out and escapes or numbers respelled. Output is one JSON document by default (`--format rich` or `PYRITE_FORMAT=rich` for text), listing each client as created, unchanged, changed, stopped or failed; the exit code is 1 unless every client ended up pointing at this install. (#582)
+
+- **The first-hour docs say what happens, and the tutorial runner now checks it.** `docs/getting-started.md` shows the frontmatter `pyrite create` really writes, searches for "mathematician" (search does not read tags) instead of "mathematics", names only the six templates `pyrite init` accepts and says extensions are separate installs, and tells a clone how to build the web UI (a release-tag install has none; `pyrite serve` now says so instead of suggesting `--build`). "Hosted" became "public demo" and the hand-typed test and ADR counts are gone from the README. The runner (`scripts/run_tutorial.py`) asserts each search on its own (a zero-result search no longer hides behind a sibling), no longer exempts `--mode semantic` and `--mode hybrid` (a semantic search with no results must print the `pyrite index embed` warning), and refuses `a && b` in a block, because `set -e` let a failed `cd` pass. `pyrite --help` now opens with the README's description. `render.yaml`, `fly.toml` and `KNOWN-ISSUES.md` no longer say the first account to register becomes admin: the operator creates it with `pyrite-admin user create <username> --role admin`. (#583, #43)
+
+Type-validation errors now list the current KB declared types when a schema restricts its vocabulary.
+
+Plugin validators now receive the KB schema and the pre-update entry during writes. The contract no longer promises a user identity that every write surface cannot provide.
+
+- Revalidate the value returned by before_save hooks before writing, so schema-invalid hook changes are refused on create and update (#601).
+
+Semantic search and the index embed command now report the sqlite-vec extension load error. SQLite also disables extension loading after each load attempt.
+
+QA gap analysis now uses the KB schema declared-type rule, so typed KBs no longer report undeclared core types as empty.
+
+Preserve body text when its first line resembles a frontmatter field. Loading or saving an entry of any type no longer drops a line such as `title: ...` merely because the same key appears in frontmatter (#636). An index built before this fix still holds the shortened body for such an entry, and `pyrite get`, REST and MCP reads serve it until the index is rebuilt: run `pyrite index build` once after upgrading. A file whose body really does begin with a leaked frontmatter line (for example `type: timeline_event`) now shows that line; Pyrite no longer hides it.
+
+Mark the journalism-investigation MCP tools experimental and unsupported until the 0.28 alpha plugin/API contract.
+
+- `pyrite mcp-setup`: what the report says about Claude Code's user scope is now true of `~/.claude.json` as last read (#690). `created` and `changed` are reported only after the file was read back and holds the entry; a `claude mcp` call that exits 0 and leaves no entry (another Claude Code session wrote over the file) is `CLIENT_COMMAND_FAILED`, not success. `by_hand` is always one sequence of commands to run in order, each of which works on the state the report describes, and `suggestion` says what they do: after a failed change it puts the previous entry back (`remove` first when another `pyrite` entry is in the way, which the report now shows as `entry`), and it is absent when no command can (after `--force` over an entry with `env` or other keys); pointing at this install is `pyrite mcp-setup` again. Before, the two commands of a failed change were alternatives the wording did not match, both failed as duplicates when another entry was present, and an unreadable file was still offered `claude mcp add`, which replaces it. A file that cannot be read now gets no `claude` command anywhere in the report. An entry whose kept arguments, env or other keys `claude mcp add` cannot write back (a NUL in an argument, for one) stops before `claude mcp remove` as `CLIENT_ENTRY_NEEDS_HAND_EDIT`, naming what it carries. Before, the start check stopped an entry with a NUL argument first, as `ENTRY_WOULD_NOT_START`, which did not say why. A NUL only in the command being replaced is still a plain change. A bug after a client was changed no longer ends the command without its report: the notes, the tool counts and the GUI-config hint can fail without losing it. A `--force` over a `pyrite` entry that is a string or null no longer reports `failed` when `claude mcp remove` fails and the file is untouched. After a failed change that left no entry, the suggestion says a re-run writes the write tier and no extra arguments. An existing entry with a stray argument or an invalid tier (`mcp --tier admin bogus`, `mcp --tier nonsense`) stops with `ENTRY_WOULD_NOT_START` instead of being rewritten and reported `changed`: the start check asks this install's `pyrite mcp` to read the arguments, where it used to run them with `--help`. A `pyrite` entry in another Claude Code scope that differs from the user-scope one (a local-scope entry, which `claude mcp add` without `-s user` writes for one project and which takes precedence there, or `./.mcp.json`) is listed in the new `other_scopes` key and a note, and never changed. `docs/getting-started.md` shows a failed report and how to read it.
+
+A plugin's `get_type_metadata()` now takes effect for `protocols`, `guidelines`, `goals` and `evaluation_rubric` as well as `ai_instructions`, `field_descriptions` and `display`; the registry used to drop the four. No bundled plugin supplies them. The core `event` and `relationship` field lists now name the file keys (`actors`, `source_entity`, `target_entity`), so `pyrite create --template` and the schema endpoints show those instead of the old spellings. Create and update accept both spellings on every surface (CLI `-f`, MCP, REST, the web form) and write the same file key: `actors` on an event, `source_entity` and `target_entity` on a relationship. Before, `actors` (and `source`, `target`) landed under `metadata:` where nothing reads them.
+
+Index health now reports an indexed file as missing only when its path is absent. Files with malformed frontmatter or other load errors no longer appear in both categories.
+
+`pyrite extension install --verify` now loads the installed distribution's own `pyrite.plugins` entry points in a fresh interpreter, so a correct editable plugin verifies (exit 0), a plugin whose entry point raises exits 3 naming the entry point and its error, and an unrelated broken plugin no longer changes the answer (#786).
+
+One rule now decides where a file's frontmatter ends, and every reader under `pyrite/` and `extensions/` follows it (the changes page in `web/` and the one-off scripts in `scripts/` still carry their own split, out of scope). The reference is Hugo and YAML, not the old loader.
+
+Files that read differently, for the better: a BOM, leading blank lines, `--- ` or `--- # comment` on the opening line, blanks or a tab after the closing `---`, and an indented `---` inside a block scalar or a `---` inside a quoted value are all read correctly now by `pyrite schema validate`, `create --body-file`, `add_entry_from_file`, templates, the markdown importer, collection export, the cascade and journalism alias readers, `ids pin` and the cascade migration scripts. A typed entry whose file starts with a BOM, or whose closing `---` has trailing blanks, loads as its own type instead of an `event`. The importer no longer invents a second entry from a horizontal rule in the body, and reads an entry with no body and no final newline. `pyrite export` of a collection no longer builds an entry out of prose that has two `---` rules.
+
+Files that are now refused, visibly, with a typed error naming the line: a first line that starts with `---` and is not a valid opener (`----`, `---x`, `---` + a tab or NBSP; dev refused these too), a column-0 line before the closing delimiter that starts with `---` but is not one (`----`, `---x`, `---` + NBSP; Hugo reads these as a closer plus body), TOML (`+++`) and JSON (`{`) frontmatter (Hugo reads them), and frontmatter that never closes. `create --body-file` and `--stdin` exit with an error on these instead of storing the YAML as the body; the importer raises instead of dropping the frontmatter of an entry whose YAML does not parse; `list_templates` skips such a template with a warning instead of failing. A `# comment` after a delimiter now belongs to the delimiter line. The cascade migration scripts still write with LF line endings. `pyrite index build` on files without these shapes gives the same index as before.
+
+A markdown file is one entry: the importer, `pyrite import --format markdown` and `POST /api/entries/import` never split a body into entries by default, so a valid entry whose body has horizontal rules, or a fenced frontmatter example, imports whole. Multi-entry streams are opt-in (`pyrite import --stream`, the `stream=true` query parameter, `import_markdown(..., stream=True)`). With it on, a `---` line directly followed by a `title:`, `type:` or `id:` line starts the next entry, which must close and parse or the file is refused; the limits are that an entry must start with one of those keys and that a `---` inside a code block is not understood. A known limit: a file that starts with blank lines is now read as frontmatter when the text between its first two `---` lines parses as a mapping (Hugo reads it the same way; this reopens the risk Tier A r1030 closed for that shape), and indexes with an empty title.
+
+Overlay backlink and outlink reads preserve distinct relations between the same entries, including custom relations, while still preferring the overlay version of the same link (#623).
+
+Ignore superseded entry-list responses and errors so overlapping KB, filter, or pagination changes keep the latest list and loading state.
+
+Graph node search now highlights matching titles after asynchronous graph loading and data refreshes, and clearing the query restores the original node and edge styles.
+
+### Security
+
+The local Docker compose file now publishes the server on 127.0.0.1 only, so a server with no credential is reachable only from the machine it runs on. **Upgrade note:** if you reached the old container from another machine on your network, that access stops. To restore it deliberately, turn on auth (`PYRITE_AUTH_ENABLED=true`), then publish the port wider and remove `PYRITE_PUBLISHED_ON_LOOPBACK` from the compose file (and from any `docker-compose.override.yml`, since Compose merges port lists).
+
+`pyrite serve` and `pyrite-server` now warn at startup when they act without a credential on a non-loopback address, and name how to bind to loopback or turn on auth. A server started another way, such as `uvicorn pyrite.server.api:app --host 0.0.0.0`, is not covered: the app cannot see its bind address. The new `PYRITE_PUBLISHED_ON_LOOPBACK=true` (set by the compose file) silences the warning only inside a container with auth off.
+
+The container path was verified by parsing the compose file in tests, not by running a container.
+
 ## [0.25.6] - 2026-10-01
 
 Fix release for frontmatter integrity. **Upgrade if you run `pyrite update`, `task update`, `link`, MCP `kb_update` or REST `PATCH`/`PUT` on entries with hand-written frontmatter:** 0.25.5 could delete or rewrite keys the request did not name.

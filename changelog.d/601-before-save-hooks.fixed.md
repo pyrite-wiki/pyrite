@@ -1,1 +1,0 @@
-- Revalidate the value returned by before_save hooks before writing, so schema-invalid hook changes are refused on create and update (#601).
