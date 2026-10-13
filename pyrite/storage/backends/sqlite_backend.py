@@ -433,8 +433,14 @@ class SQLiteBackend(BaseBackend):
         search reaches the cap short of ``limit`` *because archived rows filled
         the k-set* (the KNN was not exhausted, no live row was culled by
         ``max_distance``, and the k-set held archived rows), it runs once more
-        with the exclusion inside the KNN. Any other shortfall runs no extra
-        query: an unfiltered search issues the statements it always did.
+        with the exclusion inside the KNN. A search with no archived shortfall
+        issues the statements it always did. The retry also fires, and cannot
+        help, when every live row is already in the k-set (3 live nearest, 10
+        archived farther, ``limit=6`` at cap 8), when ``limit`` exceeds the cap
+        with archived rows in the k-set and no live rows beyond, and when every
+        live row is beyond ``max_distance``: the result is correct, at the price
+        of one extra query. An empty k-set at the cap also costs the size
+        probe (``limit >= 2048`` at the real cap).
 
         The escalation costs one extra query per round, and only when the
         previous budget did not fill ``limit``: an unfiltered search whose

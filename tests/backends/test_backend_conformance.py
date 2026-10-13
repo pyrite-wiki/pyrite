@@ -1164,15 +1164,29 @@ class TestSemanticKnnBudget:
         reason="dev's unfiltered path already ran one query with no subquery; these tests, "
         "formerly passing kb_name and so on the filtered path, now pin the unfiltered path"
     )
-    def test_unfiltered_search_above_the_k_cap_does_not_raise(self, big_embedded_backend):
+    def test_unfiltered_search_above_the_k_cap_does_not_raise(
+        self, big_embedded_backend, monkeypatch
+    ):
         """``max_distance`` culling drives the same escalation with no filter.
 
         A cutoff no row can satisfy means ``limit`` is never reached, so the
         loop escalates ``k`` to its ceiling exactly as a selective filter does.
         The honest answer is an empty list, never an exception.
         """
+        sql_log = (
+            _spy_on_sql(big_embedded_backend, monkeypatch)
+            if hasattr(big_embedded_backend, "_raw_conn")
+            else None
+        )
         rows = big_embedded_backend.search_semantic(_near_vector(), limit=5, max_distance=-1.0)
         assert rows == []
+        if sql_log is not None:
+            # Culling, not archived rows, made it short: no retry. One statement
+            # per budget, k strictly growing to the cap, none with the subquery.
+            knn = [(" ".join(q.split()), p[1]) for q, p in sql_log if "MATCH" in q and "k = ?" in q]
+            ks = [k for _, k in knn]
+            assert ks == sorted(set(ks)) and ks[-1] == 4096, ks
+            assert not [q for q, _ in knn if "rowid IN" in q], "a cull must not trigger the retry"
 
 
 class TestSemanticKnnEscalation:
@@ -1303,6 +1317,19 @@ class TestArchivedExclusionRetry:
     A search with no caller filter and no archived shortfall runs the queries
     it ran before the retry existed: one KNN statement per budget, none with
     ``rowid IN``.
+
+    The documented cost: the retry also fires, and cannot help, in three
+    shapes, all returning the correct result at the price of one extra query
+    (a full ``entry`` scan for the candidate subquery):
+
+    * archived rows fill the k-set and every live row is beyond ``max_distance``;
+    * every live row is already in the k-set (3 live nearest, 10 archived
+      farther, ``limit=6`` at cap 8; the common shape on a KB over 4,096
+      embedded rows);
+    * ``limit`` above the cap, archived rows in the k-set, no live rows beyond.
+
+    An empty k-set at the cap runs the main query plus the size probe (at the
+    real cap that needs ``limit >= 2048``).
     """
 
     @staticmethod
@@ -1363,8 +1390,8 @@ class TestArchivedExclusionRetry:
         assert not [q for q, _ in self._knn(sql_log) if "rowid IN" in q]
 
     @pytest.mark.control(
-        reason="dev has no retry, so it never over-fires; this pins that the retry added here "
-        "does not (red against the previous head of this PR, febcbca2)"
+        reason="dev has no retry and the previous head did not fire with include_archived "
+        "either (its condition tested `where`, empty here); a control against both"
     )
     def test_include_archived_never_retries(self, capped, monkeypatch):
         """Opting in to archived rows leaves nothing to exclude, so nothing to retry."""
@@ -1422,3 +1449,19 @@ class TestArchivedExclusionRetry:
             date_to="2026-02-28",
         )
         assert {r["id"] for r in rows} == {"hit-0", "hit-1"}
+
+    @pytest.mark.control(
+        reason="passes on dev: dev escalated k with the filter outside the KNN; the pinned "
+        "property is that the filtered path still escalates under max_distance culling "
+        "(coverage the unfiltered rewrite of the old tests displaced)"
+    )
+    def test_filtered_search_escalates_under_max_distance_culling(self, capped, monkeypatch):
+        """kb_name plus a cutoff no row meets: ``rowid IN`` at each k (4, then 8), result []."""
+        for i in range(30):
+            self._add(capped, f"live-{i}", _near_vector(i))
+        sql_log = _spy_on_sql(capped, monkeypatch)
+        rows = capped.search_semantic(_near_vector(), kb_name="test", limit=2, max_distance=-1.0)
+        assert rows == []
+        knn = self._knn(sql_log)
+        assert [p[1] for _, p in knn] == [4, 8], knn
+        assert all("rowid IN" in q for q, _ in knn), knn

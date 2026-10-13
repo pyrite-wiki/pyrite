@@ -59,7 +59,7 @@ write wait for embedding?". Layer 2 under [[design]] (P4).
   can still return fewer than `limit` rows when more than 4096 rows match
   (sqlite-vec's ceiling on `k`), when `max_distance` removes rows, or when the
   caller is scoped by readable KBs without naming a `kb_name` (that check runs
-  after the vector query). Unfiltered searches run the queries they always did.
+  after the vector query). An unfiltered search runs the queries it always did unless archived rows fill the nearest `k`; then it retries once with a subquery (see the component doc for the cases where that cannot help).
 - Semantic search with zero embeddings yields a `warnings` entry
   ([[adr-0035]] decision 5).
 - No search result carries an entry from a KB the caller cannot read
