@@ -694,8 +694,9 @@ bulk-create` the short `-f` is `--field`/`--file`, never `--format`.
 
 ### Explicit fields and output formats
 
-`search`, `recent`, `list-entries`, and `batch-read` accept `--fields`.
-REST search accepts the corresponding `fields=` query parameter. The
+`search`, `recent`, `list-entries`, `batch-read` and `get` accept `--fields`.
+REST search and `GET /entries/{id}` accept the corresponding `fields=` query
+parameter. A single entry is one row. The
 identity fields `id`, then `kb_name`, are always retained, followed by
 requested fields in the supplied order, with duplicates removed. JSON and
 YAML omit requested keys absent from a record rather than inventing values.
@@ -706,7 +707,9 @@ dictionary cells as JSON; ordinary strings, including snippets with quotes,
 newlines, or `<mark>` tags, are preserved through standard CSV quoting.
 Markdown uses an ordered table, escaping pipes and displaying cell line
 breaks as `<br>`. Rich renders field names and values literally, without
-interpreting markup. A projection never changes the underlying records or
+interpreting markup, as a table when the `id` and every header fit the terminal
+whole, and otherwise as `field: value` lines per record: nothing is cut with an
+ellipsis. A projection never changes the underlying records or
 the fields returned when no projection is requested.
 
 Empty projected CSV responses retain their column header and contain no data
