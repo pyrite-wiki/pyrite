@@ -21,9 +21,21 @@ URL = "https://github.com/pyrite-wiki/pyrite/issues/718"
 
 @pytest.fixture(autouse=True)
 def _fresh_process_state(monkeypatch):
-    """Each test is a new process as far as the once-only latch goes."""
+    """Each test is a new process as far as the once-only latch goes.
+
+    Also restores the ``pyrite`` logger exactly (handlers, level, propagate):
+    ``configure_logging`` replaces the package's ``NullHandler`` and sets
+    ``propagate=False``, which would hide ``pyrite.*`` from ``caplog`` for the
+    rest of the xdist worker (pattern: tests/test_logging_configuration.py).
+    """
+    package_logger = logging.getLogger("pyrite")
+    saved = (package_logger.handlers[:], package_logger.level, package_logger.propagate)
     monkeypatch.delenv(ACK_ENV, raising=False)
     monkeypatch.setattr(pg, "_experimental_notice_shown", False, raising=False)
+    yield
+    package_logger.handlers, level, propagate = saved[0], saved[1], saved[2]
+    package_logger.setLevel(level)
+    package_logger.propagate = propagate
 
 
 def test_notice_on_stderr_once_nothing_on_stdout(capfd):
@@ -62,10 +74,7 @@ def test_logging_to_stderr_does_not_double_the_line(capfd):
     from pyrite.logging import configure_logging
 
     configure_logging(level="WARNING")
-    try:
-        PostgresBackend()
-    finally:
-        logging.getLogger("pyrite").handlers.clear()
+    PostgresBackend()
     _, err = capfd.readouterr()
     assert err.count("experimental") == 1
 
@@ -120,9 +129,99 @@ def test_quiet_logging_does_not_swallow_the_notice(capfd):
     from pyrite.logging import configure_logging
 
     configure_logging(level="ERROR")
-    try:
-        PostgresBackend()
-    finally:
-        logging.getLogger("pyrite").handlers.clear()
+    PostgresBackend()
     _, err = capfd.readouterr()
     assert err.count("experimental") == 1
+
+
+def test_these_tests_leave_the_pyrite_logger_as_they_found_it():
+    """Guard for the fixture: handlers, level and propagate survive a reconfigure."""
+    from pyrite.logging import configure_logging
+
+    package_logger = logging.getLogger("pyrite")
+    before = (package_logger.handlers[:], package_logger.level, package_logger.propagate)
+    configure_logging(level="ERROR")
+    assert package_logger.propagate is False  # the leak the fixture must undo
+    # The fixture's teardown runs after this test; its effect is asserted by the
+    # next test via the module-level record below.
+    _LEAK_CHECK.append(before)
+
+
+_LEAK_CHECK: list = []
+
+
+def test_zz_logger_state_was_restored_by_the_previous_test():
+    if not _LEAK_CHECK:
+        pytest.skip("ordering: run with the whole file")
+    package_logger = logging.getLogger("pyrite")
+    assert (
+        package_logger.handlers[:],
+        package_logger.level,
+        package_logger.propagate,
+    ) == _LEAK_CHECK[-1]
+    assert any(isinstance(h, logging.NullHandler) for h in package_logger.handlers)
+
+
+class _BoomStream:
+    def write(self, _):
+        raise BrokenPipeError("stderr write fails")
+
+    def flush(self):
+        raise BrokenPipeError("stderr flush fails")
+
+
+def _closed_stream():
+    import io
+
+    s = io.StringIO()
+    s.close()
+    return s
+
+
+@pytest.mark.parametrize(
+    "make_stderr",
+    [lambda: None, _BoomStream, _closed_stream],
+    ids=["stderr-is-None", "write-raises", "closed"],
+)
+def test_a_broken_stderr_never_stops_construction_or_reaches_stdout(
+    monkeypatch, capsys, make_stderr
+):
+    import sys
+
+    monkeypatch.setattr(sys, "stderr", make_stderr())
+    backend = PostgresBackend()  # must not raise
+    assert backend is not None
+    assert capsys.readouterr().out == ""
+
+
+def test_a_failing_log_handler_never_stops_construction(monkeypatch, capfd):
+    def boom(*a, **k):
+        raise RuntimeError("logging is broken")
+
+    monkeypatch.setattr(pg.logger, "warning", boom)
+    assert PostgresBackend() is not None
+    out, _ = capfd.readouterr()
+    assert out == ""
+
+
+def test_fd2_closed_at_startup_prints_nothing_to_stdout():
+    """``2>&-``: Python starts with sys.stderr None; the line must not go to stdout."""
+    import subprocess
+
+    code = (
+        "from pyrite.storage.backends.postgres_backend import PostgresBackend\n"
+        "PostgresBackend()\n"
+        "print('ok')\n"
+    )
+    import os
+
+    env = {k: v for k, v in os.environ.items() if k != ACK_ENV}
+    proc = subprocess.run(
+        f'"{sys.executable}" -c "{code}" 2>&-',
+        shell=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    assert proc.stdout == "ok\n", proc.stdout

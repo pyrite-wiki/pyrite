@@ -62,20 +62,54 @@ def _logging_reaches_stderr() -> bool:
 def _announce_experimental() -> None:
     """Say once per process that this backend is experimental.
 
-    Never writes to stdout (``--format json`` output and the MCP stdio stream
-    stay clean). The log gets it for the server; stderr gets it directly unless
-    logging is already writing there, so a terminal sees one line, not two.
+    **Cannot stop the backend being constructed.** What can raise, and how each
+    is handled: ``os.environ.get(...).strip().lower()`` cannot (a ``str``);
+    the ``threading.Lock`` cannot; ``logger.warning`` can (a custom handler or
+    filter may raise) and is guarded; ``_logging_reaches_stderr`` can (odd
+    handler objects) and is guarded, assuming "not reached"; the stderr write
+    and flush can (closed file, broken pipe) and are guarded. Each step is
+    guarded on its own, so a failing log handler does not skip stderr. The
+    outer ``try`` is the backstop. The latch is set before any write, so a
+    failure loses the notice but never repeats it.
+
+    **Never writes to stdout by Pyrite's own doing** (``--format json`` output
+    and the MCP stdio stream stay clean). ``sys.stderr`` is read once; if it is
+    ``None`` (``2>&-``) the direct write is skipped, never redirected to stdout.
+    The log gets the notice for the server; stderr gets it directly unless a
+    ``pyrite`` log handler already writes warnings to stderr.
+
+    **Limits, not bugs.** That handler detection can print twice (``sys.stderr``
+    rebound after logging was configured, or a non-``StreamHandler`` that writes
+    to stderr) and can print nothing (a child logger's level raised above
+    WARNING). Worst case under deliberate configuration is silence. An embedding
+    application that routes logging to stdout has chosen that: it is not
+    prevented.
     """
     global _experimental_notice_shown
-    if os.environ.get(EXPERIMENTAL_ACK_ENV, "").strip().lower() in ("1", "true", "yes"):
-        return
-    with _experimental_notice_lock:
-        if _experimental_notice_shown:
+    try:
+        if os.environ.get(EXPERIMENTAL_ACK_ENV, "").strip().lower() in ("1", "true", "yes"):
             return
-        _experimental_notice_shown = True
-    logger.warning(_EXPERIMENTAL_NOTICE)
-    if not _logging_reaches_stderr():
-        print(f"pyrite: {_EXPERIMENTAL_NOTICE}", file=sys.stderr)
+        with _experimental_notice_lock:
+            if _experimental_notice_shown:
+                return
+            _experimental_notice_shown = True
+        try:
+            logger.warning(_EXPERIMENTAL_NOTICE)
+        except Exception:  # noqa: BLE001 - a notice must never break construction
+            pass
+        try:
+            covered = _logging_reaches_stderr()
+        except Exception:  # noqa: BLE001
+            covered = False
+        err = sys.stderr  # read once; None when fd 2 was closed at startup
+        if not covered and err is not None:
+            try:
+                err.write(f"pyrite: {_EXPERIMENTAL_NOTICE}\n")
+                err.flush()
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001 - backstop
+        pass
 
 
 # The DBAPI the ``postgres`` extra installs (``psycopg2-binary``). A bare

@@ -25,7 +25,8 @@ Answers "what can I delete and rebuild?", "where does this row come from?",
    content. Content is the files. **decided** [[adr-0001]], [[adr-0029]].
 2. Index operations sit behind the `SearchBackend` protocol with one
    conformance suite. SQLite is the local default; Postgres is the server
-   backend. **decided** [[adr-0015]], [[adr-0016]] (LanceDB rejected on
+   backend. **decided**, but not wired in 0.25.x: nothing selects the Postgres
+   backend yet, and it is experimental ([#718](https://github.com/pyrite-wiki/pyrite/issues/718)). [[adr-0015]], [[adr-0016]] (LanceDB rejected on
    measurement).
 3. Writes go through the ORM; raw SQL is for read-only FTS5, vector and graph
    queries and for plugin DDL. **decided, partly built** [[adr-0013]] Phase 1;
