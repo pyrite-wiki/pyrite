@@ -694,28 +694,52 @@ bulk-create` the short `-f` is `--field`/`--file`, never `--format`.
 
 ### Explicit fields and output formats
 
-`search`, `recent`, `list-entries`, `batch-read` and `get` accept `--fields`.
-REST search and `GET /entries/{id}` accept the corresponding `fields=` query
-parameter. A single entry is one row. The
-identity fields `id`, then `kb_name`, are always retained, followed by
+Who accepts `fields`, and what each does per format
+(`tests/test_fields_acceptors.py` lists them and fails on one that is not
+classified):
+
+| Acceptor | CSV, Markdown, Rich | JSON, YAML |
+|---|---|---|
+| CLI `search`, `recent`, `list-entries`, `batch-read`, `get` (`--fields`) | projected | projected |
+| REST `GET /api/search?fields=`, `GET /api/entries/{id}?fields=` (Accept `text/csv`, `text/markdown`, `text/yaml`) | projected | projected |
+| REST `POST /api/entries/batch`, body key `fields` (a JSON list, cleaned like `?fields=`) | projected | projected |
+| CLI `search --files`, and the file-search fallback in Rich mode | not projected: it prints its own Rich table (KB, Type, Title, ID) whatever `--format` and `--fields` say, and says so on stderr | same |
+| REST `GET /api/entries` | takes no `fields` (the CLI `list-entries` does); the legacy columns, whatever the parameter | same |
+| MCP tools | JSON only | projected |
+
+The identity fields `id`, then `kb_name`, are always retained, followed by
 requested fields in the supplied order, with duplicates removed. JSON and
 YAML omit requested keys absent from a record rather than inventing values.
 
 CSV, Markdown, and Rich retain every requested column, even when all records
-lack that field; absent and null values are empty cells. CSV encodes list and
+lack that field; absent and null values are empty cells. A single entry
+(`get`, `GET /api/entries/{id}`) is one row. CSV encodes list and
 dictionary cells as JSON; ordinary strings, including snippets with quotes,
 newlines, or `<mark>` tags, are preserved through standard CSV quoting.
-Markdown uses an ordered table, escaping pipes and displaying cell line
-breaks as `<br>`. Rich renders field names and values literally, without
-interpreting markup, as a table when the `id` and every header fit the terminal
-whole, and otherwise as `field: value` lines per record: nothing is cut with an
-ellipsis. A projection never changes the underlying records or
-the fields returned when no projection is requested.
+Markdown uses an ordered table (header rule `| --- |`), escaping pipes and
+displaying cell line breaks as `<br>`.
+
+Two Markdown shapes change under `--fields`. A single entry
+(`get X --fields title,body --format markdown`, or `GET /api/entries/{id}?fields=...`
+with `Accept: text/markdown`) used to be a frontmatter block plus the body; it is now a
+one-row table with the body flattened onto one line. And an empty result used to be the
+line `# Search: q (0 results)`; under a projection it is an empty string. Without
+`--fields`, each format keeps its existing rendering.
+
+Rich renders field names and values literally, without interpreting markup. It
+is for people: its width is the console's (80 when output is piped, unless
+`COLUMNS` is set), so scripts should use `json`, `yaml` or `csv`. At that width
+it prints a table when the `id` column at its widest id, every header, and the
+widest character of each column fit whole (measured in terminal cells, so a
+wide character counts 2); long values fold onto further lines. When they do not
+fit, it prints each record as `field: value` lines, records separated by a blank
+line, so a value that itself contains a blank line can look like a record
+boundary. Nothing is cut with an ellipsis. A projection never changes the
+underlying records or the fields returned when no projection is requested.
 
 Empty projected CSV responses retain their column header and contain no data
-records. Empty Markdown responses are empty, and Rich retains each command's
-existing no-results message. JSON and YAML retain their existing empty
-envelope. Without `--fields`, each format keeps its existing rendering.
+records. Rich retains each command's existing no-results message. JSON and
+YAML retain their existing empty envelope.
 
 For example, `pyrite search needle --fields status,title --format csv`
 returns the columns `id,kb_name,status,title`, including an empty `status`
