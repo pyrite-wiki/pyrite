@@ -1380,6 +1380,11 @@ in 3 files plus the directory; 3b about 850 in 12; 3c about 450 in 7.
 
 ### Needs a decision first (the maintainer's)
 
+**Decided by the maintainer, 2026-10-13: 1 yes (accept the amendment as
+recommended, option R); 2 json.** Recorded in ADR-0046, "Formats beyond
+json, yaml and rich". Slices 3b and 3c are no longer waiting on a decision;
+their sequence conditions (3a, #721, slice 2) still hold.
+
 1. **Amend ADR-0046: a format beyond json, yaml and rich is offered only by
    a command that declares a shape the root can print** (a table: csv and
    markdown; an entry: markdown), and `Table` with the option constants

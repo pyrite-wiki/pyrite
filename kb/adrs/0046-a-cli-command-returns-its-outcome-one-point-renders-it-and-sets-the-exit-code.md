@@ -231,3 +231,40 @@ is never a valid answer.
   auth commands). Options: they stay legacy; they require `--yes` and refuse
   without it; or the root offers the one way to ask, on stderr.
 - **Usage errors from the body**: strict (above, recommended) or allowed.
+
+## Formats beyond json, yaml and rich (amendment 2026-10-13; accepted by the maintainer, 2026-10-13)
+
+Slice 3 (reads) was dispatched and stopped before code: the shared format
+option accepts `json`, `yaml` and `rich`, and the read commands also offer
+`markdown` and `csv`. The groom of 2026-10-13 in the backlog item
+(`one-cli-outcome-contract-commands-return-an-outcome-one-emitter-decides-output`,
+"Groom 2026-10-13: formats a migrated read command offers") gives the
+options. The maintainer decided two things.
+
+1. **A format beyond json, yaml and rich is offered only by a command that
+   declares a shape the root can print.** A command that declares a table
+   offers `csv` and `markdown`; a command that declares an entry offers
+   `markdown`. The root writes those formats from the declared rows and
+   columns; a command never serialises them itself. `Table` and the option
+   constants join the plugin CLI contract (ADR-0040). A format a command
+   does not offer is a usage error (exit 2).
+2. **`pyrite-read` defaults to `json`**, as #303 decided for every command
+   and slice 1 applied to `task`. `--format rich` or `PYRITE_FORMAT=rich`
+   gives text. There is no default per entry point.
+
+### Consequences of this amendment
+
+- List output in markdown becomes a pipe table; `backlinks` in csv gains the
+  relation columns; `get --format csv`, and csv or markdown on `orient` and
+  `collections list`, become exit 2. Each is a public change and is stated
+  in the changelog fragment of the slice that makes it.
+- `pyrite-read`'s default output changes from rich text to JSON for the
+  five commands that printed rich text.
+- Outside PR #721 (ordered fields across csv and markdown) supplies the
+  table writer and lands before slice 3b, or is carried with credit.
+
+### Open questions this amendment leaves (decided in-slice unless the evidence disagrees)
+
+- A refusal under `csv` stays the JSON error shape, as today.
+- A `PYRITE_FORMAT` value the command does not offer falls back to `json`
+  instead of exit 2.
