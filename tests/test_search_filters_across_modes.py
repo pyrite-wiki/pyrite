@@ -268,8 +268,30 @@ def test_kb_name_filter_is_applied_before_knn_cap(svc_db, mode, monkeypatch):
         )
         svc_db.backend.upsert_embedding(entry_id, "other-kb", embedder.embed_text("detention"))
 
-    results = SearchService(svc_db).search("detention", kb_name="test-kb", mode=mode, limit=1)
-    assert results, f"mode={mode} let another KB exhaust the KNN budget"
+    # A test-kb entry the keyword leg cannot find ("detention" is nowhere in it)
+    # and the vector leg ranks after all 20 other-kb rows: only the semantic
+    # leg can return it, so hybrid mode cannot pass on keyword hits alone.
+    svc_db.upsert_entry(
+        {
+            "id": "remote-target",
+            "kb_name": "test-kb",
+            "entry_type": "mechanism",
+            "title": "Remote evidence",
+            "summary": "semantic-only",
+            "body": "unrelated wording",
+            "tags": [],
+            "sources": [],
+            "links": [],
+        }
+    )
+    far = embedder.embed_text("detention")
+    far[0] += 0.3
+    svc_db.backend.upsert_embedding("remote-target", "test-kb", far)
+
+    results = SearchService(svc_db).search("detention", kb_name="test-kb", mode=mode, limit=10)
+    assert "remote-target" in {r["id"] for r in results}, (
+        f"mode={mode} let another KB exhaust the KNN budget"
+    )
     assert all(row["kb_name"] == "test-kb" for row in results), f"mode={mode} leaked another KB"
 
 
@@ -316,9 +338,9 @@ def test_hybrid_filtered_semantic_leg_fills_limit_past_knn_cap(svc_db, monkeypat
                 "metadata": {},
             }
         )
-        svc_db.backend.upsert_embedding(
-            entry_id, "test-kb", embedder.embed_text(f"Detention distractor {i}")
-        )
+        # Exactly the query's vector: distance 0, ahead of every target. (The
+        # stub's per-text nudges would tie with the targets and let them in.)
+        svc_db.backend.upsert_embedding(entry_id, "test-kb", embedder.embed_text("detention"))
 
     # These satisfy the filter and semantic leg, but deliberately do not
     # match the keyword, so only the hybrid semantic leg can return them.
@@ -338,9 +360,9 @@ def test_hybrid_filtered_semantic_leg_fills_limit_past_knn_cap(svc_db, monkeypat
                 "metadata": {},
             }
         )
-        svc_db.backend.upsert_embedding(
-            entry_id, "test-kb", embedder.embed_text(f"Remote evidence item {i}")
-        )
+        far = embedder.embed_text("detention")
+        far[i] += 0.3
+        svc_db.backend.upsert_embedding(entry_id, "test-kb", far)
 
     results = SearchService(svc_db).search(
         "detention", kb_name="test-kb", mode="hybrid", entry_type="needle", limit=2
@@ -745,6 +767,10 @@ def test_archived_entries_do_not_consume_the_knn_cap(archived_svc, monkeypatch):
     assert _ids(results) == {"live-one"}
 
 
+@pytest.mark.control(
+    reason="include_archived=True adds no predicate, so with kb_name alone the KNN was already "
+    "unfiltered on dev; this pins that opting in still fills the page after the fix"
+)
 @pytest.mark.parametrize("mode", ["semantic", "hybrid"])
 def test_include_archived_entries_fill_the_knn_cap(archived_svc, monkeypatch, mode):
     """Explicitly included archived entries remain eligible at a small KNN cap."""

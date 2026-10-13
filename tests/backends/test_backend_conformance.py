@@ -1031,6 +1031,9 @@ class TestSemanticKnnBudget:
         assert len(rows) == 2
         assert all(row["id"].startswith("needle-") for row in rows)
 
+    @pytest.mark.control(
+        reason="nothing matches, so dev also returned []; pins empty-not-error after the fix"
+    )
     def test_zero_matches_beyond_the_k_cap_returns_empty(self, backend, monkeypatch):
         """A selective filter with no matches returns empty despite nearer distractors."""
         if not hasattr(backend, "_raw_conn"):
