@@ -10,6 +10,7 @@ import copy
 import dataclasses
 import logging
 import os
+import shlex
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -1213,6 +1214,10 @@ class KBService:
             raise EntryNotFoundError(f"Entry not found: {entry_id}{repo.not_found_hint(entry_id)}")
 
         existing_entry = copy.deepcopy(entry)
+        if updates.get("status") == "claimed":
+            refusal = self._refuse_claim_of_complete_task(entry_id, kb_name)
+            if refusal:
+                raise ValidationError(refusal["error"])
         # `type`/`entry_type` and the empty key are never model attributes on
         # any entry (`type` is frontmatter-only; `entry_type` is a read-only
         # `@property` with no setter, so setting it raised a raw
@@ -2413,8 +2418,9 @@ class KBService:
             "error": (
                 f"Task '{entry_id}' counts as done: all {completion['children']} of its "
                 "children are resolved (derived), so there is nothing left to claim. "
-                "Add a child (task decompose) to reopen the work; to write done into "
-                "its file, walk it with task update (claimed, in_progress, done)."
+                "Add an open subtask with `pyrite task create 'New work' "
+                f"-k {shlex.quote(kb_name)} --parent {shlex.quote(entry_id)}`, "
+                "then claim again."
             ),
             "current_status": derived["effective_status"],
             "derived": derived,
