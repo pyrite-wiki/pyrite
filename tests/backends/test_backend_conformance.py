@@ -959,6 +959,48 @@ class TestSemanticKnnBudget:
         )
         assert {r["id"] for r in rows} == {"e0"}
 
+    @pytest.fixture
+    def far_needle_backend(self, backend):
+        """More than 4096 rows nearer to the query than the one matching row.
+
+        The needle is the *farthest* vector, so the 4096 nearest are all
+        ``note`` rows: a filter applied after the KNN sees none of them match.
+        """
+        backend.upsert_entry(_make_entry("probe"))
+        if not backend.upsert_embedding("probe", "test", _near_vector()):
+            pytest.skip("backend cannot store embeddings (no vector support)")
+        backend.delete_entry("probe", "test")
+
+        for i in range(4100):
+            backend.upsert_entry(_make_entry(f"n{i}", entry_type="note", tags=["common"]))
+            backend.upsert_embedding(f"n{i}", "test", _near_vector(i))
+        for i in range(3):
+            backend.upsert_entry(_make_entry(f"needle-{i}", entry_type="needle", tags=["rare"]))
+            far = _near_vector()
+            far[i] += 0.4
+            backend.upsert_embedding(f"needle-{i}", "test", far)
+        return backend
+
+    def test_real_cap_filter_reaches_rows_beyond_4096_nearer_rows(self, far_needle_backend):
+        """The bug at its real size: 4,100 nearer rows, matches farther than all of them."""
+        by_type = far_needle_backend.search_semantic(
+            _near_vector(), kb_name="test", limit=3, entry_type="needle"
+        )
+        assert {r["id"] for r in by_type} == {"needle-0", "needle-1", "needle-2"}
+        by_tag = far_needle_backend.search_semantic(
+            _near_vector(), kb_name="test", limit=3, tags=["rare"]
+        )
+        assert {r["id"] for r in by_tag} == {"needle-0", "needle-1", "needle-2"}
+
+        # The stated limit of the fix: when more than 4,096 rows match, a
+        # search still caps at 4,096 and must not raise (sqlite-vec refuses
+        # ``k`` above it). Postgres has no such ceiling and returns all 4,100.
+        rows = far_needle_backend.search_semantic(
+            _near_vector(), kb_name="test", limit=4500, entry_type="note"
+        )
+        assert len(rows) == (4096 if hasattr(far_needle_backend, "_raw_conn") else 4100)
+        assert all(r["entry_type"] == "note" for r in rows)
+
     @pytest.mark.parametrize(
         (
             "filter_name",
@@ -1030,6 +1072,26 @@ class TestSemanticKnnBudget:
         )
         assert len(rows) == 2
         assert all(row["id"].startswith("needle-") for row in rows)
+
+    def test_kb_filter_keeps_other_kbs_out_of_the_cap(self, backend_with_db, monkeypatch):
+        """``kb_name`` is a filter like the rest: rows of another KB cannot fill the cap."""
+        backend, _db = backend_with_db
+        if not hasattr(backend, "_raw_conn"):
+            pytest.skip("only SQLite has a hard KNN candidate cap")
+
+        monkeypatch.setattr(sqlite_backend, "_SQLITE_VEC_MAX_K", 8)
+        for i in range(20):
+            backend.upsert_entry(_make_entry(f"other-{i}", kb_name="other"))
+            if not backend.upsert_embedding(f"other-{i}", "other", _near_vector()):
+                pytest.skip("backend cannot store embeddings (no vector support)")
+        for i in range(3):
+            backend.upsert_entry(_make_entry(f"mine-{i}"))
+            far = _near_vector()
+            far[i] += 0.3
+            backend.upsert_embedding(f"mine-{i}", "test", far)
+
+        rows = backend.search_semantic(_near_vector(), kb_name="test", limit=3)
+        assert {r["id"] for r in rows} == {"mine-0", "mine-1", "mine-2"}
 
     @pytest.mark.control(
         reason="nothing matches, so dev also returned []; pins empty-not-error after the fix"
