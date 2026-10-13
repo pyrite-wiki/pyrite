@@ -133,7 +133,11 @@ def test_empty_projected_markdown_is_empty():
     ("accept", "check"),
     [
         ("text/markdown", lambda t: t.splitlines()[0] == "| id | kb_name | status | missing |"),
-        ("text/yaml", lambda t: "missing" not in t and "waiting" in t),
+        pytest.param(
+            "text/yaml",
+            lambda t: "missing" not in t and "waiting" in t,
+            marks=pytest.mark.control(reason="YAML already projected"),
+        ),
     ],
 )
 def test_rest_get_entry_markdown_and_yaml(make_client, accept, check):

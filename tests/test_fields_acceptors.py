@@ -121,7 +121,16 @@ CLI_ACCEPTORS = {
 
 
 @pytest.mark.parametrize("command", CLI_ACCEPTORS)
-@pytest.mark.parametrize("fmt", ["csv", "markdown", "rich", "yaml", "json"])
+@pytest.mark.parametrize(
+    "fmt",
+    [
+        "csv",
+        "markdown",
+        "rich",
+        pytest.param("yaml", marks=pytest.mark.control(reason="YAML already projected")),
+        pytest.param("json", marks=pytest.mark.control(reason="JSON already projected")),
+    ],
+)
 def test_cli_acceptor_projects_in_every_format(command, fmt):
     args = [*CLI_ACCEPTORS[command], "--fields", ",".join(FIELDS), "--format", fmt]
     with _cli_patched():
@@ -208,7 +217,14 @@ REST_ACCEPTORS = {
 
 
 @pytest.mark.parametrize("acceptor", REST_ACCEPTORS)
-@pytest.mark.parametrize("accept", ["text/csv", "text/markdown", "text/yaml"])
+@pytest.mark.parametrize(
+    "accept",
+    [
+        "text/csv",
+        "text/markdown",
+        pytest.param("text/yaml", marks=pytest.mark.control(reason="YAML already projected")),
+    ],
+)
 def test_rest_acceptor_projects_in_every_negotiated_format(make_client, acceptor, accept):
     client, _, _ = make_client(kb_name="kb")
     method, url, kwargs = REST_ACCEPTORS[acceptor]
@@ -241,6 +257,7 @@ def test_batch_fields_are_cleaned_like_the_query_string_form(make_client):
     assert list(as_json.json()["entries"][0]) == ["id", "kb_name", "status"]
 
 
+@pytest.mark.control(reason="the 400 already existed; this keeps the new parse from loosening it")
 def test_batch_fields_still_refuses_a_malformed_list(make_client):
     client, _, _ = make_client(kb_name="kb")
     response = _rest(
@@ -252,15 +269,8 @@ def test_batch_fields_still_refuses_a_malformed_list(make_client):
     assert response.status_code == 400
 
 
-@pytest.mark.parametrize(
-    "accept",
-    [
-        "text/csv",
-        pytest.param(
-            "application/json", marks=pytest.mark.control(reason="JSON is not negotiated by fields")
-        ),
-    ],
-)
+@pytest.mark.control(reason="documents what GET /api/entries already does with `fields`")
+@pytest.mark.parametrize("accept", ["text/csv", "application/json"])
 def test_get_entries_list_takes_no_fields(make_client, accept):
     """`GET /api/entries` has no `fields` parameter (CLI `list-entries` does); documented, pinned:
     the parameter changes nothing."""
