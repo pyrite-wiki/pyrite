@@ -53,6 +53,10 @@ write wait for embedding?". Layer 2 under [[design]] (P4).
 - With a worker attached and `auto_embed: true`, a write imports no embedding
   model, leaves the entry keyword-searchable, and records one pending row;
   `auto_embed: false` enqueues nothing ([[adr-0035]]).
+- A filtered semantic search returns `limit` rows whenever `limit` matching
+  rows exist, below the 4096-row `k` ceiling, however many nearer rows the
+  filter excludes (#194; `TestSemanticKnnBudget` in
+  `tests/backends/test_backend_conformance.py`).
 - Semantic search with zero embeddings yields a `warnings` entry
   ([[adr-0035]] decision 5).
 - No search result carries an entry from a KB the caller cannot read

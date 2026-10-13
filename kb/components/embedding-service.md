@@ -48,7 +48,7 @@ Initialized with a `PyriteDB` instance and an optional model name (defaults to `
 - **Lazy model loading.** The `SentenceTransformer` model is loaded on first use (`_get_model`) to avoid startup cost when semantic search is not needed.
 - **Optional dependency.** The service requires `pip install pyrite[semantic]`. The `is_available()` function lets callers gracefully degrade when sentence-transformers is not installed.
 - **sqlite-vec integration.** Embeddings are stored in a virtual table (`vec_entry`) keyed by the `entry` table's `rowid`. The KNN query uses `WHERE v.embedding MATCH ? AND k = ?` with `ORDER BY v.distance` for cosine similarity ranking.
-- **Over-fetch strategy.** `search_similar` fetches `limit * 2` (or `limit * 3` when filtering by KB) from sqlite-vec to account for KB filtering and distance cutoff before trimming to the requested limit.
+- **Candidate filtering and the `k` ceiling (SQLite).** `search_semantic` passes the caller's filters (KB, type, tags, dates, `fips`, `state`, status) into the KNN as `rowid IN (SELECT ...)`, so unrelated nearer rows cannot use up the candidate budget; the archived exclusion joins them if a search reaches the cap short. It asks for `limit * 2` neighbours (room for the `max_distance` cutoff) and escalates `k` up to sqlite-vec's hard ceiling of 4096, which it clamps to and never exceeds. More than 4096 matching rows therefore still caps at 4096. A scoped caller's readable-KB check (`kb_names`) is still applied after the KNN (`SearchService._restrict`); naming `kb_name` puts it inside.
 - **Embedding text composition.** Each entry is embedded as `title + summary + body[:500]`, giving weight to metadata while capping body length to keep embeddings focused.
 
 ## Consumers
