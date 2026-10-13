@@ -118,11 +118,19 @@ they declare the option. A new *class* of way out is one function in
 `outcome_walk.py`. Shapes that need the process's own stdout run through
 `python -m tests.outcome_walk`.
 
-Still legacy: `LEGACY_COMMANDS` (`tests/test_requested_effect_exit_code.py`)
-counts, per module, the registered commands that do not declare the shared
-option, and must match the registry exactly; a slice lowers its numbers, and
-a new command is on the contract unless a number is raised in the diff. The
-same file keeps a source scan named as a **hint** (`os._exit`,
+Still legacy: `tests/legacy_commands/` holds one text file per CLI module
+(`pyrite.cli.browse_commands.txt`), naming, one per line, the module's
+registered commands that do not declare the shared option. Each file must
+match the registry exactly, in both directions, and the failure names the
+command. A slice deletes the lines of the commands it migrates, in its own
+modules' files only (an empty file is deleted: a module with no legacy
+command has no file); a new command is on the contract unless its name is
+added to its module's file. `LEGACY_COMMANDS_CEILING` is an upper bound
+that may only go down. A command on the contract shows `PYRITE_FORMAT`
+on its `--format` in `--help`, but not the converse: `pyrite mcp-setup`
+declares its own `--format` honouring it and is still legacy. The files are
+the list. The
+same test file keeps a source scan named as a **hint** (`os._exit`,
 `atexit.register`, a started thread, a command that reads its own format):
 it is not the guard and a spelling it misses is not a finding.
 

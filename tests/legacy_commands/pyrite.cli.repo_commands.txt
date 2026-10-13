@@ -1,0 +1,6 @@
+pyrite repo fork
+pyrite repo list
+pyrite repo status
+pyrite repo subscribe
+pyrite repo sync
+pyrite repo unsubscribe

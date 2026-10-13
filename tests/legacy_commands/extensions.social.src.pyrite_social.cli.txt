@@ -1,0 +1,4 @@
+pyrite social newest
+pyrite social reputation
+pyrite social top
+pyrite social vote

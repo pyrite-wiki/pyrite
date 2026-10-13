@@ -34,9 +34,7 @@ JSON, not a promise that every command gives you the option.
 }
 ```
 
-- `outcome` — on the CLI, from a command on the outcome contract (the `task` commands,
-  `create`, `add`, `update`, `rename`, `link` and the `links` commands; see
-  "Exit codes (CLI)"): always `"error"` on a refusal, as
+- `outcome` — on the CLI, from a command on the outcome contract (see "Exit codes (CLI)"): always `"error"` on a refusal, as
   `"done"`, `"partial"` or `"nothing"` is on a result. Additive: absent from
   MCP and from a CLI command that has not migrated, so do not require it.
 
@@ -574,11 +572,13 @@ key: `"done"`, `"partial"`, `"nothing"`, or `"error"` on the error shape of a
 refusal, so a caller that cannot see the exit code can still tell. Every
 result is an object, so the key always has somewhere to go.
 
-A command is on the contract when it declares the shared `--format` option;
-the `task` commands and the write commands (`create`, `add`, `update`,
-`rename`, `link` and the seven `links` commands) are today, and the other modules move one slice at a time
-and keep the behaviour below until they do (`LEGACY_COMMANDS` in
-`tests/test_requested_effect_exit_code.py` counts them). For a command on the
+A command is on the contract when it declares the shared `--format` option.
+The commands that are not yet are migrated one slice at a time and keep the
+behaviour below until they are; they are named in `tests/legacy_commands/`
+(one file per CLI module), which a test keeps equal to the registry. Every
+command on the contract shows `PYRITE_FORMAT` on its `--format` in `--help`,
+but the sign does not run the other way: `pyrite mcp-setup` has its own
+`--format` honouring `PYRITE_FORMAT` and is still legacy. For a command on the
 contract the root is also the only way *out*, checked on every run: once the
 command's own code has started, anything but a returned outcome or a raised
 refusal is answered `NO_OUTCOME`, exit `1`, in the format you asked for. That
@@ -665,10 +665,10 @@ overrides it, and an unknown format is a usage error (`2`). It takes `json`,
 they exist for the shapes the REST API serves (entries, search results) and
 print a Python `repr` for anything else. A refusal is printed in the format
 asked for, YAML included. `-f` no longer
-means `--format`: where it did (the `task` commands) it still works for one
+means `--format`: where it did it still works for one
 release and prints a deprecation line on stderr. Each module takes the
-shared option when it moves to the outcome contract; the `task` commands
-and the write path (below) have it. Until then most *read* commands default to `--format json`, `config`
+shared option when it moves to the outcome contract; the commands not named in
+`tests/legacy_commands/` have it. Until then most *read* commands default to `--format json`, `config`
 to a rich terminal view, and the write commands are not uniform. The table is
 checked against each command's Typer signature by
 `tests/test_doc_agent_contracts.py`:
@@ -686,8 +686,7 @@ checked against each command's Typer signature by
 
 A command with no `--format` prints its refusals as Rich text too, so branch
 on the exit code, not on JSON, until its module takes the shared option.
-`create`, `add`, `update`, `rename`, `link` and every `links` command have it
-(ADR-0046, slice 2). `get` and `delete` do not yet: `get` keeps
+`get` and `delete` do not have the shared option yet: `get` keeps
 `--format markdown` and `csv`, and `delete` asks a question, which a command on
 the contract may not (the prompt rule is still open). On `create`, `update` and `links
 bulk-create` the short `-f` is `--field`/`--file`, never `--format`.

@@ -1203,49 +1203,34 @@ def test_a_command_whose_function_swallows_a_failure_is_guarded():
 # legacy, and that a command on the contract is declared the way the root
 # expects.
 
-# Commands that still print their own result and choose their own exit code:
-# for each module, how many of its registered commands (across the three CLIs)
-# do not declare the shared option. The numbers match the registry exactly, so
-# they move only in a diff a reviewer sees: a slice that migrates commands
-# lowers its module's number (and deletes the line at zero; slice 11 deletes
-# the table), and a new command is on the contract unless someone raises a
-# number here. A module with no line has none: a new command module is born on
-# the contract.
-LEGACY_COMMANDS = {
-    "extensions/cascade/src/pyrite_cascade/cli.py": 5,
-    "extensions/encyclopedia/src/pyrite_encyclopedia/cli.py": 4,
-    "extensions/journalism-investigation/src/pyrite_journalism_investigation/cli.py": 18,
-    "extensions/social/src/pyrite_social/cli.py": 4,
-    "extensions/software-kb/src/pyrite_software_kb/cli.py": 23,
-    "extensions/zettelkasten/src/pyrite_zettelkasten/cli.py": 4,
-    "pyrite/admin_cli.py": 27,
-    "pyrite/cli/__init__.py": 14,
-    "pyrite/cli/browse_commands.py": 7,
-    "pyrite/cli/collection_commands.py": 2,
-    "pyrite/cli/db_commands.py": 2,
-    "pyrite/cli/entry_commands.py": 2,
-    "pyrite/cli/export_commands.py": 2,
-    "pyrite/cli/extension_commands.py": 4,
-    "pyrite/cli/ids_commands.py": 2,
-    "pyrite/cli/index_commands.py": 7,
-    "pyrite/cli/init_command.py": 1,
-    "pyrite/cli/kb_commands.py": 15,
-    "pyrite/cli/mcp_setup_command.py": 1,
-    "pyrite/cli/protocol_commands.py": 2,
-    "pyrite/cli/qa_commands.py": 10,
-    "pyrite/cli/repo_commands.py": 6,
-    "pyrite/cli/schema_commands.py": 3,
-    "pyrite/cli/search_commands.py": 2,
-    "pyrite/read_cli.py": 6,
-}
+# Commands that still print their own result and choose their own exit code
+# are listed in tests/legacy_commands/, one text file per CLI module, named for
+# the module's dotted path (`pyrite.cli.browse_commands.txt`; the extensions'
+# paths are dotted the same way), holding the registered names of that module's
+# commands that do not declare the shared option, one per line, sorted.
+# The files match the registry exactly, in both directions, so they move only in
+# a diff a reviewer sees. A slice that migrates commands deletes their lines
+# from its own modules' files, and the file when it is empty; it touches no
+# other module's file and nothing in this test. A new command is on the
+# contract unless someone adds its name to its module's file. A module with no
+# legacy command has no file: a new command module is born on the contract.
+# Slice 11 deletes the directory.
+LEGACY_DIR = Path(__file__).resolve().parent / "legacy_commands"
 
-# The total when slice 1 introduced the table. It may only get smaller.
-LEGACY_COMMANDS_AT_SLICE_1 = 185
+# An upper bound on the number of legacy commands. It replaces
+# LEGACY_COMMANDS_AT_SLICE_1 (185, the total when slice 1 introduced the table,
+# never to be edited): slice 3a renamed it and set it to the true count after
+# slice 2 (173), because a ceiling above the count lets commands be added back
+# unnoticed. The files are the exact list, so a slice may leave this alone; a
+# reviewer lowers it when a slice migrates commands. Nothing enforces "only
+# goes down" but review.
+LEGACY_COMMANDS_CEILING = 173
 
 
 def _on_the_contract(cmd) -> bool:
-    """By name, not by importing the helper at module level: so this file still
-    collects on a tree without the contract."""
+    """Imported here, not at module level, to keep this file's import light; it
+    does run at collection (the parametrization walks the registry), so a tree
+    without ``declares_shared_format`` does not collect."""
     from pyrite.cli.output import declares_shared_format
 
     return declares_shared_format(cmd)
@@ -1261,15 +1246,60 @@ def _returns_outcome(cmd) -> bool:
     )
 
 
-def _legacy_by_module() -> dict[str, list[str]]:
+def _legacy_by_module(commands: dict[str, object] | None = None) -> dict[str, list[str]]:
     found: dict[str, list[str]] = {}
-    for name, cmd in _commands().items():
+    for name, cmd in (_commands() if commands is None else commands).items():
         loc = _location(cmd) if cmd.callback is not None else None
         # A command defined outside the repo is a third-party plugin's
         # (decision 5): not this table's to count.
         if loc is not None and not _on_the_contract(cmd):
             found.setdefault(loc[0], []).append(name)
     return found
+
+
+def _module_of(file: Path) -> str:
+    """`pyrite.cli.browse_commands.txt` -> `pyrite/cli/browse_commands.py`."""
+    return file.stem.replace(".", "/") + ".py"
+
+
+def _legacy_files() -> dict[str, list[str]]:
+    """Module -> the names in its file (blank lines ignored; a repeated name stays
+    repeated, so the comparison can say so)."""
+    return {
+        _module_of(f): [ln.strip() for ln in f.read_text().splitlines() if ln.strip()]
+        for f in sorted(LEGACY_DIR.glob("*.txt"))
+    }
+
+
+def _the_file_and_the_registry_differ(
+    module: str,
+    files: dict[str, list[str]],
+    actual: dict[str, list[str]],
+    commands: dict[str, object],
+) -> list[str]:
+    """What is wrong between one module's file and the registry, one line per
+    command, each naming the command. Empty when they agree."""
+    named, found = files.get(module, []), set(actual.get(module, []))
+    problems = []
+    if module in files and not named:
+        problems.append(f"{module}: its legacy file is empty: delete the file")
+    for name in sorted({n for n in named if named.count(n) > 1}):
+        problems.append(f"{name}: named more than once in {module}'s legacy file")
+    for name in sorted(found - set(named)):
+        problems.append(
+            f"{name} ({module}) does not declare the shared --format and is not in the "
+            "module's legacy file. A new command declares OUTPUT_FORMAT and returns an "
+            "Outcome; only a command that cannot yet is added to the file"
+        )
+    for name in sorted(set(named) - found):
+        if name not in commands:
+            why = "is not a registered command (renamed, removed or misspelt)"
+        elif _on_the_contract(commands[name]):
+            why = "is on the contract now"
+        else:
+            why = f"is registered by another module ({(_location(commands[name]) or ('?',))[0]})"
+        problems.append(f"{name} {why}: remove it from {module}'s legacy file")
+    return problems
 
 
 def _contract_modules() -> set[str]:
@@ -1280,36 +1310,108 @@ def _contract_modules() -> set[str]:
     }
 
 
-def test_the_legacy_commands_are_exactly_the_ones_counted():
-    """A command that is not on the contract is counted in LEGACY_COMMANDS, and
-    the count is exact in both directions. A new command in a legacy module
-    does not join the legacy path unnoticed (the number would have to go up),
-    and a slice that migrates commands has to take them off (the number has to
-    go down)."""
-    actual = {module: len(names) for module, names in _legacy_by_module().items()}
-    wrong = []
-    for module in sorted(set(actual) | set(LEGACY_COMMANDS)):
-        counted, found = LEGACY_COMMANDS.get(module, 0), actual.get(module, 0)
-        if found > counted:
-            wrong.append(
-                f"{module}: {found} commands without the shared --format, {counted} counted. "
-                "A new command declares OUTPUT_FORMAT and returns an Outcome: "
-                f"{sorted(_legacy_by_module()[module])}"
-            )
-        elif found < counted:
-            wrong.append(
-                f"{module}: {found} legacy commands left, {counted} counted: lower the number"
-                + (" (delete the line)" if not found else "")
-            )
-    assert not wrong, "\n".join(wrong)
+@pytest.mark.parametrize(
+    "module", sorted(set(_legacy_files()) | set(_legacy_by_module())), ids=lambda m: m
+)
+def test_a_modules_legacy_file_is_exactly_its_legacy_commands(module):
+    """A command that is not on the contract is named in its module's file, and
+    the file is exact in both directions. A new command in a legacy module does
+    not join the legacy path unnoticed (its name would have to be added), and a
+    slice that migrates commands has to take them off (their lines have to go).
+    One module is one comparison: a slice moves only its own."""
+    problems = _the_file_and_the_registry_differ(
+        module, _legacy_files(), _legacy_by_module(), _commands()
+    )
+    assert not problems, "\n".join(problems)
+
+
+def _planted_on_the_contract(cmd):
+    """A copy of a registered command that also declares the shared option: what
+    a slice does to a command, without touching the registry."""
+    import copy
+
+    from pyrite.cli.output import OUTPUT_FORMAT
+
+    def planted(output_format: str = OUTPUT_FORMAT) -> None: ...
+
+    app = typer.Typer()
+    app.command()(planted)  # one command: typer hands back the command itself
+    shared = typer.main.get_command(app).params[0]
+    twin = copy.copy(cmd)
+    twin.params = [*cmd.params, shared]
+    return twin
+
+
+def test_migrating_a_command_turns_red_only_its_modules_comparison():
+    """The property slice 3a exists for: plant the shared option on one browse
+    command and exactly that module's comparison fails, naming the command. No
+    other module's file, and no line in this test, needs to move."""
+    commands = _commands()
+    legacy = _legacy_by_module(commands)
+    if not legacy:
+        pytest.fail("no command is legacy any more: slice 11 deletes this test with the files")
+    # Whatever the registry says is first: no module or command is named here.
+    module = sorted(legacy)[0]
+    victim = legacy[module][0]
+    commands[victim] = _planted_on_the_contract(commands[victim])
+    actual, files = _legacy_by_module(commands), _legacy_files()
+
+    red = {
+        m: problems
+        for m in sorted(set(files) | set(actual))
+        if (problems := _the_file_and_the_registry_differ(m, files, actual, commands))
+    }
+
+    assert list(red) == [module], red
+    assert len(red[module]) == 1 and red[module][0].startswith(f"{victim} is on the contract")
+
+
+def test_a_file_naming_a_command_that_does_not_exist_is_red():
+    module = "pyrite/cli/fabricated_module.py"
+    files = {module: ["pyrite no-such-command"]}
+    problems = _the_file_and_the_registry_differ(module, files, {}, {})
+    assert len(problems) == 1 and problems[0].startswith(
+        "pyrite no-such-command is not a registered"
+    )
+
+
+def test_a_file_for_a_module_with_no_legacy_command_is_red():
+    """A module with no legacy command has no file: not an empty one, not a stale one."""
+    module = "pyrite/cli/fabricated_module.py"
+    stale = _the_file_and_the_registry_differ(module, {module: ["pyrite fabricated"]}, {}, {})
+    empty = _the_file_and_the_registry_differ(module, {module: []}, {}, {})
+    assert stale and "pyrite fabricated" in stale[0]
+    assert empty and "empty" in empty[0]
+
+
+def test_a_third_party_plugins_commands_are_not_counted(tmp_path):
+    """A command whose function lives outside the repo is a plugin's (ADR-0046,
+    decision 5): legacy or not, it is in no module's file."""
+    import importlib.util
+
+    plugin = tmp_path / "some_plugin.py"
+    plugin.write_text("def hello():\n    print('hi')\n\n\ndef other():\n    print('o')\n")
+    spec = importlib.util.spec_from_file_location("some_plugin", plugin)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    app = typer.Typer()
+    app.command()(module.hello)
+    app.command("other")(module.other)
+    plugin_commands = dict(_walk(typer.main.get_command(app), ["pyrite-plugin"]))
+    assert "pyrite-plugin hello" in plugin_commands
+
+    counted = _legacy_by_module({**_commands(), **plugin_commands})
+    assert not any(n.startswith("pyrite-plugin") for names in counted.values() for n in names), (
+        counted
+    )
+    assert counted == _legacy_by_module()
 
 
 @pytest.mark.control(
-    reason="tests the table in this file: red when a number is raised past the slice-1 total"
+    reason="tests the files in this directory: red when the total passes the ceiling"
 )
 def test_the_legacy_count_only_goes_down():
-    assert sum(LEGACY_COMMANDS.values()) <= LEGACY_COMMANDS_AT_SLICE_1
-    assert all(LEGACY_COMMANDS.values()), "a module with no legacy command has no line"
+    assert sum(map(len, _legacy_files().values())) <= LEGACY_COMMANDS_CEILING
 
 
 def test_a_command_on_the_contract_is_declared_the_way_the_root_expects():
@@ -1336,15 +1438,6 @@ def test_a_command_on_the_contract_is_declared_the_way_the_root_expects():
             if callback is not None and callback not in shared:
                 offences.append(f"{name}: parameter {param.name!r} has its own callback")
     assert not offences, "\n".join(offences)
-
-
-@pytest.mark.control(reason="control: generalised to allow later slices; green before and after")
-def test_the_task_commands_are_on_the_contract():
-    """Slice 1 migrated `task`: all ten declare the shared option. Later slices
-    add modules, so this names the ones it knows and does not count the rest."""
-    on = sorted(n for n, cmd in _commands().items() if _on_the_contract(cmd))
-    assert len([n for n in on if n.startswith("pyrite task ")]) == 10, on
-    assert "pyrite/cli/task_commands.py" in _contract_modules()
 
 
 # A HINT, NOT THE GUARD. What follows reads source, so it knows only the
