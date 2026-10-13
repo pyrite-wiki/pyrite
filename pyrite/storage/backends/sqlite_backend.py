@@ -427,10 +427,14 @@ class SQLiteBackend(BaseBackend):
         keyword leg, which has no KNN ceiling, is unaffected; in hybrid mode it
         carries its own result.
 
-        The default archived-entry exclusion is not a caller filter and stays
-        out of the KNN on the first pass. If the search reaches the cap still
-        short of ``limit``, it runs once more with that exclusion inside the
-        KNN, so archived rows nearer than live ones cannot hide them.
+        The default archived-entry exclusion is not a caller filter. When the
+        caller passes a filter it rides inside the KNN with the others; when
+        the caller passes none it stays out on the first pass. If such a
+        search reaches the cap short of ``limit`` *because archived rows filled
+        the k-set* (the KNN was not exhausted, no live row was culled by
+        ``max_distance``, and the k-set held archived rows), it runs once more
+        with the exclusion inside the KNN. Any other shortfall runs no extra
+        query: an unfiltered search issues the statements it always did.
 
         The escalation costs one extra query per round, and only when the
         previous budget did not fill ``limit``: an unfiltered search whose
@@ -464,6 +468,9 @@ class SQLiteBackend(BaseBackend):
         # hard k cap; keep the unfiltered hot path free of this extra query.
         knn_candidates = f" AND rowid IN (SELECT e.rowid FROM entry e WHERE 1=1{where})"
         knn_filter = knn_candidates if selective else ""
+        # The only predicate in play is the default archived exclusion: no
+        # caller filter, and the caller did not opt in to archived rows.
+        archived_exclusion_only = not selective and not include_archived
         candidate_params = params if selective else []
         sql_template = """
             WITH knn AS (
@@ -507,16 +514,25 @@ class SQLiteBackend(BaseBackend):
                 if len(results) >= limit:
                     break
             if len(results) >= limit or k >= _SQLITE_VEC_MAX_K:
-                if len(results) < limit and where and not knn_filter:
-                    # At the ceiling and short, with only the default archived
-                    # exclusion in play: archived rows may be filling the k
-                    # nearest. Ask once more with that exclusion inside the
-                    # KNN (#716 review item 4). The ordinary search never pays
-                    # for the subquery; only one that already hit the ceiling.
-                    knn_filter, candidate_params = knn_candidates, params
-                    sql = sql_template.format(knn_filter=knn_filter, where=where)
-                    size_sql = size_template.format(knn_filter=knn_filter)
-                    continue
+                if len(results) < limit and archived_exclusion_only and not knn_filter:
+                    # Short at the ceiling. Of the reasons a first pass can be
+                    # short, only one is helped by asking again with the
+                    # archived exclusion inside the KNN: archived rows filled
+                    # the k-set. Not an exhausted KNN (fewer neighbours than
+                    # ``k``: every row was seen), and not ``max_distance``
+                    # (a live row was already culled, so farther ones fail
+                    # too). The readable-KB check is not visible here at all.
+                    knn_size = (
+                        rows[0]["_knn_size"]
+                        if rows
+                        else self._raw_scalar(size_sql, (blob, k, *candidate_params))
+                    )
+                    culled = len(rows) > len(results)
+                    if knn_size >= k and knn_size > len(rows) and not culled:
+                        knn_filter, candidate_params = knn_candidates, params
+                        sql = sql_template.format(knn_filter=knn_filter, where=where)
+                        size_sql = size_template.format(knn_filter=knn_filter)
+                        continue
                 # Filled, or at sqlite-vec's hard ceiling — recall is
                 # best-effort from here.
                 break
@@ -533,6 +549,10 @@ class SQLiteBackend(BaseBackend):
                 break
             k = min(k * 4, _SQLITE_VEC_MAX_K)
         return results
+
+    def _raw_scalar(self, sql: str, params: tuple[Any, ...]) -> Any:
+        with self._raw_cursor() as cur:
+            return cur.execute(sql, params).fetchone()[0]
 
     def _semantic_filter_sql(
         self,
