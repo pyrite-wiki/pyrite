@@ -108,7 +108,7 @@ class TestLinksCheck:
 
         with _patch_config(link_env):
             result = runner.invoke(app, ["links", "check", "--format", "json"])
-            assert result.exit_code == 0
+            assert result.exit_code == 1  # a broken link fails the check
             data = json.loads(result.output)
             assert data["missing_targets"] >= 1
             assert data["total_references"] >= 2
@@ -146,7 +146,7 @@ class TestLinksCheck:
 
         with _patch_config(link_env):
             result = runner.invoke(app, ["links", "check", "--detail", "--format", "rich"])
-            assert result.exit_code == 0
+            assert result.exit_code == 1  # a broken link fails the check
             # Detail mode shows the arrow notation
             assert "\u2190" in result.output
             assert "detail-target" in result.output

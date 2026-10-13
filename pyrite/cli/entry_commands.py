@@ -190,7 +190,9 @@ def _report_link(console: Console, link: dict) -> None:
     # delimiters; escape the whole dynamic segment so the relation survives in
     # the confirmation (#396).
     verb = "[green]Linked:[/green]" if link["created"] else "[yellow]Already linked:[/yellow]"
-    arrow = escape(f"{link['source']} --[{link['relation']}]--> {link['target']} (in {link['kb']})")
+    arrow = escape(
+        f"{link['source']} --[{link['relation']}]--> {link['target']} (in {link['target_kb']})"
+    )
     console.print(f"{verb} {arrow}")
 
 
@@ -660,7 +662,7 @@ def register_entry_commands(app: typer.Typer) -> None:
                     "source": source,
                     "relation": result["relation"],
                     "target": target,
-                    "kb": tkb,
+                    "target_kb": tkb,
                 }
             )
 
@@ -691,7 +693,7 @@ def register_entry_commands(app: typer.Typer) -> None:
                             "source": target,
                             "relation": inverse,
                             "target": source,
-                            "kb": kb_name,
+                            "target_kb": kb_name,
                             "error": f"The forward link was written, but the inverse ({target} "
                             f"--[{inverse}]--> {source}) failed: {inv_err}",
                         }
@@ -703,7 +705,7 @@ def register_entry_commands(app: typer.Typer) -> None:
                             "source": target,
                             "relation": inv_result["relation"],
                             "target": source,
-                            "kb": kb_name,
+                            "target_kb": kb_name,
                         }
                     )
 

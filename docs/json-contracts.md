@@ -342,7 +342,8 @@ KB's task schema allows. It has no short flag: `-f` was `--format` on the
 **not** `--field` as on `create`/`update`.
 
 `pyrite link <source> <target> -k <kb> -r <relation>` answers
-`{"links": [{"created": true, "source", "relation", "target", "kb"}], "outcome": "done"}`
+`{"links": [{"created": true, "source", "relation", "target", "target_kb"}], "outcome": "done"}`
+(`target_kb` is the KB the link points into: the one name for it across the link family, here and in `links bulk-create`; a bare `kb` is not a key of these payloads)
 (`--bidi` adds the inverse as a second item; one that failed is in `"failed"`,
 with `"outcome": "partial"` and exit `3`); under
 `--format rich` it prints
@@ -350,6 +351,11 @@ with `"outcome": "partial"` and exit `3`); under
 `Already linked: ...` when that `(target, kb, relation)` already exists
 (`"created": false`).
 Another relation between the same two entries is a new link.
+
+`pyrite links check` is a check (ADR-0046): it exits `0` with `"outcome": "done"`
+when no link is broken, and `1` with `"outcome": "nothing"` when any is, with
+the findings still in the document (`missing_targets`, `total_references`,
+`targets`, each target with its `references`).
 
 ## Repo endpoint errors
 

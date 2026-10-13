@@ -37,6 +37,9 @@ def links_check(
 ) -> Outcome:
     """Check for broken links (links to missing targets).
 
+    Exits 1 when any broken link is found (the findings are still printed),
+    0 when there are none.
+
     Shows missing targets sorted by how many entries reference them.
     Use --detail to see which entries contain each broken link.
     """
@@ -95,10 +98,11 @@ def links_check(
             console.print(table)
             console.print("\nRun with [bold]--detail[/bold] for per-link breakdown.")
 
-    return Outcome.done(
-        {"missing_targets": len(targets), "total_references": total_refs, "targets": targets},
-        rich=rich,
-    )
+    # A check exits 1 when it fails (ADR-0046, "Check commands"): a broken link
+    # is the failure, and the findings stay in the data. `nothing` is the kind
+    # whose exit is 1.
+    data = {"missing_targets": len(targets), "total_references": total_refs, "targets": targets}
+    return (Outcome.nothing if targets else Outcome.done)(data, rich=rich)
 
 
 def _parse_link_specs(raw: str) -> list[dict]:

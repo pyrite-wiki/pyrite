@@ -552,7 +552,7 @@ def test_add_rename_and_link_succeed_as_one_json_document_by_default(env):
                 "source": "hello",
                 "relation": "informs",
                 "target": "world",
-                "kb": "notes",
+                "target_kb": "notes",
             }
         ],
         "outcome": "done",
@@ -587,3 +587,111 @@ def test_the_links_reads_succeed_as_one_json_document_by_default(env, argv, keys
     payload = doc(out)
     assert keys <= set(payload), payload
     assert payload["outcome"] == "done"
+
+
+# --------------------------------------------------------------------------
+# Round 2: one name for a link's target KB, and a failed check exits 1
+# --------------------------------------------------------------------------
+
+
+def _target_kb_names(node, path="$"):
+    """Every (path, key) in a document whose key names a KB and whose mapping
+    also names a link target (``target``/``target_id``): that key is the link's
+    target KB and must be ``target_kb``."""
+    found = []
+    if isinstance(node, dict):
+        if "target" in node or "target_id" in node:
+            found += [(path, k) for k in node if k in ("kb", "kb_name", "tkb", "target_kb_name")]
+        for key, value in node.items():
+            found += _target_kb_names(value, f"{path}.{key}")
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            found += _target_kb_names(value, f"{path}[{i}]")
+    return found
+
+
+def _link_family_outcomes(env):
+    """The JSON of every outcome in the link family that can name a target."""
+    seed(env)
+    seed(env, "World")
+    ok = run(env, "create", "-k", "notes", "-t", "note", "--title", "Ghosty", "--body", "[[ghost]]")
+    assert ok.exit_code == 0, ok.output
+    specs = env["tmp"] / "specs.yaml"
+    specs.write_text("- source: hello\n  target: world\n  relation: informs\n", encoding="utf-8")
+    argvs = {
+        "link": ["link", "hello", "world", "-k", "notes", "-r", "informs", "--bidi"],
+        "link-missing-inverse": ["link", "hello", "world", "-k", "notes", "-r", "cites"],
+        "bulk-create": ["links", "bulk-create", str(specs), "-k", "notes", "--dry-run"],
+        "check": ["links", "check"],
+    }
+    return {name: run(env, *argv) for name, argv in argvs.items()}
+
+
+def test_every_link_outcome_names_the_targets_kb_target_kb(env):
+    """A walk, not one assertion per command: a link command that joins the
+    family under another name (`kb`) fails here without a new test."""
+    outs = _link_family_outcomes(env)
+    seen = 0
+    for name, out in outs.items():
+        document = doc(out)
+        assert _target_kb_names(document) == [], (name, document)
+        seen += json.dumps(document).count('"target_kb"')
+    assert seen >= 4, "the walk reached no link payloads"
+    # The bidirectional link is the one with a payload of each direction.
+    bidi = doc(outs["link"])["links"]
+    assert [link["target_kb"] for link in bidi] == ["notes", "notes"]
+
+
+def test_a_failed_bidi_inverse_names_its_target_kb_too(env):
+    seed(env)
+    seed(env, "World")
+    from pyrite.services.kb_service import KBService
+
+    real = KBService.add_link
+    calls = []
+
+    def flaky(self, *a, **kw):
+        calls.append(a)
+        if len(calls) == 2:
+            raise ValueError("inverse refused")
+        return real(self, *a, **kw)
+
+    with patch.object(KBService, "add_link", flaky):
+        out = run(env, "link", "hello", "world", "-k", "notes", "--bidi")
+    document = doc(out)
+    assert out.exit_code == 3
+    assert document["failed"][0]["target_kb"] == "notes"
+    assert _target_kb_names(document) == []
+
+
+def _broken_link_env(env):
+    seed(env)
+    made = run(
+        env, "create", "-k", "notes", "-t", "note", "--title", "Ghosty", "--body", "[[ghost]]"
+    )
+    assert made.exit_code == 0, made.output
+
+
+def test_links_check_exits_1_with_the_findings_when_a_link_is_broken(env):
+    _broken_link_env(env)
+    out = run(env, "links", "check")
+    document = doc(out)
+    assert out.exit_code == 1, out.output
+    assert document["outcome"] == "nothing"
+    assert document["missing_targets"] == 1
+    assert [t["target_id"] for t in document["targets"]] == ["ghost"]
+    assert document["targets"][0]["references"][0]["source_id"] == "ghosty"
+    rich = run(env, "links", "check", "--format", "rich")
+    assert rich.exit_code == 1 and "ghost" in rich.stdout
+
+
+@pytest.mark.control(
+    reason="control: the clean case exited 0 before the change and must keep doing so"
+)
+def test_links_check_exits_0_when_no_link_is_broken(env):
+    seed(env)
+    out = run(env, "links", "check")
+    assert out.exit_code == 0, out.output
+    document = doc(out)
+    assert document["outcome"] == "done" and document["missing_targets"] == 0
+    assert run(env, "links", "check", "--format", "rich").exit_code == 0
