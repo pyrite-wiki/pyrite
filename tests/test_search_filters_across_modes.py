@@ -295,6 +295,115 @@ def test_kb_name_filter_is_applied_before_knn_cap(svc_db, mode, monkeypatch):
     assert all(row["kb_name"] == "test-kb" for row in results), f"mode={mode} leaked another KB"
 
 
+def _fill_cap_with_other_kb(svc_db, count=20):
+    """``count`` rows of another KB on the query's exact vector (distance 0)."""
+    import pyrite.services.embedding_service as es
+
+    embedder = es.EmbeddingService(svc_db)
+    svc_db.register_kb("other-kb", KBType.RESEARCH, "/tmp/other-kb")
+    for index in range(count):
+        entry_id = f"other-kb-entry-{index}"
+        svc_db.upsert_entry(
+            {
+                "id": entry_id,
+                "kb_name": "other-kb",
+                "entry_type": "mechanism",
+                "title": "detention",
+                "summary": "unreadable knowledge base candidate",
+                "body": "detention accountability",
+                "tags": [],
+                "sources": [],
+                "links": [],
+            }
+        )
+        svc_db.backend.upsert_embedding(entry_id, "other-kb", embedder.embed_text("detention"))
+    return embedder
+
+
+def _add_far_targets(svc_db, embedder, count=4):
+    """``count`` test-kb needles at increasing distance, no keyword overlap with the query."""
+    for index in range(count):
+        entry_id = f"far-target-{index}"
+        svc_db.upsert_entry(
+            {
+                "id": entry_id,
+                "kb_name": "test-kb",
+                "entry_type": "needle",
+                "title": f"Remote evidence {index}",
+                "summary": "semantic-only",
+                "body": "unrelated wording",
+                "tags": [],
+                "sources": [],
+                "links": [],
+            }
+        )
+        vec = embedder.embed_text("detention")
+        vec[index] += 0.1 * (index + 1)
+        svc_db.backend.upsert_embedding(entry_id, "test-kb", vec)
+
+
+def test_scoped_caller_never_sees_unreadable_rows_and_they_do_not_fill_the_cap(svc_db, monkeypatch):
+    """A caller scoped to ``test-kb``: other-kb rows never appear, and (with the KB
+    named) they are out of the KNN, so they cannot use up its budget.
+
+    Limit, stated rather than fixed: a scoped caller who names *no* ``kb_name``
+    still has the readable-KB check applied after the KNN (``_restrict``), so
+    unreadable rows can fill the cap and the search comes back short (#194
+    follow-up). The never-appear half holds either way.
+    """
+    from pyrite.storage.backends import sqlite_backend
+
+    monkeypatch.setattr(sqlite_backend, "_SQLITE_VEC_MAX_K", 8)
+    embedder = _fill_cap_with_other_kb(svc_db)
+    _add_far_targets(svc_db, embedder)
+
+    for mode in ("semantic", "hybrid"):
+        results = SearchService(svc_db).search(
+            "detention",
+            kb_name="test-kb",
+            kb_names={"test-kb"},
+            entry_type="needle",
+            mode=mode,
+            limit=4,
+        )
+        assert _ids(results) == {f"far-target-{i}" for i in range(4)}, f"mode={mode}"
+        assert {r["kb_name"] for r in results} == {"test-kb"}, f"mode={mode} leaked a KB"
+
+    unnamed = SearchService(svc_db).search(
+        "detention", kb_names={"test-kb"}, mode="semantic", limit=10
+    )
+    assert all(r["kb_name"] == "test-kb" for r in unnamed), "an unreadable KB's row appeared"
+
+
+@pytest.mark.parametrize("mode", ["semantic", "hybrid"])
+def test_offset_and_limit_page_through_filtered_rows_beyond_the_cap(svc_db, monkeypatch, mode):
+    """Pages of a filtered search are disjoint, ordered, and complete past the cap."""
+    from pyrite.storage.backends import sqlite_backend
+
+    monkeypatch.setattr(sqlite_backend, "_SQLITE_VEC_MAX_K", 8)
+    embedder = _fill_cap_with_other_kb(svc_db)
+    _add_far_targets(svc_db, embedder)
+    svc = SearchService(svc_db)
+
+    def page(offset):
+        return [
+            r["id"]
+            for r in svc.search(
+                "detention",
+                kb_name="test-kb",
+                entry_type="needle",
+                mode=mode,
+                limit=2,
+                offset=offset,
+            )
+        ]
+
+    first, second, beyond = page(0), page(2), page(4)
+    assert first == ["far-target-0", "far-target-1"]
+    assert second == ["far-target-2", "far-target-3"]
+    assert beyond == []
+
+
 def test_semantic_leg_alone_honours_filters(svc_db):
     """The vector leg itself filters — not just the service that fuses it.
 
