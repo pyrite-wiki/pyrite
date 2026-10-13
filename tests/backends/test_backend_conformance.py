@@ -1450,13 +1450,13 @@ class TestArchivedExclusionRetry:
         )
         assert {r["id"] for r in rows} == {"hit-0", "hit-1"}
 
-    @pytest.mark.control(
-        reason="passes on dev: dev escalated k with the filter outside the KNN; the pinned "
-        "property is that the filtered path still escalates under max_distance culling "
-        "(coverage the unfiltered rewrite of the old tests displaced)"
-    )
     def test_filtered_search_escalates_under_max_distance_culling(self, capped, monkeypatch):
-        """kb_name plus a cutoff no row meets: ``rowid IN`` at each k (4, then 8), result []."""
+        """kb_name plus a cutoff no row meets: ``rowid IN`` at each k (4, then 8), result [].
+
+        Restores the filtered-path coverage the unfiltered rewrite of the old
+        tests displaced. Red on dev, which ran no ``rowid IN`` and a different
+        ``k`` sequence (limit * 3).
+        """
         for i in range(30):
             self._add(capped, f"live-{i}", _near_vector(i))
         sql_log = _spy_on_sql(capped, monkeypatch)
