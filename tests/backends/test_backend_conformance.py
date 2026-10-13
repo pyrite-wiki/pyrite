@@ -895,7 +895,9 @@ class TestSemanticFilterConformance:
         assert {r["id"] for r in rows} == {"mech", "theme", "task"}
 
     @pytest.mark.control(
-        reason="unfiltered semantic search already filled its requested limit on dev"
+        reason="the three-entry fixture fits inside the first k on dev, so the filter never "
+        "culls a candidate; the beyond-the-cap regime is "
+        "TestSemanticKnnBudget::test_selective_filter_reaches_candidates_beyond_the_k_cap"
     )
     def test_search_semantic_fills_limit_despite_selective_filter(self, embedded_backend):
         """A selective filter must not cost recall.
@@ -1121,6 +1123,27 @@ class TestSemanticKnnEscalation:
         budgets = sorted(set(seen_k))
         assert len(budgets) >= 2, f"escalation loop ran once only; k values: {seen_k}"
         assert seen_k == sorted(seen_k), f"k must never shrink: {seen_k}"
+
+    def test_filtered_search_finds_a_far_match_in_the_first_budget(
+        self, haystack_backend, monkeypatch
+    ):
+        """The filtered query's pinned shape: the predicate rides inside the KNN.
+
+        Before the fix a filtered search over the haystack escalated ``k``
+        (3, 12, 48, 192, ...) until the far needle came into range. With the
+        candidate rowids passed into the KNN the needle is found at the first
+        budget: one distinct ``k``, and every ``MATCH`` query carries the
+        ``rowid IN (...)`` restriction. This replaces the filtered query-count
+        test that the unfiltered rewrite displaced.
+        """
+        sql_log = _spy_on_sql(haystack_backend, monkeypatch)
+        rows = haystack_backend.search_semantic(
+            _near_vector(), kb_name="test", limit=1, entry_type="needle"
+        )
+        assert {r["id"] for r in rows} == {"h199"}
+        knn = [(s, p) for s, p in sql_log if "MATCH" in s and "k = ?" in s]
+        assert {p[1] for _, p in knn} == {knn[0][1][1]}, f"filtered search escalated: {knn}"
+        assert all("rowid IN" in " ".join(s.split()) for s, _ in knn), "predicate not in the KNN"
 
     def test_unfiltered_hot_path_runs_one_query(self, haystack_backend, monkeypatch):
         """No filter, ``limit`` filled on the first budget: one query, no COUNT.
