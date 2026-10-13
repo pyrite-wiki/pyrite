@@ -41,7 +41,7 @@ The pluggable index-layer abstraction. Defines 31 methods across entry CRUD, ful
 ## Implementors
 
 - `SQLiteBackend` (`pyrite/storage/backends/sqlite_backend.py`) — default backend using FTS5 + sqlite-vec
-- `PostgresBackend` (`pyrite/storage/backends/postgres_backend.py`) — production backend using pg_vector
+- `PostgresBackend` (`pyrite/storage/backends/postgres_backend.py`) — backend using pg_vector. **Experimental in 0.25.x**: an existing Postgres database may not upgrade between releases ([#718](https://github.com/pyrite-wiki/pyrite/issues/718)); it says so once per process at construction.
 
 ## Consumers
 

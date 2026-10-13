@@ -14,6 +14,8 @@ tags:
 - storage
 ---
 
+> **Experimental in 0.25.x.** The Postgres backend has no migration for columns added after alembic revision 006, so an existing Postgres database may not upgrade between releases ([#718](https://github.com/pyrite-wiki/pyrite/issues/718)). Pyrite says so once per process, on stderr and in the server log, when the backend is built; set `PYRITE_POSTGRES_EXPERIMENTAL_ACK=1` to silence it.
+
 Optional multi-user production backend implementing the SearchBackend protocol against PostgreSQL. Uses tsvector for full-text search and pgvector for semantic search, and is conditionally imported only when its dependencies are available.
 
 ## Key Methods / Classes

@@ -11,6 +11,9 @@ Inherits shared ORM/SQL logic from BaseBackend.  Only overrides:
 from __future__ import annotations
 
 import logging
+import os
+import sys
+import threading
 from typing import Any, ClassVar
 
 from sqlalchemy import Engine, create_engine, text
@@ -23,6 +26,56 @@ from .base_backend import BaseBackend
 from .capabilities import BackendCapability
 
 logger = logging.getLogger(__name__)
+
+# The Postgres backend is experimental in 0.25.x (#718): the alembic chain stops
+# at revision 006, so an existing Postgres database cannot take a column added
+# since. Said once per process, from the one place the backend is built, so the
+# CLI, the REST server and the MCP server all get it without a per-command change.
+EXPERIMENTAL_ACK_ENV = "PYRITE_POSTGRES_EXPERIMENTAL_ACK"
+_EXPERIMENTAL_NOTICE = (
+    "The Postgres backend is experimental in Pyrite 0.25.x: an existing Postgres "
+    "database may not upgrade between releases. "
+    "Details: https://github.com/pyrite-wiki/pyrite/issues/718 "
+    f"(set {EXPERIMENTAL_ACK_ENV}=1 to silence this notice)"
+)
+_experimental_notice_shown = False
+_experimental_notice_lock = threading.Lock()
+
+
+def _logging_reaches_stderr() -> bool:
+    """True when a handler on the ``pyrite`` chain will write a WARNING to stderr."""
+    log = logging.getLogger("pyrite")
+    if not log.isEnabledFor(logging.WARNING):
+        return False
+    while log is not None:
+        for h in log.handlers:
+            if (
+                isinstance(h, logging.StreamHandler)
+                and getattr(h, "stream", None) is sys.stderr
+                and h.level <= logging.WARNING
+            ):
+                return True
+        log = log.parent if log.propagate else None
+    return False
+
+
+def _announce_experimental() -> None:
+    """Say once per process that this backend is experimental.
+
+    Never writes to stdout (``--format json`` output and the MCP stdio stream
+    stay clean). The log gets it for the server; stderr gets it directly unless
+    logging is already writing there, so a terminal sees one line, not two.
+    """
+    global _experimental_notice_shown
+    if os.environ.get(EXPERIMENTAL_ACK_ENV, "").strip().lower() in ("1", "true", "yes"):
+        return
+    with _experimental_notice_lock:
+        if _experimental_notice_shown:
+            return
+        _experimental_notice_shown = True
+    logger.warning(_EXPERIMENTAL_NOTICE)
+    if not _logging_reaches_stderr():
+        print(f"pyrite: {_EXPERIMENTAL_NOTICE}", file=sys.stderr)
 
 
 # The DBAPI the ``postgres`` extra installs (``psycopg2-binary``). A bare
@@ -147,6 +200,7 @@ class PostgresBackend(BaseBackend):
         # the backend's lifetime. A shared psycopg connection under concurrent
         # use raises rather than corrupting results the way SQLite does, so the
         # symptom differs — the lifetime bug is the same one.
+        _announce_experimental()
         self._owner = owner
         self._explicit_session = session
         self._engine = engine
