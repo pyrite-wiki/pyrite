@@ -50,7 +50,7 @@ class EmbedRefusedError(Exception):
     """
 
 
-def settle_embed_queue(db: PyriteDB, *, label: str = "") -> int:
+def settle_embed_queue(db: PyriteDB, *, label: str = "", model_name: str | None = None) -> int:
     """Pay off whatever ADR-0035 writes left in `embed_queue`. Never raises.
 
     **The one drain implementation.** The server (startup, `POST
@@ -69,11 +69,19 @@ def settle_embed_queue(db: PyriteDB, *, label: str = "") -> int:
 
     Returns the number of entries embedded.
     """
-    return sum(settle_embed_queue_by_kb(db, label=label).values())
+    return sum(settle_embed_queue_by_kb(db, label=label, model_name=model_name).values())
 
 
-def settle_embed_queue_by_kb(db: PyriteDB, *, label: str = "") -> dict[str, int]:
+def settle_embed_queue_by_kb(
+    db: PyriteDB, *, label: str = "", model_name: str | None = None
+) -> dict[str, int]:
     """`settle_embed_queue`, returning the entries embedded per KB (``{kb: n}``).
+
+    ``model_name`` is the configured embedding model
+    (``config.settings.embedding_model``). Every caller in Pyrite passes it:
+    the queue has only a database, and without the name it embeds with the
+    default model whatever the config says, while `pyrite index embed` and
+    search use the configured one (#668).
 
     The count is what the worker reports it wrote, not an inference from the
     vector table: `upsert_embedding` reuses an entry's rowid, so a re-embedded
@@ -82,7 +90,7 @@ def settle_embed_queue_by_kb(db: PyriteDB, *, label: str = "") -> dict[str, int]
     the KB in scope (#584). Never raises.
     """
     try:
-        worker = EmbeddingWorker(db)
+        worker = EmbeddingWorker(db, model_name=model_name)
         if not worker.has_pending():
             return {}
         embedded = worker.drain()
@@ -117,9 +125,11 @@ class EmbeddingWorker:
     above for the single entry point every surface uses.
     """
 
-    def __init__(self, db: PyriteDB, max_attempts: int = 3):
+    def __init__(self, db: PyriteDB, max_attempts: int = 3, model_name: str | None = None):
         self.db = db
         self.max_attempts = max_attempts
+        #: The model queued entries are embedded with; None is the default.
+        self.model_name = model_name
         self._embedding_svc = None
         #: Entries embedded by the last `drain`, per KB (see `settle_embed_queue_by_kb`).
         self.embedded_by_kb: dict[str, int] = {}
@@ -332,10 +342,16 @@ class EmbeddingWorker:
         if self._embedding_svc is not None:
             return self._embedding_svc
         try:
-            from .embedding_service import EmbeddingService, is_available
+            from .embedding_service import (
+                DEFAULT_EMBEDDING_MODEL,
+                EmbeddingService,
+                is_available,
+            )
 
             if is_available() and self.db.vec_available:
-                self._embedding_svc = EmbeddingService(self.db)
+                self._embedding_svc = EmbeddingService(
+                    self.db, model_name=self.model_name or DEFAULT_EMBEDDING_MODEL
+                )
                 return self._embedding_svc
         except Exception:
             logger.warning("Embedding service initialization failed in worker", exc_info=True)

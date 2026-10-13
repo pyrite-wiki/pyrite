@@ -63,20 +63,39 @@ class PluginContext:
             limit: Maximum results to return
 
         Returns:
-            List of matching entry dicts with id, kb_name, title, entry_type, snippet
+            List of matching entry dicts with id, kb_name, title, entry_type,
+            snippet. Rows from the vector index also carry ``similarity``
+            (cosine, 3 places, the same on every backend) and ``distance``
+            (backend-specific; leaves after one release). Rows from the
+            keyword fallback carry neither. No verdict is attached: that is
+            `SearchService.search_response`, for a surface that shows a page.
         """
         kb = kb_name or self.kb_name
 
         # Try semantic search first
         try:
-            from ..services.embedding_service import EmbeddingService, is_available
+            from ..services.embedding_service import (
+                EmbeddingService,
+                configured_embedding_model,
+                is_available,
+            )
 
             if is_available() and self.db.vec_available:
-                svc = EmbeddingService(self.db)
-                results = svc.search(query, kb_name=kb, limit=limit)
+                # The configured model, like the entries (#668). And
+                # `search_similar`: this called `svc.search`, which
+                # EmbeddingService has never had, so the AttributeError was
+                # caught below and every plugin search was a keyword search.
+                svc = EmbeddingService(
+                    self.db,
+                    model_name=configured_embedding_model(getattr(self.config, "settings", None)),
+                )
+                results = svc.search_similar(query, kb_name=kb, limit=limit)
                 if results:
                     return results
         except Exception:
+            # Broad on purpose: a plugin asked for results and the keyword
+            # index can still give some. Never silent: a bug in the vector
+            # path (a TypeError, a KeyError) is logged here with its traceback.
             logger.warning("Semantic search failed, falling back to keyword", exc_info=True)
 
         # Fallback to FTS5 keyword search

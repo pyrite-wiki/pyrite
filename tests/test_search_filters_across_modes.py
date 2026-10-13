@@ -83,7 +83,7 @@ class _StubEmbedder:
     """Deterministic 384-dim embeddings — no model download, no wall clock.
 
     Every vector is near-identical (a fixed base with a tiny per-text nudge),
-    so the KNN leg ranks *all* embedded entries within ``max_distance``. That
+    so the KNN leg ranks *all* embedded entries above ``min_similarity``. That
     is deliberate: it makes the vector leg offer every entry as a candidate, so
     a filter that is not applied on that leg shows up immediately as a leak.
     """
@@ -556,7 +556,7 @@ def test_a_backend_type_error_always_propagates(svc, monkeypatch, filters):
     regression — it used to be swallowed and relabelled.
     """
 
-    def _broken(self, embedding, kb_name=None, limit=20, max_distance=1.3, **kwargs):
+    def _broken(self, embedding, kb_name=None, limit=20, min_similarity=0.155, **kwargs):
         raise TypeError("a real bug in the backend")
 
     monkeypatch.setattr(type(svc.db.backend), "search_semantic", _broken)

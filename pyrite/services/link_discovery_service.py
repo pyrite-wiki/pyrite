@@ -217,8 +217,12 @@ class LinkDiscoveryService:
             if exclude_linked and rid in existing_targets:
                 continue
 
-            if "distance" in r:
-                score = round(1.0 - (r["distance"] / 2.0), 4)
+            if r.get("similarity") is not None:
+                # Cosine similarity, the same number on every backend (#668).
+                # This read `1 - distance / 2`, which is neither backend's
+                # cosine: `distance` is L2 on SQLite and cosine distance on
+                # Postgres.
+                score = r["similarity"]
             else:
                 score = round(r.get("rank", 0.0), 4)
 

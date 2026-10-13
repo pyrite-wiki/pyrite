@@ -21,6 +21,7 @@ from ...exceptions import StorageError
 from ..models import Link
 from .base_backend import BaseBackend
 from .capabilities import BackendCapability
+from .protocol import DEFAULT_MIN_SIMILARITY, similarity_from
 
 logger = logging.getLogger(__name__)
 
@@ -404,7 +405,7 @@ class PostgresBackend(BaseBackend):
         embedding: list[float],
         kb_name: str | None = None,
         limit: int = 20,
-        max_distance: float = 1.3,
+        min_similarity: float = DEFAULT_MIN_SIMILARITY,
         entry_type: str | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
@@ -413,11 +414,12 @@ class PostgresBackend(BaseBackend):
         state: str | None = None,
         status: str | None = None,
         include_archived: bool = False,
+        kb_names: set[str] | list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """KNN over pgvector, honouring the same filters as ``search`` (#56).
 
         Unlike sqlite-vec there is no separate KNN budget to escalate: every
-        predicate, ``max_distance`` included, goes into the same ``WHERE`` as
+        predicate, the similarity floor included, goes into the same ``WHERE`` as
         the distance ordering, so ``LIMIT`` applies after filtering and cannot
         under-return. The predicates below mirror
         :meth:`SQLiteBackend._semantic_filter_sql` one for one — the two
@@ -439,6 +441,14 @@ class PostgresBackend(BaseBackend):
         if kb_name:
             sql += " AND e.kb_name = :kb_name"
             params["kb_name"] = kb_name
+        if kb_names is not None:
+            # The caller's readable set, as the keyword leg applies it (#668).
+            names = list(kb_names)
+            if names:
+                sql += " AND e.kb_name = ANY(:kb_names)"
+                params["kb_names"] = names
+            else:
+                sql += " AND FALSE"
         if entry_type:
             sql += " AND e.entry_type = :entry_type"
             params["entry_type"] = entry_type
@@ -477,22 +487,40 @@ class PostgresBackend(BaseBackend):
             keys = effective_status.derived_done_keys(self._session, kb_name)
             sql += f" AND {effective_status.status_sql('e.', keys, params)} = :status"
             params["status"] = status
-        # ``max_distance`` belongs in the WHERE, not in a Python filter after
-        # the fact: applied post-LIMIT it culls rows the LIMIT already paid for
-        # and under-returns, where sqlite escalates its k instead. One
+        # The similarity floor belongs in the WHERE, not in a Python filter
+        # after the fact: applied post-LIMIT it culls rows the LIMIT already
+        # paid for and under-returns, where sqlite escalates its k instead. One
         # predicate here keeps the two backends returning the same rows (#56).
-        sql += " AND (e.embedding <=> CAST(:vec3 AS vector)) <= :max_distance"
+        # ``<=>`` is cosine distance, so the floor is ``1 - min_similarity``;
+        # a zero vector's distance is NaN, which no comparison admits.
+        sql += " AND (e.embedding <=> CAST(:vec3 AS vector)) <= :max_cosine_distance"
         params["vec3"] = vec_str
-        params["max_distance"] = max_distance
+        params["max_cosine_distance"] = 1.0 - min_similarity
         sql += " ORDER BY e.embedding <=> CAST(:vec2 AS vector) LIMIT :limit"
         params["vec2"] = vec_str
         params["limit"] = limit
 
-        return self._exec(sql, params)
+        rows = self._exec(sql, params)
+        for row in rows:
+            # ``distance`` here is already cosine distance (#668).
+            row["similarity"] = similarity_from(row.get("distance"))
+        return rows
 
-    def has_embeddings(self) -> bool:
-        count = self._exec_scalar("SELECT COUNT(*) FROM entry WHERE embedding IS NOT NULL")
-        return (count or 0) > 0
+    def has_embeddings(
+        self, kb_name: str | None = None, kb_names: set[str] | list[str] | None = None
+    ) -> bool:
+        sql = "SELECT COUNT(*) FROM entry e WHERE e.embedding IS NOT NULL"
+        params: dict[str, Any] = {}
+        if kb_name:
+            sql += " AND e.kb_name = :kb_name"
+            params["kb_name"] = kb_name
+        if kb_names is not None:
+            names = list(kb_names)
+            if not names:
+                return False
+            sql += " AND e.kb_name = ANY(:kb_names)"
+            params["kb_names"] = names
+        return (self._exec_scalar(sql, params) or 0) > 0
 
     def embedding_stats(self) -> dict[str, Any]:
         vec_count = self._exec_scalar("SELECT COUNT(*) FROM entry WHERE embedding IS NOT NULL") or 0

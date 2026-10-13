@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from ...utils.json_utils import SafeEncoder as _SafeEncoder
 from ..models import Block, EdgeEndpoint, Entry, EntryRef, EntryTag, Link, Source, Tag
+from .protocol import DEFAULT_MIN_SIMILARITY
 
 
 def kb_names_clause(
@@ -635,7 +636,7 @@ class BaseBackend(ABC):
         embedding: list[float],
         kb_name: str | None = None,
         limit: int = 20,
-        max_distance: float = 1.3,
+        min_similarity: float = DEFAULT_MIN_SIMILARITY,
         entry_type: str | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
@@ -644,10 +645,13 @@ class BaseBackend(ABC):
         state: str | None = None,
         status: str | None = None,
         include_archived: bool = False,
+        kb_names: set[str] | list[str] | None = None,
     ) -> list[dict[str, Any]]: ...
 
     @abstractmethod
-    def has_embeddings(self) -> bool: ...
+    def has_embeddings(
+        self, kb_name: str | None = None, kb_names: set[str] | list[str] | None = None
+    ) -> bool: ...
 
     @abstractmethod
     def embedding_stats(self) -> dict[str, Any]: ...

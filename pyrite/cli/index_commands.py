@@ -25,7 +25,7 @@ def _format_output(data: dict, fmt: str) -> str | None:
     return format_output(data, fmt)
 
 
-def _settle_embed_queue(db) -> int:
+def _settle_embed_queue(db, model_name: str | None = None) -> int:
     """Pay off whatever ADR-0035 writes left in `embed_queue`.
 
     Shares one implementation with the server (`settle_embed_queue`), which is
@@ -44,7 +44,7 @@ def _settle_embed_queue(db) -> int:
     """
     from ..services.embedding_worker import settle_embed_queue
 
-    return settle_embed_queue(db)
+    return settle_embed_queue(db, model_name=model_name)
 
 
 def _embed_counts(stats: dict, from_queue: int, force: bool) -> tuple[int, int, int]:
@@ -187,7 +187,7 @@ def index_build(
                 # *skip* it -- it only asks whether a vector exists, not
                 # whether it is current -- so an update's row must be settled
                 # before, not after.
-                _settle_embed_queue(db)
+                _settle_embed_queue(db, model_name=config.settings.embedding_model)
                 svc = EmbeddingService(db, model_name=config.settings.embedding_model)
                 stats = svc.embed_all(kb_name=kb_name, force=force)
                 if stats["embedded"] > 0:
@@ -255,7 +255,7 @@ def index_sync(
     # `embed_all(force=False)` would skip it because a (stale) vector exists.
     changed = results["added"] + results["updated"]
     if not no_embed:
-        _settle_embed_queue(db)
+        _settle_embed_queue(db, model_name=config.settings.embedding_model)
 
     if changed > 0 and not no_embed:
         try:
@@ -359,7 +359,7 @@ def index_embed(
     # anything that already has a vector, stale or not.
     from ..services.embedding_worker import settle_embed_queue_by_kb
 
-    by_kb = settle_embed_queue_by_kb(db)
+    by_kb = settle_embed_queue_by_kb(db, model_name=config.settings.embedding_model)
     from_queue = sum(by_kb.values()) if kb_name is None else by_kb.get(kb_name, 0)
     # The drain settles every KB's queue, whatever --kb says; entries in other
     # KBs are embedded too, and are not in this run's counts below.

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .protocol import DEFAULT_MIN_SIMILARITY
+
 
 class OverlaySearchBackend:
     """Overlays a user's diff index on top of the shared main index.
@@ -370,7 +372,7 @@ class OverlaySearchBackend:
         embedding: list[float],
         kb_name: str | None = None,
         limit: int = 20,
-        max_distance: float = 1.3,
+        min_similarity: float = DEFAULT_MIN_SIMILARITY,
         entry_type: str | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
@@ -379,6 +381,7 @@ class OverlaySearchBackend:
         state: str | None = None,
         status: str | None = None,
         include_archived: bool = False,
+        kb_names: set[str] | list[str] | None = None,
     ) -> list[dict[str, Any]]:
         # For V1, semantic search from main only. Filters pass straight through
         # so the overlay honours them exactly as main does (#56).
@@ -386,7 +389,8 @@ class OverlaySearchBackend:
             embedding,
             kb_name,
             limit,
-            max_distance,
+            min_similarity,
+            kb_names=kb_names,
             entry_type=entry_type,
             tags=tags,
             date_from=date_from,
@@ -397,8 +401,10 @@ class OverlaySearchBackend:
             include_archived=include_archived,
         )
 
-    def has_embeddings(self) -> bool:
-        return self._main.has_embeddings()
+    def has_embeddings(
+        self, kb_name: str | None = None, kb_names: set[str] | list[str] | None = None
+    ) -> bool:
+        return self._main.has_embeddings(kb_name, kb_names)
 
     def embedding_stats(self) -> dict[str, Any]:
         return self._main.embedding_stats()

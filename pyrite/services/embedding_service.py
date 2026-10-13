@@ -12,9 +12,11 @@ import logging
 import os
 import struct
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..storage.backends.protocol import DEFAULT_MIN_SIMILARITY
 from ..storage.database import PyriteDB
 
 logger = logging.getLogger(__name__)
@@ -129,6 +131,59 @@ _MODEL_MAX_BODY_CHARS: dict[str, int] = {
 #: Fallback when the model name is unknown. Keep conservative so a
 #: surprise model doesn't blow past its real context window.
 _DEFAULT_MAX_BODY_CHARS = 500
+
+
+#: The model `Settings.embedding_model` defaults to, and the one an embedder
+#: built without settings uses.
+DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+
+
+def configured_embedding_model(settings: Any | None) -> str:
+    """The embedding model these settings name; the default without settings.
+
+    Entries and queries must be embedded by the same model, so every embedder
+    is built with this name: `EmbeddingService(db, model_name=...)`. A call
+    site that leaves the name out embeds with the default whatever the config
+    says (#668); `tests/test_search_match_verdict.py` walks the package for one.
+    """
+    return getattr(settings, "embedding_model", None) or DEFAULT_EMBEDDING_MODEL
+
+
+@dataclass(frozen=True)
+class MatchThresholds:
+    """Where one model's cosine similarities separate an answer from a near miss.
+
+    ``strong``: a top hit at or above it answers the query. ``floor``: a top
+    hit below it does not. Between the two, the top hit must stand ``margin``
+    above the mean of the next nine results, or the page is a crowd of
+    adjacent entries and none of them the answer.
+    """
+
+    floor: float
+    strong: float
+    margin: float
+
+
+#: Per-model thresholds for the search verdict (`match_verdict` in
+#: `search_service.py` is the one reader). Measured, not chosen: the row for
+#: all-MiniLM-L6-v2 comes from 90 labelled queries over 26 KBs (#668, the spike
+#: of 2026-10-03: 38/38 unanswerable queries flagged, 2/52 answerable ones
+#: flagged wrongly), with one vector per entry. The same numbers on
+#: bge-base-en-v1.5 flag 13/38, so a model with no row gets no semantic
+#: verdict. Add a row only with the labelled set re-run for that model, and
+#: again for a passage setup.
+_MODEL_MATCH_THRESHOLDS: dict[str, MatchThresholds] = {
+    "all-MiniLM-L6-v2": MatchThresholds(floor=0.35, strong=0.50, margin=0.10),
+}
+
+
+def match_thresholds_for_model(model_name: str | None) -> MatchThresholds | None:
+    """The verdict thresholds for ``model_name``, or None: uncalibrated.
+
+    No fallback row, unlike `max_body_chars_for_model`: a borrowed threshold
+    is a wrong verdict stated with confidence.
+    """
+    return _MODEL_MATCH_THRESHOLDS.get(model_name or "")
 
 
 def max_body_chars_for_model(model_name: str) -> int:
@@ -344,7 +399,7 @@ class EmbeddingService:
     def __init__(
         self,
         db: PyriteDB,
-        model_name: str = "all-MiniLM-L6-v2",
+        model_name: str = DEFAULT_EMBEDDING_MODEL,
         max_body_chars: int | None = None,
     ):
         self.db = db
@@ -528,7 +583,7 @@ class EmbeddingService:
         query: str,
         kb_name: str | None = None,
         limit: int = 20,
-        max_distance: float = 1.3,
+        min_similarity: float = DEFAULT_MIN_SIMILARITY,
         entry_type: str | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
@@ -537,6 +592,7 @@ class EmbeddingService:
         state: str | None = None,
         status: str | None = None,
         include_archived: bool = False,
+        kb_names: set[str] | list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """
         Search for semantically similar entries using vector KNN.
@@ -545,8 +601,10 @@ class EmbeddingService:
             query: Natural language search query.
             kb_name: Optional KB filter.
             limit: Max results to return.
-            max_distance: Cosine distance cutoff (0=identical, 2=opposite).
-                Results with distance > max_distance are excluded.
+            min_similarity: Cosine similarity floor (1=same direction,
+                0=unrelated). Results below it are excluded, on every backend.
+            kb_names: The KBs the caller may read; ``None`` is every KB.
+                Applied by the backend inside the KNN query, like the filters.
             entry_type, tags, date_from, date_to, fips, state, status,
             include_archived: the same filter set the keyword leg takes.
                 Applied by the backend inside the KNN query rather than after
@@ -555,7 +613,9 @@ class EmbeddingService:
                 exclusion rather than a value filter, and holds on both legs
                 for the same reason.
 
-        Returns list of entry dicts with 'distance' and 'snippet' fields.
+        Returns list of entry dicts with ``similarity`` (cosine, 3 places, the
+        same on every backend), ``snippet``, and ``distance`` (backend-specific:
+        sqlite-vec's L2, pgvector's cosine distance; kept for one release).
         """
         backend = self.db.backend
         if not backend.vec_available:
@@ -566,7 +626,8 @@ class EmbeddingService:
             embedding=embedding,
             kb_name=kb_name,
             limit=limit,
-            max_distance=max_distance,
+            min_similarity=min_similarity,
+            kb_names=kb_names,
             entry_type=entry_type,
             tags=tags,
             date_from=date_from,
@@ -584,9 +645,13 @@ class EmbeddingService:
 
         return results
 
-    def has_embeddings(self) -> bool:
-        """Check if any embeddings exist in the database."""
-        return self.db.backend.has_embeddings()
+    def has_embeddings(
+        self, kb_name: str | None = None, kb_names: set[str] | list[str] | None = None
+    ) -> bool:
+        """Do any embeddings exist: in the index, or in the KBs named?"""
+        if kb_name is None and kb_names is None:
+            return self.db.backend.has_embeddings()
+        return self.db.backend.has_embeddings(kb_name, kb_names)
 
     def embedding_stats(self) -> dict[str, Any]:
         """Get embedding statistics."""

@@ -154,7 +154,7 @@ def get_kb_service(
     return KBService(config, db)
 
 
-def _drain_embed_queue(db: PyriteDB, *, label: str = "") -> int:
+def _drain_embed_queue(db: PyriteDB, *, label: str = "", model_name: str | None = None) -> int:
     """Embed everything a write left in `embed_queue`. Blocking; never raises.
 
     Thin alias for `services.embedding_worker.settle_embed_queue`, which is
@@ -163,7 +163,7 @@ def _drain_embed_queue(db: PyriteDB, *, label: str = "") -> int:
     """
     from ..services.embedding_worker import settle_embed_queue
 
-    return settle_embed_queue(db, label=label)
+    return settle_embed_queue(db, label=label, model_name=model_name)
 
 
 def get_task_service(
@@ -404,12 +404,13 @@ def get_sitemap_service(
 
 
 def get_embedding_worker(
+    config: PyriteConfig = Depends(get_config),
     db: PyriteDB = Depends(get_db),
 ) -> "EmbeddingWorker":
     """Get an EmbeddingWorker (the embed queue) via DI."""
     from ..services.embedding_worker import EmbeddingWorker
 
-    return EmbeddingWorker(db)
+    return EmbeddingWorker(db, model_name=config.settings.embedding_model)
 
 
 def get_site_cache_factory(
@@ -1274,7 +1275,11 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
         # fails with `'generator' object has no attribute '_raw_conn'`, so the
         # drain never runs and a stock install embeds nothing.
         db = _app_db()
-        await run_in_threadpool(lambda: _drain_embed_queue(db, label="startup"))
+        await run_in_threadpool(
+            lambda: _drain_embed_queue(
+                db, label="startup", model_name=config.settings.embedding_model
+            )
+        )
 
     # Sync routes and IndexWorker threads have no running loop; they hand
     # WebSocket events to this one (#326, #322). Captured here, not at import,

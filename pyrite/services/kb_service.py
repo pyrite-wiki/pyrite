@@ -398,7 +398,9 @@ class KBService:
         try:
             from .embedding_worker import EmbeddingWorker
 
-            self._embedding_worker = EmbeddingWorker(self.db)
+            self._embedding_worker = EmbeddingWorker(
+                self.db, model_name=self.config.settings.embedding_model
+            )
         except Exception:
             # A DB that cannot hold the queue (read-only, locked, out of disk)
             # must not fail the write: the entry is on disk and in the index
