@@ -103,8 +103,14 @@ pyrite search "Second" -k notes
 
 <!-- output-keys -->
 ```json
-{"query": "Second", "count": 1, "results": []}
+{"query": "Second", "count": 1, "results": [],
+ "match": "strong", "match_basis": "keyword: every term matched", "legs_run": ["keyword"],
+ "keyword_match": "all_terms"}
 ```
+
+`match` says what the page is worth (`strong`, `weak` or `none`); on `none`
+the KB does not contain an answer. See
+[What the page is worth](json-contracts.md#what-the-page-is-worth-match-match_basis-keyword_match-similarity).
 
 A file you write yourself under the KB's folder is not searchable until
 `pyrite index sync` (incremental and cheap; the

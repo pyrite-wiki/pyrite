@@ -604,7 +604,9 @@ class PyriteMCPServer:
         # docstring, "what a search response owes its caller" (#56).
         warnings: list[str] = []
         try:
-            results = self.search_svc.search(
+            # The one assembler (#668): rows, verdict and warnings. Every key
+            # but `results` goes into the payload as it is.
+            response = self.search_svc.search_response(
                 query=query,
                 kb_name=args.get("kb_name"),
                 kb_names=None if args.get("kb_name") else readable_kbs,
@@ -635,6 +637,7 @@ class PyriteMCPServer:
                 ),
                 retryable=False,
             )
+        results = response.pop("results")
 
         if fields or include_body:
             # kb_search takes no body_limit, so every body it returns is
@@ -655,9 +658,8 @@ class PyriteMCPServer:
             "count": len(results),
             "has_more": len(results) == limit,
             "results": results,
+            **response,
         }
-        if warnings:
-            payload["warnings"] = warnings
         return payload
 
     def _kb_get(

@@ -114,7 +114,7 @@ def fake_embeddings(monkeypatch):
         calls.append(query)
         return []
 
-    monkeypatch.setattr(EmbeddingService, "has_embeddings", lambda self: True)
+    monkeypatch.setattr(EmbeddingService, "has_embeddings", lambda self, *a, **k: True)
     monkeypatch.setattr(EmbeddingService, "search_similar", _search_similar)
     return calls
 
@@ -519,7 +519,7 @@ class TestClassification:
     def test_a_semantic_leg_failure_is_a_storage_error(self, indexed_test_env, monkeypatch):
         from pyrite.services.embedding_service import EmbeddingService
 
-        monkeypatch.setattr(EmbeddingService, "has_embeddings", lambda self: True)
+        monkeypatch.setattr(EmbeddingService, "has_embeddings", lambda self, *a, **k: True)
         monkeypatch.setattr(EmbeddingService, "search_similar", _raise(_real_missing_table_error()))
         with pytest.raises(StorageError):
             SearchService(indexed_test_env["db"]).search("hello", mode="semantic")
@@ -598,7 +598,7 @@ class TestRestContract:
     ):
         from pyrite.services.embedding_service import EmbeddingService
 
-        monkeypatch.setattr(EmbeddingService, "has_embeddings", lambda self: True)
+        monkeypatch.setattr(EmbeddingService, "has_embeddings", lambda self, *a, **k: True)
         monkeypatch.setattr(EmbeddingService, "search_similar", _raise(_real_missing_table_error()))
         resp = self._get(rest_api_env, caplog, mode="semantic")
         assert resp.status_code == 500
@@ -642,7 +642,7 @@ class TestMcpContract:
     ):
         from pyrite.services.embedding_service import EmbeddingService
 
-        monkeypatch.setattr(EmbeddingService, "has_embeddings", lambda self: True)
+        monkeypatch.setattr(EmbeddingService, "has_embeddings", lambda self, *a, **k: True)
         monkeypatch.setattr(EmbeddingService, "search_similar", _raise(_real_missing_table_error()))
         result = self._search(mcp_server, caplog, mode="semantic")
         assert result["error_code"] == "STORAGE_ERROR", result
@@ -686,3 +686,126 @@ class TestMcpContract:
         assert result["error_code"] == code
         assert result["retryable"] is False
         assert _error_records(caplog) == []
+
+
+# ---------------------------------------------------------------------------
+# 6. The shape of a search response (#668)
+# ---------------------------------------------------------------------------
+
+_ENVELOPE = {"query", "count", "results"}
+_VERDICT = {"match", "match_basis", "legs_run"}
+
+
+class TestResponseShape:
+    """Which top-level keys a search response has, per surface and mode.
+
+    The values and the rule behind them are in `test_search_match_verdict.py`
+    and `test_search_verdict_on_every_surface.py`; this is the key set, the
+    part a client's parser depends on.
+    """
+
+    def _cli(self, env, *args):
+        from pyrite.cli import app
+
+        config = env["config"]
+        with (
+            patch("pyrite.cli.context.load_config", return_value=config),
+            patch("pyrite.cli.search_commands.load_config", return_value=config),
+        ):
+            result = CliRunner().invoke(app, ["search", *args, "--format", "json"])
+        assert result.exit_code == 0, result.output
+        return json.loads(result.stdout)
+
+    @pytest.mark.cli
+    def test_keyword_keys(self, rest_api_env, mcp_server):
+        expected = _ENVELOPE | _VERDICT | {"keyword_match"}
+        assert set(self._cli(rest_api_env, "immigration", "--mode", "keyword")) == expected
+        rest = rest_api_env["client"].get("/api/search", params={"q": "immigration"}).json()
+        assert set(rest) == expected
+        mcp = mcp_server._dispatch_tool("kb_search", {"query": "immigration", "mode": "keyword"})
+        assert set(mcp) == expected | {"has_more"}
+
+    @pytest.mark.cli
+    def test_a_semantic_search_with_nothing_embedded(self, rest_api_env, mcp_server):
+        """No keyword leg, so no `keyword_match`; a skipped leg, so `warnings`,
+        in the CLI's JSON as on the other two."""
+        expected = _ENVELOPE | _VERDICT | {"warnings"}
+        payloads = {
+            "cli": self._cli(rest_api_env, "immigration", "--mode", "semantic"),
+            "rest": rest_api_env["client"]
+            .get("/api/search", params={"q": "immigration", "mode": "semantic"})
+            .json(),
+            "mcp": mcp_server._dispatch_tool(
+                "kb_search", {"query": "immigration", "mode": "semantic"}
+            ),
+        }
+        for surface, payload in payloads.items():
+            assert set(payload) - {"has_more"} == expected, surface
+            # Not `none`: nothing was searched, and `legs` says so as a fact.
+            assert payload["match"] == "weak" and payload["results"] == [], surface
+            assert payload["legs_run"] == [], surface
+
+    def test_match_is_one_of_three_values(self, indexed_test_env):
+        svc = SearchService(indexed_test_env["db"])
+        seen = {
+            svc.search_response(query, mode="keyword")["match"]
+            for query in ("immigration", "immigration zzzabsent", "zzzabsent qqqabsent")
+        }
+        assert seen == {"strong", "weak", "none"}
+
+    def test_the_rest_schema_declares_every_key_the_assembler_returns(self, indexed_test_env):
+        """`SearchResponse` forbids undeclared keys: a key added to the
+        assembler and not to the schema fails the request, it is not dropped."""
+        from pyrite.server.schemas import SearchResponse, SearchResult
+
+        response = SearchService(indexed_test_env["db"]).search_response(
+            "immigration zzzabsent", mode="hybrid"
+        )
+        assert set(response) == {
+            "results",
+            "match",
+            "match_basis",
+            "legs_run",
+            "keyword_match",
+            "warnings",
+        }
+        assert set(response) <= set(SearchResponse.model_fields)
+        assert SearchResponse.model_config.get("extra") == "forbid"
+        assert {"similarity", "legs"} <= set(SearchResult.model_fields)
+        with pytest.raises(ValueError):
+            SearchResponse(
+                query="q", count=0, results=[], match="none", match_basis="", legs_run=[], new_key=1
+            )
+
+    @pytest.mark.control(reason="search() keeps its return type for the internal callers")
+    def test_search_itself_still_returns_a_list_of_rows(self, indexed_test_env):
+        """The internal callers (chat retrieval, link suggestions, the UI,
+        plugins) read rows; the verdict is `search_response`'s."""
+        rows = SearchService(indexed_test_env["db"]).search("immigration")
+        assert isinstance(rows, list) and rows and "match" not in rows[0]
+
+    def test_link_discovery_scores_a_vector_row_by_its_similarity(
+        self, indexed_test_env, monkeypatch
+    ):
+        """It read `1 - distance / 2`, which is neither backend's cosine."""
+        from pyrite.services.embedding_service import EmbeddingService
+
+        row = {
+            "id": "event-1",
+            "kb_name": "test-events",
+            "title": "t",
+            "entry_type": "event",
+            "snippet": "s",
+            "distance": 1.077,
+            "similarity": 0.42,
+        }
+        monkeypatch.setattr(EmbeddingService, "has_embeddings", lambda self, *a, **k: True)
+        monkeypatch.setattr(EmbeddingService, "search_similar", lambda self, q, **kw: [dict(row)])
+        config, db = indexed_test_env["config"], indexed_test_env["db"]
+        from pyrite.services.kb_service import KBService
+
+        KBService(config, db).create_entry("test-events", "probe", "Probe title", "note", body="x")
+        found = LinkDiscoveryService(config, db).discover_neighbors(
+            "probe", "test-events", mode="semantic", readable_kbs=UNSCOPED
+        )
+        assert [(c["id"], c["score"]) for c in found] == [("event-1", 0.42)]

@@ -431,9 +431,109 @@ Source of truth: `pyrite/server/endpoints/repos.py` (`_relativize_path`,
 {
   "query": "the search string",
   "count": 3,
-  "results": [ { "...": "entry dict" } ]
+  "results": [ { "...": "entry dict", "similarity": 0.412, "legs": ["keyword", "semantic"] } ],
+  "match": "weak",
+  "match_basis": "keyword: nothing matched; semantic: best similarity 0.41, below 0.50 but 0.19 above the next 9 results",
+  "legs_run": ["keyword", "semantic"],
+  "keyword_match": "none"
 }
 ```
+
+### What the page is worth: `match`, `match_basis`, `keyword_match`, `similarity`
+
+Every search response, on the CLI (`pyrite search`, `pyrite-read search`),
+MCP `kb_search` and REST `GET /api/search`, says what its results are worth.
+The three get these keys from one place (`SearchService.search_response`),
+so they are the same keys, with the same values, in the same words.
+
+| key | where | values |
+|---|---|---|
+| `match` | top level, always | `strong`, `weak` or `none` |
+| `match_basis` | top level, always | the reason, in words; for a person or a log, not for parsing |
+| `legs_run` | top level, always | the legs that ran: `["keyword"]`, `["semantic"]`, both, or `[]`. A `hybrid` search with `["keyword"]` here was a keyword search. Not the per-result `legs` |
+| `keyword_match` | top level, when a keyword leg ran (`keyword` and `hybrid` modes) | `all_terms`, `some_terms` or `none` |
+| `warnings` | top level, only when there are any | a leg that was skipped or dropped. Now in the CLI's JSON too; it was on stderr only |
+| `similarity` | each result the vector leg returned | cosine similarity to the query, 3 decimal places, the same number on SQLite and Postgres |
+| `legs` | each result, `hybrid` mode | the legs that returned that result: `keyword`, `semantic` or both |
+
+A search for a term the KB does not have, run as this page's test:
+
+```bash
+pyrite search "zzznosuchterm" -k notes --mode keyword
+```
+
+<!-- output-keys -->
+```json
+{
+  "query": "zzznosuchterm",
+  "count": 0,
+  "results": [],
+  "match": "none",
+  "match_basis": "keyword: nothing matched",
+  "legs_run": ["keyword"],
+  "keyword_match": "none"
+}
+```
+
+How to read it: `match: none` means the KB does not contain an answer; say so,
+do not build an answer from these results. `weak` means verify the entries
+before using them. `weak` with no results means the search could not run in
+full or found nothing strong, not that the KB lacks an answer: read
+`match_basis` and `legs_run`, then try keyword mode or other words.
+`similarity` compares results of the same model; it is not a probability.
+
+- **The results are returned whatever the verdict.** A `none` page holds the
+  nearest entries. The verdict is a hint to verify: on the labelled queries
+  behind it, 2 of 52 answerable queries read `none` in semantic mode (a
+  paraphrase far from the entry's own words), and 1 of 52 in hybrid.
+- **The verdict belongs to the query, not the page.** It is the same for every
+  `limit` and `offset`, and a `fields` projection does not remove it.
+- **`none` is only said with the evidence for it:** the mode searched as it
+  promises and nothing answered. If the semantic leg did not run (the
+  `[semantic]` extra is not installed, nothing in the KBs searched is embedded,
+  the backend cannot filter it), if the embedding model has no thresholds, or
+  if the vector index could not reach every entry in scope, the verdict is
+  `weak` at worst, `match_basis` says which, and `legs_run` shows which legs ran.
+  A `weak` page can be empty. One thing `none` does not account for: entries
+  written since the last `pyrite index embed` and still in the embed queue are
+  not seen by the semantic leg (`pyrite index embed-status`).
+- **It is computed only from entries you may read:** the rows of both legs,
+  whether anything is embedded, and the warning are all asked of the readable
+  KBs, and `match_basis` never quotes an entry outside them. The readable set
+  is applied inside each leg's own query, on SQLite inside the vector search
+  itself, so a scoped search answers as a search of the readable KBs alone
+  would, however many nearer entries sit in KBs outside them. (sqlite-vec
+  considers at most 4096 nearest vectors; they are the 4096 nearest readable
+  ones.)
+- **Keyword:** `strong` when every term matched; `weak` when only some did
+  (the OR-relaxed retry, an `OR` you wrote, or a hit only on `expand`'s terms);
+  `none` with no hits. In `hybrid`, beside a semantic leg that ran, the
+  keyword leg does not relax, so `keyword_match: none` there means no entry
+  has every term.
+- **Semantic:** decided by thresholds measured for the embedding model
+  (`all-MiniLM-L6-v2`: `strong` at 0.50 and above; `none` below 0.35, or
+  between the two when the best hit is less than 0.10 above the mean of the
+  next nine results). The second test needs neighbours: in a KB of a few dozen
+  entries an absent but adjacent topic can read `weak`.
+- **Another embedding model** has no thresholds yet. Results still carry
+  `similarity`; `match_basis` says `uncalibrated model <name>`, and `match` is
+  `strong` only when the keyword leg says so, `weak` when the vector leg
+  returned rows nobody can judge.
+- **Hybrid:** `strong` if either leg is strong; `none` if the semantic leg says
+  none and the keyword leg is not strong; `weak` otherwise. When the semantic
+  leg did not run, the search is a keyword search: it retries with the terms
+  OR-combined as `keyword` mode does, `legs_run` is `["keyword"]`, `warnings` says
+  why, and the verdict is `strong` or `weak`, never `none`.
+
+Ordering fields are not scores. `rank` is a raw BM25 value and `rrf_score` is
+rank arithmetic (a few fixed values, whatever the query); neither compares
+across queries. `distance` is **backend-specific**: sqlite-vec's L2 distance on
+SQLite, pgvector's cosine distance on Postgres. It is kept for this release
+and then leaves the response; read `similarity`. On SQLite, candidates are the
+L2-nearest vectors, then ordered by cosine: with a model that does not
+normalise its output, a long vector with a high cosine can be missed (the
+default model normalises). REST results carry
+`similarity` and `legs` and none of the ordering fields.
 
 `count` is `len(results)`, not a total-matches count for search results —
 none of `search`'s three transports return a separate total. `has_more`
@@ -460,6 +560,8 @@ call: CLI `backlinks` → `entries`, MCP `kb_backlinks` → `backlinks`; CLI
 
 Source of truth: `pyrite/server/mcp_server.py` (`_kb_search`,
 `_kb_list_entries`, `_kb_recent`, `_kb_backlinks`, `_kb_tags`);
+`pyrite/services/search_service.py` (`search_response`, `match_verdict`, and
+`SearchService.search`'s docstring, the one statement of the search contract);
 `pyrite/server/endpoints/search.py` (`search`), `pyrite/server/endpoints/entries.py`
 (`list_entries`) and `pyrite/server/endpoints/tags.py` (`get_tags`) for REST;
 `pyrite/cli/browse_commands.py` for the CLI commands' own JSON assembly.

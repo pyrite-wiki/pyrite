@@ -6,7 +6,7 @@ Extracted from api.py to reduce file size and improve organization.
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # =============================================================================
 # Knowledge Bases
@@ -81,14 +81,42 @@ class SearchResult(BaseModel):
     date: str | None = None
     importance: int | None = None
     tags: list[str] = []
+    #: Cosine similarity to the query, 3 places, on a row the vector leg
+    #: returned; absent on a keyword-only row. It compares results of the same
+    #: embedding model and is not a probability (#668).
+    similarity: float | None = None
+    #: Hybrid mode: the legs that returned this row, ``keyword`` and/or
+    #: ``semantic``.
+    legs: list[str] | None = None
 
 
 class SearchResponse(BaseModel):
-    """Response for search queries."""
+    """Response for search queries.
+
+    Every key but ``query``, ``count`` and ``results`` comes from
+    ``SearchService.search_response``, and its meaning is stated once, in
+    ``SearchService.search``'s docstring ("what a search response owes its
+    caller"). ``extra="forbid"``: a key the assembler adds that this model
+    does not declare fails the request in tests rather than being dropped.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     query: str
     count: int
     results: list[SearchResult]
+    #: What the page is worth: ``strong``, ``weak`` or ``none``. ``none``: the
+    #: KB does not contain an answer, and the rows are the nearest entries.
+    match: str
+    #: The reason for ``match``, in words.
+    match_basis: str
+    #: The legs that ran: ``keyword``, ``semantic``, both or neither. A hybrid
+    #: search with ``["keyword"]`` here was a keyword search. Not the
+    #: per-result ``legs``, which says which legs returned that result.
+    legs_run: list[str]
+    #: The keyword leg's signal, when one ran: ``all_terms``, ``some_terms``
+    #: or ``none``.
+    keyword_match: str | None = None
     #: Anything the search could not do as asked — today, a filter a backend's
     #: vector leg cannot honour, which costs the semantic leg entirely rather
     #: than returning rows that violate the filter. ``None`` here, and *omitted

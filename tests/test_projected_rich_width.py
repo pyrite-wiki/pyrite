@@ -80,7 +80,14 @@ def test_search_prints_whole_id_at_the_console_width(columns, console_width):
         patch("pyrite.services.search_service.SearchService") as search,
     ):
         mgr.return_value.is_empty.return_value = False
-        search.return_value.search.return_value = [row]
+        # The CLI returns the service's assembled response (#668), not `search()`'s rows.
+        search.return_value.search_response.return_value = {
+            "results": [row],
+            "match": "strong",
+            "match_basis": "keyword: every term matched",
+            "legs_run": ["keyword"],
+            "keyword_match": "all_terms",
+        }
         result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.exception or result.output
     assert ENTRY_ID in result.stdout

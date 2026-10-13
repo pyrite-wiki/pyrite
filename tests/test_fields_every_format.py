@@ -164,7 +164,14 @@ def test_cli_projection_in_every_format(command, fmt, console_width):
         patch("pyrite.services.search_service.SearchService") as search,
     ):
         mgr.return_value.is_empty.return_value = False
-        search.return_value.search.return_value = [deepcopy(ROW)]
+        # The CLI returns the service's assembled response (#668), not `search()`'s rows.
+        search.return_value.search_response.return_value = {
+            "results": [deepcopy(ROW)],
+            "match": "strong",
+            "match_basis": "keyword: every term matched",
+            "legs_run": ["keyword"],
+            "keyword_match": "all_terms",
+        }
         console_width(180)
         result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.exception or result.output

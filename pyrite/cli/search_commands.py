@@ -122,6 +122,18 @@ def register_search_command(app: typer.Typer):
         "cross-link"' NOT 'miller -bannon' (a bare hyphen there is parsed
         as the NOT operator, not a literal exclude — matching Bannon
         entries, not excluding them).
+
+        JSON output says what the page is worth: "match" (strong, weak or
+        none) with "match_basis", and "similarity" on each result of the
+        semantic leg. `match: none` means the KB does not contain an answer;
+        say so, do not build an answer from these results. `weak` means verify
+        the entries before using them. `weak` with no results means the search
+        could not run in full or found nothing strong, not that the KB lacks an
+        answer: read `match_basis` and `legs_run`, then try keyword mode or
+        other words. `similarity` compares results of the same model; it is not
+        a probability. The results are returned
+        whatever the verdict. The contract is stated once, in the docstring of
+        SearchService.search.
         """
         config = load_config()
         if kb_name:
@@ -192,7 +204,10 @@ def register_search_command(app: typer.Typer):
             # Anything the search could not do as asked — today, a filter a
             # backend's vector leg cannot honour (#56).
             search_warnings: list[str] = []
-            results = search_svc.search(
+            # The one assembler (#668): the rows, the verdict (`match`,
+            # `match_basis`, `keyword_match`) and any `warnings`. Every key but
+            # `results` goes into the JSON payload as it is.
+            response = search_svc.search_response(
                 query=query,
                 kb_name=kb_name,
                 entry_type=entry_type,
@@ -209,6 +224,7 @@ def register_search_command(app: typer.Typer):
                 trace=search_trace,
                 warnings=search_warnings,
             )
+            results = response.pop("results")
 
             for warning in search_warnings:
                 # stderr, like the trace and the staleness notice, so it never
@@ -237,7 +253,7 @@ def register_search_command(app: typer.Typer):
                     from ..formats import format_response
 
                     content, _ = format_response(
-                        {"query": query, "count": 0, "results": []},
+                        {"query": query, "count": 0, "results": [], **response},
                         output_format,
                         fields=fields_list,
                     )
@@ -256,7 +272,7 @@ def register_search_command(app: typer.Typer):
             if output_format != "rich":
                 from ..formats import format_response
 
-                resp_data = {"query": query, "count": len(results), "results": results}
+                resp_data = {"query": query, "count": len(results), "results": results, **response}
                 content, _ = format_response(resp_data, output_format, fields=fields_list)
                 typer.echo(content)
                 return

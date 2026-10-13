@@ -64,6 +64,15 @@ write wait for embedding?". Layer 2 under [[design]] (P4).
   ([[adr-0035]] decision 5).
 - No search result carries an entry from a KB the caller cannot read
   ([[adr-0037]]; `tests/test_read_scoping_is_structural.py`).
+- Every search response on the CLI, MCP and REST carries one verdict for the
+  query (`match`, `match_basis`), computed by one function over the rows the
+  caller may read and the same on every page; `none` still returns its rows;
+  every vector row carries `similarity`, the same cosine on every backend
+  (#668; `tests/test_search_match_verdict.py`,
+  `tests/test_search_verdict_on_every_surface.py`, the conformance suite).
+- The query, `index embed`, the embed queue and the plugin context embed with
+  `settings.embedding_model`; no `EmbeddingService` in `pyrite/` is built
+  without a model name (#668; `tests/test_search_match_verdict.py`).
 - Operator-shaped literals (`alex-jones`, `24-109`, `Louisiana v. Callais`)
   parse as terms; a malformed query returns a structured error, not a raw
   backend exception ([[adr-0028]], not yet testable).

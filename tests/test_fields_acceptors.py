@@ -167,7 +167,14 @@ def _cli_patched():
         patch("pyrite.services.search_service.SearchService") as search,
     ):
         mgr.return_value.is_empty.return_value = False
-        search.return_value.search.return_value = [deepcopy(ROW)]
+        # The CLI returns the service's assembled response (#668), not `search()`'s rows.
+        search.return_value.search_response.return_value = {
+            "results": [deepcopy(ROW)],
+            "match": "strong",
+            "match_basis": "keyword: every term matched",
+            "legs_run": ["keyword"],
+            "keyword_match": "all_terms",
+        }
         yield config
 
 
@@ -261,7 +268,7 @@ def test_the_rich_fallback_to_file_search_says_so_without_naming_files():
         patch("pyrite.cli.search_commands._search_files") as files,
     ):
         mgr.return_value.is_empty.return_value = False
-        search.return_value.search.side_effect = RuntimeError("index unreadable")
+        search.return_value.search_response.side_effect = RuntimeError("index unreadable")
         result = CliRunner().invoke(app, ["search", "q", "--fields", "status", "--format", "rich"])
     files.assert_called_once()
     assert "--fields is not applied by file search" in result.stderr

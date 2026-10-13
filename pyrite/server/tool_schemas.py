@@ -16,6 +16,8 @@ deployment whose ceiling is 20,000 has been misled by its own tool schema.
 import copy
 from typing import Any
 
+from ..services.search_service import HOW_TO_READ_MATCH
+
 
 def render_tool_schemas(schemas: dict[str, Any], **values: int) -> dict[str, Any]:
     """Return a deep copy of ``schemas`` with description placeholders filled.
@@ -47,7 +49,9 @@ READ_TOOLS = {
         "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     "kb_search": {
-        "description": 'Full-text search across knowledge bases. Supports FTS5 query syntax (AND, OR, NOT, phrases in quotes). Returns entries with snippets ranked by relevance. Filters (entry_type, tags, date_from/date_to, fips, state, status) apply in every mode, on every search leg -- keyword, semantic and hybrid alike -- so a filtered result never contains an entry the filter excluded. When a leg cannot honour a filter it is dropped rather than returning unfiltered rows, and the response carries a "warnings" array naming it; no "warnings" key means every filter was applied on every leg (the key is absent, never null -- test for its presence). The full contract is stated once, in the docstring of SearchService.search: "what a search response owes its caller". Auto-quote rule: special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. \'"family separation" "cross-link"\') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).',
+        "description": 'Full-text search across knowledge bases. Supports FTS5 query syntax (AND, OR, NOT, phrases in quotes). Returns entries with snippets ranked by relevance. Filters (entry_type, tags, date_from/date_to, fips, state, status) apply in every mode, on every search leg -- keyword, semantic and hybrid alike -- so a filtered result never contains an entry the filter excluded. When a leg cannot honour a filter it is dropped rather than returning unfiltered rows, and the response carries a "warnings" array naming it; no "warnings" key means every filter was applied on every leg (the key is absent, never null -- test for its presence). Every response says what its page is worth: "match" (strong, weak or none) with "match_basis", the reason in words; "legs_run", the search legs that ran (a hybrid search with only "keyword" there was a keyword search, and "warnings" says why); "keyword_match" (all_terms, some_terms, none) when a keyword leg ran; and "similarity" (cosine, the same on every backend) on each result the vector leg returned. '
+        + HOW_TO_READ_MATCH
+        + ' "none" is only said when the search ran as asked: if the semantic leg did not run the verdict is weak at worst. The results are returned whatever the verdict, and the verdict is the same on every page. The full contract is stated once, in the docstring of SearchService.search: "what a search response owes its caller". Auto-quote rule: special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. \'"family separation" "cross-link"\') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).',
         "inputSchema": {
             "type": "object",
             "properties": {

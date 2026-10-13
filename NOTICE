@@ -1,0 +1,15 @@
+Pyrite
+Copyright (c) the Pyrite contributors. Licensed under the MIT License (see LICENSE).
+
+This repository includes material under other licences:
+
+tests/fixtures/search-verdict/tps/
+  Ten knowledge-base entries (andon, five-whys, gemba, jidoka, just-in-time,
+  kaizen, kanban, poka-yoke, seven-wastes-muda, smed) taken from the `tps`
+  knowledge base of pyrite-kb-demo (https://github.com/pyrite-wiki/pyrite-kb-demo,
+  `tps/concepts/`). They are test fixtures and remain licensed under the
+  Creative Commons Attribution-ShareAlike 4.0 International licence
+  (CC BY-SA 4.0, https://creativecommons.org/licenses/by-sa/4.0/). Changes
+  from the source: wikilinks reduced to their text, and frontmatter reduced
+  to id, title, type, tags and a licence field. They are not covered by the
+  MIT licence that covers the rest of this repository.
