@@ -6903,6 +6903,12 @@
   "GET /api/search | write_key | missing-kb": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "none",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "none",
+      "match_basis": "keyword: nothing matched",
       "query": "zebra",
       "results": []
     },
@@ -6911,6 +6917,12 @@
   "GET /api/search | write_key | no-default-role-kb": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "all_terms",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "strong",
+      "match_basis": "keyword: every term matched",
       "query": "zebra",
       "results": [
         {
@@ -6924,6 +6936,12 @@
   "GET /api/search | write_key | private-kb": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "all_terms",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "strong",
+      "match_basis": "keyword: every term matched",
       "query": "zebra",
       "results": [
         {
@@ -6937,6 +6955,12 @@
   "GET /api/search | write_key | readable-kb": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "all_terms",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "strong",
+      "match_basis": "keyword: every term matched",
       "query": "zebra",
       "results": [
         {

@@ -4513,6 +4513,12 @@
   "GET /api/search | anonymous | no-default-role-kb": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "all_terms",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "strong",
+      "match_basis": "keyword: every term matched",
       "query": "zebra",
       "results": [
         {
@@ -4535,6 +4541,12 @@
   "GET /api/search | anonymous | readable-kb": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "all_terms",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "strong",
+      "match_basis": "keyword: every term matched",
       "query": "zebra",
       "results": [
         {

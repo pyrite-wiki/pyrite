@@ -3008,6 +3008,12 @@
   "GET /api/search | local_user | readable-kb": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "all_terms",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "strong",
+      "match_basis": "keyword: every term matched",
       "query": "zebra",
       "results": [
         {

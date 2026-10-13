@@ -2140,6 +2140,12 @@
   "kb_search | local_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "has_more": "<ENUMERATION_CONTENT>",
+    "keyword_match": "all_terms",
+    "legs_run": [
+      "keyword"
+    ],
+    "match": "strong",
+    "match_basis": "keyword: every term matched",
     "query": "zebra",
     "results": [
       {
