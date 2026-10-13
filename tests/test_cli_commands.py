@@ -23,6 +23,13 @@ from pyrite.storage.repository import KBRepository
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _a_person_at_a_terminal(monkeypatch):
+    """These tests read the text a person sees. The write commands print JSON
+    unless asked (#303, ADR-0046); `PYRITE_FORMAT` is how a person asks once."""
+    monkeypatch.setenv("PYRITE_FORMAT", "rich")
+
+
 @pytest.fixture
 def cli_env():
     """Environment for Typer CLI tests using monkeypatch-style config override."""

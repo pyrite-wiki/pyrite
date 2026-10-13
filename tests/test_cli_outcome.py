@@ -52,6 +52,7 @@ from tests.outcome_walk import (
     contract_commands,
     planted,
     root_app,
+    takes_short_format,
 )
 
 REPO = Path(__file__).resolve().parent.parent
@@ -667,10 +668,48 @@ def test_before_the_body_is_entered_nothing_changes(root, path):
         assert late.exit_code == 2, late.output
         for unknown in ("xml", "csv"):
             assert runner.invoke(app, [*path, *args, "--format", unknown]).exit_code == 2
-        assert runner.invoke(app, [*path, *args, "-f", "rich", "--format", "json"]).exit_code == 2
+        if takes_short_format(click_command(app, path)):
+            # -f and --format together are two answers. A command whose -f
+            # means something else (--field, --file, --force) has no such rule.
+            both = runner.invoke(app, [*path, *args, "-f", "rich", "--format", "json"])
+            assert both.exit_code == 2
         if args:
             missing = runner.invoke(app, [*path, "--format", "json"])
             assert missing.exit_code == 2, missing.output
+
+
+@pytest.mark.control(
+    reason="tests the walk's helper in tests/outcome_walk.py, not pyrite code; it failed against the hidden-proxy version"
+)
+def test_a_visible_short_f_that_means_format_is_found_by_its_callback():
+    """`-f` as the deprecated format spelling is recognised by what the option
+    is, not by being hidden: a command whose own visible `-f` is the format
+    alias must still get the `-f`/`--format` conflict checked by the walk, and a
+    hidden `-f` that is something else must not."""
+    visible_alias = typer.Option(None, "-f", callback=LEGACY_FORMAT_SHORT.callback)
+    app = typer.Typer(cls=PyriteCLIGroup)
+
+    @app.command()
+    def leaf(output_format: str = OUTPUT_FORMAT, legacy: str | None = visible_alias) -> Outcome:
+        return Outcome.done({})
+
+    @app.command()
+    def other(
+        output_format: str = OUTPUT_FORMAT,
+        hidden_field: str | None = typer.Option(None, "-f", hidden=True),
+    ) -> Outcome:
+        return Outcome.done({})
+
+    @app.command()
+    def real(
+        output_format: str = OUTPUT_FORMAT, legacy: str | None = LEGACY_FORMAT_SHORT
+    ) -> Outcome:
+        return Outcome.done({})
+
+    click_app = typer.main.get_command(app)
+    assert takes_short_format(click_app.commands["leaf"])
+    assert not takes_short_format(click_app.commands["other"])
+    assert takes_short_format(click_app.commands["real"])
 
 
 @pytest.mark.control(reason="before any command: the root's own options are click's")

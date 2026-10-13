@@ -7,11 +7,9 @@ own reviewed change (never in the same commit as a behaviour change --
 ADR-0037's migration rule). Never set in CI or the pre-push hook.
 
 What this pins: `pyrite.server.errors.error_response`'s REST classification
-and public-message rule, `pyrite.server.mcp_server._refusal`, and the real
-CLI dispatch `pyrite/cli/entry_commands.py`'s write commands use today
-(`_refusal_exit` for `ValidationError`, the generic `_cli_error(str(e),
-"rich")` for everything else -- NOT `cli_error_from`, which no CLI call
-site has adopted yet; see `error_bodies.py`'s module docstring) -- for one
+and public-message rule, `pyrite.server.mcp_server._refusal`, and what the real
+`pyrite create` prints when it raises the error, through the real root group
+(ADR-0046; see `error_bodies.py`'s module docstring) -- for one
 instance of every concrete `PyriteError` subclass
 (`tests/characterization/error_bodies.py` builds them; see its docstring
 for why this is a direct-construction pin rather than a live multi-step

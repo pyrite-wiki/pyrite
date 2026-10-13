@@ -92,6 +92,22 @@ command that reaches into the guard itself, and prompts (a prompt writes to
 stdout, so a command that asks a question stays legacy until ADR-0046's open
 question is decided).
 
+**Found building slice 2 (`entry_commands`, `links`).** (1) Bad input found
+in a body is a `ValidationError` (exit 1), not `typer.BadParameter`: after the
+body starts, a click usage error is `NO_OUTCOME`; so `links asymmetric`'s
+hand-raised `Exit(2)` became a refusal. (2) `-f` means `--field`, `--file` or
+`--force` on some commands: those do not declare `LEGACY_FORMAT_SHORT`, and
+the walk and the hint scan find the format alias by its callback
+(`tests/outcome_walk.py`'s `takes_short_format`), never by `hidden`. (3)
+`delete` stays legacy, exactly as before: it asks, a prompt writes stdout, and
+the rule for prompts is the maintainer's open question (a local stderr prompt
+was tried and withdrawn: it decided that rule in one module). (4) `get` stays
+legacy: it is taught with `--format markdown`, which the shared option does not
+offer. (5) A hint a command gave (`bulk-create`'s "Run `pyrite kb list`") is
+the exception's `suggestion`; set it on the exception, the root prints it.
+(6) A test that states what the CLI prints for a refusal must run the root:
+`tests/characterization/error_bodies.py` does, through the real `create`.
+
 **Tests.** `tests/test_cli_outcome.py` is the acceptance test: "the walk"
 takes every command of the three CLIs that declares the shared option, plants
 each way out from `tests/outcome_walk.py` as its body (on the Typer

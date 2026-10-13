@@ -31,6 +31,7 @@ import json
 import os
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -398,7 +399,7 @@ class TestImportAndBulkLinks:
             "- {source: src, target: t1, relation: informs}\n"
             "- {source: ghost, target: t1, relation: informs}\n"
         )
-        out = _invoke("links", "bulk-create", str(spec), "-k", "test-kb")
+        out = _invoke("links", "bulk-create", str(spec), "-k", "test-kb", "--format", "rich")
         assert "1 failed" in out.output, out.output
         assert out.exit_code == PARTIAL, out.output
 
@@ -1222,14 +1223,13 @@ LEGACY_COMMANDS = {
     "pyrite/cli/browse_commands.py": 7,
     "pyrite/cli/collection_commands.py": 2,
     "pyrite/cli/db_commands.py": 2,
-    "pyrite/cli/entry_commands.py": 7,
+    "pyrite/cli/entry_commands.py": 2,
     "pyrite/cli/export_commands.py": 2,
     "pyrite/cli/extension_commands.py": 4,
     "pyrite/cli/ids_commands.py": 2,
     "pyrite/cli/index_commands.py": 7,
     "pyrite/cli/init_command.py": 1,
     "pyrite/cli/kb_commands.py": 15,
-    "pyrite/cli/link_commands.py": 7,
     "pyrite/cli/mcp_setup_command.py": 1,
     "pyrite/cli/protocol_commands.py": 2,
     "pyrite/cli/qa_commands.py": 10,
@@ -1338,11 +1338,13 @@ def test_a_command_on_the_contract_is_declared_the_way_the_root_expects():
     assert not offences, "\n".join(offences)
 
 
+@pytest.mark.control(reason="control: generalised to allow later slices; green before and after")
 def test_the_task_commands_are_on_the_contract():
-    """Slice 1 migrated `task`: all ten declare the shared option."""
+    """Slice 1 migrated `task`: all ten declare the shared option. Later slices
+    add modules, so this names the ones it knows and does not count the rest."""
     on = sorted(n for n, cmd in _commands().items() if _on_the_contract(cmd))
-    assert len(on) == 10 and all(n.startswith("pyrite task ") for n in on), on
-    assert _contract_modules() == {"pyrite/cli/task_commands.py"}
+    assert len([n for n in on if n.startswith("pyrite task ")]) == 10, on
+    assert "pyrite/cli/task_commands.py" in _contract_modules()
 
 
 # A HINT, NOT THE GUARD. What follows reads source, so it knows only the
@@ -1369,6 +1371,9 @@ def _hints(source: str, rel: str = "<module>") -> list[str]:
     return hints
 
 
+@pytest.mark.control(
+    reason="control: the hint scan, generalised to the legacy -f; green before and after"
+)
 def test_hint_a_module_on_the_contract_does_nothing_the_root_cannot_see():
     """A hint (see above): the plain spellings of ``os._exit``,
     ``atexit.register`` and a started thread in a module with a command on the
@@ -1381,8 +1386,14 @@ def test_hint_a_module_on_the_contract_does_nothing_the_root_cannot_see():
     for name, cmd in _commands().items():
         if not _on_the_contract(cmd) or _location(cmd) is None:
             continue
-        fmt_params = {p.name for p in cmd.params if "--format" in p.opts or "-f" in p.opts}
-        func = ast.parse(inspect.getsource(inspect.unwrap(cmd.callback)).lstrip())
+        # `-f` is the deprecated format spelling only where it is the legacy option
+        # (found by its callback); on create/update it is --field.
+        from tests.outcome_walk import takes_short_format
+
+        fmt_params = {p.name for p in cmd.params if "--format" in p.opts}
+        if takes_short_format(cmd):
+            fmt_params |= {p.name for p in cmd.params if "-f" in getattr(p, "opts", ())}
+        func = ast.parse(textwrap.dedent(inspect.getsource(inspect.unwrap(cmd.callback))))
         for node in ast.walk(func):
             if isinstance(node, ast.Name) and node.id in fmt_params:
                 if isinstance(node.ctx, ast.Load):
@@ -1434,7 +1445,6 @@ EXIT_CALLS = {
     "cli_error_from",
     "_cli_error",
     "_cli_err",
-    "_refusal_exit",
     "_task_error",
     "_kb_error",
     "exit_unless_whole",
@@ -1505,6 +1515,14 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
     ),
     ("pyrite/cli/entry_commands.py", "_parse_field_value"): ("safe", "tries the next parser"),
     ("pyrite/cli/entry_commands.py", "create_entry"): ("fixed", "TestCreateWithFailedLink"),
+    (
+        "pyrite/cli/entry_commands.py",
+        "link_entries",
+    ): (
+        "safe",
+        "a failed --bidi inverse is returned as Outcome.partial (exit 3): "
+        "tests/test_cli_outcome_write_path.py",
+    ),
     ("pyrite/cli/export_commands.py", "_load_entry_from_result"): ("fixed", "TestExportCollection"),
     ("pyrite/cli/export_commands.py", "export_collection"): ("fixed", "TestExportCollection"),
     ("pyrite/cli/extension_commands.py", "_verify_distribution"): ("fixed", "TestExtensionVerify"),
@@ -1626,7 +1644,6 @@ PRINTS: dict[tuple[str, str], tuple[str, str]] = {
     ("pyrite/admin_cli.py", "kb_validate"): ("safe", "exits 1 after listing the errors"),
     ("pyrite/admin_cli.py", "repo_sync"): ("fixed", "TestAdminRepo"),
     ("pyrite/cli/__init__.py", "import_entries"): ("fixed", "TestImportAndBulkLinks"),
-    ("pyrite/cli/entry_commands.py", "create_entry"): ("fixed", "TestCreateWithFailedLink"),
     ("pyrite/cli/extension_commands.py", "extension_install"): ("fixed", "TestExtensionVerify"),
     ("pyrite/cli/index_commands.py", "_report_health"): (
         "safe",
@@ -1637,7 +1654,6 @@ PRINTS: dict[tuple[str, str], tuple[str, str]] = {
         "safe",
         "exits 1 on structural errors, 2 on drift",
     ),
-    ("pyrite/cli/link_commands.py", "links_bulk_create"): ("fixed", "TestImportAndBulkLinks"),
     ("pyrite/cli/protocol_commands.py", "protocol_check"): ("safe", "exits 1 when a check fails"),
     ("pyrite/cli/qa_commands.py", "qa_check_urls"): (
         "safe",

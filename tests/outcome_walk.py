@@ -66,6 +66,23 @@ def root_app(root: str) -> typer.Typer:
 # --------------------------------------------------------------------------
 
 
+def takes_short_format(command) -> bool:
+    """Does `-f` mean `--format` on this command: is one of its options the
+    deprecated short spelling (#303)? Found the way ``declares_shared_format``
+    finds the shared option -- by the option's callback -- not by a proxy such
+    as ``hidden``, which a command's own visible ``-f`` format option escapes."""
+    from pyrite.cli.output import _record_short_format
+
+    def is_short_format(param) -> bool:
+        callback = getattr(param, "callback", None)
+        return (
+            callback is _record_short_format
+            or getattr(callback, "__wrapped__", None) is _record_short_format
+        )
+
+    return any(is_short_format(param) for param in getattr(command, "params", ()))
+
+
 def leaves(command, path: tuple[str, ...] = ()) -> Iterator[tuple[tuple[str, ...], object]]:
     """Every leaf click command under ``command``, with its path."""
     # Typer vendors its own click: test for the group interface, not click.Group.

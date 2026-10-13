@@ -515,6 +515,8 @@ def test_create_allows_undeclared_with_override(cli_env):
                 "--body",
                 "Allowed by override",
                 "--allow-undeclared",
+                "--format",
+                "rich",
             ],
         )
 

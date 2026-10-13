@@ -53,14 +53,14 @@ typed MCP create tool schema if it has one (`sw_create_backlog_item` has real
 
 ## 2. Write
 
-<!-- expect-text: Created: hello-agent -->
+<!-- expect-text: "entry_id": "hello-agent" -->
 ```bash
 pyrite create -k notes -t note --title "Hello agent" --body "First note."
 ```
 
-`create` has no `--format`: it prints Rich text (see the
-[`--format` table](json-contracts.md#--format-defaults)). Read the id from
-`Created: <id>`. To change it, use `update`, which defaults to JSON:
+`create` defaults to JSON like every write command (see the
+[`--format` table](json-contracts.md#--format-defaults); `--format rich` prints
+`Created: <id>`). Read the id from `entry_id`. To change it, use `update`:
 
 <!-- expect-exit: 0 -->
 ```bash
@@ -69,7 +69,7 @@ pyrite update hello-agent -k notes --body "Second note."
 
 <!-- output-keys -->
 ```json
-{"updated": true, "entry_id": "hello-agent"}
+{"updated": true, "entry_id": "hello-agent", "outcome": "done"}
 ```
 
 A field the type does not declare is stored under `metadata`, not at the top
@@ -127,11 +127,13 @@ Two things this page adds:
 
 - All are `retryable: false`: retrying the same request unchanged fails the
   same way. Change the request.
-- A CLI command with no `--format` (`create`, `add`, `delete`, `link`)
-  prints a refusal as `ERROR [CODE]: message`, not JSON; branch on exit code
-  `1` and read the code in the brackets. `create --link` with a link that does
-  not resolve is the one exception: the entry was written, so it exits `3` (not
-  `1`) and says which link failed and what `pyrite link` finishes it. `update` prints the JSON shape:
+- A CLI write command prints a refusal as JSON by default
+  (`{"error", "error_code", ...}`), or as `ERROR [CODE]: message` under
+  `--format rich`; branch on exit code `1` and read `error_code`. (`delete`,
+  which asks first, always prints the `ERROR [CODE]` line.) `create --link` with
+  a link that does not resolve is the one exception: the entry was written, so
+  it exits `3` (not `1`) and says which link failed and what `pyrite link`
+  finishes it. `update` prints the JSON shape:
 
 <!-- expect-exit: 1 -->
 <!-- expect-text: "error_code": "KB_NOT_FOUND" -->
@@ -141,7 +143,7 @@ pyrite update hello-agent -k nokb --title x
 
 <!-- output-keys -->
 ```json
-{"error": "KB not found: nokb", "error_code": "KB_NOT_FOUND", "retryable": false}
+{"outcome": "error", "error": "KB not found: nokb", "error_code": "KB_NOT_FOUND", "retryable": false}
 ```
 
 ## Not covered here

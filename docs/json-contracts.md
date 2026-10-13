@@ -18,7 +18,8 @@ table keyed by exception type.
 `--format` flag via `cli_error`/`cli_error_from`) return the flat structure
 below. A CLI command with no `--format` flag prints a refusal as Rich text
 (`ERROR [CODE]: message`), never this JSON; the table under "`--format`
-defaults" says which. Each CLI module takes the one shared `--format`
+defaults" says which. With `--format rich` the same refusal is the one
+`ERROR [CODE]: message` line. Each CLI module takes the one shared `--format`
 (JSON by default; #303, decided 2026-10-02) as it moves to the outcome
 contract; until then this page describes the shape you get when you do get
 JSON, not a promise that every command gives you the option.
@@ -33,8 +34,9 @@ JSON, not a promise that every command gives you the option.
 }
 ```
 
-- `outcome` — on the CLI, from a command on the outcome contract (the `task`
-  commands today; see "Exit codes (CLI)"): always `"error"` on a refusal, as
+- `outcome` — on the CLI, from a command on the outcome contract (the `task` commands,
+  `create`, `add`, `update`, `rename`, `link` and the `links` commands; see
+  "Exit codes (CLI)"): always `"error"` on a refusal, as
   `"done"`, `"partial"` or `"nothing"` is on a result. Additive: absent from
   MCP and from a CLI command that has not migrated, so do not require it.
 
@@ -206,7 +208,7 @@ Source of truth: `pyrite/services/kb_service.py` (`_prepare`,
 
 Each block below is run by `tests/test_doc_agent_contracts.py` in a scratch
 HOME, in order; the exit code and the text it expects are the ones stated.
-A refusal from a command without `--format` is Rich text; from `update`, JSON.
+A refusal is JSON by default and one `ERROR [CODE]: message` line under `--format rich`; `pyrite import` has no output format and prints Rich text.
 
 <!-- expect-exit: 0 -->
 ```bash
@@ -216,7 +218,7 @@ pyrite kb add ./typed --name typed
 pyrite create -k notes -t note --title "Hello" --body "First."
 ```
 
-`KB_NOT_FOUND`, from a command with `--format` and from one without:
+`KB_NOT_FOUND`, in JSON and in Rich:
 
 <!-- expect-exit: 1 -->
 <!-- expect-text: "error_code": "KB_NOT_FOUND" -->
@@ -227,7 +229,7 @@ pyrite update hello -k nokb --title x
 <!-- expect-exit: 1 -->
 <!-- expect-text: ERROR [KB_NOT_FOUND] -->
 ```bash
-pyrite create -k nokb -t note --title x
+pyrite create -k nokb -t note --title x --format rich
 ```
 
 `NOT_FOUND`:
@@ -239,7 +241,7 @@ pyrite update nope -k notes --title x
 ```
 
 <!-- expect-exit: 1 -->
-<!-- expect-text: ERROR [NOT_FOUND] -->
+<!-- expect-text: "error_code": "NOT_FOUND" -->
 ```bash
 pyrite link hello nope -k notes
 ```
@@ -247,25 +249,25 @@ pyrite link hello nope -k notes
 `ENTRY_EXISTS`, `UNDECLARED_TYPE`, `SCHEMA_VIOLATION`, `VALIDATION_FAILED`:
 
 <!-- expect-exit: 1 -->
-<!-- expect-text: ERROR [ENTRY_EXISTS] -->
+<!-- expect-text: "error_code": "ENTRY_EXISTS" -->
 ```bash
 pyrite create -k notes -t note --title "Hello" --body "Again."
 ```
 
 <!-- expect-exit: 1 -->
-<!-- expect-text: ERROR [UNDECLARED_TYPE] -->
+<!-- expect-text: "error_code": "UNDECLARED_TYPE" -->
 ```bash
 pyrite create -k typed -t note --title "Nope"
 ```
 
 <!-- expect-exit: 1 -->
-<!-- expect-text: ERROR [SCHEMA_VIOLATION] -->
+<!-- expect-text: "error_code": "SCHEMA_VIOLATION" -->
 ```bash
 pyrite create -k typed -t ticket --title "T1" -f kind=chore
 ```
 
 <!-- expect-exit: 1 -->
-<!-- expect-text: ERROR [VALIDATION_FAILED] -->
+<!-- expect-text: "error_code": "VALIDATION_FAILED" -->
 ```bash
 pyrite create -k notes -t event --title "An event"
 ```
@@ -290,7 +292,7 @@ they are **not run** (a server would be needed).
 
 | Surface | Call | Success shape |
 |---|---|---|
-| CLI | `pyrite create -k <kb> -t <type> --title <t> --body <b>` | **No `--format`.** Rich text: `Created: <id>` / `Type: <type>`, plus a `Warning: ...` line per schema warning. Never JSON. |
+| CLI | `pyrite create -k <kb> -t <type> --title <t> --body <b>` | **`--format` defaults to `json`:** `{"created": true, "entry_id": "<id>", "entry_type": "<type>", "outcome": "done"}`, plus `"warnings"` when any. With `--format rich`: `Created: <id>` / `Type: <type>`, plus a `Warning: ...` line per schema warning. With `--link`, `"linked"` and `"failed_links"` (each failed link carries its `finish_up` command); a link that did not resolve makes the outcome `partial` and the exit `3`. |
 | MCP | `kb_create` | the block below, plus `"warnings": [...]` when any, plus `"qa_issues"` when a QA validator ran and found something. |
 | REST (not run) | `POST /api/entries` | `{"created": true, "id": "<id>", "kb_name": "<kb>", "file_path": "", "warnings": []}`. `file_path` is **always the empty string** here (MCP returns the real path). |
 
@@ -299,14 +301,13 @@ they are **not run** (a server would be needed).
 {"created": true, "entry_id": "hello", "file_path": "/abs/path/hello.md"}
 ```
 
-`pyrite add <file>` is the same shape as `create`: Rich text only,
-`Added: <id>` / `Type: <type>`, no `--format`.
+`pyrite add <file>` is the same shape as `create`: `{"added": true, "entry_id": "<id>", "entry_type": "<type>", "outcome": "done"}` (`"valid"` for `--validate-only`), or under `--format rich` `Added: <id>` / `Type: <type>`.
 
 ### `update`
 
 | Surface | Call | Success shape |
 |---|---|---|
-| CLI | `pyrite update <id> -k <kb> --title <t>` | **`--format` defaults to `json`:** `{"updated": true, "entry_id": "<id>"}`. With `--format rich`: `Updated: <id>`. |
+| CLI | `pyrite update <id> -k <kb> --title <t>` | **`--format` defaults to `json`:** `{"updated": true, "entry_id": "<id>", "outcome": "done"}`. With `--format rich`: `Updated: <id>`. |
 | MCP | `kb_update` | the block below, plus `"warnings"` when any, `"ignored"` listing keys no update writes, and `"unchanged"` listing fields an echoed read result carried at the value the read returned (not written). |
 | REST (not run) | `PUT /api/entries/{id}` (body carries `kb`) or `PATCH /api/entries/{id}` (body: `kb`, `field`, `value`; one field, `value` a string) | Both return `{"updated": true, "id": "<id>", "warnings": []}`. |
 
@@ -340,9 +341,14 @@ KB's task schema allows. It has no short flag: `-f` was `--format` on the
 `task` commands and is deprecated there (see "`--format` defaults"), and is
 **not** `--field` as on `create`/`update`.
 
-`pyrite link <source> <target> -k <kb> -r <relation>` prints
+`pyrite link <source> <target> -k <kb> -r <relation>` answers
+`{"links": [{"created": true, "source", "relation", "target", "kb"}], "outcome": "done"}`
+(`--bidi` adds the inverse as a second item; one that failed is in `"failed"`,
+with `"outcome": "partial"` and exit `3`); under
+`--format rich` it prints
 `Linked: <src> --[<relation>]--> <tgt> (in <kb>)` for a new link, or
-`Already linked: ...` when that `(target, kb, relation)` already exists.
+`Already linked: ...` when that `(target, kb, relation)` already exists
+(`"created": false`).
 Another relation between the same two entries is a new link.
 
 ## Repo endpoint errors
@@ -655,24 +661,29 @@ asked for, YAML included. `-f` no longer
 means `--format`: where it did (the `task` commands) it still works for one
 release and prints a deprecation line on stderr. Each module takes the
 shared option when it moves to the outcome contract; the `task` commands
-have it. Until then most *read* commands default to `--format json`, `config`
+and the write path (below) have it. Until then most *read* commands default to `--format json`, `config`
 to a rich terminal view, and the write commands are not uniform. The table is
 checked against each command's Typer signature by
 `tests/test_doc_agent_contracts.py`:
 
 | Command | `--format` | Default |
 |---|---|---|
-| `create` | none | Rich text, always |
-| `add` | none | Rich text, always |
-| `delete` | none | Rich text, always |
-| `link` | none | Rich text, always |
-| `update` | yes | `json` |
-| `rename` | yes | `json` |
+| `create` | yes (shared) | `json` |
+| `add` | yes (shared) | `json` |
+| `delete` | none | Rich text, always (it asks before it deletes) |
+| `link` | yes (shared) | `json` |
+| `update` | yes (shared) | `json` |
+| `rename` | yes (shared) | `json` |
 | `import` | input file format, not output | Rich text, always |
 | `task create` | yes (shared; `-f` deprecated) | `json` |
 
 A command with no `--format` prints its refusals as Rich text too, so branch
 on the exit code, not on JSON, until its module takes the shared option.
+`create`, `add`, `update`, `rename`, `link` and every `links` command have it
+(ADR-0046, slice 2). `get` and `delete` do not yet: `get` keeps
+`--format markdown` and `csv`, and `delete` asks a question, which a command on
+the contract may not (the prompt rule is still open). On `create`, `update` and `links
+bulk-create` the short `-f` is `--field`/`--file`, never `--format`.
 
 ## Operational contracts
 

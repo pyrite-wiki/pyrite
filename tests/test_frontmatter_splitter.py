@@ -906,14 +906,13 @@ def _readers(tmp_path, kb_service):
         return ("refused", "None") if e is None else ("loaded", e.title, e.body)
 
     def create(text):
-        import click
-        import typer
-
         from pyrite.cli.entry_commands import _body_frontmatter
+        from pyrite.exceptions import ValidationError
 
         try:
             meta, body = _body_frontmatter(text)
-        except (click.exceptions.Exit, typer.Exit, SystemExit):
+        except ValidationError:
+            # The helper refuses by raising; the root prints it (ADR-0046).
             return ("refused", "exit")
         # `type`/`title` stay in the body's YAML only when the helper returns them: it drops them.
         if body == text:

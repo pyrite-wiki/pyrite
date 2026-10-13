@@ -381,7 +381,7 @@ def test_cli_add_refuses_an_undeclared_type_unless_allowed(env):
     _stop_enforcing(env)
     src = env["tmp_path"] / "w.md"
     src.write_text("---\ntitle: Added Widget\ntype: widget\n---\n\nbody\n")
-    result = _cli(env, ["add", str(src), "-k", KB])
+    result = _cli(env, ["add", str(src), "-k", KB, "--format", "rich"])
     assert result.exit_code == 1, result.output
     assert "[UNDECLARED_TYPE]" in result.output
     assert _file(env, "added-widget") is None
@@ -394,7 +394,7 @@ def test_cli_add_refuses_an_undeclared_type_unless_allowed(env):
 def test_cli_add_refuses_a_truncated_body(env):
     src = env["tmp_path"] / "t.md"
     src.write_text("---\ntitle: Added Chunk\ntype: person\nbody_truncated: true\n---\n\npartial\n")
-    result = _cli(env, ["add", str(src), "-k", KB])
+    result = _cli(env, ["add", str(src), "-k", KB, "--format", "rich"])
     assert result.exit_code == 1, result.output
     assert "[VALIDATION_FAILED]" in result.output
     assert _file(env, "added-chunk") is None
