@@ -438,6 +438,9 @@ def console_width(monkeypatch):
 
     def set_width(width):
         for console in consoles:
+            # Both, so Console.size takes its first branch and never consults the
+            # terminal, TERM=dumb or COLUMNS.
             monkeypatch.setattr(console, "_width", width)
+            monkeypatch.setattr(console, "_height", 25)
 
     return set_width
