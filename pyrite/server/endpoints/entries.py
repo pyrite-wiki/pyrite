@@ -737,7 +737,7 @@ def get_entry(
     fields_list = parse_fields_param(fields)
     if fields_list:
         result = project_fields(result, fields_list)
-        neg = negotiate_response(request, result)
+        neg = negotiate_response(request, result, fields=fields_list)
         if neg is not None:
             return neg
         return JSONResponse(content=result)

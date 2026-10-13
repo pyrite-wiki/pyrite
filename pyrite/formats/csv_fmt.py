@@ -4,7 +4,7 @@ import csv
 import io
 from typing import Any
 
-from .tabular import cell_text, projected_columns
+from .tabular import cell_text, projected_columns, projected_rows
 
 
 def csv_serialize(data: Any, **kwargs) -> str:
@@ -15,8 +15,8 @@ def csv_serialize(data: Any, **kwargs) -> str:
     """
     if isinstance(data, dict):
         fields = kwargs.get("fields")
-        if fields and ("results" in data or "entries" in data):
-            rows = data["results"] if "results" in data else data["entries"]
+        rows = projected_rows(data) if fields else None
+        if rows is not None:
             output = io.StringIO()
             columns = projected_columns(fields)
             writer = csv.DictWriter(output, fieldnames=columns)

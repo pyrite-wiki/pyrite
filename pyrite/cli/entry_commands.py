@@ -51,10 +51,10 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 
-def _format_output(data: dict, fmt: str) -> str | None:
+def _format_output(data: dict, fmt: str, **kwargs) -> str | None:
     from .output import format_output
 
-    return format_output(data, fmt)
+    return format_output(data, fmt, **kwargs)
 
 
 def _body_frontmatter(body: str | None) -> tuple[dict, str | None]:
@@ -227,9 +227,15 @@ def register_entry_commands(app: typer.Typer) -> None:
             if fields_list:
                 result = project_fields(result, fields_list)
 
-            formatted = _format_output(result, output_format)
+            formatted = _format_output(result, output_format, fields=fields_list)
             if formatted is not None:
                 typer.echo(formatted)
+                return
+
+            if fields_list:
+                from ..formats.tabular import projected_rich_table
+
+                console.print(projected_rich_table([result], fields_list, "Entry"))
                 return
 
             console.print(f"\n[bold cyan]{result.get('title', '')}[/bold cyan]")

@@ -11,6 +11,18 @@ def projected_columns(fields: list[str]) -> list[str]:
     return list(dict.fromkeys((*IDENTITY_FIELDS, *fields)))
 
 
+def projected_rows(data: dict) -> list[dict] | None:
+    """The records of a projected payload: a results/entries envelope, else the
+    payload itself as the one record (``get --fields``, ``GET /entries/{id}``)."""
+    if "results" in data:
+        return data["results"]
+    if "entries" in data:
+        return data["entries"]
+    if "id" in data:
+        return [data]
+    return None
+
+
 def cell_text(value: Any) -> str:
     """Preserve complex values as JSON cells, and absent/null as empty cells."""
     if value is None:

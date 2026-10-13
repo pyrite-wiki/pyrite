@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from .tabular import projected_markdown
+from .tabular import projected_markdown, projected_rows
 
 
 def markdown_serialize(data: Any, **kwargs) -> str:
@@ -14,8 +14,8 @@ def markdown_serialize(data: Any, **kwargs) -> str:
     """
     if isinstance(data, dict):
         fields = kwargs.get("fields")
-        if fields and ("results" in data or "entries" in data):
-            rows = data["results"] if "results" in data else data["entries"]
+        rows = projected_rows(data) if fields else None
+        if rows is not None:
             return projected_markdown(rows, fields)
         if "id" in data and "title" in data:
             return _entry_to_markdown(data)
