@@ -848,3 +848,555 @@ What building the guard found that the groom above does not say. Slices 2 to
   own stdout in a real process. With the controls `tests/test_cli_outcome.py`
   is about 1,000 tests in about 20 s at `-n 4`. Against the round-1 root,
   660 of the walk's first 720 cases were red.
+
+## Groom 2026-10-13: formats a migrated read command offers
+
+Groomed by the architect on `dev` at 90360bff. Read-only for code; no suite,
+server or browser. Every behaviour below was run through the real `pyrite`
+and `pyrite-read` against a throwaway KB (`PYRITE_CONFIG_DIR` in a scratch
+directory), or is cited by file:line. **This replaces the "### Slice 3:
+reads" box above.** Slice 3 as written is not dispatchable: it removes two
+formats from commands whose docs teach them. Slice 3a below is dispatchable
+now; 3b and 3c wait for decision 1 (and 3c for decision 2).
+
+**Principles.** 8: which formats a command prints, and with which columns,
+is decided today in three places that do not know each other (the option's
+help string, the command's branch, a serialiser that guesses). 9: 48
+commands advertise `markdown, csv`; the serialisers know six payload keys.
+3 ("reports it"): a format that prints part of the answer has not reported
+it.
+
+**The user's model.** "`--format` changes how the answer looks, never what
+the answer is. If `--help` offers csv, I get this command's rows, all of
+them, with the columns its JSON has. If the command cannot print a format,
+it says so before it does anything."
+
+**The implementation model.** The command declares the shape of its answer
+(a payload; a table of rows under a named key with named columns; one
+entry). The shared option offers exactly the formats the root can print for
+that shape, so the offer is true by construction and an unoffered format is
+click's usage error. The root writes every byte of csv and markdown from the
+declared shape. No serialiser guesses a shape, and no command reads its
+format.
+
+**Where the two differ today** (the finding). `csv_serialize` and
+`markdown_serialize` pick a shape by which key the payload happens to hold
+(`pyrite/formats/csv_fmt.py:14-23`, `markdown_fmt.py:13-25`) and print fixed
+columns for it. So: `get --format csv` prints the line `tag,count` and
+nothing else (an entry has a `tags` key); `backlinks --format csv`, the one
+csv command the tutorial runs, drops `relation` and `forward_relation`;
+`--fields` is ignored (#667); every other payload prints a Python `repr`.
+Slice 1 answered this for `task` by refusing both formats, which was right
+there (nothing real was lost). For reads it removes the cases that work. The
+question is not "may a command offer more formats" but "who knows the
+columns": today the serialiser guesses; it must be the command that says and
+the root that prints.
+
+**One of several.** Same root cause: #667 (`--fields` ignored in csv; open
+PR #721), #666 (`sw adrs --format csv` prints a rich table), #547 (formats
+not validated), #553. Option R below gives #666 its csv in slice 8 with no
+csv code in the plugin, and closes #547 for each migrated command.
+
+### 1. Contracts that apply
+
+- ADR-0046 decision 1: an Outcome "carries the result data and a renderer
+  for `--format rich`". A table on the Outcome extends a plugin-facing type:
+  an amendment, the maintainer's (decision 1 below).
+- ADR-0046 decision 4: a legacy command is "counted, per module, in a table
+  that must match the registry exactly". Binding on the fix for the shared
+  test lines: the count stays hand-kept and exact; only where it is kept may
+  change.
+- ADR-0046 decision 6 and `docs/json-contracts.md:565-589`: in a machine
+  format stdout is exactly one document; an unknown format is exit 2 before
+  the body.
+- #303 (maintainer, 2026-10-02) and ADR-0046 "Questions decided": JSON is
+  the default of every command; `PYRITE_FORMAT` is how a person changes it.
+  No per-command default.
+- ADR-0010 §6: `search --format csv` and `get --format markdown` are its two
+  CLI examples. §1: csv is "for list/search endpoints only".
+- `docs/json-contracts.md:650-653`: "`markdown` and `csv` are not offered by
+  the shared option". True of `task`; the sentence changes under any option
+  but (c).
+- ADR-0040 "CLI helpers" row: what a plugin command may import. Gains
+  whatever the amendment names.
+- Written nowhere: what a refusal looks like under `--format csv`; what
+  `PYRITE_FORMAT` does when it names a format the command does not offer;
+  which columns a command's csv has. Findings; see open questions.
+
+### 2. What the code does today
+
+Reproduction of the reported problem, one command each: `pyrite task list -k
+kbx --format csv` exits 2 (the shared option); `pyrite backlinks beta-note
+-k kbx --format csv` exits 0 with rows (legacy). Migrating the second as
+slice 3 was written makes it the first.
+
+Surprises first.
+
+- **`pyrite-read` does not default to rich everywhere.** Five of its seven
+  commands do (`get`, `list`, `timeline`, `tags`, `backlinks`:
+  `pyrite/read_cli.py:79,132,187,242,288`). `pyrite-read search` is
+  `search_commands.py`'s function registered a second time
+  (`read_cli.py:15`, `register_search_command`) and defaults to `json`.
+  `config` has no `--format`.
+- **No test pins a CLI csv or markdown shape.** `tests/test_formats.py:404-
+  466` (`TestApiContentNegotiation`) pins REST `Accept` negotiation, not the
+  CLI. The only CLI tests naming csv are `tests/test_cli_outcome.py:261,668`,
+  which pin that the shared option refuses it.
+- **One executable doc uses csv, three prose lines use markdown.**
+  `docs/tutorials/pyrite-in-20-minutes.md:311` runs `pyrite backlinks
+  wip-constraints -k reinertsen --format csv` with `expect-text
+  wip-research` (CI: `.github/workflows/ci.yml:654`). Lines 133, 374, 375
+  teach `pyrite get <id> -k pyrite --format markdown` in prose (not run).
+  `docs/getting-started.md` and `docs/json-contracts.md` teach neither.
+- **`get --format markdown` is not the file.** It prints `id`, `title`,
+  `kb_name`, `date`, `importance`, `tags` and the body
+  (`markdown_fmt.py:28-41`). It reads the key `type`; the payload's key is
+  `entry_type`, so the type line never prints. Fields under `metadata` are
+  dropped. Run: an entry with `outcome: dismissed` and `custom_thing: 7`
+  printed neither.
+- **The empty set prints rich text in every format.** `timeline` (both
+  CLIs) and `collections list` print `No timeline events found.` / `No
+  collections found.` under `--format json`, exit 0, before the format is
+  looked at (`browse_commands.py:408-410`, `read_cli.py:201-203`,
+  `collection_commands.py:27-29`). With `--format xml` they also exit 0.
+- **`search --files` ignores `--format`**: a Rich table under `csv` and
+  `json` (`_search_files`, `search_commands.py:330`, takes no format).
+- **An unknown format has five answers.** Exit 2 on `search`, `tags`,
+  `backlinks`, `get` (the four with `validate_output_format`); a traceback
+  and exit 1 on `list-entries`, `batch-read`, `orient`, `recent`,
+  `collections query`; `{"error": "Unknown format: xml"}` exit 1 on
+  `pyrite-read get|list|tags|backlinks`; exit 0 on the empty-set paths
+  above; ignored by `update` (prints JSON whatever was asked).
+- **The two `backlinks` refusals differ.** `pyrite backlinks nope` prints
+  `{error, error_code: ENTRY_NOT_FOUND, retryable}`; `pyrite-read backlinks
+  nope` omits `retryable` (`read_cli.py:38-50`, its own `_emit_error`).
+  Both exit 1, and both print that JSON under `--format csv`.
+- **Already right on the legacy path:** `backlinks` on an absent subject (1,
+  `ENTRY_NOT_FOUND`), `batch-read` with a missing id (3, rows printed).
+  Nothing in slice 3's old acceptance needs a fix that can go first.
+- **`PYRITE_FORMAT`**: `PYRITE_FORMAT=csv pyrite task list` exits 2 (the
+  env value is validated like a flag, `output.py:59-60`). A legacy command
+  ignores the variable (`PYRITE_FORMAT=rich pyrite tags` prints JSON).
+
+The 18 read commands (17 of slice 3, plus `pyrite get`, which is in slice
+2's module), their defaults and what each format prints today. "ok" = rows
+or the entry, with the loss noted; "repr" = a Python `repr` or a one-row
+dump with `repr` cells; all 17 that have `--format` advertise `json, rich,
+markdown, csv, yaml` in help.
+
+| Command | file:line | default | csv | markdown |
+|---|---|---|---|---|
+| `pyrite get` | `entry_commands.py:179` | json | `tag,count`, no rows | entry, 6 keys + body |
+| `pyrite list-entries` | `browse_commands.py:39` | json | ok, 6 fixed columns | titles, no ids |
+| `pyrite batch-read` | `:109` | json | ok; `not_found` absent | titles, no ids |
+| `pyrite orient` | `:176` | json | repr | repr |
+| `pyrite recent` | `:325` | json | ok, 6 fixed columns | titles, no ids |
+| `pyrite timeline` | `:383` | json | ok; empty set is rich text | ok; same |
+| `pyrite tags` | `:433` | json | ok (`tag,count`) | ok |
+| `pyrite backlinks` | `:472` | json | ok; relation columns dropped, `importance` empty | titles, no ids |
+| `pyrite search` | `search_commands.py:58` | json | ok, 7 fixed columns; `--fields` ignored; `--files` rich | title + snippet, no ids |
+| `pyrite collections list` | `collection_commands.py:14` | json | repr | repr |
+| `pyrite collections query` | `:64` | json | ok, 6 fixed columns | titles, no ids |
+| `pyrite-read get` | `read_cli.py:75` | rich | `tag,count`, no rows | entry, 6 keys + body |
+| `pyrite-read list` | `:130` | rich | ok (`name,type,path,entries`) | ok |
+| `pyrite-read timeline` | `:181` | rich | as `pyrite timeline` | same |
+| `pyrite-read tags` | `:237` | rich | ok | ok |
+| `pyrite-read backlinks` | `:284` | rich | as `pyrite backlinks` | same |
+| `pyrite-read search` | `search_commands.py:58` | json | as `pyrite search` | same |
+| `pyrite-read config` | `read_cli.py:329` | no `--format` | - | - |
+
+An empty `entries` or `results` list in csv is the empty string, no header
+(`csv_fmt.py:38-39,53-54`).
+
+**Slice 2's 14 commands** (asked by the conductor; a worker is on it now).
+`create`, `add`, `delete`, `link`, `links bulk-create`: no `--format`.
+`rename`: `json or rich`, any other value prints JSON. `update`: advertises
+five, prints JSON for all five. `links check|suggest|discover|batch-suggest|
+orphans|asymmetric` (`link_commands.py:35,304,432,570,673,765`, default
+`rich`): advertise five; markdown is a `repr`, csv is one row with `repr`
+cells (run for check, suggest, orphans, asymmetric; discover and
+batch-suggest share the code path and were not run to output). **Slice 2
+loses nothing real on 13 commands and one real format on one: `pyrite get
+--format markdown`**, the form the tutorial teaches three times. Until
+decision 1: slice 2 leaves `get` on the legacy path beside `delete` (which
+prompts) and says so; 3c migrates `get` with `pyrite-read get`. Not a
+format matter but the same slice: `create`, `add`, `link` go from text to
+JSON by default, and `docs/json-contracts.md:293,665-668` says "Rich
+text, always" (and "Never JSON" for `create`) of them.
+
+Wider than these slices: 48 of the 89 `--format` options in the three CLIs
+advertise csv or markdown (walked from the registry; `link` 6, `kb` 5, `qa`
+5, `extension` 4, `cli/__init__` 4, `repo` 2, `index` 2, `init` 1,
+journalism 1, plus the reads). Outside the reads they are the `repr` case:
+slices 4 to 9 lose nothing, as `task` did.
+
+### 3. Invariant and surfaces
+
+**Invariant.** For every command and every format its `--help` offers:
+stdout is one document of that format holding the command's whole answer
+(every row the JSON holds under the declared key, with declared columns),
+and a format it does not offer is a usage error (2) before the body runs.
+Which formats a command offers follows from the shape it declares, in one
+place.
+
+- **CLI, `pyrite`**: 11 read commands above; 9 work in csv with losses, 2
+  print a `repr`. Not held.
+- **CLI, `pyrite-read`**: 7; the same serialisers, a second copy of five
+  commands (`read_cli.py` 348 lines), its own error shape. Not held.
+- **CLI, `pyrite-admin`**: no read command in these slices; its `repr`
+  cases go in slice 7.
+- **Plugin CLIs**: software-kb has 15 `--format` options, none advertising
+  csv; #666 asks for one. A plugin gets csv only from something it can
+  declare; it cannot teach the registry's key sniffing a new shape. In
+  scope for the amendment's wording, built in slices 8 to 10.
+- **REST**: `negotiate_response` (`pyrite/server/api.py:1028`) uses the
+  same serialisers by `Accept`, pinned by `tests/test_formats.py`. Out of
+  scope to edit and safe to leave: the root writing CLI tables itself
+  removes no serialiser. Read, not ignored: #721 threads `fields=` through
+  `negotiate_response` for REST search, and that stays.
+- **MCP**: tools return dicts; no format. Not affected (grep: `mcp_server.py`
+  does not import `pyrite.formats`' csv or markdown).
+- **Docs**: the tutorial line 311 (run in CI) and its three prose lines;
+  `docs/json-contracts.md:645-675`; ADR-0010 §6;
+  `kb/components/format-system.md`, `cli-system.md:105`.
+- **Tests**: `tests/test_cli_outcome.py:261,668` pin the three-format set by
+  value; they must come to read the set from the option.
+- **Files on disk, shipped schemas, templates**: none. No state Pyrite does
+  not own is written.
+
+### 4. Options
+
+**(a) The shared option takes a per-command format set and default.**
+`output.py`: `OUTPUT_FORMAT` becomes a factory; `declares_shared_format`
+stops comparing by identity (`output.py:124`). `outcome.py`: nothing. The
+root still calls `format_response`, so the guessing stays: `get --format
+csv` still prints `tag,count`, `backlinks` still drops its relation, and the
+`outcome` key the root adds lands in the one-row fallback. #721: no route.
+The command no longer calls `format_output`, so `fields=` has nowhere to go
+unless the Outcome carries it, which is (b). Plugins: a plugin may offer csv
+and gets a `repr`. The per-command default reopens #303. About 40 lines;
+smallest change that keeps the formats, and it moves today's bugs onto the
+contract.
+
+**(b) The Outcome names a table; the root renders csv and markdown for any
+Outcome that has one.** `outcome.py`: a `Table` (the key holding the rows,
+the columns). Root: a table writer. Fixes the guessing. Alone it breaks
+"unknown format is a usage error before the body": whether an Outcome has a
+table is known only after the command ran, so `links bulk-create --format
+csv` would write its links and then fail on the format. It needs a static
+declaration too.
+
+**(c) Remove markdown and csv from reads.** Nothing in `output.py` or
+`outcome.py`. Breaks: the tutorial's line 311 (a CI failure until the page
+changes) and its three `get --format markdown` lines; ADR-0010 §6's two
+examples; #667, filed because two of three first-hour agents reached for
+`search --fields ... --format csv` unprompted; #666; and #721, an outside
+contributor's 417-line PR, which becomes REST-only. Smallest by far, and
+the only option that shrinks the supported surface (principle 9).
+
+**(R) Recommended: (a) and (b) joined, with the set derived from the shape
+instead of chosen per command.**
+
+- `output.py` declares a closed set of option constants, one per shape:
+  `OUTPUT_FORMAT` (json, yaml, rich; unchanged), one for a table (adds csv,
+  markdown), one for an entry (adds markdown). One default, json. Each has
+  its own thin callback so `declares_shared_format` can also answer "which
+  shape". No per-command set, no per-command default.
+- `outcome.py`: `Outcome` gains an optional table: the data key holding a
+  list of mappings, and the column names. `_check` refuses a table whose key
+  is absent or not a list of mappings.
+- Root (`_outcome_answer`, `pyrite/utils/errors.py:384`): csv is a header
+  plus one row per item, written by one writer; markdown is a pipe table
+  for a table, the entry document for an entry. A command that declared the
+  table option and returned an Outcome without a table is `NO_OUTCOME` in
+  every format, so any test of the command finds it.
+- The writer is #721's `pyrite/formats/tabular.py` (`projected_columns`,
+  `cell_text`, `projected_markdown`) generalised from "`--fields` given" to
+  "columns named". `--fields` becomes the table's columns.
+- The registry serialisers stay for REST, untouched.
+
+Effect on #721: its `tabular.py` is the writer this needs, and its 272-line
+test file is acceptance for 3b. Its call-site edits in `browse_commands.py`
+and `search_commands.py` (three more `if fields_list: ... return` branches,
+`**kwargs` through `format_output`) are code 3b deletes. Merged first, 3b
+builds on it. Merged second, every one of its CLI hunks conflicts with code
+that no longer exists. So #721 goes first.
+
+Effect on plugins: a plugin command declares the table option, returns
+rows and columns, and has csv and markdown with no format code (#666's csv
+in slice 8). `Table` and the option constants join ADR-0040's "CLI helpers"
+row. A plugin that returns `None` is untouched.
+
+Size: about 300 lines before any command moves (`output.py` +40,
+`outcome.py` +45, `errors.py` +30, `tabular.py` +40 on #721's 58, tests
++150).
+
+**Counter-case, for (c).** The contract is three days old and has three
+formats that work for any payload. csv is `jq -r '.entries[] | [.id,
+.title] | @csv'` away, and each format offered is one more thing every
+future command's author must keep true. Alpha is when removing is cheap.
+What decides it for me: agents chose csv unprompted in the first-hour tests
+(#667, #666), a table is a fraction of the tokens of 25 JSON lines per hit
+(#54), and (R) makes the offer true by construction, which is the cost (c)
+is trying to avoid.
+
+**A visible consequence of (R), for the same decision.** CLI list markdown
+changes from headings (`# Entries (2 total)` then `## <title>`, which has
+no ids, so nothing in it can be acted on) to a pipe table with the declared
+columns. Nothing documents or tests the CLI form; REST keeps the headings.
+`backlinks` csv gains `relation`, `forward_relation`, `inverse_relation`.
+`get --format csv` and `orient|collections list --format csv|markdown`
+become exit 2.
+
+### 5. Open questions
+
+- A refusal under `--format csv` or `markdown`. Today: the JSON error shape
+  on stdout, exit 1 (run on both `backlinks`). Recommended: keep that, and
+  say it in `docs/json-contracts.md`, whose "printed in the format asked
+  for" is otherwise false for csv. A one-row csv of `error,error_code` is
+  data to a spreadsheet.
+- `PYRITE_FORMAT` naming a format this command does not offer. Today exit 2
+  (`PYRITE_FORMAT=csv pyrite task list`), so a person who sets
+  `PYRITE_FORMAT=markdown` for reading breaks every non-table command.
+  Recommended: an environment default the command does not offer falls back
+  to json, as `_default_format` already does for errors (`errors.py:210`);
+  an explicit `--format` it does not offer stays exit 2. This is a public
+  rule; if the worker's evidence says otherwise it goes to the maintainer.
+- A partial outcome in csv has nowhere to put `outcome` or `not_found`
+  (`batch-read`). Recommended: rows on stdout, exit 3, the rest only in
+  json and yaml, documented. Overturn it if a caller needs the misses in
+  csv.
+- Should `pyrite-read` keep five copies? `search` is already one function
+  registered twice. Registering `browse_commands`' functions on
+  `pyrite-read` would delete about 250 lines and the second error shape,
+  and would add `orient`, `list-entries`, `batch-read`, `recent` to
+  `pyrite-read` (additive). `pyrite-read list` (KBs) has no twin in
+  `browse_commands`. Explore in 3c; adding commands to a public CLI is a
+  note for the maintainer, not a blocker.
+- `get --format markdown`: keep today's bytes (root calls the existing
+  entry serialiser) or print the file. Recommended: today's bytes in 3c,
+  and the loss (no type, no custom fields) filed as its own report against
+  design.md's "a single-entry read comes from the index, not the file".
+- Default columns per command: today's fixed lists, or the JSON row's keys.
+  Recommended: today's lists, plus the relation columns on `backlinks`.
+
+### 6. Pointers
+
+- `pyrite/cli/task_commands.py`: the pattern a migrated command follows.
+- `pyrite/cli/output.py:59-126`, `pyrite/utils/errors.py:372-396`: where the
+  format is recorded and where a document is built.
+- `gh pr diff 721`: `pyrite/formats/tabular.py`,
+  `tests/test_fields_every_format.py`; its review of 2026-10-10 lists what
+  the PR still owes (rebase, an 80-column case, `get --fields`).
+- `tests/outcome_walk.py`, `tests/test_cli_outcome.py:261,668`.
+- `scripts/run_tutorial.py` (`expect-text`), the tutorial line 311.
+- `tests/test_formats.py:404-466`: the REST shapes that must not move.
+- `kb/components/format-system.md`, `kb/components/cli-system.md:105`.
+
+### 7. The shared test lines (point 3 of the brief)
+
+"On the contract" is already derived: `declares_shared_format`
+(`output.py:114`), used by the root and by `_on_the_contract`
+(`tests/test_requested_effect_exit_code.py:1246`). The walk's `CONTRACT` is
+derived from it. Two hand-kept things remain:
+
+- `test_the_task_commands_are_on_the_contract` (`:1341-1345`) asserts
+  exactly ten commands, all `pyrite task`, in one module. Every slice must
+  rewrite the same two lines. It adds nothing the exact table does not
+  already hold.
+- `LEGACY_COMMANDS` (`:1213-1240`), one line per module. ADR-0046 decision 4
+  requires this count to be hand-kept and exact; that is its point. Slices
+  conflict where their modules sit on adjacent lines: 2 with 4 (`kb`,
+  `link`), 2 with 5 (`db`, `entry`, `export`), 3 with 5 (`collection`,
+  `db`; `schema`, `search`), 3 with 6, 4 with 5, 5 with 6, 6 with 7, among
+  others; 2 and 3 do not touch in the table, only in the task test. Checked
+  in a scratch repo: two branches editing adjacent lines conflict on
+  rebase; one unchanged line between them does not.
+- Also shared: `docs/json-contracts.md:566` ("the `task` commands are
+  today") and the same phrase at `:657`; `kb/components/cli-system.md:105`.
+
+Fix, inside decision 4: the table becomes one file per module in a
+directory beside the test, each holding the names of that module's commands
+that are not on the contract, one per line. The registry test compares each
+file with the registry, exactly, in both directions. A slice deletes or
+shortens only its own modules' files. Names instead of counts also show
+which command a slice left behind (`entry_commands: 1` does not say it is
+`delete`). `LEGACY_COMMANDS_AT_SLICE_1 = 185` stays and is never edited.
+`test_the_task_commands_are_on_the_contract` is deleted. The docs stop
+naming migrated modules and give the observable test instead: a command on
+the contract shows `PYRITE_FORMAT` on its `--format` in `--help`.
+
+Not recommended: a frozen baseline no slice edits (legacy must be a subset
+of the 185 names). No shared lines at all, but a command that drops the
+shared option goes back to legacy unseen, and it drops decision 4's "a
+slice lowers it", so it would need the ADR changed.
+
+Test that fails today: "for every module, the commands that do not declare
+the shared option are exactly the names in that module's legacy file" (no
+such files exist). It is a test of scaffolding; the property it protects is
+decision 4's.
+
+### 8. Checked versus assumed
+
+Checked by running: every cell of the table in section 2 (16 commands x
+csv, markdown, xml, on a KB with two linked notes; `get`, `update`, `rename`
+and four `links` commands in csv, markdown, yaml, xml); the empty-set and
+`--files` outputs; both `backlinks` refusals; `batch-read` exit 3;
+`PYRITE_FORMAT=csv` on `task list`; the registry walk (defaults, callbacks,
+which options advertise csv); the adjacent-line rebase. Checked by reading:
+ADR-0046 with its amendment, the item, `output.py`, `outcome.py`, the
+serialisers, `gh pr diff 721` and both its review comments, #303, #547,
+#666, #667, `tests/test_formats.py:404-466`, the tutorial and its runner
+directive.
+
+Assumed: `collections list` with rows prints a `repr` (called the
+serialiser with a made-up row; the fixture KB had no collection); `links
+discover` and `batch-suggest` print as their four siblings do; a pipe table
+is acceptable CLI markdown; three option constants can share one recording
+function without Typer objecting (not probed; `task`'s two callbacks are the
+evidence); the line sizes; that #721's author will rebase.
+
+Not found filed, for the conductor: the empty-set rich text under `--format
+json` (`timeline` in both CLIs, `collections list`); `search --files`
+ignoring `--format`; `get --format csv` printing `tag,count`; `get --format
+markdown` dropping the type and custom fields. 3b and 3c remove the first
+three by construction.
+
+**This groom is wrong if** a read command's answer cannot be stated as a
+payload, a table or an entry (candidates: `orient`, whose answer is nested;
+`search` with a trace), if a caller depends on the heading-style list
+markdown, or if the three-constant option cannot be recognised by
+`declares_shared_format` without a per-command callback.
+
+Not a spike: no storage or index format, no state Pyrite does not own, no
+unverified tool behaviour beyond the last assumption, which 3b meets in its
+first hour. It is a public shape, so 3b is opus with a cold read.
+
+---
+
+### Slice 3a: the legacy list is one file per module
+
+small: sections 2 and 7 only.
+
+```
+Acceptance:   The legacy commands of each module are named in that module's own file; the
+              registry test fails when a file and the registry differ in either direction, and
+              names the command. No test names the commands or modules that are on the contract.
+              Migrating a command changes no line outside its module's file (show it: plant the
+              shared option on one browse command in a test, and only that module's comparison
+              goes red). docs/json-contracts.md and cli-system.md no longer list migrated
+              modules. Fails today: the per-module comparison (no files).
+Regimes:      a module with no legacy command has no file; a file naming a command that does not
+              exist is red; a third-party plugin's commands are not counted (as today, :1268);
+              the 185 ceiling still holds.
+Touches:      existing: tests/test_requested_effect_exit_code.py (:1213-1345, about -45/+40),
+              docs/json-contracts.md (:565-568, :656-658), kb/components/cli-system.md (:105)
+              new: one directory of 26 small text files (185 names)
+              about 250 lines, 185 of them names
+Sequence:     independent of #721 (no file under pyrite/). Conflicts once with slice 2 on
+              :1225, :1232, :1341-1345: land whichever is nearer done first; the other rebases.
+Model:        sonnet
+heavy:        no
+Cold read:    no
+Out of scope: the hint scan (:1348 on) and the behavioural walk (already derived; read
+              tests/outcome_walk.py to confirm it holds no module list).
+```
+
+### Slice 3b: a command names its table (`browse_commands`, `search_commands`)
+
+```
+Acceptance:   The 7 browse commands and search (in pyrite and pyrite-read) declare a shared
+              option and return Outcomes; browse's _cli_error and both modules' format branches
+              are gone; the walk is green with no list edited. For each of these commands and
+              each format its --help offers, stdout is one document of that format holding every
+              row its JSON holds, in the declared columns; a format it does not offer exits 2
+              and names the ones it does. csv of an empty result is the header line, exit 0.
+              --fields sets the columns in csv, markdown and rich (identity fields first, then
+              the requested order: #721's tests pass). backlinks csv carries the relation
+              columns. The tutorial runs green. A command that declares the table option and
+              returns no table is NO_OUTCOME in every format. backlinks on an absent subject is
+              a raised not-found; batch-read and search --files keep 3/1, and search --files
+              prints the format asked for. Fails today: "pyrite backlinks --format csv has a
+              relation column" and "pyrite timeline --format json on an empty KB prints JSON".
+Regimes:      empty result (done, 0); absent subject (refusal, 1, JSON error shape under csv
+              pending the open question); partial batch-read in csv (rows, exit 3); a --fields
+              name no row has (empty column); cells with comma, quote, newline, a list or dict
+              (JSON in the cell, as #721); PYRITE_FORMAT naming an unoffered format (open
+              question); index lag (a search or list may trail a write; unchanged).
+Touches:      existing: pyrite/cli/output.py, pyrite/cli/outcome.py, pyrite/utils/errors.py,
+              pyrite/formats/tabular.py (#721's), pyrite/cli/browse_commands.py,
+              pyrite/cli/search_commands.py, tests/test_cli_outcome.py (:261, :668 read the
+              offered set from the option), docs/json-contracts.md ("--format defaults" and
+              #721's section), kb/components/cli-system.md, kb/components/format-system.md,
+              the ADR-0046 amendment text, two legacy files deleted
+              new: one test file for the invariant (registry-driven: each table command x each
+              offered format on a fixture KB), a changelog fragment
+              about 850 lines: design 300, browse and search -350/+300, tests 200, docs 50
+Sequence:     after decision 1; after #721 merges (its review of 10-10 asks for a rebase and two
+              changes; if it is not updated by the time decision 1 is made, carry it as #821
+              carried #649, with credit); after 3a. Independent of slice 2 (no shared file once
+              3a has landed).
+Model:        opus
+heavy:        no
+Cold read:    yes (plugin-facing type, a public output shape)
+Out of scope: REST negotiation and the registry serialisers (pinned by tests/test_formats.py,
+              untouched); #54's lean default; the csv formula-cell note in #721's review (the
+              same on the old path; its own report); orient stays json, yaml, rich.
+Decision:     1 below.
+```
+
+### Slice 3c: `pyrite-read`, `collections`, `get`
+
+```
+Acceptance:   pyrite-read's 6 commands, collections list|query and pyrite get return Outcomes
+              with the shape each declares (get: an entry; lists: a table; config and
+              collections list: a payload unless the worker finds a table fits). get --format
+              markdown prints what it prints today, in both CLIs; get --format csv exits 2.
+              pyrite-read backlinks and pyrite backlinks answer an absent subject with the same
+              keys. pyrite-read's defaults are as decision 2 says, stated in
+              docs/json-contracts.md and the changelog. read_cli's _emit_error is gone. Fails
+              today: "pyrite-read backlinks nope prints the same error keys as pyrite
+              backlinks nope".
+Regimes:      as 3b; plus a KB named with -k that is not registered (KB_NOT_FOUND, 1).
+Touches:      existing: pyrite/read_cli.py, pyrite/cli/collection_commands.py,
+              pyrite/cli/entry_commands.py (get only, :179-229), pyrite/cli/outcome.py and
+              pyrite/utils/errors.py (the entry shape, if 3b did not land it),
+              tests/test_read_cli.py, docs/json-contracts.md, the tutorial only if a line
+              becomes false; three legacy files shortened or deleted
+              about 450 lines
+Sequence:     after 3b (same outcome.py, errors.py) and after slice 2 (entry_commands.py);
+              after decision 2
+Model:        sonnet if 3b landed the entry shape, else opus
+heavy:        no
+Cold read:    no, unless decision 2 keeps rich (a default that differs by entry point)
+Out of scope: making get --format markdown the file (reported separately); registering
+              browse's functions on pyrite-read (open question; do it only if the maintainer
+              is told what it adds).
+Decision:     2 below.
+```
+
+Predicted footprint for the three, scored after merge: 3a about 250 lines
+in 3 files plus the directory; 3b about 850 in 12; 3c about 450 in 7.
+
+### Needs a decision first (the maintainer's)
+
+1. **Amend ADR-0046: a format beyond json, yaml and rich is offered only by
+   a command that declares a shape the root can print** (a table: csv and
+   markdown; an entry: markdown), and `Table` with the option constants
+   joins the plugin CLI contract (ADR-0040). Recommendation: accept (option
+   R). Counter-case: option (c), three formats and nothing else, with the
+   tutorial, ADR-0010 §6 and #721 changed to match. It carries the visible
+   changes listed at the end of section 4 (pipe-table markdown, `backlinks`
+   csv columns, three exit-2 cases).
+2. **`pyrite-read`'s default output.** Today five of its commands print
+   rich text by default, `search` prints JSON, `config` has no option.
+   Recommendation: json, as #303 decided for "every command" and slice 1
+   did for `task`, with `PYRITE_FORMAT=rich` for a person and a changelog
+   line; `tests/test_read_cli.py` passes either way (it checks exit codes
+   and substrings), and no doc teaches `pyrite-read` beyond one phrase at
+   `docs/json-contracts.md:484`. Counter-case: `pyrite-read` is not on the
+   supported-surface list and may be the entry point a person types; a
+   default per entry point is one line at the root and breaks no script.
+   Against that: it is the CLI whose help says "safe for AI agents", its
+   `search` is already JSON, and a per-entry-point default is the
+   per-command default #303 removed, one level up.
