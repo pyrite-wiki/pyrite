@@ -134,6 +134,9 @@ def test_quiet_logging_does_not_swallow_the_notice(capfd):
     assert err.count("experimental") == 1
 
 
+@pytest.mark.control(
+    reason="logger-state guard for this file; red when the fixture restore is removed"
+)
 def test_these_tests_leave_the_pyrite_logger_as_they_found_it():
     """Guard for the fixture: handlers, level and propagate survive a reconfigure."""
     from pyrite.logging import configure_logging
@@ -150,6 +153,9 @@ def test_these_tests_leave_the_pyrite_logger_as_they_found_it():
 _LEAK_CHECK: list = []
 
 
+@pytest.mark.control(
+    reason="logger-state guard for this file; red when the fixture restore is removed"
+)
 def test_zz_logger_state_was_restored_by_the_previous_test():
     if not _LEAK_CHECK:
         pytest.skip("ordering: run with the whole file")
@@ -178,6 +184,9 @@ def _closed_stream():
     return s
 
 
+@pytest.mark.control(
+    reason="passes on dev, which has no notice; red against the unguarded first-round notice (print to a broken stderr / file=None)"
+)
 @pytest.mark.parametrize(
     "make_stderr",
     [lambda: None, _BoomStream, _closed_stream],
@@ -194,6 +203,9 @@ def test_a_broken_stderr_never_stops_construction_or_reaches_stdout(
     assert capsys.readouterr().out == ""
 
 
+@pytest.mark.control(
+    reason="passes on dev, which has no notice; red against the unguarded first-round notice (print to a broken stderr / file=None)"
+)
 def test_a_failing_log_handler_never_stops_construction(monkeypatch, capfd):
     def boom(*a, **k):
         raise RuntimeError("logging is broken")
@@ -204,6 +216,9 @@ def test_a_failing_log_handler_never_stops_construction(monkeypatch, capfd):
     assert out == ""
 
 
+@pytest.mark.control(
+    reason="passes on dev, which has no notice; red against the unguarded first-round notice (print to a broken stderr / file=None)"
+)
 def test_fd2_closed_at_startup_prints_nothing_to_stdout():
     """``2>&-``: Python starts with sys.stderr None; the line must not go to stdout."""
     import subprocess
