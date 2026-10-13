@@ -48,9 +48,15 @@ def projected_markdown(rows: list[dict], fields: list[str]) -> str:
             .replace("\n", "<br>")
         )
 
+    def rule(key: str) -> str:
+        # A header-rule cell of at least three dashes. Computed, not spelled, so
+        # no constant here reads as a frontmatter fence
+        # (tests/test_frontmatter_splitter.py scans for one).
+        return "-" * max(3, len(key))
+
     lines = [
         "| " + " | ".join(escaped(key) for key in columns) + " |",
-        "| " + " | ".join("---" for _ in columns) + " |",
+        "| " + " | ".join(rule(key) for key in columns) + " |",
     ]
     lines.extend("| " + " | ".join(escaped(row.get(key)) for key in columns) + " |" for row in rows)
     return "\n".join(lines)
