@@ -569,7 +569,8 @@ refusal, so a caller that cannot see the exit code can still tell. Every
 result is an object, so the key always has somewhere to go.
 
 A command is on the contract when it declares the shared `--format` option;
-the `task` commands are today, and the other modules move one slice at a time
+the `task` commands and the write commands (`create`, `add`, `update`,
+`rename`, `link` and the seven `links` commands) are today, and the other modules move one slice at a time
 and keep the behaviour below until they do (`LEGACY_COMMANDS` in
 `tests/test_requested_effect_exit_code.py` counts them). For a command on the
 contract the root is also the only way *out*, checked on every run: once the

@@ -209,12 +209,10 @@ def register_entry_commands(app: typer.Typer) -> None:
             help="Output format: json, rich, markdown, csv, yaml",
         ),
     ):
-        """Get a specific entry by ID.
-
-        Not on the outcome contract yet: `--format markdown` and `csv` are taught for
-        this command and the shared option offers json, yaml and rich only. It moves
-        with `pyrite-read get` (ADR-0046, slice 3).
-        """
+        """Get a specific entry by ID."""
+        # Not on the outcome contract yet: `--format markdown` and `csv` are taught for
+        # this command and the shared option offers json, yaml and rich only. It moves
+        # with `pyrite-read get` (ADR-0046, slice 3).
         with cli_context() as (config, db, svc):
             result = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
 
@@ -565,12 +563,10 @@ def register_entry_commands(app: typer.Typer) -> None:
         kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
         force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
     ):
-        """Delete an entry from a knowledge base.
-
-        Asks before it deletes, so it stays off the outcome contract: a command on
-        the contract does not prompt (ADR-0046, amendment; the prompt rule is the
-        maintainer's open question).
-        """
+        """Delete an entry from a knowledge base."""
+        # Asks before it deletes, so it stays off the outcome contract: a command on
+        # the contract does not prompt (ADR-0046, amendment; the prompt rule is the
+        # maintainer's open question).
         if not force:
             if not typer.confirm(f"Delete entry '{entry_id}' from KB '{kb_name}'?"):
                 raise typer.Abort()
