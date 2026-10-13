@@ -1160,6 +1160,10 @@ class TestSemanticKnnBudget:
         )
         assert rows == []
 
+    @pytest.mark.control(
+        reason="dev's unfiltered path already ran one query with no subquery; these tests, "
+        "formerly passing kb_name and so on the filtered path, now pin the unfiltered path"
+    )
     def test_unfiltered_search_above_the_k_cap_does_not_raise(self, big_embedded_backend):
         """``max_distance`` culling drives the same escalation with no filter.
 
@@ -1256,6 +1260,10 @@ class TestSemanticKnnEscalation:
         assert {p[1] for _, p in knn} == {knn[0][1][1]}, f"filtered search escalated: {knn}"
         assert all("rowid IN" in " ".join(s.split()) for s, _ in knn), "predicate not in the KNN"
 
+    @pytest.mark.control(
+        reason="dev's unfiltered path already ran one query with no subquery; these tests, "
+        "formerly passing kb_name and so on the filtered path, now pin the unfiltered path"
+    )
     def test_unfiltered_hot_path_runs_one_query(self, haystack_backend, monkeypatch):
         """No filter, ``limit`` filled on the first budget: one query, no COUNT.
 
@@ -1313,6 +1321,10 @@ class TestArchivedExclusionRetry:
         if not backend.upsert_embedding(entry_id, "test", vec):
             pytest.skip("backend cannot store embeddings (no vector support)")
 
+    @pytest.mark.control(
+        reason="dev has no retry, so it never over-fires; this pins that the retry added here "
+        "does not (red against the previous head of this PR, febcbca2)"
+    )
     def test_exhausted_knn_does_not_retry(self, capped, monkeypatch):
         """5 live rows, ``limit=6``: the index has fewer rows than ``k``; nothing to find."""
         for i in range(5):
@@ -1323,6 +1335,10 @@ class TestArchivedExclusionRetry:
         knn = self._knn(sql_log)
         assert len(knn) == 1 and "rowid IN" not in knn[0][0], knn
 
+    @pytest.mark.control(
+        reason="dev has no retry, so it never over-fires; this pins that the retry added here "
+        "does not (red against the previous head of this PR, febcbca2)"
+    )
     def test_exhausted_knn_with_some_archived_rows_does_not_retry(self, capped, monkeypatch):
         """Archived rows in a k-set that covers the whole index hide nothing."""
         for i in range(3):
@@ -1334,6 +1350,10 @@ class TestArchivedExclusionRetry:
         knn = self._knn(sql_log)
         assert len(knn) == 1 and "rowid IN" not in knn[0][0], knn
 
+    @pytest.mark.control(
+        reason="dev has no retry, so it never over-fires; this pins that the retry added here "
+        "does not (red against the previous head of this PR, febcbca2)"
+    )
     def test_distance_culling_does_not_retry(self, capped, monkeypatch):
         """30 live rows, ``max_distance=-1``: farther rows fail the cutoff too."""
         for i in range(30):
@@ -1342,6 +1362,10 @@ class TestArchivedExclusionRetry:
         assert capped.search_semantic(_near_vector(), limit=2, max_distance=-1.0) == []
         assert not [q for q, _ in self._knn(sql_log) if "rowid IN" in q]
 
+    @pytest.mark.control(
+        reason="dev has no retry, so it never over-fires; this pins that the retry added here "
+        "does not (red against the previous head of this PR, febcbca2)"
+    )
     def test_include_archived_never_retries(self, capped, monkeypatch):
         """Opting in to archived rows leaves nothing to exclude, so nothing to retry."""
         for i in range(5):

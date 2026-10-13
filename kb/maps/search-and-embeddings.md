@@ -53,10 +53,13 @@ write wait for embedding?". Layer 2 under [[design]] (P4).
 - With a worker attached and `auto_embed: true`, a write imports no embedding
   model, leaves the entry keyword-searchable, and records one pending row;
   `auto_embed: false` enqueues nothing ([[adr-0035]]).
-- A filtered semantic search returns `limit` rows whenever `limit` matching
-  rows exist, below the 4096-row `k` ceiling, however many nearer rows the
-  filter excludes (#194; `TestSemanticKnnBudget` in
-  `tests/backends/test_backend_conformance.py`).
+- On SQLite, a filtered semantic search is filtered inside the vector query,
+  so rows the filter excludes never use up the candidate budget (#194;
+  `TestSemanticKnnBudget` in `tests/backends/test_backend_conformance.py`). It
+  can still return fewer than `limit` rows when more than 4096 rows match
+  (sqlite-vec's ceiling on `k`), when `max_distance` removes rows, or when the
+  caller is scoped by readable KBs without naming a `kb_name` (that check runs
+  after the vector query). Unfiltered searches run the queries they always did.
 - Semantic search with zero embeddings yields a `warnings` entry
   ([[adr-0035]] decision 5).
 - No search result carries an entry from a KB the caller cannot read
