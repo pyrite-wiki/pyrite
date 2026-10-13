@@ -231,3 +231,20 @@ is never a valid answer.
   auth commands). Options: they stay legacy; they require `--yes` and refuse
   without it; or the root offers the one way to ask, on stderr.
 - **Usage errors from the body**: strict (above, recommended) or allowed.
+
+
+### Slice 1 operational boundaries (#838)
+
+Root-context close callbacks are drained before the outcome guard ends. A
+cleanup print or exit is therefore caught before a machine document is
+published. A body that prints and then refuses produces NO_OUTCOME and retains
+the refusal reason on stderr. Shared-format commands mounted without a
+PyriteCLIGroup root refuse before their body instead of silently losing their
+Outcome.
+
+Decision 5's legacy plugin fallback renders a returned Outcome in the root
+default format: a private --format option does not select its renderer, and
+an unsupported PYRITE_FORMAT falls back to JSON. These behaviours remain
+outside the shared-option guarantee; OUTPUT_FORMAT instead rejects unsupported
+values as usage errors. The root docstring names the remaining process limits.
+This note describes slice 1; it changes no accepted decision.

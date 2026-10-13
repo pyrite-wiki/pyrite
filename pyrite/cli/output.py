@@ -71,8 +71,12 @@ def _record_format(ctx: typer.Context, param: typer.CallbackParam, value: str) -
     # leaf command (only this callback has it) and wraps its body; the watch
     # starts when click calls that (ADR-0046, decision 7).
     guard = ctx.meta.get(BODY_GUARD_META_KEY)
-    if guard is not None:
-        guard.watch_body_of(ctx)
+    if guard is None:
+        raise typer.BadParameter(
+            "the shared --format option requires a PyriteCLIGroup root; "
+            "invoke the main CLI instead of a standalone sub-app"
+        )
+    guard.watch_body_of(ctx)
     return value
 
 

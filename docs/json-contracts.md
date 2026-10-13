@@ -1,5 +1,21 @@
 # JSON Contracts
 
+## CLI root boundaries (ADR-0046, slice 1)
+
+Shared-format commands require a `PyriteCLIGroup` root; invoking a sub-app
+under an ordinary Typer root refuses before its body. The guard drains root
+close callbacks before publishing the answer. Cleanup that prints or exits
+is `NO_OUTCOME`, rather than a second document or a replacement exit code.
+When the body printed and then raised a refusal, stdout remains the one
+`NO_OUTCOME` document and stderr retains both the printed text and the refusal.
+
+Legacy plugin commands that return `Outcome` without `OUTPUT_FORMAT` remain
+outside the shared-format guarantee: their private `--format` does not select
+the renderer, and unsupported `PYRITE_FORMAT` falls back to JSON. A shared
+option instead rejects unsupported values as usage errors (exit 2). Plugins
+that need the guarantee declare the shared option and mount under the Pyrite
+root. See the root's docstring for the other process-level limits.
+
 Canonical shapes returned by the pyrite CLI (`--format json`), MCP tools,
 and REST API. Written down here so agents and extension authors can rely
 on a stable contract instead of re-deriving it from source or an
