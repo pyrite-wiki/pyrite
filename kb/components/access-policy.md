@@ -20,7 +20,7 @@ dependencies:
 - pyrite.services.kb_registry_service
 ---
 
-The one place an access decision is made (ADR-0037 §1, #383). Framework-free: it imports nothing from FastAPI, Starlette, MCP or Typer. REST (through `pyrite/server/authz.py`, and for writes and instance routes still the dependencies in `api.py`), MCP (`mcp_routes.py`) and the live-update socket (`websocket.py`) build a `Principal` and ask it; none compares roles itself.
+The one place an access decision is made ([[adr-0037]] §1, #383). Framework-free: it imports nothing from FastAPI, Starlette, MCP or Typer. REST (through `pyrite/server/authz.py`, and for writes and instance routes still the dependencies in `api.py`), MCP (`mcp_routes.py`) and the live-update socket (`websocket.py`) build a `Principal` and ask it; none compares roles itself.
 
 ## What it owns
 
@@ -35,10 +35,14 @@ The one place an access decision is made (ADR-0037 §1, #383). Framework-free: i
 
 `Principal` (user, anonymous, operator_key, local), `Action` (the ADR's closed list; theme 1 decides the KB rungs and `INSTANCE_ADMIN`), `Resource` (`KB`, `Row`, `Instance`, `User`, `AnyKB`), `Decision`. `require` raises `KBNotFoundError` for a concealed or missing KB and `PolicyDeniedError` otherwise (folds into theme 2's `AccessDenied` family).
 
-Services do not take a principal (ADR-0037, decision 3). The API helpers in `api.py` (`resolve_kb_default_role`, `kb_exists`, `effective_kb_role_for_user`, `kbs_for_user_at_tier`, `readable_kbs_for_user`) are delegates kept for their callers.
+Services do not take a principal ([[adr-0037]], decision 3). The API helpers in `api.py` (`resolve_kb_default_role`, `kb_exists`, `effective_kb_role_for_user`, `kbs_for_user_at_tier`, `readable_kbs_for_user`) are delegates kept for their callers.
 
 ## REST's adapter: `pyrite/server/authz.py`
 
 - `get_principal(request)`: the one place REST turns what `verify_api_key` recorded into a `Principal`; the `api.py` helpers that need the caller (`readable_kbs`, `get_llm_service`, `get_user_llm_context`, `get_repo_service`) read it through this.
-- `authorize(action, resource)`: the one dependency a route declares (ADR-0037 §2). Cached per `(action, resource)`, so a declaration repeated on a router and as a parameter is one callable, run once. Theme 3a decides reads: `authorize(Action.KB_READ, KB)` checks every KB the request names (404 `KB_NOT_FOUND` for an unreadable one, as for a missing one) and returns the caller's `ReadScope`; `authorize(Action.KB_READ, AnyKB)` returns the `ReadScope` alone for routes that span KBs. No principal is a 401, never "unscoped". Writes (3b) and instance/user routes (3c) raise `NotImplementedError` at declaration until their theme lands.
-- The guard: `tests/test_every_entry_point_passes_the_policy.py` (ADR-0037 §5) fails for a REST operation without exactly one `authorize(...)` and an MCP tool without an `Action`, unless it is in `PUBLIC_ENTRY_POINTS` or on the not-yet-migrated lists, which only shrink.
+- `authorize(action, resource)`: the one dependency a route declares ([[adr-0037]] §2). Cached per `(action, resource)`, so a declaration repeated on a router and as a parameter is one callable, run once. Theme 3a decides reads: `authorize(Action.KB_READ, KB)` checks every KB the request names (404 `KB_NOT_FOUND` for an unreadable one, as for a missing one) and returns the caller's `ReadScope`; `authorize(Action.KB_READ, AnyKB)` returns the `ReadScope` alone for routes that span KBs. No principal is a 401, never "unscoped". Writes (3b) and instance/user routes (3c) raise `NotImplementedError` at declaration until their theme lands.
+- The guard: `tests/test_every_entry_point_passes_the_policy.py` ([[adr-0037]] §5) fails for a REST operation without exactly one `authorize(...)` and an MCP tool without an `Action`, unless it is in `PUBLIC_ENTRY_POINTS` or on the not-yet-migrated lists, which only shrink.
+
+## Decided, not yet built
+
+- [[adr-0043]] decisions 1, 3 and 5: the action vocabulary and role resolver still include KB-admin and administrative grants, rather than only the decided entry grants plus operator/self actions.

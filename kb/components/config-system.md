@@ -13,7 +13,7 @@ tags: [core, config]
 
 The configuration system manages multi-KB setups, global application settings, repository definitions, and GitHub authentication. Configuration is loaded from `~/.pyrite/config.yaml` (or `$PYRITE_CONFIG_DIR`), with per-KB overrides in each KB's `kb.yaml` file and environment variable fallbacks.
 
-A repo-local `.pyrite/config.yaml` found by searching up from the cwd (the ADR-0032 worktree registry) is untrusted: `load_config` reads only the `_UNTRUSTED_*_KEYS` allowlist from it (KB registry entries inside its tree, `index_path` inside its tree, a few switches) and warns about the rest; credentials always come from `trusted_config_dir()`. `~/.pyrite` and an explicit `PYRITE_CONFIG_DIR`/`PYRITE_DATA_DIR` are trusted in full.
+A repo-local `.pyrite/config.yaml` found by searching up from the cwd (the [[adr-0032]] worktree registry) is untrusted: `load_config` reads only the `_UNTRUSTED_*_KEYS` allowlist from it (KB registry entries inside its tree, `index_path` inside its tree, a few switches) and warns about the rest; credentials always come from `trusted_config_dir()`. `~/.pyrite` and an explicit `PYRITE_CONFIG_DIR`/`PYRITE_DATA_DIR` are trusted in full.
 
 ## Key Files
 
@@ -76,3 +76,8 @@ Configuration for a subscribed remote KB with `url`, `local_path`, `auto_sync`, 
 - [[kb-service]] -- primary consumer of `PyriteConfig`
 - [[storage-layer]] -- `PyriteDB` path comes from `Settings.index_path`
 - [[rest-api]] -- injects config into FastAPI dependency chain
+
+## Decided, not yet built
+
+- [[adr-0039]] decisions 1–3, 5–6 and 8–11: `PyriteConfig`/`save_config` still combine registry, policy and stored settings rather than expose the decided read-only operator-file catalog.
+- [[adr-0043]] decision 5, dependent on [[adr-0041]]: today's KB role/config helpers still support KB-admin and server-side registry changes.

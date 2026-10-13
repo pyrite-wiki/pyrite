@@ -12,7 +12,7 @@ path: pyrite/utils/file_lock.py
 owner: core
 ---
 
-The momentary lock that `atomic_write_text(expect=...)` (`pyrite/utils/atomic_write.py`) takes for the instant of compare-and-replace (ADR-0042 decision 10; §10a A1, A2, A5). Nothing calls `expect=` yet; B6 P3 wires the writers.
+The momentary lock that `atomic_write_text(expect=...)` (`pyrite/utils/atomic_write.py`) takes for the instant of compare-and-replace ([[adr-0042]] decision 10; §10a A1, A2, A5). Nothing calls `expect=` yet; B6 P3 wires the writers.
 
 ## Where the lock is
 

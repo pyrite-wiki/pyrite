@@ -23,14 +23,14 @@ relationship an entry?", "what formats does Pyrite emit?". Layer 2 under
 
 ## The design today
 
-1. Entries link with `[[id]]`, `[[id#heading]]`, `[[id^block-id]]`, and embed
-   with `![[...]]`; the syntax is Obsidian-compatible and cross-KB with a
+1. Entries link with <code>&#91;&#91;id&#93;&#93;</code>, <code>&#91;&#91;id#heading&#93;&#93;</code>, <code>&#91;&#91;id^block-id&#93;&#93;</code>, and embed
+   with <code>!&#91;&#91;...&#93;&#93;</code>; the syntax is Obsidian-compatible and cross-KB with a
    `kb:` prefix. A derived `block` table indexes blocks per entry. **decided**
    [[adr-0012]].
 2. Backlinks, outlinks and edge endpoints are index rows rebuilt from the
    files; no save rewrites another entry's frontmatter. **decided**
    [[adr-0022]]; the save hooks that write links today are replaced by
-   derivation in ADR-0042 and ADR-0045 (**decided**).
+   derivation in [[adr-0042]] and [[adr-0045]] (**decided**).
 3. A relationship that carries data (an ownership with a percentage, a board
    membership with a term) is an edge-entity entry: two or more declared
    endpoints, all required, optional type constraints; provisional claims are
@@ -52,9 +52,9 @@ relationship an entry?", "what formats does Pyrite emit?". Layer 2 under
    not link into an ephemeral KB. A QA rule enforces it. **accepted, not built**
    [[adr-0029]] section 3.
 10. A rename rewrites inbound links as operations on the other files, under
-    their locks. **decided** ADR-0042 decision 12.
+    their locks. **decided** [[adr-0042]] decision 12.
 11. Publishing to a static-site generator is an export; what that generator
-    reserves is the exporter's concern. **decided** ADR-0041 decision 1. The
+    reserves is the exporter's concern. **decided** [[adr-0041]] decision 1. The
     accepted `/site/` cache is [[adr-0023]].
 
 ## Invariants a test could check
@@ -99,7 +99,7 @@ Paths: `pyrite/services/block_service.py`, `pyrite/services/wikilink_service.py`
 - The import pipeline of [[adr-0010]] section 7 is "future"; the link rule is
   unbuilt.
 - Hooks still write links (cascade and journalism-investigation); until
-  ADR-0042 and ADR-0045 are accepted, a save can add links the caller did not
+  [[adr-0042]] and [[adr-0045]] are accepted, a save can add links the caller did not
   send.
 - Not decided: path spelling of an id with `/`, which wikilinks and routes
-  would need to accept (ADR-0042 question 4).
+  would need to accept ([[adr-0042]] question 4).

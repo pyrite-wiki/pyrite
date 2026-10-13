@@ -98,12 +98,12 @@ contracts are alpha.
 | Topic | Governing ADRs |
 |---|---|
 | Files, index, what is derived | [[adr-0001]], [[adr-0029]] |
-| The principle | ADR-0041 (accepted) |
-| Writes, reads, identity, hooks | ADR-0042 (accepted), [[adr-0038]] (accepted) |
-| Registry, config, state | ADR-0039 (accepted), [[adr-0029]] |
-| Who may do what | [[adr-0037]], ADR-0043 (accepted) |
-| Types, protocols, plugins | [[adr-0014]], [[adr-0017]], [[adr-0040]], ADR-0045 (accepted) |
-| Review of changes | ADR-0044 (proposed) |
+| The principle | [[adr-0041]] (accepted) |
+| Writes, reads, identity, hooks | [[adr-0042]] (accepted), [[adr-0038]] (accepted) |
+| Registry, config, state | [[adr-0039]] (accepted), [[adr-0029]] |
+| Who may do what | [[adr-0037]], [[adr-0043]] (accepted) |
+| Types, protocols, plugins | [[adr-0014]], [[adr-0017]], [[adr-0040]], [[adr-0045]] (accepted) |
+| Review of changes | [[adr-0044]] (proposed) |
 | What the alpha supports | `alpha-supported-surface` (approved 2026-10-02) |
 | Releases | [[roadmap]], "The release line" |
 
@@ -144,8 +144,9 @@ code follows it; check, and treat a mismatch as the work to do.
   the examples a fix must pass; `tests/test_doc_write_as_patch.py` runs them
   and lists each one the code fails today, and how.
 - Save hooks write links and parent status into files (principle 4).
-- An entry with no `id:` takes its identity from its title, and no command
-  lists or pins the files missing one (principle 5).
+- An entry with no `id:` still takes its identity from its title rather than
+  the KB-relative path decided by [[adr-0042]] decision 5; `pyrite ids missing`
+  lists unpinned files and `pyrite ids pin` pins them (principle 5).
 - A single-entry read comes from the index, not the file, and returns the
   type's defaults and normalised values among the file's own fields, so a
   client that sends a read back writes them into the file (principles 3 to 5).

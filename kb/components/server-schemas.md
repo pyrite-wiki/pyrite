@@ -29,4 +29,4 @@ Single shared contract layer between all REST endpoint handlers and their caller
 
 ## Related
 
-- [[rest-api-server]] — FastAPI application that mounts these endpoints
+- [[rest-api]] — FastAPI application that mounts these endpoints

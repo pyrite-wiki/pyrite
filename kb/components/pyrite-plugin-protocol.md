@@ -59,3 +59,7 @@ All extension plugins implement this protocol:
 
 - [[plugin-system]] — registry, loading, and context injection
 - [[mcp-server]] — consumes plugin-contributed tools at each tier
+
+## Decided, not yet built
+
+- [[adr-0045]] decisions 4–6: the registration protocol still accepts entry classes and save hooks; it does not yet expose the full structural protocol/derived-operation interface decided for alpha.

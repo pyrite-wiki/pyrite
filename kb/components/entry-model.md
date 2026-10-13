@@ -57,3 +57,7 @@ Protocol mixins promote fields to DB columns (Assignable → assignee, Temporal 
 - [[entry-factory]] — build_entry() creation path
 - [[entry-protocol-mixins]] — composable field groups
 - [[kb-repository]] — file I/O using Entry.save()/load()
+
+## Decided, not yet built
+
+- [[adr-0045]] decision 6: entry classes still implement `to_frontmatter()`/`to_markdown()`; those serializers are not yet removed from the existing-file write interface.

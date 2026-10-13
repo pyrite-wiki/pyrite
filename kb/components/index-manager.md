@@ -12,7 +12,7 @@ tags:
 
 Indexes KB entries from markdown files into SQLite for fast search and querying. Handles full re-index, incremental sync, and KB registration. Central coordinator between filesystem (KBRepository) and database (PyriteDB).
 
-## One reconcile (ADR-0038 step 2)
+## One reconcile ([[adr-0038]] step 2)
 
 Every path that indexes a KB's files is `reconcile_kb(kb_config, force=...)`:
 `index_kb` (`pyrite index build`, `init`, the rebuild job) forces every file,
@@ -35,3 +35,7 @@ files git changed and adds history through its `enrich` hook.
 `check_health` takes duplicates, winners and staleness from it.
 `tests/test_one_reconcile_structure.py` fails when a function walks files and
 writes rows anywhere else.
+
+## Decided, not yet built
+
+- [[adr-0042]] decision 5: `index health` does not yet list id-less files as its own category; use `ids missing`/`ids pin` today. `read_entry_id` still derives an unpinned identity from the title, while the amended decision selects the KB-relative path.

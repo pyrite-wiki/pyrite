@@ -24,7 +24,7 @@ is off. That decision is not yet in an accepted ADR or in the code.
 ## The design today
 
 1. For now every authorised write lands on the canonical files. **decided**
-   (maintainer, 2026-10-02; recorded in ADR-0044, proposed). The code still
+   (maintainer, 2026-10-02; recorded in [[adr-0044]], proposed). The code still
    routes non-admin REST entry writes to a per-user worktree
    ([[adr-audit-2026-10]]).
 2. Worktree per user, branch `user/{name}`, "Submit changes", an in-app admin
@@ -41,36 +41,36 @@ is off. That decision is not yet in an accepted ADR or in the code.
    `worktree-no-lost-commits-invariant`).
 6. One landing rule, a function of principal and KB: `canonical` or the user's
    change set, by a per-KB `landing` field in the operator's file. **proposed**
-   ADR-0044 section 1.
+   [[adr-0044]] section 1.
 7. A change set is a git ref under `refs/pyrite/changes/`, one KB, one commit
    per write; an internal pull request is a submitted change set. The ref and
    the merge commit are the record; the database holds only queue state.
-   **proposed** ADR-0044 sections 2 and 3.
+   **proposed** [[adr-0044]] sections 2 and 3.
 8. A merge is `merge-tree` plus a fast-forward in the canonical checkout, which
    is never switched or reset; a refused merge changes nothing. **proposed**
-   ADR-0044 section 5.
+   [[adr-0044]] section 5.
 9. The author reads their own change set's blob and a diff-index overlay;
-   everyone else reads main. **proposed** ADR-0044 section 4.
-10. Merge is the operator's action. **decided** ADR-0043 decision 5.
+   everyone else reads main. **proposed** [[adr-0044]] section 4.
+10. Merge is the operator's action. **decided** [[adr-0043]] decision 5.
 11. Pyrite's own flow is the model: a branch per batch of work, a PR, checks on
     the commit about to land, a queue that refuses rather than rebases for you.
-    **decided** [[adr-0032]]; ADR-0044 mirrors it.
+    **decided** [[adr-0032]]; [[adr-0044]] mirrors it.
 
 ## Invariants a test could check
 
 - For every write entry point, the file changed is where `lands_in(principal,
   kb)` says (L1); a write whose landing place is unreachable changes nothing
-  anywhere (L2) (ADR-0044).
+  anywhere (L2) ([[adr-0044]]).
 - W1 every commit a user made is reachable from a ref after any operation; W3 no
   operation on a change set changes the canonical checkout except a successful
-  merge; M3 a refused merge leaves the change set open (ADR-0044).
+  merge; M3 a refused merge leaves the change set open ([[adr-0044]]).
 - No reader other than the author receives unmerged content, by read or event
   (R3).
 - No user commit is ever unreachable ([[adr-0029]] section 6).
 
 ## ADRs in reading order
 
-ADR-0044 (proposed; the end state, with a table of what becomes of
+[[adr-0044]] (proposed; the end state, with a table of what becomes of
 [[adr-0024]]), [[adr-0024]] (built; read its audit standing), [[adr-0029]]
 section 6, [[adr-0032]] for the model it copies. History only: [[adr-0018]].
 
@@ -85,18 +85,18 @@ Paths: `pyrite/services/worktree_service.py`, `pyrite/server/worktree_resolver.p
 ## Tests that pin it
 
 `tests/test_overlay_backend.py`. The ADRs name no test for the merge queue.
-ADR-0044 proposes `tests/test_doc_internal_pull_requests.py` and a git-driven
+[[adr-0044]] proposes `tests/test_doc_internal_pull_requests.py` and a git-driven
 invariant set (L, W, P, R, M); none exists.
 
 ## Known gaps
 
-- Routing is switched off by decision, not in code; ADR-0044 step 0 does it.
-- ADR-0044's probes found ordinary failures in today's worktree: a second KB
+- Routing is switched off by decision, not in code; [[adr-0044]] step 0 does it.
+- [[adr-0044]]'s probes found ordinary failures in today's worktree: a second KB
   in one repo errors, a reset can leave a commit reachable from no ref, a
   merge switches the operator's branch, `main` is a literal, the overlay has no
   delete tombstone and nothing is committed until submit.
 - Worktree GC is unbuilt; "concurrent edits ... admin resolves" is open
   ([[adr-audit-2026-10]]).
 - Not decided: per change set or per user, `refs/pyrite/` or branches, merge
-  commit or squash (ADR-0044 questions 1 to 4); git-identity mapping for
+  commit or squash ([[adr-0044]] questions 1 to 4); git-identity mapping for
   changes pushed from outside.

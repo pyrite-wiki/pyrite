@@ -41,7 +41,7 @@ Answers "what can I delete and rebuild?", "where does this row come from?",
 7. Rows that are not derived (claim lease times, stars, reviews, users,
    sessions, quotas) are state. A rebuild must not touch them; a declared
    registry of state tables says which they are. **accepted, not built**
-   [[adr-0029]] section 4; **decided** ADR-0039 decision 7 and S1 (a generated
+   [[adr-0029]] section 4; **decided** [[adr-0039]] decision 7 and S1 (a generated
    docs list of what a rebuild loses).
 8. One reconcile serves `index_kb`, `sync_kb` and `sync_incremental`; staleness
    is mtime or size, with a hash on rebuild and in `index health`; duplicate ids
@@ -50,27 +50,27 @@ Answers "what can I delete and rebuild?", "where does this row come from?",
    with `plan_reconcile` for a read that writes nothing (delete and `index
    health` use it).
 9. Indexing writes only `last_indexed` and `entry_count` to a KB's row.
-   **decided** ADR-0039 decision 10.
+   **decided** [[adr-0039]] decision 10.
 10. List and search reads may lag the files and say when they were indexed.
-    **decided** ADR-0042 decision 9.
+    **decided** [[adr-0042]] decision 9.
 
 ## Invariants a test could check
 
 - I2 after a reconcile the index has a row for exactly the ids that parseable
   files hold; I3 a second reconcile changes nothing ([[adr-0038]]).
 - S1 every table is declared derived or state; dropping the derived tables and
-  rebuilding loses no content and no configuration (ADR-0039).
+  rebuilding loses no content and no configuration ([[adr-0039]]).
 - R3 indexing and every entry save change only `last_indexed` and
-  `entry_count` (ADR-0039).
+  `entry_count` ([[adr-0039]]).
 - Every `SearchBackend` implementation passes the same conformance suite
   ([[adr-0016]]).
 - Deleting the database and rebuilding loses nothing written in a file
-  (ADR-0041 acceptance 5).
+  ([[adr-0041]] acceptance 5).
 
 ## ADRs in reading order
 
 [[adr-0001]], [[adr-0029]] (sections 1 and 4; read its status first),
-[[adr-0015]], [[adr-0013]], [[adr-0038]], ADR-0039 (accepted). History:
+[[adr-0015]], [[adr-0013]], [[adr-0038]], [[adr-0039]] (accepted). History:
 [[adr-0016]] (the benchmark that settled LanceDB), [[adr-0005]], [[adr-0003]]
 (superseded by [[adr-0029]]: the engagement tier became "runtime state").
 
@@ -93,7 +93,7 @@ service; the allowlist only shrinks), `tests/test_overlay_backend.py`.
 ## Known gaps
 
 - No registry of state tables exists in code ([[adr-0029]] section 4); the
-  KB registry is still bridged through a cache ([[adr-0029]], ADR-0039).
+  KB registry is still bridged through a cache ([[adr-0029]], [[adr-0039]]).
 - About 70 raw-connection uses in core and 89 in extensions remain
   ([[adr-0013]] Phases 2 and 3; [[adr-audit-2026-10]]).
 - A same-size edit that also keeps the mtime is not seen by a sync; `index

@@ -55,3 +55,7 @@ Entry types, CLI commands, MCP tools, DB schema (columns + tables), relationship
 - [[pyrite-plugin-protocol]] — the protocol definition
 - [[mcp-server]] — MCP tool registration from plugins
 - [[software-kb-extension]] — canonical plugin implementation
+
+## Decided, not yet built
+
+- [[adr-0045]] decisions 4–6: plugin discovery still registers entry classes and hooks through `PluginRegistry`; the complete structural protocol interface is not yet the registration contract.

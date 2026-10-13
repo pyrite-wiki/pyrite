@@ -28,7 +28,7 @@ under [[design]] (P8, P9).
 2. MCP tools come in read, write and admin tiers; plugins register tools per
    tier; MCP also offers prompts and resources. **decided** [[adr-0006]],
    [[adr-0007]]. For the local process a tier is a tool filter, not
-   authorization. **decided** ADR-0043.
+   authorization. **decided** [[adr-0043]].
 3. Every agent-reachable read has a bound and a continuation. MCP caps bodies
    (8,000 default, 20,000 ceiling, 40,000 per response; environment-tunable);
    the CLI is complete by default with `--body-limit` or `PYRITE_BODY_LIMIT`;
@@ -45,9 +45,9 @@ under [[design]] (P8, P9).
 7. A live-update socket closes with its credential. **decided** [[adr-0036]].
 8. `/site/` serves rendered static HTML, rebuilt on index sync. **decided**
    [[adr-0023]]; anonymous surfaces show only what the policy lets the
-   anonymous principal read. **decided** ADR-0043 decision 8.
+   anonymous principal read. **decided** [[adr-0043]] decision 8.
 9. The API is the only security boundary; frontends are scoped clients that
-   enforce nothing. **withdrawn** [[adr-0031]] (replaced by ADR-0043).
+   enforce nothing. **withdrawn** [[adr-0031]] (replaced by [[adr-0043]]).
 10. A small surface is supported (files, index, search, CLI, a core of MCP
     tools); the rest is marked experimental; a doc that teaches a command runs
     as its test. **proposed** `kb/designs/alpha-supported-surface.md`; [[design]]
@@ -106,5 +106,5 @@ Components [[rest-api]], [[mcp-server]], [[mcp-tool-schemas]], [[cli-system]],
 - The alpha entry marks REST, the web UI, `/site/`, `/ws` and AI endpoints
   experimental; the web UI needs a build step and has open defects.
 - Not decided: where `--force` applies in commands that already prompt
-  (ADR-0041 question 1); whether the web UI should request bounded bodies for
+  ([[adr-0041]] question 1); whether the web UI should request bounded bodies for
   read-only views ([[adr-0034]]).

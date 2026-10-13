@@ -87,7 +87,7 @@ web/
       editor/
         Editor.svelte          # CodeMirror 6 markdown editor (source mode)
         TiptapEditor.svelte    # Tiptap WYSIWYG editor (rich text mode)
-        wikilink-utils.ts      # [[wikilink]] parsing, rendering, cross-KB support
+        wikilink-utils.ts      # wikilink parsing, rendering, cross-KB support
         callouts.ts            # Obsidian-style callout rendering
         codemirror/            # CM6 setup, slash-commands, theme, wikilinks
         tiptap/                # Tiptap extensions: wikilink-extension, markdown
@@ -131,7 +131,7 @@ export const someStore = new SomeStore();
 - Global right-side panel toggled via `Cmd+Shift+K` or "Ask AI about this" button
 - Streams responses via SSE (`POST /api/ai/chat`)
 - RAG pipeline: user query → backend search → context injection → LLM streaming
-- Citations rendered as `[[entry-id]]` clickable links
+- Citations rendered as <code>&#91;&#91;entry-id&#93;&#93;</code> clickable links
 - Source entries displayed as cards below responses
 - Entry context: can be pre-filled from the current entry page
 

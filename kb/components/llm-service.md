@@ -69,6 +69,6 @@ llm: LLMService = Depends(get_llm_service)
 
 ## Related
 
-- [ADR-0007](../adrs/0007-ai-integration-architecture.md) — Three-surface AI architecture with BYOK
+- [[adr-0007]] — Three-surface AI architecture with BYOK
 - [REST API Server](rest-api.md) — Hosts AI endpoints that consume this service
 - [Search Service](search-service.md) — Used for RAG context retrieval in chat

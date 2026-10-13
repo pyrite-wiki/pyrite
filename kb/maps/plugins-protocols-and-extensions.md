@@ -56,11 +56,11 @@ a protocol?". Layer 2 under [[design]] (P6). For `kb.yaml`-only types see
 10. A protocol is a data contract, derived information, explicit operations and
     refusals; no protocol operation writes a file as a side effect; a hook only
     refuses; serialising an existing file is not a type's job. **decided**
-    ADR-0045 decisions 2, 3, 6, 9.
+    [[adr-0045]] decisions 2, 3, 6, 9.
 11. Rollup, unblock and evidence aggregation are derived, not written.
-    **decided** ADR-0045 decision 7 (maintainer, 2026-10-02).
+    **decided** [[adr-0045]] decision 7 (maintainer, 2026-10-02).
 12. The contract is alpha; it freezes later than [[adr-0040]] says (0.28 in the
-    release line). ADR-0045 decision 10 (accepted).
+    release line). [[adr-0045]] decision 10 (accepted).
 
 ## Invariants a test could check
 
@@ -73,13 +73,13 @@ a protocol?". Layer 2 under [[design]] (P6). For `kb.yaml`-only types see
 - The façade's names and signatures match a pinned snapshot ([[adr-0040]]
   section 4).
 - Every protocol a type declares is satisfied by its schema; a type's reading
-  does not depend on index state (ADR-0045, replacing the round-trip check).
+  does not depend on index state ([[adr-0045]], replacing the round-trip check).
 
 ## ADRs in reading order
 
 [[adr-0014]] (the model), [[adr-0017]] (the implementation; the two disagree),
-[[adr-0002]] (mechanism), ADR-0045 (proposed; reconciles them), [[adr-0040]]
-(the contract; read with ADR-0045's list of amended sentences),
+[[adr-0002]] (mechanism), [[adr-0045]] (proposed; reconciles them), [[adr-0040]]
+(the contract; read with [[adr-0045]]'s list of amended sentences),
 [[adr-0009]]. Also `kb/designs/alpha-supported-surface.md` (proposed). History
 only: [[adr-0022]] (a type pattern a plugin first needed).
 
@@ -108,9 +108,9 @@ Components [[plugin-system]], [[pyrite-plugin-protocol]], [[protocols-module]],
   zettelkasten 13 (software-kb, which stays, 84).
 - [[adr-0014]] phases 1 and 2 (protocol entries, `requires_protocols`,
   `pyrite protocol show`) do not exist; the audit marks the ADR current and
-  ADR-0045 disagrees on that point.
+  [[adr-0045]] disagrees on that point.
 - [[adr-0014]] and [[adr-0017]] contradict each other (structural versus
-  inherited); ADR-0045 asks the maintainer to reconcile (question 1).
+  inherited); [[adr-0045]] asks the maintainer to reconcile (question 1).
 - [[adr-0040]]'s round-trip conformance check and the "no signature changes"
-  claim conflict with ADR-0042 and ADR-0045 (accepted). A spike over the 37
+  claim conflict with [[adr-0042]] and [[adr-0045]] (accepted). A spike over the 37
   extension classes is owed before the contract freezes.
