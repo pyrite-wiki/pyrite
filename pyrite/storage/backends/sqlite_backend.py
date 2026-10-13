@@ -427,6 +427,11 @@ class SQLiteBackend(BaseBackend):
         keyword leg, which has no KNN ceiling, is unaffected; in hybrid mode it
         carries its own result.
 
+        The default archived-entry exclusion is not a caller filter and stays
+        out of the KNN on the first pass. If the search reaches the cap still
+        short of ``limit``, it runs once more with that exclusion inside the
+        KNN, so archived rows nearer than live ones cannot hide them.
+
         The escalation costs one extra query per round, and only when the
         previous budget did not fill ``limit``: an unfiltered search whose
         nearest neighbours all survive ``max_distance`` runs exactly one query,
@@ -457,11 +462,10 @@ class SQLiteBackend(BaseBackend):
         # on every semantic search, filtered or not.
         # Apply caller filters inside the KNN query so unrelated rows cannot exhaust the
         # hard k cap; keep the unfiltered hot path free of this extra query.
-        knn_filter = (
-            f" AND rowid IN (SELECT e.rowid FROM entry e WHERE 1=1{where})" if selective else ""
-        )
+        knn_candidates = f" AND rowid IN (SELECT e.rowid FROM entry e WHERE 1=1{where})"
+        knn_filter = knn_candidates if selective else ""
         candidate_params = params if selective else []
-        sql = f"""
+        sql_template = """
             WITH knn AS (
                 SELECT rowid, distance
                 FROM vec_entry
@@ -476,12 +480,14 @@ class SQLiteBackend(BaseBackend):
             WHERE 1=1{where}
             ORDER BY knn.distance
         """
-        size_sql = f"""
+        size_template = """
             WITH knn AS (
                 SELECT rowid FROM vec_entry WHERE embedding MATCH ? AND k = ?{knn_filter}
             )
             SELECT COUNT(*) FROM knn
         """
+        sql = sql_template.format(knn_filter=knn_filter, where=where)
+        size_sql = size_template.format(knn_filter=knn_filter)
         # Over-fetch more when a caller-supplied filter may cull the k nearest.
         # The archived exclusion is not counted: it applies to every search, so
         # treating it as a filter would triple the budget of every query.
@@ -500,6 +506,16 @@ class SQLiteBackend(BaseBackend):
                 if len(results) >= limit:
                     break
             if len(results) >= limit or k >= _SQLITE_VEC_MAX_K:
+                if len(results) < limit and where and not knn_filter:
+                    # At the ceiling and short, with only the default archived
+                    # exclusion in play: archived rows may be filling the k
+                    # nearest. Ask once more with that exclusion inside the
+                    # KNN (#716 review item 4). The ordinary search never pays
+                    # for the subquery; only one that already hit the ceiling.
+                    knn_filter, candidate_params = knn_candidates, params
+                    sql = sql_template.format(knn_filter=knn_filter, where=where)
+                    size_sql = size_template.format(knn_filter=knn_filter)
+                    continue
                 # Filled, or at sqlite-vec's hard ceiling — recall is
                 # best-effort from here.
                 break

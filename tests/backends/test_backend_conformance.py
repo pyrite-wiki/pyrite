@@ -1073,6 +1073,37 @@ class TestSemanticKnnBudget:
         assert len(rows) == 2
         assert all(row["id"].startswith("needle-") for row in rows)
 
+    def test_archived_exclusion_alone_does_not_let_archived_rows_fill_the_cap(
+        self, backend, monkeypatch
+    ):
+        """No caller filter at all: archived rows nearer than live ones must not hide them.
+
+        The default archived exclusion applies to every search, so it must
+        also reach the KNN when the nearest ``k`` rows are all archived
+        (review of #716, item 4). Without a ``kb_name`` nothing else makes
+        the query selective.
+        """
+        if not hasattr(backend, "_raw_conn"):
+            pytest.skip("only SQLite has a hard KNN candidate cap")
+
+        monkeypatch.setattr(sqlite_backend, "_SQLITE_VEC_MAX_K", 8)
+        for i in range(20):
+            backend.upsert_entry(_make_entry(f"gone-{i}", lifecycle="archived"))
+            if not backend.upsert_embedding(f"gone-{i}", "test", _near_vector()):
+                pytest.skip("backend cannot store embeddings (no vector support)")
+        for i in range(3):
+            backend.upsert_entry(_make_entry(f"live-{i}"))
+            far = _near_vector()
+            far[i] += 0.3
+            backend.upsert_embedding(f"live-{i}", "test", far)
+
+        rows = backend.search_semantic(_near_vector(), limit=2)
+        assert len(rows) == 2
+        assert all(r["id"].startswith("live-") for r in rows)
+
+        explicit = backend.search_semantic(_near_vector(), limit=8, include_archived=True)
+        assert len(explicit) == 8, "include_archived=True must still see the archived rows"
+
     def test_kb_filter_keeps_other_kbs_out_of_the_cap(self, backend_with_db, monkeypatch):
         """``kb_name`` is a filter like the rest: rows of another KB cannot fill the cap."""
         backend, _db = backend_with_db
