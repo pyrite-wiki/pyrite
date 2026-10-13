@@ -227,7 +227,7 @@ def register_entry_commands(app: typer.Typer) -> None:
             if fields_list:
                 result = project_fields(result, fields_list)
 
-            formatted = _format_output(result, output_format, fields=fields_list)
+            formatted = _format_output(result, output_format, fields=fields_list, single_entry=True)
             if formatted is not None:
                 typer.echo(formatted)
                 return

@@ -413,11 +413,12 @@ def batch_read_entries(
         ids = [(eid, kb) for eid, kb in ids if scope.permits(kb)]
     results = svc.get_entries(ids)
 
-    if fields_param:
+    fields_list = parse_fields_param(fields_param)
+    if fields_list:
         # Same rule as every other read surface (#193). found_ids below reads
         # the identity pair, and dropping it is what made `found` and
         # `not_found` disagree (#134).
-        results = [project_fields(record, fields_param) for record in results]
+        results = [project_fields(record, fields_list) for record in results]
 
     found_ids = {(r["id"], r["kb_name"]) for r in results}
     requested = [(e["entry_id"], e["kb_name"]) for e in entries_spec]
@@ -426,7 +427,7 @@ def batch_read_entries(
     ]
 
     resp_data = {"entries": results, "found": len(results), "not_found": not_found}
-    neg = negotiate_response(request, resp_data)
+    neg = negotiate_response(request, resp_data, fields=fields_list)
     if neg is not None:
         return neg
     return resp_data
@@ -737,7 +738,7 @@ def get_entry(
     fields_list = parse_fields_param(fields)
     if fields_list:
         result = project_fields(result, fields_list)
-        neg = negotiate_response(request, result, fields=fields_list)
+        neg = negotiate_response(request, result, fields=fields_list, single_entry=True)
         if neg is not None:
             return neg
         return JSONResponse(content=result)

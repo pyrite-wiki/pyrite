@@ -23,15 +23,19 @@ from typing import Any
 IDENTITY_FIELDS: tuple[str, ...] = ("id", "kb_name")
 
 
-def parse_fields_param(fields: str | None) -> list[str] | None:
+def parse_fields_param(fields: str | list[str] | None) -> list[str] | None:
     """Split a comma-separated field list into a clean list, or ``None``.
+
+    A list of strings (the JSON body of ``POST /entries/batch``) is cleaned the
+    same way, item by item, so both forms of a request mean the same thing.
 
     ``None``, ``""``, ``","`` and ``" "`` all mean "no projection". Duplicates
     are dropped while the caller's order is kept.
     """
     if not fields:
         return None
-    parsed = [field.strip() for field in fields.split(",") if field.strip()]
+    items = fields if isinstance(fields, list) else fields.split(",")
+    parsed = [field.strip() for field in items if field.strip()]
     return list(dict.fromkeys(parsed)) or None
 
 

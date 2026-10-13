@@ -159,6 +159,7 @@ def register_search_command(app: typer.Typer):
             )
 
         if use_files:
+            _warn_fields_not_applied(parse_fields_param(fields))
             _search_files(config, query, kb_name, entry_type, limit)
             return
 
@@ -329,10 +330,19 @@ def register_search_command(app: typer.Typer):
                 raise typer.Exit(1)
             console.print(f"[red]Search error ({type(e).__name__}):[/red] {e}")
             console.print("[dim]Falling back to file search...[/dim]")
+            _warn_fields_not_applied(parse_fields_param(fields))
             _search_files(config, query, kb_name, entry_type, limit)
         finally:
             if db is not None:
                 db.close()
+
+
+def _warn_fields_not_applied(fields_list):
+    """File search prints its own table (KB, Type, Title, ID) whatever `--fields` says."""
+    if fields_list:
+        typer.echo(
+            "--fields is not applied by file search (--files); showing its own table.", err=True
+        )
 
 
 def _search_files(config, query, kb_name, entry_type, limit):

@@ -14,7 +14,7 @@ def markdown_serialize(data: Any, **kwargs) -> str:
     """
     if isinstance(data, dict):
         fields = kwargs.get("fields")
-        rows = projected_rows(data) if fields else None
+        rows = projected_rows(data, single=kwargs.get("single_entry", False)) if fields else None
         if rows is not None:
             return projected_markdown(rows, fields)
         if "id" in data and "title" in data:
