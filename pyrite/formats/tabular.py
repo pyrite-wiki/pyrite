@@ -86,8 +86,12 @@ class ProjectedRich:
     like a record boundary). Nothing is elided. Values are rendered literally,
     never as Rich markup.
 
-    The width is the console's: 80 when output is piped, unless ``COLUMNS`` is
-    set. This is for people; scripts take json, yaml or csv.
+    The width is the console's, which Rich takes from the terminal even when
+    stdout is piped (any standard stream that is a terminal will do), 80 when no
+    stream is a terminal, and ``COLUMNS`` overrides both. This is for people;
+    scripts take json, yaml or csv. At width 1 a stacked value made of wide
+    characters is dropped (a wide character needs 2 cells); from width 2 no value
+    is cut.
     """
 
     def __init__(self, rows: list[dict], fields: list[str], title: str):

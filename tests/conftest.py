@@ -413,3 +413,31 @@ def make_client(tmp_path):
             errors.append(exc)
     if errors:
         raise errors[0]
+
+
+@pytest.fixture
+def console_width(monkeypatch):
+    """Set the width of the Rich consoles the read commands print through.
+
+    A `Console` reads `COLUMNS` and the terminal once, when it is made (at import),
+    so `CliRunner(env={"COLUMNS": ...})` does not reach it, and neither does
+    `terminal_width=` (that is Click's help width). Call `console_width(80)`
+    before invoking; the fixture restores each console afterwards.
+    """
+    import importlib
+
+    consoles = [
+        importlib.import_module(name).console
+        for name in (
+            "pyrite.cli",
+            "pyrite.cli.browse_commands",
+            "pyrite.cli.entry_commands",
+            "pyrite.cli.search_commands",
+        )
+    ]
+
+    def set_width(width):
+        for console in consoles:
+            monkeypatch.setattr(console, "_width", width)
+
+    return set_width

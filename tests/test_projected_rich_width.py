@@ -60,7 +60,7 @@ def test_nothing_is_cut_with_an_ellipsis_when_narrower(width):
 
 
 @pytest.mark.parametrize("columns", [80, 30])
-def test_search_prints_whole_id_at_the_console_width(columns):
+def test_search_prints_whole_id_at_the_console_width(columns, console_width):
     row = dict(ROWS[0], entry_type="note")
     svc = MagicMock()
     config = MagicMock()
@@ -71,6 +71,7 @@ def test_search_prints_whole_id_at_the_console_width(columns):
         yield config, MagicMock(), svc
 
     args = ["search", "q", "--fields", ",".join(FIELDS), "--format", "rich"]
+    console_width(columns)
     with (
         patch("pyrite.cli.search_commands.load_config", return_value=config),
         patch("pyrite.cli.context.open_index_db"),
@@ -80,11 +81,10 @@ def test_search_prints_whole_id_at_the_console_width(columns):
     ):
         mgr.return_value.is_empty.return_value = False
         search.return_value.search.return_value = [row]
-        result = CliRunner(env={"COLUMNS": str(columns)}).invoke(app, args)
+        result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.exception or result.output
     assert ENTRY_ID in result.stdout
     assert "…" not in result.stdout
-    # The width is the console's: COLUMNS reaches Rich; CliRunner's terminal_width does not.
     assert ("┏" in result.stdout) == (columns == 80)
 
 

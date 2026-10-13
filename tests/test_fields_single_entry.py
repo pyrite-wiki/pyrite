@@ -46,7 +46,7 @@ def test_single_entry_without_fields_keeps_its_rendering():
 
 
 @pytest.mark.parametrize("fmt", ["csv", "markdown", "rich"])
-def test_get_projects_in_every_format(fmt):
+def test_get_projects_in_every_format(fmt, console_width):
     svc = MagicMock()
     svc.get_entry.return_value = deepcopy(ENTRY)
 
@@ -54,8 +54,9 @@ def test_get_projects_in_every_format(fmt):
     def context():
         yield MagicMock(), MagicMock(), svc
 
+    console_width(120)
     with patch("pyrite.cli.entry_commands.cli_context", context):
-        result = CliRunner(env={"COLUMNS": "120"}).invoke(
+        result = CliRunner().invoke(
             app,
             ["get", "entry-1", "--fields", ",".join(FIELDS), "--format", fmt],
         )
@@ -98,6 +99,9 @@ def test_non_dict_rows_are_skipped_like_the_unprojected_branches():
         assert "waiting" in content
 
 
+@pytest.mark.control(
+    reason="the one-row table and the frontmatter view were both already true at 16ceeb0b; this pins the documented shape change"
+)
 def test_markdown_projection_replaces_the_frontmatter_view():
     """A shape change, pinned: with fields, Markdown is a one-row table (body flattened);
     without, it is the frontmatter block plus body."""
@@ -121,6 +125,9 @@ def test_markdown_header_rule_is_three_dashes_per_column():
     assert md.splitlines()[1] == "| --- | --- | --- | --- |"
 
 
+@pytest.mark.control(
+    reason="the empty string under a projection was already true at 16ceeb0b; this pins the documented shape change"
+)
 def test_empty_projected_markdown_is_empty():
     """A shape change, pinned: no `# Search: q (0 results)` line under a projection."""
     md, _ = format_response({"query": "q", "count": 0, "results": []}, "markdown", fields=FIELDS)

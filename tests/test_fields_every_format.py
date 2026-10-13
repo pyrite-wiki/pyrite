@@ -137,7 +137,7 @@ def test_default_markdown_list_is_unchanged():
         "rich",
     ],
 )
-def test_cli_projection_in_every_format(command, fmt):
+def test_cli_projection_in_every_format(command, fmt, console_width):
     svc = MagicMock()
     svc.list_entries.return_value = [deepcopy(ROW)]
     svc.get_entries.return_value = [deepcopy(ROW)]
@@ -165,7 +165,8 @@ def test_cli_projection_in_every_format(command, fmt):
     ):
         mgr.return_value.is_empty.return_value = False
         search.return_value.search.return_value = [deepcopy(ROW)]
-        result = CliRunner(env={"COLUMNS": "180"}).invoke(app, args)
+        console_width(180)
+        result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.exception or result.output
     assert_projected(result.stdout, fmt)
 
@@ -186,9 +187,9 @@ def test_rest_csv_uses_requested_projection(make_client):
 
 
 @pytest.mark.parametrize("command", ["search", "recent", "list-entries", "batch-read"])
-def test_projected_rich_cells_are_literal(monkeypatch, command):
+def test_projected_rich_cells_are_literal(monkeypatch, command, console_width):
     monkeypatch.setitem(ROW, "title", "[bold]Requested title[/bold]")
-    test_cli_projection_in_every_format(command, "rich")
+    test_cli_projection_in_every_format(command, "rich", console_width)
 
 
 @pytest.fixture
@@ -209,7 +210,9 @@ def indexed_projection(make_client):
 
 @pytest.mark.parametrize("command", ["search", "recent", "list-entries", "batch-read"])
 @pytest.mark.parametrize("fmt", ["csv", "markdown", "rich"])
-def test_real_index_projection_reaches_all_cli_encoders(indexed_projection, command, fmt):
+def test_real_index_projection_reaches_all_cli_encoders(
+    indexed_projection, command, fmt, console_width
+):
     _, config, entry_id = indexed_projection
     args = [command]
     if command == "search":
@@ -221,7 +224,8 @@ def test_real_index_projection_reaches_all_cli_encoders(indexed_projection, comm
         patch("pyrite.cli.context.load_config", return_value=config),
         patch("pyrite.cli.search_commands.load_config", return_value=config),
     ):
-        result = CliRunner(env={"COLUMNS": "180"}).invoke(app, args)
+        console_width(180)
+        result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.exception or result.output
     if fmt == "csv":
         rows = list(csv.DictReader(io.StringIO(result.stdout)))
@@ -253,7 +257,7 @@ def test_real_rest_search_projection(indexed_projection):
 
 
 @pytest.mark.parametrize("command", ["search", "recent", "list-entries"])
-def test_empty_cli_csv_retains_projection(indexed_projection, command):
+def test_empty_cli_csv_retains_projection(indexed_projection, command, console_width):
     _, config, _ = indexed_projection
     args = [command]
     if command == "search":
@@ -265,6 +269,7 @@ def test_empty_cli_csv_retains_projection(indexed_projection, command):
         patch("pyrite.cli.context.load_config", return_value=config),
         patch("pyrite.cli.search_commands.load_config", return_value=config),
     ):
+        console_width(180)
         result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.exception or result.output
     reader = csv.DictReader(io.StringIO(result.stdout))

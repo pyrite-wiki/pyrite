@@ -340,9 +340,7 @@ def register_search_command(app: typer.Typer):
 def _warn_fields_not_applied(fields_list):
     """File search prints its own table (KB, Type, Title, ID) whatever `--fields` says."""
     if fields_list:
-        typer.echo(
-            "--fields is not applied by file search (--files); showing its own table.", err=True
-        )
+        typer.echo("--fields is not applied by file search; showing its own table.", err=True)
 
 
 def _search_files(config, query, kb_name, entry_type, limit):

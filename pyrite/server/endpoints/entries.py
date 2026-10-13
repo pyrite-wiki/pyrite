@@ -18,7 +18,7 @@ from ...exceptions import (
 from ...services.access_policy import KB, Action, AnyKB, ReadScope
 from ...services.block_service import BlockService
 from ...services.kb_service import KBService
-from ...services.read_shaping import parse_fields_param, project_fields
+from ...services.read_shaping import IDENTITY_FIELDS, parse_fields_param, project_fields
 from ..api import (
     get_block_service,
     get_config,
@@ -413,7 +413,13 @@ def batch_read_entries(
         ids = [(eid, kb) for eid, kb in ids if scope.permits(kb)]
     results = svc.get_entries(ids)
 
+    # `[]` is no projection. A non-empty list that cleans to nothing (`[""]`,
+    # `[" "]`) is still a projection, as it was before the list went through
+    # parse_fields_param: the identity pair only. The body's list is not split
+    # on commas, unlike `?fields=`: `["a,b"]` names one field.
     fields_list = parse_fields_param(fields_param)
+    if fields_param and not fields_list:
+        fields_list = list(IDENTITY_FIELDS)
     if fields_list:
         # Same rule as every other read surface (#193). found_ids below reads
         # the identity pair, and dropping it is what made `found` and
