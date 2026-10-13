@@ -71,8 +71,7 @@ gh issue list --milestone "<next>" --state open --json number,labels,createdAt
 # What workers said they were unsure of / left (from PR bodies)
 gh pr view N --json body
 # Code health: what the suite and the linters say is drifting
-.venv/bin/pytest tests/ extensions/ -n auto -q --durations=15
-ruff check pyrite/ extensions/ --statistics
+# Commands: CONTRIBUTING.md#running-the-tests and CONTRIBUTING.md#lint
 ```
 
 Read the last ten tick entries and the workers' "Unsure" and "Left" lines:

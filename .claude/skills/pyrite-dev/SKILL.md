@@ -99,7 +99,7 @@ work" is not evidence.
 | The tests guard the change (every branch that changes code, `feat` included) | `scripts/verify-red.sh`, once (CI's `verify-red` job runs the same code) | `verify-red: N red · 0 import-only · 0 unexpected pass · 0 n/a`; paste its summary line into the report |
 | Each guard is tested | delete that guard alone, run the tests | a test fails, for every guard you added |
 | Frontend passes | `cd web && npm run check && npm run test:unit && npm run build` | all green |
-| Lint passes | `.venv/bin/ruff check . && .venv/bin/ruff format --check .` | clean |
+| Lint passes | [CONTRIBUTING: Lint](../../../CONTRIBUTING.md#lint) (CI command: `ruff check pyrite/ tests/ extensions/ && ruff format --check pyrite/ tests/ extensions/`) | clean |
 
 - A test meant to pass without the fix gets `@pytest.mark.control(reason="...")`;
   a bare marker is rejected.

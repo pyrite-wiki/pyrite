@@ -190,9 +190,5 @@ merge.
   every test in it is experimental by the mapping; then the core run warns and
   continues, and the experimental job reports it as a failure of that file.
 
-Run either set locally:
-
-```bash
-.venv/bin/pytest tests/ extensions/ -n 4 -m "not slow and not e2e and not experimental"
-.venv/bin/pytest tests/ extensions/ -n 4 -m "experimental and not slow and not e2e"
-```
+For commands to run either set locally, see
+[Running the tests](../CONTRIBUTING.md#running-the-tests).

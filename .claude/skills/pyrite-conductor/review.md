@@ -74,7 +74,7 @@ code nobody had pushed).
       across two venvs, one against dev instead of the merge base) — each worktree has its own .venv and they resolve different Pythons; "run it
       here, then there" compares environments (PR #69: a published "not slower" and a cold read's "+71%"
       were both 3.11-vs-3.13 artefacts) — or the number is struck from the PR
-- [ ] ruff check . && ruff format --check .
+- [ ] [CONTRIBUTING: Lint](../../../CONTRIBUTING.md#lint)
 - [ ] theme complete? nothing in "Left:" that belongs to this PR
 - [ ] learning is captured: every `Learned` line has a `Captured in` entry, and that test, comment or
       doc is in the diff; where the worker found the groom wrong, the ticket carries a comment saying so

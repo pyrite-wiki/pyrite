@@ -203,15 +203,17 @@ class TestValidators:
 
 ```bash
 # Single test
+# Diagnostic example: substitute the node relevant to your change
 .venv/bin/pytest tests/test_file.py::TestClass::test_name -v
 
 # Extension tests
 .venv/bin/pytest extensions/my-extension/tests/ -v
 
 # All backend tests
-.venv/bin/pytest tests/ -v
+# General suite commands: CONTRIBUTING.md#running-the-tests
 
 # With print output visible
+# Diagnostic example: substitute the node relevant to your change
 .venv/bin/pytest tests/test_file.py -v -s --tb=long
 ```
 
@@ -267,3 +269,6 @@ git add -u && git commit -m "same message"
 ```
 
 **Extension discovery:** pytest pre-commit uses `.venv/`. If your extension isn't `pip install -e` in the venv, its tests will fail with `ModuleNotFoundError: No module named 'pyrite_my_extension'`.
+
+General test commands and local worker limits live in
+[CONTRIBUTING](../../../CONTRIBUTING.md#running-the-tests).

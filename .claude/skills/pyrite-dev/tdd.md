@@ -44,6 +44,7 @@ def test_search(tmp_kb):
 
 ```bash
 # Backend
+# Diagnostic example: substitute the node relevant to your change
 .venv/bin/pytest tests/path/test_file.py::test_name -v
 
 # Frontend unit
@@ -77,8 +78,9 @@ Run the specific test AND the full suite for the area:
 
 ```bash
 # Backend: specific test then full suite
+# Diagnostic example: substitute the node relevant to your change
 .venv/bin/pytest tests/path/test_file.py::test_name -v
-.venv/bin/pytest tests/ -v
+# General suite commands: CONTRIBUTING.md#running-the-tests
 
 # Frontend: specific then full
 cd web && npx vitest run src/path/file.test.ts
@@ -191,3 +193,6 @@ If you catch yourself:
 - Saying "I already manually tested it"
 
 **Delete the code. Write the test first. Start over.**
+
+General test commands and local worker limits live in
+[CONTRIBUTING](../../../CONTRIBUTING.md#running-the-tests).

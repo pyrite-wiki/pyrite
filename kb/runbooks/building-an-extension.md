@@ -62,5 +62,6 @@ packages = ["src/pyrite_<name>"]
 pip install -e extensions/<name>              # system
 .venv/bin/pip install -e extensions/<name>    # venv (for pre-commit)
 python -m pytest extensions/<name>/tests/ -v
+# Diagnostic example: a focused plugin-integration guard
 python -m pytest tests/test_plugin_integration.py -v
 ```

@@ -383,32 +383,10 @@ options — or [pyrite.wiki](https://pyrite.wiki) for a public demo.
 
 ## Development
 
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[all]"
-for ext in extensions/*/; do pip install -e "$ext"; done
-pre-commit install
-
-# Tests (core and extensions; in parallel with -n auto)
-pytest tests/ extensions/ -n auto
-
-# Frontend
-cd web && npm install && npm run dev
-# Port 5173 must be free -- strictPort is on, so a taken port is a startup
-# error, not a silent move to 5174.
-
-# Linting
-ruff check pyrite/
-```
-
-Pyrite's own backlog and architecture docs live in `kb/`:
-
-```bash
-pyrite sw backlog        # Prioritized backlog
-pyrite sw adrs           # Architecture Decision Records
-pyrite sw components     # Module documentation
-pyrite sw standards      # Coding conventions
-```
+See [CONTRIBUTING](CONTRIBUTING.md) for setup,
+[tests](CONTRIBUTING.md#running-the-tests), [lint](CONTRIBUTING.md#lint), and
+[branches, hooks and pull requests](CONTRIBUTING.md#branches-hooks-and-pull-requests).
+Project architecture and planned work are in `kb/`.
 
 ## Documentation
 

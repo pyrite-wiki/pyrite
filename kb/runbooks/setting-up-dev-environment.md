@@ -43,12 +43,9 @@ pre-commit install
 ```
 
 ### 5. Verify
-```bash
-python -m pytest tests/ extensions/ --collect-only -q
-```
-The suite is in the thousands and grows with every PR — run the command
-above rather than trusting a number written here. If it errors instead of
-reporting a collected count, step 2 or 3 above did not take.
+
+Use [Lint](../../CONTRIBUTING.md#lint) and
+[Running the tests](../../CONTRIBUTING.md#running-the-tests).
 
 ## Troubleshooting
 - If pre-commit pytest fails: ensure extensions are installed in `.venv/` not just system Python

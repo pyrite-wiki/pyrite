@@ -601,3 +601,6 @@ taken as deliberate. Reading a field more leniently (a task's word
 `priority`, `tags: Foo` as `['Foo']`) is safe for the file for the same
 reason: the kept-key rule writes the file's own value back until the field
 is assigned.
+
+Current lint scope and commands live in [CONTRIBUTING](../../../CONTRIBUTING.md#lint);
+the historical lint incidents above do not define today's gate.

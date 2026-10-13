@@ -108,16 +108,8 @@ CI on a PR runs the checks relevant to the changed files (one interpreter); the 
 
 ## Testing
 
-```bash
-# Backend tests
-.venv/bin/pytest tests/ -v
-
-# Frontend
-cd web && npm run build && npm run test:unit
-
-# Linting
-ruff check pyrite/
-```
+Follow [Running the tests](CONTRIBUTING.md#running-the-tests) and
+[Lint](CONTRIBUTING.md#lint); they own the commands and local worker limit.
 
 ## Two skills: worker and conductor
 
@@ -142,19 +134,14 @@ If you find yourself in `/Users/markr/pyrite` on `dev` with uncommitted work, yo
 
 ## Pre-commit Hooks
 
-One-time setup on a fresh clone: `.venv/bin/pip install -e ".[dev]"` (installs `pre-commit`), then `.venv/bin/pre-commit install`. If that fails with "Cowardly refusing to install hooks with core.hooksPath set", run `git config --unset-all core.hooksPath` first — some environments set it to a directory of unused `.sample` files, which blocks installation.
+Follow [Branches, hooks and pull requests](CONTRIBUTING.md#branches-hooks-and-pull-requests)
+for installation, stages and bypass rules.
 
-`pre-commit install` installs all three hook types (`default_install_hook_types` in `.pre-commit-config.yaml`). On a clone that installed hooks before 2026-09-17, re-run it once to pick up `commit-msg` and `pre-push`.
+**Agent stash hazard:** pre-commit stashes every unstaged edit while hooks
+run. After an interrupted commit, inspect the newest `~/.cache/pre-commit/patch*`
+and use `git apply --check` before restoring it; do not assume edits were lost.
 
-| Stage | What runs |
-|-------|-----------|
-| commit | ruff, ruff-format, trailing-whitespace, end-of-file, check-yaml, check-large-files, check-merge-conflict, debug-statements, import-cycle check, KB schema validation. Seconds. **No pytest.** |
-| commit-msg | `fix:` commits must touch `tests/` |
-| pre-push | `scripts/test-affected --run`: the `core` tests plus every test importing what the push changed, `-n 4` (`PYRITE_PUSH_WORKERS`); the full suite for conftest/config/CI changes or `PYRITE_PUSH_FULL=1`; only when the pushed range touches code, scripts or config; skipped when a passing `--run` already stamped the pushed tree (`PYRITE_PUSH_FORCE=1` re-runs) |
-| CI | the authority — everything above plus the full matrix |
+If an unrelated parallel flake passes alone, `--no-verify` is permitted under
+the CONTRIBUTING rule: name the skipped test and the evidence in the PR.
+A failure in touched code must be fixed; upstream CI remains the authority.
 
-If ruff-format modifies files, re-stage and commit again.
-
-**Why the commit stage is fast:** pre-commit stashes *every* unstaged edit in the working tree to `~/.cache/pre-commit/patch*` while commit hooks run. With several sessions sharing the tree, a slow hook makes other sessions' edits vanish for minutes. `tests/test_dev_process_config.py` pins this layout — change the config and the tests together. If a commit is killed mid-hook (crash, Ctrl-C at the wrong moment), unstaged edits may exist *only* in the newest patch file: check `git apply --check ~/.cache/pre-commit/patch<newest>`, then `git apply` it.
-
-The pre-push suite runs in parallel. A test that passes alone and fails under `-n auto` is a real bug in that test (shared state, fixed wall-clock timeouts under load, a shared port or path), not a reason to go serial; `tests/test_task_claim_concurrency.py` shows the pattern for process-spawning tests (start barrier + one group deadline). If a blocked push fails on a test your change did not touch, re-run that test alone (`pytest <nodeid>`, or `scripts/test-affected --run -- --lf`). If it passes alone, push with `--no-verify` and say why in the PR: the local run is not the last gate -- PR CI, the merge queue's full matrix on the exact commit, the push to `dev`, `main` and review all come after it, so a laptop run does not have to be perfect (maintainer, 2026-09-25). File a GitHub issue for the test only if it fails that way again. Name the skipped test in the PR, so a reviewer sees it and a repeat is visible. If PR CI or the merge queue then fails the same test, it is a real failure the change caused -- a test the change never touched can still be broken by it (2026-09-25: a module reload in one test broke an unrelated one only after the batch's change) -- and it goes back to the worker. A failure in a test your change touches is a real failure: fix it.

@@ -9,8 +9,7 @@ tags: [testing, pytest]
 
 ## Framework
 - pytest with rich output
-- The commit hooks run no tests; the pre-push hook runs the core plus the
-  affected tests (`scripts/test-affected --run`); CI is the authority
+- Commands and hook stages have one home: [CONTRIBUTING](../../CONTRIBUTING.md#running-the-tests).
 - Tests of experimental surfaces carry the `experimental` marker, applied by
   path from `tests/experimental_surface.py` (never by hand). They do not gate a
   merge or a push; CI's `experimental` job runs them against

@@ -162,6 +162,16 @@ pyrite/
 4. **Plugin Protocol**: Extensions use structural typing (Protocol) — no base class inheritance required
 5. **SearchBackend Abstraction**: All search operations go through `SearchBackend` protocol (SQLite or Postgres)
 
+## Lint
+
+Run the same source scope as CI; development/deployment scripts outside this
+scope have separate tooling and are not part of this gate.
+
+```bash
+ruff check pyrite/ tests/ extensions/
+ruff format --check pyrite/ tests/ extensions/
+```
+
 ## Running the tests
 
 Pyrite is written largely by AI agents and runs on its users' machines, so
@@ -194,6 +204,15 @@ cd web && npx playwright install chromium && npm run test:e2e             # larg
 Use `-n 4`, not `-n auto`, on a laptop: `-n auto` starts a worker per core,
 each with its own databases and temp trees, and several worktrees doing that
 at once ran a 16 GB machine out of memory (#168) and filled its disk (#356).
+
+**One suite at a time**
+
+Run `scripts/test-affected --run` alone in the foreground on the committed
+tree, read its final summary and exit status, and reuse that passing tree at
+pre-push. Never launch a second suite while one is still running. If a long
+run must be backgrounded, redirect both stdout and stderr to one log, retain
+the process handle and exit status, and read the final summary after it exits;
+a quiet log or a running process is not a pass.
 
 **A subset**
 
@@ -351,7 +370,7 @@ uv pip install --python .venv/bin/python -e ".[all,dev]"
 
 | Stage | Runs | Takes |
 |---|---|---|
-| commit | ruff, formatting, file hygiene, import-cycle check, KB schema validation | seconds |
+| pre-commit | ruff, formatting, file hygiene, import-cycle check, KB schema validation | seconds |
 | commit-msg | a `fix:` commit must touch `tests/` | — |
 | pre-push | `scripts/test-affected --run`: core + affected tests on `PYRITE_PUSH_WORKERS` (default 4) workers, only when the push touches code, tests, scripts or test config (a docs- or KB-only push skips it); `PYRITE_PUSH_FULL=1` runs the full suite | Seconds to minutes, depending on what changed |
 

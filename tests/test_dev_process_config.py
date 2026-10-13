@@ -10,11 +10,46 @@ suite at pre-push, CI as the authority.
 """
 
 from pathlib import Path
+import re
 
 import pytest
 import yaml
 
 REPO = Path(__file__).resolve().parent.parent
+
+
+class TestDocumentationCommandHome:
+    def test_contributing_lint_is_the_ci_command(self, ci):
+        steps = [step for job in ci["jobs"].values() for step in job.get("steps", [])]
+        command = next(
+            step["run"].strip() for step in steps if step.get("name") == "Lint with ruff"
+        )
+        text = (REPO / "CONTRIBUTING.md").read_text(encoding="utf-8")
+        lint = text.split("## Lint\n", 1)[1].split("\n## ", 1)[0]
+        assert f"```bash\n{command}\n```" in lint
+
+    def test_general_test_commands_have_one_home(self):
+        paths = [REPO / name for name in ("CLAUDE.md", "README.md")]
+        for directory in ("docs", "kb/standards", "kb/runbooks", ".claude/skills"):
+            paths.extend((REPO / directory).rglob("*.md"))
+        offenders = []
+        for path in paths:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for i, line in enumerate(lines):
+                if re.match(r"^(?:\.venv/bin/|python -m )?(?:ruff check|pytest tests/)", line):
+                    # Specific diagnostic examples are allowed; general suite policies are not.
+                    if i and lines[i - 1].startswith("# Diagnostic example:"):
+                        continue
+                    offenders.append(f"{path.relative_to(REPO)}:{i + 1}: {line}")
+        assert offenders == []
+
+    def test_documented_hook_stages_match_installed_hooks(self, precommit):
+        text = (REPO / "CONTRIBUTING.md").read_text(encoding="utf-8").split("**Git hooks**", 1)[1]
+        table = text.split("\n\n", 2)[1]
+        stages = {
+            line.split("|")[1].strip() for line in table.splitlines()[2:] if line.startswith("|")
+        }
+        assert stages == set(precommit["default_install_hook_types"])
 
 
 @pytest.fixture(scope="module")
