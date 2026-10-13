@@ -724,6 +724,37 @@ class TestAKbNameThatIsNotAStringIsRefused:
         assert "knowledge_bases" in sw.dispatch("kb_orient", {"kb_name": blank})
 
 
+_ORIENT_FRAGMENT = "66-orient-true-as-first-call.changed.md"
+_ORIENT_ENTRY_TITLE = "**`kb_orient` / `pyrite orient` is true as the first call**"
+
+
+def _orient_changelog_entry() -> str:
+    """The changelog's statement about orient, wherever it lives now.
+
+    Before a release it is the fragment; a release moves its text into
+    CHANGELOG.md and deletes the file, so this test must not depend on the
+    file. The entry is found by its title and ends at the next top-level bullet
+    or heading, so a later release's text cannot satisfy or break the checks.
+    """
+    import pathlib
+
+    repo = pathlib.Path(__file__).resolve().parent.parent
+    fragment = repo / "changelog.d" / _ORIENT_FRAGMENT
+    if fragment.exists():
+        return fragment.read_text()
+    lines = (repo / "CHANGELOG.md").read_text().splitlines()
+    start = next(
+        (i for i, ln in enumerate(lines) if ln.startswith("- ") and _ORIENT_ENTRY_TITLE in ln),
+        None,
+    )
+    assert start is not None, "the orient entry is in neither the fragment nor CHANGELOG.md"
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i].startswith(("- ", "## "))),
+        len(lines),
+    )
+    return "\n".join(lines[start:end])
+
+
 class TestTheScopedRefusalSaysWhatToDoNext:
     """Item 4: one static hint, the same for an absent and an unreadable name."""
 
@@ -745,9 +776,7 @@ class TestTheScopedRefusalSaysWhatToDoNext:
                     assert out["suggestion"] == SCOPED_REFUSAL_HINT, (tool, key)
 
     def test_the_changelog_does_not_promise_scoped_callers_near_matches(self):
-        import pathlib
-
-        text = pathlib.Path("changelog.d/66-orient-true-as-first-call.changed.md").read_text()
+        text = _orient_changelog_entry()
         flat = " ".join(text.split())
         assert "Names are drawn only from the KBs the caller may read" not in flat
         assert "never from a KB the caller may not read" in flat

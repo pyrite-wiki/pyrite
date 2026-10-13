@@ -103,3 +103,5 @@ changing anything, which is the way to check how your entry will read.
   error message, a documented workflow — that is not a process change for this
   purpose. Write the fragment under the section describing what the user
   experiences.
+
+A test must not read a fragment by name; fragments are deleted at release.
