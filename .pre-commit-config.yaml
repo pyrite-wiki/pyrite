@@ -11,7 +11,9 @@
 #   commit-msg `fix:` commits must touch tests/.
 #   pre-push   core + affected tests (scripts/test-affected), only when the
 #              pushed range touches code, and not again on a tree whose run
-#              already passed; PYRITE_PUSH_FULL=1 for everything. Experimental
+#              already passed or a tip commit CI already verified (`gate`
+#              green on that exact SHA; scripts/verified_commit.py);
+#              PYRITE_PUSH_FULL=1 for everything. Experimental
 #              tests (#657) are deselected, as in the gating CI job;
 #              PYRITE_PUSH_EXPERIMENTAL=1 includes them.
 #   CI         the authority. Full suite + everything above, on every push and PR;
@@ -106,6 +108,17 @@ repos:
         # covers the selection -- the worker's own run and this one were the
         # same tests on the same code, about 45 minutes under load
         # (2026-09-25). PYRITE_PUSH_FORCE=1 ignores stamps.
+        #
+        # A verified tip is not tested again: when the required check
+        # (`gate`) is green on the pushed tip's exact SHA on GitHub, the
+        # script says so in one line and skips. The definition is
+        # scripts/verified_commit.py, the one scripts/release.py uses; on
+        # 0.25.7 this hook re-ran the full suite on the release commit, in
+        # a venv missing a dev dependency, and blocked the push to main. It
+        # fails closed (any lookup failure or ambiguous answer runs the
+        # suite), asks once with a short timeout, and PYRITE_PUSH_FORCE=1
+        # still forces a run. The entry below is unchanged by it: the
+        # decision is the script's, so `--preflight` can report it.
         #
         # Refuse rather than fall back. This used to end `|| PY=python`, and in
         # a worktree created with a bare `git worktree add` (no venv) that

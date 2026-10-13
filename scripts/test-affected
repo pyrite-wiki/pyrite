@@ -57,13 +57,44 @@ Usage
                                                (or PYRITE_PUSH_FULL=1|true|yes)
   scripts/test-affected --run -- --lf          re-run only the last run's failures
                                                (anything after -- goes to pytest)
-  --force             ignore pass stamps (or PYRITE_PUSH_FORCE=1|true|yes)
+  scripts/test-affected --preflight            what the pre-push hook would do
+                                               for a push, without running it
+  --force             ignore pass stamps and CI's verdict
+                      (or PYRITE_PUSH_FORCE=1|true|yes)
   --base REF          compare against REF's merge base (default origin/dev)
   --committed         ignore uncommitted and untracked changes
   --files A B ...     use these changed paths instead of asking git
 
 Under the pre-push hook (PRE_COMMIT_FROM_REF / PRE_COMMIT_TO_REF set) the
 changed paths are those of the pushed range, not the working tree.
+
+A verified tip is not tested again (under the hook only)
+  When the commit being pushed is VERIFIED -- the required check (`gate`) is
+  green on that exact SHA on GitHub, by the one definition in
+  scripts/verified_commit.py, which scripts/release.py also uses -- the hook
+  prints one line naming the SHA, the check and the repository, and skips.
+  The 0.25.7 release push re-ran the full suite here on a commit CI had
+  passed, in a venv missing a dev dependency, and was blocked.
+
+  It fails closed. No `gh`, no network, a timeout, an API error, a pending or
+  red check, an answer that is not understood: the commit is not verified and
+  the run goes ahead exactly as it would have. One request, 8 seconds at most,
+  no retry; and no request at all unless a remote-tracking ref already
+  contains the tip, so an ordinary push of new commits never waits on the
+  network. Only the pushed tip is asked about: a verified ancestor says
+  nothing for commits on top of it. A push of several refs is seen by
+  pre-commit as its first ref only, as before.
+
+  ``--force`` / PYRITE_PUSH_FORCE=1 runs anyway and asks nothing.
+  ``--experimental`` / PYRITE_PUSH_EXPERIMENTAL=1 runs too: `gate` does not
+  need the experimental job. The full suite (PYRITE_PUSH_FULL=1) is covered,
+  as it is by a "full" stamp. A verified skip writes no stamp. Outside the
+  hook (no PRE_COMMIT_TO_REF) nothing is asked.
+
+  ``--preflight`` answers with the same decision and runs only a collection:
+  ``preflight: skip: ...``, ``preflight: would run: ...`` (the selection
+  imports with the hook's interpreter), or ``preflight: cannot run: ...`` and
+  exit 1. The release dry run asks it for the pushes ``--execute`` makes.
 
 Pass stamps: each tree is tested once
   A ``--run`` that exits 0 on a clean tree (no uncommitted change to a
@@ -117,6 +148,12 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# Run as a script, scripts/ is already first on sys.path; loaded by path (the
+# tests do), it is not.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import verified_commit  # noqa: E402
 
 DEFAULT_BASE = "origin/dev"
 DEFAULT_WORKERS = 4
@@ -988,6 +1025,41 @@ def _skip_line(tree: str, stamp: dict) -> str:
 
 
 # --------------------------------------------------------------------------
+# A verified tip is not tested again
+
+
+def pushed_tip_verdict(root: Path, to_ref: str) -> verified_commit.Verdict | None:
+    """What GitHub says about the commit being pushed, or None when it was not
+    asked. Under the hook only: ``to_ref`` is pre-commit's PRE_COMMIT_TO_REF.
+
+    Not asked, and so not verified, when the ref names no commit, the push
+    is not to a GitHub repository, or no remote-tracking ref contains the tip
+    (GitHub cannot have tested a commit it has never been sent, and this keeps
+    an ordinary push off the network). The definition itself, and every way
+    its lookup fails closed, is verified_commit.verdict_for.
+
+    The tip is peeled to a commit: an annotated tag is pushed as a tag object.
+    """
+    try:
+        sha = _git(root, "rev-parse", "--verify", "--quiet", f"{to_ref}^{{commit}}").strip()
+        slug = verified_commit.remote_slug(os.environ.get("PRE_COMMIT_REMOTE_URL", ""))
+        if not sha or not slug:
+            return None
+        if not _git(root, "for-each-ref", "--count=1", "--contains", sha, "refs/remotes/").strip():
+            return None
+        return verified_commit.verdict_for(sha, slug, verified_commit.run_bounded)
+    except Exception:  # noqa: BLE001 - whatever went wrong, the commit is not verified
+        return None
+
+
+def _verified_line(verdict: verified_commit.Verdict) -> str:
+    return (
+        f"test-affected: {verdict.sha[:12]} is verified ({verdict.detail} on "
+        f"{verdict.slug}); not re-running the local suite"
+    )
+
+
+# --------------------------------------------------------------------------
 # CLI
 
 
@@ -996,6 +1068,43 @@ def _python(root: Path) -> str:
     ``python3`` may have no pytest, or import another checkout's code."""
     venv = root / ".venv" / "bin" / "python"
     return str(venv) if os.access(venv, os.X_OK) else sys.executable
+
+
+def _preflight(
+    root: Path,
+    python: str,
+    args: list[str],
+    scope: list[str],
+    label: str,
+    skip: str | None,
+    forced: bool,
+) -> int:
+    """Say what ``--run`` would do, on stdout, and run nothing but a
+    collection: importing every selected test file is what shows that the
+    interpreter the hook uses has what the suite needs (0.25.7: it had no
+    ``hypothesis``, found at the push to main)."""
+    if skip is not None:
+        print(f"preflight: skip: {skip}")
+        return 0
+    why = "PYRITE_PUSH_FORCE or --force is set; " if forced else ""
+    # No -n: collection needs no workers. No cache: a preflight writes nothing.
+    collect = [python, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"]
+    collect += [*args[2:], *scope]
+    try:
+        proc = subprocess.run(collect, cwd=root, capture_output=True, text=True)
+    except OSError as exc:
+        print(f"preflight: cannot run: {python} could not be started ({exc})")
+        return 1
+    if proc.returncode != 0:
+        print(
+            f"preflight: cannot run: {label}, and the selection does not import with "
+            f"{python} (pytest --collect-only exited {proc.returncode}):"
+        )
+        for line in (proc.stdout + proc.stderr).strip().splitlines()[-25:]:
+            print(f"  {line}")
+        return 1
+    print(f"preflight: would run: {why}{label}; it collects cleanly with {python}")
+    return 0
 
 
 def _default_base(root: Path, base: str) -> str:
@@ -1016,6 +1125,11 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--list", action="store_true", help="print selected paths (default)")
     mode.add_argument("--explain", action="store_true", help="print why each test was selected")
     mode.add_argument("--run", action="store_true", help="run the selection with pytest")
+    mode.add_argument(
+        "--preflight",
+        action="store_true",
+        help="say what --run would do for this push, and check the selection imports",
+    )
     parser.add_argument(
         "-n", "--workers", type=_workers, default=str(DEFAULT_WORKERS), help="N or auto"
     )
@@ -1031,7 +1145,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--helper-threshold", type=int, default=DEFAULT_HELPER_THRESHOLD)
     parser.add_argument("--dry-run", action="store_true", help="with --run: print the command only")
     parser.add_argument(
-        "--force", action="store_true", help="with --run: ignore pass stamps (PYRITE_PUSH_FORCE=1)"
+        "--force",
+        action="store_true",
+        help="with --run: ignore pass stamps and CI's verdict (PYRITE_PUSH_FORCE=1)",
     )
     parser.add_argument("--root", default=None, help=argparse.SUPPRESS)
     parser.add_argument("pytest_extra", nargs=argparse.REMAINDER, help="after --: passed to pytest")
@@ -1077,7 +1193,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     args = pytest_args(selection, opts.workers)
-    if opts.run:
+    if opts.run or opts.preflight:
         extra = [a for a in opts.pytest_extra if a != "--"]
         python = _python(root)
         with_experimental = opts.experimental or _truthy("PYRITE_PUSH_EXPERIMENTAL")
@@ -1098,7 +1214,7 @@ def main(argv: list[str] | None = None) -> int:
                 "run them too with: scripts/test-affected --run --experimental",
                 file=sys.stderr,
             )
-        if opts.dry_run:
+        if opts.dry_run and not opts.preflight:
             print(shlex.join(cmd))
             return 0
         needed: str | list[str] = "full" if selection.full is not None else args[2:]
@@ -1114,18 +1230,35 @@ def main(argv: list[str] | None = None) -> int:
         stamps = stamp_dir(root) if own_venv else None
         clean = is_clean(root)
         head_tree = tree_of(root, "HEAD")
-        if (
-            stamps is not None
-            and version is not None
-            and not (opts.force or _truthy("PYRITE_PUSH_FORCE"))
-        ):
+        forced = opts.force or _truthy("PYRITE_PUSH_FORCE")
+        # Why this run need not happen, if it need not: one line, or None.
+        # --run and --preflight read the same answer.
+        skip: str | None = None
+        if not forced and stamps is not None and version is not None:
             # The tree under test: under the hook, the one being pushed --
             # never the working tree's, which may be another commit.
             looked_up = tree_of(root, to_ref) if to_ref else (clean and head_tree)
             stamp = looked_up and find_stamp(stamps, looked_up, version, needed)
             if stamp:
-                print(_skip_line(looked_up, stamp), file=sys.stderr)
-                return 0
+                skip = _skip_line(looked_up, stamp)
+        if skip is None and not forced and to_ref and not with_experimental:
+            # `gate` ran the whole suite on this commit, so it covers any
+            # selection -- but not the experimental tests, which it does not
+            # need. Asked after the stamp: a stamp costs no request.
+            verdict = pushed_tip_verdict(root, to_ref)
+            if verdict is not None and verdict.verified:
+                skip = _verified_line(verdict)
+            elif verdict is not None:
+                print(
+                    f"test-affected: {verdict.sha[:12]} is not verified "
+                    f"({verdict.detail}); running the suite",
+                    file=sys.stderr,
+                )
+        if opts.preflight:
+            return _preflight(root, python, args, scope, label, skip, forced)
+        if skip is not None:
+            print(skip, file=sys.stderr)
+            return 0
         code = subprocess.call(cmd, cwd=root, env={**os.environ})
         if code == 0 and not own_venv:
             print("test-affected: passed; not stamped (no .venv in this worktree)", file=sys.stderr)
