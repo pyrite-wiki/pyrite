@@ -113,6 +113,9 @@ def _scan():
     return found
 
 
+@pytest.mark.control(
+    reason="every listed function already exists on dev; the test guards the next acceptor, not this change"
+)
 def test_the_inventory_is_what_the_source_has():
     found = _scan()
     assert found == set(ACCEPTORS), (
@@ -122,6 +125,7 @@ def test_the_inventory_is_what_the_source_has():
     )
 
 
+@pytest.mark.control(reason="a consistency check of the inventory table against the case tables")
 def test_every_listed_acceptor_has_a_case():
     cli = {case for kind, case in ACCEPTORS.values() if kind == "cli"}
     rest = {case for kind, case in ACCEPTORS.values() if kind == "rest"}
@@ -129,6 +133,7 @@ def test_every_listed_acceptor_has_a_case():
     assert rest == set(REST_ACCEPTORS)
 
 
+@pytest.mark.control(reason="MCP was JSON only on dev; this pins the claim in the docs table")
 def test_mcp_returns_json_only():
     """The MCP row is "JSON only" because the server never reaches the format registry."""
     text = (ROOT / "pyrite/server/mcp_server.py").read_text(encoding="utf-8")
@@ -393,6 +398,9 @@ def test_batch_empty_fields_list_is_no_projection(make_client):
     assert "body" in _batch(client, []).json()["entries"][0]
 
 
+@pytest.mark.control(
+    reason="the body list was never split on commas; this pins the documented difference from ?fields="
+)
 def test_batch_fields_are_not_split_on_commas_in_the_json_body(make_client):
     """Unlike `?fields=a,b`, the body's list names fields one by one: `["a,b"]` is one field."""
     client, _, _ = make_client(kb_name="kb")
