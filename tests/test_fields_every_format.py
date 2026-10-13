@@ -165,7 +165,7 @@ def test_cli_projection_in_every_format(command, fmt):
     ):
         mgr.return_value.is_empty.return_value = False
         search.return_value.search.return_value = [deepcopy(ROW)]
-        result = CliRunner().invoke(app, args, terminal_width=180)
+        result = CliRunner(env={"COLUMNS": "180"}).invoke(app, args)
     assert result.exit_code == 0, result.exception or result.output
     assert_projected(result.stdout, fmt)
 
@@ -221,7 +221,7 @@ def test_real_index_projection_reaches_all_cli_encoders(indexed_projection, comm
         patch("pyrite.cli.context.load_config", return_value=config),
         patch("pyrite.cli.search_commands.load_config", return_value=config),
     ):
-        result = CliRunner().invoke(app, args, terminal_width=180)
+        result = CliRunner(env={"COLUMNS": "180"}).invoke(app, args)
     assert result.exit_code == 0, result.exception or result.output
     if fmt == "csv":
         rows = list(csv.DictReader(io.StringIO(result.stdout)))

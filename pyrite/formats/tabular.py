@@ -11,15 +11,19 @@ def projected_columns(fields: list[str]) -> list[str]:
     return list(dict.fromkeys((*IDENTITY_FIELDS, *fields)))
 
 
-def projected_rows(data: dict) -> list[dict] | None:
-    """The records of a projected payload: a results/entries envelope, else the
-    payload itself as the one record (``get --fields``, ``GET /entries/{id}``)."""
-    if "results" in data:
-        return data["results"]
-    if "entries" in data:
-        return data["entries"]
-    if "id" in data:
+def projected_rows(data: dict, *, single: bool = False) -> list[dict] | None:
+    """The records of a projected payload, or None when it has none to project.
+
+    ``single=True`` says the payload *is* the one record (``get --fields``,
+    ``GET /entries/{id}``); the caller knows, so it is not inferred from key
+    names. Otherwise the payload is a ``results`` or ``entries`` envelope.
+    A row that is not a dict is skipped, as the unprojected branches do.
+    """
+    if single:
         return [data]
+    for key in ("results", "entries"):
+        if isinstance(data.get(key), list):
+            return [row for row in data[key] if isinstance(row, dict)]
     return None
 
 
@@ -48,15 +52,11 @@ def projected_markdown(rows: list[dict], fields: list[str]) -> str:
             .replace("\n", "<br>")
         )
 
-    def rule(key: str) -> str:
-        # A header-rule cell of at least three dashes. Computed, not spelled, so
-        # no constant here reads as a frontmatter fence
-        # (tests/test_frontmatter_splitter.py scans for one).
-        return "-" * max(3, len(key))
-
+    # The header rule, one cell at a time. Each constant holds a "|", which is how
+    # tests/test_frontmatter_splitter.py tells a table separator from a fence.
     lines = [
         "| " + " | ".join(escaped(key) for key in columns) + " |",
-        "| " + " | ".join(rule(key) for key in columns) + " |",
+        "".join("| --- " for _ in columns) + "|",
     ]
     lines.extend("| " + " | ".join(escaped(row.get(key)) for key in columns) + " |" for row in rows)
     return "\n".join(lines)
@@ -65,12 +65,29 @@ def projected_markdown(rows: list[dict], fields: list[str]) -> str:
 class ProjectedRich:
     """Projected records for a terminal: a table when it can be read, else a stack.
 
-    Rich fits a table to the terminal by shrinking columns and ending cells it
-    cannot fit with an ellipsis. In a projection that cut the id a reader keys on
-    (``entry-one-lo…``, review of #721), and below a certain width every header.
-    So the table is used only when the id and every header fit whole; narrower,
-    each record is printed as ``field: value`` lines. Nothing is ever elided.
-    Values are rendered literally, never as Rich markup.
+    Rich fits a table to the terminal by shrinking columns, ending a cell it
+    cannot fit with an ellipsis and splitting a header across lines. In a
+    projection that cut the id a reader keys on and the field names (review of
+    #721), and its shrinking does not honour a column's ``min_width`` when the
+    table is tight. So the widths are decided here, in terminal cells, and given
+    to Rich as fixed column widths. What sets a column's minimum:
+
+    * its header (``cell_len``: a wide character is 2 cells);
+    * for the id column, its widest id;
+    * the widest single character in any of its cells (a wide character cannot
+      be folded into one cell);
+    * three cells of chrome per column (a space either side, a border) and one
+      more border.
+
+    The table is used when every minimum fits; spare width then goes to the
+    columns that want more, narrowest first, and long cells fold onto further
+    lines. Narrower, each record prints as ``field: value`` lines, records
+    separated by a blank line (a value that itself holds a blank line can look
+    like a record boundary). Nothing is elided. Values are rendered literally,
+    never as Rich markup.
+
+    The width is the console's: 80 when output is piped, unless ``COLUMNS`` is
+    set. This is for people; scripts take json, yaml or csv.
     """
 
     def __init__(self, rows: list[dict], fields: list[str], title: str):
@@ -78,26 +95,52 @@ class ProjectedRich:
         self.columns = projected_columns(fields)
         self.title = title
 
-    def _widest_id(self) -> int:
-        return max((len(cell_text(row.get("id"))) for row in self.rows), default=0)
+    def _cells(self, column: str) -> list[str]:
+        return [cell_text(row.get(column)) for row in self.rows]
 
-    def _width_needed(self) -> int:
-        first = max(self._widest_id(), len("id"))
-        rest = sum(len(column) for column in self.columns if column != "id")
-        borders = 3 * len(self.columns) + 1
-        return first + rest + borders
+    def _minimum(self, column: str) -> int:
+        """The narrowest this column may be, in terminal cells."""
+        from rich.cells import cell_len
+
+        cells = self._cells(column)
+        width = max(cell_len(column), *(cell_len(ch) for cell in cells for ch in cell), 0)
+        if column == "id":
+            width = max(width, *(cell_len(cell) for cell in cells), 0)
+        return width
+
+    def _natural(self, column: str) -> int:
+        """The width at which no cell of this column would fold."""
+        from rich.cells import cell_len
+
+        widest_line = max(
+            (cell_len(line) for cell in self._cells(column) for line in cell.splitlines() or [""]),
+            default=0,
+        )
+        return max(self._minimum(column), widest_line)
+
+    def width_needed(self) -> int:
+        return sum(self._minimum(c) for c in self.columns) + 3 * len(self.columns) + 1
+
+    def _widths(self, max_width: int) -> list[int]:
+        widths = [self._minimum(c) for c in self.columns]
+        natural = [self._natural(c) for c in self.columns]
+        spare = max_width - self.width_needed()
+        while spare > 0:
+            wanting = [i for i, w in enumerate(widths) if w < natural[i]]
+            if not wanting:
+                break
+            widths[min(wanting, key=lambda i: widths[i])] += 1
+            spare -= 1
+        return widths
 
     def __rich_console__(self, console, options):
         from rich.table import Table
         from rich.text import Text
 
-        if options.max_width >= self._width_needed():
+        if options.max_width >= self.width_needed():
             table = Table(title=Text(self.title))
-            for column in self.columns:
-                if column == "id":
-                    table.add_column(Text(column), no_wrap=True, min_width=self._widest_id())
-                else:
-                    table.add_column(Text(column), overflow="fold")
+            for column, width in zip(self.columns, self._widths(options.max_width), strict=True):
+                table.add_column(Text(column), width=width, overflow="fold")
             for row in self.rows:
                 table.add_row(*(Text(cell_text(row.get(key))) for key in self.columns))
             yield table
