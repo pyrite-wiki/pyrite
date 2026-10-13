@@ -701,8 +701,8 @@ classified):
 | Acceptor | CSV, Markdown, Rich | JSON, YAML |
 |---|---|---|
 | CLI `search`, `recent`, `list-entries`, `batch-read`, `get` (`--fields`) | projected | projected |
-| REST `GET /api/search?fields=`, `GET /api/entries/{id}?fields=` (Accept `text/csv`, `text/markdown`, `text/yaml`) | projected | projected |
-| REST `POST /api/entries/batch`, body key `fields` (a JSON list, cleaned like `?fields=`) | projected | projected |
+| REST `GET /api/search?fields=`, `GET /api/entries/{id}?fields=` (Accept `text/csv`, `text/markdown`, `text/yaml`; YAML is in the JSON column) | projected | projected |
+| REST `POST /api/entries/batch`, body key `fields` (a JSON list, cleaned like `?fields=`: spaces and duplicates dropped; `[]` is no projection; a list that cleans to nothing, such as `[""]`, keeps `id` and `kb_name` only; `["a,b"]` is one field named `a,b`, unlike the query-string form, which splits on commas) | projected | projected |
 | CLI `search --files`, and the file-search fallback in Rich mode | not projected: it prints its own Rich table (KB, Type, Title, ID) whatever `--format` and `--fields` say, and says so on stderr | same |
 | REST `GET /api/entries` | takes no `fields` (the CLI `list-entries` does); the legacy columns, whatever the parameter | same |
 | MCP tools | JSON only | projected |
@@ -727,14 +727,18 @@ line `# Search: q (0 results)`; under a projection it is an empty string. Withou
 `--fields`, each format keeps its existing rendering.
 
 Rich renders field names and values literally, without interpreting markup. It
-is for people: its width is the console's (80 when output is piped, unless
-`COLUMNS` is set), so scripts should use `json`, `yaml` or `csv`. At that width
+is for people: its width is the console's. Rich takes it from the terminal even
+when stdout is piped (stdin or stderr being a terminal is enough), uses 80 when no
+standard stream is a terminal, and lets `COLUMNS` override both. Scripts should
+use `json`, `yaml` or `csv`. At that width
 it prints a table when the `id` column at its widest id, every header, and the
 widest character of each column fit whole (measured in terminal cells, so a
 wide character counts 2); long values fold onto further lines. When they do not
 fit, it prints each record as `field: value` lines, records separated by a blank
 line, so a value that itself contains a blank line can look like a record
-boundary. Nothing is cut with an ellipsis. A projection never changes the
+boundary. Nothing is cut with an ellipsis, and from a console width of 2 no
+value is cut; at width 1 a stacked value made of wide characters is dropped,
+since a wide character needs 2 cells. A projection never changes the
 underlying records or the fields returned when no projection is requested.
 
 Empty projected CSV responses retain their column header and contain no data
