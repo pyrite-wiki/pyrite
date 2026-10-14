@@ -186,7 +186,20 @@ app.add_typer(task_app, name="task")
 try:
     from ..plugins import get_registry
 
-    for name, command in get_registry().get_all_cli_commands():
+    _registry = get_registry()
+    _cli_commands = _registry.get_all_cli_commands()
+    # A plugin whose get_cli_commands raised vanishes from `app`; say so on
+    # stderr rather than only in a logger nobody listens to (#900).
+    for _plugin, _method, _exc in _registry.aggregate_failures:
+        if _method == "get_cli_commands":
+            import sys as _sys
+
+            print(
+                f"pyrite: plugin '{_plugin}' CLI commands are unavailable: "
+                f"{type(_exc).__name__}: {_exc}",
+                file=_sys.stderr,
+            )
+    for name, command in _cli_commands:
         if hasattr(command, "registered_commands"):
             # It's a Typer app — register as sub-app
             app.add_typer(command, name=name)

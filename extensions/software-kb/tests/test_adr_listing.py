@@ -1,15 +1,22 @@
+import importlib
 import json
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 
-from pyrite_software_kb import cli
 from pyrite_software_kb.plugin import SoftwareKBPlugin
 from rich.console import Console
 
+import pyrite.cli
 from pyrite.storage.database import PyriteDB
 
 KB = "public-kb"
+
+# pyrite.cli must be imported before the extension's CLI module: importing the
+# extension first runs pyrite.cli's plugin loop on a half-initialised module and
+# `sw` drops out of `app` for the whole worker (#900). A plain `from
+# pyrite_software_kb import cli` gets re-sorted above `import pyrite.cli`.
+cli = importlib.import_module("pyrite_software_kb.cli") if pyrite.cli else None
 
 
 def _make_db(tmp_path: Path, entries: list[dict], links: list[dict] | None = None) -> PyriteDB:

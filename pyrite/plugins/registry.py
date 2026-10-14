@@ -231,6 +231,11 @@ class PluginRegistry:
     def __init__(self):
         self._plugins: dict[str, PyritePlugin] = {}
         self._discovered = False
+        # (plugin name, method, exception) for every aggregate call a plugin
+        # raised from. The "pyrite" logger has a NullHandler, so the logger.error
+        # alone is invisible in the CLI (#900); callers that can show the user
+        # (pyrite.cli) read this.
+        self.aggregate_failures: list[tuple[str, str, Exception]] = []
         # Signature-conformance is checked once per plugin (coordinator
         # blocker 3, #379 follow-up: "checked at registration" wasn't true --
         # the filter re-ran, and re-warned, on every call). Keyed by plugin
@@ -498,6 +503,7 @@ class PluginRegistry:
                     method_name,
                     e,
                 )
+                self.aggregate_failures.append((plugin.name, method_name, e))
                 continue
             if not items:
                 continue
