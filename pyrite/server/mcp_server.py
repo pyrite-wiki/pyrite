@@ -1486,7 +1486,8 @@ class PyriteMCPServer:
         return {
             "linked": True,
             "source_id": source_id,
-            "target_id": target_id,
+            # The target as stored, not the raw argument (fix round 2).
+            "target_id": result["target"],
             "relation": relation,
             "resolved": result["resolved"],
             "created": result["created"],

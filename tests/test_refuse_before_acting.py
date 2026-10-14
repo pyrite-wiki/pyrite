@@ -238,31 +238,6 @@ class TestNewEntryCarryingALink:
         assert not list(env["rs"].rglob("three.md"))
 
     @pytest.mark.control(
-        reason="control vs dev, which added these; red against round 0 of this branch (ef43954b)"
-    )
-    @pytest.mark.parametrize(
-        ("links", "expect"),
-        [
-            ("- target: 2024\n  relation: related_to\n", "target: 2024"),
-            ("- target: 3.5\n", "target: 3.5"),
-            ("- target: fresh\n  relation: ''\n", "relation: ''"),
-        ],
-        ids=["int-target", "float-target", "empty-relation"],
-    )
-    def test_add_takes_a_hand_file_that_update_and_sync_take(self, env, links, expect):
-        """Ingest refuses only a link with no target (fix round 1).
-
-        dev added these files, and `update` and `index sync` accept them; the
-        same file gets the same answer from `add` (principle 2). The file is
-        not rewritten in Pyrite's spelling: the int target stays an int.
-        """
-        src = env["tmp"] / "four.md"
-        src.write_text(f"---\ntype: note\ntitle: Four\nlinks:\n{links}---\nbody\n")
-        out = cli("add", str(src), "-k", "rs")
-        assert out.exit_code == 0, out.output
-        assert expect in _file(env, "rs", "four").read_text()
-
-    @pytest.mark.control(
         reason="control: pins the docstring claim; sync already reported it on dev"
     )
     def test_index_sync_reports_a_null_target_link_on_disk_as_malformed(self, env):
@@ -287,6 +262,183 @@ class TestNewEntryCarryingALink:
         )
         out = cli("update", "hello", "-k", "rs", "--title", "Hi")
         assert out.exit_code == 0, out.output
+
+
+#: A file's own `links:` item, as a hand would write it, and whether the index
+#: insert can store it. `add` refuses exactly the shapes `index sync` reports as
+#: malformed (fix round 2): what is refused is what the insert cannot store --
+#: a null target or relation (NOT NULL columns), and a list or mapping in a
+#: field that is part of the row's key or bound as a value. Everything else is
+#: accepted as the file spells it.
+INGEST_SHAPES = [
+    # refused: the index insert fails
+    ("null-target", "- target:\n", False),
+    ("list-target", "- target: [a, b]\n", False),
+    ("map-target", "- target: {a: 1}\n", False),
+    ("null-relation", "- target: fresh\n  relation:\n", False),
+    ("list-relation", "- target: fresh\n  relation: [x]\n", False),
+    ("map-relation", "- target: fresh\n  relation: {a: 1}\n", False),
+    ("list-note", "- target: fresh\n  note: [x]\n", False),
+    ("map-note", "- target: fresh\n  note: {a: 1}\n", False),
+    ("list-kb", "- target: fresh\n  kb: [x]\n", False),
+    ("map-kb", "- target: fresh\n  kb: {a: 1}\n", False),
+    # accepted: the index stores them
+    ("int-target", "- target: 2024\n  relation: related_to\n", True),
+    ("float-target", "- target: 3.5\n", True),
+    ("bool-target", "- target: true\n", True),
+    ("date-target", "- target: 2024-01-01\n", True),
+    ("blank-target", "- target: ''\n", True),
+    ("no-target-key", "- relation: informs\n", True),
+    ("blank-relation", "- target: fresh\n  relation: ''\n", True),
+    ("int-relation", "- target: fresh\n  relation: 5\n", True),
+    ("int-note", "- target: fresh\n  note: 5\n", True),
+    ("null-note", "- target: fresh\n  note:\n", True),
+    ("int-kb", "- target: fresh\n  kb: 5\n", True),
+    ("null-kb", "- target: fresh\n  kb:\n", True),
+    ("bare-string", "- fresh\n", True),
+]
+
+
+class TestIngestMatchesIndexSync:
+    """The same file gets the same answer from `add` and `index sync`."""
+
+    @staticmethod
+    def _text(links: str) -> str:
+        return f"---\nid: four\ntype: note\ntitle: Four\nlinks:\n{links}---\nbody\n"
+
+    @pytest.mark.parametrize(
+        ("links", "storable"),
+        [
+            pytest.param(
+                links,
+                ok,
+                id=name,
+                # dev added every storable shape; these guard rounds 0-1 of
+                # this branch, which refused some of them.
+                marks=[pytest.mark.control(reason="control: dev added this storable shape")]
+                if ok
+                else [],
+            )
+            for name, links, ok in INGEST_SHAPES
+        ],
+    )
+    def test_add_refuses_exactly_what_the_index_cannot_store(self, env, links, storable):
+        src = env["tmp"] / "four.md"
+        src.write_text(self._text(links))
+        notes = env["rs"] / "notes"
+        before = sorted(p.name for p in notes.iterdir())
+        out = cli("add", str(src), "-k", "rs")
+        if storable:
+            assert out.exit_code == 0, out.output
+            # Not rewritten in Pyrite's spelling.
+            assert links.splitlines()[0].strip(" -") in _file(env, "rs", "four").read_text()
+        else:
+            assert out.exit_code == REFUSED, out.output
+            assert _json(out)["error_code"] == "VALIDATION_FAILED"
+            assert sorted(p.name for p in notes.iterdir()) == before
+
+    @pytest.mark.control(reason="control: index sync already reported these on dev")
+    @pytest.mark.parametrize(
+        ("links", "storable"),
+        [pytest.param(links, ok, id=name) for name, links, ok in INGEST_SHAPES],
+    )
+    def test_index_sync_gives_the_same_answer(self, env, links, storable):
+        from pyrite.cli import app
+
+        (env["other"] / "four.md").write_text(self._text(links))
+        out = CliRunner().invoke(app, ["index", "sync"])
+        assert out.exit_code == 0, out.output
+        assert ("Malformed: 1 file(s) skipped" in out.output) is (not storable), out.output
+
+
+class TestReplayAgainstAHandIntTarget:
+    """Replaying a link the file already holds is a no-op, whatever type the
+    target arrives as (fix round 2): the duplicate key compares targets as
+    text, so a hand file's `target: 2024` and a typed "2024" are one link."""
+
+    @pytest.fixture
+    def hand(self, env):
+        from pyrite.cli import app
+
+        path = _file(env, "rs", "fresh")
+        path.write_text(
+            path.read_text().replace(
+                "tags:", "links:\n- target: 2024\n  relation: related_to\ntags:"
+            )
+        )
+        assert CliRunner().invoke(app, ["index", "sync"]).exit_code == 0
+        return path
+
+    @staticmethod
+    def _rows(env) -> int:
+        import sqlite3
+
+        con = sqlite3.connect(env["config"].settings.index_path)
+        try:
+            return con.execute(
+                "select count(*) from link where source_id='fresh' and source_kb='rs'"
+            ).fetchone()[0]
+        finally:
+            con.close()
+
+    def test_bulk_create(self, env, hand):
+        assert self._rows(env) == 1
+        with _unchanged(hand):
+            out = cli("links", "bulk-create", "-", "-k", "rs",
+                      input=json.dumps([{"source": "fresh", "target": "2024"}]))  # fmt: skip
+        assert out.exit_code == 0, out.output
+        assert _json(out)["results"][0]["status"] == "skipped"
+        assert self._rows(env) == 1
+
+    def test_cli_link(self, env, hand):
+        with _unchanged(hand):
+            out = cli("link", "fresh", "2024", "-k", "rs")
+        assert out.exit_code == 0, out.output
+        assert _json(out)["links"][0]["created"] is False
+        assert self._rows(env) == 1
+
+    def test_mcp_kb_link_echoes_the_stored_target(self, env, hand, mcp):
+        with _unchanged(hand):
+            out = mcp("kb_link", {"source_id": "fresh", "source_kb": "rs", "target_id": "2024"})
+        assert out.get("created") is False, out
+        assert out["target_id"] == 2024, out
+        assert self._rows(env) == 1
+
+
+class TestExplicitNonStringTarget:
+    """On a surface where the caller types the link, a target YAML or JSON read
+    as something other than text is refused with a hint to quote it, never
+    converted: YAML 1.1 reads `yes` as true and `010` as 8 (fix round 2)."""
+
+    @pytest.mark.parametrize(
+        "raw",
+        ["yes", "010", "2024", "3.5", "2024-01-01"],
+    )
+    def test_bulk_create(self, env, raw):
+        source = _file(env, "rs", "fresh")
+        spec = f"- source: fresh\n  target: {raw}\n"
+        with _unchanged(source):
+            out = cli("links", "bulk-create", "-", "-k", "rs", input=spec)
+        assert out.exit_code == REFUSED, out.output
+        item = _json(out)["results"][0]
+        assert item["error_code"] == "VALIDATION_FAILED"
+        assert "quote" in item["error"].lower()
+
+    @pytest.mark.parametrize("target", [2024, 3.5, True], ids=["int", "float", "bool"])
+    def test_mcp_kb_link(self, env, mcp, target):
+        source = _file(env, "rs", "fresh")
+        with _unchanged(source):
+            out = mcp(
+                "kb_link",
+                {
+                    "source_id": "fresh",
+                    "source_kb": "rs",
+                    "target_id": target,
+                    "allow_dangling": True,
+                },
+            )
+        assert out.get("error_code") == "VALIDATION_FAILED", out
+        assert "quote" in out["error"].lower()
 
 
 class TestLinkCommandSpec:
