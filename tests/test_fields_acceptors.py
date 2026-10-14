@@ -189,18 +189,20 @@ def test_cli_acceptor_projects_in_every_format(command, fmt, console_width, cli_
 
 @pytest.mark.parametrize("command", CLI_ACCEPTORS)
 @pytest.mark.parametrize("fmt", ["json", "yaml"])
-def test_cli_acceptor_star_means_every_field(command, fmt):
+def test_cli_acceptor_star_means_every_field(command, fmt, cli_config):
     """`--fields '*'` is the whole record on every command that takes `--fields`, not
     the identity pair (the parser used to treat `*` as one unknown name)."""
     args = [*CLI_ACCEPTORS[command], "--fields", "*", "--format", fmt]
-    with _cli_patched():
+    with cli_world(cli_config):
         result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.exception or result.output
     data = json.loads(result.stdout) if fmt == "json" else yaml.safe_load(result.stdout)
     record = data.get("results", data.get("entries", [data]))[0]
+    # The index columns the lean search row drops, on every command: not the identity pair.
+    assert {"id", "kb_name", "entry_type", "title", "status", "summary", "file_path"} <= set(record)
+    assert {"created_at", "indexed_at", "metadata"} <= set(record), sorted(record)
     # Search leaves `body` to --include-body, as it did before `--fields`.
-    expected = set(ROW) - {"body"} if command == "search" else set(ROW)
-    assert set(record) == expected, record
+    assert ("body" in record) == (command != "search")
 
 
 def test_search_files_is_not_projected_and_says_so(tmp_path, console_width):
