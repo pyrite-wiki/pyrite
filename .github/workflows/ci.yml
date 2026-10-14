@@ -402,6 +402,10 @@ jobs:
             cov=(--cov=pyrite --cov-report=xml:coverage-${{ matrix.shard }}.xml --cov-fail-under=0)
             for d in extensions/*/src/*/; do cov+=("--cov=$d"); done
           fi
+          # The committed balance, uncompressed (it is 1.4 MB of JSON, over the
+          # repo's 500 KB file limit). Missing or unreadable: pytest-split splits
+          # evenly by count; no test is dropped.
+          gunzip -c .test_durations.gz > .test_durations 2>/dev/null || rm -f .test_durations
           pytest -n auto -m "not slow and not e2e and not experimental" \
             -W "error::DeprecationWarning:pyrite" \
             -W "error::DeprecationWarning:tests" \
@@ -495,7 +499,7 @@ jobs:
   # equals the unsplit collection's. A required part of `gate`. (2) The shard
   # balance, to the step summary. (3) Diff coverage on a PR, from the three
   # shards' coverage files (advisory, as before), kept for verify-red. (4) The
-  # merged durations as an artifact: committing it to `.test_durations`
+  # merged durations as an artifact: committing it as `.test_durations.gz`
   # refreshes the balance; nothing depends on that for correctness.
   # ===========================================================================
   shard-report:
@@ -525,12 +529,12 @@ jobs:
         run: python scripts/check_shard_union.py balance reports >> "$GITHUB_STEP_SUMMARY" || true
       - name: Merge the durations
         if: ${{ !cancelled() }}
-        run: python scripts/merge_test_durations.py --old .test_durations --out test_durations.merged reports/junit-test-3.12-*/.test_durations || true
+        run: python scripts/merge_test_durations.py --old .test_durations.gz --out test_durations.gz reports/junit-test-3.12-*/.test_durations || true
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
           name: test-durations
-          path: test_durations.merged
+          path: test_durations.gz
           if-no-files-found: ignore
           retention-days: 30
       - uses: actions/download-artifact@v4

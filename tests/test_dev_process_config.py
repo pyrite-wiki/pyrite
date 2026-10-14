@@ -1661,13 +1661,23 @@ class TestTheTestJobIsShardedAndProvesItRanEverything:
         assert "not slow and not e2e and not experimental" in run
         assert "--splits" not in run  # the unsplit collection
 
-    def test_the_durations_file_is_committed_json_and_nothing_requires_it(self):
+    def test_the_durations_file_is_committed_gzip_json_under_the_size_limit(self):
+        import gzip
         import json
 
-        path = REPO / ".test_durations"
-        if path.exists():
-            data = json.loads(path.read_text())
-            assert all(isinstance(v, (int, float)) for v in data.values())
+        path = REPO / ".test_durations.gz"
+        assert path.exists() and path.stat().st_size < 500 * 1024
+        data = json.loads(gzip.open(path, "rt").read())
+        assert data and all(isinstance(v, (int, float)) for v in data.values())
+
+    def test_the_shards_gunzip_it_and_survive_its_absence(self, ci):
+        run = next(
+            str(s["run"])
+            for s in ci["jobs"]["test"]["steps"]
+            if "pytest -n auto" in str(s.get("run", ""))
+        )
+        assert "gunzip -c .test_durations.gz > .test_durations" in run
+        assert "|| rm -f .test_durations" in run, "a bad file must fall back to an even split"
 
     def test_every_nested_job_a_required_check_could_name_is_unchanged(self, ci):
         for job in ("gate", "kb", "frontend", "changes"):

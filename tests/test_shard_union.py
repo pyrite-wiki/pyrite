@@ -105,3 +105,15 @@ class TestMergeDurations:
 
     def test_an_unreadable_old_file_is_an_empty_one(self, tmp_path):
         assert durations._load(tmp_path / "nope.json") == {}
+
+
+class TestGzippedDurations:
+    def test_round_trip_through_gzip(self, tmp_path):
+        out = tmp_path / "d.gz"
+        durations.write(out, {"a": 1.23456, "b": 2.0})
+        assert durations._load(out) == {"a": 1.235, "b": 2.0}
+
+    def test_a_corrupt_gzip_is_an_empty_file(self, tmp_path):
+        bad = tmp_path / "d.gz"
+        bad.write_bytes(b"not gzip")
+        assert durations._load(bad) == {}

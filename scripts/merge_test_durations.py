@@ -9,8 +9,9 @@ writes one file with every fresh timing.
 
     python scripts/merge_test_durations.py --old .test_durations --out merged shard1 shard2 shard3
 
-CI uploads the result as the `test-durations` artifact; committing it as
-`.test_durations` refreshes the balance. Nothing depends on that for
+CI uploads the result as the `test-durations` artifact (`.gz`); committing it as
+`.test_durations.gz` refreshes the balance (the shards gunzip it to
+`.test_durations` before pytest-split reads it). Nothing depends on that for
 correctness: a missing or stale file makes pytest-split split by count or by
 the average, never drop a test.
 """
@@ -18,6 +19,7 @@ the average, never drop a test.
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import sys
 from pathlib import Path
@@ -34,10 +36,21 @@ def merge(old: dict[str, float], shards: list[dict[str, float]]) -> dict[str, fl
 
 def _load(path: Path) -> dict[str, float]:
     try:
-        data = json.loads(path.read_text())
-    except (OSError, ValueError):
+        raw = gzip.open(path, "rt").read() if path.suffix == ".gz" else path.read_text()
+        data = json.loads(raw)
+    except (OSError, ValueError, EOFError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def write(path: Path, durations: dict[str, float]) -> None:
+    """Compact, rounded to the millisecond; `.gz` to stay under the repo's 500 KB file limit."""
+    text = json.dumps({k: round(v, 3) for k, v in durations.items()}, separators=(",", ":")) + "\n"
+    if path.suffix == ".gz":
+        with open(path, "wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as gz:
+            gz.write(text.encode())
+    else:
+        path.write_text(text)
 
 
 def main(argv: list[str]) -> int:
@@ -47,7 +60,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("shards", nargs="*", type=Path)
     args = ap.parse_args(argv[1:])
     merged = merge(_load(args.old), [_load(p) for p in args.shards])
-    args.out.write_text(json.dumps(merged, indent=4) + "\n")
+    write(args.out, merged)
     print(f"{len(merged)} timings")
     return 0
 
