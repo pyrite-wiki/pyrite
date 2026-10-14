@@ -24,34 +24,40 @@
   },
   "AmbiguousEntryError": {
     "cli": {
-      "error": "Entry 'characterization-entry' exists in multiple KBs: kb-a, kb-b",
-      "error_code": "ERROR",
-      "retryable": false
-    },
-    "mcp": {
-      "error": "Entry 'characterization-entry' exists in multiple KBs: kb-a, kb-b",
-      "error_code": "AMBIGUOUS",
-      "retryable": false,
-      "suggestion": "Name one of these KBs explicitly.",
       "candidate_kbs": [
         "kb-a",
         "kb-b"
-      ]
+      ],
+      "error": "Entry 'characterization-entry' exists in multiple KBs: kb-a, kb-b",
+      "error_code": "AMBIGUOUS",
+      "outcome": "error",
+      "retryable": false,
+      "suggestion": "Name one of these KBs: -k on the CLI, kb on REST, kb_name on MCP (or a pyrite://kbs/<kb>/entries/<id> resource)."
+    },
+    "mcp": {
+      "candidate_kbs": [
+        "kb-a",
+        "kb-b"
+      ],
+      "error": "Entry 'characterization-entry' exists in multiple KBs: kb-a, kb-b",
+      "error_code": "AMBIGUOUS",
+      "retryable": false,
+      "suggestion": "Name one of these KBs: -k on the CLI, kb on REST, kb_name on MCP (or a pyrite://kbs/<kb>/entries/<id> resource)."
     },
     "rest": {
-      "status": 409,
       "body": {
         "detail": {
-          "code": "AMBIGUOUS",
-          "message": "Entry 'characterization-entry' exists in multiple KBs: kb-a, kb-b",
-          "retryable": false,
-          "hint": "Name one of these KBs explicitly.",
           "candidate_kbs": [
             "kb-a",
             "kb-b"
-          ]
+          ],
+          "code": "AMBIGUOUS",
+          "hint": "Name one of these KBs: -k on the CLI, kb on REST, kb_name on MCP (or a pyrite://kbs/<kb>/entries/<id> resource).",
+          "message": "Entry 'characterization-entry' exists in multiple KBs: kb-a, kb-b",
+          "retryable": false
         }
-      }
+      },
+      "status": 409
     }
   },
   "BrandingInvalidError": {

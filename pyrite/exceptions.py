@@ -114,14 +114,45 @@ class EntryNotFoundError(PyriteError):
 
 
 class AmbiguousEntryError(PyriteError):
-    """An unqualified entry ID names more than one readable knowledge base."""
+    """An entry id given without a KB names more than one KB the caller can read (#528).
+
+    Never resolved by config order: the caller names the KB. ``candidate_kbs``
+    lists only KBs the caller can read -- the raise site counts matches over
+    the readable set, so a private KB holding the same id is neither listed
+    nor a cause of the refusal (ADR-0037 section 4). The list is public by
+    construction; every transport copies it into its body through
+    ``refusal_fields`` (REST ``server/errors.py``, MCP ``_refusal``, the CLI's
+    ``utils/errors.py``).
+    """
 
     error_code = "AMBIGUOUS"
+    suggestion = (
+        "Name one of these KBs: -k on the CLI, kb on REST, kb_name on MCP "
+        "(or a pyrite://kbs/<kb>/entries/<id> resource)."
+    )
 
     def __init__(self, entry_id: str, candidate_kbs: list[str]):
-        self.candidate_kbs = candidate_kbs
-        self.suggestion = "Name one of these KBs explicitly."
+        self.entry_id = entry_id
+        self.candidate_kbs = list(candidate_kbs)
         super().__init__(f"Entry '{entry_id}' exists in multiple KBs: {', '.join(candidate_kbs)}")
+
+
+#: Attributes a refusal carries beside its code, message and suggestion, each
+#: public by construction. Every transport copies those an exception has into
+#: its error body under the same key, through ``refusal_fields`` -- one list,
+#: so a class that adds one (#777's unreadable candidates) is mapped on REST,
+#: MCP and the CLI by naming it here.
+REFUSAL_FIELDS: tuple[str, ...] = ("candidate_kbs",)
+
+
+def refusal_fields(exc: BaseException) -> dict:
+    """The ``REFUSAL_FIELDS`` ``exc`` carries, keyed by name (absent ones left out)."""
+    out = {}
+    for name in REFUSAL_FIELDS:
+        value = getattr(exc, name, None)
+        if value is not None:
+            out[name] = value
+    return out
 
 
 class KBNotFoundError(PyriteError):

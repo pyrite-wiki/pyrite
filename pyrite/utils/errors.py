@@ -30,7 +30,7 @@ from typing import Any
 import typer
 from typer.core import TyperGroup
 
-from ..exceptions import PyriteError, public_text
+from ..exceptions import PyriteError, public_text, refusal_fields
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +151,7 @@ def cli_error_from(
     cli_error(
         message,
         output_format,
-        extra=extra,
+        extra={**refusal_fields(exc), **(extra or {})},
         error_code=error_code or exc.error_code,
         suggestion=getattr(exc, "suggestion", None),
         retryable=bool(getattr(exc, "retryable", False)),
@@ -181,6 +181,9 @@ def _refusal_payload(exc: BaseException) -> dict[str, Any]:
     code = _CLI_CODE_OVERRIDES.get(exc.error_code, exc.error_code)
     return {
         "outcome": REFUSED,
+        # A refusal's public extras (AMBIGUOUS's candidate_kbs, #528), from
+        # the one list REST and MCP map too.
+        **refusal_fields(exc),
         **build_error(
             public_text(exc, log=logger),
             code,

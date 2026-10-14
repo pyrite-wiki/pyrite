@@ -31,6 +31,7 @@ from ..exceptions import (
     StorageError,
     ValidationError,
     public_text,
+    refusal_fields,
 )
 from ..services.access_policy import ROLES, named_kb
 from ..services.body_bounds import (
@@ -254,9 +255,9 @@ def _refusal(exc: PyriteError, *, already_logged: bool = False) -> dict:
         retryable=retryable,
         legacy_error_code=legacy_code,
     )
-    candidate_kbs = getattr(exc, "candidate_kbs", None)
-    if candidate_kbs is not None:
-        err["candidate_kbs"] = candidate_kbs
+    # A refusal's public extras (AMBIGUOUS's candidate_kbs, #528), mapped
+    # once for every class from the one list in pyrite.exceptions.
+    err.update(refusal_fields(exc))
     declared = getattr(exc, "declared_types", None)
     if declared is not None:
         err["declared_types"] = declared
