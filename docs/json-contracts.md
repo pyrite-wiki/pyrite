@@ -355,6 +355,23 @@ when no link is broken, and `1` with `"outcome": "nothing"` when any is, with
 the findings still in the document (`missing_targets`, `total_references`,
 `targets`, each target with its `references`).
 
+## Link discovery: what is left out
+
+`pyrite links discover`, `pyrite links batch-suggest`, MCP `kb_discover_neighbors`
+and `kb_batch_suggest`, and REST `GET /api/links/discover-neighbors` and
+`GET /api/links/batch-suggest` leave out candidate entries whose body and
+summary are both blank (nothing but space, tab, CR or LF; a summary without a
+body is kept) (#200). The exclusion is a predicate in the search query, so
+`limit` results come back when that many qualify. It applies to candidates
+only: an entry with no body still gets suggestions. `kb_search` and
+`pyrite search` hide nothing.
+
+| Surface | Switch |
+|---|---|
+| CLI | `--include-empty`; the JSON document carries `"include_empty": true\|false` |
+| MCP | `include_empty` (boolean, default `false`); a value that is not a boolean answers `INVALID_PARAMETER` |
+| REST | `include_empty` query parameter (default `false`) |
+
 ## Repo endpoint errors
 
 `/api/repos/*` is not `PyriteError`-based (it is out of scope for ADR-0037

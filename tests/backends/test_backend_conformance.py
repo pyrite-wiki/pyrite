@@ -217,6 +217,65 @@ class TestTags:
 # =========================================================================
 
 
+class TestNonEmptyFilter:
+    """``non_empty`` (#200): leave out entries with no body and no summary.
+
+    Blank means nothing but space, tab, CR or LF (or NULL). The default
+    returns them; a summary without a body is not blank.
+    """
+
+    BLANK_BODIES = {
+        "empty": "",
+        "null": None,
+        "spaces": "   ",
+        "mixed": " \t\r\n \n\t",
+    }
+
+    def _populate(self, backend):
+        for name, body in self.BLANK_BODIES.items():
+            backend.upsert_entry(
+                _make_entry(f"blank-{name}", title="zebra crossing", body=body, summary="")
+            )
+        backend.upsert_entry(
+            _make_entry("blank-summary-ws", title="zebra crossing", body="", summary=" \t\r\n ")
+        )
+        backend.upsert_entry(
+            _make_entry("summary-only", title="zebra crossing", body="", summary="a real summary")
+        )
+        backend.upsert_entry(_make_entry("with-body", title="zebra crossing", body="some words"))
+
+    def test_keyword_leg_excludes_blank_and_keeps_the_rest(self, backend):
+        self._populate(backend)
+        got = {r["id"] for r in backend.search("zebra", non_empty=True)}
+        assert got == {"summary-only", "with-body"}
+
+    def test_keyword_leg_default_returns_them(self, backend):
+        self._populate(backend)
+        got = {r["id"] for r in backend.search("zebra")}
+        assert {f"blank-{n}" for n in self.BLANK_BODIES} | {"blank-summary-ws"} <= got
+
+    def test_limit_counts_only_qualifying_rows(self, backend):
+        self._populate(backend)
+        got = backend.search("zebra", non_empty=True, limit=2)
+        assert {r["id"] for r in got} == {"summary-only", "with-body"}
+
+    def test_semantic_leg(self, backend):
+        if not getattr(backend, "vec_available", False):
+            pytest.skip("vector search not available on this backend")
+        self._populate(backend)
+        vec = [0.05] * 384
+        for eid in [f"blank-{n}" for n in self.BLANK_BODIES] + [
+            "blank-summary-ws",
+            "summary-only",
+            "with-body",
+        ]:
+            backend.upsert_embedding(eid, "test", vec)
+        got = {r["id"] for r in backend.search_semantic(vec, limit=20, non_empty=True)}
+        assert got == {"summary-only", "with-body"}
+        everything = {r["id"] for r in backend.search_semantic(vec, limit=20)}
+        assert "blank-spaces" in everything
+
+
 class TestFullTextSearch:
     def test_search_basic(self, backend):
         backend.upsert_entry(_make_entry("e1", title="quantum computing advances"))

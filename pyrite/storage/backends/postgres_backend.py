@@ -32,13 +32,6 @@ logger = logging.getLogger(__name__)
 # at revision 006, so an existing Postgres database cannot take a column added
 # since. Said once per process, from the one place the backend is built, so the
 # CLI, the REST server and the MCP server all get it without a per-command change.
-# ``non_empty`` (#200), the same predicate as SQLite's: a body or a summary
-# with a character other than space, tab, CR or LF.
-NON_EMPTY_SQL = (
-    " AND (btrim(COALESCE(e.body, ''), chr(32) || chr(9) || chr(10) || chr(13)) != ''"
-    " OR btrim(COALESCE(e.summary, ''), chr(32) || chr(9) || chr(10) || chr(13)) != '')"
-)
-
 EXPERIMENTAL_ACK_ENV = "PYRITE_POSTGRES_EXPERIMENTAL_ACK"
 _EXPERIMENTAL_NOTICE = (
     "The Postgres backend is experimental in Pyrite 0.25.x: an existing Postgres "
@@ -48,6 +41,13 @@ _EXPERIMENTAL_NOTICE = (
 )
 _experimental_notice_shown = False
 _experimental_notice_lock = threading.Lock()
+
+# ``non_empty`` (#200), the same predicate as SQLite's: a body or a summary
+# with a character other than space, tab, CR or LF.
+NON_EMPTY_SQL = (
+    " AND (btrim(COALESCE(e.body, ''), chr(32) || chr(9) || chr(10) || chr(13)) != ''"
+    " OR btrim(COALESCE(e.summary, ''), chr(32) || chr(9) || chr(10) || chr(13)) != '')"
+)
 
 
 def _logging_reaches_stderr() -> bool:

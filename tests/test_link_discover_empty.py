@@ -266,6 +266,32 @@ class TestMCP:
         assert EMPTIES <= _ids(out["pairs"], "target_id")
 
     @pytest.mark.parametrize("tool", ["kb_discover_neighbors", "kb_batch_suggest"])
+    def test_a_string_false_is_not_read_as_true(self, env, tool):
+        """`bool("false")` is True. The handler reads the argument as a boolean,
+        whatever client or route (the SDK's schema check included) reached it."""
+        from pyrite.server.mcp_server import PyriteMCPServer
+
+        server = PyriteMCPServer(config=env["config"], tier="read")
+        try:
+            if tool == "kb_discover_neighbors":
+                call = server._kb_discover_neighbors
+                args = {"entry_id": "palantir-source", "kb_name": "kb-a", "target_kb": "kb-b"}
+                rows_key, id_key = "discoveries", "id"
+            else:
+                call = server._kb_batch_suggest
+                args = {"source_kb": "kb-a", "target_kb": "kb-b", "limit_per_entry": 10}
+                rows_key, id_key = "pairs", "target_id"
+            args["mode"] = "keyword"
+            out = call(args | {"include_empty": "false"})
+            assert not (_ids(out[rows_key], id_key) & EMPTIES), out
+            out = call(args | {"include_empty": "true"})
+            assert EMPTIES <= _ids(out[rows_key], id_key)
+            out = call(args | {"include_empty": "maybe"})
+            assert out["error_code"] == "INVALID_PARAMETER"
+        finally:
+            server.close()
+
+    @pytest.mark.parametrize("tool", ["kb_discover_neighbors", "kb_batch_suggest"])
     def test_description_and_schema_name_the_switch(self, tool):
         spec = READ_TOOLS[tool]
         assert "no body and no summary" in spec["description"]

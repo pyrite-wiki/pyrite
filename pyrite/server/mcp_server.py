@@ -180,6 +180,20 @@ def _safe_message(exc: Exception) -> str:
     return str(exc)
 
 
+def _boolean_arg(args: dict[str, Any], name: str, default: bool = False) -> bool | None:
+    """A boolean tool argument; ``None`` when it is neither a bool nor "true"/"false".
+
+    A client that sends the string "false" must not get the truthy reading
+    ``bool("false")`` gives (#200).
+    """
+    value = args.get(name, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+        return value.strip().lower() == "true"
+    return None
+
+
 def _error(
     code: str,
     message: str,
@@ -1627,6 +1641,10 @@ class PyriteMCPServer:
         if not source_kb or not target_kb:
             return _error("MISSING_PARAMETER", "source_kb and target_kb are required")
 
+        include_empty = _boolean_arg(args, "include_empty")
+        if include_empty is None:
+            return _error("INVALID_PARAMETER", "include_empty must be true or false")
+
         svc = self.link_svc
         pairs = svc.batch_suggest(
             source_kb=source_kb,
@@ -1635,7 +1653,7 @@ class PyriteMCPServer:
             mode=args.get("mode", "keyword"),
             exclude_linked=args.get("exclude_linked", True),
             readable_kbs=readable_kbs,
-            include_empty=bool(args.get("include_empty", False)),
+            include_empty=include_empty,
         )
 
         return {
@@ -1654,6 +1672,10 @@ class PyriteMCPServer:
         if not entry_id or not kb_name:
             return _error("MISSING_PARAMETER", "entry_id and kb_name are required")
 
+        include_empty = _boolean_arg(args, "include_empty")
+        if include_empty is None:
+            return _error("INVALID_PARAMETER", "include_empty must be true or false")
+
         svc = self.link_svc
         candidates = svc.discover_neighbors(
             entry_id=entry_id,
@@ -1663,7 +1685,7 @@ class PyriteMCPServer:
             mode=args.get("mode", "hybrid"),
             exclude_linked=args.get("exclude_linked", True),
             readable_kbs=readable_kbs,
-            include_empty=bool(args.get("include_empty", False)),
+            include_empty=include_empty,
         )
 
         return {
