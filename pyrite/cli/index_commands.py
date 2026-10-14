@@ -12,6 +12,7 @@ from rich.table import Table
 
 from ..utils.errors import PARTIAL_EXIT, cli_error, exit_unless_whole
 from .context import cli_db_context, get_config_and_db
+from .output import validate_output_format
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +274,10 @@ def index_sync(
 @index_app.command("stats")
 def index_stats(
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Show index statistics."""
@@ -421,7 +425,10 @@ def index_embed(
 @index_app.command("health")
 def index_health(
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
     kb_name: str = typer.Option(
         None, "--kb", "-k", help="Only check this KB (default: every configured KB)"

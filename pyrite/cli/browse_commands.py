@@ -51,7 +51,10 @@ def register_browse_commands(app: typer.Typer) -> None:
         offset: int = typer.Option(0, "--offset", help="Pagination offset"),
         fields: str = typer.Option(None, "--fields", help="Comma-separated fields to return"),
         output_format: str = typer.Option(
-            "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+            "json",
+            "--format",
+            callback=validate_output_format,
+            help="Output format: json, rich, markdown, csv, yaml",
         ),
     ):
         """Browse entries with filters and pagination."""
@@ -119,7 +122,10 @@ def register_browse_commands(app: typer.Typer) -> None:
         ),
         fields: str = typer.Option(None, "--fields", help="Comma-separated fields to return"),
         output_format: str = typer.Option(
-            "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+            "json",
+            "--format",
+            callback=validate_output_format,
+            help="Output format: json, rich, markdown, csv, yaml",
         ),
     ):
         """Fetch multiple entries in one call."""
@@ -196,7 +202,10 @@ def register_browse_commands(app: typer.Typer) -> None:
             help="full (default) or brief. brief omits the write-side schema blocks.",
         ),
         output_format: str = typer.Option(
-            "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+            "json",
+            "--format",
+            callback=validate_output_format,
+            help="Output format: json, rich, markdown, csv, yaml",
         ),
     ):
         """One-shot KB orientation summary — types, tags, recent changes, and schema.
@@ -343,7 +352,10 @@ def register_browse_commands(app: typer.Typer) -> None:
         ),
         fields: str = typer.Option(None, "--fields", help="Comma-separated fields to return"),
         output_format: str = typer.Option(
-            "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+            "json",
+            "--format",
+            callback=validate_output_format,
+            help="Output format: json, rich, markdown, csv, yaml",
         ),
     ):
         """Show recently changed entries."""
@@ -408,7 +420,10 @@ def register_browse_commands(app: typer.Typer) -> None:
             "desc", "--sort", "-s", help="Sort order: asc or desc (default: desc)"
         ),
         output_format: str = typer.Option(
-            "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+            "json",
+            "--format",
+            callback=validate_output_format,
+            help="Output format: json, rich, markdown, csv, yaml",
         ),
     ):
         """Query timeline events."""

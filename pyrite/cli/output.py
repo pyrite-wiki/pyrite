@@ -21,6 +21,23 @@ def validate_output_format(value: str) -> str:
     raise typer.BadParameter(f"unknown format {value!r}; choose one of: {', '.join(available)}")
 
 
+def output_format_choice(*allowed: str):
+    """An option callback for a command that renders only some formats (#547).
+
+    ``validate_output_format`` accepts everything the registry can serialize; a
+    command that handles ``json`` and ``rich`` alone (or ``text`` and ``json``)
+    must not accept ``yaml`` and quietly print something else. Same refusal, same
+    message, same exit 2, before the command body starts.
+    """
+
+    def check(value: str) -> str:
+        if value in allowed:
+            return value
+        raise typer.BadParameter(f"unknown format {value!r}; choose one of: {', '.join(allowed)}")
+
+    return check
+
+
 #: Where the shared option leaves the format for the root group. ``ctx.meta`` is
 #: one dict for the whole context chain, so the root reads what the leaf parsed.
 FORMAT_META_KEY = "pyrite.output_format"

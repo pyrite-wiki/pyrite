@@ -31,6 +31,7 @@ from ..exceptions import ValidationError
 from ..services import id_pin_service
 from ..utils.errors import cli_error
 from .context import cli_context
+from .output import output_format_choice
 
 OUTSIDE_CONTRACT = 3
 
@@ -65,7 +66,9 @@ def _print_collisions(collisions: list[dict]) -> None:
 @ids_app.command("missing")
 def ids_missing(
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
-    output_format: str = typer.Option("json", "--format", help=_FORMAT_HELP),
+    output_format: str = typer.Option(
+        "json", "--format", callback=output_format_choice("text", "json"), help=_FORMAT_HELP
+    ),
 ):
     """List the files with no `id:`, with the id each has today.
 
@@ -116,7 +119,9 @@ def ids_pin(
         "--rename",
         help="<path>=<id>: in a collision, give this file a new id (repeatable)",
     ),
-    output_format: str = typer.Option("json", "--format", help=_FORMAT_HELP),
+    output_format: str = typer.Option(
+        "json", "--format", callback=output_format_choice("text", "json"), help=_FORMAT_HELP
+    ),
 ):
     """Add one line, `id: <the id it has today>`, to each file with no id.
 

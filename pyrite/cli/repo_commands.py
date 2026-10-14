@@ -10,6 +10,7 @@ from rich.table import Table
 
 from ..config import load_config
 from ..utils.errors import cli_error
+from .output import validate_output_format
 
 repo_collab_app = typer.Typer(help="Repository collaboration commands")
 console = Console()
@@ -158,7 +159,10 @@ def repo_unsubscribe(
 def repo_status(
     name: str = typer.Argument(..., help="Repository name"),
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Show detailed status for a repository."""
@@ -210,7 +214,10 @@ def repo_status(
 @repo_collab_app.command("list")
 def repo_list_extended(
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """List all repositories with sync status."""

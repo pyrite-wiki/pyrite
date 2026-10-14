@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .cli.context import open_index_db
+from .cli.output import validate_output_format
 from .cli.search_commands import register_search_command
 from .config import CONFIG_FILE, load_config
 from .exceptions import PyriteError
@@ -77,7 +78,10 @@ def get_entry(
     entry_id: str = typer.Argument(..., help="Entry ID"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB to search in"),
     output_format: str = typer.Option(
-        "rich", "--format", help="Output format: rich, json, markdown, csv, yaml"
+        "rich",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: rich, json, markdown, csv, yaml",
     ),
 ):
     """Get a specific entry by ID."""
@@ -130,7 +134,10 @@ def get_entry(
 @app.command("list")
 def list_kbs(
     output_format: str = typer.Option(
-        "rich", "--format", help="Output format: rich, json, markdown, csv, yaml"
+        "rich",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: rich, json, markdown, csv, yaml",
     ),
 ):
     """List all knowledge bases."""
@@ -185,7 +192,10 @@ def timeline(
     min_importance: int = typer.Option(1, "--min-importance", help="Minimum importance (1-10)"),
     limit: int = typer.Option(50, "--limit", "-n", help="Max results"),
     output_format: str = typer.Option(
-        "rich", "--format", help="Output format: rich, json, markdown, csv, yaml"
+        "rich",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: rich, json, markdown, csv, yaml",
     ),
 ):
     """Query timeline events."""
@@ -240,7 +250,10 @@ def tags_cmd(
     prefix: str = typer.Option(None, "--prefix", "-p", help="Filter tags by prefix"),
     limit: int = typer.Option(100, "--limit", "-n", help="Max tags to show"),
     output_format: str = typer.Option(
-        "rich", "--format", help="Output format: rich, json, markdown, csv, yaml"
+        "rich",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: rich, json, markdown, csv, yaml",
     ),
 ):
     """List tags with counts."""
@@ -286,7 +299,10 @@ def backlinks_cmd(
     entry_id: str = typer.Argument(..., help="Entry ID to find backlinks for"),
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
     output_format: str = typer.Option(
-        "rich", "--format", help="Output format: rich, json, markdown, csv, yaml"
+        "rich",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: rich, json, markdown, csv, yaml",
     ),
 ):
     """Find entries that link to a given entry."""

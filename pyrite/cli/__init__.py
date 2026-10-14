@@ -52,6 +52,7 @@ from .init_command import init_kb
 from .kb_commands import kb_app
 from .link_commands import links_app
 from .mcp_setup_command import MCP_CHECK_OK, mcp_setup, mcp_tool_counts
+from .output import output_format_choice, validate_output_format
 from .protocol_commands import protocol_app
 from .qa_commands import qa_app
 from .repo_commands import repo_collab_app
@@ -212,7 +213,12 @@ def _format_output(data: dict, fmt: str) -> str | None:
 @app.command("ci")
 def ci_command(
     kb: str | None = typer.Option(None, "--kb", help="Validate specific KB"),
-    output_format: str = typer.Option("text", "--format", help="Output format: text or json"),
+    output_format: str = typer.Option(
+        "text",
+        "--format",
+        callback=output_format_choice("text", "json"),
+        help="Output format: text or json",
+    ),
     severity: str = typer.Option(
         "warning", "--severity", help="Minimum severity to fail on: error or warning"
     ),
@@ -384,7 +390,10 @@ def ci_command(
 @app.command("list")
 def list_kbs(
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """List all knowledge bases."""
@@ -604,7 +613,10 @@ def repo_remove(
 @auth_app.command("status")
 def auth_status(
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Check GitHub authentication status."""
@@ -626,7 +638,10 @@ def auth_status(
 @auth_app.command("whoami")
 def auth_whoami(
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Show current user identity."""

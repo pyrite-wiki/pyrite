@@ -177,7 +177,10 @@ def kb_discover(
     search_path: Path | None = typer.Argument(None, help="Path to search for KBs"),
     add: bool = typer.Option(False, "--add", "-a", help="Add discovered KBs to registry"),
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Auto-discover knowledge bases by finding kb.yaml files."""
@@ -247,7 +250,10 @@ def kb_discover(
 def kb_validate(
     name: str | None = typer.Argument(None, help="Name of KB to validate (all if omitted)"),
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Validate knowledge base configuration and contents.
@@ -449,7 +455,10 @@ def kb_create(
 def kb_reindex(
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Reindex a specific knowledge base."""
@@ -484,7 +493,10 @@ def kb_reindex(
 def kb_health(
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Check health of a knowledge base."""
@@ -603,7 +615,9 @@ kb_app.add_typer(schema_app, name="schema")
 @schema_app.command("show")
 def schema_show(
     kb_name: str = typer.Argument(..., help="Knowledge base name"),
-    output_format: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    output_format: str = typer.Option(
+        "json", "--format", "-f", callback=validate_output_format, help="Output format: json, rich"
+    ),
 ):
     """Show the current schema for a KB."""
     from ..services.schema_service import SchemaService
@@ -657,7 +671,9 @@ def schema_add_type(
     required: str = typer.Option("", "--required", "-r", help="Comma-separated required fields"),
     optional: str = typer.Option("", "--optional", "-o", help="Comma-separated optional fields"),
     subdirectory: str = typer.Option("", "--subdirectory", "-s", help="Subdirectory for files"),
-    output_format: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    output_format: str = typer.Option(
+        "json", "--format", "-f", callback=validate_output_format, help="Output format: json, rich"
+    ),
 ):
     """Add a type definition to a KB's schema."""
     from ..services.schema_service import SchemaService
@@ -696,7 +712,9 @@ def schema_add_type(
 def schema_remove_type(
     kb_name: str = typer.Argument(..., help="Knowledge base name"),
     type_name: str = typer.Option(..., "--type", "-t", help="Type name to remove"),
-    output_format: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    output_format: str = typer.Option(
+        "json", "--format", "-f", callback=validate_output_format, help="Output format: json, rich"
+    ),
 ):
     """Remove a type definition from a KB's schema."""
     from ..services.schema_service import SchemaService
@@ -725,7 +743,9 @@ def schema_remove_type(
 def schema_set(
     kb_name: str = typer.Argument(..., help="Knowledge base name"),
     schema_file: Path = typer.Option(..., "--schema-file", "-s", help="YAML file with schema"),
-    output_format: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    output_format: str = typer.Option(
+        "json", "--format", "-f", callback=validate_output_format, help="Output format: json, rich"
+    ),
 ):
     """Replace schema from a YAML file."""
     from ..services.schema_service import SchemaService
