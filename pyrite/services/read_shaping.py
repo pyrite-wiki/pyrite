@@ -55,3 +55,60 @@ def project_fields(
         return record
     keys = dict.fromkeys((*required, *fields))
     return {key: record[key] for key in keys if key in record}
+
+
+# --- The CLI search row (#54) -------------------------------------------------
+
+#: Every key a `pyrite search` / `pyrite-read search` result row can carry: the
+#: index columns, the body (only with `--include-body` or when asked for), and
+#: what the mode measured. `PYRITE_SEARCH_FIELDS` is checked against this, so a
+#: misspelt name is refused instead of silently dropping a column.
+SEARCH_ROW_FIELDS: tuple[str, ...] = (
+    "id", "kb_name", "entry_type", "title", "body", "summary", "file_path", "date",
+    "importance", "status", "location", "lifecycle", "metadata", "created_at",
+    "updated_at", "indexed_at", "created_by", "modified_by", "snippet",
+    "rank", "rrf_score", "similarity", "distance", "legs",
+)  # fmt: skip
+
+#: What a caller needs to choose the next read: which entry (`id` + `kb_name`,
+#: since an id alone is ambiguous across KBs), what it is, why it matched, and
+#: the score key the mode produced. `project_fields` skips a key a row lacks,
+#: so a keyword row carries `rank`, a semantic row `similarity`, a hybrid row
+#: `rrf_score` as well. `legs` (hybrid: which legs returned the row) is how an
+#: `rrf_score` is read and #668 made it part of the row's contract. `distance`
+#: (backend-specific, leaving the response) is not here.
+SEARCH_DEFAULT_FIELDS: tuple[str, ...] = (
+    "id", "kb_name", "entry_type", "title", "snippet", "rank", "rrf_score", "similarity",
+    "legs",
+)  # fmt: skip
+
+SEARCH_FIELDS_ENV = "PYRITE_SEARCH_FIELDS"
+
+
+class SearchFieldsError(ValueError):
+    """`PYRITE_SEARCH_FIELDS` names a field a search row cannot carry."""
+
+
+def resolve_search_fields(
+    fields: str | None, env_value: str | None = None, *, include_body: bool = False
+) -> list[str] | None:
+    """The field list for a search row, or ``None`` for the whole row.
+
+    ``fields`` (``--fields``) wins over ``env_value`` (``PYRITE_SEARCH_FIELDS``),
+    which wins over the lean default. ``*`` anywhere in either means the whole
+    row. A name in the variable that no row carries raises
+    :class:`SearchFieldsError`; ``--fields`` keeps its old leniency (an unknown
+    name is skipped), so existing scripts are not broken by this change.
+    """
+    named = parse_fields_param(fields)
+    if named is None:
+        named = parse_fields_param(env_value)
+        unknown = [f for f in named or () if f != "*" and f not in SEARCH_ROW_FIELDS]
+        if unknown:
+            raise SearchFieldsError(
+                f"{SEARCH_FIELDS_ENV} names no search-row field: {', '.join(unknown)}. "
+                f"Known: {', '.join(SEARCH_ROW_FIELDS)}, or * for the whole row."
+            )
+    if named is None:
+        named = list(SEARCH_DEFAULT_FIELDS) + (["body"] if include_body else [])
+    return None if "*" in named else named

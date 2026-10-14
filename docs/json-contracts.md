@@ -429,13 +429,34 @@ Source of truth: `pyrite/server/endpoints/repos.py` (`_relativize_path`,
 {
   "query": "the search string",
   "count": 3,
-  "results": [ { "...": "entry dict", "similarity": 0.412, "legs": ["keyword", "semantic"] } ],
+  "results": [ { "id": "e1", "kb_name": "notes", "entry_type": "note", "title": "...", "snippet": "...", "similarity": 0.412 } ],
   "match": "weak",
   "match_basis": "keyword: nothing matched; semantic: best similarity 0.41, below 0.50 but 0.19 above the next 9 results",
   "legs_run": ["keyword", "semantic"],
   "keyword_match": "none"
 }
 ```
+
+### What a result row carries: the lean default (CLI only)
+
+`pyrite search` and `pyrite-read search` return, per result, `id`, `kb_name`,
+`entry_type`, `title`, `snippet` and the score key the mode produced: `rank`
+(keyword), `similarity` (semantic), `rank`, `rrf_score` and `similarity`
+(hybrid; a row only one leg returned has only that leg's) and, in hybrid, the
+per-result `legs`. `distance` is not in the default. The page-level keys below
+(`match`, `match_basis`, `legs_run`, `keyword_match`, `warnings`) are in every
+response whatever the rows carry. A key that is not in the row is absent, not
+`null`: reading it is a `KeyError`, never a wrong answer.
+
+To get more: `--fields '*'` (or `PYRITE_SEARCH_FIELDS='*'`) is the whole row
+as before #54, a named list (`--fields title,date,status`) is those fields
+after `id` and `kb_name`, and `PYRITE_SEARCH_FIELDS` sets the same list for
+every search in a shell. `--fields` wins over the variable. A variable that
+names a field no row carries is refused with exit 2 (`--fields` still skips an
+unknown name). `--include-body` adds `body` to the default row. In CSV the
+columns are the default row's keys that the page has; Markdown keeps its list.
+MCP `kb_search` and REST `GET /api/search` are unchanged: they return the
+whole row.
 
 ### What the page is worth: `match`, `match_basis`, `keyword_match`, `similarity`
 

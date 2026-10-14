@@ -5,6 +5,7 @@ Commands: search (with file-based fallback)
 """
 
 import logging
+import os
 
 import typer
 from rich.console import Console
@@ -13,7 +14,14 @@ from rich.table import Table
 
 from ..config import load_config
 from ..exceptions import QuerySyntaxError, QueryTooLongError
-from ..services.read_shaping import parse_fields_param, project_fields
+from ..services.read_shaping import (
+    IDENTITY_FIELDS,
+    SEARCH_FIELDS_ENV,
+    SearchFieldsError,
+    parse_fields_param,
+    project_fields,
+    resolve_search_fields,
+)
 from ..storage.repository import KBRepository
 from ..utils.errors import exit_unless_whole
 from .context import get_config_with_registered_kbs
@@ -94,7 +102,13 @@ def register_search_command(app: typer.Typer):
             False, "--debug", help="Print the search trace (mode, fallback reason, latency)"
         ),
         fields: str = typer.Option(
-            None, "--fields", help="Comma-separated fields to return (e.g. id,title,tags)"
+            None,
+            "--fields",
+            help=(
+                "Comma-separated fields per result (e.g. id,title,date); '*' for "
+                "every field. Default: id, kb_name, entry_type, title, snippet and "
+                "the score. Overrides PYRITE_SEARCH_FIELDS."
+            ),
         ),
         output_format: str = typer.Option(
             "json",
@@ -123,6 +137,12 @@ def register_search_command(app: typer.Typer):
         as the NOT operator, not a literal exclude — matching Bannon
         entries, not excluding them).
 
+        Each result carries id, kb_name, entry_type, title, snippet and the
+        score the mode produced (rank, rrf_score, similarity); `--fields '*'`
+        (or PYRITE_SEARCH_FIELDS='*') returns every field, a named list
+        returns those. `--fields` wins over the variable. The page-level keys
+        below are in every response whatever the row carries.
+
         JSON output says what the page is worth: "match" (strong, weak or
         none) with "match_basis", and "similarity" on each result of the
         semantic leg. `match: none` means the KB does not contain an answer;
@@ -135,6 +155,16 @@ def register_search_command(app: typer.Typer):
         whatever the verdict. The contract is stated once, in the docstring of
         SearchService.search.
         """
+        asked = bool(
+            parse_fields_param(fields) or parse_fields_param(os.environ.get(SEARCH_FIELDS_ENV))
+        )
+        try:
+            row_fields = resolve_search_fields(
+                fields, os.environ.get(SEARCH_FIELDS_ENV), include_body=include_body
+            )
+        except SearchFieldsError as e:
+            raise typer.BadParameter(str(e)) from None
+
         config = load_config()
         if kb_name:
             config = get_config_with_registered_kbs(config, name=kb_name)
@@ -245,7 +275,10 @@ def register_search_command(app: typer.Typer):
                     f"relaxed={search_trace.get('relaxed')}"
                 )
 
-            fields_list = parse_fields_param(fields)
+            # `fields_list` is what the caller asked for (--fields or the variable):
+            # it also shapes csv/markdown/rich. The lean default only trims the
+            # rows, so markdown keeps its list and the verdict keeps its keys.
+            fields_list = row_fields if asked else None
             if not results:
                 if output_format != "rich":
                     # Machine formats get a valid empty-result payload, not a
@@ -263,8 +296,8 @@ def register_search_command(app: typer.Typer):
                 return
 
             # Apply field projection. One rule for every read surface (#193).
-            if fields_list:
-                results = [project_fields(record, fields_list) for record in results]
+            if row_fields:
+                results = [project_fields(record, row_fields) for record in results]
             elif not include_body:
                 for r in results:
                     r.pop("body", None)
@@ -273,7 +306,16 @@ def register_search_command(app: typer.Typer):
                 from ..formats import format_response
 
                 resp_data = {"query": query, "count": len(results), "results": results, **response}
-                content, _ = format_response(resp_data, output_format, fields=fields_list)
+                table_fields = fields_list
+                if table_fields is None and output_format == "csv" and row_fields:
+                    # The columns the lean row has: a score column no row of this
+                    # mode carries would be an empty column that looks like data.
+                    table_fields = [
+                        f
+                        for f in row_fields
+                        if f not in IDENTITY_FIELDS and any(f in r for r in results)
+                    ]
+                content, _ = format_response(resp_data, output_format, fields=table_fields)
                 typer.echo(content)
                 return
 
@@ -287,7 +329,9 @@ def register_search_command(app: typer.Typer):
             table.add_column("KB", style="cyan", width=12)
             table.add_column("Type", style="green", width=10)
             table.add_column("Title", width=40)
-            table.add_column("Date", width=10)
+            show_date = any(r.get("date") for r in results)
+            if show_date:
+                table.add_column("Date", width=10)
             table.add_column("Snippet", width=50)
 
             for r in results:
@@ -296,13 +340,8 @@ def register_search_command(app: typer.Typer):
                 snippet = (raw_snippet[:97] + "...") if len(raw_snippet) > 100 else raw_snippet
                 raw_title = r.get("title", "") or ""
                 title = (raw_title[:37] + "...") if len(raw_title) > 40 else raw_title
-                table.add_row(
-                    r.get("kb_name", ""),
-                    r.get("entry_type", ""),
-                    title,
-                    date,
-                    snippet,
-                )
+                cells = [r.get("kb_name", ""), r.get("entry_type", ""), title]
+                table.add_row(*cells, *([date] if show_date else []), snippet)
 
             console.print(table)
 

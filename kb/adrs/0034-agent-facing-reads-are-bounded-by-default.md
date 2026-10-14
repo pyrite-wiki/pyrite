@@ -157,6 +157,20 @@ shipped defaults 8,000 / 20,000 / 40,000 tunable by the environment variables
 in rule 4. The five implementation themes (`adr-0034-i` … `adr-0034-v` in the
 backlog) are unblocked, sequenced as the serial queue says.
 
+## Amendment, proposed 2026-10-14 (the maintainer's to accept)
+
+Issue #54, decided by the maintainer on 2026-09-30: the CLI's `search` command
+(and `pyrite-read search`) now returns a **lean row per result** by default
+(`id`, `kb_name`, `entry_type`, `title`, `snippet` and the score key), with
+`--fields '*'` or `PYRITE_SEARCH_FIELDS='*'` for the whole row. Rule 5's
+statement that the CLI's default output stays complete "because scripts depend
+on it" no longer holds for the *field set* of search results; it still holds
+for bodies (`--body-limit` stays off by default). The reasoning that kept the
+body whole does not carry over: a dropped body can look complete when it was
+cut, while a dropped field is absent from the row, so reading it fails loudly
+instead of answering wrongly. Page-level verdict keys are unaffected. MCP and
+REST search keep the whole row.
+
 ## Open question
 
 1. Whether the web UI should itself request bounded bodies for read-only

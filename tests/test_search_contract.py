@@ -809,3 +809,209 @@ class TestResponseShape:
             "probe", "test-events", mode="semantic", readable_kbs=UNSCOPED
         )
         assert [(c["id"], c["score"]) for c in found] == [("event-1", 0.42)]
+
+
+# ---------------------------------------------------------------------------
+# A result row carries what a caller needs to choose the next read (#54)
+# ---------------------------------------------------------------------------
+
+#: The row before #54: every index column. The page-level verdict is not a row.
+_OLD_ROW_KEYS = {
+    "id", "kb_name", "entry_type", "title", "summary", "file_path", "date",
+    "importance", "status", "location", "lifecycle", "metadata", "created_at",
+    "updated_at", "indexed_at", "created_by", "modified_by", "snippet", "rank",
+}  # fmt: skip
+_LEAN_KEYWORD = {"id", "kb_name", "entry_type", "title", "snippet", "rank"}
+_VERDICT_KEYS = {"query", "count", "match", "match_basis", "legs_run", "keyword_match"}
+
+
+@pytest.fixture(params=["pyrite", "pyrite-read"])
+def run_search(request, indexed_test_env, monkeypatch):
+    """Run `search` through the real CLI entry point over the seeded KB.
+
+    Both entry points register the same command; each is entered, not assumed.
+    """
+    monkeypatch.delenv("PYRITE_SEARCH_FIELDS", raising=False)
+    if request.param == "pyrite":
+        from pyrite.cli import app
+    else:
+        from pyrite.read_cli import app
+
+    def run(*args, env=None):
+        config = indexed_test_env["config"]
+        with (
+            patch("pyrite.cli.context.load_config", return_value=config),
+            patch("pyrite.cli.search_commands.load_config", return_value=config),
+        ):
+            return CliRunner().invoke(app, ["search", *args], env=env)
+
+    return run
+
+
+@pytest.mark.cli
+class TestLeanSearchRows:
+    def test_the_default_row_is_lean_and_the_verdict_stays(self, run_search):
+        out = run_search("immigration", "--format", "json")
+        assert out.exit_code == 0, out.output
+        payload = json.loads(out.stdout)
+        assert {set(r) == _LEAN_KEYWORD for r in payload["results"]} == {True}
+        assert payload["results"], "the seed must match"
+        assert _VERDICT_KEYS <= set(payload)
+        assert "indexed_at" not in out.stdout
+
+    def test_star_gives_the_whole_row_back(self, run_search):
+        out = run_search("immigration", "--format", "json", "--fields", "*")
+        assert out.exit_code == 0, out.output
+        assert {frozenset(r) for r in json.loads(out.stdout)["results"]} == {
+            frozenset(_OLD_ROW_KEYS)
+        }
+
+    @pytest.mark.control(
+        reason="--fields already projected before #54; this pins that it keeps doing so"
+    )
+    def test_a_named_list_still_projects(self, run_search):
+        out = run_search("immigration", "--format", "json", "--fields", "title,indexed_at")
+        row = json.loads(out.stdout)["results"][0]
+        assert list(row) == ["id", "kb_name", "title", "indexed_at"]
+
+    def test_the_variable_sets_the_fields(self, run_search):
+        out = run_search(
+            "immigration", "--format", "json", env={"PYRITE_SEARCH_FIELDS": "title,date"}
+        )
+        assert out.exit_code == 0, out.output
+        row = json.loads(out.stdout)["results"][0]
+        assert list(row) == ["id", "kb_name", "title", "date"]
+
+    @pytest.mark.control(
+        reason="before #54 the whole row was the default, so '*' trivially matched; pins it once the default is lean"
+    )
+    def test_the_variable_can_say_star(self, run_search):
+        out = run_search("immigration", "--format", "json", env={"PYRITE_SEARCH_FIELDS": "*"})
+        assert set(json.loads(out.stdout)["results"][0]) == _OLD_ROW_KEYS
+
+    @pytest.mark.control(
+        reason="before #54 the variable was ignored, so --fields trivially won; pins precedence once it is read"
+    )
+    def test_fields_wins_over_the_variable(self, run_search):
+        out = run_search(
+            "immigration",
+            "--format",
+            "json",
+            "--fields",
+            "status",
+            env={"PYRITE_SEARCH_FIELDS": "title,date"},
+        )
+        assert list(json.loads(out.stdout)["results"][0]) == ["id", "kb_name", "status"]
+
+    def test_a_blank_variable_is_unset(self, run_search):
+        out = run_search("immigration", "--format", "json", env={"PYRITE_SEARCH_FIELDS": " "})
+        assert set(json.loads(out.stdout)["results"][0]) == _LEAN_KEYWORD
+
+    def test_a_variable_naming_no_field_is_refused_with_exit_2(self, run_search):
+        out = run_search(
+            "immigration", "--format", "json", env={"PYRITE_SEARCH_FIELDS": "title,nosuchfield"}
+        )
+        assert out.exit_code == 2, out.output
+        assert "nosuchfield" in out.output and "PYRITE_SEARCH_FIELDS" in out.output
+        assert not out.stdout.lstrip().startswith("{"), "no half-answer on stdout"
+
+    @pytest.mark.control(
+        reason="before #54 the variable did not exist, so nothing refused; pins that --fields still wins over a bad one"
+    )
+    def test_a_refused_variable_does_not_stop_an_explicit_fields(self, run_search):
+        """`--fields` wins over the variable, so a bad variable is never read."""
+        out = run_search(
+            "immigration",
+            "--format",
+            "json",
+            "--fields",
+            "title",
+            env={"PYRITE_SEARCH_FIELDS": "nosuchfield"},
+        )
+        assert out.exit_code == 0, out.output
+
+    def test_include_body_adds_the_body_to_the_lean_row(self, run_search):
+        out = run_search("immigration", "--format", "json", "--include-body")
+        row = json.loads(out.stdout)["results"][0]
+        assert set(row) == _LEAN_KEYWORD | {"body"}
+
+    def test_yaml_rows_are_lean_and_keep_the_verdict(self, run_search):
+        import yaml
+
+        payload = yaml.safe_load(run_search("immigration", "--format", "yaml").stdout)
+        assert {frozenset(r) for r in payload["results"]} == {frozenset(_LEAN_KEYWORD)}
+        assert _VERDICT_KEYS <= set(payload)
+
+    def test_csv_columns_are_the_lean_set(self, run_search):
+        header = run_search("immigration", "--format", "csv").stdout.splitlines()[0]
+        assert header == "id,kb_name,entry_type,title,snippet,rank"
+
+    @pytest.mark.control(
+        reason="Markdown's list already carried only title, kb and snippet; pins that the lean default does not turn it into a table"
+    )
+    def test_markdown_keeps_its_list_shape(self, run_search):
+        text = run_search("immigration", "--format", "markdown").stdout
+        assert text.startswith("# Search: immigration (3 results)")
+        assert "- **Test Event 0** (test-events)" in text
+        assert "| ---" not in text
+
+    @pytest.mark.control(reason="Rich printed before and must still print once date is absent")
+    def test_rich_default_prints_without_the_columns_the_row_no_longer_has(self, run_search):
+        out = run_search("immigration", "--format", "rich")
+        assert out.exit_code == 0, out.output
+        assert "Test Event 0" in out.stdout
+
+    @pytest.mark.control(
+        reason="the verdict keys were already on an empty page (#847); pins that the lean row does not drop them"
+    )
+    def test_an_empty_result_keeps_the_verdict(self, run_search):
+        payload = json.loads(run_search("zzznosuchterm", "--format", "json").stdout)
+        assert payload["results"] == [] and _VERDICT_KEYS <= set(payload)
+
+
+@pytest.mark.cli
+class TestLeanRowsPerMode:
+    """The score keys differ per mode; the lean row carries the ones the mode made."""
+
+    @pytest.fixture
+    def vector_leg(self, monkeypatch):
+        from pyrite.services.embedding_service import EmbeddingService
+
+        row = {
+            "id": "2025-01-11--test-event-1",
+            "kb_name": "test-events",
+            "entry_type": "event",
+            "title": "Test Event 1",
+            "snippet": "s",
+            "file_path": "/x.md",
+            "indexed_at": "t",
+            "distance": 1.0,
+            "similarity": 0.42,
+        }
+        monkeypatch.setattr(EmbeddingService, "has_embeddings", lambda self, *a, **k: True)
+        monkeypatch.setattr(EmbeddingService, "search_similar", lambda self, q, **kw: [dict(row)])
+
+    def test_semantic_rows_carry_similarity(self, run_search, vector_leg):
+        out = run_search("immigration", "--format", "json", "--mode", "semantic")
+        assert out.exit_code == 0, out.output
+        assert {frozenset(r) for r in json.loads(out.stdout)["results"]} == {
+            frozenset({"id", "kb_name", "entry_type", "title", "snippet", "similarity"})
+        }
+
+    def test_hybrid_rows_carry_every_score_they_have(self, run_search, vector_leg):
+        out = run_search("immigration", "--format", "json", "--mode", "hybrid")
+        assert out.exit_code == 0, out.output
+        payload = json.loads(out.stdout)
+        both = [r for r in payload["results"] if r["id"] == "2025-01-11--test-event-1"][0]
+        assert set(both) == _LEAN_KEYWORD | {"rrf_score", "similarity", "legs"}
+        assert both["legs"] == ["keyword", "semantic"] and "distance" not in both
+        assert "legs_run" in payload and "match" in payload
+
+
+def test_the_rows_fields_are_a_known_set():
+    """`PYRITE_SEARCH_FIELDS` is checked against this: it is the keys a row can carry."""
+    from pyrite.services.read_shaping import SEARCH_ROW_FIELDS
+
+    assert _OLD_ROW_KEYS | {"body", "similarity", "distance", "rrf_score", "legs"} == set(
+        SEARCH_ROW_FIELDS
+    )

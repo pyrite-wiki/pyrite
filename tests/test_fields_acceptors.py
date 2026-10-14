@@ -51,6 +51,9 @@ ACCEPTORS = {
     ),
     # MCP tools shape their records with the shared rule but return JSON only.
     ("pyrite/server/mcp_server.py", "_project_fields"): ("mcp", None),
+    # The CLI search row's field list (`--fields` > PYRITE_SEARCH_FIELDS > the lean
+    # default); `search` above applies it, tests/test_search_contract.py pins it.
+    ("pyrite/services/read_shaping.py", "resolve_search_fields"): ("helper", None),
 }
 #: Not acceptors, by design, and pinned below: `GET /api/entries` takes no `fields`.
 
