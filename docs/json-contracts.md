@@ -457,7 +457,7 @@ as before #54 (`body` still needs `--include-body`), a named list
 #54 it gave the whole row). Names are case-sensitive and the variable is as
 lenient as the flag: a name that no returned row carries and no search row is
 known to have (`Title`, a typo) is skipped, and a warning naming it goes to
-stderr. A name a row merely lacks (`status` on an entry with none) is silent.
+stderr. A name a row merely lacks (`status` on an entry with none) is silent, and an empty result page gives no warning.
 `--fields '*'` means every field on every CLI command that takes `--fields`
 (`search`, `get`, `list-entries`, `recent`, `batch-read`); on REST and MCP `*`
 is not special. `search --files` ignores both and says so on stderr.

@@ -73,8 +73,9 @@ def project_fields(
 
 #: Every key a `pyrite search` / `pyrite-read search` result row can carry: the
 #: index columns, the body (only with `--include-body` or when asked for), and
-#: what the mode measured. `PYRITE_SEARCH_FIELDS` is checked against this, so a
-#: misspelt name is refused instead of silently dropping a column.
+#: what the mode measured. It only silences the unknown-name warning: a name in
+#: this list that every row on the page lacks (`status`) is not warned about.
+#: Nothing is refused.
 SEARCH_ROW_FIELDS: tuple[str, ...] = (
     "id", "kb_name", "entry_type", "title", "body", "summary", "file_path", "date",
     "importance", "status", "location", "lifecycle", "metadata", "created_at",

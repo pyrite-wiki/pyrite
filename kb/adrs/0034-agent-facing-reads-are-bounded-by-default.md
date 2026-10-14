@@ -169,7 +169,7 @@ for bodies (`--body-limit` stays off by default). The reasoning that kept the
 body whole does not carry over: a dropped body can look complete when it was
 cut, while a dropped field is absent from the row, so reading it fails loudly
 instead of answering wrongly. Page-level verdict keys are unaffected. MCP and
-REST search keep the whole row.
+REST search keep the whole row. On the CLI, `*` means every field on `search`, `get`, `list-entries`, `recent` and `batch-read` (search still needs `--include-body` for the body); field names are lenient and case-sensitive, a name no result carries warns on stderr, and an empty result page gives no warning.
 
 ## Open question
 
