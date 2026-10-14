@@ -117,7 +117,10 @@ repos:
         # a venv missing a dev dependency, and blocked the push to main. It
         # fails closed (any lookup failure or ambiguous answer runs the
         # suite), asks once with a short timeout, and PYRITE_PUSH_FORCE=1
-        # still forces a run. The entry below is unchanged by it: the
+        # still forces a run, as do PYRITE_PUSH_FULL=1 and
+        # PYRITE_PUSH_EXPERIMENTAL=1: a green `gate` says CI accepted the
+        # commit, not that everything ran (a pull-request gate is one
+        # interpreter and passes with `test` skipped). The entry below is unchanged by it: the
         # decision is the script's, so `--preflight` can report it.
         #
         # Refuse rather than fall back. This used to end `|| PY=python`, and in

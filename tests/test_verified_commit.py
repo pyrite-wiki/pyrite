@@ -27,7 +27,13 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import verified_commit as vc  # noqa: E402
 
-from tests.verified_commit_cases import CASES, answer  # noqa: E402
+from tests.verified_commit_cases import (  # noqa: E402
+    CASES,
+    GITHUB_REMOTES,
+    NOT_GITHUB_REMOTES,
+    VERIFIED,
+    answer,
+)
 from tests.verified_commit_cases import run_of as _run_of  # noqa: E402
 
 SHA = "a" * 40
@@ -146,6 +152,32 @@ class TestVerified:
 
     def test_the_default_required_check_is_gate(self):
         assert vc.REQUIRED_CHECKS == ("gate",)
+
+
+class TestWhichRepository:
+    @pytest.mark.parametrize("url", NOT_GITHUB_REMOTES)
+    def test_a_url_that_only_contains_the_host_is_not_github(self, url):
+        assert vc.remote_slug(url) is None
+
+    @pytest.mark.parametrize("url", GITHUB_REMOTES)
+    def test_every_spelling_of_github_is_understood(self, url):
+        assert vc.remote_slug(url) == "acme/widget"
+
+    @pytest.mark.parametrize("url", ["", "   ", "origin", None, 7])
+    def test_nothing_is_not_a_repository(self, url):
+        assert vc.remote_slug(url) is None
+
+
+class TestEveryAnswerThatVerifies:
+    @pytest.mark.parametrize("case", sorted(VERIFIED))
+    def test_it_is_verified(self, case):
+        assert vc.verdict_for(SHA, SLUG, as_runner(VERIFIED[case])).verified, case
+
+    def test_an_unknown_verdict_says_what_could_not_be_read(self):
+        verdict = vc.verdict_for(
+            SHA, SLUG, as_runner(CASES["the run does not say which app made it"][0])
+        )
+        assert verdict.state == vc.UNKNOWN and "which app" in verdict.detail
 
 
 class TestOneRequest:

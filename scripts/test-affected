@@ -87,9 +87,21 @@ A verified tip is not tested again (under the hook only)
 
   ``--force`` / PYRITE_PUSH_FORCE=1 runs anyway and asks nothing.
   ``--experimental`` / PYRITE_PUSH_EXPERIMENTAL=1 runs too: `gate` does not
-  need the experimental job. The full suite (PYRITE_PUSH_FULL=1) is covered,
-  as it is by a "full" stamp. A verified skip writes no stamp. Outside the
-  hook (no PRE_COMMIT_TO_REF) nothing is asked.
+  need the experimental job. ``--full`` / PYRITE_PUSH_FULL=1 runs too (below).
+  A verified skip writes no stamp. Outside the hook (no PRE_COMMIT_TO_REF)
+  nothing is asked.
+
+  What a verified tip is evidence of, exactly: every job `gate` needs ended
+  in success or was skipped by CI's change classifier, in every workflow run
+  that tested this SHA. For a commit the merge queue tested that is the full
+  three-Python matrix. For a pull-request run it is one interpreter, and a
+  job the classifier judged irrelevant (`test` on a docs-only change) did not
+  run at all. It says CI accepted this commit; it does not say any particular
+  selection of tests ran. So an explicit request for the full suite
+  (``--full`` / PYRITE_PUSH_FULL=1) is honoured and runs. A selection that is
+  "full" only because of what the pushed range touches (the release range
+  always touches pyproject.toml) is still skipped: that is the case the skip
+  exists for.
 
   ``--preflight`` answers with the same decision and runs only a collection:
   ``preflight: skip: ...``, ``preflight: would run: ...`` (the selection
@@ -1241,10 +1253,14 @@ def main(argv: list[str] | None = None) -> int:
             stamp = looked_up and find_stamp(stamps, looked_up, version, needed)
             if stamp:
                 skip = _skip_line(looked_up, stamp)
-        if skip is None and not forced and to_ref and not with_experimental:
-            # `gate` ran the whole suite on this commit, so it covers any
-            # selection -- but not the experimental tests, which it does not
-            # need. Asked after the stamp: a stamp costs no request.
+        asked_for_all = opts.full or env_full or with_experimental
+        if skip is None and not forced and to_ref and not asked_for_all:
+            # A green `gate` says CI accepted this commit -- not that a given
+            # selection ran: a pull-request `gate` is one interpreter and
+            # passes with `test` skipped, and no `gate` needs the experimental
+            # job. So an explicit request for more (PYRITE_PUSH_FULL,
+            # PYRITE_PUSH_EXPERIMENTAL) is honoured and runs. Asked after the
+            # stamp: a stamp costs no request.
             verdict = pushed_tip_verdict(root, to_ref)
             if verdict is not None and verdict.verified:
                 skip = _verified_line(verdict)

@@ -32,6 +32,8 @@ import pytest
 
 from tests.verified_commit_cases import (
     CASES,
+    GITHUB_REMOTES,
+    NOT_GITHUB_REMOTES,
     FAKE_GH,
     FAKE_VENV_PYTHON,
     VERIFIED,
@@ -206,12 +208,23 @@ class TestAVerifiedTipSkips:
         _hook(repo)
         assert _gh_calls() == [f"api repos/acme/widget/commits/{sha}/check-runs?per_page=100"]
 
-    def test_the_full_suite_request_is_covered_too(self, repo):
-        """`gate` ran the whole suite; PYRITE_PUSH_FULL asks for no more than
-        that, as a `full` pass stamp covers it."""
+    def test_a_range_that_selects_the_full_suite_is_still_skipped(self, repo):
+        """The release range always touches pyproject.toml, which selects the
+        full suite. That is the push the skip exists for."""
+        (repo / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+        _git(repo, "add", "pyproject.toml")
+        _git(repo, "commit", "-qm", "C: touches test configuration")
+        _git(repo, "push", "-q", "origin", "dev:refs/heads/dev")
         _gh_answers(green(_sha(repo)))
-        out = _hook(repo, PYRITE_PUSH_FULL="1")
-        assert out.returncode == 0 and _pytest_calls() == []
+        out = _hook(repo)
+        assert out.returncode == 0 and _pytest_calls() == [], out.stderr
+
+    @pytest.mark.parametrize("url", GITHUB_REMOTES)
+    def test_every_spelling_of_a_github_remote_is_understood(self, repo, url):
+        _gh_answers(green(_sha(repo)))
+        out = _hook(repo, url=url)
+        assert out.returncode == 0 and _pytest_calls() == [], out.stderr
+        assert "repos/acme/widget/" in _gh_calls()[0]
 
     @NEVER
     def test_a_verified_skip_writes_no_stamp(self, repo):
@@ -280,7 +293,7 @@ class TestFailClosed:
     @NEVER
     @pytest.mark.parametrize(
         "url",
-        [None, "", "/srv/git/widget.git", "https://gitlab.com/acme/widget.git", "origin"],
+        [None, "", "/srv/git/widget.git", "origin", *NOT_GITHUB_REMOTES],
     )
     def test_a_remote_that_is_not_a_github_repository_is_never_asked_about(self, repo, url):
         _gh_answers(green(_sha(repo)))
@@ -390,6 +403,21 @@ class TestNoNewBypass:
         _gh_answers(green(_sha(repo)))
         _hook(repo, "--force")
         assert len(_pytest_calls()) == 1 and _gh_calls() == []
+
+    @NEVER
+    @pytest.mark.parametrize("how", ["PYRITE_PUSH_FULL", "--full"])
+    def test_an_explicit_request_for_the_full_suite_runs(self, repo, how):
+        """A green `gate` says CI accepted the commit, not that the full suite
+        ran: a pull-request `gate` is one interpreter and passes with `test`
+        skipped. Asking for everything gets everything."""
+        _gh_answers(green(_sha(repo)))
+        if how.startswith("--"):
+            _hook(repo, how)
+        else:
+            _hook(repo, **{how: "1"})
+        (call,) = _pytest_calls()
+        assert "tests/ extensions/" in call
+        assert _gh_calls() == []
 
     @NEVER
     def test_the_experimental_scope_is_not_covered_by_gate(self, repo):

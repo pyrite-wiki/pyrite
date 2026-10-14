@@ -25,8 +25,21 @@ T1 = "2026-10-13T10:00:00Z"
 T2 = "2026-10-13T11:00:00Z"
 
 
+ACTIONS = {"slug": "github-actions"}
+
+
 def run_of(sha: str, name="gate", status="completed", conclusion="success", **more) -> dict:
-    return {"name": name, "status": status, "conclusion": conclusion, "head_sha": sha, **more}
+    """One check run as this repository's own CI reports it: from the GitHub
+    Actions app, in a check suite (one per workflow run; reruns share it)."""
+    return {
+        "name": name,
+        "status": status,
+        "conclusion": conclusion,
+        "head_sha": sha,
+        "app": ACTIONS,
+        "check_suite": {"id": 1},
+        **more,
+    }
 
 
 def answer(*runs: dict, total: object = "len") -> str:
@@ -53,7 +66,20 @@ def _fail(code: int, stderr: str, stdout: str = "") -> Callable[[str], dict]:
 
 
 def _bare(sha: str, **fields) -> dict:
-    return {"name": "gate", "status": "completed", "conclusion": "success", **fields}
+    run = run_of(sha, **fields)
+    del run["head_sha"]
+    return run
+
+
+def _without(sha: str, *drop: str, **fields) -> dict:
+    run = run_of(sha, **fields)
+    for key in drop:
+        del run[key]
+    return run
+
+
+OTHER_APP = {"slug": "some-ci-bot"}
+SUITE2 = {"id": 2}
 
 
 # name -> (behaviour, the state `verdict_for` must return). The strings are
@@ -107,7 +133,7 @@ CASES: dict[str, tuple[Callable[[str], dict], str]] = {
         "unknown",
     ),
     "a check run with no name": (
-        _out(lambda sha: answer({"status": "completed", "conclusion": "success", "head_sha": sha})),
+        _out(lambda sha: answer(_without(sha, "name"))),
         "unknown",
     ),
     "total_count is absent (maybe one page of several)": (
@@ -156,7 +182,7 @@ CASES: dict[str, tuple[Callable[[str], dict], str]] = {
         "pending",
     ),
     "the check has no status": (
-        _out(lambda sha: answer({"name": "gate", "head_sha": sha, "conclusion": "success"})),
+        _out(lambda sha: answer(_without(sha, "status"))),
         "pending",
     ),
     "the check failed": (_out(lambda sha: answer(run_of(sha, conclusion="failure"))), "failed"),
@@ -206,7 +232,7 @@ CASES: dict[str, tuple[Callable[[str], dict], str]] = {
     ),
     "an undated red run beside a dated green one": (
         _out(lambda sha: answer(run_of(sha, started_at=T1), run_of(sha, conclusion="failure"))),
-        "failed",
+        "unknown",
     ),
     "an undated queued rerun beside a dated green one": (
         _out(
@@ -214,9 +240,123 @@ CASES: dict[str, tuple[Callable[[str], dict], str]] = {
                 run_of(sha, started_at=T1), run_of(sha, status="queued", conclusion=None)
             )
         ),
-        "pending",
+        "unknown",
+    ),
+    # --- fix round 1: four inputs the first version read as green ---------------
+    # 1. `gate` is `if: always()`: a skipped gate means the workflow changed.
+    "the required check was skipped": (
+        _out(lambda sha: answer(run_of(sha, conclusion="skipped"))),
+        "failed",
+    ),
+    # 2. the name alone is not the check: it must be exact, and from Actions.
+    "only a matrix-style leg of the name exists": (
+        _out(lambda sha: answer(run_of(sha, "gate (docs)"))),
+        "missing",
+    ),
+    "the only green run of the name is another app's": (
+        _out(lambda sha: answer(run_of(sha, app=OTHER_APP))),
+        "missing",
+    ),
+    "a newer green run from another app beside a red one from CI": (
+        _out(
+            lambda sha: answer(
+                run_of(sha, conclusion="failure", started_at=T1),
+                run_of(sha, app=OTHER_APP, started_at=T2),
+            )
+        ),
+        "failed",
+    ),
+    "a newer green run from another workflow beside a red one": (
+        _out(
+            lambda sha: answer(
+                run_of(sha, conclusion="failure", started_at=T1),
+                run_of(sha, check_suite=SUITE2, started_at=T2),
+            )
+        ),
+        "failed",
+    ),
+    "the run does not say which app made it": (
+        _out(lambda sha: answer(_without(sha, "app"))),
+        "unknown",
+    ),
+    "the app is not an object": (
+        _out(lambda sha: answer(run_of(sha, app="github-actions"))),
+        "unknown",
+    ),
+    "the app has no slug": (_out(lambda sha: answer(run_of(sha, app={"id": 15368}))), "unknown"),
+    "the run does not say which workflow run it belongs to": (
+        _out(lambda sha: answer(_without(sha, "check_suite"))),
+        "unknown",
+    ),
+    "the check suite has no id": (
+        _out(lambda sha: answer(run_of(sha, check_suite={}))),
+        "unknown",
+    ),
+    # 3. "newest" needs a timestamp that can be trusted.
+    "a red run with only a later completed_at beside a dated green one": (
+        _out(
+            lambda sha: answer(
+                run_of(sha, started_at=T1, completed_at=T1),
+                run_of(sha, conclusion="failure", completed_at=T2),
+            )
+        ),
+        "unknown",
+    ),
+    "a timestamp that is a number": (
+        _out(
+            lambda sha: answer(
+                run_of(sha, started_at=T2), run_of(sha, conclusion="failure", started_at=99)
+            )
+        ),
+        "unknown",
+    ),
+    "a timestamp with an offset instead of Z": (
+        _out(
+            lambda sha: answer(
+                run_of(sha, started_at=T1),
+                run_of(sha, conclusion="failure", started_at="2026-10-13T09:30:00-02:00"),
+            )
+        ),
+        "unknown",
+    ),
+    "a timestamp that is not a time": (
+        _out(
+            lambda sha: answer(
+                run_of(sha, started_at=T2), run_of(sha, conclusion="failure", started_at="soon")
+            )
+        ),
+        "unknown",
+    ),
+    "red runs disagree with nothing to order them": (
+        _out(lambda sha: answer(run_of(sha), run_of(sha, conclusion="failure"))),
+        "unknown",
     ),
 }
+
+# 4. Remote URLs that only look like this GitHub repository. None may be read
+# as `acme/widget`; each surface asserts no request is made for them.
+NOT_GITHUB_REMOTES = [
+    "https://notgithub.com/acme/widget.git",
+    "https://example.org/mirror/github.com/acme/widget",
+    "https://github.com.evil.example/acme/widget.git",
+    "https://github.com@evil.example/acme/widget.git",
+    "git@notgithub.com:acme/widget.git",
+    "ssh://git@evil.example/github.com/acme/widget.git",
+    "http://github.com/acme/widget.git",
+    "/srv/git/github.com/acme/widget.git",
+    "file:///srv/github.com/acme/widget.git",
+    "https://github.com/acme/widget/extra",
+    "https://github.com/acme",
+    "https://gitlab.com/acme/widget.git",
+]
+GITHUB_REMOTES = [
+    "https://github.com/acme/widget",
+    "https://github.com/acme/widget.git",
+    "https://github.com/acme/widget/",
+    "https://token@github.com/acme/widget.git",
+    "git@github.com:acme/widget.git",
+    "ssh://git@github.com/acme/widget.git",
+]
 
 # Answers that DO verify, so each surface can show its skip is reachable and
 # the cases above are red for the reason they name.
@@ -228,6 +368,14 @@ VERIFIED: dict[str, Callable[[str], dict]] = {
         )
     ),
     "two green runs (merge queue and push)": _out(lambda sha: answer(run_of(sha), run_of(sha))),
+    "the merge queue and the push to dev, two workflow runs, both green": _out(
+        lambda sha: answer(
+            run_of(sha, started_at=T1), run_of(sha, check_suite=SUITE2, started_at=T2)
+        )
+    ),
+    "green runs that agree need no order": _out(
+        lambda sha: answer(run_of(sha), run_of(sha, started_at="garbage"))
+    ),
     "an advisory check is red": _out(
         lambda sha: answer(run_of(sha), run_of(sha, "e2e", conclusion="failure"))
     ),

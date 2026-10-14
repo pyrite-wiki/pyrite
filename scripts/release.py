@@ -26,7 +26,10 @@ change the world come after every check:
                        labelled `release-blocker`
   b. ci             -- the commit is VERIFIED: the REQUIRED checks for that
                        exact SHA concluded `success` (default `gate`;
-                       `--require-check` to change it). The definition is
+                       `--require-check` to change it; exact names, runs
+                       from the GitHub Actions app only, `skipped` is not
+                       success, and every workflow run that ran the check
+                       on this SHA must be green). The definition is
                        scripts/verified_commit.py, shared with the pre-push
                        hook. Checks not named are advisory and never block --
                        the breadth jobs that run after the merge gate must not
@@ -1051,7 +1054,7 @@ def step_ci(ctx: Context) -> None:
                 c.get("name")
                 for c in checks
                 if not any(_matches(c.get("name", ""), r) for r in required)
-                and c.get("conclusion") not in ("success", "skipped", None)
+                and c.get("conclusion") not in ("success", "skipped", None)  # advisory only
             ]
             if other:
                 ctx.runner.note(
@@ -1141,7 +1144,11 @@ def step_push_rehearsal(ctx: Context) -> None:
             'Create it (`uv venv && uv pip install -e ".[all,dev]"`) and run this again.'
         )
     script = ctx.repo / "scripts" / "test-affected"
-    url = _check_output(["git", "-C", str(ctx.repo), "remote", "get-url", "origin"]).strip()
+    # --push: the hook is handed the URL git pushes to, which is `pushurl`
+    # when one is set.
+    url = _check_output(
+        ["git", "-C", str(ctx.repo), "remote", "get-url", "--push", "origin"]
+    ).strip()
     env = {
         **os.environ,
         # What pre-commit hands the hook for `git push origin <sha>:refs/heads/main`.
@@ -1676,7 +1683,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--require-check",
         action="append",
         metavar="NAME",
-        help="a check that must be green before the tag, by name. Repeatable. "
+        help="a check that must be green before the tag, by its exact name "
+        "(a matrix leg is `test (3.12)`, not `test`). Repeatable. "
         f"Default: {', '.join(DEFAULT_REQUIRED_CHECKS)}. Checks NOT named here are "
         "advisory and never block the release -- that is deliberate for the breadth "
         "jobs that run after the merge gate.",

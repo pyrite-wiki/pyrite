@@ -31,7 +31,13 @@ from pathlib import Path
 
 import pytest
 
-from tests.verified_commit_cases import CASES, FAKE_GH, FAKE_VENV_PYTHON, green
+from tests.verified_commit_cases import (
+    CASES,
+    FAKE_GH,
+    FAKE_VENV_PYTHON,
+    NOT_GITHUB_REMOTES,
+    green,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
@@ -110,8 +116,8 @@ def _isolated(tmp_path, monkeypatch):
     real = release._check_output
 
     def with_a_github_origin(cmd, **kwargs):
-        if cmd[-3:] == ["remote", "get-url", "origin"]:
-            return GITHUB_URL + "\n"
+        if "get-url" in cmd and cmd[-1] == "origin":
+            return os.environ.get("FAKE_ORIGIN_URL", GITHUB_URL) + "\n"
         return real(cmd, **kwargs)
 
     monkeypatch.setattr(release, "_check_output", with_a_github_origin)
@@ -301,6 +307,20 @@ class TestEachPreconditionIsNamed:
         err = capsys.readouterr().err
         assert code == 1 and planned == [], f"{case}: reported ready"
         assert "FAIL at ci: " in err and head(checkout)[:12] in err, err
+
+    @pytest.mark.parametrize("url", NOT_GITHUB_REMOTES)
+    def test_an_origin_that_only_looks_like_github_is_named(
+        self, checkout, capsys, monkeypatch, url
+    ):
+        """`https://notgithub.com/acme/widget.git` was read as acme/widget on
+        GitHub, and the release then asked GitHub about a commit it was about
+        to push somewhere else."""
+        monkeypatch.setenv("FAKE_ORIGIN_URL", url)
+        code, planned = rehearse(checkout)
+        err = capsys.readouterr().err
+        assert code == 1 and planned == []
+        assert "is not a GitHub repository URL" in err
+        assert not any("check-runs" in call for call in gh_calls())
 
     def test_a_venv_that_cannot_import_the_suite_is_named(self, checkout, capsys, monkeypatch):
         """0.25.7: the hook's venv had no `hypothesis`. With the commit

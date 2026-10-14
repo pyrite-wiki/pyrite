@@ -72,11 +72,22 @@ def repo(tmp_path):
 FAKE_SHA = "abc1234def5678" + "0" * 26
 
 
+def _as_ci_reports(run: dict) -> dict:
+    """A run as this repository's CI reports it: for FAKE_SHA, from the GitHub
+    Actions app, in a check suite. The shared verdict counts no other kind."""
+    return {
+        "head_sha": FAKE_SHA,
+        "app": {"slug": "github-actions"},
+        "check_suite": {"id": 1},
+        **run,
+    }
+
+
 def check_runs(*runs: dict) -> str:
     """The body `gh api .../check-runs` returns for FAKE_SHA: every run is for
     that commit and the page is whole, as the shared reader requires."""
     return release.json.dumps(
-        {"total_count": len(runs), "check_runs": [{"head_sha": FAKE_SHA, **r} for r in runs]}
+        {"total_count": len(runs), "check_runs": [_as_ci_reports(r) for r in runs]}
     )
 
 
@@ -571,7 +582,7 @@ class TestContributorWindow:
 
 
 def _run(status, conclusion, name="gate"):
-    return {"status": status, "conclusion": conclusion, "name": name}
+    return _as_ci_reports({"status": status, "conclusion": conclusion, "name": name})
 
 
 class TestCiDecision:
@@ -607,10 +618,14 @@ class TestCiDecision:
     def test_timed_out_is_a_failure(self):
         assert release.ci_decision([_run("completed", "timed_out")]) == release.CI_FAILED
 
-    def test_skipped_required_check_passes(self):
-        """ADR-0032: a skipped job is the classifier saying "nothing to test
-        here", and `gate` itself reports success. A skipped check is a pass."""
-        assert release.ci_decision([_run("completed", "skipped")]) == release.CI_PASSED
+    def test_a_skipped_required_check_is_not_a_pass(self):
+        """This pinned the opposite until fix round 1 of #854. `gate` runs
+        `if: always()`, so a skipped `gate` means the workflow is no longer
+        the one the rule was written against; and for any required check,
+        "it did not run" is not "it passed". Jobs `gate` NEEDS may still be
+        skipped by the classifier -- that is `gate`'s business, and it
+        reports success when they are."""
+        assert release.ci_decision([_run("completed", "skipped")]) == release.CI_FAILED
 
     def test_an_advisory_red_check_does_not_block(self):
         """The coupling that matters: `e2e` runs on pushes to main, is not in
@@ -630,11 +645,15 @@ class TestCiDecision:
         checks = [_run("completed", "success", "gate"), _run("queued", None, "kb")]
         assert release.ci_decision(checks, required=("gate", "kb")) == release.CI_PENDING
 
-    def test_matrix_legs_match_by_prefix(self):
-        """`test` reports as `test (3.12)` on a matrix and as `test` when the
-        matrix is skipped -- requiring `test` must match both."""
+    def test_a_required_check_is_matched_by_its_exact_name(self):
+        """Requiring `test` used to match `test (3.12)`, which made a lone
+        `gate (docs)` a green `gate`. A matrix leg is required by its own
+        name."""
         checks = [_run("completed", "success", "test (3.12)")]
-        assert release.ci_decision(checks, required=("test",)) == release.CI_PASSED
+        assert release.ci_decision(checks, required=("test",)) == release.CI_MISSING
+        assert release.ci_decision(checks, required=("test (3.12)",)) == release.CI_PASSED
+        lone_leg = [_run("completed", "success", "gate (docs)")]
+        assert release.ci_decision(lone_leg) == release.CI_MISSING
 
     def test_the_default_required_check_is_gate(self):
         assert release.DEFAULT_REQUIRED_CHECKS == ("gate",)
@@ -663,12 +682,15 @@ class TestCiDecision:
         ]
         assert release.ci_decision(checks) == release.CI_FAILED
 
-    def test_completed_at_breaks_the_tie_when_started_at_is_absent(self):
+    def test_runs_that_disagree_with_no_started_at_cannot_be_ordered(self):
+        """`completed_at` used to break the tie. A rerun is ordered by when it
+        STARTED, and only by a `started_at` every run carries; without one the
+        answer is unknown, never the green one."""
         checks = [
             _run("completed", "failure") | {"completed_at": "2026-09-18T10:05:00Z"},
             _run("completed", "success") | {"completed_at": "2026-09-18T11:05:00Z"},
         ]
-        assert release.ci_decision(checks) == release.CI_PASSED
+        assert release.ci_decision(checks) == release.CI_UNKNOWN
 
     def test_a_rerun_in_progress_is_pending_not_the_old_pass(self):
         checks = [
@@ -677,14 +699,18 @@ class TestCiDecision:
         ]
         assert release.ci_decision(checks) == release.CI_PENDING
 
+    @pytest.mark.control(
+        reason="pre-existing test, respelled for exact names; its property held before and after"
+    )
     def test_matrix_legs_are_still_all_required_together(self):
-        """Newest-per-name, not newest-overall: `test (3.11)` and `test (3.12)`
-        are different names and both must pass."""
+        """Each required name is judged on its own: `test (3.11)` and
+        `test (3.12)` are different names and both must pass."""
         checks = [
             _run("completed", "success", "test (3.11)") | {"started_at": "2026-09-18T11:00:00Z"},
             _run("completed", "failure", "test (3.12)") | {"started_at": "2026-09-18T10:00:00Z"},
         ]
-        assert release.ci_decision(checks, required=("test",)) == release.CI_FAILED
+        required = ("test (3.11)", "test (3.12)")
+        assert release.ci_decision(checks, required=required) == release.CI_FAILED
 
     def test_e2e_is_never_required_by_default(self):
         assert "e2e" not in release.DEFAULT_REQUIRED_CHECKS
