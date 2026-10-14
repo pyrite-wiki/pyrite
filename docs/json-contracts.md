@@ -49,20 +49,31 @@ JSON, not a promise that every command gives you the option.
   itself needs to change first (e.g. a malformed query).
 
 **`AMBIGUOUS`: an id in more than one KB (#528).** An entry or task id given
-without a KB (or with a blank one) that is held by more than one KB the
-caller can read is refused, never answered by config order. Every surface
+without a KB (or with a blank one) that the index holds in more than one KB
+the caller can read is refused, never answered by config order. Every surface
 that resolves an id this way answers the same code and lists the KBs in
 `candidate_kbs`, beside the contract's keys: CLI `get`, `task get`, `task
 status`, `pyrite-read get`, and `update`/`links suggest`/`links discover`
 given `-k ""`; MCP `kb_get`, `kb_read_body`, `task_status` and the four
-task-graph tools, the `summarize_entry` and `find_connections` prompts and the
-`pyrite://entries/{id}` resource; REST `GET /api/entries/{id}/blocks`,
+task-graph tools (in the tool result); REST `GET /api/entries/{id}/blocks`,
 `GET /api/collections/{id}` and `/entries`, and the AI routes, given a blank
 `kb`, answer `409` with `candidate_kbs` in `detail`. `candidate_kbs` names
 only KBs the caller can read: a private KB holding the same id is neither
 listed nor a cause of the refusal. One readable match still answers; zero is
-still `NOT_FOUND`. To comply, name one of the KBs: `-k`, `kb`, `kb_name`,
-`kb_a`/`kb_b` (`find_connections`), or `pyrite://kbs/<kb>/entries/<id>`.
+still `NOT_FOUND`. Only indexed copies are counted: an id indexed in one KB
+with a not-yet-indexed `<id>.md` in another answers from the indexed KB (the
+by-name read runs only when no readable KB's index holds the id, #753). To
+comply, name one of the KBs: `-k`, `kb`, `kb_name`, `kb_a`/`kb_b`
+(`find_connections`), or `pyrite://kbs/<kb>/entries/<id>`.
+
+**MCP prompts and resources** (`prompts/get`, `resources/read`) have no result
+shape for a refusal, so theirs is a JSON-RPC error: `message` is the
+envelope's `error`, `code` is `-32602` (invalid params), and `data` is the
+whole envelope above (`error_code`, `suggestion`, `retryable`, and
+`candidate_kbs` for `AMBIGUOUS`). Match on `data.error_code`. This holds for
+every refusal from a prompt or resource, `KB_NOT_FOUND` included; a KB in
+`pyrite://kbs/<kb>/entries/<id>` that does not exist answers `KB_NOT_FOUND`,
+as one the caller cannot read does.
 
 **Not yet:** REST `GET /api/entries/{id}` without `kb` still answers the first
 readable match, because web entry links can omit `?kb=` (#528's groom;

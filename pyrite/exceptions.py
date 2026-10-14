@@ -139,9 +139,11 @@ class AmbiguousEntryError(PyriteError):
 
 #: Attributes a refusal carries beside its code, message and suggestion, each
 #: public by construction. Every transport copies those an exception has into
-#: its error body under the same key, through ``refusal_fields`` -- one list,
-#: so a class that adds one (#777's unreadable candidates) is mapped on REST,
-#: MCP and the CLI by naming it here.
+#: its error body under the same key, through ``refusal_fields``, so a class
+#: that adds one (#777's unreadable candidates) is mapped on REST, MCP and the
+#: CLI by naming it here. Not every extra goes through it yet:
+#: ``UndeclaredTypeError.declared_types`` is still copied by MCP's ``_refusal``
+#: and REST's write-refusal path themselves, with their own suggestion text.
 REFUSAL_FIELDS: tuple[str, ...] = ("candidate_kbs",)
 
 

@@ -59,7 +59,7 @@ Static resources and URI templates for browsing:
 
 Resources are read via `_read_resource()` which dispatches based on URI prefix matching.
 
-**An id in more than one KB (#528).** Every entry read without a KB (`kb_get`, `kb_read_body`, the task tools, `summarize_entry`, `find_connections`, `pyrite://entries/{id}`) is refused with `AMBIGUOUS` and `candidate_kbs` when the id is in more than one KB the caller can read; a private KB is never a candidate. Prompts and resources return the refusal in the tool envelope (`_refusal`) instead of raising, and each has a way to name the KB: `kb_name`, `kb_a`/`kb_b`, or the KB-qualified resource. `tests/test_ambiguous_id_is_refused.py` walks the tool schemas and prompts and fails on an id-taking surface it has not judged.
+**An id in more than one KB (#528).** Every entry read without a KB (`kb_get`, `kb_read_body`, the task tools, `summarize_entry`, `find_connections`, `pyrite://entries/{id}`) is refused with `AMBIGUOUS` and `candidate_kbs` when the id is in more than one KB the caller can read; a private KB is never a candidate. Tools answer the refusal envelope (`_refusal`) as their result; prompts and resources, which have no result shape for a refusal, send it as a JSON-RPC error whose `data` is that envelope (`_protocol_refusal` in `build_sdk_server`), and each has a way to name the KB: `kb_name`, `kb_a`/`kb_b`, or the KB-qualified resource. `tests/test_ambiguous_id_is_refused.py` drives these over a real MCP session, walks the tool schemas and prompts, and fails on an id-taking surface it has not judged.
 
 ## SDK Integration
 

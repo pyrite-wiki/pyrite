@@ -183,7 +183,7 @@ def error_response(exc: PyriteError) -> tuple[int, dict]:
     if suggestion:
         detail["hint"] = suggestion
     # A refusal's public extras (AMBIGUOUS's candidate_kbs, #528), mapped
-    # once for every class from the one list in pyrite.exceptions.
+    # once for every class from REFUSAL_FIELDS in pyrite.exceptions.
     detail.update(refusal_fields(exc))
     return status_code, {"detail": detail}
 

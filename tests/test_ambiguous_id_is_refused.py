@@ -190,20 +190,52 @@ def test_every_mcp_id_tool_is_a_case_or_excluded(world):
     assert found == set(MCP_TOOL_CASES) | set(MCP_TOOL_EXCLUDED)
 
 
+def _mcp(world, readable: set[str] | None, kind: str, *args) -> dict:
+    """One MCP request over a real session (the SDK's in-memory transport, as
+    `tests/test_mcp_resources_session.py` drives it), answered as the wire
+    carries it: a tool's JSON result; a prompt's or resource's result, or the
+    JSON-RPC error's ``data`` when it refuses (``{"error": message}`` if the
+    error carried none)."""
+    import asyncio
+
+    from mcp import McpError
+    from mcp.shared.memory import create_connected_server_and_client_session
+    from pyrite.plugins import PluginContext, get_registry
+
+    get_registry().set_context(PluginContext(config=world.config, db=world.db))
+    sdk = world.mcp_server.build_sdk_server(
+        client_id="ambiguous-528", client_kind="local", readable_kbs=readable
+    )
+
+    async def run():
+        async with create_connected_server_and_client_session(sdk) as session:
+            try:
+                if kind == "tool":
+                    result = await session.call_tool(*args)
+                    return json.loads(result.content[0].text)
+                if kind == "prompt":
+                    result = await session.get_prompt(*args)
+                    return {
+                        "messages": [{"content": {"text": m.content.text}} for m in result.messages]
+                    }
+                result = await session.read_resource(*args)
+                return {"contents": [{"text": c.text} for c in result.contents]}
+            except McpError as err:
+                return err.error.data or {"error": err.error.message}
+
+    return asyncio.run(run())
+
+
 @pytest.mark.parametrize("tool", sorted(MCP_TOOL_CASES))
 def test_mcp_tool_refuses_an_ambiguous_id(world, tool):
-    result = world.dispatch_tool(
-        tool, MCP_TOOL_CASES[tool], client_kind="local", readable_kbs={READABLE, READ_ONLY}
-    )
+    result = _mcp(world, {READABLE, READ_ONLY}, "tool", tool, MCP_TOOL_CASES[tool])
     _assert_ambiguous(result, SCOPED, f"MCP {tool}")
 
 
 @pytest.mark.parametrize("tool", sorted(MCP_TOOL_CASES))
 def test_mcp_tool_treats_a_blank_kb_name_as_none(world, tool):
     args = {**MCP_TOOL_CASES[tool], "kb_name": "  "}
-    result = world.dispatch_tool(
-        tool, args, client_kind="local", readable_kbs={READABLE, READ_ONLY}
-    )
+    result = _mcp(world, {READABLE, READ_ONLY}, "tool", tool, args)
     _assert_ambiguous(result, SCOPED, f"MCP {tool} kb_name='  '")
 
 
@@ -211,26 +243,18 @@ def test_mcp_tool_treats_a_blank_kb_name_as_none(world, tool):
 @pytest.mark.parametrize("tool", sorted(MCP_TOOL_CASES))
 def test_mcp_tool_resolves_with_a_named_kb(world, tool):
     args = {**MCP_TOOL_CASES[tool], "kb_name": READABLE}
-    result = world.dispatch_tool(
-        tool, args, client_kind="local", readable_kbs={READABLE, READ_ONLY}
-    )
+    result = _mcp(world, {READABLE, READ_ONLY}, "tool", tool, args)
     assert "error_code" not in result, result
-    single = world.dispatch_tool(
-        tool, MCP_TOOL_CASES[tool], client_kind="local", readable_kbs={READABLE}
-    )
+    single = _mcp(world, {READABLE}, "tool", tool, MCP_TOOL_CASES[tool])
     assert "error_code" not in single, single
 
 
 def test_mcp_get_reports_ambiguity_and_scopes_candidates(world):
-    result = world.dispatch_tool(
-        "kb_get", {"entry_id": DUPLICATE}, client_kind="local", readable_kbs={READABLE, READ_ONLY}
-    )
+    result = _mcp(world, {READABLE, READ_ONLY}, "tool", "kb_get", {"entry_id": DUPLICATE})
     assert result["error_code"] == "AMBIGUOUS"
     assert READABLE in result["error"] and READ_ONLY in result["error"]
     assert PRIVATE not in json.dumps(result)
-    unique = world.dispatch_tool(
-        "kb_get", {"entry_id": HIDDEN_TWIN}, client_kind="local", readable_kbs={READABLE}
-    )
+    unique = _mcp(world, {READABLE}, "tool", "kb_get", {"entry_id": HIDDEN_TWIN})
     assert unique["entry"]["kb_name"] == READABLE
 
 
@@ -260,14 +284,12 @@ def test_every_mcp_id_prompt_is_a_case(world):
 @pytest.mark.parametrize("prompt", sorted(MCP_PROMPT_CASES))
 def test_mcp_prompt_refuses_an_ambiguous_id_and_can_name_the_kb(world, prompt):
     args, naming = MCP_PROMPT_CASES[prompt]
-    refused = world.mcp_server._get_prompt(prompt, args, readable_kbs={READABLE, READ_ONLY})
+    refused = _mcp(world, {READABLE, READ_ONLY}, "prompt", prompt, args)
     _assert_ambiguous(refused, SCOPED, f"prompt {prompt}")
     # The refusal can be complied with: the prompt takes the KB.
     declared = {a["name"] for a in world.mcp_server.prompts[prompt]["arguments"]}
     assert set(naming) <= declared, f"{prompt} cannot name the KB: {declared}"
-    answered = world.mcp_server._get_prompt(
-        prompt, {**args, **naming}, readable_kbs={READABLE, READ_ONLY}
-    )
+    answered = _mcp(world, {READABLE, READ_ONLY}, "prompt", prompt, {**args, **naming})
     assert "error_code" not in answered, answered
     text = answered["messages"][0]["content"]["text"]
     assert f"{READABLE} duplicate" in text or "Read-only duplicate" in text
@@ -276,10 +298,12 @@ def test_mcp_prompt_refuses_an_ambiguous_id_and_can_name_the_kb(world, prompt):
 def test_find_connections_kb_argument_is_scoped(world):
     """A KB named in the new kb_a/kb_b arguments is refused like any other
     KB argument when the caller cannot read it (KB_ARGUMENT_NAMES)."""
-    refused = world.mcp_server._get_prompt(
+    refused = _mcp(
+        world,
+        {READABLE, READ_ONLY},
+        "prompt",
         "find_connections",
         {"entry_a": DUPLICATE, "entry_b": HIDDEN_TWIN, "kb_a": PRIVATE},
-        readable_kbs={READABLE, READ_ONLY},
     )
     assert refused["error_code"] == "KB_NOT_FOUND"
     assert "behind" not in json.dumps(refused)
@@ -288,18 +312,18 @@ def test_find_connections_kb_argument_is_scoped(world):
 def test_mcp_entry_resource_refuses_and_a_kb_resource_resolves(world):
     from pyrite.server.mcp_server import URI_SCHEME
 
-    refused = world.mcp_server._read_resource(
-        f"{URI_SCHEME}entries/{DUPLICATE}", readable_kbs={READABLE, READ_ONLY}
-    )
+    refused = _mcp(world, {READABLE, READ_ONLY}, "resource", f"{URI_SCHEME}entries/{DUPLICATE}")
     _assert_ambiguous(refused, SCOPED, "resource entries/{id}")
-    named = world.mcp_server._read_resource(
-        f"{URI_SCHEME}kbs/{READ_ONLY}/entries/{DUPLICATE}", readable_kbs={READABLE, READ_ONLY}
+    named = _mcp(
+        world, {READABLE, READ_ONLY}, "resource", f"{URI_SCHEME}kbs/{READ_ONLY}/entries/{DUPLICATE}"
     )
     assert json.loads(named["contents"][0]["text"])["kb_name"] == READ_ONLY
-    hidden = world.mcp_server._read_resource(
-        f"{URI_SCHEME}kbs/{PRIVATE}/entries/{DUPLICATE}", readable_kbs={READABLE, READ_ONLY}
+    hidden = _mcp(
+        world, {READABLE, READ_ONLY}, "resource", f"{URI_SCHEME}kbs/{PRIVATE}/entries/{DUPLICATE}"
     )
     assert hidden["error_code"] == "KB_NOT_FOUND"
+    unscoped_unknown = _mcp(world, None, "resource", f"{URI_SCHEME}kbs/no-such-kb/entries/x")
+    assert unscoped_unknown["error_code"] == "KB_NOT_FOUND"
     templates = {t["uriTemplate"] for t in world.mcp_server.resource_templates}
     assert f"{URI_SCHEME}kbs/{{name}}/entries/{{id}}" in templates
 

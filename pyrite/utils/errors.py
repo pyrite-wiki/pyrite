@@ -182,7 +182,7 @@ def _refusal_payload(exc: BaseException) -> dict[str, Any]:
     return {
         "outcome": REFUSED,
         # A refusal's public extras (AMBIGUOUS's candidate_kbs, #528), from
-        # the one list REST and MCP map too.
+        # REFUSAL_FIELDS, which REST and MCP map too.
         **refusal_fields(exc),
         **build_error(
             public_text(exc, log=logger),

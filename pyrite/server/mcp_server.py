@@ -256,7 +256,7 @@ def _refusal(exc: PyriteError, *, already_logged: bool = False) -> dict:
         legacy_error_code=legacy_code,
     )
     # A refusal's public extras (AMBIGUOUS's candidate_kbs, #528), mapped
-    # once for every class from the one list in pyrite.exceptions.
+    # once for every class from REFUSAL_FIELDS in pyrite.exceptions.
     err.update(refusal_fields(exc))
     declared = getattr(exc, "declared_types", None)
     if declared is not None:
@@ -267,6 +267,22 @@ def _refusal(exc: PyriteError, *, already_logged: bool = False) -> dict:
             "or pass allow_undeclared=true to override.",
         )
     return err
+
+
+def _protocol_refusal(err: dict) -> Exception:
+    """A refusal from a prompt or resource, as a JSON-RPC error.
+
+    `prompts/get` and `resources/read` have no result shape for a refusal, so
+    the envelope ``_refusal``/``_error`` built (``error_code``, ``suggestion``,
+    ``retryable``, and ``REFUSAL_FIELDS`` such as ``candidate_kbs``) travels
+    whole in the JSON-RPC error's ``data``, with ``error`` as its message. A
+    bare ``ValueError`` here sent the message alone (#528 fix round 1).
+    Tools answer the same envelope as their result instead.
+    """
+    from mcp.shared.exceptions import McpError
+    from mcp.types import INVALID_PARAMS, ErrorData
+
+    return McpError(ErrorData(code=INVALID_PARAMS, message=err["error"], data=err))
 
 
 MAX_TIMELINE_EVENTS = 50
@@ -2364,7 +2380,11 @@ class PyriteMCPServer:
             entry_id = uri[len(f"{URI_SCHEME}entries/") :]
         elif uri.startswith(f"{URI_SCHEME}kbs/") and "/entries/" in uri:
             entry_kb, _, entry_id = uri[len(f"{URI_SCHEME}kbs/") :].partition("/entries/")
-            if readable_kbs is not None and entry_kb not in readable_kbs:
+            # A KB the caller cannot read and a KB that does not exist answer
+            # the same KB_NOT_FOUND (scoped or not), never a plain NOT_FOUND.
+            if (readable_kbs is not None and entry_kb not in readable_kbs) or self.svc.get_kb(
+                entry_kb
+            ) is None:
                 return _kb_not_found(entry_kb)
         if entry_id is not None:
             # Without a KB the lookup is bounded by the caller's readable set:
@@ -2695,7 +2715,7 @@ class PyriteMCPServer:
                 raise ValueError(f"Unknown prompt: {name}")
             result = mcp_server._get_prompt(name, arguments or {}, readable_kbs=_readable_kbs)
             if "error" in result:
-                raise ValueError(result["error"])
+                raise _protocol_refusal(result)
             return GetPromptResult(
                 messages=[
                     PromptMessage(
@@ -2734,7 +2754,7 @@ class PyriteMCPServer:
         async def _read_resource(uri: AnyUrl):
             result = mcp_server._read_resource(str(uri), readable_kbs=_readable_kbs)
             if "error" in result:
-                raise ValueError(result["error"])
+                raise _protocol_refusal(result)
             return [
                 ReadResourceContents(content=c["text"], mime_type=c.get("mimeType"))
                 for c in result["contents"]
