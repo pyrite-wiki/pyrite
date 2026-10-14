@@ -310,8 +310,8 @@ For each worker that reported done — protocol in [review.md](review.md):
 1. Claim it (`in-review`). Check out the **pushed** head in your own review
    worktree — never the worker's. `git log origin/dev..HEAD --oneline`; read
    the **diff**, not the report.
-2. Read the draft PR's CI for the pushed SHA (`gh pr checks N`: `test (3.12)`
-   and `gate`); locally, `scripts/test-affected --run` is enough. Run the
+2. Read the draft PR's CI for the pushed SHA (`gh pr checks N`: `gate`,
+   which waits for every `test (<py>, <shard>)` leg); locally, `scripts/test-affected --run` is enough. Run the
    full suite yourself only to reproduce a CI failure (#356).
 3. The `verify-red` job's summary line on that SHA (review.md): the fix's tests
    `red`; read it, do not re-run it.

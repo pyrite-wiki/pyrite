@@ -61,7 +61,10 @@ def check(shards, collected, expected_shards: int) -> list[str]:
     problems = []
     if not shards:
         problems.append("no shard junit reports found")
-    for py, by_shard in sorted(shards.items()):
+    # An interpreter with a collection count but no shard reports (or the
+    # reverse) is a failure, not something to skip.
+    for py in sorted(set(shards) | set(collected)):
+        by_shard = shards.get(py, {})
         missing = set(range(1, expected_shards + 1)) - set(by_shard)
         if missing:
             problems.append(f"{py}: shard(s) {sorted(missing)} produced no junit report")

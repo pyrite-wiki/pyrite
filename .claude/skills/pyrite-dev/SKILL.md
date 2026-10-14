@@ -95,7 +95,7 @@ work" is not evidence.
 | Claim | Run | Look for |
 |---|---|---|
 | Backend tests pass (local) | `scripts/test-affected --run` | `N passed, 0 failed` |
-| Backend tests pass (all) | the draft PR's CI: `gh pr checks <n>` | `test (3.12)` and `gate` pass |
+| Backend tests pass (all) | the draft PR's CI: `gh pr checks <n>` | `gate` passes (it waits for every `test (<py>, <shard>)` leg) |
 | The tests guard the change (every branch that changes code, `feat` included) | `scripts/verify-red.sh`, once (CI's `verify-red` job runs the same code) | `verify-red: N red · 0 import-only · 0 unexpected pass · 0 n/a`; paste its summary line into the report |
 | Each guard is tested | delete that guard alone, run the tests | a test fails, for every guard you added |
 | Frontend passes | `cd web && npm run check && npm run test:unit && npm run build` | all green |

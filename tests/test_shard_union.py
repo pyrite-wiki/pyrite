@@ -81,6 +81,14 @@ class TestUnion:
         shards, collected = union.load(_tree(tmp_path, {1: [A], 2: [B], 3: [C]}, None))
         assert any("no unsplit collection" in p for p in union.check(shards, collected, 3))
 
+    def test_an_interpreter_with_a_count_but_no_shard_reports_fails(self, tmp_path):
+        tree = _tree(tmp_path, {1: [A], 2: [B], 3: [C]}, 3)
+        d = tree / "collected-3.13"
+        d.mkdir()
+        (d / "collected-3.13.txt").write_text("3\n")
+        shards, collected = union.load(tree)
+        assert any(p.startswith("3.13:") for p in union.check(shards, collected, 3))
+
     def test_no_reports_at_all_fails(self):
         assert union.check({}, {}, 3)
 
@@ -97,6 +105,17 @@ class TestBalance:
 
 
 class TestMergeDurations:
+    def test_a_durations_file_lacking_a_test_still_places_it_in_one_group(self):
+        from types import SimpleNamespace
+
+        from pytest_split.algorithms import Algorithms
+
+        items = [SimpleNamespace(nodeid=f"t::{i}") for i in range(7)]
+        known = {f"t::{i}": 1.0 for i in range(5)}  # t::5 and t::6 are new
+        groups = Algorithms.least_duration.value(splits=3, items=items, durations=known)
+        placed = sorted(i.nodeid for g in groups for i in g.selected)
+        assert placed == sorted(i.nodeid for i in items)
+
     def test_fresh_timings_from_each_shard_win_over_the_old_file(self):
         old = {"a": 1.0, "b": 1.0, "c": 1.0}
         s1 = {"a": 2.0, "b": 1.0, "c": 1.0}  # shard 1 ran `a`

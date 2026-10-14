@@ -1556,7 +1556,7 @@ class TestTheRedLineIsFirstAndEveryGatingRunLeavesATimingRecord:
         assert up["with"]["if-no-files-found"] == "ignore"  # died before pytest wrote it
         assert "!cancelled()" in str(up["if"])
 
-    def test_the_required_check_names_did_not_move(self, ci):
+    def test_gate_changes_kb_and_frontend_keep_their_names_and_gate_aggregates_the_shards(self, ci):
         # `shard-report` (tests Q2) is the shards' union proof; the shard legs are
         # `test (<py>, <k>)` and are aggregated by `gate`, never required by name.
         assert ci["jobs"]["gate"]["needs"] == ["changes", "kb", "test", "shard-report", "frontend"]
@@ -1592,6 +1592,10 @@ class TestTheTestJobIsShardedAndProvesItRanEverything:
     """
 
     SHARDS = 3
+
+    def test_a_red_shard_does_not_cancel_its_siblings(self, ci):
+        # every leg records its timings; gate still fails on any red leg
+        assert ci["jobs"]["test"]["strategy"]["fail-fast"] is False
 
     def test_the_test_job_is_a_shard_matrix_under_every_interpreter(self, ci):
         matrix = ci["jobs"]["test"]["strategy"]["matrix"]
@@ -1653,8 +1657,15 @@ class TestTheTestJobIsShardedAndProvesItRanEverything:
         job = ci["jobs"]["shard-report"]
         assert {"test", "collect"} <= set(job["needs"])
         assert "shard-report" in ci["jobs"]["gate"]["needs"]
-        runs = "\n".join(str(s.get("run", "")) for s in job["steps"])
-        assert "check_shard_union.py check" in runs and "--shards 3" in runs
+        # The proof cannot be switched off or narrowed by a later edit:
+        step = next(
+            s for s in job["steps"] if "check_shard_union.py check" in str(s.get("run", ""))
+        )
+        assert "--shards 3" in step["run"]
+        assert "|| true" not in step["run"], "a swallowed exit status is no proof"
+        assert "continue-on-error" not in step and "continue-on-error" not in job
+        assert str(step["if"]).strip() == "${{ needs.test.result == 'success' }}"
+        assert str(job["if"]).strip() == "${{ !cancelled() && needs.test.result != 'skipped' }}"
 
     def test_the_collection_count_uses_the_shards_selection(self, ci):
         run = "\n".join(str(s.get("run", "")) for s in ci["jobs"]["collect"]["steps"])

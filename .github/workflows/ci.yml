@@ -207,6 +207,9 @@ jobs:
     if: (needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main') && needs.changes.outputs.queue_passed != 'true'
     runs-on: ubuntu-latest
     strategy:
+      # A red shard must not cancel its siblings: every leg records its
+      # timings, and `gate` fails on any red leg regardless.
+      fail-fast: false
       matrix:
         # Value chain (ADR-0032 §3): a pull request proves the change on one
         # interpreter, fast; the merge queue and the push to dev that follows
