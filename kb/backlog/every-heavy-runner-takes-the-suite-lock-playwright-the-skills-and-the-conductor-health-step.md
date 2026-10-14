@@ -9,7 +9,7 @@ tags:
 - conductor
 importance: 5
 kind: tech_debt
-status: proposed
+status: in_progress
 priority: high
 effort: S
 rank: 0
@@ -39,3 +39,7 @@ github_issue: 168
 **Model:** sonnet (mechanical once the lock exists). **heavy:** yes, once — one single-spec Playwright run through the wrapper to prove criterion 1; it takes the machine's one slot. **Cold read:** no. **Size:** S, ~150 lines, mostly one-line edits across the prompt files.
 
 **Out of scope:** raising the WIP limit; rewriting the conductor's tick structure; the CI `e2e` job (package H).
+
+## Re-scoped 2026-10-14 (feature/machine-wide-suite-lock)
+
+Done on the same branch as the lock. `scripts/suite.sh` does not exist (test-affected replaced it); instructions name `scripts/test-affected --run`, `scripts/heavy_lock.py -- <command>` for a full suite, and `scripts/e2e.sh`. The grep test is `tests/test_suite_lock.py::TestInstructions`; it also covers the pyrite-dev skill's testing/tdd/debugging pages and `CLAUDE.md`. `scripts/machine_ok.sh` uses the conductor skill's existing limits (load 0.8 x cores, 30% available memory) rather than this item's "load above cores / under 4 GB", which were older than the skill text. Criterion 5 (outside-PR review agents get the conductor's result) was already in the conductor skill's machine budget.
