@@ -155,6 +155,9 @@ markers = [
     # verify-red (scripts/verify_red_ci.py): a test the PR adds on purpose to
     # pass without the fix too (a "still works" guard), so it is not warned about.
     # It must say why: reason=... or the test's docstring; a bare marker is rejected.
+    # The root conftest hashes passwords at bcrypt cost 4 in tests (tests-t2a); a test
+    # that asserts the stored hash's format or cost opts out and sees production cost 12.
+    "production_bcrypt_cost: opt out of the cheap test bcrypt cost; the test sees the production cost",
     "control(reason): a deliberate negative control; verify-red expects it to pass without the fix",
 ]
 

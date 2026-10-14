@@ -205,3 +205,49 @@ def _allow_testclient_host(monkeypatch):
     except ImportError:  # server extras not installed
         return
     monkeypatch.setattr(request_guard, "LOCAL_HOSTS", request_guard.LOCAL_HOSTS | {"testserver"})
+
+
+_TEST_BCRYPT_ROUNDS = 4  # bcrypt's minimum; production uses gensalt()'s default, 12
+_cheap_dummy_hash: str | None = None
+
+
+@pytest.fixture(autouse=True)
+def _cheap_password_hashing(request, monkeypatch):
+    """Hash passwords at bcrypt cost 4 in tests, not the production 12 (tests-t2a).
+
+    At cost 12 bcrypt was ~75% of the time in the big scoping files: every
+    ``create_user`` / ``register`` pays one hash and it is pure CPU, so it
+    degrades worst under load. This is the one place the test cost is set
+    (tests/test_test_rules.py pins that); production code reads no switch.
+
+    It swaps the module's ``_bcrypt`` for a shim whose ``gensalt`` defaults to
+    cost 4, so only ``pyrite.services.auth_service`` is affected (the real
+    bcrypt module, and anything else importing it, is untouched), and swaps
+    the login timing-equalizer's dummy hash for a cost-4 one so a miss costs
+    what a hit costs. ``checkpw`` reads the cost out of the stored hash, so
+    verification is unchanged.
+
+    A test that asserts the hash format or cost says so:
+    ``@pytest.mark.production_bcrypt_cost`` (tests/test_auth_service.py).
+    """
+    if request.node.get_closest_marker("production_bcrypt_cost"):
+        return
+    try:
+        from pyrite.services import auth_service
+    except ImportError:  # server extras (bcrypt) not installed
+        return
+    global _cheap_dummy_hash
+    real = auth_service._bcrypt
+
+    class _CheapBcrypt:
+        def gensalt(self, rounds: int = _TEST_BCRYPT_ROUNDS, prefix: bytes = b"2b"):
+            return real.gensalt(rounds, prefix)
+
+        def __getattr__(self, name):
+            return getattr(real, name)
+
+    shim = _CheapBcrypt()
+    if _cheap_dummy_hash is None:
+        _cheap_dummy_hash = real.hashpw(b"dummy-password", shim.gensalt()).decode()
+    monkeypatch.setattr(auth_service, "_bcrypt", shim)
+    monkeypatch.setattr(auth_service, "_DUMMY_PASSWORD_HASH", _cheap_dummy_hash)
