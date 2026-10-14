@@ -572,8 +572,14 @@ included when resolvable.
 
 A single entry is read from its file as the file is now, so an edit made
 since the last `index sync` is in it; `content_hash` is the SHA-256 of the
-bytes that read (`null` for an entry with no file). Lists and search are
-index reads and may lag.
+bytes that read. Lists and search are index reads and may lag.
+
+`"content_hash": null` means one of two things. On a single-entry read it
+means the entry has no file (a row only). On a list result it means the
+hash was not computed: `GET /api/entries`, `GET /api/collections/{id}/entries`,
+`POST /api/collections/query-preview` and the daily-note routes when they
+answer from the index build their entries from index rows, which carry no
+hash. Read the entry by id for its hash.
 
 ### Backlink rows
 
