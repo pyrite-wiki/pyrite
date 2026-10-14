@@ -787,11 +787,26 @@ def _add_reproduces(entry: Any) -> bool:
     nothing but a stdio command and args. Env would need its values on a
     command line, unknown keys cannot be passed at all, and no command line,
     run or printed, can carry a NUL."""
+    return _restore_unavailable_reason(entry) is None
+
+
+def _restore_unavailable_reason(entry: Any) -> str | None:
+    """The first reason add cannot restore the whole entry, or None.
+
+    Env/extra-key limitations precede NULs, preserving their existing wording
+    when an entry carries both. Values are never included in the reason.
+    """
     try:
         command, args = _command_and_args(entry)
     except _StopError:
-        return False
-    return set(_normal(entry)) <= {"command", "args"} and "\0" not in "".join([command, *args])
+        if not isinstance(entry, dict):
+            return "the previous entry was not an object"
+        return "the previous command or args were not a valid stdio entry"
+    if not set(_normal(entry)) <= {"command", "args"}:
+        return "`claude mcp add` cannot write env without its values, or other keys"
+    if "\0" in "".join([command, *args]):
+        return "a NUL no command line can carry"
+    return None
 
 
 def _runs(entry: Any) -> str:
@@ -1022,7 +1037,7 @@ def _setup_claude_code(
         if gone and not restorable:
             lost = (
                 ". `removed` names what the previous entry held; no command can add it back "
-                "(`claude mcp add` cannot write env without its values, or other keys)"
+                f"({_restore_unavailable_reason(existing)})"
             )
         if now is _UNKNOWN:
             # Claude Code replaces a file it cannot read, so it was not called
