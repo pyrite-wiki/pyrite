@@ -7,11 +7,13 @@ tags:
 - testing
 importance: 4
 kind: tech_debt
-status: proposed
+status: planned
 priority: high
 effort: M
 rank: 0
 ---
+
+> **Decision 2026-10-14 (Mark):** all eight test themes accepted as planned ("I think all the themes make sense"). Q1 and Q2 tentatively in the next release.
 
 Source: `test-architecture-review-2026-10`, findings 3 and the process section. `tests-t8` is the one-time sweep of pre-#360 tests; this is the rule that keeps the tree swept, and it can land before or after T8.
 

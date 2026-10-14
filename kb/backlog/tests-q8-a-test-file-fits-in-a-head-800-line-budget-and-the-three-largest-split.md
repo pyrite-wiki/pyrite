@@ -7,11 +7,13 @@ tags:
 - testing
 importance: 3
 kind: tech_debt
-status: proposed
+status: planned
 priority: low
 effort: M
 rank: 0
 ---
+
+> **Decision 2026-10-14 (Mark):** all eight test themes accepted as planned ("I think all the themes make sense"). Q1 and Q2 tentatively in the next release.
 
 Source: `test-architecture-review-2026-10`, finding 5. Last in the plan: it is the cleanup the other themes make safe, and a budget without the lints before it would be gamed by splitting weak tests into more files.
 

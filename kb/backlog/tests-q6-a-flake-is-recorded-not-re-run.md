@@ -7,11 +7,13 @@ tags:
 - testing
 importance: 4
 kind: improvement
-status: proposed
+status: planned
 priority: medium
 effort: M
 rank: 0
 ---
+
+> **Decision 2026-10-14 (Mark):** all eight test themes accepted as planned ("I think all the themes make sense"). Q1 and Q2 tentatively in the next release.
 
 Source: `test-architecture-review-2026-10`, "The gates today". Model: the experimental ratchet (`scripts/experimental_ratchet.py`, `ci.yml:743-886`), which already files and updates issues from a `dev` run.
 

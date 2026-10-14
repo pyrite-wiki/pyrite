@@ -2,7 +2,7 @@
 type: design
 id: test-architecture-review-2026-10
 title: "Test architecture review, 2026-10: findings, the layered target model, principles for test code"
-status: proposed
+status: accepted
 date: '2026-10-14'
 author: 'pyrite-architect (Claude Fable 5.1), for markr'
 tags: [testing, quality, ci, process, design]

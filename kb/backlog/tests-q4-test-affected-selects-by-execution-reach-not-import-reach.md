@@ -7,11 +7,13 @@ tags:
 - testing
 importance: 5
 kind: improvement
-status: proposed
+status: planned
 priority: high
 effort: L
 rank: 0
 ---
+
+> **Decision 2026-10-14 (Mark):** all eight test themes accepted as planned ("I think all the themes make sense"). Q1 and Q2 tentatively in the next release.
 
 Source: `test-architecture-review-2026-10`, finding 2.
 
