@@ -2120,6 +2120,7 @@
     "body": {
       "backlinks": [],
       "body": "a zebra of no fixed abode",
+      "content_hash": "fe7dc60f356dd2997276b0c2e28444db5334e02d626e49d4f617c57c97f33716",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -2152,6 +2153,7 @@
     "body": {
       "backlinks": [],
       "body": "a zebra in the open",
+      "content_hash": "75a0ede94d46612f5bd4f9a26fc86dfcf7c40ce08024dae647c9bece56e9e2c1",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",

@@ -10,7 +10,7 @@ import copy
 import dataclasses
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -555,8 +555,10 @@ class KBService:
         every surface that calls this -- CLI ``get``, ``pyrite-read get``,
         REST ``GET /api/entries/{id}``, MCP ``kb_get`` and ``kb_read_body``
         -- returns a hand edit before the next sync (#753). Without a KB,
-        readable KBs are tried in config order, ids the index knows first,
-        so a hit never walks a directory.
+        readable KBs are tried in config order, ids the index knows first.
+        A read the index can answer (its row's file still holds the id) opens
+        that one file and walks no directory; only a miss looks for files by
+        name (``_entry_file``).
         """
         kb_name = named_kb(kb_name)
         if kb_name:
@@ -626,31 +628,38 @@ class KBService:
     ) -> tuple[Path, str, Entry] | None:
         """``(path, content_hash, entry)`` of the file holding ``entry_id``, or None."""
         repo = KBRepository(kb_config)
-        candidates: list[Path] = []
         indexed = Path(row["file_path"]) if row else None
-        if indexed is not None:
-            candidates.append(indexed)
-        if indexed is None or repo._lexically_inside(indexed):
+
+        def candidates() -> Iterator[Path]:
+            # Lazy: the indexed file is tried first, and the KB's directories
+            # are walked (``_filename_candidates`` runs ``rglob``) only when it
+            # does not hold the id. A hit never walks a directory.
+            if indexed is not None:
+                yield indexed
+            if indexed is not None and not repo._lexically_inside(indexed):
+                return  # an overlay row: never main's file in its place
             # find_file's first step, without its whole-KB tail (see _read_entry).
             try:
                 repo._validate_entry_id(entry_id)
-                candidates.extend(
-                    c for c in repo._filename_candidates(entry_id) if repo._lexically_inside(c)
-                )
             except ValidationError:
-                pass
+                return
+            for c in repo._filename_candidates(entry_id):
+                if c != indexed and repo._lexically_inside(c):
+                    yield c
+
         unreadable: tuple[Path, Exception] | None = None
-        for path in dict.fromkeys(candidates):
+        tried: set[Path] = set()
+        for path in candidates():
+            if path in tried:
+                continue
+            tried.add(path)
             try:
-                # Hashed before it is parsed, from a read of its own: if the
-                # file changes in between, the hash is the OLDER version, so a
-                # write that presents it is refused as stale rather than
-                # accepted over an edit the reader never saw.
                 raw = path.read_bytes()
             except OSError:
                 continue
             try:
-                entry = repo.load_entry_from_file(path)
+                # One read: the entry is parsed from the bytes that are hashed.
+                entry = repo.load_entry_from_bytes(path, raw)
             except Exception as exc:
                 unreadable = unreadable or (path, exc)
                 continue

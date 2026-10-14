@@ -12,7 +12,7 @@ import os
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -119,27 +119,28 @@ _LIFTED_METADATA_KEYS = ("rank", "effort", "kind", "status_reason", "parked_awai
 _ROW_ONLY_KEYS = ("indexed_at", "created_by", "modified_by")
 
 
-def _as_column(key: str, value: Any) -> Any:
-    """``value`` as the index column ``key`` returns it: ``importance`` is an
-    INTEGER column, the rest of ``_READ_COLUMNS`` TEXT (``storage/models.py``),
-    so a YAML number in ``priority`` reads back as its text, as SQLite's
-    column affinity stores it."""
-    if value is None:
-        return None
-    if key == "importance":
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return value
+def _as_text(value: Any) -> Any:
+    """``value`` as a TEXT column returns it once SQLite has stored it: a YAML
+    number or date as its text, a bool as ``"1"``/``"0"`` (sqlite3 binds a
+    bool as an integer). ``str`` of a date or datetime is the ISO text
+    sqlite3's adapters write."""
+    if value is None or isinstance(value, str):
+        return value
     if isinstance(value, bool):
         return str(int(value))
-    if isinstance(value, datetime):
-        return value.isoformat(" ")
-    if isinstance(value, date):
-        return value.isoformat()
-    if isinstance(value, (int, float)):
-        return str(value)
-    return value
+    return str(value)
+
+
+def _as_column(key: str, value: Any) -> Any:
+    """``value`` as the index column ``key`` returns it.
+
+    ``importance`` is an INTEGER column and the model has already made it an
+    int; the rest of ``_READ_COLUMNS`` are TEXT (``storage/models.py``), so
+    ``priority: 2.5`` reads back as ``"2.5"`` and ``status: true`` as ``"1"``.
+    The pin test in ``tests/test_get_reads_the_file.py`` compares unquoted
+    dates, bools, floats and nulls with a real row.
+    """
+    return value if key == "importance" else _as_text(value)
 
 
 def _read_sources(
@@ -701,7 +702,9 @@ class IndexManager:
         for key in _LIFTED_METADATA_KEYS:
             if key in metadata and key not in result:
                 result[key] = metadata[key]
-        result["tags"] = list(dict.fromkeys(t for t in data["tags"] if t))
+        # As _sync_tags stores them: falsy skipped, duplicates (by ==, so
+        # ``1`` and ``true`` are one) dropped first-wins, names as TEXT.
+        result["tags"] = [_as_text(t) for t in dict.fromkeys(t for t in data["tags"] if t)]
         result["sources"] = _read_sources(data["sources"], entry.id, kb_name, row)
         result["links"] = row.get("links", [])
         result["content_hash"] = content_hash

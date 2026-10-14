@@ -176,6 +176,9 @@ class EntryResponse(BaseModel):
     metadata: dict = {}
     created_at: str | None = None
     updated_at: str | None = None
+    # SHA-256 of the file bytes the read parsed (ADR-0042 decision 9); None
+    # for an entry with no file.
+    content_hash: str | None = None
 
 
 # =============================================================================

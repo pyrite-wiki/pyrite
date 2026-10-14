@@ -290,35 +290,109 @@ def test_hand_written_shapes_read_as_written(env, svc, shape):
 
 @contextmanager
 def _files_opened():
-    """Every path whose content is read (``read_bytes``/``read_text``/``open``)."""
+    """Every file opened, as a Path: ``Path.read_bytes``/``read_text``/``open``
+    go through ``io.open``, a bare ``open()`` through ``builtins.open``; each
+    open is recorded once."""
+    import builtins
+    import io
+
     opened: list[Path] = []
-    real_bytes, real_text, real_open = Path.read_bytes, Path.read_text, Path.open
+    real = io.open
 
-    def spy_bytes(self):
-        opened.append(self)
-        return real_bytes(self)
+    def spy(file, *a, **k):
+        if isinstance(file, (str, os.PathLike)):
+            opened.append(Path(file))
+        return real(file, *a, **k)
 
-    def spy_text(self, *a, **k):
-        opened.append(self)
-        return real_text(self, *a, **k)
-
-    def spy_open(self, *a, **k):
-        opened.append(self)
-        return real_open(self, *a, **k)
-
-    with (
-        patch.object(Path, "read_bytes", spy_bytes),
-        patch.object(Path, "read_text", spy_text),
-        patch.object(Path, "open", spy_open),
-    ):
+    with patch.object(io, "open", spy), patch.object(builtins, "open", spy):
         yield opened
+
+
+@contextmanager
+def _directory_walks():
+    """Every directory listing or walk started (``rglob``, ``glob``,
+    ``iterdir``, ``Path.walk``, ``os.walk``, ``os.scandir``, ``os.listdir``,
+    ``glob.glob``): the cost a lookup by name pays on a large KB."""
+    import glob as glob_mod
+
+    walks: list[str] = []
+    targets = [
+        (Path, "rglob"),
+        (Path, "glob"),
+        (Path, "iterdir"),
+        (os, "walk"),
+        (os, "scandir"),
+        (os, "listdir"),
+        (glob_mod, "glob"),
+        (glob_mod, "iglob"),
+    ]
+    if hasattr(Path, "walk"):
+        targets.append((Path, "walk"))
+    patches = []
+    for owner, name in targets:
+        real = getattr(owner, name)
+
+        def spy(*a, _real=real, _name=name, **k):
+            # Path methods get the path as self; os/glob functions as the
+            # first argument. ruamel globs its own plugin directory on every
+            # YAML(); only a walk in the KB is the cost this pins.
+            where = a[0] if a else k.get("path", k.get("pathname", ""))
+            walks.append(f"{_name}({where})")
+            return _real(*a, **k)
+
+        patches.append(patch.object(owner, name, spy))
+    for p in patches:
+        p.start()
+    try:
+        yield walks
+    finally:
+        for p in reversed(patches):
+            p.stop()
+
+
+@pytest.mark.parametrize("surface", ["named", "kb_omitted", "mcp_kb_get"])
+def test_a_read_the_index_can_answer_walks_no_directory(env, svc, surface):
+    """Property A (round 1): the row's file still holds the id, so the read
+    opens that one file and lists no directory. Only a miss looks by name:
+    ``export`` and ``ai_ep`` call get_entry once per entry, and a walk per
+    call costs milliseconds per entry on a large KB."""
+    server = None
+    if surface == "mcp_kb_get":
+        from pyrite.server.mcp_server import PyriteMCPServer
+
+        server = PyriteMCPServer(env["config"], tier="admin")
+    try:
+        with _directory_walks() as walks:
+            if surface == "named":
+                got = svc.get_entry(ENTRY, KB, readable_kbs=None)
+            elif surface == "kb_omitted":
+                got = svc.get_entry(ENTRY, None, readable_kbs=None)
+            else:
+                got = server._kb_get({"entry_id": ENTRY, "kb_name": KB})["entry"]
+    finally:
+        if server is not None:
+            server.close()
+    assert "### Added by hand" in got["body"]
+    in_kb = [w for w in walks if str(env["kb_path"]) in w]
+    assert in_kb == [], in_kb
+
+
+def test_the_entry_is_parsed_from_the_bytes_it_hashed(env, svc):
+    """Property B (round 1): one read of the file. The hash and the entry come
+    from the same bytes, so the read is one version of the file."""
+    with _files_opened() as opened:
+        got = svc.get_entry(ENTRY, KB, readable_kbs=None)
+    assert opened.count(env["path"]) == 1, opened
+    assert got["content_hash"] == hashlib.sha256(env["path"].read_bytes()).hexdigest()
 
 
 def test_no_row_but_a_file_is_found(env, svc):
     """A file added by hand and never indexed answers by its id."""
     added = env["kb_path"] / "notes" / "hand-added.md"
     added.write_text("---\nid: hand-added\ntitle: Hand added\ntype: note\n---\n\nNew.\n")
-    got = svc.get_entry("hand-added", KB, readable_kbs=None)
+    with _directory_walks() as walks:
+        got = svc.get_entry("hand-added", KB, readable_kbs=None)
+    assert [w for w in walks if str(env["kb_path"]) in w], "a miss looks for the file by name"
     assert got["body"] == "New." and got["title"] == "Hand added"
     assert got["indexed_at"] is None and got["links"] == []
 
@@ -530,6 +604,30 @@ PIN_FILES = {
     ),
     "findings/f1.md": "---\nid: f1\ntitle: F1\ntype: finding\nseverity: high\n---\n\nFound.\n",
     "no-timestamps.md": "---\nid: no-timestamps\ntitle: No timestamps\ntype: note\n---\n\nx\n",
+    # YAML's own scalar types, unquoted, in the typed columns and in metadata:
+    # what the index stores for each is what the file read must return.
+    "events/unquoted.md": (
+        "---\nid: unquoted\ntitle: Unquoted\ntype: event\ndate: 2026-03-04\n"
+        "importance: 7.9\nlocation: null\n---\n\nx\n"
+    ),
+    "events/whole-float.md": (
+        "---\nid: whole-float\ntitle: Whole float\ntype: event\ndate: 2026-03-05\n"
+        "importance: 7.0\n---\n\nx\n"
+    ),
+    "tasks/typed.md": (
+        "---\nid: typed\ntitle: Typed\ntype: task\nstatus: true\npriority: 2.5\n"
+        "assignee: null\ndue_date: 2026-05-01\nstart_date: 2026-01-02T10:00:00\n"
+        "end_date: false\n---\n\nx\n"
+    ),
+    "tasks/int-priority.md": (
+        "---\nid: int-priority\ntitle: Int priority\ntype: task\npriority: 3\n"
+        "assignee: 7\n---\n\nx\n"
+    ),
+    "notes/scalars.md": (
+        "---\nid: scalars\ntitle: Scalars\ntype: note\nimportance: true\n"
+        "custom_flag: yes\ncustom_date: 2026-01-01\ncustom_when: 2026-01-01T08:00:00Z\n"
+        "custom_null: null\ncustom_float: 0.1\ntags: [1, true, 2026-01-01]\n---\n\nx\n"
+    ),
 }
 
 
