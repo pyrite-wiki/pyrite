@@ -27,6 +27,14 @@ from .protocol import DEFAULT_MIN_SIMILARITY, SemanticRows, similarity_from
 #: cap, or when distance culling removes candidates (#56, #194).
 _SQLITE_VEC_MAX_K = 4096
 
+# ``non_empty`` (#200): an entry has something to show when its body or its
+# summary holds a character other than space, tab, CR or LF. SQLite's TRIM
+# takes a one-space default, so the set is spelled out. No length threshold.
+NON_EMPTY_SQL = (
+    " AND (TRIM(COALESCE(e.body, ''), char(32, 9, 10, 13)) != ''"
+    " OR TRIM(COALESCE(e.summary, ''), char(32, 9, 10, 13)) != '')"
+)
+
 
 class SQLiteBackend(BaseBackend):
     """SearchBackend implementation for SQLite + FTS5 + sqlite-vec."""
@@ -243,6 +251,7 @@ class SQLiteBackend(BaseBackend):
         fips: str | None = None,
         state: str | None = None,
         status: str | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         sql = """
             SELECT
@@ -306,6 +315,8 @@ class SQLiteBackend(BaseBackend):
             keys = effective_status.derived_done_keys(self._session, kb_name, kb_names)
             sql += f" AND {effective_status.status_sql('e.', keys, params)} = ?"
             params.append(status)
+        if non_empty:
+            sql += NON_EMPTY_SQL
         sql += " ORDER BY rank LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         with self._raw_cursor() as cur:
@@ -411,6 +422,7 @@ class SQLiteBackend(BaseBackend):
         status: str | None = None,
         include_archived: bool = False,
         kb_names: set[str] | list[str] | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """KNN over ``vec_entry``, filtered by the same predicates as ``search``.
 
@@ -483,6 +495,7 @@ class SQLiteBackend(BaseBackend):
             status=status,
             include_archived=include_archived,
             kb_names=kb_names,
+            non_empty=non_empty,
         )
 
         # The KNN k-set is materialised in a CTE and its size carried on every
@@ -616,6 +629,7 @@ class SQLiteBackend(BaseBackend):
         status: str | None = None,
         include_archived: bool = False,
         kb_names: set[str] | list[str] | None = None,
+        non_empty: bool = False,
     ) -> tuple[str, list[Any], bool]:
         """Build the WHERE fragment shared by the semantic leg and ``search``.
 
@@ -683,6 +697,8 @@ class SQLiteBackend(BaseBackend):
             keys = effective_status.derived_done_keys(self._session, kb_name)
             sql += f" AND {effective_status.status_sql('e.', keys, params)} = ?"
             params.append(status)
+        if non_empty:
+            sql += NON_EMPTY_SQL
         selective = any(
             (
                 kb_name,
@@ -694,6 +710,7 @@ class SQLiteBackend(BaseBackend):
                 fips,
                 state,
                 status,
+                non_empty,
             )
         )
         return sql, params, selective

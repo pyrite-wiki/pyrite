@@ -32,6 +32,13 @@ logger = logging.getLogger(__name__)
 # at revision 006, so an existing Postgres database cannot take a column added
 # since. Said once per process, from the one place the backend is built, so the
 # CLI, the REST server and the MCP server all get it without a per-command change.
+# ``non_empty`` (#200), the same predicate as SQLite's: a body or a summary
+# with a character other than space, tab, CR or LF.
+NON_EMPTY_SQL = (
+    " AND (btrim(COALESCE(e.body, ''), chr(32) || chr(9) || chr(10) || chr(13)) != ''"
+    " OR btrim(COALESCE(e.summary, ''), chr(32) || chr(9) || chr(10) || chr(13)) != '')"
+)
+
 EXPERIMENTAL_ACK_ENV = "PYRITE_POSTGRES_EXPERIMENTAL_ACK"
 _EXPERIMENTAL_NOTICE = (
     "The Postgres backend is experimental in Pyrite 0.25.x: an existing Postgres "
@@ -342,6 +349,7 @@ class PostgresBackend(BaseBackend):
         fips: str | None = None,
         state: str | None = None,
         status: str | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         # Build the tsquery — plainto_tsquery handles user input safely
         sql = """
@@ -414,6 +422,8 @@ class PostgresBackend(BaseBackend):
             keys = effective_status.derived_done_keys(self._session, kb_name)
             sql += f" AND {effective_status.status_sql('e.', keys, params)} = :status"
             params["status"] = status
+        if non_empty:
+            sql += NON_EMPTY_SQL
 
         sql += " ORDER BY rank DESC LIMIT :limit OFFSET :offset"
         params["limit"] = limit
@@ -503,6 +513,7 @@ class PostgresBackend(BaseBackend):
         status: str | None = None,
         include_archived: bool = False,
         kb_names: set[str] | list[str] | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """KNN over pgvector, honouring the same filters as ``search`` (#56).
 
@@ -575,6 +586,8 @@ class PostgresBackend(BaseBackend):
             keys = effective_status.derived_done_keys(self._session, kb_name)
             sql += f" AND {effective_status.status_sql('e.', keys, params)} = :status"
             params["status"] = status
+        if non_empty:
+            sql += NON_EMPTY_SQL
         # The similarity floor belongs in the WHERE, not in a Python filter
         # after the fact: applied post-LIMIT it culls rows the LIMIT already
         # paid for and under-returns, where sqlite escalates its k instead. One

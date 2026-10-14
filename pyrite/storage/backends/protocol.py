@@ -131,6 +131,7 @@ class SearchBackend(Protocol):
         lifecycle: str | None = None,
         fips: str | None = None,
         state: str | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """Full-text search across entries."""
         ...
@@ -178,6 +179,7 @@ class SearchBackend(Protocol):
         status: str | None = None,
         include_archived: bool = False,
         kb_names: set[str] | list[str] | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """KNN search over stored embeddings, honouring the same filters as
         :meth:`search`.

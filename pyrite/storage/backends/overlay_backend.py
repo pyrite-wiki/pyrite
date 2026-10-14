@@ -181,6 +181,7 @@ class OverlaySearchBackend:
         fips: str | None = None,
         state: str | None = None,
         status: str | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         main_results = self._main.search(
             query,
@@ -196,6 +197,7 @@ class OverlaySearchBackend:
             fips=fips,
             state=state,
             status=status,
+            non_empty=non_empty,
         )
         diff_results = self._diff.search(
             query,
@@ -211,6 +213,7 @@ class OverlaySearchBackend:
             fips=fips,
             state=state,
             status=status,
+            non_empty=non_empty,
         )
         merged = self._merge_entry_lists(main_results, diff_results)
         return merged[offset : offset + limit] if limit else merged
@@ -382,6 +385,7 @@ class OverlaySearchBackend:
         status: str | None = None,
         include_archived: bool = False,
         kb_names: set[str] | list[str] | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         # For V1, semantic search from main only. Filters pass straight through
         # so the overlay honours them exactly as main does (#56).
@@ -399,6 +403,7 @@ class OverlaySearchBackend:
             state=state,
             status=status,
             include_archived=include_archived,
+            non_empty=non_empty,
         )
 
     def has_embeddings(

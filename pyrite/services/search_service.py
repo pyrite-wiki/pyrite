@@ -615,6 +615,7 @@ class SearchService:
         kb_names: set[str] | list[str] | None = None,
         warnings: list[str] | None = None,
         semantic_query: str | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Search across entries.
@@ -643,6 +644,11 @@ class SearchService:
                 applied on every leg that ran. Never populated on the happy
                 path; a caller that ignores it still gets correctly filtered
                 results, just without knowing a leg was dropped.
+            non_empty: Leave out entries whose body and summary are both blank
+                after trimming whitespace (#200). Applied inside each leg's own
+                query, so ``limit`` rows come back when that many qualify. Off
+                by default: search itself hides nothing; link discovery turns
+                it on.
             semantic_query: The text the semantic leg embeds, when it should
                 differ from ``query``. A feature that derives an OR query from
                 a title or a message passes the query as ``query`` and the
@@ -796,6 +802,7 @@ class SearchService:
                         state=state,
                         status=status,
                         include_archived=include_archived,
+                        non_empty=non_empty,
                     ),
                     warnings=warnings,
                     trace=skip,
@@ -828,6 +835,7 @@ class SearchService:
                     include_archived=include_archived,
                     kb_names=kb_names,
                     signal=signal,
+                    non_empty=non_empty,
                 )
                 results = self._restrict(results, kb_names, limit)
             else:
@@ -851,6 +859,7 @@ class SearchService:
                         fips=fips,
                         state=state,
                         status=status,
+                        non_empty=non_empty,
                     )
 
                 def _hits(q: str, page: list[dict[str, Any]] | None = None) -> bool:
@@ -1176,6 +1185,7 @@ class SearchService:
         state: str | None = None,
         status: str | None = None,
         include_archived: bool = False,
+        non_empty: bool = False,
     ) -> dict[str, Any]:
         """The one filter set every leg receives (#56).
 
@@ -1193,6 +1203,7 @@ class SearchService:
             "state": state,
             "status": status,
             "include_archived": include_archived,
+            "non_empty": non_empty,
         }
 
     def _index_has_entries(
@@ -1251,6 +1262,7 @@ class SearchService:
         include_archived: bool = False,
         kb_names: set[str] | list[str] | None = None,
         signal: dict[str, Any] | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Hybrid search using Reciprocal Rank Fusion (RRF).
@@ -1285,6 +1297,7 @@ class SearchService:
                 state=state,
                 status=status,
                 include_archived=include_archived,
+                non_empty=non_empty,
             )
 
         keyword_results = _keyword(kw_query, fetch_size)
@@ -1313,6 +1326,7 @@ class SearchService:
                 state=state,
                 status=status,
                 include_archived=include_archived,
+                non_empty=non_empty,
             ),
             warnings=warnings,
             keyword_leg_ran=True,

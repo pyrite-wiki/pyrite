@@ -593,6 +593,7 @@ class EmbeddingService:
         status: str | None = None,
         include_archived: bool = False,
         kb_names: set[str] | list[str] | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Search for semantically similar entries using vector KNN.
@@ -612,6 +613,8 @@ class EmbeddingService:
                 hybrid result violate it. ``include_archived`` is the default
                 exclusion rather than a value filter, and holds on both legs
                 for the same reason.
+            non_empty: leave out entries whose body and summary are both blank
+                (#200); applied inside the KNN like the others.
 
         Returns list of entry dicts with ``similarity`` (cosine, 3 places, the
         same on every backend), ``snippet``, and ``distance`` (backend-specific:
@@ -636,6 +639,7 @@ class EmbeddingService:
             state=state,
             status=status,
             include_archived=include_archived,
+            non_empty=non_empty,
         )
 
         # Add relevance-aware snippets to results

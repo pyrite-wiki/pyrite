@@ -600,6 +600,7 @@ class BaseBackend(ABC):
         fips: str | None = None,
         state: str | None = None,
         status: str | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """Full-text search — FTS5 (SQLite) or tsvector (Postgres)."""
         ...
@@ -646,6 +647,7 @@ class BaseBackend(ABC):
         status: str | None = None,
         include_archived: bool = False,
         kb_names: set[str] | list[str] | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]: ...
 
     @abstractmethod
