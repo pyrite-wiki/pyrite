@@ -920,27 +920,37 @@ def _is_build_noise(path: str) -> bool:
     )
 
 
-def is_clean(root: Path) -> bool:
-    """HEAD's tree is exactly what the tests could see: no uncommitted change
-    to a tracked file, no untracked ``.py`` file anywhere (a root conftest or
-    module changes what runs), and no untracked or gitignored file under the
-    code roots other than build noise. Unknown counts as dirty."""
+def dirty_reason(root: Path) -> str | None:
+    """Why HEAD's tree is not exactly what the tests could see, or None when
+    it is: an uncommitted change to a tracked file, an untracked ``.py`` file
+    anywhere (a root conftest or module changes what runs), an untracked or
+    gitignored file under the code roots other than build noise. The answer
+    names the rule and the first path, so a worker is not sent to ``git
+    status`` for a file it shows nothing about (#852). Unknown counts as dirty."""
     try:
-        if _git(root, "status", "--porcelain", "--untracked-files=no").strip():
-            return False
+        tracked = _git(root, "status", "--porcelain", "--untracked-files=no").strip()
+        if tracked:
+            return f"uncommitted change to a tracked file: {tracked.splitlines()[0]}"
         untracked = _git(root, "ls-files", "-z", "--others", "--exclude-standard")
         ignored = _git(
             root, "ls-files", "-z", "--others", "--ignored", "--exclude-standard",
             "--", *_CODE_ROOTS,
         )  # fmt: skip
-    except (subprocess.CalledProcessError, OSError):
-        return False
+    except (subprocess.CalledProcessError, OSError) as exc:
+        return f"git could not say whether the tree is clean ({exc.__class__.__name__})"
     for path in untracked.split("\0"):
-        if path.endswith(".py") or (
-            path.startswith(_CODE_ROOTS_PREFIXES) and not _is_build_noise(path)
-        ):
-            return False
-    return not any(p and not _is_build_noise(p) for p in ignored.split("\0"))
+        if path.endswith(".py"):
+            return f"untracked .py file: {path}"
+        if path.startswith(_CODE_ROOTS_PREFIXES) and not _is_build_noise(path):
+            return f"untracked file under a code root: {path}"
+    for path in ignored.split("\0"):
+        if path and not _is_build_noise(path):
+            return f"gitignored file under a code root: {path}"
+    return None
+
+
+def is_clean(root: Path) -> bool:
+    return dirty_reason(root) is None
 
 
 _CODE_ROOTS_PREFIXES = tuple(f"{r}/" for r in _CODE_ROOTS)
@@ -1252,7 +1262,8 @@ def main(argv: list[str] | None = None) -> int:
         # the stamp store is shared by every worktree.
         own_venv = python == str(root / ".venv" / "bin" / "python")
         stamps = stamp_dir(root) if own_venv else None
-        clean = is_clean(root)
+        start_dirty = dirty_reason(root)
+        clean = start_dirty is None
         head_tree = tree_of(root, "HEAD")
         forced = opts.force or _truthy("PYRITE_PUSH_FORCE")
         # Why this run need not happen, if it need not: one line, or None.
@@ -1295,8 +1306,15 @@ def main(argv: list[str] | None = None) -> int:
             # and only when it was exactly HEAD's tree from start to finish
             # and the whole selection ran.
             tree = tree_of(root, "HEAD")
-            if not (clean and is_clean(root)) or tree is None or tree != head_tree:
-                print("test-affected: passed; not stamped (uncommitted changes)", file=sys.stderr)
+            end_dirty = dirty_reason(root)
+            if start_dirty or end_dirty or tree is None or tree != head_tree:
+                if start_dirty:
+                    why = f"the tree was not clean before the run: {start_dirty}"
+                elif end_dirty:
+                    why = f"the run left the tree unclean: {end_dirty}"
+                else:
+                    why = "HEAD moved during the run"
+                print(f"test-affected: passed; not stamped ({why})", file=sys.stderr)
             elif not stampable_args(extra):
                 print(
                     "test-affected: passed; not stamped "

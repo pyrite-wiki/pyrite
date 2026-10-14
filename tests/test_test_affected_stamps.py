@@ -234,6 +234,27 @@ class TestNeverStamped:
         assert _run(repo).returncode == 0
         assert _stamps(repo) == []
 
+    def test_a_file_the_run_leaves_behind_is_named_not_called_uncommitted(self, repo):
+        # #852: a passing run left a gitignored fixture under a code root; git
+        # status stayed clean, and the message said "uncommitted changes".
+        (repo / ".gitignore").write_text(".venv/\n*.db\n")
+        _git(repo, "commit", "-qam", "ignore dbs")
+        assert _git(repo, "status", "--porcelain").strip() == ""
+        out = _run(repo, FAKE_DURING="echo x > tests/leftover.db")
+        assert out.returncode == 0, out.stderr
+        assert _stamps(repo) == []
+        assert _git(repo, "status", "--porcelain").strip() == "", "git still sees a clean tree"
+        assert "uncommitted" not in out.stderr
+        assert "the run left the tree unclean" in out.stderr
+        assert "gitignored file under a code root: tests/leftover.db" in out.stderr
+
+    def test_a_tree_unclean_before_the_run_says_so_and_names_the_file(self, repo):
+        _write(repo, "tests/data.json", "{}")
+        out = _run(repo)
+        assert "not clean before the run: untracked file under a code root: tests/data.json" in (
+            out.stderr
+        )
+
     def test_build_noise_under_a_code_root_does_not_make_the_tree_dirty(self, repo):
         (repo / ".gitignore").write_text(".venv/\n__pycache__/\n*.egg-info/\n.pytest_cache/\n")
         _git(repo, "commit", "-qam", "ignore build noise")
