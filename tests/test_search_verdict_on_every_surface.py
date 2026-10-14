@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 from unittest.mock import patch
 
 import pytest
@@ -32,6 +33,10 @@ from tests.cli_help import plain
 from tests.search_verdict_seed import install_fake_model, vector_at
 
 OPEN, SECRET = "open", "secret"
+SECRET_SCORES = (0.87, 0.86)  # the similarities seeded into `secret` below
+SCORE_KEYS = {"similarity", "distance", "score", "rank", "rrf_score"}
+KB_KEYS = {"kb_name", "kb", "kb_id"}
+SECRET_TOKEN = re.compile(r"(?<![\d.])0\.8[67]\d*(?![\d])")  # a whole number, never inside 10.878
 ABSENT = "Andon cord"
 MODES = ["keyword", "semantic", "hybrid"]
 VERDICT_KEYS = ("match", "match_basis", "keyword_match", "legs_run")
@@ -116,6 +121,52 @@ def walk(env, query, mode, kb=OPEN):
         "mcp": mcp(env, query=query, kb_name=kb, mode=mode),
         "rest": rest(env["admin"], q=query, kb=kb, mode=mode),
     }
+
+
+def leaks(payload):
+    """What in `payload` reveals the unreadable KB, by structure.
+
+    Not a substring search over the JSON: wall-clock fields (`created_at`,
+    `indexed_at`) contain digit runs such as `10.878126` (#881)."""
+    found = []
+
+    def numbers_equal_secret(value):
+        return isinstance(value, (int, float)) and any(
+            abs(value - s) < 0.005 for s in SECRET_SCORES
+        )
+
+    def walk_node(node, path, in_legs=False):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                here = f"{path}.{key}"
+                if key in KB_KEYS and value == SECRET:
+                    found.append(f"{here} is the unreadable KB")
+                if key in SCORE_KEYS and numbers_equal_secret(value):
+                    found.append(f"{here}={value} is a seeded secret score")
+                if key in (
+                    "match_basis",
+                    "legs_run",
+                    "legs",
+                    "hint",
+                    "hints",
+                    "warnings",
+                    "kbs",
+                    "kb_names",
+                ):
+                    text = json.dumps(value)
+                    if SECRET in text:
+                        found.append(f"{here} names the unreadable KB")
+                    if key == "match_basis" and SECRET_TOKEN.search(text):
+                        found.append(f"{here} quotes a secret score: {value}")
+                walk_node(value, here, in_legs or key == "legs")
+        elif isinstance(node, list):
+            for i, value in enumerate(node):
+                if in_legs and numbers_equal_secret(value):
+                    found.append(f"{path}[{i}] is a seeded secret score")
+                walk_node(value, f"{path}[{i}]", in_legs)
+
+    walk_node(payload, "$")
+    return found
 
 
 def verdict(payload):
@@ -262,7 +313,10 @@ class TestAScopedCallerOnTheSurfaces:
         alone = rest(env["peer"], q=ABSENT, kb=OPEN, mode=mode)
         assert scoped == alone
         assert scoped["match"] == "none"
-        assert SECRET not in json.dumps(scoped) and "0.87" not in json.dumps(scoped)
+        assert leaks(scoped) == []
+        assert leaks(rest(env["admin"], q=ABSENT, mode=mode)) != [], (
+            "the check must see a real leak"
+        )
         assert rest(env["admin"], q=ABSENT, mode=mode)["match"] == "strong"
 
     @pytest.mark.parametrize("mode", MODES)
@@ -272,8 +326,44 @@ class TestAScopedCallerOnTheSurfaces:
         alone = server._kb_search({"query": ABSENT, "mode": mode, "kb_name": OPEN})
         assert scoped == alone
         assert scoped["match"] == "none"
-        assert SECRET not in json.dumps(scoped) and "0.87" not in json.dumps(scoped)
+        assert leaks(scoped) == []
         assert mcp(env, query=ABSENT, mode=mode)["match"] == "strong"
+
+
+class TestTheLeakCheckItself:
+    """The check is structural: it catches a leak and ignores a timestamp (#881)."""
+
+    CLEAN = {
+        "results": [{"id": "kestrel", "kb_name": OPEN, "similarity": 0.3, "legs": ["semantic"]}],
+        "match_basis": "semantic: best similarity 0.30, below 0.35",
+        "legs_run": ["semantic"],
+    }
+
+    def test_a_timestamp_holding_the_old_score_is_not_a_leak(self):
+        payload = json.loads(json.dumps(self.CLEAN))
+        payload["results"][0].update(
+            created_at="2026-10-14T07:00:10.878126+00:00", indexed_at="2026-10-14T10:87:00"
+        )
+        assert "0.87" in json.dumps(payload) or "10.87" in json.dumps(payload)
+        assert leaks(payload) == []
+
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            lambda p: p["results"].append({"id": "andon", "kb_name": SECRET}),
+            lambda p: p["results"][0].update(similarity=0.87),
+            lambda p: p["results"][0].update(rrf_score=0.86),
+            lambda p: p["results"][0].update(legs=[0.87]),
+            lambda p: p.update(match_basis="semantic: best similarity 0.87, at or above 0.50"),
+            lambda p: p.update(legs_run=["semantic", SECRET]),
+        ],
+        ids=["row", "similarity", "rrf", "legs", "basis", "legs_run"],
+    )
+    def test_an_injected_secret_is_caught(self, mutate):
+        payload = json.loads(json.dumps(self.CLEAN))
+        assert leaks(payload) == []
+        mutate(payload)
+        assert leaks(payload) != []
 
 
 class TestHowToReadIt:
