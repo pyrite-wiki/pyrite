@@ -7,6 +7,7 @@ Every test drives the real CLI (`pyrite.cli.app`) against a temporary KB.
 """
 
 import contextlib
+import re
 from unittest.mock import patch
 
 import pytest
@@ -16,6 +17,8 @@ from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models.core_types import NoteEntry
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
+
+from .cli_help import plain
 
 runner = CliRunner()
 
@@ -60,6 +63,13 @@ def _export(config, *args):
         return runner.invoke(app, ["export", *args])
 
 
+def _say(result):
+    """Everything the command printed, as plain words: no ANSI, no Rich box
+    borders, no wrapping, so assertions hold under FORCE_COLOR and any COLUMNS."""
+    text = plain(result.output + result.stderr)
+    return re.sub(r"[\s│╭╮╰╯─┃┏┓┗┛━]+", " ", text)
+
+
 def _files(path):
     """name -> bytes of every file written, so the alias is compared on content."""
     return {
@@ -101,7 +111,7 @@ class TestSiteTarget:
         out = tmp_path / "x"
         result = _export(config, *SITE, "-o", str(out), flag, "hugo")
         assert result.exit_code == 2
-        text = result.output + result.stderr
+        text = _say(result)
         assert "hugo" in text and "quartz" in text
         assert not out.exists()
 
@@ -116,14 +126,15 @@ class TestSiteTarget:
             config, *SITE, "-o", str(tmp_path / "x"), "--target", "quartz", "--format", "hugo"
         )
         assert result.exit_code == 2
-        text = result.output + result.stderr
+        text = _say(result)
         assert "--target" in text and "--format" in text
         assert not (tmp_path / "x").exists()
 
     def test_help_shows_target_and_hides_the_old_spelling(self, config):
         result = _export(config, "site", "--help")
-        assert "--target" in result.output
-        assert "--format" not in result.output
+        text = _say(result)
+        assert "--target" in text
+        assert "--format" not in text
 
 
 class TestCollectionTarget:
@@ -153,7 +164,7 @@ class TestCollectionTarget:
         out = tmp_path / "x"
         result = _export(config, *COLLECTION, "-o", str(out), flag, "hugo")
         assert result.exit_code == 2
-        text = result.output + result.stderr
+        text = _say(result)
         assert "hugo" in text and "notebooklm" in text
         assert not out.exists()
 
@@ -183,10 +194,11 @@ class TestCollectionTarget:
             "other",
         )
         assert result.exit_code == 2
-        text = result.output + result.stderr
+        text = _say(result)
         assert "--target" in text and "--format" in text
 
     def test_help_shows_target_and_hides_the_old_spelling(self, config):
         result = _export(config, "collection", "--help")
-        assert "--target" in result.output
-        assert "--format" not in result.output
+        text = _say(result)
+        assert "--target" in text
+        assert "--format" not in text
