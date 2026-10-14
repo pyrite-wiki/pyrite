@@ -4,35 +4,30 @@ Pyrite is a knowledge infrastructure platform — Knowledge-as-Code for humans a
 
 ## Read the design first
 
-`kb/design.md` is Pyrite's design on one page: nine principles, the questions to ask of any ticket or change, and where the code does not match yet. Read it before a ticket, a groom or a review, and judge the work against it. Its topic maps lead to the ADRs.
+Read `kb/design.md` **by path** before any indexed lookup: this works even without an index. It gives Pyrite's nine principles, the questions to ask of a ticket or review, and the current gaps. Follow its [topic-map table](kb/design.md#topic-maps) to the ADRs rather than guessing from backlog search results.
 
 ## Using the KB for Project Context
 
-This project has a comprehensive knowledge base in `kb/` indexed by Pyrite's own tools. **Use the CLI to get context before and during work** — it's faster and cheaper than reading files manually.
+Use the CLI for project context after an incremental sync. Run the sync before trusting `get`, `sw` or `search`, including in the main checkout: their answers come from the index. The lookups below print JSON; sync prints its change summary. Type-filtered context searches avoid closed backlog items. Contract guides live outside this KB: start with `docs/json-contracts.md` and `docs/agent-write-path.md` by path.
 
 ### Quick Context Lookups
 
 ```bash
-# Search for anything — architecture, decisions, components, backlog items
-.venv/bin/pyrite search "<topic>" -k pyrite
+# Reconcile files before consulting indexed context; no embeddings needed
+.venv/bin/pyrite index sync -k pyrite --no-embed
 
-# Semantic search (finds conceptually related content, not just keyword matches)
-.venv/bin/pyrite search "<question>" -k pyrite --mode semantic
+# Search binding decisions and living module docs separately (JSON)
+.venv/bin/pyrite search "<topic>" -k pyrite --type adr --format json
+.venv/bin/pyrite search "<topic>" -k pyrite --type component --format json
 
-# Get a specific entry by ID
-.venv/bin/pyrite get <entry-id> -k pyrite
+# Read the design and a binding identity/write decision (JSON)
+.venv/bin/pyrite get design -k pyrite --format json
+.venv/bin/pyrite get adr-0042 -k pyrite --format json
 
-# Browse project structure
-.venv/bin/pyrite sw components    # Core modules and services
-.venv/bin/pyrite sw adrs          # Architecture Decision Records
-.venv/bin/pyrite sw backlog       # Top 50 backlog items with status (--limit/--offset to page, --limit 0 for all)
-.venv/bin/pyrite sw standards     # Coding standards and conventions
-
-# Find what links to something
-.venv/bin/pyrite backlinks <entry-id> -k pyrite
-
-# Browse by tag
-.venv/bin/pyrite tags -k pyrite
+# Browse current project structure (JSON)
+.venv/bin/pyrite sw components -k pyrite --format json
+.venv/bin/pyrite sw adrs -k pyrite --format json
+.venv/bin/pyrite backlinks <entry-id> -k pyrite --format json
 ```
 
 ### When to Use KB Tools

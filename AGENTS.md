@@ -5,10 +5,14 @@ Claude Code, any agent framework that reads `AGENTS.md`.
 
 ## Start here
 
-1. Read `CLAUDE.md` — the full development guide (git workflow,
+1. Read `kb/design.md` by path, then `docs/json-contracts.md` (the
+   contracts index until `docs/README.md` lands). Follow the design's
+   topic-map table for the decisions that bind your ticket.
+2. Read `CLAUDE.md` — the full development guide (git workflow,
    testing, KB usage, pre-commit hooks). It applies regardless of
    which agent is reading it.
-2. Run `pyrite orient -k <kb-name>` before working in any knowledge
+3. Follow its incremental sync step before indexed lookups. Run
+   `pyrite orient -k <kb-name>` before working in any knowledge
    base — it returns entry types, tags, recent changes, schema, and
    the operational contracts (indexing, error shape, search quoting,
    task-claim semantics) in one call. Don't relearn these from trial
@@ -19,7 +23,7 @@ Claude Code, any agent framework that reads `AGENTS.md`.
    return the same prose, no fields); today the required fields exist
    only in that type's MCP create-tool schema (e.g. `sw_create_backlog_item`
    requires `title`, `kind`, `kb_name`) — see #232.
-3. If integrating over MCP: connect with `pyrite mcp --tier <tier>`
+4. If integrating over MCP: connect with `pyrite mcp --tier <tier>`
    and call the `kb_orient` tool first for the same reason.
 
 ## JSON contracts
