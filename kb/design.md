@@ -146,9 +146,9 @@ code follows it; check, and treat a mismatch as the work to do.
 - Save hooks write links and parent status into files (principle 4).
 - An entry with no `id:` takes its identity from its title, and no command
   lists or pins the files missing one (principle 5).
-- A single-entry read comes from the index, not the file, and returns the
-  type's defaults and normalised values among the file's own fields, so a
-  client that sends a read back writes them into the file (principles 3 to 5).
+- A single-entry read returns the type's defaults and normalised values
+  among the file's own fields, so a client that sends a read back writes them
+  into the file (principles 3 and 4).
 - Entry classes and protocol mixins serialise themselves (principle 6).
 - KBs can exist only as database rows; grants and secrets are not in a
   reviewable config file (principle 7).

@@ -570,6 +570,11 @@ A single entry (`kb_get`, `pyrite get`) returns the entry dict directly
 — not wrapped in an `{"entry": ...}` key. `outlinks` and `backlinks` are
 included when resolvable.
 
+A single entry is read from its file as the file is now, so an edit made
+since the last `index sync` is in it; `content_hash` is the SHA-256 of the
+bytes that read (`null` for an entry with no file). Lists and search are
+index reads and may lag.
+
 ### Backlink rows
 
 Each row in `backlinks` (and in `pyrite backlinks`, MCP `kb_backlinks`) reads

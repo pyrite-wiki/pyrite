@@ -30,7 +30,8 @@ Marks: **decided** = accepted ADR; **proposed** = ADR-0044 only (all of ADR-0038
    ADR-0042 decisions 1 to 3. Code today re-emits the whole file from the model.
 3. A single-entry read reads the file's current bytes and returns a
    `content_hash`; lists and search stay index reads. **decided** ADR-0042
-   decision 9. Code today reads the index row.
+   decision 9. Built for the read (#753, `KBService._read_entry`); the type's
+   defaults and normalised values still come back among the fields (#730 P5).
 4. Hooks may refuse a write; they may not change one. What hooks added (links,
    parent status) is derived and shown as derived. **decided** ADR-0042
    decision 4, ADR-0045 decisions 3 and 7.
@@ -99,7 +100,7 @@ does instead (all seven, 2026-10-03). Remove a line when its example passes.
 ## Known gaps
 
 - Update re-serialises the file; hooks write links and parent status; the id
-  comes from the title; a single read comes from the index. ADR-0042 and
+  comes from the title; a single read returns defaults among the file's fields. ADR-0042 and
   ADR-0045 address them; ADR-0042 is accepted (2026-10-03); spike 2 and spike 3 (concurrency, `/` in ids; macOS only) are done, and the checks
   not run (CRLF, BOM, anchors, Hugo; Linux and Windows locks) are listed in the ADR.
 - `previous_ids` (history across a rename) is absent; most I1 to I10 are
