@@ -1525,6 +1525,8 @@ def _renderers(tree: ast.AST) -> set[str]:
 
 SCANNED = [
     *sorted((REPO / "pyrite" / "cli").glob("*.py")),
+    # Code a CLI command delegates to, whose handlers decide its exit status.
+    REPO / "pyrite" / "services" / "file_search.py",
     REPO / "pyrite" / "read_cli.py",
     REPO / "pyrite" / "admin_cli.py",
     *sorted((REPO / "extensions").glob("*/src/*/cli*.py")),
@@ -1699,6 +1701,7 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "safe",
         "path outside the KB is skipped",
     ),
+    ("pyrite/services/file_search.py", "search_kb_files"): ("fixed", "TestSearchFiles"),
     ("pyrite/cli/search_commands.py", "_warn_if_stale"): ("safe", "a probe for a warning"),
     ("pyrite/cli/task_commands.py", "_task_get_impl"): ("safe", "bad metadata reads as empty"),
 }
