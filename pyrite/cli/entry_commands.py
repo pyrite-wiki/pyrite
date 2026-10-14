@@ -33,7 +33,7 @@ from ..exceptions import (
     ValidationError,
 )
 from ..services.access_policy import UNSCOPED
-from ..services.read_shaping import parse_fields_param, project_fields
+from ..services.read_shaping import parse_cli_fields, project_fields
 from ..utils.errors import cli_error
 from ..utils.frontmatter import (
     Frontmatter,
@@ -223,7 +223,7 @@ def register_entry_commands(app: typer.Typer) -> None:
 
             # Apply field projection. One rule for every read surface (#193):
             # `--fields` keeps the identity pair, like the REST routes and MCP.
-            fields_list = parse_fields_param(fields)
+            fields_list = parse_cli_fields(fields)
             if fields_list:
                 result = project_fields(result, fields_list)
 

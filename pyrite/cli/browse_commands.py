@@ -12,7 +12,7 @@ from rich.table import Table
 
 from ..exceptions import PyriteError
 from ..services.access_policy import UNSCOPED
-from ..services.read_shaping import parse_fields_param, project_fields
+from ..services.read_shaping import parse_cli_fields, project_fields
 from .context import cli_context
 from .output import validate_output_format
 
@@ -69,7 +69,7 @@ def register_browse_commands(app: typer.Typer) -> None:
             total = svc.count_entries(kb_name=kb_name, entry_type=entry_type, tag=tag)
 
             # Apply field projection. One rule for every read surface (#193).
-            fields_list = parse_fields_param(fields)
+            fields_list = parse_cli_fields(fields)
             if fields_list:
                 entries = [project_fields(record, fields_list) for record in entries]
 
@@ -138,7 +138,7 @@ def register_browse_commands(app: typer.Typer) -> None:
             results = svc.get_entries(parsed_ids)
 
             # Apply field projection. One rule for every read surface (#193).
-            fields_list = parse_fields_param(fields)
+            fields_list = parse_cli_fields(fields)
             if fields_list:
                 results = [project_fields(record, fields_list) for record in results]
 
@@ -360,7 +360,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 entries = [e for e in entries if (e.get("updated_at") or "") >= since]
 
             # Apply field projection. One rule for every read surface (#193).
-            fields_list = parse_fields_param(fields)
+            fields_list = parse_cli_fields(fields)
             if fields_list:
                 entries = [project_fields(record, fields_list) for record in entries]
 

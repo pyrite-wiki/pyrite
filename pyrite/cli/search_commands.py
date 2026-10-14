@@ -17,10 +17,10 @@ from ..exceptions import QuerySyntaxError, QueryTooLongError
 from ..services.read_shaping import (
     IDENTITY_FIELDS,
     SEARCH_FIELDS_ENV,
-    SearchFieldsError,
     parse_fields_param,
     project_fields,
     resolve_search_fields,
+    unmatched_search_fields,
 )
 from ..storage.repository import KBRepository
 from ..utils.errors import exit_unless_whole
@@ -158,12 +158,9 @@ def register_search_command(app: typer.Typer):
         asked = bool(
             parse_fields_param(fields) or parse_fields_param(os.environ.get(SEARCH_FIELDS_ENV))
         )
-        try:
-            row_fields = resolve_search_fields(
-                fields, os.environ.get(SEARCH_FIELDS_ENV), include_body=include_body
-            )
-        except SearchFieldsError as e:
-            raise typer.BadParameter(str(e)) from None
+        row_fields = resolve_search_fields(
+            fields, os.environ.get(SEARCH_FIELDS_ENV), include_body=include_body
+        )
 
         config = load_config()
         if kb_name:
@@ -201,7 +198,7 @@ def register_search_command(app: typer.Typer):
             )
 
         if use_files:
-            _warn_fields_not_applied(parse_fields_param(fields))
+            _warn_fields_not_applied(fields)
             _search_files(config, query, kb_name, entry_type, limit)
             return
 
@@ -297,6 +294,13 @@ def register_search_command(app: typer.Typer):
 
             # Apply field projection. One rule for every read surface (#193).
             if row_fields:
+                missing = unmatched_search_fields(results, row_fields) if asked else []
+                if missing:
+                    typer.echo(
+                        f"warning: no result carries: {', '.join(missing)} "
+                        "(field names are case-sensitive; '*' returns every field)",
+                        err=True,
+                    )
                 results = [project_fields(record, row_fields) for record in results]
             elif not include_body:
                 for r in results:
@@ -385,17 +389,26 @@ def register_search_command(app: typer.Typer):
                 raise typer.Exit(1)
             console.print(f"[red]Search error ({type(e).__name__}):[/red] {e}")
             console.print("[dim]Falling back to file search...[/dim]")
-            _warn_fields_not_applied(parse_fields_param(fields))
+            _warn_fields_not_applied(fields)
             _search_files(config, query, kb_name, entry_type, limit)
         finally:
             if db is not None:
                 db.close()
 
 
-def _warn_fields_not_applied(fields_list):
-    """File search prints its own table (KB, Type, Title, ID) whatever `--fields` says."""
-    if fields_list:
-        typer.echo("--fields is not applied by file search; showing its own table.", err=True)
+def _warn_fields_not_applied(fields):
+    """File search prints its own table (KB, Type, Title, ID) whatever the caller asked.
+
+    Both ways of asking are named: `--fields`, and `PYRITE_SEARCH_FIELDS` when
+    `--fields` is absent.
+    """
+    if parse_fields_param(fields):
+        source = "--fields"
+    elif parse_fields_param(os.environ.get(SEARCH_FIELDS_ENV)):
+        source = SEARCH_FIELDS_ENV
+    else:
+        return
+    typer.echo(f"{source} is not applied by file search; showing its own table.", err=True)
 
 
 def _search_files(config, query, kb_name, entry_type, limit):

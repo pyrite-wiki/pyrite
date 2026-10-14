@@ -449,11 +449,19 @@ response whatever the rows carry. A key that is not in the row is absent, not
 `null`: reading it is a `KeyError`, never a wrong answer.
 
 To get more: `--fields '*'` (or `PYRITE_SEARCH_FIELDS='*'`) is the whole row
-as before #54, a named list (`--fields title,date,status`) is those fields
-after `id` and `kb_name`, and `PYRITE_SEARCH_FIELDS` sets the same list for
-every search in a shell. `--fields` wins over the variable. A variable that
-names a field no row carries is refused with exit 2 (`--fields` still skips an
-unknown name). `--include-body` adds `body` to the default row. In CSV the
+as before #54 (`body` still needs `--include-body`), a named list
+(`--fields title,date,status`) is those fields after `id` and `kb_name`, and
+`PYRITE_SEARCH_FIELDS` sets the same list for every search in a shell.
+`--fields` wins over the variable; an empty or blank value of either
+(`--fields ''`, `--fields ','`) is "not given" and gives the lean row (before
+#54 it gave the whole row). Names are case-sensitive and the variable is as
+lenient as the flag: a name that no returned row carries and no search row is
+known to have (`Title`, a typo) is skipped, and a warning naming it goes to
+stderr. A name a row merely lacks (`status` on an entry with none) is silent.
+`--fields '*'` means every field on every CLI command that takes `--fields`
+(`search`, `get`, `list-entries`, `recent`, `batch-read`); on REST and MCP `*`
+is not special. `search --files` ignores both and says so on stderr.
+`--include-body` adds `body` to the default row. In CSV the
 columns are the default row's keys that the page has; Markdown keeps its list.
 MCP `kb_search` and REST `GET /api/search` are unchanged: they return the
 whole row.
@@ -872,7 +880,9 @@ line, so a value that itself contains a blank line can look like a record
 boundary. Nothing is cut with an ellipsis, and from a console width of 2 no
 value is cut; at width 1 a stacked value made of wide characters is dropped,
 since a wide character needs 2 cells. A projection never changes the
-underlying records or the fields returned when no projection is requested.
+underlying records. What a command returns when no projection is requested is
+that command's default: the whole record everywhere except `search`, whose
+default row is the lean one above (#54).
 
 Empty projected CSV responses retain their column header and contain no data
 records. Rich retains each command's existing no-results message. JSON and

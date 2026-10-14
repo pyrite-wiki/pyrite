@@ -39,6 +39,18 @@ def parse_fields_param(fields: str | list[str] | None) -> list[str] | None:
     return list(dict.fromkeys(parsed)) or None
 
 
+def parse_cli_fields(fields: str | None) -> list[str] | None:
+    """`--fields` on the CLI: ``parse_fields_param``, plus ``*`` meaning every field.
+
+    ``*`` anywhere in the list is "no projection" (``None``), the same as not
+    passing the flag but explicit, so a caller can override ``PYRITE_SEARCH_FIELDS``.
+    Every CLI command that takes ``--fields`` calls this one function (REST and
+    MCP keep ``parse_fields_param``, where ``*`` is just an unknown name).
+    """
+    parsed = parse_fields_param(fields)
+    return None if parsed and "*" in parsed else parsed
+
+
 def project_fields(
     record: dict[str, Any],
     fields: list[str] | None,
@@ -85,10 +97,6 @@ SEARCH_DEFAULT_FIELDS: tuple[str, ...] = (
 SEARCH_FIELDS_ENV = "PYRITE_SEARCH_FIELDS"
 
 
-class SearchFieldsError(ValueError):
-    """`PYRITE_SEARCH_FIELDS` names a field a search row cannot carry."""
-
-
 def resolve_search_fields(
     fields: str | None, env_value: str | None = None, *, include_body: bool = False
 ) -> list[str] | None:
@@ -96,19 +104,25 @@ def resolve_search_fields(
 
     ``fields`` (``--fields``) wins over ``env_value`` (``PYRITE_SEARCH_FIELDS``),
     which wins over the lean default. ``*`` anywhere in either means the whole
-    row. A name in the variable that no row carries raises
-    :class:`SearchFieldsError`; ``--fields`` keeps its old leniency (an unknown
-    name is skipped), so existing scripts are not broken by this change.
+    row. Names are case-sensitive and never refused here: a row can carry keys
+    no fixed list knows (semantic rows from a KB's index carry ``fips``,
+    ``state``, ``rowid``), so the check is made against the rows actually
+    returned, by :func:`unmatched_search_fields`.
     """
-    named = parse_fields_param(fields)
-    if named is None:
-        named = parse_fields_param(env_value)
-        unknown = [f for f in named or () if f != "*" and f not in SEARCH_ROW_FIELDS]
-        if unknown:
-            raise SearchFieldsError(
-                f"{SEARCH_FIELDS_ENV} names no search-row field: {', '.join(unknown)}. "
-                f"Known: {', '.join(SEARCH_ROW_FIELDS)}, or * for the whole row."
-            )
-    if named is None:
-        named = list(SEARCH_DEFAULT_FIELDS) + (["body"] if include_body else [])
-    return None if "*" in named else named
+    named = parse_cli_fields(fields)
+    if fields and parse_fields_param(fields):
+        return named
+    named = parse_cli_fields(env_value)
+    if parse_fields_param(env_value):
+        return named
+    return list(SEARCH_DEFAULT_FIELDS) + (["body"] if include_body else [])
+
+
+def unmatched_search_fields(rows: list[dict[str, Any]], named: list[str] | None) -> list[str]:
+    """Requested names no returned row carries and no search row is known to.
+
+    A known name a row lacks (``status`` on an entry with none) is fine: the
+    row is simply without it. A name that is neither a known column nor present
+    in any row is a typo or a case slip (``Title``), and the caller says so.
+    """
+    return [f for f in named or () if f not in SEARCH_ROW_FIELDS and not any(f in r for r in rows)]

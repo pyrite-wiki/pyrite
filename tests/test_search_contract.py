@@ -848,6 +848,36 @@ def run_search(request, indexed_test_env, monkeypatch):
     return run
 
 
+@pytest.fixture
+def vector_leg(monkeypatch):
+    """Stub only the backend's KNN query; `search_similar` runs for real, so the row's
+    `snippet` is made by the production snippet path from the row's body."""
+    from pyrite.services.embedding_service import EmbeddingService
+
+    row = {
+        "id": "2025-01-11--test-event-1",
+        "kb_name": "test-events",
+        "entry_type": "event",
+        "title": "Test Event 1",
+        "body": "Immigration policy shifted that week.",
+        "file_path": "/x.md",
+        "indexed_at": "t",
+        "distance": 1.0,
+        "similarity": 0.42,
+        "fips": "27053",  # a key no fixed list of row fields names
+    }
+    real = EmbeddingService.search_similar
+
+    def search_similar(self, q, **kw):
+        self.db.backend.vec_available = True
+        self.db.backend.search_semantic = lambda **_: [dict(row)]
+        return real(self, q, **kw)
+
+    monkeypatch.setattr(EmbeddingService, "has_embeddings", lambda self, *a, **k: True)
+    monkeypatch.setattr(EmbeddingService, "embed_text", lambda self, text: [0.0])
+    monkeypatch.setattr(EmbeddingService, "search_similar", search_similar)
+
+
 @pytest.mark.cli
 class TestLeanSearchRows:
     def test_the_default_row_is_lean_and_the_verdict_stays(self, run_search):
@@ -907,19 +937,44 @@ class TestLeanSearchRows:
         out = run_search("immigration", "--format", "json", env={"PYRITE_SEARCH_FIELDS": " "})
         assert set(json.loads(out.stdout)["results"][0]) == _LEAN_KEYWORD
 
-    def test_a_variable_naming_no_field_is_refused_with_exit_2(self, run_search):
+    def test_a_name_no_row_carries_is_warned_about_not_refused(self, run_search):
+        """The variable is as lenient as `--fields`: the rows still come, and stderr names the
+        field nobody carries."""
         out = run_search(
             "immigration", "--format", "json", env={"PYRITE_SEARCH_FIELDS": "title,nosuchfield"}
         )
-        assert out.exit_code == 2, out.output
-        assert "nosuchfield" in out.output and "PYRITE_SEARCH_FIELDS" in out.output
-        assert not out.stdout.lstrip().startswith("{"), "no half-answer on stdout"
+        assert out.exit_code == 0, out.output
+        assert "nosuchfield" in out.stderr
+        row = json.loads(out.stdout)["results"][0]
+        assert list(row) == ["id", "kb_name", "title"]
 
-    @pytest.mark.control(
-        reason="before #54 the variable did not exist, so nothing refused; pins that --fields still wins over a bad one"
-    )
-    def test_a_refused_variable_does_not_stop_an_explicit_fields(self, run_search):
-        """`--fields` wins over the variable, so a bad variable is never read."""
+    @pytest.mark.parametrize("how", ["flag", "variable"])
+    def test_names_are_case_sensitive_and_a_miss_is_warned(self, run_search, how):
+        args = ["--fields", "Title"] if how == "flag" else []
+        env = {"PYRITE_SEARCH_FIELDS": "Title"} if how == "variable" else None
+        out = run_search("immigration", "--format", "json", *args, env=env)
+        assert out.exit_code == 0, out.output
+        assert "Title" in out.stderr and "case-sensitive" in out.stderr
+        assert list(json.loads(out.stdout)["results"][0]) == ["id", "kb_name"]
+
+    def test_a_known_column_a_row_lacks_is_not_a_warning(self, run_search):
+        out = run_search("immigration", "--format", "json", "--fields", "title,status")
+        assert "warning" not in out.stderr
+
+    def test_a_variable_key_only_the_rows_carry_is_accepted(self, run_search, vector_leg):
+        """Semantic rows from a KB index carry keys (`fips`) no fixed list names."""
+        out = run_search(
+            "immigration",
+            "--format",
+            "json",
+            "--mode",
+            "semantic",
+            env={"PYRITE_SEARCH_FIELDS": "title,fips"},
+        )
+        assert out.exit_code == 0 and "warning" not in out.stderr, out.output
+        assert json.loads(out.stdout)["results"][0]["fips"] == "27053"
+
+    def test_a_bad_variable_does_not_stop_an_explicit_fields(self, run_search):
         out = run_search(
             "immigration",
             "--format",
@@ -929,6 +984,7 @@ class TestLeanSearchRows:
             env={"PYRITE_SEARCH_FIELDS": "nosuchfield"},
         )
         assert out.exit_code == 0, out.output
+        assert "nosuchfield" not in out.stderr
 
     def test_include_body_adds_the_body_to_the_lean_row(self, run_search):
         out = run_search("immigration", "--format", "json", "--include-body")
@@ -973,30 +1029,14 @@ class TestLeanSearchRows:
 class TestLeanRowsPerMode:
     """The score keys differ per mode; the lean row carries the ones the mode made."""
 
-    @pytest.fixture
-    def vector_leg(self, monkeypatch):
-        from pyrite.services.embedding_service import EmbeddingService
-
-        row = {
-            "id": "2025-01-11--test-event-1",
-            "kb_name": "test-events",
-            "entry_type": "event",
-            "title": "Test Event 1",
-            "snippet": "s",
-            "file_path": "/x.md",
-            "indexed_at": "t",
-            "distance": 1.0,
-            "similarity": 0.42,
-        }
-        monkeypatch.setattr(EmbeddingService, "has_embeddings", lambda self, *a, **k: True)
-        monkeypatch.setattr(EmbeddingService, "search_similar", lambda self, q, **kw: [dict(row)])
-
     def test_semantic_rows_carry_similarity(self, run_search, vector_leg):
         out = run_search("immigration", "--format", "json", "--mode", "semantic")
         assert out.exit_code == 0, out.output
-        assert {frozenset(r) for r in json.loads(out.stdout)["results"]} == {
+        rows = json.loads(out.stdout)["results"]
+        assert {frozenset(r) for r in rows} == {
             frozenset({"id", "kb_name", "entry_type", "title", "snippet", "similarity"})
         }
+        assert rows[0]["snippet"] == "Immigration policy shifted that week."
 
     def test_hybrid_rows_carry_every_score_they_have(self, run_search, vector_leg):
         out = run_search("immigration", "--format", "json", "--mode", "hybrid")
