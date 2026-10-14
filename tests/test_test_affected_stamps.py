@@ -77,6 +77,10 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.delenv("FAKE_EXIT", raising=False)
     monkeypatch.delenv("FAKE_PY_VERSION", raising=False)
     monkeypatch.delenv("FAKE_DURING", raising=False)
+    # The machine-wide lock (scripts/heavy_lock.py) lives under HOME, which
+    # is tmp here: each case has its own, never the real one.
+    for var in ("PYRITE_SUITE_LOCK", "PYRITE_SUITE_LOCK_SKIP", "PYRITE_SUITE_LOCK_TIMEOUT"):
+        monkeypatch.delenv(var, raising=False)
     for var in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
         monkeypatch.setenv(var, "Test")
     for var in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
@@ -138,6 +142,53 @@ def _stamps(repo: Path) -> list[dict]:
 
 def _tree(repo: Path, rev: str = "HEAD") -> str:
     return _git(repo, "rev-parse", f"{rev}^{{tree}}").strip()
+
+
+class TestTheRunTakesTheMachineLock:
+    """`--run` waits for any other heavy run on the machine (#168)."""
+
+    @pytest.fixture
+    def held(self, tmp_path):
+        import fcntl
+
+        lock = tmp_path / "home" / ".cache" / "pyrite" / "heavy.lock"
+        lock.parent.mkdir(parents=True)
+        fd = os.open(lock, os.O_RDWR | os.O_CREAT)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        os.write(fd, json.dumps({"pid": 4242, "command": "another suite"}).encode())
+        yield lock
+        os.close(fd)
+
+    def test_the_run_waits_for_the_holder(self, repo, held):
+        out = _run(repo, PYRITE_SUITE_LOCK_TIMEOUT="0.5")
+        assert out.returncode == 75, out.stderr
+        assert "pid 4242" in out.stderr and "another suite" in out.stderr
+        assert _calls() == []
+
+    @pytest.mark.control(
+        reason="a dry run never ran pytest; pins that the lock did not move earlier"
+    )
+    def test_a_dry_run_takes_no_lock(self, repo, held):
+        out = _run(repo, "--dry-run", PYRITE_SUITE_LOCK_TIMEOUT="0.5")
+        assert out.returncode == 0, out.stderr
+
+    @pytest.mark.control(
+        reason="a stamp skip never ran pytest; pins that the lock did not move earlier"
+    )
+    def test_a_stamped_tree_skips_without_waiting(self, repo, held):
+        held_fd_free = _run(repo, PYRITE_SUITE_LOCK_SKIP="1")
+        assert held_fd_free.returncode == 0
+        out = _run(repo, PYRITE_SUITE_LOCK_TIMEOUT="0.5")
+        assert out.returncode == 0, out.stderr
+        assert "skipping" in out.stderr
+        assert len(_calls()) == 1
+
+    def test_pytest_runs_marked_as_the_holder(self, repo, tmp_path):
+        seen = tmp_path / "held.txt"
+        out = _run(repo, FAKE_DURING=f'echo "$PYRITE_SUITE_LOCK_HELD" > {seen}')
+        assert out.returncode == 0, out.stderr
+        lock = (tmp_path / "home" / ".cache" / "pyrite" / "heavy.lock").resolve()
+        assert seen.read_text().strip() == str(lock)
 
 
 class TestStampWritten:

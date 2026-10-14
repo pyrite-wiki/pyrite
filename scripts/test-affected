@@ -112,6 +112,15 @@ A verified tip is not tested again (under the hook only)
   imports with the hook's interpreter), or ``preflight: cannot run: ...`` and
   exit 1. The release dry run asks it for the pushes ``--execute`` makes.
 
+One heavy run at a time
+  ``--run`` takes the machine-wide lock in scripts/heavy_lock.py for the
+  pytest run only (not the selection, a stamp or verified skip, --dry-run or
+  --preflight), so a second suite -- another worktree's push, a verify-red,
+  a Playwright run -- waits its turn with a line naming the holder instead
+  of running beside it (#168). PYRITE_SUITE_LOCK_SKIP=1 runs without it; CI
+  takes none. Exit 75 when PYRITE_SUITE_LOCK_TIMEOUT (default 3600 s) ends
+  the wait.
+
 Pass stamps: each tree is tested once
   A ``--run`` that exits 0 on a clean tree (no uncommitted change to a
   tracked file, no untracked ``.py`` file) records a stamp: the HEAD tree SHA,
@@ -169,6 +178,7 @@ from pathlib import Path
 # tests do), it is not.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import heavy_lock  # noqa: E402
 import verified_commit  # noqa: E402
 
 DEFAULT_BASE = "origin/dev"
@@ -1298,7 +1308,18 @@ def main(argv: list[str] | None = None) -> int:
         if skip is not None:
             print(skip, file=sys.stderr)
             return 0
-        code = subprocess.call(cmd, cwd=root, env={**os.environ})
+        # One heavy run at a time on this machine (#168): wait for any other
+        # suite, verify-red or Playwright run to finish. Only the run itself
+        # holds the lock -- not the selection, a skip, a dry run or --preflight.
+        try:
+            with heavy_lock.hold(f"scripts/test-affected --run ({label})"):
+                code = subprocess.call(cmd, cwd=root, env={**os.environ})
+        except heavy_lock.LockTimeoutError as exc:
+            print(exc, file=sys.stderr)
+            return heavy_lock.EXIT_TIMEOUT
+        except heavy_lock.LockError as exc:
+            print(f"test-affected: {exc}", file=sys.stderr)
+            return 2
         if code == 0 and not own_venv:
             print("test-affected: passed; not stamped (no .venv in this worktree)", file=sys.stderr)
         if code == 0 and stamps is not None and version is not None:

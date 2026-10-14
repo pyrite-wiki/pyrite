@@ -143,8 +143,8 @@ def checkout(tmp_path: Path) -> Path:
     _write(root, "tests/__init__.py", "")
     _write(root, "tests/test_b.py", "import pyrite.b\n\ndef test_b():\n    pass\n")
     # The hook's script is this repository's own, so the rehearsal asks the
-    # real decision code.
-    for name in ("test-affected", "verified_commit.py"):
+    # real decision code -- with the modules it imports beside it.
+    for name in ("test-affected", "verified_commit.py", "heavy_lock.py"):
         (root / "scripts").mkdir(exist_ok=True)
         shutil.copy(REPO / "scripts" / name, root / "scripts" / name)
     _git(root, "init", "-q", "-b", "dev")

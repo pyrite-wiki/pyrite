@@ -9,6 +9,11 @@
 # $TMPDIR, including your uncommitted changes (see scripts/verify_red_ci.py).
 # Run it once before reporting and paste the `verify-red: ...` line.
 #
+# It runs pytest twice, so it takes the machine-wide heavy-run lock
+# (scripts/heavy_lock.py, #168) and waits its turn behind any other suite or
+# Playwright run; PYRITE_SUITE_LOCK_SKIP=1 skips the lock. CI's verify-red
+# job calls verify_red_ci.py directly and takes no lock.
+#
 #   VERIFY_RED_BASE    integration ref (default origin/dev, then dev)
 #   VERIFY_RED_PYTHON  interpreter (default this checkout's .venv/bin/python)
 set -euo pipefail
@@ -18,4 +23,5 @@ py="${VERIFY_RED_PYTHON:-$top/.venv/bin/python}"
 [ -x "$py" ] || py=python3
 base=()
 [ -z "${VERIFY_RED_BASE:-}" ] || base=(--base "$VERIFY_RED_BASE")
-exec "$py" "$here/verify_red_ci.py" --python "$py" ${base[@]+"${base[@]}"} "$@"
+exec "$py" "$here/heavy_lock.py" --label "scripts/verify-red.sh" -- \
+  "$py" "$here/verify_red_ci.py" --python "$py" ${base[@]+"${base[@]}"} "$@"
