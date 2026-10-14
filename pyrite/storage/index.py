@@ -1614,6 +1614,29 @@ class IndexManager:
         result.pop("written", None)
         return result
 
+    def _drop_unservable_versions(
+        self,
+        entry_id: str,
+        kb_name: str,
+        kb_path: Path,
+        current_rel_path: str,
+        accepted: set[str],
+        git_service: Any,
+    ) -> None:
+        """Delete this entry's rows outside the walk on a positive fact only:
+        the read refuses a file git did read (another entry's id), or the
+        stored path is unsafe. `git_service` is the injected GitService:
+        storage does not import it. Anything else (git failed, the commit is
+        unreadable or past a shallow boundary) keeps the row (#453)."""
+        for commit_hash, stored_path in self.db.list_entry_version_rows(entry_id, kb_name):
+            if commit_hash in accepted:
+                continue
+            verdict, _ = git_service.version_servability(
+                kb_path, commit_hash, stored_path, current_rel_path, entry_id
+            )
+            if verdict == git_service.REFUSED:
+                self.db.delete_entry_version(entry_id, kb_name, commit_hash)
+
     def index_with_attribution(
         self,
         kb_name: str,
@@ -1675,19 +1698,29 @@ class IndexManager:
             if not is_git:
                 return None
             rel_path = str(file_path.relative_to(kb_path))
-            log_entries = _same_entry_history(
-                entry.id,
-                rel_path,
-                git_service.get_file_log(kb_path, rel_path),
-                kb_path,
-                git_service,
-            )
+            walked = git_service.get_file_log(kb_path, rel_path)
+            log_entries = _same_entry_history(entry.id, rel_path, walked, kb_path, git_service)
             if log_entries:
                 # First commit = created_by, last commit = modified_by
                 data["created_by"] = log_entries[-1]["author_name"]
                 data["modified_by"] = log_entries[0]["author_name"]
 
             def write_versions() -> None:
+                # entry_version is derived from git, so a recompute removes
+                # what is stale, but only a row the version read would refuse
+                # (#453). Not "every row outside the walk": the walk misses
+                # renames git does not detect, and a row `record_commit` adds
+                # concurrently is servable, so a servability check (the
+                # read's own rule) spares both. An empty walk learned nothing.
+                if walked:
+                    self._drop_unservable_versions(
+                        entry.id,
+                        kb_name,
+                        kb_path,
+                        rel_path,
+                        {e["hash"] for e in log_entries},
+                        git_service,
+                    )
                 # After the row (entry_version's FK). Each commit's file_path
                 # is the KB-relative path this entry had *at that commit* (its
                 # own tree), not necessarily its current path -- get_file_log

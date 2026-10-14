@@ -147,7 +147,9 @@ class TestCommitHashValidation:
         monkeypatch.setattr(subprocess, "run", _spy)
         # An abbreviated id: the read must use the peeled full commit id.
         assert svc.get_entry_at_version("entry-1", "test-kb", commit1[:7]) is not None
-        show = [a for a in seen if a[:2] == ["git", "show"]]
+        from pyrite.services.git_service import READ_BLOB_ARGV
+
+        show = [a for a in seen if tuple(a[: len(READ_BLOB_ARGV)]) == READ_BLOB_ARGV]
         assert len(show) == 1, seen
         argv = show[0]
         assert argv.index("--end-of-options") == len(argv) - 2

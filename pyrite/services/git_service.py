@@ -142,8 +142,30 @@ def _git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     return env
 
 
+# Verdicts of the version-servability check (#453). REFUSED is a positive
+# fact (an unsafe stored path, or a readable file holding another entry) and
+# the only verdict attribution deletes on. UNKNOWN is every case where git
+# did not hand back readable text: nothing was learned, so nothing is acted on.
+SERVABLE = "servable"
+REFUSED = "refused"
+UNKNOWN = "unknown"
+
+# The one command that reads a file at a commit. `cat-file blob` exits 0 only
+# when the commit, its trees and the blob were all read and the path names a
+# blob (`git show` exits 0 on a directory and prints a tree listing). Its
+# exit code is the fact; stderr is never classified, because git words
+# "path absent from a readable commit" and "commit unreadable" alike (#453).
+READ_BLOB_ARGV = ("git", "cat-file", "blob", "--end-of-options")
+
+
 class GitService:
     """Low-level git operations via subprocess."""
+
+    # The servability verdicts, reachable through an injected GitService
+    # (storage receives the class and does not import this module).
+    SERVABLE = SERVABLE
+    REFUSED = REFUSED
+    UNKNOWN = UNKNOWN
 
     @staticmethod
     def get_kb_prefix(kb_path: Path) -> str | None:
@@ -211,23 +233,92 @@ class GitService:
 
     @staticmethod
     def read_file_at(local_path: Path, commit: str, kb_relative_path: str) -> str | None:
-        """The text of `kb_relative_path` in `commit`'s tree, or None when it
-        is not there or the path is not a safe KB-relative path."""
+        """The text of `kb_relative_path` in `commit`'s tree, or None when the
+        path is unsafe or git did not hand back a UTF-8 blob (absent, an
+        unreadable object, a timeout, an OSError, a decode error). The one
+        version read: never raises for a file it cannot serve.
+
+        `<rev>:<path>` is resolved against the repo root unless anchored, so
+        the path is read as `./<path>` from the KB directory: a KB that is a
+        subdirectory of its repo is found (#415)."""
         if not GitService.is_safe_kb_relative_path(kb_relative_path):
             return None
         try:
             result = subprocess.run(
-                ["git", "show", "--end-of-options", f"{commit}:./{kb_relative_path}"],
+                [*READ_BLOB_ARGV, f"{commit}:./{kb_relative_path}"],
                 cwd=str(local_path),
                 capture_output=True,
-                text=True,
                 timeout=10,
                 env=_git_env(),
             )
         except (subprocess.SubprocessError, OSError):
-            logger.warning("git show failed for %s", local_path, exc_info=True)
+            logger.warning("git cat-file failed for %s", local_path, exc_info=True)
             return None
-        return result.stdout if result.returncode == 0 else None
+        if result.returncode != 0:
+            return None
+        try:
+            return result.stdout.decode("utf-8")
+        except UnicodeDecodeError:
+            logger.warning("Version of %s at %s is not UTF-8", kb_relative_path, commit)
+            return None
+
+    @staticmethod
+    def version_servability(
+        local_path: Path,
+        commit: str,
+        versioned_path: str | None,
+        current_rel_path: str | None,
+        entry_id: str,
+    ) -> tuple[str, str | None]:
+        """`(verdict, text)`: can a recorded version row be served for this
+        entry? The one rule for it, used by `VersionService.get_entry_at_version`
+        (which serves only SERVABLE) and by attribution (which deletes a row
+        only on REFUSED, #453).
+
+        Read at the path that version recorded (`versioned_path`, else the
+        entry's current one). REFUSED only on a positive fact: the path is
+        unsafe, or the file was read and holds another entry. No path to
+        read, or no text from `read_file_at` (absent from the commit, the
+        commit or blob unreadable, a shallow boundary, a timeout, a decode
+        error): UNKNOWN. A path absent from a readable commit is UNKNOWN too:
+        the read refuses it either way, and keeping a row is the safe side.
+        """
+        from ..models.core_types import entry_id_from_markdown, explicit_entry_id
+
+        if versioned_path:
+            # Stored KB-relative from #432 onward. Tolerate an absolute path
+            # under the KB (a dev database may hold rows from before paths
+            # were stored relative); any other absolute path is refused,
+            # never resolved.
+            if Path(versioned_path).is_absolute():
+                try:
+                    rel_path = str(Path(versioned_path).relative_to(local_path))
+                except ValueError:
+                    rel_path = versioned_path
+            else:
+                rel_path = versioned_path
+        else:
+            rel_path = current_rel_path
+        if rel_path is None:
+            return UNKNOWN, None  # the entry's indexed path is not under the KB
+        if not GitService.is_safe_kb_relative_path(rel_path):
+            return REFUSED, None
+
+        text = GitService.read_file_at(local_path, commit, rel_path)
+        if text is None:
+            return UNKNOWN, None
+        if rel_path != current_rel_path:
+            # A path other than the current one (a rename): git pairs renames
+            # by similarity and entries share boilerplate, so only the id says
+            # the file is this entry (#432).
+            return (SERVABLE, text) if entry_id_from_markdown(text) == entry_id else (REFUSED, None)
+        # The same path can hold a different entry at an older commit. A file
+        # stating another id is not this entry's version; one with no explicit
+        # id is served (its id comes from the title, which an edit may change).
+        stated_id = explicit_entry_id(text)
+        if stated_id is not None and stated_id != entry_id:
+            return REFUSED, None
+        return SERVABLE, text
 
     @staticmethod
     def _parse_nul_separated_name_status(raw: bytes) -> list[dict]:
