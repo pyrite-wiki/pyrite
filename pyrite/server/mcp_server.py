@@ -1635,6 +1635,7 @@ class PyriteMCPServer:
             mode=args.get("mode", "keyword"),
             exclude_linked=args.get("exclude_linked", True),
             readable_kbs=readable_kbs,
+            include_empty=bool(args.get("include_empty", False)),
         )
 
         return {
@@ -1662,6 +1663,7 @@ class PyriteMCPServer:
             mode=args.get("mode", "hybrid"),
             exclude_linked=args.get("exclude_linked", True),
             readable_kbs=readable_kbs,
+            include_empty=bool(args.get("include_empty", False)),
         )
 
         return {

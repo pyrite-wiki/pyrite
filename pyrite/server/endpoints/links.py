@@ -28,12 +28,17 @@ def discover_neighbors(
     limit: int = Query(10, ge=1, le=100),
     mode: str = Query("hybrid", description="Search mode: keyword, semantic, hybrid"),
     exclude_linked: bool = Query(True, description="Exclude entries already linked"),
+    include_empty: bool = Query(
+        False,
+        description="Also return entries with no body and no summary (left out by default)",
+    ),
     svc: LinkDiscoveryService = Depends(get_link_discovery_service),
     scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
     """Find related entries across all KBs, including the source KB by default.
 
     Excludes the source entry and, by default, already-linked entries.
+    Entries with no body and no summary are left out unless `include_empty`.
 
     `authorize(Action.KB_READ, KB)` refuses any KB this call names that the
     caller may not read; `scope` keeps the *candidates* to readable KBs as well.
@@ -49,6 +54,7 @@ def discover_neighbors(
         mode=mode,
         exclude_linked=exclude_linked,
         readable_kbs=scope.as_set(),
+        include_empty=include_empty,
     )
 
     return {
@@ -68,10 +74,17 @@ def batch_suggest(
     limit_per_entry: int = Query(3, ge=1, le=20),
     mode: str = Query("keyword", description="Search mode: keyword, semantic, hybrid"),
     exclude_linked: bool = Query(True, description="Exclude entries already linked"),
+    include_empty: bool = Query(
+        False,
+        description="Also return entries with no body and no summary (left out by default)",
+    ),
     svc: LinkDiscoveryService = Depends(get_link_discovery_service),
     scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
-    """Batch-compare two KBs to find potential cross-KB links."""
+    """Batch-compare two KBs to find potential cross-KB links.
+
+    Targets with no body and no summary are left out unless `include_empty`.
+    """
     pairs = svc.batch_suggest(
         source_kb=source_kb,
         target_kb=target_kb,
@@ -79,6 +92,7 @@ def batch_suggest(
         mode=mode,
         exclude_linked=exclude_linked,
         readable_kbs=scope.as_set(),
+        include_empty=include_empty,
     )
 
     return {

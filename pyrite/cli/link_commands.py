@@ -361,6 +361,7 @@ def _discover_neighbors(
     exclude_linked: bool = True,
     config=None,
     db=None,
+    include_empty: bool = False,
 ) -> list[dict]:
     """Find related entries in all KBs, including the source KB, unless narrowed.
 
@@ -383,6 +384,7 @@ def _discover_neighbors(
             mode=mode,
             exclude_linked=exclude_linked,
             readable_kbs=UNSCOPED,
+            include_empty=include_empty,
         )
     finally:
         if close_db:
@@ -405,12 +407,18 @@ def links_discover(
         "--exclude-linked/--include-linked",
         help="Exclude entries that already have a link to the source",
     ),
+    include_empty: bool = typer.Option(
+        False,
+        "--include-empty",
+        help="Also return entries with no body and no summary (left out by default)",
+    ),
     output_format: str = OUTPUT_FORMAT,
 ) -> Outcome:
     """Discover related entries across KBs, including the source KB.
 
     Searches all KBs unless --target-kb is set. Excludes the source entry
-    and, by default, entries already linked to it.
+    and, by default, entries already linked to it. Entries with no body and
+    no summary are left out; --include-empty returns them.
 
     \\b
     Examples:
@@ -437,6 +445,7 @@ def links_discover(
         limit,
         mode=mode,
         exclude_linked=exclude_linked,
+        include_empty=include_empty,
     )
 
     data = {
@@ -445,6 +454,7 @@ def links_discover(
         "target_kb": target_kb or "all",
         "mode": mode,
         "exclude_linked": exclude_linked,
+        "include_empty": include_empty,
         "count": len(candidates),
         "discoveries": candidates,
     }
@@ -491,6 +501,7 @@ def _batch_suggest(
     exclude_linked: bool = True,
     config=None,
     db=None,
+    include_empty: bool = False,
 ) -> list[dict]:
     """Find all potential cross-KB links between two KBs.
 
@@ -512,6 +523,7 @@ def _batch_suggest(
             mode=mode,
             exclude_linked=exclude_linked,
             readable_kbs=UNSCOPED,
+            include_empty=include_empty,
         )
     finally:
         if close_db:
@@ -533,12 +545,19 @@ def links_batch_suggest(
         "--exclude-linked/--include-linked",
         help="Exclude already-linked pairs",
     ),
+    include_empty: bool = typer.Option(
+        False,
+        "--include-empty",
+        help="Also return entries with no body and no summary (left out by default)",
+    ),
     output_format: str = OUTPUT_FORMAT,
 ) -> Outcome:
     """Batch-compare all entries between two KBs to find potential links.
 
     For each entry in source-kb, finds the most similar entries in target-kb.
-    Deduplicates bidirectional matches and sorts by similarity score.
+    Deduplicates bidirectional matches and sorts by similarity score. Target
+    entries with no body and no summary are left out; --include-empty returns
+    them.
 
     \\b
     Examples:
@@ -552,6 +571,7 @@ def links_batch_suggest(
         limit_per_entry=limit_per_entry,
         mode=mode,
         exclude_linked=exclude_linked,
+        include_empty=include_empty,
     )
 
     data = {
@@ -559,6 +579,7 @@ def links_batch_suggest(
         "target_kb": target_kb,
         "mode": mode,
         "exclude_linked": exclude_linked,
+        "include_empty": include_empty,
         "count": len(pairs),
         "pairs": pairs,
     }

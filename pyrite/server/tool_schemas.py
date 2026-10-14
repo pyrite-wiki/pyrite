@@ -652,7 +652,7 @@ READ_TOOLS = {
         },
     },
     "kb_batch_suggest": {
-        "description": "Batch-compare all entries between two KBs to find potential cross-KB links. For each entry in source_kb, finds similar entries in target_kb. Deduplicates bidirectional matches.",
+        "description": "Batch-compare all entries between two KBs to find potential cross-KB links. For each entry in source_kb, finds similar entries in target_kb. Deduplicates bidirectional matches. Entries with no body and no summary are left out of the targets unless include_empty is true.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -677,12 +677,16 @@ READ_TOOLS = {
                     "type": "boolean",
                     "description": "Exclude already-linked pairs (default: true)",
                 },
+                "include_empty": {
+                    "type": "boolean",
+                    "description": "Also return entries with no body and no summary (default: false, they are left out)",
+                },
             },
             "required": ["source_kb", "target_kb"],
         },
     },
     "kb_discover_neighbors": {
-        "description": "Find related entries across all KBs, including the source KB, unless target_kb limits the search. Excludes the source entry and, by default, already-linked entries.",
+        "description": "Find related entries across all KBs, including the source KB, unless target_kb limits the search. Excludes the source entry and, by default, already-linked entries. Entries with no body and no summary are left out unless include_empty is true.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -710,6 +714,10 @@ READ_TOOLS = {
                 "exclude_linked": {
                     "type": "boolean",
                     "description": "Exclude entries that already have a link to the source (default: true)",
+                },
+                "include_empty": {
+                    "type": "boolean",
+                    "description": "Also return entries with no body and no summary (default: false, they are left out)",
                 },
             },
             "required": ["entry_id", "kb_name"],

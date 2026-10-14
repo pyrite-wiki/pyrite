@@ -124,6 +124,7 @@ class LinkDiscoveryService:
         exclude_linked: bool = True,
         *,
         readable_kbs: set[str] | None,
+        include_empty: bool = False,
     ) -> list[dict]:
         """Find related entries in all KBs, including the source KB, unless narrowed.
 
@@ -135,6 +136,13 @@ class LinkDiscoveryService:
         `target_kb` omitted the search spans every KB, so a candidate from a
         KB outside that set is dropped here -- without it a caller who may
         read one KB is handed another KB's entry as a suggestion (#186).
+
+        Candidates with no body and no summary (blank after trimming
+        whitespace) are left out unless `include_empty` (#200). The
+        exclusion is a predicate in the search query, not a filter on its
+        result, so `limit` candidates come back when that many qualify. It
+        applies to candidates only: an empty source entry still gets
+        suggestions.
         """
         from .kb_service import KBService
         from .search_service import SearchService
@@ -192,6 +200,7 @@ class LinkDiscoveryService:
             limit=limit + 30,
             mode=actual_mode,
             semantic_query=semantic_query or None,
+            non_empty=not include_empty,
         )
 
         # Collect existing link targets to exclude
@@ -254,11 +263,13 @@ class LinkDiscoveryService:
         exclude_linked: bool = True,
         *,
         readable_kbs: set[str] | None,
+        include_empty: bool = False,
     ) -> list[dict]:
         """Find all potential cross-KB links between two KBs.
 
         For each entry in source_kb, runs discover_neighbors against target_kb,
-        then deduplicates bidirectional matches and sorts by score.
+        then deduplicates bidirectional matches and sorts by score. Targets
+        with no body and no summary are left out unless `include_empty` (#200).
         """
         from .kb_service import KBService
 
@@ -278,6 +289,7 @@ class LinkDiscoveryService:
                 mode=mode,
                 exclude_linked=exclude_linked,
                 readable_kbs=readable_kbs,
+                include_empty=include_empty,
             )
 
             for c in candidates:
