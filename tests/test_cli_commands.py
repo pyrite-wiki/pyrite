@@ -775,32 +775,44 @@ class TestMcpCommandTier:
 
 @pytest.mark.cli
 @pytest.mark.core
-def test_index_sync_verify_forwards_option(monkeypatch):
-    from pyrite.cli import index_commands
+def test_index_sync_verify_finds_same_size_edit_with_restored_mtime(cli_env):
+    """A same-size edit with its mtime restored is invisible to a plain sync;
+    `--verify` reads the bytes and finds it. Real KB, real index, real command."""
+    import os
 
-    calls = {}
+    target = next(
+        f for f in cli_env["events_kb"].path.rglob("*.md") if "Test Event 0" in f.read_text()
+    )
+    before = target.stat()
+    original = target.read_bytes()
+    marker = b"title: Test Event "
+    offset = original.index(marker) + len(marker)
+    changed = original[:offset] + b"X" + original[offset + 1 :]
+    assert len(changed) == len(original)
+    target.write_bytes(changed)
+    os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert target.stat().st_mtime_ns == before.st_mtime_ns
 
-    class FakeIndexManager:
-        def __init__(self, db, config):
-            pass
+    def indexed_title():
+        db = PyriteDB(cli_env["config"].settings.index_path)
+        try:
+            row = db._raw_conn.execute(
+                "SELECT title FROM entry WHERE file_path = ?", (str(target),)
+            ).fetchone()
+        finally:
+            db.close()
+        return row[0]
 
-        def sync_incremental(self, kb_name=None, *, verify=False):
-            calls["kb_name"] = kb_name
-            calls["verify"] = verify
-            return {
-                "added": 0,
-                "updated": 0,
-                "removed": 0,
-                "malformed": [],
-                "duplicates": [],
-            }
+    with _patch_config(cli_env):
+        plain_sync = runner.invoke(app, ["index", "sync", "--no-embed"])
+        assert plain_sync.exit_code == 0, plain_sync.output
+        assert "Updated: 0" in plain(plain_sync.output)
+        assert indexed_title() == "Test Event 0"
 
-    monkeypatch.setattr(index_commands, "get_config_and_db", lambda: (object(), object()))
-    monkeypatch.setattr("pyrite.storage.IndexManager", FakeIndexManager)
-    result = runner.invoke(app, ["index", "sync", "--verify", "--no-embed"])
-
-    assert result.exit_code == 0, result.output
-    assert calls == {"kb_name": None, "verify": True}
+        verified = runner.invoke(app, ["index", "sync", "--verify", "--no-embed"])
+        assert verified.exit_code == 0, verified.output
+        assert "Updated: 1" in plain(verified.output)
+        assert indexed_title() == "Test Event X"
 
 
 @pytest.mark.cli
