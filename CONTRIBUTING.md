@@ -220,6 +220,17 @@ set; and it switches to the full suite when you touch `conftest.py`,
 `pyrite/services/kb_service.py` selects 167 of the 281 test files that
 execute it on import. CI catches the rest.
 
+**CLI output is rendered the same everywhere.** `tests/conftest.py` pins the
+rendering environment before any CLI module is imported: ambient `FORCE_COLOR`,
+`PY_COLORS`, `NO_COLOR` and `TTY_COMPATIBLE` are removed, `COLUMNS` and
+`TERMINAL_WIDTH` are 80, `TERM` is `xterm-256color`, and `_TYPER_FORCE_DISABLE_TERMINAL`
+is set. The last matters most: Typer renders help and usage errors as ANSI in
+any process where `GITHUB_ACTIONS` is set, which is why a test could pass on a
+laptop and fail in CI (#884). A test that checks styling on purpose takes the
+`terminal_colour` fixture (in-process Typer), `Console(force_terminal=True)`, or
+`FORCE_COLOR=1` in a subprocess's env. `tests/test_cli_output_is_deterministic.py`
+runs the CLI under the CI variables to catch a regression.
+
 **Experimental tests** (#657). A red required check means the core broke.
 Tests of the surfaces `kb/designs/alpha-supported-surface.md` calls
 experimental (the extensions, tasks, REST and the web UI, `/site`, `/ws`, the

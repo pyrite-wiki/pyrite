@@ -11,13 +11,29 @@ import pytest
 
 _COLOR_ENV = pytest.StashKey[pytest.MonkeyPatch]()
 
+# Ambient variables that switch Rich/Typer to terminal rendering.
+_AMBIENT_RENDER_VARS = ("FORCE_COLOR", "TTY_COMPATIBLE", "PY_COLORS", "NO_COLOR")
+# Pinned for the whole run, before CLI modules (and their Rich consoles) import.
+_PINNED_RENDER_ENV = {
+    "_TYPER_FORCE_DISABLE_TERMINAL": "1",  # no ANSI/boxes from Typer, even in CI
+    "COLUMNS": "80",  # Rich Console width
+    "TERMINAL_WIDTH": "80",  # Typer help width
+    "TERM": "xterm-256color",
+}
+
 
 def pytest_configure(config):
     # Rich caches colour capability when module-level consoles are created.
     # Normalize before collection imports CLI modules, not only before tests.
     patch = pytest.MonkeyPatch()
-    patch.delenv("FORCE_COLOR", raising=False)
-    patch.delenv("TTY_COMPATIBLE", raising=False)
+    for name in _AMBIENT_RENDER_VARS:
+        patch.delenv(name, raising=False)
+    # Typer turns terminal mode on for GITHUB_ACTIONS, FORCE_COLOR or PY_COLORS
+    # (typer/rich_utils.py FORCE_TERMINAL) and only this variable overrides it.
+    # CI sets GITHUB_ACTIONS, so help and usage errors rendered as ANSI boxes
+    # there and as plain text on a laptop (#884). Pin one rendering for everyone.
+    for name, value in _PINNED_RENDER_ENV.items():
+        patch.setenv(name, value)
     config.stash[_COLOR_ENV] = patch
 
 
@@ -51,8 +67,24 @@ def _plain_cli_environment(monkeypatch):
     FORCE_COLOR wins. Tests that exercise styling can still opt in by setting
     FORCE_COLOR inside their own fixture/test, or using force_terminal=True.
     """
-    monkeypatch.delenv("FORCE_COLOR", raising=False)
-    monkeypatch.delenv("TTY_COMPATIBLE", raising=False)
+    for name in _AMBIENT_RENDER_VARS:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in _PINNED_RENDER_ENV.items():
+        monkeypatch.setenv(name, value)
+
+
+@pytest.fixture
+def terminal_colour(monkeypatch):
+    """Opt in to Typer's terminal rendering (ANSI, boxes) for one test.
+
+    Typer decides once, at import, so the environment cannot reach it; this
+    flips the decision it already made. Rich consoles you build yourself take
+    `force_terminal=True`; a subprocess takes `FORCE_COLOR=1` in its own env.
+    """
+    from typer import rich_utils
+
+    monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", True)
+    monkeypatch.delenv("_TYPER_FORCE_DISABLE_TERMINAL", raising=False)
 
 
 @pytest.fixture(autouse=True)
