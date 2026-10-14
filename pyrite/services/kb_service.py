@@ -34,12 +34,13 @@ from ..exceptions import (
 )
 from ..models import Entry
 from ..models.base import parse_datetime
+from ..models.core_types import id_text
 from ..models.factory import build_entry
 from ..plugins.context import PluginContext
 from ..schema.enum_check import is_off_list, is_per_element
 from ..storage.database import PyriteDB
 from ..storage.document_manager import DocumentManager
-from ..storage.index import IndexManager
+from ..storage.index import IndexManager, content_hash
 from ..storage.repository import KBRepository
 from ..utils.frontmatter import Frontmatter, NoFrontmatter, describe, split_frontmatter
 from ..utils.metadata import parse_metadata
@@ -549,25 +550,124 @@ class KBService:
         computed over readable KBs only (P-R4). A named KB the caller
         cannot read is the caller's to refuse; here it reads as a miss. A
         blank ``kb_name`` names no KB (``access_policy.named_kb``).
+
+        The entry is read from its file as it is now (``_read_entry``), so
+        every surface that calls this -- CLI ``get``, ``pyrite-read get``,
+        REST ``GET /api/entries/{id}``, MCP ``kb_get`` and ``kb_read_body``
+        -- returns a hand edit before the next sync (#753). Without a KB,
+        readable KBs are tried in config order, ids the index knows first,
+        so a hit never walks a directory.
         """
         kb_name = named_kb(kb_name)
         if kb_name:
             if readable_kbs is not None and kb_name not in readable_kbs:
                 return None
-            result = self.db.get_entry(entry_id, kb_name)
+            result = self._read_entry(entry_id, kb_name)
             if result:
                 self._attach_links(result, entry_id, kb_name, readable_kbs)
             return result
 
         # Search all KBs the caller can read
-        for kb in self.config.all_kbs():
-            if readable_kbs is not None and kb.name not in readable_kbs:
-                continue
-            result = self.db.get_entry(entry_id, kb.name)
-            if result:
-                self._attach_links(result, entry_id, kb.name, readable_kbs)
-                return result
+        readable = [
+            kb.name
+            for kb in self.config.all_kbs()
+            if readable_kbs is None or kb.name in readable_kbs
+        ]
+        for unindexed in (False, True):
+            for name in readable:
+                result = self._read_entry(entry_id, name, unindexed=unindexed)
+                if result:
+                    self._attach_links(result, entry_id, name, readable_kbs)
+                    return result
         return None
+
+    def _read_entry(
+        self, entry_id: str, kb_name: str, *, unindexed: bool | None = None
+    ) -> dict[str, Any] | None:
+        """THE single-entry read: the entry's file, parsed now (ADR-0042 decision 9).
+
+        The index row only says where to look. Its file is read if it still
+        holds the id (ADR-0038 I8); otherwise, and when there is no row, the
+        files named ``<id>.md`` in the KB are tried, each verified. No file
+        holding the id is a miss (``None``) even when a row remains: the file
+        decides (principle 5). A miss reads no file's content, because the
+        whole-KB scan ``find_file`` falls back to costs seconds on a large KB
+        (#135); a file whose id is not its name is found once it is indexed.
+
+        A row whose path lies outside the KB root is a user's worktree file
+        (the overlay read service, ``WorktreeResolver.get_read_service``): it
+        is read where it points and never replaced by a file in main.
+
+        A row with no ``file_path`` (rows the experimental journalism tools
+        create, #92) is returned as it is, with ``content_hash: None``.
+
+        ``unindexed``: None reads either way; False only ids with a row; True
+        only ids without one (``get_entry``'s two passes without a KB).
+
+        Lists, search and batch reads stay index reads and may lag.
+        """
+        row = self.db.get_entry(entry_id, kb_name)
+        if unindexed is not None and unindexed != (row is None):
+            return None
+        kb_config = self.get_kb(kb_name)
+        if row is not None and (not row.get("file_path") or kb_config is None):
+            row["content_hash"] = None  # no file to read: the row, as before
+            return row
+        if kb_config is None:
+            return None
+        found = self._entry_file(kb_config, entry_id, row)
+        if found is None:
+            return None
+        path, digest, entry = found
+        return self._index_mgr.read_fields(entry, kb_name, path, content_hash=digest, row=row)
+
+    def _entry_file(
+        self, kb_config: KBConfig, entry_id: str, row: dict[str, Any] | None
+    ) -> tuple[Path, str, Entry] | None:
+        """``(path, content_hash, entry)`` of the file holding ``entry_id``, or None."""
+        repo = KBRepository(kb_config)
+        candidates: list[Path] = []
+        indexed = Path(row["file_path"]) if row else None
+        if indexed is not None:
+            candidates.append(indexed)
+        if indexed is None or repo._lexically_inside(indexed):
+            # find_file's first step, without its whole-KB tail (see _read_entry).
+            try:
+                repo._validate_entry_id(entry_id)
+                candidates.extend(
+                    c for c in repo._filename_candidates(entry_id) if repo._lexically_inside(c)
+                )
+            except ValidationError:
+                pass
+        unreadable: tuple[Path, Exception] | None = None
+        for path in dict.fromkeys(candidates):
+            try:
+                # Hashed before it is parsed, from a read of its own: if the
+                # file changes in between, the hash is the OLDER version, so a
+                # write that presents it is refused as stale rather than
+                # accepted over an edit the reader never saw.
+                raw = path.read_bytes()
+            except OSError:
+                continue
+            try:
+                entry = repo.load_entry_from_file(path)
+            except Exception as exc:
+                unreadable = unreadable or (path, exc)
+                continue
+            if id_text(entry.id) == entry_id:
+                return path, content_hash(raw), entry
+        if unreadable is not None:
+            self._unreadable_entry_file(kb_config.name, entry_id, *unreadable)
+        return None
+
+    @staticmethod
+    def _unreadable_entry_file(kb_name: str, entry_id: str, path: Path, exc: Exception) -> None:
+        """The file that may hold ``entry_id`` cannot be parsed.
+
+        A miss for now, with one log line and never a traceback. #777 gives
+        this its own error (``MALFORMED_ENTRY``): raise it here.
+        """
+        logger.warning("get %s/%s: cannot parse %s: %s", kb_name, entry_id, path, exc)
 
     def _attach_links(
         self,
@@ -1151,7 +1251,11 @@ class KBService:
         each written as sent; the CLI's ``-f`` never passes through here.
         """
         updatable = self.updatable_fields(entry_id, kb_name)
-        row = self.db.get_entry(entry_id, kb_name)
+        # The reading an echo is compared with is the read a get returns -- the
+        # file now -- not the row, which may lag it: a value the read
+        # normalised is then "unchanged" and not written over the file's own
+        # spelling (#753).
+        row = self._read_entry(entry_id, kb_name)
         entry_type = row.get("entry_type") if row else None
         managed = (
             self._field_sets(entry_type, self.config.get_kb(kb_name))[2]

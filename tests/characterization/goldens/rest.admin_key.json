@@ -268,7 +268,7 @@
   "GET /api/daily/{date_str} | admin_key | no-default-role-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Sunday, May 2, 2021\n\n",
+      "body": "# Sunday, May 2, 2021",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -293,7 +293,7 @@
   "GET /api/daily/{date_str} | admin_key | private-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Monday, October 30, 2017\n\n",
+      "body": "# Monday, October 30, 2017",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -318,7 +318,7 @@
   "GET /api/daily/{date_str} | admin_key | readable-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Saturday, February 3, 2018\n\n",
+      "body": "# Saturday, February 3, 2018",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -7588,7 +7588,7 @@
   "POST /api/daily/{date_str} | admin_key | no-default-role-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Thursday, January 22, 2015\n\n",
+      "body": "# Thursday, January 22, 2015",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -7613,7 +7613,7 @@
   "POST /api/daily/{date_str} | admin_key | private-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Monday, May 30, 2022\n\n",
+      "body": "# Monday, May 30, 2022",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -7638,7 +7638,7 @@
   "POST /api/daily/{date_str} | admin_key | readable-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Thursday, November 19, 2020\n\n",
+      "body": "# Thursday, November 19, 2020",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",

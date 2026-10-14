@@ -6,12 +6,13 @@ Supports incremental updates based on file modification times.
 """
 
 import hashlib
+import json
 import logging
 import os
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -71,16 +72,102 @@ def _strip_code_regions(text: str) -> str:
     return stripped
 
 
+def content_hash(raw: bytes) -> str:
+    """THE ``content_hash``: SHA-256 of a file's raw bytes (ADR-0042 decision 9).
+
+    The index records it per row; a single-entry read returns it for the bytes
+    it read. One definition, so the two can be compared.
+    """
+    return hashlib.sha256(raw).hexdigest()
+
+
 def _hash_file(file_path: Path) -> str | None:
-    """SHA-256 of a file's raw bytes, or None if it can't be read.
+    """``content_hash`` of a file, or None if it can't be read.
 
     Used for content-based staleness detection: mtime alone misses
     same-second edits and coarse-resolution filesystems.
     """
     try:
-        return hashlib.sha256(file_path.read_bytes()).hexdigest()
+        return content_hash(file_path.read_bytes())
     except OSError:
         return None
+
+
+#: The entry columns of a read, in the order the backend's row puts them
+#: (``base_backend._entry_to_dict``) between ``file_path`` and ``metadata``.
+_READ_COLUMNS = (
+    "date",
+    "importance",
+    "status",
+    "location",
+    "lifecycle",
+    "assignee",
+    "assigned_at",
+    "priority",
+    "due_date",
+    "start_date",
+    "end_date",
+    "coordinates",
+)
+
+#: Metadata keys the backend lifts to the top of a row (Tier A 1200, r1175).
+_LIFTED_METADATA_KEYS = ("rank", "effort", "kind", "status_reason", "parked_awaiting")
+
+#: What a read keeps from the index row whatever the file says: the index's
+#: own bookkeeping and the derived link list (decision 9: derived values may
+#: lag, like search; outlinks and backlinks come from the index too).
+_ROW_ONLY_KEYS = ("indexed_at", "created_by", "modified_by")
+
+
+def _as_column(key: str, value: Any) -> Any:
+    """``value`` as the index column ``key`` returns it: ``importance`` is an
+    INTEGER column, the rest of ``_READ_COLUMNS`` TEXT (``storage/models.py``),
+    so a YAML number in ``priority`` reads back as its text, as SQLite's
+    column affinity stores it."""
+    if value is None:
+        return None
+    if key == "importance":
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return value
+    if isinstance(value, bool):
+        return str(int(value))
+    if isinstance(value, datetime):
+        return value.isoformat(" ")
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, (int, float)):
+        return str(value)
+    return value
+
+
+def _read_sources(
+    sources: list[dict[str, Any]], entry_id: str, kb_name: str, row: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """The file's sources in the shape a row returns them (``_get_entry_sources``).
+
+    ``id`` is the index's row number for a source; the file has none. It is
+    kept from the row where the row's source at the same position says the
+    same thing, so an unchanged source reads exactly as before; otherwise None.
+    """
+    indexed = row.get("sources") or []
+    out = []
+    for i, src in enumerate(sources):
+        shaped = {
+            "id": None,
+            "entry_id": entry_id,
+            "kb_name": kb_name,
+            "title": src.get("title", ""),
+            "url": src.get("url", ""),
+            "outlet": src.get("outlet", ""),
+            "date": src.get("date", ""),
+            "verified": 1 if src.get("verified") else 0,
+        }
+        if i < len(indexed) and {**indexed[i], "id": None} == shaped:
+            shaped["id"] = indexed[i].get("id")
+        out.append(shaped)
+    return out
 
 
 def _is_valid_link_target(target: str) -> bool:
@@ -557,6 +644,68 @@ class IndexManager:
             data["_blocks"] = extract_blocks(body)
 
         return data
+
+    def read_fields(
+        self,
+        entry: Entry,
+        kb_name: str,
+        file_path: Path,
+        *,
+        content_hash: str,
+        row: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """A single-entry read of ``entry``, parsed from ``file_path`` just now.
+
+        The same keys, in the same order, with the same values a row indexed
+        from this parse would return (``PyriteDB.get_entry``): the entry is
+        projected by ``_entry_to_dict`` -- the index's own projection -- and
+        then shaped as the backend shapes a row. Every file-held value comes
+        from this one parse, so a read never pairs a new body with an old title.
+        From ``row`` come only what the index alone knows: ``indexed_at``,
+        ``created_by``, ``modified_by``, the derived ``links``, and a
+        timestamp the file does not carry (whose value is the time of
+        indexing, #670). ``content_hash`` names the bytes the entry was parsed
+        from. ``tests/test_get_reads_the_file.py`` pins that on a fresh index
+        this equals the row, key for key; the backend's shaping is mirrored,
+        not shared, because it reads an ORM row (a finding for #730 P5).
+        """
+        from ..utils.json_utils import SafeEncoder
+
+        data = self._entry_to_dict(entry, kb_name, file_path, content_hash=content_hash)
+        row = row or {}
+        # Stored as JSON (upsert_entry), so a read sees JSON's values: a date
+        # becomes its ISO string, a tuple a list.
+        metadata = json.loads(json.dumps(data.get("metadata") or {}, cls=SafeEncoder))
+        result: dict[str, Any] = {
+            "id": data["id"],
+            "kb_name": kb_name,
+            "entry_type": data["entry_type"],
+            "title": data["title"],
+            "body": data["body"],
+            "summary": data["summary"],
+            "file_path": data["file_path"],
+        }
+        for key in _READ_COLUMNS:
+            result[key] = _as_column(key, data.get(key))
+        result["lifecycle"] = result["lifecycle"] or "active"
+        result["metadata"] = metadata
+        # A timestamp the file does not carry (or carries unparsed) is not the
+        # file's: the model fills it with "now", which would change on every
+        # read. The row's value stands, as before (#670).
+        source = entry._source_frontmatter or {}
+        for key in ("created_at", "updated_at"):
+            from_file = key in source and key not in entry._unparsed_timestamp_keys
+            result[key] = data.get(key) if from_file else row.get(key)
+        for key in _ROW_ONLY_KEYS:
+            result[key] = row.get(key)
+        for key in _LIFTED_METADATA_KEYS:
+            if key in metadata and key not in result:
+                result[key] = metadata[key]
+        result["tags"] = list(dict.fromkeys(t for t in data["tags"] if t))
+        result["sources"] = _read_sources(data["sources"], entry.id, kb_name, row)
+        result["links"] = row.get("links", [])
+        result["content_hash"] = content_hash
+        return result
 
     # -----------------------------------------------------------------
     # One reconcile (ADR-0038 step 2). Every path that indexes a KB's files

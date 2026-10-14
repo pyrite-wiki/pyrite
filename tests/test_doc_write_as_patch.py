@@ -116,9 +116,9 @@ KNOWN_DIVERGENCES: dict[str, tuple[str, str]] = {
         r"diff was:\n----\r\n-# header comment\r\n",
     ),
     "a-stale-whole-document-replace-is-refused": (
-        "decisions 9 and 11: kb_get returns no `content_hash`, so a replace cannot "
-        "say what it read (kb_update would set the argument aside as `ignored`)",
-        r"the read returned no content_hash",
+        "decision 11: kb_get returns `content_hash` since #753 (decision 9), but "
+        "kb_update sets it aside as `ignored` and writes over the hand edit",
+        r"a stale replace was written, not refused",
     ),
     "an-id-less-file-keeps-its-identity-when-its-title-changes": (
         "principle 5: no entry `posts/intro`; an id-less file is known by its title's "

@@ -268,7 +268,7 @@
   "GET /api/daily/{date_str} | write_key | no-default-role-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Sunday, March 31, 2024\n\n",
+      "body": "# Sunday, March 31, 2024",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -293,7 +293,7 @@
   "GET /api/daily/{date_str} | write_key | private-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Wednesday, July 13, 2022\n\n",
+      "body": "# Wednesday, July 13, 2022",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -318,7 +318,7 @@
   "GET /api/daily/{date_str} | write_key | readable-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Friday, June 30, 2023\n\n",
+      "body": "# Friday, June 30, 2023",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -7576,7 +7576,7 @@
   "POST /api/daily/{date_str} | write_key | no-default-role-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Sunday, December 16, 2018\n\n",
+      "body": "# Sunday, December 16, 2018",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -7601,7 +7601,7 @@
   "POST /api/daily/{date_str} | write_key | private-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Thursday, November 18, 2021\n\n",
+      "body": "# Thursday, November 18, 2021",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -7626,7 +7626,7 @@
   "POST /api/daily/{date_str} | write_key | readable-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Monday, January 26, 2015\n\n",
+      "body": "# Monday, January 26, 2015",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
