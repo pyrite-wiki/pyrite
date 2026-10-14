@@ -31,6 +31,7 @@ from ..exceptions import (
     SchemaViolationError,
     UndeclaredTypeError,
     ValidationError,
+    public_text,
 )
 from ..models import Entry
 from ..models.base import parse_datetime
@@ -157,11 +158,7 @@ def _safe_message(exc: Exception) -> str:
     this too, rather than ``str(exc)`` directly. Logs the real detail
     server-side when it masks it.
     """
-    public_message = getattr(exc, "public_message", None)
-    if public_message is not None:
-        logger.warning("%s", exc)
-        return public_message
-    return str(exc)
+    return public_text(exc, log=logger)
 
 
 def _refusal_result(exc: Exception) -> dict[str, Any]:
@@ -1815,8 +1812,10 @@ class KBService:
                 entry.touch_updated_at()
                 self._doc_mgr.save_entry(entry, kb_name, kb_config)
             except Exception as e:
+                # Once per failed save, not once per position: one cause, one line.
+                message = _safe_message(e)
                 for i in positions:
-                    results[i] = {"status": "failed", "error": _safe_message(e)}
+                    results[i] = {"status": "failed", "error": message}
         return results
 
     # =========================================================================
@@ -2981,7 +2980,7 @@ class KBService:
             # Already logged above (with a traceback) -- public_message, when
             # set, is what the caller sees; str(e) can carry server-side
             # detail (ADR-0037 theme 2 round 2, item 1).
-            push_error = getattr(e, "public_message", None) or str(e)
+            push_error = public_text(e, already_logged=True, log=logger)
 
         return {
             "success": True,

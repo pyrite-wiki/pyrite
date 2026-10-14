@@ -4,6 +4,7 @@ import logging
 import secrets
 from typing import Any, ClassVar
 
+from pyrite.exceptions import public_text
 from pyrite.plugins.capabilities import Capability
 
 from .entry_types import (
@@ -33,6 +34,9 @@ from .utils import parse_meta
 from .validators import validate_investigation_entry
 
 logger = logging.getLogger(__name__)
+# Under `pyrite`, where configure_logging puts the handler: a record on this
+# module's own logger would fall to the last-resort handler (#848).
+_masked_log = logging.getLogger("pyrite.ext.journalism_investigation")
 
 _EXPERIMENTAL_NOTICE = "EXPERIMENTAL: Unsupported until the 0.28 alpha plugin/API contract."
 
@@ -47,11 +51,7 @@ def _safe_error(e: Exception) -> str:
     path, a driver's own text. public_message, when set, is what every
     other transport already shows; the real detail still reaches the log.
     """
-    public_message = getattr(e, "public_message", None)
-    if public_message is not None:
-        logger.warning("%s", e)
-        return public_message
-    return str(e)
+    return public_text(e, log=_masked_log)
 
 
 # Prefix for the fresh guard name used when a scoped caller may not read the KB

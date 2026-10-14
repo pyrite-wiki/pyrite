@@ -30,6 +30,7 @@ from ..exceptions import (
     QueryTooLongError,
     StorageError,
     ValidationError,
+    public_text,
 )
 from ..services.access_policy import ROLES, named_kb
 from ..services.body_bounds import (
@@ -173,11 +174,7 @@ def _safe_message(exc: Exception) -> str:
     ``exc`` is not always a ``PyriteError`` -- ``public_message`` is looked
     up with ``getattr``, not assumed present.
     """
-    public_message = getattr(exc, "public_message", None)
-    if public_message is not None:
-        logger.warning("%s", exc)
-        return public_message
-    return str(exc)
+    return public_text(exc, log=logger)
 
 
 def _boolean_arg(args: dict[str, Any], name: str, default: bool = False) -> bool | None:
@@ -211,7 +208,7 @@ def _error(
     return r
 
 
-def _refusal(exc: PyriteError) -> dict:
+def _refusal(exc: PyriteError, *, already_logged: bool = False) -> dict:
     """Map a service refusal to the MCP envelope.
 
     The code is the exception class's own (``exc.error_code`` -- every
@@ -245,7 +242,9 @@ def _refusal(exc: PyriteError) -> dict:
     # `public_message` class attribute because its own str() names a real
     # filesystem path (BrandingInvalidError; the REST side's #377 pattern,
     # #445's cold read).
-    message = exc.public_message or str(exc)
+    # `already_logged`: the dispatchers log a StorageError at ERROR with its
+    # traceback (#431) before calling this; the cause is logged once (#848).
+    message = public_text(exc, already_logged=already_logged, log=logger)
     err = _error(
         code,
         message,
@@ -2064,9 +2063,10 @@ class PyriteMCPServer:
             # logged once, with its traceback (#431); every other refusal
             # (including BrandingInvalidError) is the caller finding out the
             # service said no, not a crash.
-            if isinstance(e, StorageError):
+            logged = isinstance(e, StorageError)
+            if logged:
                 logger.error("Prompt %s failed: %s", name, e, exc_info=e)
-            return _refusal(e)
+            return _refusal(e, already_logged=logged)
 
     def _prompt_research_topic(self, args: dict[str, Any]) -> dict[str, Any]:
         """Generate research prompt for a topic."""
@@ -2496,9 +2496,10 @@ class PyriteMCPServer:
             # except a storage fault, which is the server's problem and is
             # logged once, with its traceback (#431). See _refusal for which
             # refusals are retryable.
-            if isinstance(e, StorageError):
+            logged = isinstance(e, StorageError)
+            if logged:
                 logger.error("Tool %s failed: %s", name, e, exc_info=e)
-            return _refusal(e)
+            return _refusal(e, already_logged=logged)
         except Exception as e:
             logger.exception("Tool %s failed with args %s", name, arguments)
             return _error("INTERNAL", str(e), retryable=True)

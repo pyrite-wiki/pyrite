@@ -5,6 +5,7 @@ from collections.abc import Callable
 from datetime import UTC
 from typing import Any, ClassVar
 
+from pyrite.exceptions import public_text
 from pyrite.plugins.capabilities import Capability
 from pyrite.plugins.scoping import kb_scope_clause
 from pyrite.schema import generate_entry_id
@@ -27,6 +28,9 @@ from .validators import validate_software_kb
 from .workflows import ADR_LIFECYCLE, BACKLOG_WORKFLOW
 
 logger = logging.getLogger(__name__)
+# Under `pyrite`, where configure_logging puts the handler: a record on this
+# module's own logger would fall to the last-resort handler (#848).
+_masked_log = logging.getLogger("pyrite.ext.software_kb")
 
 
 def _safe_error(e: Exception) -> str:
@@ -39,11 +43,7 @@ def _safe_error(e: Exception) -> str:
     path, a driver's own text. public_message, when set, is what every
     other transport already shows; the real detail still reaches the log.
     """
-    public_message = getattr(e, "public_message", None)
-    if public_message is not None:
-        logger.warning("%s", e)
-        return public_message
-    return str(e)
+    return public_text(e, log=_masked_log)
 
 
 # Default page size for list-shaped sw_* surfaces (#233). These commands are

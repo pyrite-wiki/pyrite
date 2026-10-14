@@ -41,6 +41,7 @@ from ..exceptions import (
     PyriteError,
     StorageError,
     ValidationError,
+    public_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -166,20 +167,15 @@ def error_response(exc: PyriteError) -> tuple[int, dict]:
         # The exception itself, not True: outside an except frame,
         # sys.exc_info() is empty and exc_info=True logs no traceback (#431).
         logger.error("Unhandled %s: %s", type(exc).__name__, exc, exc_info=exc)
-    message = str(exc)
-    public_message = exc.public_message
-    if public_message is not None:
-        # str(exc) may name a real filesystem path or other operator detail
-        # unsafe to return over HTTP (#377's ConfigSaveRefusedError pattern,
-        # extended to any PyriteError subclass that sets a public_message --
-        # e.g. BrandingInvalidError, #445's cold read). A 5xx already logged
-        # the detail above (with exc_info); logging it again here would
-        # double it on every request -- the #445 delta cold read's second
-        # finding. Only a sub-500 refusal needs this line, since nothing else
-        # logs it.
-        if status_code < 500:
-            logger.warning("%s", exc)
-        message = public_message
+    # public_message, when the class sets one, replaces str(exc), which may
+    # name a real filesystem path or other operator detail unsafe to return
+    # over HTTP (#377's ConfigSaveRefusedError pattern, extended to any
+    # PyriteError subclass that sets one -- e.g. BrandingInvalidError, #445's
+    # cold read). A 5xx already logged the detail above (with exc_info);
+    # logging it again would double it on every request -- the #445 delta
+    # cold read's second finding. public_text writes the line for a sub-500
+    # refusal, where nothing else logs it (#848).
+    message = public_text(exc, already_logged=status_code >= 500, log=logger)
     detail: dict = {"code": code, "message": message, "retryable": _retryable(exc)}
     suggestion = getattr(exc, "suggestion", None)
     if suggestion:

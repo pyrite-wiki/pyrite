@@ -3,11 +3,15 @@
 import logging
 from typing import Any
 
+from pyrite.exceptions import public_text
 from pyrite.schema import generate_entry_id
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
 
 logger = logging.getLogger(__name__)
+# Under `pyrite`, where configure_logging puts the handler: a record on this
+# module's own logger would fall to the last-resort handler (#848).
+_masked_log = logging.getLogger("pyrite.ext.journalism_investigation")
 
 PROMOTABLE_STATUSES = {"corroborated", "partially_verified"}
 VALID_EDGE_TYPES = {"ownership", "membership", "funding"}
@@ -199,8 +203,4 @@ def promote_claim_to_edge(
         # path, a driver's own text. public_message, when set, is what
         # every other transport already shows (ADR-0037 theme 2 round 2,
         # item 1); the real detail still reaches the log.
-        public_message = getattr(e, "public_message", None)
-        if public_message is not None:
-            logger.warning("%s", e)
-            return {"error": public_message}
-        return {"error": str(e)}
+        return {"error": public_text(e, log=_masked_log)}

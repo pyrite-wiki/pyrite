@@ -33,8 +33,9 @@ the CLI all already agreed, and continue to agree -- no ``legacy_error_code``
 for it.
 
 **Messages are public or private by construction.** ``public_message`` is
-``None`` by default -- every transport's
-``exc.public_message or str(exc)`` then falls back to ``str(exc)``, which
+``None`` by default -- every transport's ``public_text(exc)`` (which returns
+``exc.public_message`` when set, else ``str(exc)``, and logs the real text at
+WARNING when it substitutes; #848) then falls back to ``str(exc)``, which
 every refusal family here whose message is *always* written to be safe to
 show (not-found, read-only, the ``ValidationError`` family, query errors)
 relies on. **A class *can* carry server-side detail in ``str(exc)`` at some
@@ -51,6 +52,42 @@ phrase themselves safely, which is exactly the trap: a class-level
 ``public_message=None`` looked correct until the next raise site embedded a
 path).
 """
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def public_text(
+    exc: BaseException,
+    *,
+    already_logged: bool = False,
+    log: logging.Logger | None = None,
+) -> str:
+    """The text a response may show for ``exc``, and the one place that decides it.
+
+    Returns ``exc.public_message`` when the class sets one, else ``str(exc)``.
+    When it substitutes, the real ``str(exc)`` is logged at WARNING (#848), so
+    the cause stays findable server-side -- on the CLI, stderr at the default
+    level. A class that leaves ``public_message`` unset shows ``str(exc)`` and
+    logs nothing extra. A caller that has already logged the exception (REST
+    at 5xx, a handler with its own ``logger.error(..., exc_info=...)`` line)
+    passes ``already_logged=True`` so the cause is not logged twice. ``log`` is
+    the caller's logger, so the record names the surface that masked the error
+    (``pyrite.server.errors``, ``pyrite.server.mcp_server``, ``pyrite.utils.errors``);
+    it defaults to this module's.
+
+    Every reader of ``.public_message`` goes through here;
+    ``tests/test_public_message_logged_once.py`` fails on one that does not.
+    ``exc`` need not be a ``PyriteError`` (some call sites catch
+    ``ValueError`` too), hence ``getattr``.
+    """
+    public = getattr(exc, "public_message", None)
+    if public is None:
+        return str(exc)
+    if not already_logged:
+        (log or logger).warning("%s: %s", type(exc).__name__, exc)
+    return public
 
 
 class PyriteError(Exception):

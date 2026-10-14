@@ -4,6 +4,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, ClassVar
 
+from pyrite.exceptions import public_text
 from pyrite.plugins.capabilities import Capability
 from pyrite.plugins.scoping import kb_scope_clause
 
@@ -18,6 +19,9 @@ from .tables import SOCIAL_TABLES
 from .validators import validate_social
 
 logger = logging.getLogger(__name__)
+# Under `pyrite`, where configure_logging puts the handler: a record on this
+# module's own logger would fall to the last-resort handler (#848).
+_masked_log = logging.getLogger("pyrite.ext.social")
 
 
 class SocialPlugin:
@@ -397,12 +401,7 @@ class SocialPlugin:
             # a real path, a driver's own text. public_message, when set, is
             # what every other transport already shows; the real detail
             # still reaches the log (ADR-0037 theme 2 round 2, item 1).
-            public_message = getattr(e, "public_message", None)
-            if public_message is not None:
-                logger.warning("%s", e)
-                message = public_message
-            else:
-                message = str(e)
+            message = public_text(e, log=_masked_log)
             return {"error": message, "error_code": code}
         finally:
             if should_close:

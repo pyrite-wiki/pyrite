@@ -30,7 +30,7 @@ from typing import Any
 import typer
 from typer.core import TyperGroup
 
-from ..exceptions import PyriteError
+from ..exceptions import PyriteError, public_text
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +147,7 @@ def cli_error_from(
     (``NOT_FOUND``; see ``_CLI_CODE_OVERRIDES``), and ``extra`` adds keys as
     ``cli_error``'s does. Always raises ``typer.Exit(1)`` (via ``cli_error``).
     """
-    message = exc.public_message or str(exc)
+    message = public_text(exc, log=logger)
     cli_error(
         message,
         output_format,
@@ -182,7 +182,7 @@ def _refusal_payload(exc: BaseException) -> dict[str, Any]:
     return {
         "outcome": REFUSED,
         **build_error(
-            exc.public_message or str(exc),
+            public_text(exc, log=logger),
             code,
             suggestion=getattr(exc, "suggestion", None),
             retryable=bool(getattr(exc, "retryable", False)),
