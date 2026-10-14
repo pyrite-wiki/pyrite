@@ -747,10 +747,10 @@
     "not_found": []
   },
   "kb_batch_suggest | write_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "pairs": [],
-    "source_kb": "missing-kb",
-    "target_kb": "missing-kb"
+    "error": "KB not found: missing-kb",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "kb_batch_suggest | write_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -870,10 +870,10 @@
     "entry_id": "characterization-disposable-mutation-target"
   },
   "kb_discover_neighbors | write_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "discoveries": [],
-    "entry_id": "characterization-missing-entry",
-    "kb_name": "missing-kb"
+    "error": "KB not found: missing-kb",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "kb_discover_neighbors | write_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",

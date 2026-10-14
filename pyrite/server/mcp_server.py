@@ -1470,6 +1470,11 @@ class PyriteMCPServer:
             # this handler deliberately diverges on the code but not on
             # retryability.
             return _error("LINK_FAILED", str(e), retryable=False)
+        except ValidationError as e:
+            # A malformed link (empty target or relation) is refused by
+            # `check_link_spec` before anything is written, with the code the
+            # CLI gives the same request; a retry cannot succeed (#846).
+            return _refusal(e)
         except PyriteError as e:
             return _error("LINK_FAILED", _safe_message(e), retryable=True)
 

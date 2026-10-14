@@ -6331,12 +6331,13 @@
   },
   "GET /api/links/batch-suggest | read_key | missing-kb": {
     "body": {
-      "count": "<ENUMERATION_CONTENT>",
-      "pairs": [],
-      "source_kb": "missing-kb",
-      "target_kb": "missing-kb"
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "message": "KB not found: missing-kb",
+        "retryable": false
+      }
     },
-    "status": 200
+    "status": 404
   },
   "GET /api/links/batch-suggest | read_key | no-default-role-kb": {
     "body": {
@@ -6367,12 +6368,13 @@
   },
   "GET /api/links/discover-neighbors | read_key | missing-kb": {
     "body": {
-      "count": "<ENUMERATION_CONTENT>",
-      "discoveries": [],
-      "entry_id": "does-not-exist-entry",
-      "kb_name": "missing-kb"
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "message": "KB not found: missing-kb",
+        "retryable": false
+      }
     },
-    "status": 200
+    "status": 404
   },
   "GET /api/links/discover-neighbors | read_key | no-default-role-kb": {
     "body": {

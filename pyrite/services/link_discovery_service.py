@@ -29,6 +29,19 @@ class LinkDiscoveryService:
     # Helpers
     # ------------------------------------------------------------------
 
+    def _require_kbs(self, *names: str | None) -> None:
+        """Refuse a KB name that matches no KB, before any read (#846).
+
+        Each public read here names its KBs, and without this answered an
+        empty result -- ``outcome: done``, exit 0 -- for a typo. ``None`` is
+        "not narrowed" (every KB), never a name. Called once per public
+        call; the per-entry ``discover_neighbors`` calls inside
+        ``batch_suggest`` and ``find_orphans`` repeat a dict lookup.
+        """
+        for name in names:
+            if name is not None:
+                self.config.require_kb(name)
+
     @staticmethod
     def build_suggest_query(entry: dict) -> str:
         """Build an FTS5 OR query from an entry's title words and tags.
@@ -57,6 +70,7 @@ class LinkDiscoveryService:
         Returns a list of candidate dicts with id, kb_name, title, entry_type,
         score, and snippet.
         """
+        self._require_kbs(kb_name, target_kb)
         from .kb_service import KBService
         from .search_service import SearchService
 
@@ -144,6 +158,7 @@ class LinkDiscoveryService:
         applies to candidates only: an empty source entry still gets
         suggestions.
         """
+        self._require_kbs(kb_name, target_kb)
         from .kb_service import KBService
         from .search_service import SearchService
 
@@ -271,6 +286,7 @@ class LinkDiscoveryService:
         then deduplicates bidirectional matches and sorts by score. Targets
         with no body and no summary are left out unless `include_empty` (#200).
         """
+        self._require_kbs(source_kb, target_kb)
         from .kb_service import KBService
 
         svc = KBService(self.config, self.db)
@@ -331,6 +347,7 @@ class LinkDiscoveryService:
         Orphan score = potential_matches - cross_kb_links. High score means
         "should be connected but isn't."
         """
+        self._require_kbs(kb_name)
         from .kb_service import KBService
 
         svc = KBService(self.config, self.db)
@@ -400,6 +417,7 @@ class LinkDiscoveryService:
         Returns links that exist in one direction (A\u2192B) but not the reverse (B\u2192A).
         When both names are the same, each directed link is considered once.
         """
+        self._require_kbs(kb_a, kb_b)
         if kb_a == kb_b:
             entries = self.db.list_entries(kb_name=kb_a, limit=10000)
             entry_ids = {entry["id"] for entry in entries}

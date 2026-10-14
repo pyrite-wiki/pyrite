@@ -121,6 +121,55 @@ def _norm_relation(relation: str) -> str:
     return _DEFAULT_RELATION if relation == _LEGACY_DEFAULT_RELATION else relation
 
 
+def check_link_spec(
+    target: Any,
+    relation: Any = None,
+    *,
+    note: Any = None,
+    target_kb: Any = None,
+) -> tuple[str, str, str]:
+    """The one check a link request passes before anything is written (#846).
+
+    Returns ``(target, relation, note)`` as they will be written: a relation
+    left out (``None``) is ``related_to``, a note left out is ``""``. Raises
+    ``ValidationError`` for a target that is missing, not text or blank, a
+    relation or note that is given but is not text, a relation that is blank,
+    and a ``target_kb`` that is given but is not text.
+
+    Every write of a new link calls this first: ``add_link`` (CLI ``link``,
+    MCP ``kb_link``), ``add_links`` (``links bulk-create``) and ``pyrite
+    create --link``, which calls it for every spec before it creates the
+    entry. Before this, a null target was appended, the file saved, and the
+    index insert then failed: the link was on disk and the item reported
+    failed.
+
+    Only for writes. A file that already holds such a link is read as it is
+    and reported, never refused on read or repaired (``kb/design.md``,
+    principle 2), so this is not a check in the ``Link`` model, which also
+    loads files. A ``:`` in a relation is accepted here: it is ambiguous
+    only in the CLI's ``--link target:relation`` syntax, whose parser
+    refuses a third part.
+    """
+    if not isinstance(target, str) or not target.strip():
+        raise ValidationError(
+            f"A link needs a target entry id; got {target!r}.",
+        )
+    if relation is None:
+        relation = _DEFAULT_RELATION
+    elif not isinstance(relation, str) or not relation.strip():
+        raise ValidationError(
+            f"A link's relation must be non-empty text; got {relation!r}. "
+            f"Leave it out for {_DEFAULT_RELATION}.",
+        )
+    if note is None:
+        note = ""
+    elif not isinstance(note, str):
+        raise ValidationError(f"A link's note must be text; got {type(note).__name__}.")
+    if target_kb is not None and not isinstance(target_kb, str):
+        raise ValidationError(f"A link's target_kb must be a KB name; got {target_kb!r}.")
+    return target, relation, note
+
+
 @dataclass
 class WriteResult:
     """What a write produced: the saved entry and the schema warnings it drew.
@@ -864,6 +913,16 @@ class KBService:
         errors = entry.validate()
         if errors:
             raise ValidationError("; ".join(errors))
+        # A new entry's own links pass the check every link write passes
+        # (#846): a null target used to be written, then fail the index
+        # insert. Here, in the create pipeline only -- not `_validate_write`,
+        # which an update also runs: a link already in a hand-edited file is
+        # reported, never a reason to refuse an unrelated update (principle 2).
+        for link in entry.links:
+            try:
+                check_link_spec(link.target, link.relation, note=link.note, target_kb=link.kb)
+            except ValidationError as e:
+                raise ValidationError(f"links: {e}") from None
         warnings = self._validate_write(entry, kb_name, kb_config)
 
         # Create never replaces. Ids are derived from titles, so two entries
@@ -1677,6 +1736,11 @@ class KBService:
             between the same two entries is a new link, not a duplicate
             (#396).
         """
+        # A malformed request is refused before anything is loaded or written
+        # (#846); every link writer passes through this one check.
+        target_id, relation, note = check_link_spec(
+            target_id, relation, note=note, target_kb=target_kb
+        )
         kb_config = self.config.get_kb(source_kb)
         if not kb_config:
             raise KBNotFoundError(f"KB not found: {source_kb}")
@@ -1762,8 +1826,12 @@ class KBService:
         second copy of any entry kept elsewhere (#375).
 
         Returns one result per spec, in input order:
-        ``{"status": "created" | "skipped" | "failed", "error"?: str}``.
-        ``dry_run`` reports what would happen without writing.
+        ``{"status": "created" | "skipped" | "failed", "error"?: str,
+        "error_code"?: str}``. A spec that is malformed (not a mapping, no
+        source, a target or relation :func:`check_link_spec` refuses) or names
+        a ``target_kb`` that does not exist is ``failed`` before its source is
+        touched, with the code that refusal carries; the other specs go on
+        (#846). ``dry_run`` reports what would happen without writing.
         """
         kb_config = self._writable_kb(kb_name)
         repo = KBRepository(kb_config)
@@ -1773,10 +1841,11 @@ class KBService:
         dirty: dict[str, list[int]] = {}
 
         for i, spec in enumerate(links):
-            source_id = spec.get("source")
-            target_id = spec.get("target")
-            tkb = spec.get("target_kb") or kb_name
-            relation = spec.get("relation") or "related_to"
+            try:
+                source_id, target_id, relation, note, tkb = self._checked_bulk_spec(spec, kb_name)
+            except (ValidationError, KBNotFoundError) as e:
+                results[i] = {"status": "failed", "error": str(e), "error_code": e.error_code}
+                continue
             if source_id not in loaded:
                 loaded[source_id] = repo.load(source_id)
             entry = loaded[source_id]
@@ -1794,12 +1863,7 @@ class KBService:
             ):
                 results[i] = {"status": "skipped"}
                 continue
-            entry.add_link(
-                target=target_id,
-                relation=relation,
-                note=spec.get("note", ""),
-                kb=tkb,
-            )
+            entry.add_link(target=target_id, relation=relation, note=note, kb=tkb)
             results[i] = {"status": "created"}
             dirty.setdefault(source_id, []).append(i)
 
@@ -1817,6 +1881,28 @@ class KBService:
                 for i in positions:
                     results[i] = {"status": "failed", "error": message}
         return results
+
+    def _checked_bulk_spec(self, spec: Any, kb_name: str) -> tuple[str, str, str, str, str]:
+        """One ``add_links`` spec as ``(source, target, relation, note,
+        target_kb)``, or the refusal that fails it alone."""
+        if not isinstance(spec, dict):
+            raise ValidationError(f"expected a mapping, got {type(spec).__name__}")
+        for key in ("source", "target"):
+            if spec.get(key) is None:
+                raise ValidationError(f"missing required field '{key}'")
+        source_id = spec["source"]
+        if not isinstance(source_id, str) or not source_id.strip():
+            raise ValidationError(f"A link needs a source entry id; got {source_id!r}.")
+        target_id, relation, note = check_link_spec(
+            spec["target"],
+            spec.get("relation"),
+            note=spec.get("note"),
+            target_kb=spec.get("target_kb"),
+        )
+        tkb = spec.get("target_kb") or kb_name
+        if self.config.get_kb(tkb) is None:
+            raise KBNotFoundError(f"KB not found: {tkb}")
+        return source_id, target_id, relation, note, tkb
 
     # =========================================================================
     # Query Operations (read-only, delegate to db)

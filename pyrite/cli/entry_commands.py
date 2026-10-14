@@ -43,7 +43,7 @@ from ..utils.frontmatter import (
     describe,
     split_frontmatter,
 )
-from .context import cli_context
+from .context import cli_context, read_input_file, require_input_file
 from .outcome import Outcome
 from .output import OUTPUT_FORMAT, validate_output_format
 
@@ -94,6 +94,37 @@ def _with_cli_hint(exc: ValidationError) -> ValidationError:
             "--allow-undeclared to override."
         )
     return exc
+
+
+def _parse_link_option(spec: str) -> tuple[str, str]:
+    """One ``--link`` value as ``(target, relation)``, or its refusal (#846).
+
+    The syntax is ``target`` or ``target:relation``. A third part is refused
+    rather than folded into the relation (``a:b:c`` used to store relation
+    ``b:c``): it is most likely the wikilink ``kb:target`` form, which
+    ``--link`` does not take. The target and relation then pass the same
+    check every link write does (``check_link_spec``), so a malformed spec is
+    refused before the entry is created.
+    """
+    from ..services.kb_service import check_link_spec
+
+    parts = spec.split(":")
+    if len(parts) > 2:
+        error = ValidationError(
+            f"--link takes target or target:relation; got '{spec}', which has {len(parts)} parts."
+        )
+        error.suggestion = (
+            "For a target in another KB, create the entry, then run "
+            "`pyrite link <id> <target> -k <kb> --target-kb <target-kb>`."
+        )
+        raise error
+    target = parts[0].strip()
+    relation = parts[1].strip() if len(parts) == 2 else None
+    try:
+        target, relation, _note = check_link_spec(target, relation)
+    except ValidationError as e:
+        raise ValidationError(f"--link '{spec}': {e}") from None
+    return target, relation
 
 
 def _read_stdin() -> str:
@@ -329,13 +360,17 @@ def register_entry_commands(app: typer.Typer) -> None:
         if kb_name is None:
             raise ValidationError("--kb is required (unless using --template)")
 
+        # Every --link is parsed and checked before anything is written: a
+        # malformed one refuses the create instead of leaving an entry behind
+        # with the link failed (#846). A target that does not exist yet is
+        # not malformed; that still fails the link alone, after the create.
+        link_specs = [_parse_link_option(spec) for spec in link or []]
+
         # Body resolution: --stdin > --body-file > --body
         if stdin:
             body = _read_stdin()
         elif body_file:
-            if not body_file.exists():
-                raise EntryNotFoundError(f"Body file not found: {body_file}")
-            body = body_file.read_text(encoding="utf-8")
+            body = read_input_file(body_file, "Body file")
 
         # Extract YAML frontmatter from body content (--body-file or --stdin)
         _file_meta, body = _body_frontmatter(body)
@@ -375,12 +410,7 @@ def register_entry_commands(app: typer.Typer) -> None:
             # Add links after creation
             linked: list[dict] = []
             failed_links: list[dict] = []
-            for link_spec in link or []:
-                if ":" in link_spec:
-                    target, relation = link_spec.split(":", 1)
-                else:
-                    target, relation = link_spec, "related_to"
-                target, relation = target.strip(), relation.strip()
+            for target, relation in link_specs:
                 try:
                     svc.add_link(entry.id, kb_name, target, relation)
                     linked.append({"target": target, "relation": relation})
@@ -455,8 +485,7 @@ def register_entry_commands(app: typer.Typer) -> None:
         Frontmatter must include 'type' and 'title'. If 'id' is missing, it is
         generated from the title.
         """
-        if not file_path.exists():
-            raise EntryNotFoundError(f"File not found: {file_path}")
+        require_input_file(file_path)
 
         with cli_context() as (config, db, svc):
             try:
@@ -514,9 +543,23 @@ def register_entry_commands(app: typer.Typer) -> None:
         if stdin_flag:
             body = _read_stdin()
         elif body_file:
-            if not body_file.exists():
-                raise EntryNotFoundError(f"Body file not found: {body_file}")
-            body = body_file.read_text(encoding="utf-8")
+            body = read_input_file(body_file, "Body file")
+
+        # A request that names nothing to change is malformed, refused before
+        # the entry is read or written, as `task update` refuses it (#846).
+        # Without this the service rewrote the file in its own spelling.
+        if (
+            title is None
+            and body is None
+            and tags is None
+            and importance is None
+            and lifecycle is None
+            and not field
+        ):
+            raise ValidationError(
+                "Nothing to update: name at least one of --title, --body, --body-file, "
+                "--stdin, --tags, --importance, --lifecycle or --field."
+            )
 
         updates: dict[str, Any] = {}
         if title is not None:

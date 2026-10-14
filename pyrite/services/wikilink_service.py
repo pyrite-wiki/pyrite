@@ -230,6 +230,9 @@ class WikilinkService:
             target_id, target_kb, ref_count, references (list of
             {source_id, source_kb, relation})
         """
+        # A KB that does not exist is refused, not reported as clean (#846).
+        if kb_name is not None:
+            self.config.require_kb(kb_name)
         # Get per-link rows, then group in Python for nested structure
         sql = """
             SELECT l.source_id, l.source_kb, l.target_id, l.target_kb, l.relation

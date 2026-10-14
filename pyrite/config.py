@@ -21,7 +21,12 @@ from typing import Any, Literal
 
 from dotenv import load_dotenv
 
-from pyrite.exceptions import ConfigError, ConfigFileUnreadableError, ConfigSaveRefusedError
+from pyrite.exceptions import (
+    ConfigError,
+    ConfigFileUnreadableError,
+    ConfigSaveRefusedError,
+    KBNotFoundError,
+)
 from pyrite.utils.yaml import dump_yaml_file, load_yaml_file
 
 logger = logging.getLogger(__name__)
@@ -496,6 +501,19 @@ class PyriteConfig:
         if kb:
             return kb
         return self._db_kb_cache.get(name)
+
+    def require_kb(self, name: str) -> KBConfig:
+        """The KB a request names, or ``KBNotFoundError`` (``KB_NOT_FOUND``).
+
+        For a service read that would otherwise answer an empty result for a
+        name that matches no KB, so the caller is told the KB does not exist
+        instead of that it holds nothing (#846). Same lookup as
+        :meth:`get_kb`: config.yaml first, then DB-registered KBs.
+        """
+        kb = self.get_kb(name)
+        if kb is None:
+            raise KBNotFoundError(f"KB not found: {name}")
+        return kb
 
     def confined_default_role(self, value: str | None) -> str | None:
         """A default_role as this config may honour it. Under an untrusted

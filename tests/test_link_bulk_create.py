@@ -304,8 +304,16 @@ class TestBulkCreate:
         assert entry is not None
         assert entry.links[0].relation == "related_to"
 
+    @pytest.mark.control(reason="control: a target_kb that exists is still written")
     def test_target_kb_field(self, bulk_env):
-        """target_kb is set on the link when provided."""
+        """target_kb is set on the link when provided.
+
+        The target entry need not exist yet; the target KB must (#846), as
+        `pyrite link --target-kb` has always required.
+        """
+        other = bulk_env["tmpdir"] / "other"
+        other.mkdir()
+        bulk_env["config"].add_kb(KBConfig(name="other-kb", path=other, kb_type=KBType.GENERIC))
         links = [
             {"source": "entry-a", "target": "ext-entry", "target_kb": "other-kb"},
         ]

@@ -4,6 +4,7 @@ import logging
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -166,3 +167,28 @@ def get_config_with_registered_kbs(
             exc,
         )
     return config
+
+
+def require_input_file(path: Path | str, what: str = "File") -> Path:
+    """The path of a file the caller named as input, or the refusal for it.
+
+    One rule for every CLI input path (#846): a path that does not exist is
+    ``EntryNotFoundError`` (``NOT_FOUND``, as each site always said), and a
+    path that is a directory is ``ValidationError`` naming it -- before this
+    it reached ``read_text`` and left the body as ``IsADirectoryError``,
+    which the root reports as ``NO_OUTCOME``. Used by ``create`` and
+    ``update`` (``--body-file``), ``add`` and ``links bulk-create``.
+    """
+    from ..exceptions import EntryNotFoundError, ValidationError
+
+    p = Path(path)
+    if not p.exists():
+        raise EntryNotFoundError(f"{what} not found: {path}")
+    if p.is_dir():
+        raise ValidationError(f"{what} is a directory, not a file: {path}")
+    return p
+
+
+def read_input_file(path: Path | str, what: str = "File") -> str:
+    """The text of an input file, refused as :func:`require_input_file` says."""
+    return require_input_file(path, what).read_text(encoding="utf-8")
