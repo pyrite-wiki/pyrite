@@ -108,6 +108,7 @@ class TestRangeMode:
                 "GIT_COMMITTER_EMAIL": "t@example.com",
                 "PATH": "/usr/bin:/bin:/usr/local/bin",
             },
+            timeout=120,
         )
 
     def _commit(self, repo, path: str, message: str, content: str = "x"):
@@ -135,6 +136,7 @@ class TestRangeMode:
             cwd=repo,
             capture_output=True,
             text=True,
+            timeout=120,
         )
         assert result.returncode == 0, result.stderr
 
@@ -149,6 +151,7 @@ class TestRangeMode:
             cwd=repo,
             capture_output=True,
             text=True,
+            timeout=120,
         )
         assert result.returncode != 0
         assert "fix:" in result.stderr
@@ -165,6 +168,7 @@ class TestRangeMode:
             cwd=repo,
             capture_output=True,
             text=True,
+            timeout=120,
         )
         assert result.returncode == 0, result.stderr
 
@@ -180,6 +184,7 @@ class TestRangeMode:
             cwd=repo,
             capture_output=True,
             text=True,
+            timeout=120,
         )
         # The offending commit is the FIRST one; a naive "does the whole
         # range touch tests/" check would wrongly pass because the second

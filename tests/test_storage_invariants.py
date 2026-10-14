@@ -536,7 +536,7 @@ def _git(cwd: Path, *args: str) -> None:
     # No user or system git config: hooks, signing or a template must not
     # change what these tests see.
     env |= {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, env=env)
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, env=env, timeout=120)
 
 
 @pytest.fixture

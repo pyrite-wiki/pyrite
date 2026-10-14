@@ -640,7 +640,9 @@ def _git(cwd: Path, *args: str) -> str:
     env = {**os.environ, "GIT_AUTHOR_NAME": "Ann", "GIT_AUTHOR_EMAIL": "ann@example.com"}
     env |= {"GIT_COMMITTER_NAME": "Ann", "GIT_COMMITTER_EMAIL": "ann@example.com"}
     env |= {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
-    out = subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, env=env)
+    out = subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, env=env, timeout=120
+    )
     return out.stdout.decode().strip()
 
 

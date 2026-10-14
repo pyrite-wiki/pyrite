@@ -63,7 +63,12 @@ exec .venv/bin/python scripts/test-affected --run -n 2
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
     ).stdout
 
 
@@ -540,6 +545,7 @@ class TestExecute:
             cwd=checkout,
             capture_output=True,
             text=True,
+            timeout=120,
         )
         assert pushed.returncode != 0
         assert len(pytest_calls()) == 1

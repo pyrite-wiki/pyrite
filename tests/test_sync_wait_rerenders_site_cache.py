@@ -46,6 +46,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from pyrite.config import KBConfig, PyriteConfig, Settings  # noqa: E402
 from pyrite.server.api import create_app  # noqa: E402
 from pyrite.server.websocket import manager  # noqa: E402
+from tests.ws_helpers import receive_json
 
 MARKER = {"type": "kb_synced", "entry_id": "__marker__", "kb_name": ""}
 
@@ -193,12 +194,12 @@ class TestSyncWaitRerendersSiteCache:
 
             # The drain and broadcast still ran despite the render failure.
             client.portal.call(manager.broadcast, dict(MARKER))
-            assert ws.receive_json() == {
+            assert receive_json(ws) == {
                 "type": "kb_synced",
                 "entry_id": "",
                 "kb_name": "",
             }
-            assert ws.receive_json() == MARKER
+            assert receive_json(ws) == MARKER
 
         # The failure is not silent: the traceback reached the log.
         assert any("boom" in r.message or "boom" in str(r.exc_info) for r in caplog.records), (

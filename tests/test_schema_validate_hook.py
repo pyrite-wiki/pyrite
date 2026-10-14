@@ -32,6 +32,7 @@ def test_schema_validate_hook_refuses_package_directory(tmp_path):
         env={"PATH": ".:/usr/bin:/bin", "HOME": str(tmp_path)},
         capture_output=True,
         text=True,
+        timeout=120,
     )
     assert result.returncode != 0
     assert result.returncode != 126
@@ -55,6 +56,7 @@ def test_schema_validate_hook_runs_executable_on_path(tmp_path):
         env={"PATH": f"{bindir}:/usr/bin:/bin", "HOME": str(tmp_path)},
         capture_output=True,
         text=True,
+        timeout=120,
     )
     assert result.returncode == 0, result.stderr
     called = (work / "called").read_text()

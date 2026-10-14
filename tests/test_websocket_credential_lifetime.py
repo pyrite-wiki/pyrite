@@ -33,6 +33,7 @@ from pyrite.server.websocket import manager
 from pyrite.services.auth_service import AuthService
 from pyrite.services.clipper import ClipperService, ClipResult
 from pyrite.storage.database import PyriteDB
+from tests.ws_helpers import receive_json
 from tests.auth_seed import seed_and_sign_in
 
 PUBLIC, PRIVATE = "public-kb", "private-kb"
@@ -148,13 +149,13 @@ def _assert_closed(ws, client):
     """
     _marker(client)
     with pytest.raises(WebSocketDisconnect) as exc:
-        ws.receive_json()
+        receive_json(ws)
     assert exc.value.code == CREDENTIAL_CLOSE_CODE
 
 
 def _assert_open(ws, client):
     _marker(client)
-    assert ws.receive_json() == MARKER
+    assert receive_json(ws) == MARKER
 
 
 class TestLogout:
@@ -170,7 +171,7 @@ class TestLogout:
                 # An event in a KB alice could read, raised after the logout:
                 # bob gets it, alice's socket gets only its close.
                 entry_id = _clip(c, PRIVATE, tokens["admin-user"])
-                assert bob.receive_json()["entry_id"] == entry_id
+                assert receive_json(bob)["entry_id"] == entry_id
                 _assert_closed(alice, c)
                 _assert_open(bob, c)
 
@@ -243,7 +244,7 @@ class TestExpiry:
                     if state.user_id == env["users"]["alice"]:
                         state.expires_at = datetime.now(UTC) - timedelta(seconds=1)
                 entry_id = _clip(c, PRIVATE, tokens["admin-user"])
-                assert bob.receive_json()["entry_id"] == entry_id
+                assert receive_json(bob)["entry_id"] == entry_id
                 _assert_closed(alice, c)
 
     def test_the_expiry_sweep_closes_a_socket_whose_session_expired(self, env):
@@ -315,7 +316,7 @@ class TestRoleAndGrantChanges:
                 )
                 assert r.status_code == 200, r.text
                 entry_id = _clip(c, PUBLIC, tokens["admin-user"])
-                assert bob.receive_json()["entry_id"] == entry_id
+                assert receive_json(bob)["entry_id"] == entry_id
                 _assert_closed(alice, c)
 
     @pytest.mark.control(
@@ -349,7 +350,7 @@ class TestRoleAndGrantChanges:
                 )
                 assert r.status_code == 200, r.text
                 entry_id = _clip(c, PRIVATE, tokens["admin-user"])
-                assert bob.receive_json()["entry_id"] == entry_id
+                assert receive_json(bob)["entry_id"] == entry_id
                 _assert_closed(alice, c)
 
     def test_granting_a_kb_closes_the_socket_so_it_reopens_with_the_new_scope(self, env):
@@ -427,7 +428,7 @@ class TestHandshakeRace:
                     # Refused at the handshake, or closed right after it:
                     # either way the marker never reaches it.
                     _marker(c)
-                    ws.receive_json()
+                    receive_json(ws)
             assert manager.connection_count == before
 
 

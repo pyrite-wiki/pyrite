@@ -221,7 +221,10 @@ class TestAndListsAreRefused:
         import subprocess
 
         result = subprocess.run(
-            ["bash", "-c", "set -e; false && true; echo ran"], text=True, capture_output=True
+            ["bash", "-c", "set -e; false && true; echo ran"],
+            text=True,
+            capture_output=True,
+            timeout=120,
         )
         assert result.returncode == 0 and "ran" in result.stdout
 

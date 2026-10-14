@@ -477,7 +477,7 @@ class TestOrientWithNoNameIsTheFirstCall:
         server, interleaved callers would see each other's KBs."""
         server = scoped.server()
         seen: dict[str, set[frozenset]] = {"peer": set(), "all": set()}
-        start = threading.Barrier(2)
+        start = threading.Barrier(2, timeout=30)
 
         def run(label, readable):
             start.wait(timeout=10)

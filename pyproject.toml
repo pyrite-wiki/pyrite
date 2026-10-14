@@ -128,6 +128,11 @@ python_files = ["test_*.py"]
 # Per-test ceiling in seconds (#766); TestEveryTestIsBounded pins it <= 600.
 # A test that needs longer is marked @pytest.mark.timeout(N) with a reason.
 timeout = 600
+# No `timeout_func_only`: the ceiling also covers fixture setup and teardown, so a
+# hanging fixture is killed too (tests/test_test_rules.py proves it).
+# A test still running after this many seconds dumps every thread's stack to
+# stderr, so a hang names its culprit (#372) even before the ceiling kills it.
+faulthandler_timeout = 300
 addopts = "-v --tb=short -m 'not slow and not e2e'"
 markers = [
     "integration: tests requiring full environment setup (DB, indexing, network)",

@@ -447,7 +447,9 @@ class _Venv:
 
         self.root = root
         venv = root / "venv"
-        subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, capture_output=True)
+        subprocess.run(
+            [sys.executable, "-m", "venv", str(venv)], check=True, capture_output=True, timeout=120
+        )
         self.python = venv / "bin" / "python"
         site_dir = next(venv.glob("lib/python*/site-packages"))
         # pyrite's dependencies (and setuptools, for the offline editable build).
@@ -613,7 +615,7 @@ class TestKbCommit:
             ["config", "user.email", "t@example.invalid"],
             ["config", "user.name", "T"],
         ):
-            subprocess.run(["git", *args], cwd=cli.kb, check=True, capture_output=True)
+            subprocess.run(["git", *args], cwd=cli.kb, check=True, capture_output=True, timeout=120)
 
     def test_a_hook_that_rejects_the_commit_is_a_failure(self, cli):
         self._git(cli)

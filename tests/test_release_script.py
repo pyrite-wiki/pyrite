@@ -1310,6 +1310,7 @@ class TestDryRunOverThisRepo:
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
+            timeout=120,
         )
         out = proc.stdout
         assert proc.returncode != 0
@@ -1354,6 +1355,7 @@ class TestTutorialVenvHook:
             text=True,
             env=env,
             cwd=str(tmp_path),
+            timeout=120,
         )
 
     def test_the_named_venvs_python_is_the_interpreter_invoked(self, tmp_path):

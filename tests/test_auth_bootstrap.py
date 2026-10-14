@@ -87,7 +87,7 @@ def _race(db_path, config, calls):
 
     for db in dbs:
         event.listen(db.engine, "before_cursor_execute", widen)
-    barrier = threading.Barrier(len(calls))
+    barrier = threading.Barrier(len(calls), timeout=30)
     results: list = []
     errors: list[BaseException] = []
     lock = threading.Lock()

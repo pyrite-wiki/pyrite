@@ -34,6 +34,7 @@ from pyrite.server.websocket import manager, origin_allowed
 from pyrite.services.auth_service import AuthService
 from pyrite.services.clipper import ClipperService, ClipResult
 from pyrite.storage.database import PyriteDB
+from tests.ws_helpers import receive_json
 from tests.auth_seed import seed_and_sign_in
 
 PUBLIC, PRIVATE = "public-kb", "private-kb"
@@ -119,14 +120,14 @@ class TestPrivateKBEventReachesOnlyGrantedSockets:
                 assert r.status_code == 200, r.text
                 entry_id = r.json()["id"]
 
-                first = granted.receive_json()
+                first = receive_json(granted)
                 assert first == {"type": "entry_created", "entry_id": entry_id, "kb_name": PRIVATE}
 
                 _broadcast_marker(c)
-                assert granted.receive_json() == MARKER
+                assert receive_json(granted) == MARKER
                 # The peer's first message is the marker: the private event
                 # never reached it.
-                assert peer.receive_json() == MARKER
+                assert receive_json(peer) == MARKER
 
     def test_public_kb_event_reaches_both(self, secured):
         app, tokens = secured["app"], secured["tokens"]
@@ -142,14 +143,14 @@ class TestPrivateKBEventReachesOnlyGrantedSockets:
                 )
                 assert r.status_code == 200, r.text
                 for ws in (granted, peer):
-                    assert ws.receive_json()["kb_name"] == PUBLIC
+                    assert receive_json(ws)["kb_name"] == PUBLIC
 
     def test_kb_synced_reaches_a_scoped_socket(self, secured):
         app, tokens = secured["app"], secured["tokens"]
         with TestClient(app) as c:
             with c.websocket_connect("/ws", headers=_cookie(tokens["peer"])) as peer:
                 _broadcast_marker(c)
-                assert peer.receive_json() == MARKER
+                assert receive_json(peer) == MARKER
 
 
 class TestHandshakeAuthentication:
@@ -195,7 +196,7 @@ class TestHandshakeAuthentication:
         with TestClient(secured["app"]) as c:
             with c.websocket_connect("/ws", headers=headers) as ws:
                 _broadcast_marker(c)
-                assert ws.receive_json() == MARKER
+                assert receive_json(ws) == MARKER
 
     def test_configured_cors_origin_is_admitted(self, secured):
         # localhost:5173 is in the default cors_origins (the Vite dev server).
@@ -203,7 +204,7 @@ class TestHandshakeAuthentication:
         with TestClient(secured["app"]) as c:
             with c.websocket_connect("/ws", headers=headers) as ws:
                 _broadcast_marker(c)
-                assert ws.receive_json() == MARKER
+                assert receive_json(ws) == MARKER
 
 
 def _clip(c, kb, headers=None):
@@ -224,7 +225,7 @@ class TestOtherIdentities:
             app = create_app(config=_config(Path(d), auth=False))
             with TestClient(app) as c, c.websocket_connect("/ws") as ws:
                 entry_id = _clip(c, PRIVATE)
-                assert ws.receive_json() == {
+                assert receive_json(ws) == {
                     "type": "entry_created",
                     "entry_id": entry_id,
                     "kb_name": PRIVATE,
@@ -243,7 +244,7 @@ class TestOtherIdentities:
                         pass
                 with c.websocket_connect(f"/ws?api_key={OPERATOR_KEY}") as ws:
                     entry_id = _clip(c, PRIVATE, headers=key)
-                    assert ws.receive_json()["entry_id"] == entry_id
+                    assert receive_json(ws)["entry_id"] == entry_id
 
     def test_anonymous_tier_admits_visitor_scoped_to_public(self, stub_clip):
         with tempfile.TemporaryDirectory() as d:
@@ -256,7 +257,7 @@ class TestOtherIdentities:
                 public_id = _clip(c, PUBLIC, headers=_cookie(admin_token))
                 # The first thing the anonymous socket sees is the public
                 # clip; the private one, created first, never arrived.
-                assert anon.receive_json() == {
+                assert receive_json(anon) == {
                     "type": "entry_created",
                     "entry_id": public_id,
                     "kb_name": PUBLIC,
@@ -273,14 +274,14 @@ class TestEventsWithoutAKb:
             with c.websocket_connect("/ws", headers=_cookie(tokens["peer"])) as peer:
                 c.portal.call(manager.broadcast, {"type": "index_progress", "job_id": "j1"})
                 _broadcast_marker(c)
-                assert peer.receive_json() == MARKER  # index_progress was skipped
+                assert receive_json(peer) == MARKER  # index_progress was skipped
 
     def test_non_global_kbless_event_reaches_an_unscoped_socket(self, secured):
         app, tokens = secured["app"], secured["tokens"]
         with TestClient(app) as c:
             with c.websocket_connect("/ws", headers=_cookie(tokens["admin-user"])) as admin:
                 c.portal.call(manager.broadcast, {"type": "index_progress", "job_id": "j1"})
-                assert admin.receive_json()["type"] == "index_progress"
+                assert receive_json(admin)["type"] == "index_progress"
 
 
 class _Conn:

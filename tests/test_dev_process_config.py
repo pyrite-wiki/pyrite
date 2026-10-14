@@ -261,6 +261,7 @@ class TestParallelSuite:
             capture_output=True,
             text=True,
             env={**os.environ, "PYRITE_PUSH_FULL": value},
+            timeout=120,
         )
         assert out.returncode == 0, out.stderr
         assert ("tests/ extensions/" in out.stdout) is full, out.stdout
@@ -511,7 +512,7 @@ class TestSessionSetupScript:
         script = REPO / "scripts" / "new-worktree.sh"
         assert script.exists(), "ADR-0032 migration step 3: scripts/new-worktree.sh"
         assert os.access(script, os.X_OK), "must be executable"
-        subprocess.run(["bash", "-n", str(script)], check=True)
+        subprocess.run(["bash", "-n", str(script)], check=True, timeout=120)
         text = script.read_text()
         assert "git worktree add" in text and "pre-commit install" in text
         # The hook shim embeds the installing Python's path. Installing from a
@@ -547,7 +548,7 @@ class TestCloudSessionSetup:
         script = REPO / "scripts" / name
         assert script.exists()
         assert os.access(script, os.X_OK), "must be executable"
-        subprocess.run(["bash", "-n", str(script)], check=True)
+        subprocess.run(["bash", "-n", str(script)], check=True, timeout=120)
 
     def test_setup_installs_pyrite_every_extension_and_a_local_config(self):
         text = self.SETUP.read_text()
@@ -647,7 +648,7 @@ class TestCloudEnvironment:
         script = REPO / "scripts" / name
         assert script.exists()
         assert os.access(script, os.X_OK), "must be executable"
-        subprocess.run(["bash", "-n", str(script)], check=True)
+        subprocess.run(["bash", "-n", str(script)], check=True, timeout=120)
 
     def test_postgres_image_and_credentials_match_ci(self, ci):
         import re
@@ -770,7 +771,7 @@ class TestCloudEnvironment:
         (repo / "extensions" / "ext").mkdir(parents=True)
         (repo / "extensions" / "ext" / "pyproject.toml").write_text("[project]\nname='e'\n")
         (repo / "kb").mkdir()
-        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(["git", "init", "-q", str(repo)], check=True, timeout=120)
 
         uv_log = tmp_path / "uv-calls.log"
         uv = fake_docker[0].parent / "uv"
@@ -1031,7 +1032,7 @@ class TestSmokeLayer:
         script = REPO / "scripts" / "run_tutorial.sh"
         assert script.exists(), "docs-as-tests runner for docs/getting-started.md"
         assert os.access(script, os.X_OK), "must be executable"
-        subprocess.run(["bash", "-n", str(script)], check=True)
+        subprocess.run(["bash", "-n", str(script)], check=True, timeout=120)
 
 
 class TestNoTrackedFileIsGitignored:
@@ -1054,6 +1055,7 @@ class TestNoTrackedFileIsGitignored:
             check=True,
             capture_output=True,
             text=True,
+            timeout=120,
         ).stdout.strip()
         assert tracked_and_ignored == "", (
             f"tracked but gitignored under .claude/ (add/add-conflict risk): "
@@ -1229,7 +1231,12 @@ class TestDevPushReusesTheMergeQueuesPass:
                 "GITHUB_OUTPUT": str(out),
                 "GH_TOKEN": "x",
             }
-            subprocess.run(["bash", "-e", "-o", "pipefail", "-c", step["run"]], env=env, check=True)
+            subprocess.run(
+                ["bash", "-e", "-o", "pipefail", "-c", step["run"]],
+                env=env,
+                check=True,
+                timeout=120,
+            )
             return out.read_text()
 
         return run
@@ -1583,13 +1590,17 @@ class TestTheRedLineIsFirstAndEveryGatingRunLeavesATimingRecord:
         )
         script = REPO / "scripts" / "junit_slowest.py"
         out = subprocess.run(
-            [sys.executable, str(script), str(xml), "x"], capture_output=True, text=True
+            [sys.executable, str(script), str(xml), "x"],
+            capture_output=True,
+            text=True,
+            timeout=120,
         ).stdout
         assert out.index("slow") < out.index("fast") and "9.50" in out
         missing = subprocess.run(
             [sys.executable, str(script), str(tmp_path / "none.xml")],
             capture_output=True,
             text=True,
+            timeout=120,
         )
         assert missing.returncode == 0 and "no junit report" in missing.stdout
 
@@ -1652,6 +1663,7 @@ class TestTheTestJobIsShardedAndProvesItRanEverything:
                 capture_output=True,
                 text=True,
                 cwd=tmp_path,
+                timeout=120,
             ).stdout
             ran += [ln.split()[0] for ln in out.splitlines() if " PASSED" in ln]
         assert len(ran) == 10 and len(set(ran)) == 10

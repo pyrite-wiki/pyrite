@@ -2283,6 +2283,7 @@ def _fake_install(root: Path) -> Path:
             check=True,
             capture_output=True,
             text=True,
+            timeout=120,
         ).stdout.strip()
     )
     (theirs / "chain.pth").write_text(f"{REPO}\nimport site; site.addsitedir({ours!r})\n")

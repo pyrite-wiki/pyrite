@@ -161,6 +161,7 @@ def _git(*args, cwd):
         cwd=str(cwd),
         capture_output=True,
         text=True,
+        timeout=120,
     )
 
 

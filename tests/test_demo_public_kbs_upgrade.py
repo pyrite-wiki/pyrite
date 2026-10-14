@@ -46,7 +46,11 @@ def _config(tmp_path: Path) -> Path:
 
 def _run(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, str(SCRIPT), *args], capture_output=True, text=True, check=True
+        [sys.executable, str(SCRIPT), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
     )
 
 

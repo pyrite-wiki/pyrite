@@ -27,7 +27,7 @@ SECRET = "the source is Alice"
 
 
 def _git(*args, cwd=None):
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True, timeout=120)
 
 
 def _seed_bare_repo(tmp: Path) -> Path:
@@ -58,6 +58,7 @@ def _bare_repo_history(bare: Path) -> str:
         check=True,
         capture_output=True,
         text=True,
+        timeout=120,
     ).stdout
 
 

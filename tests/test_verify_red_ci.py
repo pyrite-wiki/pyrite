@@ -351,7 +351,11 @@ def test_patched_in_a_fixture(patched):
 
 def git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
     ).stdout.strip()
 
 
@@ -756,7 +760,7 @@ def test_only_its_own_stale_trees_are_pruned(repo: Path, tmp_path: Path) -> None
     # moved checkout) is not this tool's to forget.
     other = tmp_path / "elsewhere" / "wt"
     git(repo, "worktree", "add", "-q", "--detach", str(other))
-    subprocess.run(["rm", "-rf", str(other)], check=True)
+    subprocess.run(["rm", "-rf", str(other)], check=True, timeout=120)
     (repo / "pyrite" / "__init__.py").write_text(FIXED)
     (repo / "tests" / "test_new.py").write_text(
         "from pyrite import add\n\n\ndef test_new():\n    assert add(2, 2) == 4\n"
@@ -929,7 +933,7 @@ def test_a_killed_run_leaves_the_developers_tree_alone(repo: Path, tmp_path: Pat
     assert len(stale) == 1 and len(worktrees(repo)) == 2, (stale, worktrees(repo))
 
     # The OS clears $TMPDIR; the next run drops the registration left behind.
-    subprocess.run(["rm", "-rf", str(stale[0])], check=True)
+    subprocess.run(["rm", "-rf", str(stale[0])], check=True, timeout=120)
     flag.unlink()
     result, summary = run_vr(repo, tmp_path, env=env)
     assert result.returncode == 0, (result.stdout, result.stderr)

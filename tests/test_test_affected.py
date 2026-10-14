@@ -376,7 +376,12 @@ class TestPytestArgs:
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
     ).stdout
 
 
@@ -441,6 +446,7 @@ class TestBaseFallback:
             [sys.executable, str(SCRIPT), "--root", str(repo), "--list", "--committed"],
             capture_output=True,
             text=True,
+            timeout=120,
         )
         assert out.returncode == 0, out.stderr
         assert "tests/test_b.py" in out.stdout.split()
@@ -471,6 +477,7 @@ class TestPushedRange:
             capture_output=True,
             text=True,
             env={**os.environ, **env},
+            timeout=120,
         )
 
     def test_selects_the_pushed_range_not_the_working_tree(self, pushed):
@@ -506,6 +513,7 @@ class TestNoBase:
             [sys.executable, str(SCRIPT), "--root", str(repo), "--run", "--dry-run"],
             capture_output=True,
             text=True,
+            timeout=120,
         )
         assert out.returncode != 0
         assert "Traceback" not in out.stderr
@@ -518,6 +526,7 @@ class TestCLI:
             [sys.executable, str(SCRIPT), "--root", str(repo), *args],
             capture_output=True,
             text=True,
+            timeout=120,
         )
 
     def test_list_prints_selected_paths(self, repo):

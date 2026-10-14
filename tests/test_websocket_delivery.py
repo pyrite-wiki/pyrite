@@ -10,7 +10,8 @@ startup.
 **Surface.** One `TestClient` in context per app, so that REST calls, the
 startup hook and the sockets share one event loop, as they do under uvicorn.
 
-**No receive timeouts.** A TestClient socket's ``receive`` blocks forever, so
+**Bounded receives.** A TestClient socket's own ``receive`` blocks forever, so
+every read goes through ``tests.ws_helpers.receive_json`` (a deadline), and
 every test broadcasts a *marker* on the loop after the action under test and
 reads the socket's messages in order: the event (if it should arrive) comes
 first, then the marker. Before the fix the first message is the marker, which
@@ -35,6 +36,7 @@ from pyrite.server.api import create_app, get_index_worker
 from pyrite.server.websocket import broadcast_event, manager
 from pyrite.services.auth_service import AuthService
 from pyrite.storage.database import PyriteDB
+from tests.ws_helpers import receive_json
 from tests.auth_seed import seed_user
 
 PUBLIC, PRIVATE = "public-kb", "private-kb"
@@ -62,10 +64,10 @@ def _marker(client):
 
 def _event_then_marker(ws, event):
     """The event arrives, then the marker. Assert the first before reading
-    the second: before the fix only the marker comes, and a second
-    ``receive`` would block forever."""
-    assert ws.receive_json() == event
-    assert ws.receive_json() == MARKER
+    the second: before the fix only the marker comes. A missing message fails
+    at ``receive_json``'s deadline instead of hanging."""
+    assert receive_json(ws) == event
+    assert receive_json(ws) == MARKER
 
 
 @pytest.fixture
@@ -173,7 +175,7 @@ class TestScopingHoldsOnTheSyncPath:
                 _event_then_marker(
                     granted, {"type": "entry_created", "entry_id": entry_id, "kb_name": PRIVATE}
                 )
-                assert peer.receive_json() == MARKER
+                assert receive_json(peer) == MARKER
 
 
 def _worker(app):
@@ -194,7 +196,7 @@ class TestIndexProgress:
             assert r.status_code == 200, r.text
             _worker(open_app).wait_for_idle()
             _marker(c)
-            first = ws.receive_json()
+            first = receive_json(ws)
             assert first["type"] == "index_progress"
             assert first["job_id"] == r.json()["job_id"]
 
@@ -211,11 +213,11 @@ class TestIndexProgress:
                 job_id = worker.submit_sync(kb_name=kb_name)
                 worker.wait_for_idle()
                 _marker(c)
-                first = admin.receive_json()
+                first = receive_json(admin)
                 assert first["type"] == "index_progress"
                 assert first["job_id"] == job_id
                 assert first["kb_name"] == kb_name
-                assert granted.receive_json() == MARKER
+                assert receive_json(granted) == MARKER
 
 
 def _no_unawaited_coroutine(record):
@@ -235,7 +237,7 @@ class TestLoopLifetime:
             with TestClient(app) as c, c.websocket_connect("/ws") as ws:
                 entry_id = _create(c, PUBLIC, f"Note {root.name}")
                 _marker(c)
-                assert ws.receive_json()["entry_id"] == entry_id
+                assert receive_json(ws)["entry_id"] == entry_id
 
             # Between apps: the first app's loop is gone. An off-loop event
             # is dropped quietly, with no coroutine left unawaited.
@@ -257,7 +259,8 @@ class TestLoopLifetime:
                     target=lambda: _call_capturing(errors),
                 )
                 t.start()
-                t.join()
+                t.join(timeout=30)
+                assert not t.is_alive()
                 assert errors == []
                 assert _no_unawaited_coroutine(record) == []
         finally:
@@ -296,7 +299,8 @@ class TestLoopLifetime:
         with TestClient(open_app) as c, c.websocket_connect("/ws") as ws:
             t = threading.Thread(target=lambda: asyncio.run(emit()))
             t.start()
-            t.join()
+            t.join(timeout=30)
+            assert not t.is_alive()
             _marker(c)
             _event_then_marker(
                 ws, {"type": "entry_created", "entry_id": "foreign", "kb_name": PUBLIC}
@@ -368,3 +372,19 @@ def _call_capturing(errors):
         broadcast_event("entry_created", entry_id="x", kb_name=PUBLIC)
     except Exception as e:  # pragma: no cover - the assertion reports it
         errors.append(e)
+
+
+class TestReceiveHasADeadline:
+    """A dropped message fails at the helper's deadline; it does not hang."""
+
+    def test_an_idle_socket_fails_within_the_deadline(self, open_app):
+        import time
+
+        with TestClient(open_app) as c, c.websocket_connect("/ws") as ws:
+            start = time.monotonic()
+            with pytest.raises(AssertionError, match="no websocket message within"):
+                receive_json(ws, timeout=0.5)
+            assert time.monotonic() - start < 5
+            # The socket is still usable: the late message arrives.
+            _marker(c)
+            assert receive_json(ws) == MARKER

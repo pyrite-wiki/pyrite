@@ -56,7 +56,12 @@ def _write(root: Path, rel: str, text: str = "") -> None:
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
     ).stdout
 
 
@@ -133,6 +138,7 @@ def _run(repo: Path, *args: str, **env: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         env={**os.environ, **env},
+        timeout=120,
     )
 
 
@@ -252,7 +258,7 @@ class TestStoppingTestAffected:
         )
         end = time.monotonic() + self.DEADLINE
         while not (events.exists() and "start" in events.read_text()):
-            assert holder.poll() is None, holder.communicate()
+            assert holder.poll() is None, holder.communicate(timeout=60)
             assert time.monotonic() < end, "pytest never started"
             time.sleep(0.02)
         waiter_log = tmp_path / "waiter.log"
@@ -272,7 +278,7 @@ class TestStoppingTestAffected:
         )
         queue = Path(str(lock) + ".queue")
         while not list(queue.glob("*.ticket")):
-            assert waiter.poll() is None, waiter.communicate()
+            assert waiter.poll() is None, waiter.communicate(timeout=60)
             assert time.monotonic() < end, "the waiter never queued"
             time.sleep(0.02)
         yield holder, waiter, events, release, waiter_log
@@ -301,7 +307,7 @@ class TestStoppingTestAffected:
     def test_sigkill_the_next_run_waits_for_the_orphaned_pytest(self, setup):
         holder, waiter, events, release, waiter_log = setup
         holder.send_signal(signal.SIGKILL)
-        holder.wait()
+        holder.wait(timeout=60)
         time.sleep(1.5)
         assert not waiter_log.exists(), "a second run started beside the orphaned pytest"
         release.touch()
@@ -333,6 +339,7 @@ class TestWithoutFcntl:
             [sys.executable, "-c", HIDE_FCNTL, str(SCRIPT), "--root", str(repo), *args],
             capture_output=True,
             text=True,
+            timeout=120,
         )
 
     @pytest.mark.control(

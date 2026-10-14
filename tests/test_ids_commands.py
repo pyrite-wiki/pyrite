@@ -40,6 +40,7 @@ def _git(cwd: Path, *args: str) -> str:
         check=True,
         capture_output=True,
         env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "HOME": str(cwd)},
+        timeout=120,
     ).stdout.decode("utf-8")  # not text=True: that drops the \r of a CRLF line
 
 

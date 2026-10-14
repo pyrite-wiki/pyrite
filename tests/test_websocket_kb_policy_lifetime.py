@@ -27,6 +27,7 @@ from pyrite.config import AuthConfig, KBConfig, PyriteConfig, Settings
 from pyrite.server.api import create_app
 from pyrite.server.websocket import manager
 from pyrite.storage.database import PyriteDB
+from tests.ws_helpers import receive_json
 from tests.auth_seed import app_db, seed_user, sign_in
 
 OPEN, CLOSED, YAML = "open-kb", "closed-kb", "yaml-kb"
@@ -71,13 +72,13 @@ def _marker(client):
 def _assert_closed(ws, client):
     _marker(client)
     with pytest.raises(WebSocketDisconnect) as exc:
-        ws.receive_json()
+        receive_json(ws)
     assert exc.value.code == CLOSE_CODE
 
 
 def _assert_open(ws, client):
     _marker(client)
-    assert ws.receive_json() == MARKER
+    assert receive_json(ws) == MARKER
 
 
 def _reader_cookie(app, client) -> dict:
@@ -175,7 +176,7 @@ class TestHandshakeRace:
             with pytest.raises(WebSocketDisconnect):
                 with c.websocket_connect("/ws") as ws:
                     _marker(c)
-                    ws.receive_json()
+                    receive_json(ws)
             assert manager.connection_count == before
 
 

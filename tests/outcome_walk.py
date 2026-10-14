@@ -311,7 +311,7 @@ def writes_descriptor_1():
 
 
 def child_process_prints():
-    subprocess.run([sys.executable, "-c", f"print({MARK!r})"], check=True)
+    subprocess.run([sys.executable, "-c", f"print({MARK!r})"], check=True, timeout=120)
     return _done()
 
 

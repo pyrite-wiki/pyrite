@@ -206,6 +206,9 @@ jobs:
     needs: changes
     if: (needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main') && needs.changes.outputs.queue_passed != 'true'
     runs-on: ubuntu-latest
+    # A hung test must not hold a runner for the 6 h default (tests-t1): pytest-timeout
+    # bounds each test; this bounds the job.
+    timeout-minutes: 45
     strategy:
       # A red shard must not cancel its siblings: every leg records its
       # timings, and `gate` fails on any red leg regardless.
@@ -461,6 +464,7 @@ jobs:
     needs: changes
     if: (needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main') && needs.changes.outputs.queue_passed != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         python-version: ${{ fromJSON((github.event_name == 'pull_request' && needs.changes.outputs.infra != 'true') && '["3.12"]' || '["3.11", "3.12", "3.13"]') }}
@@ -632,6 +636,9 @@ jobs:
     needs: changes
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    # A hung test must not hold a runner for the 6 h default (tests-t1): pytest-timeout
+    # bounds each test; this bounds the job.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

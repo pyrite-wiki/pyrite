@@ -24,7 +24,7 @@ def _run_seed_config_snippet(data_dir: Path) -> dict:
     script = SEED.read_text()
     snippet = re.search(r'python3 -c "\n(.*?)\n"\n', script, re.S).group(1)
     snippet = snippet.replace("$DATA_DIR", str(data_dir))
-    subprocess.run([sys.executable, "-c", snippet], check=True, capture_output=True)
+    subprocess.run([sys.executable, "-c", snippet], check=True, capture_output=True, timeout=120)
     return load_yaml_file(data_dir / "config.yaml")
 
 

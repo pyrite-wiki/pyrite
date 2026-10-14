@@ -687,7 +687,9 @@ def test_the_overlay_reads_the_users_own_file_never_mains_in_its_place(tmp_path)
     main_file = kb_path / "notes" / f"{ENTRY}.md"
     main_file.write_text(ORIGINAL)
     for cmd in (["git", "add", "."], ["git", "commit", "-qm", "kb"]):
-        subprocess.run(cmd, cwd=repo, env=_clean_git_env(), check=True, capture_output=True)
+        subprocess.run(
+            cmd, cwd=repo, env=_clean_git_env(), check=True, capture_output=True, timeout=120
+        )
     config = _config(tmp_path, KBConfig(name=KB, path=kb_path, kb_type="generic"))
     _index(config)
     db = PyriteDB(config.settings.index_path)

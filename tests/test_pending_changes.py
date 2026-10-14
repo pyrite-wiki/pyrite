@@ -17,7 +17,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def _git(args: list[str], cwd: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=120)
 
 
 @pytest.fixture

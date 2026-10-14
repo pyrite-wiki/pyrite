@@ -825,7 +825,11 @@ def test_oracle_matches_live_hugo(row, tmp_path):
     )
     (tmp_path / "content/p.md").write_bytes(text.encode())
     r = subprocess.run(
-        ["hugo", "--quiet", "-d", "out"], cwd=tmp_path, capture_output=True, text=True
+        ["hugo", "--quiet", "-d", "out"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     out = tmp_path / "out/p/index.html"
     if r.returncode or not out.exists():

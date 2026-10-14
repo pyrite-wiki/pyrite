@@ -308,7 +308,7 @@ class TestNeverWedged:
             waiter,
         )
         holder.send_signal(signal.SIGKILL)
-        holder.wait()
+        holder.wait(timeout=60)
         return waiter, release, child
 
     def test_after_sigkill_the_next_run_waits_for_the_orphaned_command(
@@ -355,7 +355,7 @@ class TestNeverWedged:
             holder,
         )
         holder.send_signal(signal.SIGKILL)
-        holder.wait()
+        holder.wait(timeout=60)
         try:
             out = subprocess.run(
                 [sys.executable, str(LOCK), "--", sys.executable, str(fake), str(log), "late"],
@@ -379,7 +379,7 @@ class TestNeverWedged:
         alive = _spawn(lock, fake, log, "alive")
         _wait_for(lambda: len(list(queue.glob("*.ticket"))) == 2, "alive to queue", deadline, alive)
         dead.send_signal(signal.SIGKILL)
-        dead.wait()
+        dead.wait(timeout=60)
         release.touch()
         ((code, _o, err),) = _finish([alive], deadline)
         assert code == 0, err
@@ -557,7 +557,11 @@ class TestExitCode:
 
     def test_no_command_is_a_usage_error(self, lock):
         out = subprocess.run(
-            [sys.executable, str(LOCK)], env=_clean_env(lock), capture_output=True, text=True
+            [sys.executable, str(LOCK)],
+            env=_clean_env(lock),
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         assert out.returncode == 2
         assert out.stderr.startswith("usage:")

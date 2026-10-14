@@ -40,6 +40,7 @@ def test_push_ref_failure_names_actual_range_and_ref_variables(repo, bad):
         env=env,
         text=True,
         capture_output=True,
+        timeout=120,
     )
     assert result.returncode == 2
     assert "pushed range" in result.stderr
