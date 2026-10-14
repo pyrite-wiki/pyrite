@@ -1454,3 +1454,42 @@ class TestAVerifiedCommitIsNotTestedAgain:
         for doc in ("CLAUDE.md", "CONTRIBUTING.md"):
             text = " ".join((REPO / doc).read_text().split())
             assert "names each one that would stop `--execute`" in text, doc
+
+
+class TestWhatAVerifiedTipIsEvidenceOf:
+    """Fix round 1 of #854: the docs said a verified tip "covers" the full
+    suite. A pull-request `gate` is one interpreter and passes with `test`
+    skipped, so it does not, and an explicit request for the full suite runs."""
+
+    @pytest.mark.parametrize("doc", ["CLAUDE.md", "CONTRIBUTING.md", ".pre-commit-config.yaml"])
+    def test_the_docs_say_the_full_suite_still_runs_when_asked_for(self, doc):
+        text = " ".join((REPO / doc).read_text().replace("#", " ").split())
+        assert "PYRITE_PUSH_FULL=1" in text and "one interpreter" in text, doc
+        assert "CI accepted the commit" in text, doc
+        assert "covers the full" not in text and "is covered" not in text, doc
+
+    @pytest.mark.control(
+        reason="pins the CI fact the docs now state; true of ci.yml before this branch"
+    )
+    def test_gate_reports_success_when_the_jobs_it_needs_were_skipped(self, ci):
+        """The fact the docs state: `gate` fails only on failure or
+        cancellation, so a skipped `test` leaves it green."""
+        step = ci["jobs"]["gate"]["steps"][0]["run"]
+        assert "(failure|cancelled)" in step and "skipped" in step
+        assert "test" in ci["jobs"]["gate"]["needs"]
+
+    def test_the_runbook_describes_the_rehearsal_and_the_hook_step(self):
+        text = " ".join(
+            (REPO / ".claude/skills/pyrite-conductor/release-runbook.md").read_text().split()
+        )
+        assert "b2. push rehearsal" in text
+        assert "scripts/test-affected --preflight" in text
+        assert "does not stop at the first check that fails" in text and "exits 1" in text
+        assert "scripts/verified_commit.py" in text
+        assert "prints every step" not in text
+        import sys
+
+        sys.path.insert(0, str(REPO / "scripts"))
+        import release
+
+        assert "push_rehearsal" in [s.key for s in release.STEPS]

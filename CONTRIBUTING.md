@@ -291,9 +291,17 @@ is down, the request takes more than 8 seconds, the API errors, the check
 is pending, red, renamed or absent, or the answer is not one the script
 understands, the commit is *not verified* and the hook runs the tests as it
 always has. Only the pushed tip is asked about: a verified commit says
-nothing for commits on top of it. `--force` or `PYRITE_PUSH_FORCE=1` runs
-the tests anyway, and so does `PYRITE_PUSH_EXPERIMENTAL=1` (`gate` does not
-need the experimental job). `git push` of several refs at once is examined
+nothing for commits on top of it. The check must be named exactly `gate`,
+come from GitHub Actions, and conclude `success` (`skipped` does not count)
+in every workflow run that tested the SHA.
+
+What that is evidence of: CI accepted the commit. Every job `gate` needs
+succeeded or was skipped by CI's change classifier: the full matrix in the
+merge queue, one interpreter (with `test` skipped on a docs-only change) on
+a pull request. It does not say a particular selection of tests ran. So
+`PYRITE_PUSH_FULL=1` still runs the full suite, `PYRITE_PUSH_EXPERIMENTAL=1`
+still runs (`gate` does not need the experimental job), and `--force` or
+`PYRITE_PUSH_FORCE=1` runs the tests whatever CI said. `git push` of several refs at once is examined
 by pre-commit for its first ref only, as before.
 
 **After a failure that looks load-caused** (a timeout, a flaky port), re-run

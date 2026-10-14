@@ -16,7 +16,9 @@ tags: [testing, pytest]
   (`gate`) green on that exact SHA on GitHub, by the one definition in
   `scripts/verified_commit.py` that `scripts/release.py` also uses. That
   lookup fails closed: anything short of a readable green answer for that
-  SHA means the tests run
+  SHA means the tests run. A verified tip says CI accepted the commit, not
+  that a given selection ran, so `PYRITE_PUSH_FULL=1` and
+  `PYRITE_PUSH_EXPERIMENTAL=1` still run
 - Tests of experimental surfaces carry the `experimental` marker, applied by
   path from `tests/experimental_surface.py` (never by hand). They do not gate a
   merge or a push; CI's `experimental` job runs them against
