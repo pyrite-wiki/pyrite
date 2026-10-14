@@ -857,7 +857,10 @@ class Entry(ABC):
         There is a narrow gap between the ``os.stat`` and the ``os.unlink``:
         a concurrent non-exclusive replace landing inside it would be removed.
         POSIX has no unlink-if-inode; the window is a few syscalls wide and
-        needs a second writer that bypassed the exclusive path.
+        needs a second writer that bypassed the exclusive path. The identity
+        test shares that window in one more way: if the placeholder is unlinked
+        and a new file reuses its inode number, ``samestat`` matches the new
+        file. That needs the same outside writer inside the same window.
         """
         import os
 
