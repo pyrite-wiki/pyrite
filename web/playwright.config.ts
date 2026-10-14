@@ -43,7 +43,7 @@ export default defineConfig({
 	// A flake must be visible, not absorbed. Retries hid the fact that the suite
 	// had no test-data contract; they only made the job three times slower.
 	retries: 0,
-	// Bounded locally (PW_WORKERS, default 2), 1 in CI: see e2e/workers.ts.
+	// PW_WORKERS locally (else Playwright's default), 1 in CI: see e2e/workers.ts.
 	workers: playwrightWorkers(process.env),
 	reporter: 'list',
 	use: {

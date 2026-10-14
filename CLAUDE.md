@@ -119,7 +119,7 @@ cd web && npm run build && npm run test:unit
 ruff check pyrite/
 ```
 
-**One heavy run at a time per machine (#168).** `scripts/test-affected --run` (the pre-push hook too), `scripts/verify-red.sh` and `scripts/e2e.sh` (Playwright; `npm run test:e2e` calls it) take one lock, `~/.cache/pyrite/heavy.lock`, shared by every worktree. A second run waits its turn and prints who holds it; a killed holder releases it. Wrap anything else heavy, the full suite included, in `scripts/heavy_lock.py -- <command>`. `PYRITE_SUITE_LOCK_SKIP=1` skips the lock; CI takes none. Details: CONTRIBUTING, "One heavy run at a time per machine".
+**One heavy run at a time per machine (#168).** `scripts/test-affected --run` (the pre-push hook too), `scripts/verify-red.sh` and `scripts/e2e.sh` (Playwright; `npm run test:e2e` calls it) take one lock, `~/.cache/pyrite/heavy.lock`, shared by every worktree. A second run waits its turn and prints who holds it; the lock covers the run's command until it ends, even when the wrapper is killed, and never goes stale. Wrap anything else heavy, the full suite included, in `scripts/heavy_lock.py -- <command>`. `PYRITE_SUITE_LOCK_SKIP=1` skips the lock; CI takes none. Details: CONTRIBUTING, "One heavy run at a time per machine".
 
 ## Two skills: worker and conductor
 

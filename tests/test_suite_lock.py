@@ -54,11 +54,19 @@ GROUP_DEADLINE = 60.0
 # What the fake command does: append "<event> <name> <time>" to a log, and
 # optionally block until a release file exists.
 FAKE = """\
-import os, sys, time
+import os, signal, sys, time
 log, name = sys.argv[1], sys.argv[2]
 def note(event):
     with open(log, "a") as f:
         f.write(f"{event} {name} {time.time():.6f}\\n")
+def on_term(signum, frame):
+    # A command that takes a moment to stop, as pytest does on SIGTERM: the
+    # lock must still be held until it has.
+    note("term")
+    time.sleep(float(os.environ.get("FAKE_TERM_GRACE", "0.5")))
+    note("end")
+    sys.exit(0)
+signal.signal(signal.SIGTERM, on_term)
 note("start")
 release = os.environ.get("FAKE_RELEASE")
 if release:
@@ -138,6 +146,13 @@ def _wait_for(predicate, what: str, deadline: float, *watched: subprocess.Popen)
         if time.monotonic() > deadline:
             raise AssertionError(f"timed out waiting for {what}")
         time.sleep(0.02)
+
+
+def _lock_record(lock: Path) -> dict:
+    try:
+        return json.loads(lock.read_text() or "{}")
+    except (FileNotFoundError, ValueError):
+        return {}
 
 
 def _started(log: Path, name: str) -> bool:
@@ -276,32 +291,84 @@ class TestOneAtATime:
 
 
 class TestNeverWedged:
-    def test_a_killed_holder_releases_the_lock(self, lock, fake, log, tmp_path):
-        """SIGKILL leaves no chance to clean up; the kernel releases the
-        lock anyway -- even while the holder's own child still runs."""
-        release = tmp_path / "never"
+    def _killed_holder(self, lock, fake, log, tmp_path):
+        """A holder SIGKILLed while its command runs, and a waiter queued
+        behind it. Returns (waiter, release file, the command's pid)."""
+        release = tmp_path / "release-orphan"
         holder = _spawn(lock, fake, log, "holder", FAKE_RELEASE=str(release))
         deadline = time.monotonic() + GROUP_DEADLINE
         _wait_for(lambda: _started(log, "holder"), "the holder to start", deadline, holder)
-        waiter = _spawn(lock, fake, log, "waiter")
+        _wait_for(lambda: "child" in _lock_record(lock), "the child pid", deadline)
+        child = json.loads(lock.read_text())["child"]
+        waiter = _spawn(lock, fake, log, "waiter", PYRITE_SUITE_LOCK_TIMEOUT="30")
         _wait_for(
             lambda: len(list(Path(str(lock) + ".queue").glob("*.ticket"))) == 1,
             "the waiter to queue",
             deadline,
             waiter,
         )
-        killed_at = time.time()
+        holder.send_signal(signal.SIGKILL)
+        holder.wait()
+        return waiter, release, child
+
+    def test_after_sigkill_the_next_run_waits_for_the_orphaned_command(
+        self, lock, fake, log, tmp_path
+    ):
+        """SIGKILL gives the holder no chance to stop its command. The kernel
+        frees the flock; the next run takes it and waits for that command."""
+        waiter, release, child = self._killed_holder(lock, fake, log, tmp_path)
+        try:
+            time.sleep(1.5)  # many poll intervals: a waiter that would start, has
+            assert not _started(log, "waiter"), "started beside the orphaned command"
+            release.touch()
+            ((code, _out, err),) = _finish([waiter], time.monotonic() + GROUP_DEADLINE)
+            assert code == 0, err
+            assert f"pid {child}" in err and "holder was killed" in err
+            ends = {n: t for e, n, t in _events(log) if e == "end"}
+            starts = {n: t for e, n, t in _events(log) if e == "start"}
+            assert starts["waiter"] >= ends["holder"]
+        finally:
+            release.touch()
+
+    def test_a_killed_holder_and_its_command_never_wedge_the_lock(self, lock, fake, log, tmp_path):
+        """Nothing left running: the next run starts at once. No stale lock,
+        nothing to delete by hand."""
+        waiter, release, child = self._killed_holder(lock, fake, log, tmp_path)
+        try:
+            killed_at = time.time()
+            os.kill(child, signal.SIGKILL)
+            ((code, _out, err),) = _finish([waiter], time.monotonic() + GROUP_DEADLINE)
+            assert code == 0, err
+            start = next(t for e, n, t in _events(log) if e == "start" and n == "waiter")
+            assert start - killed_at < 10, start - killed_at
+        finally:
+            release.touch()
+
+    def test_the_orphan_wait_is_bounded(self, lock, fake, log, tmp_path):
+        release = tmp_path / "release-orphan"
+        holder = _spawn(lock, fake, log, "holder", FAKE_RELEASE=str(release))
+        deadline = time.monotonic() + GROUP_DEADLINE
+        _wait_for(
+            lambda: "child" in _lock_record(lock),
+            "the child pid",
+            deadline,
+            holder,
+        )
         holder.send_signal(signal.SIGKILL)
         holder.wait()
         try:
-            ((code, _out, err),) = _finish([waiter], deadline)
-            assert code == 0, err
-            start = next(t for e, n, t in _events(log) if e == "start" and n == "waiter")
-            # Well under the deadline: no stale-lock timeout is involved. The
-            # poll interval is a fraction of a second; the slack is for load.
-            assert start - killed_at < 10, start - killed_at
+            out = subprocess.run(
+                [sys.executable, str(LOCK), "--", sys.executable, str(fake), str(log), "late"],
+                env=_clean_env(lock, PYRITE_SUITE_LOCK_TIMEOUT="0.5"),
+                capture_output=True,
+                text=True,
+                timeout=GROUP_DEADLINE,
+            )
+            assert out.returncode == EXIT_TIMEOUT, out.stderr
+            assert "holder was killed" in out.stderr
+            assert not _started(log, "late")
         finally:
-            release.touch()  # the orphaned fake command exits
+            release.touch()
 
     def test_a_dead_waiter_does_not_hold_up_the_line(self, lock, fake, log, holder):
         proc, release = holder
@@ -331,6 +398,65 @@ class TestNeverWedged:
         assert lock.exists()
 
 
+class TestStoppingTheHolder:
+    """While a heavy run's command still runs, no other heavy run starts --
+    however the holder is stopped."""
+
+    def _entry(self, how: str, fake: Path, log: Path, tmp_path: Path) -> tuple[list[str], dict]:
+        if how == "heavy_lock.py":
+            return [
+                sys.executable,
+                str(LOCK),
+                "--",
+                sys.executable,
+                str(fake),
+                str(log),
+                "holder",
+            ], {}
+        # scripts/e2e.sh execs into heavy_lock.py; its command is npx.
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        npx = bin_dir / "npx"
+        npx.write_text(
+            f"#!{sys.executable}\nimport runpy, sys\nsys.argv = [{str(fake)!r}, {str(log)!r}, 'holder']\nrunpy.run_path(sys.argv[0], run_name='__main__')\n"
+        )
+        npx.chmod(0o755)
+        return ["bash", str(E2E)], {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+
+    @pytest.mark.parametrize("how", ["heavy_lock.py", "scripts/e2e.sh"])
+    def test_sigterm_reaches_the_command_and_the_lock_waits_for_it(
+        self, lock, fake, log, tmp_path, how
+    ):
+        release = tmp_path / "never"
+        argv, extra = self._entry(how, fake, log, tmp_path)
+        holder = subprocess.Popen(
+            argv,
+            env=_clean_env(lock, FAKE_RELEASE=str(release), **extra),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        deadline = time.monotonic() + GROUP_DEADLINE
+        try:
+            _wait_for(lambda: _started(log, "holder"), "the holder to start", deadline, holder)
+            waiter = _spawn(lock, fake, log, "waiter")
+            _wait_for(
+                lambda: len(list(Path(str(lock) + ".queue").glob("*.ticket"))) == 1,
+                "the waiter to queue",
+                deadline,
+                waiter,
+            )
+            holder.send_signal(signal.SIGTERM)
+            results = _finish([holder, waiter], deadline)
+            assert [r[0] for r in results] == [0, 0], results
+            events = {(e, n): t for e, n, t in _events(log)}
+            assert ("term", "holder") in events, "SIGTERM was not passed on to the command"
+            assert events[("start", "waiter")] >= events[("end", "holder")]
+            assert json.loads(lock.read_text())["released"] is True
+        finally:
+            release.touch()
+
+
 class TestBoundedWait:
     def test_the_timeout_ends_the_wait_without_running_the_command(self, lock, fake, log, holder):
         proc, _release = holder
@@ -358,6 +484,63 @@ class TestBoundedWait:
         assert out.returncode == 2
         assert "PYRITE_SUITE_LOCK_TIMEOUT" in out.stderr
         assert not _started(log, "x")
+
+
+class TestALockThatCannotBeUsed:
+    def _run(self, lock: Path, fake: Path, log: Path, *pre: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, *pre, str(LOCK), "--", sys.executable, str(fake), str(log), "x"],
+            env=_clean_env(lock),
+            capture_output=True,
+            text=True,
+            timeout=GROUP_DEADLINE,
+        )
+
+    def test_a_lock_directory_that_is_a_file_is_a_clear_error(self, tmp_path, fake, log):
+        (tmp_path / "file").write_text("")
+        out = self._run(tmp_path / "file" / "heavy.lock", fake, log)
+        assert out.returncode == 2
+        assert "PYRITE_SUITE_LOCK_SKIP" in out.stderr
+        assert "Traceback" not in out.stderr
+        assert not _started(log, "x")
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root writes anywhere")
+    def test_an_unwritable_cache_is_a_clear_error(self, tmp_path, fake, log):
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        cache.chmod(0o500)
+        try:
+            out = self._run(cache / "pyrite" / "heavy.lock", fake, log)
+        finally:
+            cache.chmod(0o700)
+        assert out.returncode == 2
+        assert "PYRITE_SUITE_LOCK_SKIP" in out.stderr
+        assert "Traceback" not in out.stderr
+        assert not _started(log, "x")
+
+    def test_without_fcntl_the_run_goes_ahead_and_says_so(self, lock, fake, log):
+        """Windows has no fcntl: no lock, one line, the command runs."""
+        out = self._run(lock, fake, log, "-c", HIDE_FCNTL)
+        assert out.returncode == 0, out.stderr
+        assert "no fcntl" in out.stderr
+        assert "Traceback" not in out.stderr
+        assert _started(log, "x")
+
+
+# Runs a script (argv[1:]) as __main__ with fcntl and pwd unimportable, as on
+# Windows.
+HIDE_FCNTL = """\
+import runpy, sys
+class Hide:
+    def find_spec(self, name, path=None, target=None):
+        if name in ("fcntl", "pwd"):
+            raise ImportError(f"No module named {name!r} (hidden)")
+sys.meta_path.insert(0, Hide())
+for name in ("fcntl", "pwd"):
+    sys.modules.pop(name, None)
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
 
 
 class TestExitCode:

@@ -208,8 +208,16 @@ worktree. A second run waits its turn, in the order it arrived, and prints
 holder ends. Anything else heavy goes through the same lock with
 `scripts/heavy_lock.py -- <command>`, as in the commands above.
 
-- The kernel releases the lock when its holder exits, killed or crashed
-  included: there is never a stale lock to delete.
+- The lock covers the run's command, not just the wrapper: stopping the
+  wrapper (Ctrl-C, `kill`, a closed terminal) passes the signal on and the
+  lock is let go only when the command has ended. If the wrapper is
+  SIGKILLed, the kernel frees the lock at once -- there is never a stale
+  lock to delete -- and the next run waits, saying so, until the command
+  that wrapper started has ended.
+- A lock it cannot use (an unwritable `~/.cache`, a filesystem without
+  `flock`) stops the run with a one-line error naming
+  `PYRITE_SUITE_LOCK_SKIP`; where `fcntl` does not exist (Windows) runs go
+  ahead without the lock and say so.
 - `PYRITE_SUITE_LOCK_SKIP=1` runs without it (a run you know is small, a
   machine that can afford two). A single test file through plain `pytest`
   takes no lock.

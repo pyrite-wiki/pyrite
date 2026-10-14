@@ -9,8 +9,8 @@
 # same machine-wide lock as `scripts/test-affected --run` and
 # `scripts/verify-red.sh` (scripts/heavy_lock.py), waits its turn, and says
 # who it is waiting for. `npm run test:e2e` calls this script, so it cannot
-# go around the lock. Local workers: PW_WORKERS (default 2;
-# web/playwright.config.ts).
+# go around the lock. Local workers: PW_WORKERS, else Playwright's default
+# (half the cores; a lower default waits on #906 -- web/e2e/workers.ts).
 #
 #   PYRITE_SUITE_LOCK_SKIP=1   run without the lock
 #   CI / GITHUB_ACTIONS set    no lock (and no Python needed)

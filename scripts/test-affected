@@ -1311,15 +1311,11 @@ def main(argv: list[str] | None = None) -> int:
         # One heavy run at a time on this machine (#168): wait for any other
         # suite, verify-red or Playwright run to finish. Only the run itself
         # holds the lock -- not the selection, a skip, a dry run or --preflight.
-        try:
-            with heavy_lock.hold(f"scripts/test-affected --run ({label})"):
-                code = subprocess.call(cmd, cwd=root, env={**os.environ})
-        except heavy_lock.LockTimeoutError as exc:
-            print(exc, file=sys.stderr)
-            return heavy_lock.EXIT_TIMEOUT
-        except heavy_lock.LockError as exc:
-            print(f"test-affected: {exc}", file=sys.stderr)
-            return 2
+        # heavy_lock.run, not hold() around subprocess.call: it passes
+        # SIGTERM/SIGHUP on to pytest and lets the lock go only once pytest
+        # has ended, so a stopped test-affected never frees the machine for
+        # a second suite while this one still runs. 75: the wait timed out.
+        code = heavy_lock.run(cmd, f"scripts/test-affected --run ({label})", cwd=root)
         if code == 0 and not own_venv:
             print("test-affected: passed; not stamped (no .venv in this worktree)", file=sys.stderr)
         if code == 0 and stamps is not None and version is not None:

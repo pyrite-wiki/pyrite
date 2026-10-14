@@ -19,16 +19,28 @@ Usage
   Exit status is COMMAND's; 75 when the wait timed out (COMMAND not run);
   2 for a usage or configuration error.
 
-  As a module: ``with heavy_lock.hold("label"):`` around the heavy part.
+  As a module: ``heavy_lock.run(command, label, cwd=...)`` -- the same
+  locking, signal forwarding and reaping as the command line.
 
 The lock
   ``fcntl.flock`` on ``~/.cache/pyrite/heavy.lock`` -- one per user per
-  machine, outside every worktree, so all of them contend for it. The kernel
-  releases it when the holder exits, however it exits (SIGKILL included):
-  there is no stale lock to clean up. The descriptor is not inherited, so a
-  server or xdist worker the command leaves behind cannot keep it held. The
-  holder writes its pid, command, directory and start time into the lock
-  file; a waiter prints them on entry and every 60 seconds.
+  machine, outside every worktree, so all of them contend for it. The holder
+  writes its pid, command, directory, start time and its command's pid into
+  the lock file; a waiter prints them on entry and every 60 seconds.
+
+  While the command runs, the lock is held, however the holder is stopped:
+  - exit, Ctrl-C, SIGTERM, SIGHUP: the holder forwards SIGTERM/SIGHUP to its
+    command (Ctrl-C reaches it from the terminal), waits for it to end, and
+    only then marks the record released and lets the lock go.
+  - SIGKILL (or a crash): the kernel releases the flock at once -- there is
+    never a stale lock to delete -- but the record was not marked released.
+    The next run takes the lock and then waits, saying so, until the
+    command pid in that record is gone (bounded by the timeout). The work
+    is not killed; it finishes, and the next run starts after it.
+  The descriptor is not inherited: a server or xdist worker the command
+  leaves behind never keeps the lock held. The command's pid is the one
+  thing a killed holder's successor waits for; what that command itself
+  leaves running after it exits is outside the lock.
 
   Order: each waiter holds a flock on its own ticket in
   ``heavy.lock.queue/`` and tries the lock only when no older ticket is
@@ -48,6 +60,9 @@ Environment
                              already holding the lock, so it does not wait
                              on its own parent
 
+Where ``fcntl`` does not exist (Windows), runs go ahead without a lock and
+say so in one line.
+
 A single test file run by hand (``pytest tests/test_x.py``) goes through no
 runner and takes no lock.
 """
@@ -57,17 +72,19 @@ from __future__ import annotations
 import argparse
 import contextlib
 import errno
-import fcntl
 import json
 import os
-import pwd
 import shlex
 import signal
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
 from pathlib import Path
+
+try:  # POSIX only; Windows runs without the lock (one line says so).
+    import fcntl
+except ImportError:  # pragma: no cover - exercised by a test that hides it
+    fcntl = None  # type: ignore[assignment]
 
 EXIT_TIMEOUT = 75  # EX_TEMPFAIL: try again later
 EXIT_USAGE = 2
@@ -75,6 +92,7 @@ DEFAULT_TIMEOUT = 3600.0
 NOTICE_EVERY = 60.0
 POLL = 0.1
 _FALSE = {"", "0", "false", "no", "off"}
+_SKIP_HINT = "set PYRITE_SUITE_LOCK to another path, or PYRITE_SUITE_LOCK_SKIP=1 to run without it"
 
 
 class LockError(Exception):
@@ -105,6 +123,8 @@ def skip_reason(path: Path) -> str | None:
     held = os.environ.get("PYRITE_SUITE_LOCK_HELD")
     if held and _same(Path(held), path):
         return "nested in the run holding it"
+    if fcntl is None:
+        return "no fcntl on this platform"
     return None
 
 
@@ -121,8 +141,10 @@ def _check_not_a_test(path: Path) -> None:
     if not os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("PYRITE_SUITE_LOCK"):
         return
     try:
+        import pwd
+
         real_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
-    except KeyError:
+    except (ImportError, KeyError):
         return
     if _same(Path.home(), real_home):
         raise LockError(
@@ -144,17 +166,40 @@ def _timeout() -> float:
     return value
 
 
-def _holder_line(path: Path) -> str:
+def _record(path: Path) -> dict:
     try:
         info = json.loads(path.read_text() or "{}")
     except (OSError, ValueError):
-        info = {}
+        return {}
+    return info if isinstance(info, dict) else {}
+
+
+def _holder_line(path: Path) -> str:
+    info = _record(path)
     if not info:
         return f"the heavy-run lock {path} (holder not recorded yet)"
     return (
         f"the heavy-run lock {path}, held by pid {info.get('pid', '?')} "
         f"({info.get('command', '?')}) in {info.get('cwd', '?')} since {info.get('since', '?')}"
     )
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _orphan(info: dict) -> int | None:
+    """The command pid a killed holder left running, if it still runs."""
+    child = info.get("child")
+    if info.get("released") or not isinstance(child, int) or child <= 0:
+        return None
+    return child if _alive(child) else None
 
 
 def _try_flock(fd: int, mode: int) -> bool:
@@ -202,35 +247,93 @@ def _ahead(queue: Path, mine: Path) -> int:
     return live
 
 
-def acquire(path: Path, label: str, timeout: float | None = None) -> int:
-    """Wait in line for the lock; return its descriptor, held.
+class Held:
+    """The lock, held: its descriptor and the record in the lock file."""
 
-    Raises LockTimeoutError when ``timeout`` seconds pass first."""
+    def __init__(self, fd: int, record: dict):
+        self.fd = fd
+        self.record = record
+        self._write()
+
+    def _write(self) -> None:
+        os.ftruncate(self.fd, 0)
+        os.pwrite(self.fd, json.dumps(self.record).encode(), 0)
+
+    def started(self, pid: int) -> None:
+        """Name the command's pid: a successor of a killed holder waits for it."""
+        self.record["child"] = pid
+        self._write()
+
+    def release(self) -> None:
+        """Mark the record released -- the command is over -- and let go."""
+        with contextlib.suppress(OSError):
+            self.record["released"] = True
+            self._write()
+        os.close(self.fd)
+
+
+def acquire(path: Path, label: str, timeout: float | None = None) -> Held:
+    """Wait in line for the lock, then for any command a killed holder left
+    running; return it held. Raises LockTimeoutError when ``timeout`` seconds
+    pass first, LockError when the lock file cannot be used at all."""
     timeout = _timeout() if timeout is None else timeout
+    try:
+        return _acquire(path, label, timeout)
+    except OSError as exc:
+        raise LockError(f"cannot use the heavy-run lock {path}: {exc}; {_SKIP_HINT}") from exc
+
+
+def _acquire(path: Path, label: str, timeout: float) -> Held:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)  # not inheritable (PEP 446)
     queue = path.with_name(path.name + ".queue")
-    ticket_fd, ticket = _take_ticket(queue)
+    try:
+        ticket_fd, ticket = _take_ticket(queue)
+    except BaseException:
+        os.close(fd)
+        raise
     start = time.monotonic()
     next_notice = start
+    locked = False
+    said = None  # what the last notice was about: a new reason gets a line at once
     try:
         while True:
-            ahead = _ahead(queue, ticket)
-            if ahead == 0 and _try_flock(fd, fcntl.LOCK_EX):
-                break
+            ahead = 0 if locked else _ahead(queue, ticket)
+            if locked or (ahead == 0 and _try_flock(fd, fcntl.LOCK_EX)):
+                locked = True
+                orphan = _orphan(_record(path))
+                if orphan is None:
+                    break
+                waiting_for = (
+                    f"pid {orphan}, the command of a heavy run whose holder was killed "
+                    f"({_record(path).get('command', '?')}); it holds no lock but still runs"
+                )
+            else:
+                waiting_for = _holder_line(path)
             now = time.monotonic()
             if now - start >= timeout:
                 raise LockTimeoutError(
-                    f"heavy-lock: gave up after {timeout:g}s waiting for {_holder_line(path)}; "
+                    f"heavy-lock: gave up after {timeout:g}s waiting for {waiting_for}; "
                     f"{label} not run (PYRITE_SUITE_LOCK_TIMEOUT)"
                 )
-            if now >= next_notice:
-                line = f"heavy-lock: waiting for {_holder_line(path)}"
+            reason = "orphan" if locked else "holder"
+            if now >= next_notice or reason != said:
+                said = reason
+                line = f"heavy-lock: waiting for {waiting_for}"
                 if ahead:
                     line += f"; {ahead} more ahead of this run"
                 print(line, file=sys.stderr, flush=True)
                 next_notice = now + NOTICE_EVERY
             time.sleep(POLL)
+        held = Held(
+            fd,
+            {
+                "pid": os.getpid(),
+                "command": label,
+                "cwd": os.getcwd(),
+                "since": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            },
+        )
     except BaseException:
         os.close(fd)
         raise
@@ -238,58 +341,74 @@ def acquire(path: Path, label: str, timeout: float | None = None) -> int:
         with contextlib.suppress(FileNotFoundError):
             ticket.unlink()
         os.close(ticket_fd)
-    record = {
-        "pid": os.getpid(),
-        "command": label,
-        "cwd": os.getcwd(),
-        "since": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-    }
-    os.ftruncate(fd, 0)
-    os.pwrite(fd, json.dumps(record).encode(), 0)
     waited = time.monotonic() - start
     if waited >= 1:
         print(f"heavy-lock: acquired after {waited:.0f}s", file=sys.stderr, flush=True)
-    return fd
+    return held
 
 
 @contextlib.contextmanager
-def hold(label: str) -> Iterator[None]:
-    """Hold the machine-wide lock for the body, unless this run skips it.
+def hold(label: str):
+    """Hold the machine-wide lock for the body (yields a Held), or yield None
+    when this run skips it. Sets PYRITE_SUITE_LOCK_HELD for child processes.
 
-    Sets PYRITE_SUITE_LOCK_HELD for the body's child processes."""
+    Prefer run(): a body that starts a command must also forward signals to
+    it and wait for it before the lock is let go."""
     path = lock_path()
-    if skip_reason(path) is not None:
-        yield
+    reason = skip_reason(path)
+    if reason is not None:
+        if reason.startswith("no fcntl"):
+            print(f"heavy-lock: {reason}; running without the machine-wide lock", file=sys.stderr)
+        yield None
         return
     _check_not_a_test(path)
-    fd = acquire(path, label)
+    held = acquire(path, label)
     previous = os.environ.get("PYRITE_SUITE_LOCK_HELD")
     os.environ["PYRITE_SUITE_LOCK_HELD"] = str(path.resolve())
     try:
-        yield
+        yield held
     finally:
         if previous is None:
             os.environ.pop("PYRITE_SUITE_LOCK_HELD", None)
         else:
             os.environ["PYRITE_SUITE_LOCK_HELD"] = previous
-        os.close(fd)
+        held.release()
 
 
-def run(command: list[str], label: str | None = None) -> int:
-    """Run ``command`` under the lock; its exit status, or EXIT_TIMEOUT/EXIT_USAGE."""
+_FORWARDED = tuple(getattr(signal, name) for name in ("SIGTERM", "SIGHUP") if hasattr(signal, name))
+
+
+def run(command: list[str], label: str | None = None, *, cwd: str | Path | None = None) -> int:
+    """Run ``command`` under the lock and return its exit status (or
+    EXIT_TIMEOUT / EXIT_USAGE, with the reason on stderr).
+
+    The lock is let go only after the command has ended: SIGTERM and SIGHUP
+    to this process are passed on to it and the command is waited for;
+    Ctrl-C reaches it from the terminal, and this process waits for it too.
+    The command inherits os.environ, PYRITE_SUITE_LOCK_HELD included."""
     label = label or shlex.join(command)
     try:
-        with hold(label):
-            proc = subprocess.Popen(command)
-            # Ctrl-C reaches the whole foreground group anyway; pass SIGTERM on
-            # so `kill <wrapper>` does not leave the command running unlocked.
-            previous = signal.signal(signal.SIGTERM, lambda *_: proc.terminate())
+        with hold(label) as held:
+            proc = subprocess.Popen(command, cwd=cwd)
+            if held is not None:
+                held.started(proc.pid)
+
+            def forward(signum, _frame):
+                with contextlib.suppress(ProcessLookupError):
+                    proc.send_signal(signum)
+
+            previous = {sig: signal.signal(sig, forward) for sig in _FORWARDED}
             try:
-                return proc.wait()
-            except KeyboardInterrupt:
-                return proc.wait()
+                while True:
+                    try:
+                        return proc.wait()
+                    except KeyboardInterrupt:
+                        # The terminal sent SIGINT to the command as well; it
+                        # decides how to stop, and the lock waits for it.
+                        continue
             finally:
-                signal.signal(signal.SIGTERM, previous)
+                for sig, handler in previous.items():
+                    signal.signal(sig, handler)
     except LockTimeoutError as exc:
         print(exc, file=sys.stderr)
         return EXIT_TIMEOUT
