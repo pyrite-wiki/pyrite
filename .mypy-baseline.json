@@ -1,0 +1,835 @@
+{
+ "files": {
+  "pyrite/__init__.py": {
+   "count": 1,
+   "errors": {
+    "no-any-return|Returning Any from function declared to return \"str\"": 1
+   }
+  },
+  "pyrite/admin_cli.py": {
+   "count": 2,
+   "errors": {
+    "arg-type|Argument \"auth_method\" to \"Repository\" has incompatible type \"str\"; expected \"Literal['none', 'ssh', 'github_oauth', 'token']\"": 1,
+    "attr-defined|\"RepoService\" has no attribute \"fork\"": 1
+   }
+  },
+  "pyrite/cli/__init__.py": {
+   "count": 1,
+   "errors": {
+    "union-attr|Item \"None\" of \"KBConfig | None\" has no attribute \"path\"": 1
+   }
+  },
+  "pyrite/cli/browse_commands.py": {
+   "count": 2,
+   "errors": {
+    "arg-type|Argument 1 to \"orient\" of \"KBService\" has incompatible type \"str | None\"; expected \"str\"": 1,
+    "misc|Assignment to variable \"e\" outside except: block": 1
+   }
+  },
+  "pyrite/cli/entry_commands.py": {
+   "count": 11,
+   "errors": {
+    "arg-type|Argument 1 to \"_format_output\" has incompatible type \"dict[str, Any] | None\"; expected \"dict[Any, Any]\"": 1,
+    "arg-type|Argument 1 to \"project_fields\" has incompatible type \"dict[str, Any] | None\"; expected \"dict[str, Any]\"": 1,
+    "assignment|Incompatible types in assignment (expression has type \"str | None\", variable has type \"str\")": 1,
+    "list-item|List item 0 has incompatible type \"dict[str, Any] | None\"; expected \"dict[Any, Any]\"": 1,
+    "no-any-return|Returning Any from function declared to return \"str | None\"": 2,
+    "union-attr|Item \"None\" of \"dict[str, Any] | None\" has no attribute \"get\"": 5
+   }
+  },
+  "pyrite/cli/extension_commands.py": {
+   "count": 4,
+   "errors": {
+    "arg-type|Argument 1 to \"add_row\" of \"Table\" has incompatible type \"object\"; expected \"ConsoleRenderable | RichCast | str | None\"": 1,
+    "arg-type|Argument 1 to \"join\" of \"str\" has incompatible type \"object\"; expected \"Iterable[str]\"": 1,
+    "union-attr|Item \"None\" of \"PyritePlugin | None\" has no attribute \"get_entry_types\"": 1,
+    "union-attr|Item \"None\" of \"PyritePlugin | None\" has no attribute \"get_mcp_tools\"": 1
+   }
+  },
+  "pyrite/cli/index_commands.py": {
+   "count": 3,
+   "errors": {
+    "assignment|Incompatible types in assignment (expression has type \"KBConfig | None\", variable has type \"KBConfig\")": 1,
+    "union-attr|Item \"None\" of \"KBConfig | None\" has no attribute \"path\"": 2
+   }
+  },
+  "pyrite/cli/init_command.py": {
+   "count": 3,
+   "errors": {
+    "dict-item|Dict entry 4 has incompatible type \"str\": \"list[Any]\"; expected \"str\": \"str\"": 1,
+    "dict-item|Dict entry 5 has incompatible type \"str\": \"int\"; expected \"str\": \"str\"": 1,
+    "union-attr|Item \"Collection[str]\" of \"Any | Collection[str]\" has no attribute \"keys\"": 1
+   }
+  },
+  "pyrite/cli/kb_commands.py": {
+   "count": 11,
+   "errors": {
+    "arg-type|Argument 1 to \"get_kb\" of \"PyriteConfig\" has incompatible type \"object\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"len\" has incompatible type \"object\"; expected \"Sized\"": 3,
+    "attr-defined|\"object\" has no attribute \"__iter__\"; maybe \"__dir__\" or \"__str__\"? (not iterable)": 1,
+    "index|Value of type \"dict[str, Any] | None\" is not indexable": 1,
+    "index|Value of type \"object\" is not indexable": 3,
+    "no-any-return|Returning Any from function declared to return \"list[KBConfig]\"": 1,
+    "union-attr|Item \"None\" of \"Path | None\" has no attribute \"expanduser\"": 1
+   }
+  },
+  "pyrite/cli/link_commands.py": {
+   "count": 2,
+   "errors": {
+    "attr-defined|\"EntryNotFoundError\" has no attribute \"suggestion\"": 1,
+    "attr-defined|\"KBNotFoundError\" has no attribute \"suggestion\"": 1
+   }
+  },
+  "pyrite/cli/mcp_setup_command.py": {
+   "count": 16,
+   "errors": {
+    "arg-type|Argument 1 to \"_verify_starts\" has incompatible type \"Path | None\"; expected \"Path\"": 1,
+    "arg-type|Argument 2 to \"_note_rest_of_claude_config\" has incompatible type \"Sequence[str]\"; expected \"dict[Any, Any]\"": 1,
+    "arg-type|Argument 3 to \"_StopError\" has incompatible type \"**dict[str, Sequence[str]]\"; expected \"str\"": 2,
+    "assignment|Incompatible types in assignment (expression has type \"int\", target has type \"Sequence[str]\")": 1,
+    "attr-defined|\"Sequence[str]\" has no attribute \"append\"": 1,
+    "call-overload|No overload variant of \"update\" of \"MutableMapping\" matches argument types \"str\", \"str\", \"str\", \"str\", \"dict[str, object]\"": 1,
+    "index|Invalid index type \"Sequence[str]\" for \"dict[str, int]\"; expected type \"str\"": 1,
+    "index|Value of type \"dict[Any, Any] | None\" is not indexable": 1,
+    "no-any-return|Returning Any from function declared to return \"bool\"": 1,
+    "no-any-return|Returning Any from function declared to return \"str | None\"": 1,
+    "no-redef|Name \"entry\" already defined on line N": 1,
+    "union-attr|Item \"None\" of \"CompletedProcess[str] | None\" has no attribute \"returncode\"": 1,
+    "union-attr|Item \"None\" of \"CompletedProcess[str] | None\" has no attribute \"stderr\"": 1,
+    "union-attr|Item \"None\" of \"CompletedProcess[str] | None\" has no attribute \"stdout\"": 2
+   }
+  },
+  "pyrite/cli/output.py": {
+   "count": 3,
+   "errors": {
+    "arg-type|Argument 1 to \"get_parameter_source\" of \"Context\" has incompatible type \"str | None\"; expected \"str\"": 1,
+    "no-any-return|Returning Any from function declared to return \"str | None\"": 2
+   }
+  },
+  "pyrite/cli/protocol_commands.py": {
+   "count": 1,
+   "errors": {
+    "union-attr|Item \"None\" of \"KBConfig | None\" has no attribute \"kb_schema\"": 1
+   }
+  },
+  "pyrite/cli/schema_commands.py": {
+   "count": 6,
+   "errors": {
+    "arg-type|Argument 1 to \"KBRepository\" has incompatible type \"KBConfig | None\"; expected \"KBConfig\"": 1,
+    "union-attr|Item \"None\" of \"KBConfig | None\" has no attribute \"kb_schema\"": 3,
+    "union-attr|Item \"None\" of \"KBConfig | None\" has no attribute \"kb_yaml_path\"": 1,
+    "union-attr|Item \"None\" of \"KBConfig | None\" has no attribute \"path\"": 1
+   }
+  },
+  "pyrite/cli/search_commands.py": {
+   "count": 1,
+   "errors": {
+    "assignment|Incompatible types in assignment (expression has type \"dict[Any, Any] | None\", variable has type \"dict[Any, Any]\")": 1
+   }
+  },
+  "pyrite/cli/task_commands.py": {
+   "count": 2,
+   "errors": {
+    "attr-defined|\"EntryNotFoundError\" has no attribute \"suggestion\"": 1,
+    "no-any-return|Returning Any from function declared to return \"str\"": 1
+   }
+  },
+  "pyrite/config.py": {
+   "count": 3,
+   "errors": {
+    "arg-type|Argument 1 to \"_file_plus_changes\" has incompatible type \"Any | dict[Any, Any] | None\"; expected \"dict[str, Any]\"": 1,
+    "assignment|Incompatible types in assignment (expression has type \"str\", variable has type \"Literal['anthropic', 'openai', 'gemini', 'openrouter', 'ollama', 'local', 'stub', 'none']\")": 1,
+    "no-any-return|Returning Any from function declared to return \"dict[str, Any]\"": 1
+   }
+  },
+  "pyrite/exceptions.py": {
+   "count": 5,
+   "errors": {
+    "assignment|Incompatible types in assignment (expression has type \"None\", base class \"ConfigError\" defined the type as \"str\")": 2,
+    "assignment|Incompatible types in assignment (expression has type \"None\", base class \"PluginError\" defined the type as \"str\")": 2,
+    "assignment|Incompatible types in assignment (expression has type \"None\", base class \"StorageError\" defined the type as \"str\")": 1
+   }
+  },
+  "pyrite/formats/csv_fmt.py": {
+   "count": 4,
+   "errors": {
+    "arg-type|Argument 1 to \"projected_columns\" has incompatible type \"Any | None\"; expected \"list[str]\"": 1,
+    "arg-type|Argument 1 to \"writerow\" of \"DictWriter\" has incompatible type \"dict_keys[Any, Any]\"; expected \"Mapping[str, Any]\"": 1,
+    "arg-type|Argument 1 to \"writerow\" of \"DictWriter\" has incompatible type \"dict_values[Any, Any]\"; expected \"Mapping[str, Any]\"": 1,
+    "assignment|Incompatible types in assignment (expression has type \"Writer\", variable has type \"DictWriter[str]\")": 1
+   }
+  },
+  "pyrite/formats/importers/yaml_importer.py": {
+   "count": 3,
+   "errors": {
+    "assignment|Incompatible types in assignment (expression has type \"list[dict[str, Any]]\", variable has type \"dict[str, Any]\")": 2,
+    "var-annotated|Need type annotation for \"entries\" (hint: \"entries: list[<type>] = ...\")": 1
+   }
+  },
+  "pyrite/formats/markdown_fmt.py": {
+   "count": 1,
+   "errors": {
+    "arg-type|Argument 2 to \"projected_markdown\" has incompatible type \"Any | None\"; expected \"list[str]\"": 1
+   }
+  },
+  "pyrite/github_auth.py": {
+   "count": 1,
+   "errors": {
+    "no-any-return|Returning Any from function declared to return \"dict[Any, Any] | None\"": 1
+   }
+  },
+  "pyrite/logging.py": {
+   "count": 1,
+   "errors": {
+    "arg-type|Argument 1 to \"StreamHandler\" has incompatible type \"object | Any\"; expected \"None\"": 1
+   }
+  },
+  "pyrite/models/base.py": {
+   "count": 1,
+   "errors": {
+    "no-any-return|Returning Any from function declared to return \"dict[str, Any]\"": 1
+   }
+  },
+  "pyrite/models/factory.py": {
+   "count": 1,
+   "errors": {
+    "no-redef|Name \"fm\" already defined on line N": 1
+   }
+  },
+  "pyrite/models/task.py": {
+   "count": 2,
+   "errors": {
+    "no-any-return|Returning Any from function declared to return \"bool\"": 1,
+    "no-any-return|Returning Any from function declared to return \"dict[Any, Any]\"": 1
+   }
+  },
+  "pyrite/plugins/registry.py": {
+   "count": 3,
+   "errors": {
+    "arg-type|Argument 2 to \"get\" of \"Deprecated\" has incompatible type \"list[Never]\"; expected \"EntryPoints\"": 1,
+    "no-any-return|Returning Any from function declared to return \"str | None\"": 1,
+    "var-annotated|Need type annotation for \"declared\"": 1
+   }
+  },
+  "pyrite/schema/enum_check.py": {
+   "count": 1,
+   "errors": {
+    "assignment|Incompatible types in assignment (expression has type \"Any | None\", variable has type \"str\")": 1
+   }
+  },
+  "pyrite/schema/field_aliases.py": {
+   "count": 1,
+   "errors": {
+    "var-annotated|Need type annotation for \"declared\"": 1
+   }
+  },
+  "pyrite/schema/field_schema.py": {
+   "count": 2,
+   "errors": {
+    "arg-type|Argument \"constraints\" to \"FieldSchema\" has incompatible type \"dict[Literal['min_length', 'max_length', 'min', 'max', 'target_type', 'format'], Any]\"; expected \"dict[str, Any]\"": 1,
+    "operator|\"str\" not callable": 1
+   }
+  },
+  "pyrite/schema/kb_schema.py": {
+   "count": 4,
+   "errors": {
+    "dict-item|Dict entry 3 has incompatible type \"str\": \"Any | None\"; expected \"str\": \"Sequence[str]\"": 3,
+    "no-any-return|Returning Any from function declared to return \"str\"": 1
+   }
+  },
+  "pyrite/schema/provenance.py": {
+   "count": 8,
+   "errors": {
+    "assignment|Incompatible types in assignment (expression has type \"Literal[True]\", target has type \"str\")": 2,
+    "assignment|Incompatible types in assignment (expression has type \"float\", target has type \"str\")": 1,
+    "assignment|Incompatible types in assignment (expression has type \"list[str]\", target has type \"str\")": 4,
+    "no-any-return|Returning Any from function declared to return \"str\"": 1
+   }
+  },
+  "pyrite/server/api.py": {
+   "count": 6,
+   "errors": {
+    "arg-type|Argument \"ai_provider\" to \"Settings\" has incompatible type \"str\"; expected \"Literal['anthropic', 'openai', 'gemini', 'openrouter', 'ollama', 'local', 'stub', 'none']\"": 1,
+    "no-any-return|Returning Any from function declared to return \"IndexManager\"": 1,
+    "no-any-return|Returning Any from function declared to return \"IndexWorker\"": 1,
+    "no-any-return|Returning Any from function declared to return \"KBRegistryService\"": 1,
+    "no-any-return|Returning Any from function declared to return \"PyriteConfig\"": 1,
+    "no-any-return|Returning Any from function declared to return \"PyriteDB\"": 1
+   }
+  },
+  "pyrite/server/auth_endpoints.py": {
+   "count": 2,
+   "errors": {
+    "arg-type|Argument 2 to \"_set_session_cookie\" has incompatible type \"str | None\"; expected \"str\"": 1,
+    "no-any-return|Returning Any from function declared to return \"dict[Any, Any]\"": 1
+   }
+  },
+  "pyrite/server/endpoints/admin.py": {
+   "count": 2,
+   "errors": {
+    "arg-type|Argument 1 to \"get_usage\" of \"LLMUsageService\" has incompatible type \"Any | None\"; expected \"int\"": 1,
+    "arg-type|Argument 4 to \"grant_kb_permission\" of \"AuthService\" has incompatible type \"Any | None\"; expected \"int\"": 1
+   }
+  },
+  "pyrite/server/endpoints/ai_ep.py": {
+   "count": 1,
+   "errors": {
+    "arg-type|Argument 1 to \"permits\" of \"ReadScope\" has incompatible type \"Any | None\"; expected \"str\"": 1
+   }
+  },
+  "pyrite/server/endpoints/blocks.py": {
+   "count": 5,
+   "errors": {
+    "arg-type|Argument \"block_id\" to \"BlockResponse\" has incompatible type \"Column[str]\"; expected \"str\"": 1,
+    "arg-type|Argument \"block_type\" to \"BlockResponse\" has incompatible type \"Column[str]\"; expected \"str\"": 1,
+    "arg-type|Argument \"content\" to \"BlockResponse\" has incompatible type \"Column[str]\"; expected \"str\"": 1,
+    "arg-type|Argument \"heading\" to \"BlockResponse\" has incompatible type \"Column[str]\"; expected \"str | None\"": 1,
+    "arg-type|Argument \"position\" to \"BlockResponse\" has incompatible type \"Column[int]\"; expected \"int\"": 1
+   }
+  },
+  "pyrite/server/endpoints/collections.py": {
+   "count": 1,
+   "errors": {
+    "index|Value of type \"Entry\" is not indexable": 1
+   }
+  },
+  "pyrite/server/endpoints/entries.py": {
+   "count": 2,
+   "errors": {
+    "arg-type|Argument \"block_content\" to \"ResolveResponse\" has incompatible type \"Column[str] | None\"; expected \"str | None\"": 1,
+    "assignment|Incompatible types in assignment (expression has type \"str | None\", variable has type \"str\")": 1
+   }
+  },
+  "pyrite/server/endpoints/kbs.py": {
+   "count": 1,
+   "errors": {
+    "arg-type|Argument 1 to \"permits\" of \"ReadScope\" has incompatible type \"Any | None\"; expected \"str\"": 1
+   }
+  },
+  "pyrite/server/endpoints/repos.py": {
+   "count": 1,
+   "errors": {
+    "attr-defined|\"object\" has no attribute \"config\"": 1
+   }
+  },
+  "pyrite/server/endpoints/settings_ep.py": {
+   "count": 2,
+   "errors": {
+    "arg-type|Argument 1 to \"get\" of \"dict\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "misc|Value expression in dictionary comprehension has incompatible type \"str | None\"; expected type \"str\"": 1
+   }
+  },
+  "pyrite/server/endpoints/starred.py": {
+   "count": 1,
+   "errors": {
+    "no-any-return|Returning Any from function declared to return \"int | None\"": 1
+   }
+  },
+  "pyrite/server/errors.py": {
+   "count": 1,
+   "errors": {
+    "arg-type|Argument 2 to \"add_exception_handler\" of \"Starlette\" has incompatible type \"Callable[[Request[State], PyriteError], JSONResponse]\"; expected \"Callable[[Request[State], Exception], Response | Awaitable[Response]] | Callable[[WebSocket[State], Exception], Awaitable[None]]\"": 1
+   }
+  },
+  "pyrite/server/mcp_routes.py": {
+   "count": 1,
+   "errors": {
+    "return-value|Incompatible return value type (got \"Callable[[Any, Any, Any], Coroutine[Any, Any, None]]\", expected \"Response\")": 1
+   }
+  },
+  "pyrite/server/mcp_server.py": {
+   "count": 39,
+   "errors": {
+    "arg-type|Argument \"source_id\" to \"add_link\" of \"KBService\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument \"source_kb\" to \"add_link\" of \"KBService\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument \"target_id\" to \"add_link\" of \"KBService\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"bulk_create_entries\" of \"KBService\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"create\" of \"KBService\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"delete_entry\" of \"KBService\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"get_backlinks\" of \"GraphService\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"get_entry\" of \"KBService\" has incompatible type \"Any | None\"; expected \"str\"": 2,
+    "arg-type|Argument 1 to \"get_kb\" of \"PyriteConfig\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"orient\" of \"KBService\" has incompatible type \"str | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"signature\" has incompatible type \"function\"; expected \"Callable[..., Any]\"": 1,
+    "arg-type|Argument 1 to \"split_echoed_update\" of \"KBService\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"update\" of \"KBService\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 2 to \"_maybe_validate\" of \"PyriteMCPServer\" has incompatible type \"Any | None\"; expected \"str\"": 2,
+    "arg-type|Argument 2 to \"delete_entry\" of \"KBService\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 2 to \"get_backlinks\" of \"GraphService\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 2 to \"split_echoed_update\" of \"KBService\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 2 to \"update\" of \"KBService\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "no-any-return|Returning Any from function declared to return \"bool\"": 1,
+    "no-any-return|Returning Any from function declared to return \"dict[str, Any]\"": 13,
+    "no-any-return|Returning Any from function declared to return \"list[dict[Any, Any]] | None\"": 1,
+    "no-any-return|Returning Any from function declared to return \"str\"": 1,
+    "operator|Cannot call function of unknown type": 2,
+    "var-annotated|Need type annotation for \"tools\" (hint: \"tools: dict[<type>, <type>] = ...\")": 1
+   }
+  },
+  "pyrite/server/static.py": {
+   "count": 2,
+   "errors": {
+    "arg-type|Argument 1 to \"refresh_kb_index\" of \"SiteCacheService\" has incompatible type \"str | None\"; expected \"str\"": 1,
+    "arg-type|Argument 2 to \"add_route\" of \"Starlette\" has incompatible type \"Callable[[Request[State]], Coroutine[Any, Any, None]]\"; expected \"Callable[[Request[State]], Awaitable[Response] | Response]\"": 1
+   }
+  },
+  "pyrite/server/tool_schemas.py": {
+   "count": 1,
+   "errors": {
+    "no-any-return|Returning Any from function declared to return \"dict[str, Any]\"": 1
+   }
+  },
+  "pyrite/server/websocket.py": {
+   "count": 1,
+   "errors": {
+    "no-any-return|Returning Any from function declared to return \"ScopeEpoch\"": 1
+   }
+  },
+  "pyrite/server/worktree_resolver.py": {
+   "count": 3,
+   "errors": {
+    "assignment|Incompatible types in assignment (expression has type \"PyriteDB\", variable has type \"WorktreeDB\")": 1,
+    "return-value|Incompatible return value type (got \"WorktreeDB\", expected \"PyriteDB\")": 1,
+    "return-value|Incompatible return value type (got \"tuple[PyriteConfig, WorktreeDB]\", expected \"tuple[PyriteConfig, PyriteDB]\")": 1
+   }
+  },
+  "pyrite/services/access_policy.py": {
+   "count": 2,
+   "errors": {
+    "no-any-return|Returning Any from function declared to return \"bool\"": 1,
+    "no-any-return|Returning Any from function declared to return \"str | None\"": 1
+   }
+  },
+  "pyrite/services/auth_service.py": {
+   "count": 1,
+   "errors": {
+    "no-any-return|Returning Any from function declared to return \"int\"": 1
+   }
+  },
+  "pyrite/services/block_service.py": {
+   "count": 2,
+   "errors": {
+    "no-any-return|Returning Any from function declared to return \"Block | None\"": 1,
+    "no-any-return|Returning Any from function declared to return \"list[Block]\"": 1
+   }
+  },
+  "pyrite/services/clipper.py": {
+   "count": 2,
+   "errors": {
+    "arg-type|Argument 1 to \"add\" of \"set\" has incompatible type \"str | int\"; expected \"str\"": 1,
+    "no-any-return|Returning Any from function declared to return \"str\"": 1
+   }
+  },
+  "pyrite/services/embedding_service.py": {
+   "count": 6,
+   "errors": {
+    "assignment|Incompatible types in assignment (expression has type \"float\", variable has type \"int\")": 1,
+    "attr-defined|\"SearchBackend\" has no attribute \"vec_available\"": 3,
+    "no-any-return|Returning Any from function declared to return \"list[float]\"": 1,
+    "no-any-return|Returning Any from function declared to return \"str\"": 1
+   }
+  },
+  "pyrite/services/embedding_worker.py": {
+   "count": 9,
+   "errors": {
+    "union-attr|Item \"None\" of \"DBAPIConnection | None\" has no attribute \"commit\"": 2,
+    "union-attr|Item \"None\" of \"DBAPIConnection | None\" has no attribute \"execute\"": 7
+   }
+  },
+  "pyrite/services/git_service.py": {
+   "count": 3,
+   "errors": {
+    "attr-defined|\"object\" has no attribute \"append\"": 3
+   }
+  },
+  "pyrite/services/index_worker.py": {
+   "count": 14,
+   "errors": {
+    "union-attr|Item \"None\" of \"DBAPIConnection | None\" has no attribute \"commit\"": 8,
+    "union-attr|Item \"None\" of \"DBAPIConnection | None\" has no attribute \"execute\"": 6
+   }
+  },
+  "pyrite/services/kb_registry_service.py": {
+   "count": 4,
+   "errors": {
+    "arg-type|Argument 2 to \"_yaml_origin\" of \"KBRegistryService\" has incompatible type \"Column[int]\"; expected \"int | None\"": 2,
+    "union-attr|Item \"None\" of \"IndexManager | None\" has no attribute \"sync_kb\"": 2
+   }
+  },
+  "pyrite/services/kb_service.py": {
+   "count": 19,
+   "errors": {
+    "arg-type|Argument \"key\" to \"sort\" of \"list\" has incompatible type \"Callable[[dict[str, object]], object]\"; expected \"Callable[[dict[str, object]], SupportsDunderLT[Any] | SupportsDunderGT[Any]]\"": 1,
+    "arg-type|Argument \"target\" to \"add_link\" of \"Entry\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"load\" of \"KBRepository\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"save_entry\" of \"DocumentManager\" has incompatible type \"Entry | None\"; expected \"Entry\"": 1,
+    "arg-type|Argument 1 to \"setdefault\" of \"MutableMapping\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 3 to \"_run_hooks\" of \"KBService\" has incompatible type \"PluginContext\"; expected \"dict[Any, Any]\"": 6,
+    "arg-type|Argument 7 to \"PluginContext\" has incompatible type \"**dict[str, dict[Any, Any]]\"; expected \"KBSchema | None\"": 1,
+    "attr-defined|\"Result[*tuple[Any, ...]]\" has no attribute \"rowcount\"": 1,
+    "index|Invalid index type \"Any | None\" for \"dict[str, Entry | None]\"; expected type \"str\"": 2,
+    "no-any-return|Returning Any from function declared to return \"Entry\"": 1,
+    "no-any-return|Returning Any from function declared to return \"str\"": 1,
+    "return-value|Incompatible return value type (got \"object\", expected \"SupportsDunderLT[Any] | SupportsDunderGT[Any]\")": 1,
+    "union-attr|Item \"None\" of \"Entry | None\" has no attribute \"touch_updated_at\"": 1
+   }
+  },
+  "pyrite/services/llm_rubric_evaluator.py": {
+   "count": 1,
+   "errors": {
+    "no-any-return|Returning Any from function declared to return \"bool\"": 1
+   }
+  },
+  "pyrite/services/llm_service.py": {
+   "count": 2,
+   "errors": {
+    "arg-type|Argument \"ai_provider\" to \"Settings\" has incompatible type \"str\"; expected \"Literal['anthropic', 'openai', 'gemini', 'openrouter', 'ollama', 'local', 'stub', 'none']\"": 1,
+    "no-any-return|Returning Any from function declared to return \"str\"": 1
+   }
+  },
+  "pyrite/services/qa_analytics_service.py": {
+   "count": 2,
+   "errors": {
+    "arg-type|Argument \"key\" to \"sorted\" has incompatible type \"Callable[[dict[str, object]], object]\"; expected \"Callable[[dict[str, object]], SupportsDunderLT[Any] | SupportsDunderGT[Any]]\"": 1,
+    "return-value|Incompatible return value type (got \"object\", expected \"SupportsDunderLT[Any] | SupportsDunderGT[Any]\")": 1
+   }
+  },
+  "pyrite/services/qa_service.py": {
+   "count": 12,
+   "errors": {
+    "assignment|Incompatible types in assignment (expression has type \"list[tuple[Entry, Path]]\", variable has type \"Iterator[tuple[Entry, Path]]\")": 1,
+    "no-any-return|Returning Any from function declared to return \"None\"": 1,
+    "no-any-return|Returning Any from function declared to return \"dict[str, Any] | None\"": 2,
+    "no-any-return|Returning Any from function declared to return \"dict[str, Any]\"": 2,
+    "no-any-return|Returning Any from function declared to return \"list[dict[str, Any]]\"": 4,
+    "no-any-return|Returning Any from function declared to return \"list[str]\"": 1,
+    "no-any-return|Returning Any from function declared to return \"str\"": 1
+   }
+  },
+  "pyrite/services/repo_service.py": {
+   "count": 5,
+   "errors": {
+    "assignment|Incompatible types in assignment (expression has type \"list[dict[str, Any]]\", variable has type \"list[dict[str, Any] | None]\")": 1,
+    "index|Value of type \"dict[str, Any] | None\" is not indexable": 3,
+    "union-attr|Item \"None\" of \"dict[str, Any] | None\" has no attribute \"get\"": 1
+   }
+  },
+  "pyrite/services/search_service.py": {
+   "count": 5,
+   "errors": {
+    "arg-type|Argument 1 to \"get\" of \"dict\" has incompatible type \"tuple[str | None, None]\"; expected \"tuple[str, str | None]\"": 1,
+    "arg-type|Argument 1 to \"get\" of \"dict\" has incompatible type \"tuple[str | None, str | None]\"; expected \"tuple[str, str | None]\"": 1,
+    "arg-type|Argument 2 to \"_offending_token\" of \"SearchService\" has incompatible type \"DatabaseError\"; expected \"OperationalError\"": 1,
+    "no-any-return|Returning Any from function declared to return \"list[dict[str, Any]]\"": 1,
+    "var-annotated|Need type annotation for \"declared\"": 1
+   }
+  },
+  "pyrite/services/site_cache.py": {
+   "count": 11,
+   "errors": {
+    "arg-type|Argument \"kb_name\" to \"list_entries\" of \"CRUDMixin\" has incompatible type \"int | Any | str\"; expected \"str | None\"": 1,
+    "arg-type|Argument 1 to \"_esc\" has incompatible type \"str | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"_render_entry\" of \"SiteCacheService\" has incompatible type \"int | Any | str\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"_render_paginated_index\" of \"SiteCacheService\" has incompatible type \"int | Any | str\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"get_all_backlinks_for_kb\" of \"QueryMixin\" has incompatible type \"int | Any | str\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"get_all_outlinks_for_kb\" of \"QueryMixin\" has incompatible type \"int | Any | str\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"get_all_sources_for_kb\" of \"QueryMixin\" has incompatible type \"int | Any | str\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"get_kb\" of \"PyriteConfig\" has incompatible type \"int | Any | str\"; expected \"str\"": 1,
+    "index|Invalid index type \"int | Any | str\" for \"dict[str, list[Any]]\"; expected type \"str\"": 2,
+    "operator|Unsupported operand types for / (\"Path\" and \"int\")": 1
+   }
+  },
+  "pyrite/services/task_service.py": {
+   "count": 2,
+   "errors": {
+    "no-any-return|Returning Any from function declared to return \"dict[str, Any]\"": 1,
+    "no-any-return|Returning Any from function declared to return \"list[dict[str, Any]]\"": 1
+   }
+  },
+  "pyrite/services/user_service.py": {
+   "count": 2,
+   "errors": {
+    "no-any-return|Returning Any from function declared to return \"str | None\"": 1,
+    "union-attr|Item \"None\" of \"DBAPIConnection | None\" has no attribute \"execute\"": 1
+   }
+  },
+  "pyrite/services/version_service.py": {
+   "count": 1,
+   "errors": {
+    "assignment|Incompatible types in assignment (expression has type \"str | None\", variable has type \"str\")": 1
+   }
+  },
+  "pyrite/services/worktree_service.py": {
+   "count": 24,
+   "errors": {
+    "arg-type|Argument 1 to \"_row_to_info\" of \"WorktreeService\" has incompatible type \"dict[str, Any] | None\"; expected \"dict[str, Any]\"": 5,
+    "union-attr|Item \"None\" of \"DBAPIConnection | None\" has no attribute \"commit\"": 7,
+    "union-attr|Item \"None\" of \"DBAPIConnection | None\" has no attribute \"execute\"": 12
+   }
+  },
+  "pyrite/storage/alembic/env.py": {
+   "count": 1,
+   "errors": {
+    "no-untyped-def|Function is missing a type annotation": 1
+   }
+  },
+  "pyrite/storage/backends/base_backend.py": {
+   "count": 55,
+   "errors": {
+    "arg-type|Argument 1 to \"_get_entry_links\" of \"BaseBackend\" has incompatible type \"Column[str]\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"_get_entry_sources\" of \"BaseBackend\" has incompatible type \"Column[str]\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"_get_entry_tags\" of \"BaseBackend\" has incompatible type \"Column[str]\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"_sync_blocks\" of \"BaseBackend\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"_sync_edge_endpoints\" of \"BaseBackend\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"_sync_entry_refs\" of \"BaseBackend\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"_sync_links\" of \"BaseBackend\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"_sync_sources\" of \"BaseBackend\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"_sync_tags\" of \"BaseBackend\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"_upsert_entry_main\" of \"BaseBackend\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"filter\" of \"Query\" has incompatible type \"bool\"; expected \"ColumnElement[bool] | _HasClauseElement[bool] | SQLCoreOperations[bool] | ExpressionElementRole[bool] | TypedColumnsClauseRole[bool] | Callable[[], ColumnElement[bool]] | LambdaElement\"": 2,
+    "arg-type|Argument 1 to \"get\" of \"dict\" has incompatible type \"tuple[Column[str], Column[str]]\"; expected \"tuple[str, str]\"": 1,
+    "arg-type|Argument 2 to \"_get_entry_links\" of \"BaseBackend\" has incompatible type \"Column[str]\"; expected \"str\"": 1,
+    "arg-type|Argument 2 to \"_get_entry_sources\" of \"BaseBackend\" has incompatible type \"Column[str]\"; expected \"str\"": 1,
+    "arg-type|Argument 2 to \"_get_entry_tags\" of \"BaseBackend\" has incompatible type \"Column[str]\"; expected \"str\"": 1,
+    "arg-type|Argument 2 to \"_sync_blocks\" of \"BaseBackend\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 2 to \"_sync_edge_endpoints\" of \"BaseBackend\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 2 to \"_sync_entry_refs\" of \"BaseBackend\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 2 to \"_sync_links\" of \"BaseBackend\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 2 to \"_sync_sources\" of \"BaseBackend\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 2 to \"_sync_tags\" of \"BaseBackend\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "arg-type|Argument 2 to \"_upsert_entry_main\" of \"BaseBackend\" has incompatible type \"Any | None\"; expected \"str\"": 1,
+    "assignment|Incompatible types in assignment (expression has type \"Any | None\", variable has type \"Column[int]\")": 3,
+    "assignment|Incompatible types in assignment (expression has type \"Any | None\", variable has type \"Column[str]\")": 21,
+    "assignment|Incompatible types in assignment (expression has type \"str\", variable has type \"Column[str]\")": 2,
+    "no-untyped-def|Function is missing a return type annotation": 1,
+    "var-annotated|Need type annotation for \"links\"": 1,
+    "var-annotated|Need type annotation for \"query\"": 1,
+    "var-annotated|Need type annotation for \"results\" (hint: \"results: list[<type>] = ...\")": 1,
+    "var-annotated|Need type annotation for \"rows\"": 2
+   }
+  },
+  "pyrite/storage/backends/capabilities.py": {
+   "count": 1,
+   "errors": {
+    "var-annotated|Need type annotation for \"declared\"": 1
+   }
+  },
+  "pyrite/storage/backends/overlay_backend.py": {
+   "count": 35,
+   "errors": {
+    "no-any-return|Returning Any from function declared to return \"bool\"": 3,
+    "no-any-return|Returning Any from function declared to return \"dict[str, Any] | None\"": 2,
+    "no-any-return|Returning Any from function declared to return \"dict[str, Any]\"": 2,
+    "no-any-return|Returning Any from function declared to return \"dict[str, int]\"": 1,
+    "no-any-return|Returning Any from function declared to return \"int\"": 2,
+    "no-any-return|Returning Any from function declared to return \"list[dict[str, Any]]\"": 13,
+    "no-any-return|Returning Any from function declared to return \"set[int]\"": 1,
+    "no-untyped-def|Function is missing a return type annotation": 6,
+    "no-untyped-def|Function is missing a type annotation for one or more parameters": 3,
+    "var-annotated|Need type annotation for \"diff\"": 1,
+    "var-annotated|Need type annotation for \"main\"": 1
+   }
+  },
+  "pyrite/storage/backends/postgres_backend.py": {
+   "count": 9,
+   "errors": {
+    "assignment|Incompatible types in assignment (expression has type \"Logger | None\", variable has type \"Logger\")": 1,
+    "no-any-return|Returning Any from function declared to return \"bool\"": 1,
+    "no-untyped-def|Function is missing a return type annotation": 2,
+    "no-untyped-def|Function is missing a type annotation": 2,
+    "no-untyped-def|Function is missing a type annotation for one or more parameters": 2,
+    "override|Signature of \"search\" incompatible with supertype \"pyrite.storage.backends.base_backend.BaseBackend\"": 1
+   }
+  },
+  "pyrite/storage/backends/sqlite_backend.py": {
+   "count": 9,
+   "errors": {
+    "no-any-return|Returning Any from function declared to return \"bool\"": 1,
+    "no-untyped-def|Function is missing a return type annotation": 3,
+    "no-untyped-def|Function is missing a type annotation": 2,
+    "no-untyped-def|Function is missing a type annotation for one or more parameters": 2,
+    "override|Signature of \"search\" incompatible with supertype \"pyrite.storage.backends.base_backend.BaseBackend\"": 1
+   }
+  },
+  "pyrite/storage/connection.py": {
+   "count": 27,
+   "errors": {
+    "arg-type|Argument 1 to \"MigrationManager\" has incompatible type \"DBAPIConnection | None\"; expected \"Connection\"": 2,
+    "attr-defined|\"Result[*tuple[Any, ...]]\" has no attribute \"returns_rows\"": 1,
+    "attr-defined|\"Result[*tuple[Any, ...]]\" has no attribute \"rowcount\"": 1,
+    "no-any-return|Returning Any from function declared to return \"Session\"": 2,
+    "no-any-return|Returning Any from function declared to return \"int\"": 1,
+    "no-untyped-def|Function is missing a return type annotation": 10,
+    "no-untyped-def|Function is missing a type annotation": 4,
+    "no-untyped-def|Function is missing a type annotation for one or more parameters": 2,
+    "union-attr|Item \"None\" of \"DBAPIConnection | None\" has no attribute \"commit\"": 1,
+    "union-attr|Item \"None\" of \"DBAPIConnection | None\" has no attribute \"execute\"": 2,
+    "union-attr|Item \"None\" of \"DBAPIConnection | None\" has no attribute \"row_factory\"": 1
+   }
+  },
+  "pyrite/storage/crud.py": {
+   "count": 15,
+   "errors": {
+    "attr-defined|\"CRUDMixin\" has no attribute \"_backend\"": 8,
+    "no-any-return|Returning Any from function declared to return \"bool\"": 1,
+    "no-any-return|Returning Any from function declared to return \"dict[str, Any] | None\"": 1,
+    "no-any-return|Returning Any from function declared to return \"int\"": 1,
+    "no-any-return|Returning Any from function declared to return \"list[dict[str, Any]]\"": 3,
+    "no-any-return|Returning Any from function declared to return \"list[str]\"": 1
+   }
+  },
+  "pyrite/storage/document_manager.py": {
+   "count": 1,
+   "errors": {
+    "operator|Unsupported right operand type for in (\"Any | None\")": 1
+   }
+  },
+  "pyrite/storage/effective_status.py": {
+   "count": 1,
+   "errors": {
+    "var-annotated|Need type annotation for \"key\"": 1
+   }
+  },
+  "pyrite/storage/file_operations.py": {
+   "count": 44,
+   "errors": {
+    "arg-type|Argument 2 to \"_block_body_range\" has incompatible type \"Node\"; expected \"ScalarNode\"": 2,
+    "arg-type|Argument 2 to \"_delete_pairs\" has incompatible type \"Node\"; expected \"MappingNode\"": 1,
+    "arg-type|Argument 2 to \"_header\" has incompatible type \"Node\"; expected \"ScalarNode\"": 1,
+    "arg-type|Argument 2 to \"_header_end\" has incompatible type \"Node\"; expected \"ScalarNode\"": 3,
+    "arg-type|Argument 4 to \"_value_spans\" has incompatible type \"MappingNode | None\"; expected \"Node\"": 1,
+    "assignment|Incompatible types in assignment (expression has type \"Mapping[Any, Any]\", variable has type \"list[Any]\")": 1,
+    "assignment|Incompatible types in assignment (expression has type \"list[Any] | None\", variable has type \"list[tuple[int, int, str]]\")": 1,
+    "assignment|Incompatible types in assignment (expression has type \"str | None\", variable has type \"str\")": 1,
+    "assignment|Incompatible types in assignment (expression has type \"str\", variable has type \"int\")": 1,
+    "attr-defined|\"Node\" has no attribute \"flow_style\"": 6,
+    "attr-defined|\"date\" has no attribute \"tzinfo\"": 1,
+    "index|Invalid index type \"str | int\" for \"list[Any]\"; expected type \"SupportsIndex\"": 2,
+    "index|Unsupported target for indexed assignment (\"Mapping[Any, Any]\")": 1,
+    "no-any-return|Returning Any from function declared to return \"bool\"": 2,
+    "no-any-return|Returning Any from function declared to return \"int\"": 2,
+    "no-any-return|Returning Any from function declared to return \"str | None\"": 1,
+    "no-any-return|Returning Any from function declared to return \"str\"": 2,
+    "no-untyped-def|Function is missing a return type annotation": 1,
+    "no-untyped-def|Function is missing a type annotation": 2,
+    "no-untyped-def|Function is missing a type annotation for one or more parameters": 10,
+    "union-attr|Item \"None\" of \"str | None\" has no attribute \"endswith\"": 2
+   }
+  },
+  "pyrite/storage/index.py": {
+   "count": 42,
+   "errors": {
+    "arg-type|Argument 1 to \"append\" of \"list\" has incompatible type \"dict[str, str | Any]\"; expected \"str\"": 2,
+    "arg-type|Argument 1 to \"append\" of \"list\" has incompatible type \"dict[str, str]\"; expected \"str\"": 1,
+    "arg-type|Argument 1 to \"enum_findings\" has incompatible type \"Any | None\"; expected \"KBSchema\"": 1,
+    "arg-type|Argument 3 to \"_Claim\" has incompatible type \"str | None\"; expected \"str\"": 1,
+    "assignment|Incompatible types in assignment (expression has type \"str\", variable has type \"Path\")": 1,
+    "attr-defined|\"object\" has no attribute \"append\"": 8,
+    "attr-defined|\"object\" has no attribute \"extend\"": 1,
+    "index|Unsupported target for indexed assignment (\"object\")": 1,
+    "no-any-return|Returning Any from function declared to return \"int\"": 1,
+    "no-untyped-def|Function is missing a return type annotation": 3,
+    "no-untyped-def|Function is missing a type annotation": 1,
+    "no-untyped-def|Function is missing a type annotation for one or more parameters": 4,
+    "operator|Unsupported right operand type for in (\"Literal[False] | set[Path]\")": 1,
+    "union-attr|Item \"None\" of \"datetime | None\" has no attribute \"isoformat\"": 1,
+    "union-attr|Item \"None\" of \"list[dict[str, Any]] | list[str] | str | int | Any | None\" has no attribute \"__iter__\" (not iterable)": 2,
+    "union-attr|Item \"None\" of \"list[dict[str, Any]] | list[str] | str | int | Any | None\" has no attribute \"append\"": 3,
+    "union-attr|Item \"int\" of \"list[dict[str, Any]] | list[str] | str | int | Any | None\" has no attribute \"__iter__\" (not iterable)": 2,
+    "union-attr|Item \"int\" of \"list[dict[str, Any]] | list[str] | str | int | Any | None\" has no attribute \"append\"": 3,
+    "union-attr|Item \"str\" of \"dict[str, Any] | str | Any\" has no attribute \"get\"": 2,
+    "union-attr|Item \"str\" of \"list[dict[str, Any]] | list[str] | str | int | Any | None\" has no attribute \"append\"": 3
+   }
+  },
+  "pyrite/storage/kb_ops.py": {
+   "count": 28,
+   "errors": {
+    "attr-defined|\"KBOpsMixin\" has no attribute \"session\"": 28
+   }
+  },
+  "pyrite/storage/queries.py": {
+   "count": 64,
+   "errors": {
+    "attr-defined|\"QueryMixin\" has no attribute \"_backend\"": 26,
+    "attr-defined|\"QueryMixin\" has no attribute \"session\"": 14,
+    "no-any-return|Returning Any from function declared to return \"bool\"": 1,
+    "no-any-return|Returning Any from function declared to return \"dict[str, Any]\"": 1,
+    "no-any-return|Returning Any from function declared to return \"dict[str, int]\"": 1,
+    "no-any-return|Returning Any from function declared to return \"dict[str, list[dict[str, Any]]]\"": 3,
+    "no-any-return|Returning Any from function declared to return \"int\"": 1,
+    "no-any-return|Returning Any from function declared to return \"list[dict[str, Any]]\"": 16,
+    "no-any-return|Returning Any from function declared to return \"list[tuple[str, int]]\"": 1
+   }
+  },
+  "pyrite/storage/repository.py": {
+   "count": 5,
+   "errors": {
+    "arg-type|Argument 2 to \"_refuse_if_derived\" of \"KBRepository\" has incompatible type \"dict[Path, str | None]\"; expected \"dict[Path, str]\"": 2,
+    "assignment|Incompatible types in assignment (expression has type \"Entry\", variable has type \"CollectionEntry\")": 1,
+    "misc|Cannot infer type of lambda": 1,
+    "no-any-return|Returning Any from function declared to return \"str | None\"": 1
+   }
+  },
+  "pyrite/storage/review_ops.py": {
+   "count": 9,
+   "errors": {
+    "attr-defined|\"ReviewOpsMixin\" has no attribute \"session\"": 8,
+    "no-any-return|Returning Any from function declared to return \"bool\"": 1
+   }
+  },
+  "pyrite/storage/user_ops.py": {
+   "count": 38,
+   "errors": {
+    "attr-defined|\"UserOpsMixin\" has no attribute \"session\"": 36,
+    "no-any-return|Returning Any from function declared to return \"bool\"": 2
+   }
+  },
+  "pyrite/storage/virtual_tables.py": {
+   "count": 2,
+   "errors": {
+    "no-untyped-def|Function is missing a type annotation for one or more parameters": 2
+   }
+  },
+  "pyrite/ui/data.py": {
+   "count": 5,
+   "errors": {
+    "no-any-return|Returning Any from function declared to return \"dict[str, Any] | None\"": 2,
+    "no-any-return|Returning Any from function declared to return \"dict[str, Any]\"": 1,
+    "no-any-return|Returning Any from function declared to return \"list[dict[str, Any]]\"": 2
+   }
+  },
+  "pyrite/ui/pages/timeline.py": {
+   "count": 1,
+   "errors": {
+    "var-annotated|Need type annotation for \"events_by_date\" (hint: \"events_by_date: dict[<type>, <type>] = ...\")": 1
+   }
+  },
+  "pyrite/utils/atomic_write.py": {
+   "count": 1,
+   "errors": {
+    "union-attr|Item \"_Absent\" of \"str | _Absent\" has no attribute \"lower\"": 1
+   }
+  },
+  "pyrite/utils/errors.py": {
+   "count": 1,
+   "errors": {
+    "no-any-return|Returning Any from function declared to return \"bytes\"": 1
+   }
+  },
+  "pyrite/utils/frontmatter.py": {
+   "count": 1,
+   "errors": {
+    "union-attr|Item \"None\" of \"Match[str] | None\" has no attribute \"end\"": 1
+   }
+  },
+  "pyrite/utils/yaml.py": {
+   "count": 4,
+   "errors": {
+    "arg-type|Argument 1 to \"len\" has incompatible type \"Iterable[Any]\"; expected \"Sized\"": 2,
+    "index|Value of type \"Iterable[Any]\" is not indexable": 1,
+    "return-value|Incompatible return value type (got \"Mapping[Any, Any]\", expected \"dict[str, Any]\")": 1
+   }
+  }
+ },
+ "total": 710
+}

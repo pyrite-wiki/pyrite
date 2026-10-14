@@ -612,8 +612,14 @@ jobs:
             fi
           done
 
-      - name: Type check with mypy
-        run: mypy pyrite/ --ignore-missing-imports
+      # Red means this change ADDED type errors (#885): mypy's output is
+      # compared per file to the committed `.mypy-baseline.json`. The mypy
+      # exit code is ignored on purpose; the ratchet decides (and exits 2 if
+      # mypy never finished, so a crash cannot read as zero errors).
+      - name: Type check with mypy (ratchet)
+        run: |
+          mypy pyrite/ --ignore-missing-imports > mypy.out || true
+          python scripts/mypy_ratchet.py mypy.out
 
   # ===========================================================================
   # Coverage: its own job so the matrix stays the fast gate. Not a required

@@ -1530,6 +1530,15 @@ class TestTheRedLineIsFirstAndEveryGatingRunLeavesATimingRecord:
         assert any("mypy pyrite/" in str(s.get("run", "")) for s in job["steps"])
         assert "mypy" not in ci["jobs"]["gate"]["needs"]
 
+    def test_the_mypy_job_runs_the_ratchet_not_bare_mypy(self, ci):
+        runs = [str(s.get("run", "")) for s in ci["jobs"]["mypy"]["steps"]]
+        assert any("scripts/mypy_ratchet.py" in r for r in runs)
+        # a bare `mypy pyrite/` step would be red on every PR again (#885)
+        for r in runs:
+            if "mypy pyrite/" in r:
+                assert "||" in r or "mypy_ratchet" in r
+        assert (REPO / ".mypy-baseline.json").exists()
+
     def test_every_gating_pytest_line_records_durations_and_junit(self, ci):
         runs = self._gating_pytest_runs(ci)
         assert {j for j, _ in runs} == {"test", "smoke"}
