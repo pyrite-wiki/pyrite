@@ -47,6 +47,7 @@ Every create/update decision is made here, once, for every surface. REST, MCP an
 - **`delete_entry(entry_id, kb_name)`** -- Runs `before_delete` hooks, deletes from file system and index, then runs `after_delete` hooks.
 - **`add_link(source_id, source_kb, target_id, relation, target_kb, note)`** -- Adds a link to the source entry's frontmatter and re-indexes. Deduplicates existing links.
 - **`add_links(kb_name, specs, *, dry_run)`** -- many links, each source loaded and saved once, in place (used by `pyrite links bulk-create`, #375).
+- **`check_link_spec(target, relation, *, note, target_kb)`** (module function) -- the one check a new link passes before anything is written (#846): a target that is missing, not text or blank, or a relation that is given but empty, is `ValidationError`. `add_link`, `add_links` (per item: that spec `failed` with `error_code`, the rest go on; a `target_kb` that does not exist is `KB_NOT_FOUND` for that item), `pyrite create --link` (before the create) and the create pipeline (`_prepare`, for a new entry's own `links:`) call it. Never on read, and not in `_validate_write`: an update of a hand-edited file that already holds such a link is not refused for it (principle 2). Link reads look their KB up first through `PyriteConfig.require_kb` (`LinkDiscoveryService`, `WikilinkService.check_links`), so a typo is `KB_NOT_FOUND`, not an empty result.
 
 ## Query Operations (read-only)
 
