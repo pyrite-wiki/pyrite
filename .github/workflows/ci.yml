@@ -354,10 +354,6 @@ jobs:
             --head "${{ github.sha }}" \
             --body-file /tmp/pr-body.txt
 
-      - name: Type check with mypy
-        continue-on-error: true
-        run: mypy pyrite/ --ignore-missing-imports
-
       - name: Run tests
         # A bare `-W error::DeprecationWarning` promotes THIRD-PARTY
         # deprecations to hard errors, so any upstream release can turn CI
@@ -394,7 +390,30 @@ jobs:
           pytest -n auto -m "not slow and not e2e and not experimental" \
             -W "error::DeprecationWarning:pyrite" \
             -W "error::DeprecationWarning:tests" \
+            --disable-warnings \
+            --durations=25 --durations-min=1.0 \
+            -o junit_family=xunit1 --junitxml=junit-test-${{ matrix.python-version }}.xml \
             ${cov[@]+"${cov[@]}"}
+
+      # Timing record (test-architecture review, findings 3 and 4): every
+      # gating pytest run leaves a junit XML artifact and its 25 slowest tests
+      # in the step summary. `if: !cancelled()` so a red run records too; a
+      # job that dies before pytest writes the file uploads nothing.
+      # --disable-warnings: the warnings block (12k lines on 3.12) sat between
+      # the failure and the summary line; the count stays on the final line and
+      # the -W error::DeprecationWarning escalation still fails the run.
+      - name: Slowest tests
+        if: ${{ !cancelled() }}
+        run: python scripts/junit_slowest.py "junit-test-${{ matrix.python-version }}.xml" "test (${{ matrix.python-version }})" >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Keep the junit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-test-${{ matrix.python-version }}
+          path: junit-test-${{ matrix.python-version }}.xml
+          if-no-files-found: ignore
+          retention-days: 30
 
       # Diff coverage (the 0.26 test-evidence item): are the lines this PR
       # changes run by some test? ADVISORY -- continue-on-error, so a low
@@ -422,6 +441,46 @@ jobs:
           path: diff-cover.json
           if-no-files-found: ignore
           retention-days: 1
+
+  # ===========================================================================
+  # mypy: advisory, in its own job so the `test` log opens with the failure,
+  # not with ~700 `error:` lines (test-architecture review, finding 3). Same
+  # condition and install as `test`, one interpreter. Deliberately NOT in
+  # `gate`'s needs and not a required check: it was `continue-on-error` inside
+  # `test`, so it never failed anything, and it still does not. The verdict
+  # is the job's own conclusion plus its annotations.
+  # ===========================================================================
+  mypy:
+    name: mypy (advisory)
+    needs: changes
+    if: (needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main') && needs.changes.outputs.queue_passed != 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            extensions/*/pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          uv pip install --system -e ".[all,postgres]"
+          for ext in extensions/*/; do
+            if [ -f "$ext/pyproject.toml" ]; then
+              uv pip install --system -e "$ext"
+            fi
+          done
+
+      - name: Type check with mypy
+        run: mypy pyrite/ --ignore-missing-imports
 
   # ===========================================================================
   # Coverage: its own job so the matrix stays the fast gate. Not a required
@@ -642,7 +701,23 @@ jobs:
         # worker. Splitting one file across ten workers starts ten servers
         # instead of one and makes the run SLOWER (46 s vs 22 s locally).
         # loadfile keeps each file whole on one worker.
-        run: pytest tests/e2e -m e2e -n auto --dist loadfile
+        run: |
+          pytest tests/e2e -m e2e -n auto --dist loadfile --disable-warnings \
+            --durations=25 --durations-min=1.0 \
+            -o junit_family=xunit1 --junitxml=junit-smoke.xml
+
+      - name: Slowest tests
+        if: ${{ !cancelled() }}
+        run: python scripts/junit_slowest.py junit-smoke.xml smoke >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Keep the junit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-smoke
+          path: junit-smoke.xml
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Getting-started tutorial (docs-as-tests)
         run: bash scripts/run_tutorial.sh

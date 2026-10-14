@@ -1497,3 +1497,86 @@ class TestWhatAVerifiedTipIsEvidenceOf:
         import release
 
         assert "push_rehearsal" in [s.key for s in release.STEPS]
+
+
+class TestTheRedLineIsFirstAndEveryGatingRunLeavesATimingRecord:
+    """Test-architecture review findings 3 and 4 (tests Q2).
+
+    mypy printed ~700 `error:` lines ahead of pytest in the `test` job, so the
+    red line was never the first thing in the log; and no gating pytest run
+    recorded durations or junit. The layout pinned here: mypy is its own
+    advisory job, every gating pytest invocation records timings, and the
+    required check names did not move.
+    """
+
+    def _gating_pytest_runs(self, ci) -> list[tuple[str, str]]:
+        out = []
+        for job_id in ("test", "smoke"):
+            for step in ci["jobs"][job_id]["steps"]:
+                run = str(step.get("run", ""))
+                if "pytest" in run:
+                    out.append((job_id, run))
+        return out
+
+    def test_mypy_is_not_a_step_of_the_test_job(self, ci):
+        for step in ci["jobs"]["test"]["steps"]:
+            assert "mypy" not in str(step.get("run", "")), "mypy output would precede pytest"
+            assert "mypy" not in str(step.get("name", "")).lower()
+
+    def test_mypy_is_its_own_advisory_job_outside_the_gate(self, ci):
+        job = ci["jobs"]["mypy"]
+        assert job.get("continue-on-error") is True
+        assert any("mypy pyrite/" in str(s.get("run", "")) for s in job["steps"])
+        assert "mypy" not in ci["jobs"]["gate"]["needs"]
+
+    def test_every_gating_pytest_line_records_durations_and_junit(self, ci):
+        runs = self._gating_pytest_runs(ci)
+        assert {j for j, _ in runs} == {"test", "smoke"}
+        for job_id, run in runs:
+            assert "--durations=25" in run and "--durations-min=1.0" in run, job_id
+            assert "junit_family=xunit1" in run and "--junitxml=" in run, job_id
+            assert "--disable-warnings" in run, f"{job_id}: warnings belong after the failure"
+
+    def test_the_test_job_keeps_the_deprecation_escalation(self, ci):
+        run = "\n".join(str(s.get("run", "")) for s in ci["jobs"]["test"]["steps"])
+        assert "error::DeprecationWarning:pyrite" in run
+
+    @pytest.mark.parametrize("job_id", ["test", "smoke"])
+    def test_the_junit_is_uploaded_for_thirty_days_even_when_red(self, ci, job_id):
+        ups = [
+            s
+            for s in ci["jobs"][job_id]["steps"]
+            if str(s.get("uses", "")).startswith("actions/upload-artifact")
+            and "junit" in str(s.get("with", {}).get("name", ""))
+        ]
+        assert len(ups) == 1, job_id
+        up = ups[0]
+        assert up["with"]["retention-days"] == 30
+        assert up["with"]["if-no-files-found"] == "ignore"  # died before pytest wrote it
+        assert "!cancelled()" in str(up["if"])
+
+    def test_the_required_check_names_did_not_move(self, ci):
+        assert ci["jobs"]["gate"]["needs"] == ["changes", "kb", "test", "frontend"]
+        assert "name" not in ci["jobs"]["test"], "`test (<python>)` is the matrix leg's name"
+        assert "name" not in ci["jobs"]["gate"], "`gate` is looked up by exact name"
+
+    def test_the_slowest_table_reads_a_junit_report(self, tmp_path):
+        import subprocess
+        import sys
+
+        xml = tmp_path / "j.xml"
+        xml.write_text(
+            '<testsuites><testsuite><testcase classname="t.a" name="fast" time="0.1"/>'
+            '<testcase classname="t.a" name="slow" time="9.5"/></testsuite></testsuites>'
+        )
+        script = REPO / "scripts" / "junit_slowest.py"
+        out = subprocess.run(
+            [sys.executable, str(script), str(xml), "x"], capture_output=True, text=True
+        ).stdout
+        assert out.index("slow") < out.index("fast") and "9.50" in out
+        missing = subprocess.run(
+            [sys.executable, str(script), str(tmp_path / "none.xml")],
+            capture_output=True,
+            text=True,
+        )
+        assert missing.returncode == 0 and "no junit report" in missing.stdout
