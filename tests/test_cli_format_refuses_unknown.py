@@ -21,6 +21,7 @@ import pytest
 from typer.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
+from cli_help import plain  # noqa: E402
 from test_requested_effect_exit_code import _commands, _on_the_contract  # noqa: E402
 
 #: ``--format`` on these names a *file* format (import: json, yaml, markdown;
@@ -102,6 +103,8 @@ def test_format_bogus_is_refused_before_the_command_acts(command, tmp_path, monk
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("PYRITE_FORMAT", raising=False)
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("COLUMNS", "200")
     before = _tree(tmp_path)
     config_before = CONFIG_FILE.read_bytes() if CONFIG_FILE.exists() else None
 
@@ -109,7 +112,7 @@ def test_format_bogus_is_refused_before_the_command_acts(command, tmp_path, monk
     result = CliRunner().invoke(_root_app(command), argv)
 
     # click draws usage errors in a box that wraps at the terminal width
-    out = " ".join(result.output.replace("│", " ").split())
+    out = " ".join(plain(result.output).replace("│", " ").split())
     assert result.exit_code == 2, f"{command}: exit {result.exit_code}\n{out}"
     assert "unknown format 'bogus'; choose one of:" in out, f"{command}:\n{out}"
     assert "Traceback" not in out and not (
