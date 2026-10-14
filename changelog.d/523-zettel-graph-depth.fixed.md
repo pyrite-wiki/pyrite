@@ -1,1 +1,3 @@
-The zettel_graph MCP tool now expands readable note links through multiple hops, with a validated maximum depth of three and cycle-safe traversal.
+- **`zettel_graph` now honours `depth` (#523).** `depth: 2` or `3` used to
+  return only first-hop neighbour links; it now expands readable neighbours hop
+  by hop, visiting each entry once, so cycles do not repeat.
