@@ -114,7 +114,7 @@ Pagination and totals differ by tool and by transport (CLI/MCP/REST) — see `do
 
 Plugins add their own tools per tier (e.g., software-kb adds `sw_adrs`, `sw_backlog`, `sw_new_adr`).
 
-Also exposes: 4 prompts (`research_topic`, `summarize_entry`, `find_connections`, `daily_briefing`), resources (`pyrite://kbs`, `pyrite://kbs/{name}/entries`, `pyrite://entries/{id}`).
+Also exposes: 4 prompts (`research_topic`, `summarize_entry`, `find_connections`, `daily_briefing`), resources (`pyrite://kbs`, `pyrite://kbs/{name}/entries`, `pyrite://entries/{id}`, `pyrite://kbs/{name}/entries/{id}`).
 
 Use `pyrite mcp --tier read` for a read-only server.
 

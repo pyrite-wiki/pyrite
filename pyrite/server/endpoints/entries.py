@@ -718,6 +718,7 @@ def get_entry(
     # The web client still generates entry links without ?kb= in several
     # places. Keep REST's first-readable-match behaviour until those links
     # consistently carry KB identity; CLI and MCP refuse ambiguity (#528).
+    # #910 removes this once every web link carries ?kb=.
     legacy_first_match = not kb or not kb.strip()
     if with_links:
         # get_entry already includes outlinks/backlinks

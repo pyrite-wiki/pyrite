@@ -287,10 +287,12 @@ def test_task_subtree_resolves_to_the_readable_twin(w, scope):
     assert "twin-child" in json.dumps(result)
 
 
-@pytest.mark.control(reason="unscoped task lookup keeps config order: the private twin answers")
-def test_task_lookup_unscoped_unchanged(w):
+def test_task_lookup_unscoped_refuses_the_twin(w):
+    """Unscoped, both twins are readable, so the id is ambiguous (#528): it is
+    refused with both KBs named, never answered by config order."""
     result = _call(w, "task_status", {"task_id": TWIN_TASK}, None)
-    assert "Private twin task" in json.dumps(result)
+    assert result["error_code"] == "AMBIGUOUS"
+    assert result["candidate_kbs"] == [PRIVATE, READ_ONLY]
 
 
 # -- kb_qa_status counts (cold read) -----------------------------------------

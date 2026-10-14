@@ -43,7 +43,7 @@ Four built-in prompts available at all tiers:
 
 - `research_topic` — search across all KBs, summarize findings, identify gaps
 - `summarize_entry` — fetch entry and generate concise summary
-- `find_connections` — analyze relationships between two entries
+- `find_connections` — analyze relationships between two entries (`kb_a`/`kb_b` name each entry's KB)
 - `daily_briefing` — summarize recent timeline events (configurable lookback days)
 
 Each prompt returns MCP `PromptMessage` objects with pre-built user messages.
@@ -55,8 +55,11 @@ Static resources and URI templates for browsing:
 - `pyrite://kbs` — list all knowledge bases
 - `pyrite://kbs/{name}/entries` — list entries in a KB (limit 200)
 - `pyrite://entries/{id}` — get a specific entry
+- `pyrite://kbs/{name}/entries/{id}` — get a specific entry from a named KB
 
 Resources are read via `_read_resource()` which dispatches based on URI prefix matching.
+
+**An id in more than one KB (#528).** Every entry read without a KB (`kb_get`, `kb_read_body`, the task tools, `summarize_entry`, `find_connections`, `pyrite://entries/{id}`) is refused with `AMBIGUOUS` and `candidate_kbs` when the id is in more than one KB the caller can read; a private KB is never a candidate. Prompts and resources return the refusal in the tool envelope (`_refusal`) instead of raising, and each has a way to name the KB: `kb_name`, `kb_a`/`kb_b`, or the KB-qualified resource. `tests/test_ambiguous_id_is_refused.py` walks the tool schemas and prompts and fails on an id-taking surface it has not judged.
 
 ## SDK Integration
 

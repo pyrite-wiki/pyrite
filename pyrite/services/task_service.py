@@ -7,7 +7,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from ..config import PyriteConfig
-from ..exceptions import EntryNotFoundError, KBNotFoundError, ValidationError
+from ..exceptions import (
+    AmbiguousEntryError,
+    EntryNotFoundError,
+    KBNotFoundError,
+    ValidationError,
+)
 from ..models.task import TASK_RESOLVED_STATUSES, coerce_task_priority
 from ..models.task_completion import derive_completion, no_derived
 from ..storage.backends.base_backend import kb_names_clause
@@ -256,9 +261,12 @@ class TaskService:
         read path for both makes that divergence structurally impossible.
 
         ``readable_kbs`` (required; ``UNSCOPED`` for none) bounds the lookup:
-        without ``kb_name`` it takes the first match among the readable KBs
+        without ``kb_name`` (or with a blank one) it reads the readable KBs
         only, so a task in a KB the caller cannot read neither answers nor
-        hides a readable task with the same id (P-R5).
+        hides a readable task with the same id (P-R5). A task id held by more
+        than one readable KB is refused with ``AmbiguousEntryError`` (#528),
+        never answered by whichever row SQLite returns first; the candidates
+        are listed in config order, readable KBs only.
         """
         sql = (
             "SELECT id, title, kb_name, status, assignee, priority, metadata "
@@ -272,11 +280,15 @@ class TaskService:
         scope = kb_names_clause("kb_name", readable_kbs, params)
         if scope:
             sql += f" AND {scope}"
-        sql += " LIMIT 1"
 
         rows = self._query(sql, params)
         if not rows:
             return None
+        if len(rows) > 1:
+            held = {row["kb_name"] for row in rows}
+            order = [kb.name for kb in self.config.all_kbs()]
+            candidates = [n for n in order if n in held] + sorted(held - set(order))
+            raise AmbiguousEntryError(task_id, candidates)
         return rows[0]
 
     def derived_completion(self, kb_name: str) -> dict[str, dict[str, Any]]:

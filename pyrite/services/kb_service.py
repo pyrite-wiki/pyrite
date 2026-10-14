@@ -664,7 +664,8 @@ class KBService:
 
         If kb_name is omitted, searches readable KBs and refuses duplicate IDs.
         ``legacy_first_match`` is for REST GET without ``kb`` until its web
-        links consistently carry KB names; it preserves the old first-hit read.
+        links consistently carry KB names; it preserves the old first-hit read
+        (#910 removes it).
 
         ``readable_kbs`` is the caller's ``ReadScope`` set (``None``:
         unscoped). With it, a lookup without a KB walks only readable KBs,

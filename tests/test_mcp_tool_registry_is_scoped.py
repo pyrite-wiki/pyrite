@@ -54,7 +54,17 @@ TIERS = ("read", "write", "admin")
 # hand inventory classified tools by `kb_name`/`kb` and missed it entirely,
 # which is the whole argument for enumerating the registry rather than
 # trusting a list.
-KB_BEARING_PARAMETERS = {"kb_name", "kb", "source_kb", "target_kb", "center_kb", "kb_names"}
+KB_BEARING_PARAMETERS = {
+    "kb_name",
+    "kb",
+    "source_kb",
+    "target_kb",
+    "center_kb",
+    "kb_names",
+    # the find_connections prompt names a KB per entry (#528)
+    "kb_a",
+    "kb_b",
+}
 
 # Parameters whose name contains "kb" but which do not name a KB. Listed so
 # the heuristic below stays sharp: without this, the gate either fires on
