@@ -26,12 +26,26 @@ fixture. In such a file these fail:
 
 The process edge is allowed, by target: a dotted path with a `subprocess`,
 `httpx`, `requests`, `urllib`, `socket`, `smtplib`, `time` or `datetime`
-component; `_import_anthropic` / `_import_openai` (any `_import_*`);
-`is_available`, `_load_model` and `_MODEL_CACHE` of the embedding service (the
-model is the edge; a test that needs a model failure returns a failing model
-from `_load_model`); module constants (an ALL_CAPS attribute, however spelled, is a tunable,
+component; `_import_anthropic` / `_import_openai` (any `_import_*`); a target named in
+`EDGES` (below); module constants (an ALL_CAPS attribute, however spelled, is a tunable,
 not a method); and anything outside `pyrite.services` / `pyrite.storage` (config
 loading, `load_config`, is how a test points the CLI at its world).
+
+`EDGES` is the registry of named edges: fully dotted target -> one line saying which
+external I/O it is and why a test cannot seed it instead. Matching is exact on the dotted
+target, after the walk resolves aliases (`patch.object(GitService, "fork_repo")`, and
+`repo_service.GitService.fork_repo`, a name one module imported from another, both
+become `pyrite.services.git_service.GitService.fork_repo`). The rules:
+
+  1. An edge is a method or function whose job is one external I/O operation and nothing
+     else: one HTTP request, one git subprocess, one credential read, one OS file call,
+     one model load. A function that also holds Pyrite logic (which status counts as
+     live, which token wins, what to refuse) is not an edge; patching it would hide that
+     logic. Extract the I/O into a thin function and register that one.
+  2. A fault-injection edge is allowed (an OS rename or write that fails on cue): a real
+     disk cannot be made to fail when the test wants.
+  3. The registry only grows by a pull request that names the edge in its description.
+     The ceiling and the ALLOWLIST below are separate rules and stay as they are.
 
 Scanned: every `.py` under `tests/` and `extensions/*/tests`, so `conftest.py` and the seed
 helpers are covered too (a patch hidden in a shared helper counts when the file drives).
@@ -74,8 +88,29 @@ EDGE_COMPONENTS = {
     "shutil",
     "webbrowser",
 }
-#: Attributes of the embedding service that are its edge (the model and its install).
-EDGE_ATTRS = {"is_available", "_load_model", "_MODEL_CACHE"}
+#: The named edges (rules in the docstring): fully dotted target -> which external I/O it
+#: is, and why a test cannot seed it instead.
+EDGES: dict[str, str] = {
+    "pyrite.services.embedding_service.is_available": (
+        "model install probe (imports the ML library); a test cannot install or remove it"
+    ),
+    "pyrite.services.embedding_service._load_model": (
+        "model load from disk or network; a test needing a failure returns a failing model"
+    ),
+    "pyrite.services.embedding_service._MODEL_CACHE": (
+        "process-wide cache of loaded models; the test swaps it for an empty one"
+    ),
+    "pyrite.services.git_service.GitService.add_remote": (
+        "one `git remote add` subprocess; a test cannot make the remote step fail on cue"
+    ),
+    "pyrite.services.git_service.GitService.fork_repo": (
+        "one GitHub API request (a fork); needs the network and a real token"
+    ),
+    "pyrite.services.id_pin_service._rename": (
+        "one os.rename (fault injection: a real disk cannot be made to fail, or a link "
+        "swapped in right before the rename, on cue)"
+    ),
+}
 EDGE_ATTR_PREFIXES = ("_import_",)  # llm_service._import_anthropic / _import_openai
 
 SERVICE_ROOTS = ("pyrite.services", "pyrite.storage")
@@ -155,14 +190,14 @@ def _is_service_path(dotted: str) -> bool:
 
 
 @lru_cache(maxsize=None)  # noqa: UP033
-def _imported_from_services(module: str) -> frozenset[str]:
-    """Names a pyrite module imports from services/storage (or defines there)."""
+def _module_imports(module: str) -> dict[str, str]:
+    """name -> full dotted source, for each `from x import y` in a pyrite module."""
     path = ROOT / (module.replace(".", "/") + ".py")
     if not path.exists():
         path = ROOT / module.replace(".", "/") / "__init__.py"
     if not path.exists():
-        return frozenset()
-    names = set()
+        return {}
+    names: dict[str, str] = {}
     package = module.split(".") if path.name == "__init__.py" else module.split(".")[:-1]
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if not isinstance(node, ast.ImportFrom):
@@ -170,17 +205,40 @@ def _imported_from_services(module: str) -> frozenset[str]:
         # `from ..storage.repository import X` is `pyrite.storage.repository`
         base = package[: len(package) - (node.level - 1)] if node.level else []
         source = ".".join([*base, *([node.module] if node.module else [])])
-        if _is_service_path(source):
-            names.update(a.asname or a.name for a in node.names)
-    return frozenset(names)
+        for a in node.names:
+            names[a.asname or a.name] = f"{source}.{a.name}"
+    return names
+
+
+@lru_cache(maxsize=None)  # noqa: UP033
+def _imported_from_services(module: str) -> frozenset[str]:
+    """Names a pyrite module imports from services/storage (or defines there)."""
+    return frozenset(
+        name for name, full in _module_imports(module).items() if _is_service_path(full)
+    )
+
+
+def _canonical(dotted: str) -> str:
+    """Follow a name one pyrite module imported from another to where it is defined:
+    `pyrite.services.repo_service.GitService.fork_repo` is
+    `pyrite.services.git_service.GitService.fork_repo`."""
+    parts = dotted.split(".")
+    for i in range(len(parts) - 1, 1, -1):
+        module = ".".join(parts[:i])
+        if module.startswith("pyrite"):
+            source = _module_imports(module).get(parts[i])
+            if source:
+                return ".".join([source, *parts[i + 1 :]])
+    return dotted
 
 
 def _edge(dotted: str) -> bool:
     parts = dotted.split(".")
     return (
         any(p in EDGE_COMPONENTS for p in parts)
-        or parts[-1] in EDGE_ATTRS
         or parts[-1].startswith(EDGE_ATTR_PREFIXES)
+        or dotted in EDGES
+        or _canonical(dotted) in EDGES
     )
 
 
@@ -284,7 +342,7 @@ def _object_target(obj: ast.AST, attr: str | None, imports: dict[str, str]) -> s
         return None
     if attr is None:
         return full
-    if attr.isupper() or attr in EDGE_ATTRS or attr.startswith(EDGE_ATTR_PREFIXES) or _edge(full):
+    if attr.isupper() or _edge(f"{full}.{attr}"):
         return None
     return f"{full}.{attr}"
 
@@ -470,6 +528,96 @@ def test_the_detector_flags_a_planted_service_patch(source, target):
 )
 def test_the_detector_allows_the_edge_and_non_drivers(source):
     assert violations(source) == []
+
+
+GIT = "from typer.testing import CliRunner\nfrom unittest.mock import patch\n"
+
+
+@pytest.mark.control(reason="Pins the registry on planted sources, independent of the tree")
+@pytest.mark.parametrize(
+    "source",
+    [
+        # string target, canonical module
+        GIT + "patch('pyrite.services.git_service.GitService.fork_repo')\n",
+        GIT + "patch('pyrite.services.git_service.GitService.add_remote')\n",
+        GIT + "patch('pyrite.services.id_pin_service._rename')\n",
+        GIT + "patch('pyrite.services.embedding_service._load_model')\n",
+        # a name one module imported from another resolves to where it is defined
+        GIT + "patch('pyrite.services.repo_service.GitService.fork_repo')\n",
+        # patch.object on an imported class, and on a module
+        GIT + "from pyrite.services.git_service import GitService\n"
+        "patch.object(GitService, 'fork_repo')\n",
+        GIT + "from pyrite.services.repo_service import GitService\n"
+        "patch.object(GitService, 'add_remote')\n",
+        GIT + "import pyrite.services.id_pin_service as pin\npatch.object(pin, '_rename')\n",
+        "from typer.testing import CliRunner\n"
+        "from pyrite.services import git_service\n"
+        "def t(monkeypatch):\n"
+        "    monkeypatch.setattr(git_service.GitService, 'fork_repo', None)\n",
+    ],
+)
+def test_a_registered_edge_may_be_patched(source):
+    assert violations(source) == []
+
+
+def test_every_registered_edge_names_why_and_is_a_real_target():
+    assert all(why.strip() for why in EDGES.values())
+    for target in EDGES:
+        module = target
+        while module and not (ROOT / (module.replace(".", "/") + ".py")).exists():
+            module = module.rpartition(".")[0]
+        assert module.startswith("pyrite.services"), f"{target}: no module under pyrite.services"
+        assert target.rpartition(".")[2] in (ROOT / (module.replace(".", "/") + ".py")).read_text(
+            encoding="utf-8"
+        ), f"{target}: the module does not define it"
+
+
+@pytest.mark.control(reason="Pins that the registry is exact: a neighbour of an edge still fails")
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        # the same class, a method that is Pyrite logic
+        (
+            GIT + "patch('pyrite.services.git_service.GitService.clone_with_code')\n",
+            "pyrite.services.git_service.GitService.clone_with_code",
+        ),
+        (
+            GIT + "patch('pyrite.services.repo_service.GitService.clone_with_code')\n",
+            "pyrite.services.repo_service.GitService.clone_with_code",
+        ),
+        (
+            GIT + "from pyrite.services.git_service import GitService\n"
+            "patch.object(GitService, 'create_pull_request')\n",
+            "pyrite.services.git_service.GitService.create_pull_request",
+        ),
+        # the same module, the other function the seam sits beside
+        (
+            GIT + "patch('pyrite.services.id_pin_service._write_pin')\n",
+            "pyrite.services.id_pin_service._write_pin",
+        ),
+        # candidates that hold Pyrite logic, refused on reading the code
+        (
+            GIT + "from pyrite.services.url_checker import URLChecker\n"
+            "patch.object(URLChecker, 'check_url')\n",
+            "pyrite.services.url_checker.URLChecker.check_url",
+        ),
+        (
+            GIT + "patch('pyrite.services.repo_service.RepoService._get_token')\n",
+            "pyrite.services.repo_service.RepoService._get_token",
+        ),
+        # a registered name on another class or module is not the registered edge
+        (
+            GIT + "patch('pyrite.services.kb_service.KBService.fork_repo')\n",
+            "pyrite.services.kb_service.KBService.fork_repo",
+        ),
+        (
+            GIT + "patch('pyrite.services.llm_rubric_evaluator.is_available')\n",
+            "pyrite.services.llm_rubric_evaluator.is_available",
+        ),
+    ],
+)
+def test_a_neighbour_of_an_edge_is_still_flagged(source, target):
+    assert [t for _, t in violations(source)] == [target]
 
 
 # ------------------------------------------------------------------- the tree
