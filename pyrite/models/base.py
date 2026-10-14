@@ -757,29 +757,44 @@ class Entry(ABC):
     def _publish_exclusive(tmp: str, path: Path) -> None:
         """Publish ``tmp`` to ``path``, refusing if ``path`` already exists.
 
-        Keep the hard-link path first: it publishes the complete file atomically
-        without exposing a placeholder. Only errors that mean the operation is
-        unsupported enter a fallback; space, quota, and ordinary I/O errors
-        must not turn into a non-exclusive replace.
+        The contract: publish exactly the new file at ``path`` and leave
+        nothing behind that the caller cannot name, or raise and leave
+        ``path`` as it was. Mechanisms, in order:
+
+        1. ``os.link(tmp, path)`` -- atomic, never exposes a partial file.
+           ``FileExistsError`` stops here. Any other error (no hard links on
+           FAT/exFAT, EACCES on some network shares, FUSE-specific errnos)
+           goes on to step 2, which is still exclusive (#391 round 3; #643
+           review: an errno allow-list here failed every create on those).
+        2. ``os.open(path, O_CREAT | O_EXCL)`` claims the name, then
+           ``os.replace(tmp, path)`` fills it: the replace only targets a
+           path this call just created. If anything after the claim fails,
+           the placeholder is removed while it is still ours (#477).
+           ``FileExistsError`` stops here; so does any error other than
+           "unsupported" (ENOSPC, EDQUOT, EIO...), with ``path`` untouched.
+        3. Only if O_EXCL itself is unsupported (ENOTSUP, ENOSYS,
+           EOPNOTSUPP): a plain ``os.replace``, guarded only by the write
+           pipeline's own ``exists()`` check, as before this method existed.
+
+        ``FileExistsError`` is raised whenever step 1 or 2 finds ``path``
+        taken; this never knowingly overwrites it. ``tmp`` belongs to the
+        caller until a mechanism consumes it: on success it is gone (moved by
+        ``os.replace``, or unlinked after step 1 -- if that unlink fails twice
+        the save still succeeds and a warning names the leftover); on a raise
+        it is still there, and ``save()`` removes it.
         """
         import errno
         import os
 
         unsupported_errnos = {errno.ENOTSUP, errno.ENOSYS}
         unsupported_errnos.add(getattr(errno, "EOPNOTSUPP", errno.ENOTSUP))
-        hardlink_unsupported = unsupported_errnos | {errno.EPERM}
-        if os.name == "nt":
-            # Windows maps ERROR_INVALID_FUNCTION (common on FAT/exFAT) to
-            # EINVAL for CreateHardLinkW.
-            hardlink_unsupported.add(errno.EINVAL)
 
         try:
             os.link(tmp, path)
         except FileExistsError:
             raise
-        except OSError as exc:
-            if exc.errno not in hardlink_unsupported:
-                raise
+        except OSError:
+            pass  # step 2 is still exclusive, and re-raises real I/O errors
         else:
             # The target is already published. Keep cleanup outside the try
             # above so an unlink error can never be mistaken for a link failure.
@@ -792,7 +807,16 @@ class Entry(ABC):
                 try:
                     os.unlink(tmp)
                 except OSError:
-                    pass
+                    # Not harmless since #752: a second hard link to the entry
+                    # blocks `ids pin` (nlink > 1) and keeps today's content
+                    # after the next update gives the entry a new inode.
+                    logger.warning(
+                        "saved %s, but could not remove its temp name %s, a second "
+                        "hard link to the same file; delete it by hand",
+                        path,
+                        tmp,
+                        exc_info=True,
+                    )
             return
 
         try:
@@ -807,24 +831,46 @@ class Entry(ABC):
             os.replace(tmp, path)
             return
 
+        # From here the placeholder at `path` is ours: everything up to a
+        # successful replace runs inside one cleanup scope (#643 review item 3).
+        claim_stat = None
         try:
-            claim_stat = os.fstat(claim_fd)
-        finally:
-            os.close(claim_fd)
-
-        try:
+            try:
+                claim_stat = os.fstat(claim_fd)
+            finally:
+                os.close(claim_fd)
             os.replace(tmp, path)
         except BaseException:
-            # O_EXCL proves this call created the placeholder. It is safe to
-            # remove only while the path still names that same file; a writer
-            # that replaced it in the meantime owns the new target.
-            try:
-                current_stat = os.stat(path)
-                if os.path.samestat(claim_stat, current_stat):
-                    os.unlink(path)
-            except OSError:
-                pass
+            Entry._remove_claim(path, claim_stat)
             raise
+
+    @staticmethod
+    def _remove_claim(path: Path, claim_stat: Any) -> None:
+        """Remove the O_EXCL placeholder at ``path`` if it is still ours.
+
+        With the claim's identity (``claim_stat``), remove ``path`` only while
+        it names that same file: a writer that replaced it in the meantime
+        owns the new target. Without it (``fstat`` failed), remove ``path``
+        only while it is empty: the placeholder is 0 bytes and no entry file
+        ever is. Best effort either way; the caller is already raising.
+
+        There is a narrow gap between the ``os.stat`` and the ``os.unlink``:
+        a concurrent non-exclusive replace landing inside it would be removed.
+        POSIX has no unlink-if-inode; the window is a few syscalls wide and
+        needs a second writer that bypassed the exclusive path.
+        """
+        import os
+
+        try:
+            current = os.stat(path)
+            if claim_stat is not None:
+                ours = os.path.samestat(claim_stat, current)
+            else:
+                ours = current.st_size == 0
+            if ours:
+                os.unlink(path)
+        except OSError:
+            pass
 
     def save(self, path: Path | None = None, *, exclusive: bool = False) -> Path:
         """Save entry to file.

@@ -235,6 +235,10 @@ class TestExclusiveSaveFailurePaths:
         assert not path.exists(), "a failed publish must not leave an empty claimed path"
         assert list(tmp_path.iterdir()) == []
 
+    @pytest.mark.control(
+        reason="dev never claimed a placeholder, so it never removed one; guards the "
+        "samestat check on #643's cleanup path"
+    )
     def test_failed_replace_preserves_a_concurrent_replacement(self, tmp_path, monkeypatch):
         import errno
 
@@ -282,47 +286,6 @@ class TestExclusiveSaveFailurePaths:
         assert "published" in path.read_text(encoding="utf-8")
         assert [p.name for p in tmp_path.iterdir()] == ["note.md"]
 
-    @pytest.mark.parametrize(("platform_name", "should_fallback"), [("nt", True), ("posix", False)])
-    def test_einval_from_hard_link_falls_back_only_on_windows(
-        self, tmp_path, monkeypatch, platform_name, should_fallback
-    ):
-        import errno
-        import os
-
-        path = tmp_path / "note.md"
-        temp = tmp_path / "source.tmp"
-        temp.write_text("payload", encoding="utf-8")
-        real_open = os.open
-        open_calls = []
-
-        def fail_link(src, dst):
-            raise OSError(errno.EINVAL, "simulated unsupported Windows hard link")
-
-        def observe_open(path_arg, flags, *args, **kwargs):
-            if os.fspath(path_arg) == os.fspath(path) and flags & os.O_EXCL:
-                open_calls.append(path_arg)
-            return real_open(path_arg, flags, *args, **kwargs)
-
-        monkeypatch.setattr(os, "link", fail_link)
-        monkeypatch.setattr(os, "open", observe_open)
-        with monkeypatch.context() as platform:
-            platform.setattr(os, "name", platform_name)
-            if should_fallback:
-                NoteEntry._publish_exclusive(str(temp), path)
-            else:
-                with pytest.raises(OSError) as exc:
-                    NoteEntry._publish_exclusive(str(temp), path)
-                assert exc.value.errno == errno.EINVAL
-
-        if should_fallback:
-            assert open_calls
-            assert path.read_text(encoding="utf-8") == "payload"
-            assert not temp.exists()
-        else:
-            assert open_calls == []
-            assert not path.exists()
-            assert temp.read_text(encoding="utf-8") == "payload"
-
     def test_enospc_on_exclusive_claim_propagates_and_preserves_winner(self, tmp_path, monkeypatch):
         import errno
 
@@ -367,26 +330,122 @@ class TestExclusiveSaveFailurePaths:
         assert exc.value.errno == error_number
         assert path.read_text(encoding="utf-8") == "concurrent winner"
 
-    def test_unrelated_link_error_does_not_enter_fallback(self, tmp_path, monkeypatch):
+    @pytest.mark.control(
+        reason="dev already let every link error fall through; guards #643 review item 2 "
+        "(a link errno allow-list failed every create on e.g. EACCES network shares)"
+    )
+    @pytest.mark.parametrize("err", ["EINVAL", "EIO", "EACCES", "EPERM", "EXDEV"])
+    def test_any_link_error_but_eexist_falls_through_to_the_exclusive_claim(
+        self, tmp_path, monkeypatch, err
+    ):
         import errno
 
+        self._make_link_raise(monkeypatch, getattr(errno, err))
         path = tmp_path / "note.md"
-        open_calls = []
         real_open = os.open
-
-        def fail_link(src, dst):
-            raise OSError(errno.EIO, "simulated I/O failure")
+        claims = []
 
         def observe_open(path_arg, flags, *args, **kwargs):
             if os.fspath(path_arg) == os.fspath(path) and flags & os.O_EXCL:
-                open_calls.append(path_arg)
+                claims.append(path_arg)
             return real_open(path_arg, flags, *args, **kwargs)
 
-        monkeypatch.setattr(os, "link", fail_link)
         monkeypatch.setattr(os, "open", observe_open)
+        NoteEntry(id="note", title="t", body="payload").save(path, exclusive=True)
+
+        assert claims, "the O_EXCL claim is still exclusive; a link error must reach it"
+        assert "payload" in path.read_text(encoding="utf-8")
+        assert [p.name for p in tmp_path.iterdir()] == ["note.md"]
+
+    def test_io_error_on_both_link_and_claim_raises_without_a_plain_replace(
+        self, tmp_path, monkeypatch
+    ):
+        import errno
+
+        self._make_link_raise(monkeypatch, errno.EIO)
+        path = tmp_path / "note.md"
+        real_open = os.open
+        replaces = []
+        real_replace = os.replace
+
+        def fail_claim(path_arg, flags, *args, **kwargs):
+            if os.fspath(path_arg) == os.fspath(path) and flags & os.O_EXCL:
+                raise OSError(errno.EIO, "simulated I/O failure")
+            return real_open(path_arg, flags, *args, **kwargs)
+
+        def spy_replace(src, dst):
+            replaces.append(dst)
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(os, "open", fail_claim)
+        monkeypatch.setattr(os, "replace", spy_replace)
         with pytest.raises(OSError) as exc:
             NoteEntry(id="note", title="t", body="candidate").save(path, exclusive=True)
 
         assert exc.value.errno == errno.EIO
-        assert open_calls == []
-        assert not path.exists()
+        assert replaces == [], "an I/O error is not 'unsupported': no non-exclusive replace"
+        assert list(tmp_path.iterdir()) == []
+
+    def test_temp_name_left_after_a_successful_link_is_reported(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """#643 review item 1: a stray second hard link is not harmless (#752).
+
+        It blocks ``ids pin`` (nlink > 1) and keeps the old content after the
+        next update gives the entry a new inode. The save still succeeded, so
+        it returns; but the leftover is logged by name for someone to remove.
+        """
+        import errno
+        import logging
+
+        path = tmp_path / "note.md"
+        real_unlink = os.unlink
+        refused = []
+
+        def refuse_temp_unlink(path_arg, *args, **kwargs):
+            if os.fspath(path_arg).endswith(".tmp"):
+                refused.append(os.fspath(path_arg))
+                raise OSError(errno.EBUSY, "simulated: held open by a scanner")
+            return real_unlink(path_arg, *args, **kwargs)
+
+        monkeypatch.setattr(os, "unlink", refuse_temp_unlink)
+        with caplog.at_level(logging.WARNING, logger="pyrite.models.base"):
+            result = NoteEntry(id="note", title="t", body="published").save(path, exclusive=True)
+
+        assert result == path
+        assert "published" in path.read_text(encoding="utf-8")
+        assert refused, "the temp name was never unlinked"
+        leftover = refused[-1]
+        assert os.path.exists(leftover)
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any(leftover in r.getMessage() for r in warnings), (
+            "the leftover second link must be named in a warning"
+        )
+
+    @pytest.mark.control(
+        reason="dev has no post-claim fstat; this fails at #643's 114af3a6, where a "
+        "failed fstat left the 0-byte placeholder at the target"
+    )
+    def test_failed_fstat_on_the_claim_leaves_no_placeholder(self, tmp_path, monkeypatch):
+        """#643 review item 3: the claim's 0-byte placeholder is cleaned up
+        whatever fails after O_EXCL succeeds, not only ``os.replace``.
+
+        The invariant: publish exactly the new file, or raise and leave the
+        target as it was (absent here) with nothing else behind.
+        """
+        import errno
+
+        self._make_link_raise(monkeypatch, errno.EPERM)
+        path = tmp_path / "note.md"
+
+        def fail_fstat(fd):
+            raise OSError(errno.EIO, "simulated fstat failure")
+
+        monkeypatch.setattr(os, "fstat", fail_fstat)
+        try:
+            NoteEntry(id="note", title="t", body="payload").save(path, exclusive=True)
+        except OSError:
+            assert list(tmp_path.iterdir()) == [], "a failed save left a placeholder behind"
+        else:
+            assert "payload" in path.read_text(encoding="utf-8")
+            assert [p.name for p in tmp_path.iterdir()] == ["note.md"]
