@@ -616,7 +616,11 @@ kb_app.add_typer(schema_app, name="schema")
 def schema_show(
     kb_name: str = typer.Argument(..., help="Knowledge base name"),
     output_format: str = typer.Option(
-        "json", "--format", "-f", callback=validate_output_format, help="Output format: json, rich"
+        "json",
+        "--format",
+        "-f",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Show the current schema for a KB."""
@@ -672,7 +676,11 @@ def schema_add_type(
     optional: str = typer.Option("", "--optional", "-o", help="Comma-separated optional fields"),
     subdirectory: str = typer.Option("", "--subdirectory", "-s", help="Subdirectory for files"),
     output_format: str = typer.Option(
-        "json", "--format", "-f", callback=validate_output_format, help="Output format: json, rich"
+        "json",
+        "--format",
+        "-f",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Add a type definition to a KB's schema."""
@@ -713,7 +721,11 @@ def schema_remove_type(
     kb_name: str = typer.Argument(..., help="Knowledge base name"),
     type_name: str = typer.Option(..., "--type", "-t", help="Type name to remove"),
     output_format: str = typer.Option(
-        "json", "--format", "-f", callback=validate_output_format, help="Output format: json, rich"
+        "json",
+        "--format",
+        "-f",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Remove a type definition from a KB's schema."""
@@ -744,7 +756,11 @@ def schema_set(
     kb_name: str = typer.Argument(..., help="Knowledge base name"),
     schema_file: Path = typer.Option(..., "--schema-file", "-s", help="YAML file with schema"),
     output_format: str = typer.Option(
-        "json", "--format", "-f", callback=validate_output_format, help="Output format: json, rich"
+        "json",
+        "--format",
+        "-f",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Replace schema from a YAML file."""
