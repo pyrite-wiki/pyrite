@@ -22,7 +22,6 @@ from ..services.read_shaping import (
     resolve_search_fields,
     unmatched_search_fields,
 )
-from ..storage.repository import KBRepository
 from ..utils.errors import exit_unless_whole
 from .context import get_config_with_registered_kbs
 from .output import validate_output_format
@@ -43,14 +42,12 @@ def _warn_if_stale(config, db, kb_name: str | None) -> None:
     never break a search). Scoped to ``kb_name`` when the caller passed ``-k``.
     """
     try:
-        from ..storage import IndexManager
+        from ..services.kb_service import KBService
 
-        stale = IndexManager(db, config).check_staleness()
-        if kb_name:
-            stale = [s for s in stale if s["kb"] == kb_name]
+        stale = KBService(config, db).stale_kbs(kb_name)
         if not stale:
             return
-        kbs = ", ".join(s["kb"] for s in stale)
+        kbs = ", ".join(stale)
         err_console.print(
             f"[yellow]Warning:[/yellow] index may be stale for: {kbs} "
             f"(a file on disk is newer than the index). Results could be out "
@@ -202,18 +199,18 @@ def register_search_command(app: typer.Typer):
             _search_files(config, query, kb_name, entry_type, limit)
             return
 
-        from ..storage import IndexManager
+        from ..services.kb_service import KBService
         from .context import open_index_db
 
         db = None
         try:
             db = open_index_db(config)
 
-            index_mgr = IndexManager(db, config)
-            if index_mgr.is_empty():
+            kb_svc = KBService(config, db)
+            if kb_svc.index_is_empty():
                 # Status to stderr — stdout must stay clean for -f json callers.
                 err_console.print("[yellow]Index is empty. Building index...[/yellow]")
-                index_mgr.index_all()
+                kb_svc.build_index()
             else:
                 # Warn (never silently) when the index is behind the files on
                 # disk — otherwise search returns a confidently-wrong stale
@@ -433,35 +430,10 @@ def _search_files(config, query, kb_name, entry_type, limit):
 
     console.print(f"[dim]Searching for '{query}'...[/dim]")
 
-    results = []
-    unreadable = 0
-    scanned = 0
-    for kb in kbs:
-        if not kb.path.exists():
-            continue
+    from ..services.file_search import search_kb_files
 
-        repo = KBRepository(kb)
-        for md_file in repo.list_files():
-            try:
-                content = md_file.read_text(encoding="utf-8")
-                scanned += 1
-                if query.lower() in content.lower():
-                    entry = repo._load_entry(md_file)
-
-                    if entry_type and entry.entry_type != entry_type:
-                        continue
-
-                    results.append((kb.name, entry, md_file))
-
-                    if len(results) >= limit:
-                        break
-            except Exception:
-                logger.warning("Search failed for KB %s", kb.name, exc_info=True)
-                unreadable += 1
-                continue
-
-        if len(results) >= limit:
-            break
+    found = search_kb_files(kbs, query, entry_type, limit)
+    results, unreadable, scanned = found.hits, found.unreadable, found.scanned
 
     if unreadable:
         # The answer is incomplete: say so, and do not exit 0 (#526).

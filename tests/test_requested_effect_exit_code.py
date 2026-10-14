@@ -1699,7 +1699,6 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "safe",
         "path outside the KB is skipped",
     ),
-    ("pyrite/cli/search_commands.py", "_search_files"): ("fixed", "TestSearchFiles"),
     ("pyrite/cli/search_commands.py", "_warn_if_stale"): ("safe", "a probe for a warning"),
     ("pyrite/cli/task_commands.py", "_task_get_impl"): ("safe", "bad metadata reads as empty"),
 }

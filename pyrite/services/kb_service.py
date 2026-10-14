@@ -2765,6 +2765,24 @@ class KBService:
         """
         return self._index_mgr.sync_incremental(kb_name)
 
+    def index_is_empty(self) -> bool:
+        """True when nothing is indexed yet (the first search builds it)."""
+        return self._index_mgr.is_empty()
+
+    def build_index(self) -> Any:
+        """Index every configured KB from its files (``IndexManager.index_all``)."""
+        return self._index_mgr.index_all()
+
+    def stale_kbs(self, kb_name: str | None = None) -> list[str]:
+        """Names of KBs with a file on disk newer than the index (cheap mtime probe).
+
+        Scoped to ``kb_name`` when given.
+        """
+        stale = self._index_mgr.check_staleness()
+        if kb_name:
+            stale = [s for s in stale if s["kb"] == kb_name]
+        return [s["kb"] for s in stale]
+
     def get_index_stats(self) -> dict[str, Any]:
         """Get index statistics."""
         return self._index_mgr.get_index_stats()

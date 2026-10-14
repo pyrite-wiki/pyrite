@@ -16,7 +16,7 @@ fixture. In such a file these fail:
   * `patch("<target>")`, `patch.object(<obj>, "<attr>")`, `monkeypatch.setattr(...)`
     where the target is in `pyrite.services` or `pyrite.storage`, or is a name a
     `pyrite.cli` / `pyrite.server` / `pyrite.plugins` module imported from them
-    (`pyrite.cli.search_commands.KBRepository`);
+    (`pyrite.cli.search_commands.project_fields`);
   * `patch.object` / `patch.multiple` / `monkeypatch.setattr` / `mocker.patch...` on a class or
     module the test file imported from `pyrite.services` / `pyrite.storage` (aliases resolved
     from the import: `import unittest.mock as um`, `patch as p`);
@@ -367,8 +367,8 @@ def _scan() -> dict[str, list[tuple[int, str, str]]]:
         (
             "from typer.testing import CliRunner\n"
             "from unittest.mock import patch\n"
-            "patch('pyrite.cli.search_commands.KBRepository')\n",
-            "pyrite.cli.search_commands.KBRepository",
+            "patch('pyrite.cli.search_commands.project_fields')\n",
+            "pyrite.cli.search_commands.project_fields",
         ),
         (
             "from typer.testing import CliRunner\n"
