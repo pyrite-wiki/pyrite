@@ -257,10 +257,13 @@ class GitService:
         if result.returncode != 0:
             return None
         try:
-            return result.stdout.decode("utf-8")
+            text = result.stdout.decode("utf-8")
         except UnicodeDecodeError:
             logger.warning("Version of %s at %s is not UTF-8", kb_relative_path, commit)
             return None
+        # Universal newlines, as the `text=True` read before #453 returned:
+        # "\r\n" and a lone "\r" become "\n", so a CRLF file reads as it did.
+        return text.replace("\r\n", "\n").replace("\r", "\n")
 
     @staticmethod
     def version_servability(

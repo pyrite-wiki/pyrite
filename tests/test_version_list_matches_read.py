@@ -111,3 +111,39 @@ def test_a_rename_git_does_not_detect_keeps_its_older_servable_versions(
     assert c1 in listed and c2 in listed
     for h in listed:
         assert client.get(f"/api/entries/n1/versions/{h}", params={"kb": "k"}).status_code == 200
+
+
+def test_a_crlf_version_reads_over_rest_as_the_lf_text_dev_returned(
+    repo, make_client, tmp_path, monkeypatch
+):
+    """A version read returns the text dev returned for every file dev could
+    read. Dev read with `text=True` (universal newlines), so a committed CRLF
+    file came back with `\\n`; the one read function keeps that, and the
+    servability verdict on the normalised text is unchanged."""
+    import pyrite.config as pyrite_config
+    from pyrite.cli import app
+    from pyrite.services.git_service import SERVABLE, GitService
+
+    crlf = b"---\r\nid: n1\r\ntitle: N\r\ntype: note\r\n---\r\n\r\nold body\rlone cr\r\n"
+    (repo.kb / "n.md").write_bytes(crlf)
+    c1 = repo.commit("crlf version")
+    repo.write("kb/n.md", _note("n1", "N", "new body"))
+    repo.commit("lf version")
+    repo.index()
+
+    cfg_dir = tmp_path / "cfg"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.yaml").write_text(yaml.safe_dump(repo.config.to_dict()))
+    monkeypatch.setattr(pyrite_config, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(pyrite_config, "CONFIG_FILE", cfg_dir / "config.yaml")
+    client, _, _ = make_client(
+        dependency_overrides={get_config: lambda: repo.config, get_db: lambda: repo.db}
+    )
+    result = CliRunner().invoke(app, ["index", "build", "--with-attribution"])
+    assert result.exit_code == 0, result.output
+
+    r = client.get(f"/api/entries/n1/versions/{c1}", params={"kb": "k"})
+    assert r.status_code == 200, r.text
+    lf = "---\nid: n1\ntitle: N\ntype: note\n---\n\nold body\nlone cr\n"
+    assert r.json()["content"] == lf
+    assert GitService.version_servability(repo.kb, c1, "n.md", "n.md", "n1") == (SERVABLE, lf)
