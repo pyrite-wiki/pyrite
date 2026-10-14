@@ -48,6 +48,8 @@ import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
+from urllib.parse import urlsplit
 
 # The checks a verified commit needs, by name. `gate` is the required check on
 # dev and main: it needs the jobs that must pass and fails on any of their
@@ -76,7 +78,17 @@ LOOKUP_TIMEOUT_SECONDS = 8
 _PAGE_SIZE = 100
 
 _SHA = re.compile(r"[0-9a-f]{40}([0-9a-f]{24})?")
-_SLUG = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+_SEGMENT = re.compile(r"[A-Za-z0-9_.-]+")
+
+
+def _is_slug(value: object) -> bool:
+    """`owner/name`, each a real path segment: never `.`, `..` or `.git`."""
+    if not isinstance(value, str):
+        return False
+    parts = value.split("/")
+    return len(parts) == 2 and all(
+        _SEGMENT.fullmatch(part) and part.strip(".") and part != ".git" for part in parts
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -88,10 +100,21 @@ _SLUG = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 # another app's `gate`, green, is not this repository's CI saying anything.
 CI_APP = "github-actions"
 
-# The only shape of timestamp that is ordered: GitHub's own, UTC with a Z.
-# Strings in this shape sort as times. Anything else -- absent, a number, an
-# offset, prose -- is not compared at all.
-_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+# The only timestamp that is ordered: GitHub's own spelling, UTC with a Z,
+# and a real instant. The shape alone is not enough -- `9999-99-99T99:99:99Z`
+# has it, and as a string it sorts after every real time.
+_TIMESTAMP = "%Y-%m-%dT%H:%M:%SZ"
+_TIMESTAMP_SHAPE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+
+
+def _instant(value: object) -> datetime | None:
+    """The instant a `started_at` names, or None if it names none."""
+    if not isinstance(value, str) or not _TIMESTAMP_SHAPE.fullmatch(value):
+        return None
+    try:
+        return datetime.strptime(value, _TIMESTAMP)
+    except ValueError:
+        return None
 
 
 class UnreadableAnswerError(Exception):
@@ -156,27 +179,53 @@ def _suite_of(check: dict, name: str) -> int:
     return suite_id
 
 
-def _newest_in_suite(runs: list[dict], name: str) -> str:
-    """The verdict of one workflow run's `name` check.
+def _newest_in_suite(runs: list[dict], name: str) -> tuple[dict, str]:
+    """One workflow run's `name` check: the run that speaks for it, and its
+    verdict.
 
     Several runs in one check suite are reruns of the same job, and the newest
     is the verdict: a rerun to green must be able to unblock a release. When
     they all say the same thing no order is needed. When they disagree, the
-    order has to come from a `started_at` this code has checked on EVERY one
-    of them -- an undated or malformed run sorted "oldest" would let a dated
-    green run speak for a red or queued rerun -- and a tie goes to the worst.
+    order has to come from a `started_at` this code has parsed as a real
+    instant on EVERY one of them -- an undated or malformed run sorted
+    "oldest", or an impossible date sorted "newest", would let a green run
+    speak for a red or queued one -- and a tie goes to the worst.
     """
     verdicts = [_one(run) for run in runs]
     if len(set(verdicts)) == 1:
-        return verdicts[0]
-    stamps = [run.get("started_at") for run in runs]
-    if not all(isinstance(s, str) and _TIMESTAMP.fullmatch(s) for s in stamps):
+        return runs[-1], verdicts[0]
+    instants = [_instant(run.get("started_at")) for run in runs]
+    if any(instant is None for instant in instants):
         raise UnreadableAnswerError(
             f"the `{name}` runs disagree and cannot be put in order "
-            "(a `started_at` is missing or not a UTC timestamp)"
+            "(a `started_at` is missing or is not a real UTC timestamp)"
         )
-    newest = max(stamps)
-    return _worst([v for v, s in zip(verdicts, stamps, strict=True) if s == newest])
+    newest = max(instants)
+    tied = [(r, v) for r, v, i in zip(runs, verdicts, instants, strict=True) if i == newest]
+    worst = _worst([v for _r, v in tied])
+    return next((r, v) for r, v in tied if v == worst)
+
+
+def counted_runs(checks: list[dict], required: tuple[str, ...]) -> list[tuple[dict, str]] | None:
+    """The runs a verdict is read from, each with its own verdict: for every
+    required name, one per workflow run (check suite) of this repository's CI.
+    None when a required name has no such run. Raises UnreadableAnswerError
+    when a run cannot be attributed or ordered.
+
+    `decide` and the printed detail both read this, so what a refusal prints
+    is exactly what was counted -- never another app's run of the same name,
+    never a superseded attempt.
+    """
+    counted: list[tuple[dict, str]] = []
+    for name in required:
+        own = _own_runs(checks, name)
+        if not own:
+            return None
+        suites: dict[int, list[dict]] = {}
+        for run in own:
+            suites.setdefault(_suite_of(run, name), []).append(run)
+        counted += [_newest_in_suite(runs, name) for runs in suites.values()]
+    return counted
 
 
 def decide(checks: list[dict], required: tuple[str, ...] | None = None) -> str:
@@ -206,54 +255,89 @@ def decide(checks: list[dict], required: tuple[str, ...] | None = None) -> str:
     required = required or REQUIRED_CHECKS
     if not checks:
         return MISSING
-
-    verdicts = []
     try:
-        for name in required:
-            own = _own_runs(checks, name)
-            if not own:
-                return MISSING
-            suites: dict[int, list[dict]] = {}
-            for run in own:
-                suites.setdefault(_suite_of(run, name), []).append(run)
-            verdicts += [_newest_in_suite(runs, name) for runs in suites.values()]
+        counted = counted_runs(checks, required)
     except UnreadableAnswerError:
         return UNKNOWN
-    return _worst(verdicts)
+    if counted is None:
+        return MISSING
+    return _worst([verdict for _run, verdict in counted])
 
 
-def describe(checks: list[dict], required: tuple[str, ...]) -> str:
-    relevant = [c for c in checks if any(matches(str(c.get("name") or ""), r) for r in required)]
-    return (
-        ", ".join(f"{c.get('name')}={c.get('conclusion') or c.get('status')}" for c in relevant)
-        or "none"
-    )
+_RUN_URL = re.compile(
+    r"https://github\.com/(?P<slug>[^/\s]+/[^/\s]+)/actions/runs/(?P<run>\d+)(/[\w/]*)?"
+)
+
+
+def _where(run: dict, slug: str) -> tuple[str, str | None]:
+    """How to point a person at one run: its URL and workflow run id when the
+    API gave a URL that is this repository's Actions run, else its check
+    suite. The URL is the API's and is printed for someone to open, so
+    anything else is not printed at all."""
+    for key in ("html_url", "details_url"):
+        url = run.get(key)
+        match = _RUN_URL.fullmatch(url) if isinstance(url, str) else None
+        if match and match.group("slug") == slug:
+            return url, match.group("run")
+    suite = run.get("check_suite")
+    return f"check suite {suite.get('id') if isinstance(suite, dict) else '?'}", None
+
+
+def describe(counted: list[tuple[dict, str]], slug: str) -> str:
+    """The counted runs as `name=conclusion`, the ones that are not green
+    followed by where to find them."""
+    parts = []
+    for run, verdict in counted:
+        said = f"{run.get('name')}={run.get('conclusion') or run.get('status')}"
+        parts.append(said if verdict == PASSED else f"{said} ({_where(run, slug)[0]})")
+    return ", ".join(parts) or "none"
 
 
 # ---------------------------------------------------------------------------
 # which repository
 # ---------------------------------------------------------------------------
 
-# The whole URL, anchored at both ends, host included. Unanchored, this read
-# `https://notgithub.com/a/b.git` and `https://example.org/mirror/github.com/
-# a/b` as `a/b` on GitHub -- and the lookup then asked GitHub about a commit
-# being pushed somewhere else. https (optionally with a user or token before
-# the host), scp-style ssh, and ssh://; nothing else, plain http included.
-_REMOTE = re.compile(
-    r"(?:https://(?:[^@/\s]+@)?github\.com/|(?:ssh://)?git@github\.com[:/])"
-    r"(?P<slug>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?"
-)
+_SCP_STYLE = re.compile(r"git@github\.com:(?P<path>[^:\s]+)")
 
 
 def remote_slug(url: str) -> str | None:
     """`owner/repo` from a git remote URL that IS github.com, else None.
 
-    Both forms have to be understood because both are in use on the
-    maintainer's machines: `https://github.com/owner/repo(.git)` and
-    `git@github.com:owner/repo.git` (and its `ssh://` spelling).
+    The forms in use on the maintainer's machines: `https://github.com/owner/
+    repo(.git)`, `git@github.com:owner/repo.git`, and its `ssh://` spelling.
+
+    The host is decided by ONE parser, `urlsplit`, and must be exactly
+    github.com. Two earlier versions used a pattern over the whole string: the
+    first was unanchored (`https://notgithub.com/a/b.git` read as `a/b`), the
+    second let `#` and `?` into the part before `@`, so `https://evil.org#@
+    github.com/a/b` read as GitHub while every URL parser, and git, go to
+    evil.org. A query, a fragment, a port, a scheme other than https or ssh,
+    or a path that is not exactly two real segments is not a repository here.
     """
-    match = _REMOTE.fullmatch(url.strip()) if isinstance(url, str) else None
-    return match.group("slug") if match else None
+    if not isinstance(url, str):
+        return None
+    url = url.strip()
+    scp = _SCP_STYLE.fullmatch(url)
+    if scp:
+        path = scp.group("path")
+    else:
+        try:
+            parts = urlsplit(url)
+            port = parts.port
+        except ValueError:
+            return None
+        if parts.scheme not in ("https", "ssh") or parts.hostname != "github.com":
+            return None
+        if port is not None or parts.query or parts.fragment or "?" in url or "#" in url:
+            return None
+        if parts.password is not None and parts.scheme == "ssh":
+            return None
+        if parts.scheme == "ssh" and parts.username != "git":
+            return None
+        path = parts.path.removeprefix("/")
+    path = path.removesuffix("/")
+    path = path.removesuffix(".git")
+    return path if _is_slug(path) else None
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +357,9 @@ class Verdict:
     # (`gate=success`). MISSING/UNKNOWN: why there is no trustworthy answer.
     detail: str
     checks: tuple[dict, ...] = ()
+    # The counted runs that are not green, each as (name, conclusion, where,
+    # workflow run id or None): what a refusal needs to name the run to re-run.
+    not_green: tuple[tuple[str, str, str, str | None], ...] = ()
 
     @property
     def verified(self) -> bool:
@@ -332,12 +419,7 @@ def read_check_runs(raw: str, sha: str) -> list[dict]:
 def _why_unknown(checks: list[dict], required: tuple[str, ...]) -> str:
     """The reason `decide` could not read a verdict, in its own words."""
     try:
-        for name in required:
-            suites: dict[int, list[dict]] = {}
-            for run in _own_runs(checks, name):
-                suites.setdefault(_suite_of(run, name), []).append(run)
-            for runs in suites.values():
-                _newest_in_suite(runs, name)
+        counted_runs(checks, required)
     except UnreadableAnswerError as exc:
         return str(exc)
     return "the required check's runs could not be read as a verdict"
@@ -367,14 +449,19 @@ def verdict_for(
     """
     required = tuple(required or REQUIRED_CHECKS)
 
-    def verdict(state: str, detail: str, checks: list[dict] | None = None) -> Verdict:
-        return Verdict(state, sha, slug, required, detail, tuple(checks or ()))
+    def verdict(
+        state: str,
+        detail: str,
+        checks: list[dict] | None = None,
+        not_green: tuple = (),
+    ) -> Verdict:
+        return Verdict(state, sha, slug, required, detail, tuple(checks or ()), not_green)
 
     # A SHA, in full: anything shorter or symbolic is a ref the API would
     # resolve for itself, to a commit this caller never named.
     if not isinstance(sha, str) or not _SHA.fullmatch(sha):
         return verdict(UNKNOWN, f"{sha!r} is not a full commit SHA")
-    if not isinstance(slug, str) or not _SLUG.fullmatch(slug):
+    if not _is_slug(slug):
         return verdict(UNKNOWN, f"{slug!r} is not an owner/name repository")
     try:
         raw = run(lookup_command(slug, sha))
@@ -394,7 +481,13 @@ def verdict_for(
         return verdict(UNKNOWN, f"the answer could not be read ({type(exc).__name__}: {exc})")
     if state == MISSING:
         return verdict(MISSING, f"no run of {', '.join(required)} on {sha[:12]}", checks)
-    return verdict(state, describe(checks, required), checks)
+    counted = counted_runs(checks, required) or []
+    not_green = tuple(
+        (str(run.get("name")), str(run.get("conclusion") or run.get("status")), *_where(run, slug))
+        for run, each in counted
+        if each != PASSED
+    )
+    return verdict(state, describe(counted, slug), checks, not_green)
 
 
 def run_bounded(cmd: list[str], timeout: float = LOOKUP_TIMEOUT_SECONDS) -> str:

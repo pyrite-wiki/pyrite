@@ -702,8 +702,21 @@ def check_no_release_blockers(prs: list[dict]) -> None:
         )
 
 
+def origin_push_url(repo: Path) -> str:
+    """Where `git push origin ...` goes. THE read of the remote: the slug, the
+    re-check of it and the URL handed to the pre-push hook all come from here.
+
+    `--push`, because the release pushes: with a `pushurl` set, `main` and the
+    tag go there, not to the fetch URL, and it is that repository whose CI
+    must have passed the commit and on which the release must be cut. Three
+    reads that disagreed (two fetch, one push) would be the very split
+    `check_remote_is_the_release_repo` exists to refuse.
+    """
+    return _check_output(["git", "-C", str(repo), "remote", "get-url", "--push", "origin"]).strip()
+
+
 def resolve_repo_slug(repo: Path) -> str:
-    """The `owner/name` this checkout releases, from `origin`.
+    """The `owner/name` this checkout releases: where `origin` pushes to.
 
     Every `gh --repo` call and the install spec read this, so the script
     releases the repository it is actually run from. Hard-coding it meant the
@@ -715,7 +728,7 @@ def resolve_repo_slug(repo: Path) -> str:
     A remote that is not a recognisable GitHub URL is a hard failure: a
     release cut against a guessed repository is not undoable.
     """
-    url = _check_output(["git", "-C", str(repo), "remote", "get-url", "origin"]).strip()
+    url = origin_push_url(repo)
     slug = remote_slug(url)
     if not slug:
         raise ReleaseError(
@@ -741,7 +754,7 @@ def check_remote_is_the_release_repo(repo: Path, slug: str) -> None:
     trusting the value it was handed: the resolve happens once at startup and
     a release is long enough for a remote to be re-pointed under it.
     """
-    url = _check_output(["git", "-C", str(repo), "remote", "get-url", "origin"]).strip()
+    url = origin_push_url(repo)
     current = remote_slug(url)
     if current != slug:
         raise ReleaseError(
@@ -1063,11 +1076,7 @@ def step_ci(ctx: Context) -> None:
                 )
             return
         if verdict.state == CI_FAILED:
-            raise ReleaseError(
-                f"a required check is not green on {ctx.sha[:12]}: "
-                f"{verdict.detail}. Fix it on dev; the tagged "
-                "commit must be one CI passed."
-            )
+            raise ReleaseError(_not_green_message(ctx.sha, verdict))
         if verdict.state == CI_MISSING:
             raise ReleaseError(
                 f"no run of {', '.join(required)} exists for {ctx.sha[:12]} "
@@ -1098,6 +1107,38 @@ def step_ci(ctx: Context) -> None:
         nap = min(30.0, remaining)
         ctx.runner.note(f"required check(s) still running on {ctx.sha[:12]}; waiting {nap:.0f}s")
         time.sleep(nap)
+
+
+def _not_green_message(sha: str, verdict: verified_commit.Verdict) -> str:
+    """Why a red verdict refuses, naming the workflow run and the remedy.
+
+    Every workflow run that ran the check on this commit must be green, so a
+    single cancelled or flaky run refuses a commit whose other runs passed.
+    Nothing is wrong on dev then, and "fix it on dev" sends the maintainer
+    nowhere: the remedy is to re-run THAT run, and it has to be named. This
+    script never runs the command it prints.
+    """
+    lines = [
+        f"a required check is not green on {sha[:12]}, in "
+        f"{len(verdict.not_green)} of the workflow run(s) that ran it: {verdict.detail}.",
+        "Every workflow run that ran the check on this commit must be green.",
+    ]
+    for name, conclusion, where, run_id in verdict.not_green:
+        if run_id:
+            lines.append(
+                f"  {name}={conclusion}: {where}\n"
+                f"    if that run was cancelled or flaky, re-run it and release when it "
+                f"is green:  gh run rerun {run_id} --repo {verdict.slug}"
+            )
+        else:
+            lines.append(
+                f"  {name}={conclusion}: {where} -- re-run that workflow run from the "
+                "commit's checks page if it was cancelled or flaky"
+            )
+    lines.append(
+        "If it is red for a real reason, fix it on dev: the tagged commit must be one CI passed."
+    )
+    return "\n".join(lines)
 
 
 def step_push_rehearsal(ctx: Context) -> None:
@@ -1144,11 +1185,7 @@ def step_push_rehearsal(ctx: Context) -> None:
             'Create it (`uv venv && uv pip install -e ".[all,dev]"`) and run this again.'
         )
     script = ctx.repo / "scripts" / "test-affected"
-    # --push: the hook is handed the URL git pushes to, which is `pushurl`
-    # when one is set.
-    url = _check_output(
-        ["git", "-C", str(ctx.repo), "remote", "get-url", "--push", "origin"]
-    ).strip()
+    url = origin_push_url(ctx.repo)
     env = {
         **os.environ,
         # What pre-commit hands the hook for `git push origin <sha>:refs/heads/main`.

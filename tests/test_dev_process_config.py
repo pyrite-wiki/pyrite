@@ -1487,6 +1487,10 @@ class TestWhatAVerifiedTipIsEvidenceOf:
         assert "does not stop at the first check that fails" in text and "exits 1" in text
         assert "scripts/verified_commit.py" in text
         assert "prints every step" not in text
+        # What to do when it refuses, and when the hook runs anyway.
+        assert "gh run rerun" in text and "red or cancelled" in text
+        assert "lookup fails" in text and "push URL is not a github.com URL" in text
+        assert "happens only with" not in text
         import sys
 
         sys.path.insert(0, str(REPO / "scripts"))

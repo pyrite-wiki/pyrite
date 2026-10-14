@@ -28,6 +28,9 @@ T2 = "2026-10-13T11:00:00Z"
 ACTIONS = {"slug": "github-actions"}
 
 
+RUN_URL = "https://github.com/acme/widget/actions/runs/{run}/job/{job}"
+
+
 def run_of(sha: str, name="gate", status="completed", conclusion="success", **more) -> dict:
     """One check run as this repository's own CI reports it: from the GitHub
     Actions app, in a check suite (one per workflow run; reruns share it)."""
@@ -327,6 +330,25 @@ CASES: dict[str, tuple[Callable[[str], dict], str]] = {
         ),
         "unknown",
     ),
+    # fix round 2: the right shape is not a real instant.
+    "a green run stamped at an impossible later time beside a real red one": (
+        _out(
+            lambda sha: answer(
+                run_of(sha, conclusion="failure", started_at=T2),
+                run_of(sha, started_at="9999-99-99T99:99:99Z"),
+            )
+        ),
+        "unknown",
+    ),
+    "a green run stamped on a day that does not exist beside a real red one": (
+        _out(
+            lambda sha: answer(
+                run_of(sha, conclusion="failure", started_at=T2),
+                run_of(sha, started_at="2026-11-31T00:00:00Z"),
+            )
+        ),
+        "unknown",
+    ),
     "red runs disagree with nothing to order them": (
         _out(lambda sha: answer(run_of(sha), run_of(sha, conclusion="failure"))),
         "unknown",
@@ -348,6 +370,22 @@ NOT_GITHUB_REMOTES = [
     "https://github.com/acme/widget/extra",
     "https://github.com/acme",
     "https://gitlab.com/acme/widget.git",
+    # fix round 2: where a pattern and a URL parser disagree about the host,
+    # and paths that are not a repository.
+    "https://evil.example#@github.com/acme/widget",
+    "https://evil.example?@github.com/acme/widget",
+    "https://evil.example/@github.com/acme/widget",
+    "https://github.com/acme/widget?x=1",
+    "https://github.com/acme/widget#main",
+    "https://github.com:8443/acme/widget.git",
+    "https://github.com/acme/..",
+    "https://github.com/../widget",
+    "https://github.com/./widget",
+    "https://github.com/acme/.git",
+    "git@github.com:acme/..",
+    "git@github.com:../widget.git",
+    "ssh://root@github.com/acme/widget.git",
+    "https://GITHUB.com.evil.example/acme/widget",
 ]
 GITHUB_REMOTES = [
     "https://github.com/acme/widget",

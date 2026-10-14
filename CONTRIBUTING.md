@@ -279,8 +279,10 @@ set. When what changed is the environment, use `--force`.
 *verified* when the required check (`gate`) is green on that exact SHA on
 GitHub. That rule lives in one place, `scripts/verified_commit.py`, and
 `scripts/release.py` and the pre-push hook both use it. When the tip of the
-ref you push is verified, the hook prints `<sha> is verified (gate=success
-on <owner>/<repo>); not re-running the local suite` and exits 0. You will
+ref you push is verified, the hook prints `<sha> is verified (gate=success,
+gate=success on <owner>/<repo>); not re-running the local suite` and exits 0
+(one `gate=` per workflow run that tested the commit: a `dev` tip has two,
+the merge queue's and the push's). You will
 meet this when you push a commit GitHub has already tested to another
 branch; the release's push of `dev`'s tip to `main` is the usual case. An
 ordinary push of new commits is unaffected and makes no request: GitHub

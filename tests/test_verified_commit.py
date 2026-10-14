@@ -180,6 +180,50 @@ class TestEveryAnswerThatVerifies:
         assert verdict.state == vc.UNKNOWN and "which app" in verdict.detail
 
 
+class TestTheDetailNamesOnlyWhatWasCounted:
+    """What a refusal prints is what the maintainer acts on. It lists the runs
+    the verdict counted and no others, and names the run that is not green."""
+
+    def test_another_apps_red_run_is_not_printed_beside_a_pass(self):
+        other = run_of(conclusion="failure", app={"slug": "some-ci-bot"})
+        verdict = vc.verdict_for(SHA, SLUG, gh(answer(run_of(), other)))
+        assert verdict.verified
+        assert verdict.detail == "gate=success"
+
+    def test_one_line_per_workflow_run_counted(self):
+        both = answer(run_of(), run_of(check_suite={"id": 2}))
+        assert vc.verdict_for(SHA, SLUG, gh(both)).detail == "gate=success, gate=success"
+
+    def test_only_the_newest_of_a_reruns_runs_is_printed(self):
+        rerun = answer(
+            run_of(conclusion="failure", started_at="2026-10-13T10:00:00Z"),
+            run_of(started_at="2026-10-13T11:00:00Z"),
+        )
+        assert vc.verdict_for(SHA, SLUG, gh(rerun)).detail == "gate=success"
+
+    def test_the_run_that_is_not_green_is_named_by_its_url(self):
+        url = "https://github.com/acme/widget/actions/runs/777/job/42"
+        runs = answer(
+            run_of(),
+            run_of(conclusion="cancelled", check_suite={"id": 2}, html_url=url),
+            run_of(check_suite={"id": 3}),
+        )
+        verdict = vc.verdict_for(SHA, SLUG, gh(runs))
+        assert verdict.state == vc.FAILED
+        assert verdict.detail == f"gate=success, gate=cancelled ({url}), gate=success"
+        assert verdict.not_green == (("gate", "cancelled", url, "777"),)
+
+    def test_a_url_that_is_not_this_repositorys_run_is_not_printed(self):
+        """The URL comes from the API and is printed for a person to open."""
+        runs = answer(
+            run_of(conclusion="failure", check_suite={"id": 9}, html_url="https://evil.example/x")
+        )
+        verdict = vc.verdict_for(SHA, SLUG, gh(runs))
+        assert "evil.example" not in verdict.detail
+        assert verdict.detail == "gate=failure (check suite 9)"
+        assert verdict.not_green == (("gate", "failure", "check suite 9", None),)
+
+
 class TestOneRequest:
     def test_it_asks_exactly_once_whatever_the_answer(self):
         for case, (run, _state) in NOT_VERIFIED.items():

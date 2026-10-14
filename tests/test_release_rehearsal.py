@@ -13,7 +13,7 @@ this repository's own `scripts/test-affected` as the hook's script) with each
 failing precondition in turn, then all of them at once.
 
 Two seams, and no others: `gh` is a fake executable first on PATH, so nothing
-reaches GitHub; and `git remote get-url origin` is answered with a GitHub URL,
+reaches GitHub; and `git remote get-url [--push] origin` is answered with a GitHub URL,
 because the real origin here is a directory. Everything else -- every other
 git command, the hook's preflight subprocess -- is real.
 """
@@ -117,7 +117,11 @@ def _isolated(tmp_path, monkeypatch):
 
     def with_a_github_origin(cmd, **kwargs):
         if "get-url" in cmd and cmd[-1] == "origin":
-            return os.environ.get("FAKE_ORIGIN_URL", GITHUB_URL) + "\n"
+            # The fetch URL and the push URL are different questions, and a
+            # remote with a `pushurl` answers them differently.
+            if "--push" in cmd:
+                return os.environ.get("FAKE_PUSH_URL", GITHUB_URL) + "\n"
+            return os.environ.get("FAKE_FETCH_URL", GITHUB_URL) + "\n"
         return real(cmd, **kwargs)
 
     monkeypatch.setattr(release, "_check_output", with_a_github_origin)
@@ -315,12 +319,60 @@ class TestEachPreconditionIsNamed:
         """`https://notgithub.com/acme/widget.git` was read as acme/widget on
         GitHub, and the release then asked GitHub about a commit it was about
         to push somewhere else."""
-        monkeypatch.setenv("FAKE_ORIGIN_URL", url)
+        monkeypatch.setenv("FAKE_PUSH_URL", url)
         code, planned = rehearse(checkout)
         err = capsys.readouterr().err
         assert code == 1 and planned == []
         assert "is not a GitHub repository URL" in err
         assert not any("check-runs" in call for call in gh_calls())
+
+    def test_the_repository_is_the_one_pushed_to_not_the_one_fetched_from(
+        self, checkout, capsys, monkeypatch
+    ):
+        """With a `pushurl` set, `main` and the tag go to the push URL. That
+        is the repository the release must ask GitHub about, cut the release
+        on, and hand to the hook -- all three, or they disagree."""
+        monkeypatch.setenv("FAKE_FETCH_URL", "https://mirror.example/acme/widget.git")
+        code, planned = rehearse(checkout)
+        out = capsys.readouterr().out
+        assert code == 0, out
+        assert "origin is acme/widget" in out
+        assert "push to main: the hook skips" in out and "on acme/widget" in out
+        create = next(c for c in planned if c[:3] == ["gh", "release", "create"])
+        assert create[create.index("--repo") + 1] == "acme/widget"
+
+    def test_a_push_url_that_is_not_github_is_named_even_if_the_fetch_url_is(
+        self, checkout, capsys, monkeypatch
+    ):
+        monkeypatch.setenv("FAKE_PUSH_URL", "https://mirror.example/acme/widget.git")
+        code, planned = rehearse(checkout)
+        assert code == 1 and planned == []
+        assert "is not a GitHub repository URL" in capsys.readouterr().err
+
+    def test_a_cancelled_workflow_run_is_named_and_the_remedy_is_to_rerun_it(
+        self, checkout, capsys
+    ):
+        """One of the two workflow runs that tested the commit was cancelled.
+        Nothing is wrong on dev, so "fix it on dev" sends the maintainer
+        nowhere: the run is named, and the remedy is to re-run it."""
+        from tests.verified_commit_cases import answer, run_of
+
+        sha = head(checkout)
+        url = "https://github.com/acme/widget/actions/runs/777/job/42"
+        gh_answers(
+            {
+                "stdout": answer(
+                    run_of(sha),
+                    run_of(sha, conclusion="cancelled", check_suite={"id": 2}, html_url=url),
+                )
+            }
+        )
+        code, planned = rehearse(checkout)
+        err = capsys.readouterr().err
+        assert code == 1 and planned == []
+        assert f"gate=cancelled ({url})" in err
+        assert "gh run rerun 777" in err and "re-run" in err
+        assert "Fix it on dev" not in err
 
     def test_a_venv_that_cannot_import_the_suite_is_named(self, checkout, capsys, monkeypatch):
         """0.25.7: the hook's venv had no `hypothesis`. With the commit
