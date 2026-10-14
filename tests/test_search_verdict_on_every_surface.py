@@ -313,6 +313,7 @@ class TestAScopedCallerOnTheSurfaces:
         alone = rest(env["peer"], q=ABSENT, kb=OPEN, mode=mode)
         assert scoped == alone
         assert scoped["match"] == "none"
+        assert SECRET not in json.dumps(scoped)
         assert leaks(scoped) == []
         assert leaks(rest(env["admin"], q=ABSENT, mode=mode)) != [], (
             "the check must see a real leak"
@@ -326,7 +327,9 @@ class TestAScopedCallerOnTheSurfaces:
         alone = server._kb_search({"query": ABSENT, "mode": mode, "kb_name": OPEN})
         assert scoped == alone
         assert scoped["match"] == "none"
+        assert SECRET not in json.dumps(scoped)
         assert leaks(scoped) == []
+        assert leaks(mcp(env, query=ABSENT, mode=mode)) != [], "the check must see a real leak"
         assert mcp(env, query=ABSENT, mode=mode)["match"] == "strong"
 
 
