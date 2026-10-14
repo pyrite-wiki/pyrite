@@ -31,6 +31,7 @@ from tests.link_scope_seed import (
     READABLE,
     READABLE_ENTRY,
     READABLE_POINTER,
+    READ_ONLY,
     seed_links,
 )
 
@@ -52,6 +53,10 @@ def _seed_zettel_graph(db):
         (READABLE, "graph-cycle-b", "Cycle B"),
         (PRIVATE, "graph-scope-secret", "Private graph secret"),
         (READABLE, "graph-scope-leak", "Readable graph target"),
+        (READABLE, "graph-xkb-start", "Cross-KB start"),
+        (READ_ONLY, "graph-xkb-bridge", "Cross-KB bridge"),
+        (READ_ONLY, "graph-xkb-far", "Cross-KB far"),
+        (PRIVATE, "graph-xkb-secret", "Private cross-KB secret"),
     ]
     for kb_name, entry_id, title in entries:
         _insert(db, kb_name, entry_id, title, "open", {}, entry_type="note")
@@ -67,6 +72,10 @@ def _seed_zettel_graph(db):
         ("graph-cycle-b", READABLE, "graph-cycle-a", READABLE),
         ("graph-scope-b", READABLE, "graph-scope-secret", PRIVATE),
         ("graph-scope-secret", PRIVATE, "graph-scope-leak", READABLE),
+        ("graph-xkb-start", READABLE, "graph-xkb-bridge", READ_ONLY),
+        ("graph-xkb-bridge", READ_ONLY, "graph-xkb-far", READ_ONLY),
+        ("graph-xkb-start", READABLE, "graph-xkb-secret", PRIVATE),
+        ("graph-xkb-secret", PRIVATE, "graph-xkb-far", READ_ONLY),
     ]
     for source_id, source_kb, target_id, target_kb in links:
         _link(db, source_id, source_kb, target_id, target_kb, "elaborates", "elaborated_by")
@@ -265,6 +274,35 @@ def test_zettel_graph_depth_expansion_handles_cycles_once(w, scope):
     neighbors = result.get("neighbors", {})
     assert "graph-cycle-b" in neighbors, result
     assert len(neighbors) == 1
+
+
+def test_zettel_graph_expands_readable_other_kb_neighbour_under_kb_id_key(w, scope):
+    assert READ_ONLY in scope
+    result = _call(
+        w, "zettel_graph", {"entry_id": "graph-xkb-start", "kb_name": READABLE, "depth": 2}, scope
+    )
+    neighbors = result.get("neighbors", {})
+    key = f"{READ_ONLY}:graph-xkb-bridge"
+    assert key in neighbors, result
+    assert "graph-xkb-bridge" not in neighbors  # the bare id would name this KB's entry
+    bridge = neighbors[key]
+    assert (bridge["id"], bridge["kb_name"]) == ("graph-xkb-bridge", READ_ONLY)
+    assert "graph-xkb-far" in [row["id"] for row in bridge["outlinks"]]
+
+
+def test_zettel_graph_omits_unreadable_other_kb_neighbour(w, scope):
+    args = {"entry_id": "graph-xkb-start", "kb_name": READABLE, "depth": 3}
+    scoped = _call(w, "zettel_graph", args, scope)
+    text = json.dumps(scoped)
+    assert f"{READ_ONLY}:graph-xkb-bridge" in scoped["neighbors"], scoped
+    assert not any(k.startswith(f"{PRIVATE}:") for k in scoped["neighbors"])
+    assert "Private cross-KB secret" not in text
+    # Like any unreadable target it reads as a missing one: a bare pointer, never expanded.
+    assert _by_id(scoped["outlinks"], "graph-xkb-secret")["title"] is None
+    assert not any("graph-xkb-secret" in k for k in scoped["neighbors"])
+    # Control: with no scope the same neighbour is expanded, so the absence above is the scope.
+    unscoped = _call(w, "zettel_graph", args, None)
+    assert f"{PRIVATE}:graph-xkb-secret" in unscoped["neighbors"], unscoped
 
 
 def test_zettel_graph_neighbours_stay_readable(w, scope):
