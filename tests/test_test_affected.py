@@ -654,7 +654,7 @@ class TestThisRepository:
         "tests/test_cli_commands.py::TestTyperListCommand",
         "tests/test_cli_commands.py::TestTyperGetCommand",
         "tests/test_cli_commands.py::TestTyperCreateCommand",
-        "tests/test_cli_commands.py::test_index_sync_verify_forwards_option",
+        "tests/test_cli_commands.py::test_index_sync_verify_finds_same_size_edit_with_restored_mtime",
         "tests/test_cli_commands.py::test_index_sync_verify_rejects_background_mode",
         "tests/test_cli_commands.py::TestTopLevelHelpAdvertisesOrient",
     }
