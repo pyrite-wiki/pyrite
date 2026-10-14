@@ -27,6 +27,7 @@ from pyrite.server.tool_schemas import READ_TOOLS
 from pyrite.services.kb_service import KBService
 from pyrite.services.link_discovery_service import LinkDiscoveryService
 from pyrite.storage.database import PyriteDB
+from tests.cli_help import plain
 
 runner = CliRunner()
 
@@ -35,11 +36,23 @@ EMPTIES = {"stub-1", "stub-2", "stub-3", "blank-body"}
 FULL = {"note-1", "note-2", "note-3"}
 
 
-class _StubEmbedder:
-    def embed_text(self, text: str) -> list[float]:
+class _Vec(list):
+    def tolist(self):
+        return list(self)
+
+
+class _StubModel:
+    """The model is the process edge: a deterministic 384-dim vector per text.
+
+    The real `EmbeddingService` and `SearchService` run on top of it.
+    """
+
+    def encode(self, text, **kwargs):
+        if isinstance(text, list):  # the service's warm-up call
+            return [self.encode(t) for t in text]
         vec = [0.05] * 384
         vec[zlib.crc32(text.encode()) % 384] += 0.001
-        return vec
+        return _Vec(vec)
 
 
 @pytest.fixture
@@ -47,8 +60,8 @@ def env(monkeypatch):
     import pyrite.services.embedding_service as es
 
     monkeypatch.setattr(es, "is_available", lambda: True)
-    monkeypatch.setattr(es.EmbeddingService, "_get_model", lambda self: _StubEmbedder())
-    monkeypatch.setattr(es.EmbeddingService, "embed_text", _StubEmbedder().embed_text)
+    monkeypatch.setattr(es, "_load_model", lambda name: _StubModel())
+    monkeypatch.setattr(es, "_MODEL_CACHE", {})
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -222,7 +235,7 @@ class TestCLI:
 
     @pytest.mark.parametrize("cmd", ["discover", "batch-suggest"])
     def test_help_says_what_is_left_out(self, cmd):
-        out = runner.invoke(app, ["links", cmd, "--help"]).output
+        out = plain(runner.invoke(app, ["links", cmd, "--help"]).output)
         flat = " ".join(out.split())
         assert "--include-empty" in flat
         assert "no body and no summary" in flat
