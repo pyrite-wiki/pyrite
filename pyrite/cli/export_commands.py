@@ -17,6 +17,33 @@ console = Console()
 export_app = typer.Typer(help="Export KB entries to external formats")
 
 
+def _legacy_format_option():
+    """`--format`/`-f` named the export target until #873 gave `--format` to the
+    shared output option (ADR-0046). Kept one release as a hidden alias."""
+    return typer.Option(None, "--format", "-f", hidden=True)
+
+
+def _resolve_target(target: str | None, legacy_format: str | None, default: str) -> str:
+    """The export target, from `--target` or its deprecated alias `--format`/`-f`.
+
+    Both given with different values is a usage error (exit 2); the old spelling
+    alone warns once on stderr (the deprecation pattern of #303).
+    """
+    if legacy_format is None:
+        return target if target is not None else default
+    if target is not None and target != legacy_format:
+        raise typer.BadParameter(
+            f"--target {target} and --format {legacy_format} disagree; "
+            "use --target only (--format is deprecated)."
+        )
+    typer.echo(
+        "Warning: --format/-f on `pyrite export` is deprecated and will be removed in the "
+        f"next release; use --target {legacy_format}.",
+        err=True,
+    )
+    return legacy_format
+
+
 @export_app.command("collection")
 def export_collection(
     collection_id: str = typer.Argument(
@@ -32,9 +59,10 @@ def export_collection(
         0, "--depth", help="Link-following depth (0=no following, 1=direct links, etc.)"
     ),
     title: str = typer.Option(None, "--title", help="Title for the manifest document"),
-    format: str = typer.Option(
-        "notebooklm", "--format", "-f", help="Export format (currently: notebooklm)"
+    target: str = typer.Option(
+        None, "--target", help="Export target (currently: notebooklm; the default)"
     ),
+    legacy_format: str = _legacy_format_option(),
 ):
     """Export a collection of KB entries for NotebookLM.
 
@@ -52,6 +80,8 @@ def export_collection(
         # Bundle into fewer files for large collections
         pyrite export collection my-collection --bundle by-type
     """
+    _resolve_target(target, legacy_format, "notebooklm")
+
     from ..models.base import Entry
     from ..renderers.notebooklm import BundleStrategy, SourceMode
     from ..services.export_service import ExportService
@@ -181,7 +211,10 @@ def export_collection(
 def export_site(
     kb: str = typer.Option(..., "-k", "--kb", help="Knowledge base name"),
     output: Path = typer.Option(Path("./site"), "-o", "--output", help="Output directory"),
-    format: str = typer.Option("quartz", "--format", "-f", help="Site format (currently: quartz)"),
+    target: str = typer.Option(
+        None, "--target", help="Site target (currently: quartz; the default)"
+    ),
+    legacy_format: str = _legacy_format_option(),
     exclude_types: str = typer.Option(
         None, "--exclude-types", help="Comma-separated entry types to exclude"
     ),
@@ -206,8 +239,9 @@ def export_site(
         pyrite export site -k my-kb -o ./my-site \\
             --exclude-types backlog_item,note --exclude-status draft,done
     """
-    if format != "quartz":
-        console.print(f"[red]Unknown site format: {format}[/red]")
+    target = _resolve_target(target, legacy_format, "quartz")
+    if target != "quartz":
+        console.print(f"[red]Unknown site target: {target}[/red]")
         console.print("Valid options: quartz")
         raise typer.Exit(1)
 
