@@ -92,7 +92,7 @@ dev = [
     # Bounds every test (#766): a hung retry loop ended nothing for 2h on #752.
     "pytest-timeout==2.4.0",
     # Splits the CI suite into balanced parallel shards (tests Q2); ci.yml `test`.
-    "pytest-split==0.10.0",
+    "pytest-split==0.11.0",
     # Diff coverage on the PR's 3.12 leg (advisory; see ci.yml's test job).
     "diff-cover==10.6.0",
     # Pinned exactly: tests/test_storage_invariants.py runs derandomized, and
