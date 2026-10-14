@@ -23,19 +23,26 @@ def _legacy_format_option():
     return typer.Option(None, "--format", "-f", hidden=True)
 
 
-def _resolve_target(target: str | None, legacy_format: str | None, default: str) -> str:
+def _resolve_target(target: str | None, legacy_format: str | None, valid: tuple[str, ...]) -> str:
     """The export target, from `--target` or its deprecated alias `--format`/`-f`.
 
     Both given with different values is a usage error (exit 2); the old spelling
-    alone warns once on stderr (the deprecation pattern of #303).
+    alone warns once on stderr (the deprecation pattern of #303). A value the
+    command cannot produce is a usage error too, before anything is written.
+    The first of ``valid`` is the default.
     """
-    if legacy_format is None:
-        return target if target is not None else default
-    if target is not None and target != legacy_format:
+    if legacy_format is not None and target is not None and target != legacy_format:
         raise typer.BadParameter(
             f"--target {target} and --format {legacy_format} disagree; "
             "use --target only (--format is deprecated)."
         )
+    for given in (target, legacy_format):
+        if given is not None and given not in valid:
+            raise typer.BadParameter(
+                f"unknown target {given!r}; valid targets: {', '.join(valid)}."
+            )
+    if legacy_format is None:
+        return target if target is not None else valid[0]
     typer.echo(
         "Warning: --format/-f on `pyrite export` is deprecated and will be removed in the "
         f"next release; use --target {legacy_format}.",
@@ -80,7 +87,7 @@ def export_collection(
         # Bundle into fewer files for large collections
         pyrite export collection my-collection --bundle by-type
     """
-    _resolve_target(target, legacy_format, "notebooklm")
+    _resolve_target(target, legacy_format, ("notebooklm",))
 
     from ..models.base import Entry
     from ..renderers.notebooklm import BundleStrategy, SourceMode
@@ -239,11 +246,7 @@ def export_site(
         pyrite export site -k my-kb -o ./my-site \\
             --exclude-types backlog_item,note --exclude-status draft,done
     """
-    target = _resolve_target(target, legacy_format, "quartz")
-    if target != "quartz":
-        console.print(f"[red]Unknown site target: {target}[/red]")
-        console.print("Valid options: quartz")
-        raise typer.Exit(1)
+    _resolve_target(target, legacy_format, ("quartz",))
 
     from ..renderers.quartz import export_site as quartz_export
     from ..renderers.quartz import scaffold_quartz_project

@@ -61,7 +61,10 @@ def _export(config, *args):
 
 
 def _files(path):
-    return sorted(str(p.relative_to(path)) for p in path.rglob("*") if p.is_file())
+    """name -> bytes of every file written, so the alias is compared on content."""
+    return {
+        str(p.relative_to(path)): p.read_bytes() for p in sorted(path.rglob("*")) if p.is_file()
+    }
 
 
 SITE = ["site", "-k", "notes"]
@@ -93,14 +96,20 @@ class TestSiteTarget:
         assert result.exit_code == 0, result.output
         assert _files(out)
 
-    def test_unknown_target_is_refused(self, config, tmp_path):
-        result = _export(config, *SITE, "-o", str(tmp_path / "x"), "--target", "hugo")
-        assert result.exit_code == 1
-        assert "hugo" in result.output
+    @pytest.mark.parametrize("flag", ["--target", "--format", "-f"])
+    def test_unknown_target_is_refused_before_anything_is_written(self, config, tmp_path, flag):
+        out = tmp_path / "x"
+        result = _export(config, *SITE, "-o", str(out), flag, "hugo")
+        assert result.exit_code == 2
+        text = result.output + result.stderr
+        assert "hugo" in text and "quartz" in text
+        assert not out.exists()
 
-    def test_unknown_old_spelling_is_refused(self, config, tmp_path):
-        result = _export(config, *SITE, "-o", str(tmp_path / "x"), "--format", "hugo")
-        assert result.exit_code == 1
+    def test_same_value_on_both_spellings_is_accepted_and_warns_once(self, config, tmp_path):
+        out = tmp_path / "x"
+        result = _export(config, *SITE, "-o", str(out), "--target", "quartz", "-f", "quartz")
+        assert result.exit_code == 0, result.output
+        assert len([ln for ln in result.stderr.splitlines() if "deprecated" in ln.lower()]) == 1
 
     def test_conflicting_target_and_format_is_a_usage_error(self, config, tmp_path):
         result = _export(
@@ -138,6 +147,29 @@ class TestCollectionTarget:
     def test_default_is_unchanged(self, config, tmp_path):
         result = _export(config, *COLLECTION, "-o", str(tmp_path / "d"))
         assert result.exit_code == 0, result.output
+
+    @pytest.mark.parametrize("flag", ["--target", "--format", "-f"])
+    def test_unknown_target_is_refused_before_anything_is_written(self, config, tmp_path, flag):
+        out = tmp_path / "x"
+        result = _export(config, *COLLECTION, "-o", str(out), flag, "hugo")
+        assert result.exit_code == 2
+        text = result.output + result.stderr
+        assert "hugo" in text and "notebooklm" in text
+        assert not out.exists()
+
+    def test_same_value_on_both_spellings_is_accepted_and_warns_once(self, config, tmp_path):
+        result = _export(
+            config,
+            *COLLECTION,
+            "-o",
+            str(tmp_path / "x"),
+            "--target",
+            "notebooklm",
+            "-f",
+            "notebooklm",
+        )
+        assert result.exit_code == 0, result.output
+        assert len([ln for ln in result.stderr.splitlines() if "deprecated" in ln.lower()]) == 1
 
     def test_conflicting_target_and_format_is_a_usage_error(self, config, tmp_path):
         result = _export(
