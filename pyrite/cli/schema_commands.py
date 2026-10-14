@@ -10,7 +10,14 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from ..utils.errors import cli_error
+from ..utils.errors import cli_error, exit_unless_whole
+from ..utils.frontmatter import (
+    Frontmatter,
+    NoFrontmatter,
+    Unterminated,
+    describe,
+    split_frontmatter,
+)
 from .context import cli_context, get_config_with_registered_kbs
 
 logger = logging.getLogger(__name__)
@@ -58,7 +65,8 @@ def _parse_frontmatter(file_path: Path) -> tuple[dict[str, Any], str, list[dict[
         )
         return {}, "", errors
 
-    if not text.startswith("---"):
+    split = split_frontmatter(text)
+    if isinstance(split, NoFrontmatter):
         errors.append(
             {
                 "file": path_str,
@@ -69,20 +77,23 @@ def _parse_frontmatter(file_path: Path) -> tuple[dict[str, Any], str, list[dict[
         )
         return {}, text, errors
 
-    end = text.find("---", 3)
-    if end < 0:
+    if not isinstance(split, Frontmatter):
         errors.append(
             {
                 "file": path_str,
                 "check": "frontmatter_parse",
-                "message": "Unterminated YAML frontmatter (missing closing ---)",
+                "message": (
+                    "Unterminated YAML frontmatter (missing closing ---)"
+                    if isinstance(split, Unterminated)
+                    else f"Unreadable YAML frontmatter: {describe(split)}"
+                ),
                 "severity": "error",
             }
         )
         return {}, text, errors
 
-    yaml_text = text[3:end]
-    body = text[end + 3 :].strip()
+    yaml_text = split.text
+    body = split.body
 
     try:
         from ..utils.yaml import load_yaml
@@ -356,8 +367,6 @@ def schema_migrate(
                 if entry_type and entry.entry_type != entry_type:
                     continue
 
-                checked += 1
-
                 # Check if version changed (migration happened on load)
                 type_schema = kb_config.kb_schema.get_type_schema(entry.entry_type)
                 needs_save = (
@@ -366,13 +375,16 @@ def schema_migrate(
                     and entry._schema_version != type_schema.version
                 )
 
+                if needs_save and not dry_run:
+                    entry._schema_version = type_schema.version
+                    entry.kb_name = kb_name
+                    entry.file_path = file_path
+                    entry.save(file_path)
+                # Counted after the save: a file that failed to save was neither
+                # checked nor migrated, whatever the summary used to say.
+                checked += 1
                 if needs_save:
                     migrated += 1
-                    if not dry_run:
-                        entry._schema_version = type_schema.version
-                        entry.kb_name = kb_name
-                        entry.file_path = file_path
-                        entry.save(file_path)
             except Exception as e:
                 errors += 1
                 logger.warning("Migration error for %s: %s", file_path, e)
@@ -382,9 +394,10 @@ def schema_migrate(
         console.print(f"  Checked: {checked}")
         console.print(f"  Migrated: {migrated}")
         if errors:
-            console.print(f"  [red]Errors: {errors}[/red]")
-        if migrated == 0:
+            console.print(f"  [red]Errors: {errors}[/red] (files left as they were)")
+        elif migrated == 0:
             console.print("  [green]All entries are up to date.[/green]")
+        exit_unless_whole(errors, checked)
 
 
 def _collect_md_files(paths: list[Path]) -> list[Path]:
@@ -545,6 +558,20 @@ def schema_validate(
                 {
                     "file": w["where"],
                     "check": "schema_enum",
+                    "message": w["message"],
+                    "severity": "warning",
+                }
+            )
+
+    # Schema-level: a malformed `field_aliases` map on a type (#697).
+    if schema:
+        from ..schema.field_aliases import field_aliases_findings
+
+        for w in field_aliases_findings(schema):
+            all_errors.append(
+                {
+                    "file": w["where"],
+                    "check": "schema_field_aliases",
                     "message": w["message"],
                     "severity": "warning",
                 }

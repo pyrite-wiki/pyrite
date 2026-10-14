@@ -184,6 +184,16 @@ Measured before this amendment: a `values:` list was silently dropped by the par
 
 Upgrade: a KB whose data drifts from its declared enums starts refusing off-list writes and its `index health` goes `unhealthy`. Set `validation.enforce_enums: false`, clean up guided by `qa validate` / `index health`, then remove the line.
 
+## Amendment 2026-10-14: a KB's declared vocabulary overrides a plugin's (#874, #669)
+
+Measured before this amendment (#874's groom, dev 34c67235): a value had to pass both the KB's list and the plugin's, so a KB could narrow a plugin vocabulary but never widen it, and the surfaces disagreed on the same value. On a software KB declaring `kind: refactor` for `backlog_item`, `create` and `update` refused it (`SCHEMA_VIOLATION`), `index health` reported a plugin warning, `orient` listed it as allowed, and `schema validate` passed it. The maintainer's decisions (2026-10-14):
+
+7. **Override.** Where a KB's `kb.yaml` declares the vocabulary for a field of a type (field `options:`/`values:`, or a `validation.rules` enum covering it), that list is the vocabulary for the field in that KB. A plugin's vocabulary is the default, and applies only where the KB declares none. A KB that declares nothing behaves as before. Explicit is better than implicit: the KB's file says what the KB accepts.
+8. **One resolver.** One function answers "which values are allowed for field F of type T in KB K", next to `enum_findings` in `pyrite/schema/enum_check.py`. Every surface that checks or reports a vocabulary (the write path, `schema validate`, `index health`, `orient`, MCP tool schemas) asks it; a plugin's enum finding on a field the KB declares is dropped there, so out-of-tree plugins need no change.
+9. **One switch.** This replaces point 3's last rule ("the switch does not extend to plugin validators' enums"): `validation.enforce_enums` governs every enum finding whatever its origin, kb.yaml or plugin. With it on, an off-list value is refused; with it off, it is a warning. Point 5's plugin rows in `index health` therefore follow the switch like kb.yaml rows.
+
+Upgrade: a KB whose data relied on a plugin vocabulary being only a warning in `index health` may go `unhealthy`; the remedy is point 3's (turn the switch off, clean up, turn it back on) or declaring the KB's own vocabulary.
+
 ## Related
 
 - **ADR-0001**: Git-native storage — structured data stays in YAML frontmatter, preserving the model

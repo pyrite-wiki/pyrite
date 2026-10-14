@@ -301,7 +301,7 @@ Plugins can register additional view types. Each view type is a Svelte component
 - [ADR-0008: Structured Data and Schema](0008-structured-data-and-schema.md) — field types, validation, kb.yaml schema
 - [ADR-0009: Type Metadata and AI Instructions](0009-type-metadata-and-plugin-documentation.md) — display hints, AI instructions per type
 - [ADR-0010: Content Negotiation](0010-content-negotiation-and-format-support.md) — format-aware rendering of collection results
-- Backlog #28: [Dataview-Style Queries](../backlog/dataview-queries.md) — subsumed by virtual collections
-- Backlog #29: [Database Views](../backlog/database-views.md) — subsumed by collection view types
-- Backlog #43: [Display Hints for Types](../backlog/display-hints-for-types.md) — foundation for view configuration
-- Backlog #17: [Block References and Transclusion](../backlog/block-references.md) — collection embedding extends transclusion
+- Backlog #28: [Dataview-Style Queries](../backlog/done/dataview-queries.md) — subsumed by virtual collections
+- Backlog #29: [Database Views](../backlog/done/database-views.md) — subsumed by collection view types
+- Backlog #43: [Display Hints for Types](../backlog/done/display-hints-for-types.md) — foundation for view configuration
+- Backlog #17: [Block References and Transclusion](../backlog/done/block-references.md) — collection embedding extends transclusion

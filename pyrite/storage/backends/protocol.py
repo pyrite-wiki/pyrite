@@ -8,7 +8,41 @@ protocol.  App-state tables (kb, user, repo, etc.) stay in PyriteDB/ORM.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Protocol, runtime_checkable
+
+#: The vector leg returns no row less similar to the query than this (cosine).
+#: 0.155 is where the cutoff has always sat on SQLite: it was written as an L2
+#: distance of 1.3 between unit vectors, and ``1 - 1.3**2 / 2 = 0.155``. On
+#: Postgres the same 1.3 was read as a cosine distance and cut nothing (#668).
+DEFAULT_MIN_SIMILARITY = 0.155
+
+
+def similarity_from(cosine_distance: float | None) -> float | None:
+    """A row's ``similarity``: cosine similarity, 3 places, from cosine distance.
+
+    The one conversion both backends use (pgvector's ``<=>``, sqlite-vec's
+    ``vec_distance_cosine``), so the number cannot differ by backend. ``None``
+    for a vector with no direction (all zeros), which has no cosine.
+    """
+    if cosine_distance is None or math.isnan(cosine_distance):
+        return None
+    return round(1.0 - float(cosine_distance), 3)
+
+
+class SemanticRows(list):
+    """The rows ``search_semantic`` returns, with one fact about how it got them.
+
+    ``capped`` is True when the backend returned fewer rows than ``limit`` and
+    could not consider every candidate the filters admit: sqlite-vec looks at
+    the 4096 nearest vectors and no further, so when more than that many
+    nearer vectors fall outside the filter (another KB, another type), rows
+    inside it are never reached. An empty or short result is then not
+    evidence that nothing matches, and the search verdict does not read it as
+    ``none`` (#668). A plain list means "not capped".
+    """
+
+    capped: bool = False
 
 
 @runtime_checkable
@@ -97,6 +131,7 @@ class SearchBackend(Protocol):
         lifecycle: str | None = None,
         fips: str | None = None,
         state: str | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """Full-text search across entries."""
         ...
@@ -134,7 +169,7 @@ class SearchBackend(Protocol):
         embedding: list[float],
         kb_name: str | None = None,
         limit: int = 20,
-        max_distance: float = 1.3,
+        min_similarity: float = DEFAULT_MIN_SIMILARITY,
         entry_type: str | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
@@ -143,6 +178,8 @@ class SearchBackend(Protocol):
         state: str | None = None,
         status: str | None = None,
         include_archived: bool = False,
+        kb_names: set[str] | list[str] | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """KNN search over stored embeddings, honouring the same filters as
         :meth:`search`.
@@ -156,11 +193,32 @@ class SearchBackend(Protocol):
         vector leg — naming the filters in ``warnings`` — rather than call it
         with a filter it would ignore. Returning unfiltered rows is never
         acceptable.
+
+        ``kb_names`` is the caller's readable set (``None``: every KB) and is
+        applied the same way, inside the query: a search scoped to it returns
+        what a search of an index holding only those KBs would (#668).
+
+        Every row carries ``similarity``: the cosine similarity of its vector
+        and ``embedding``, rounded to 3 places (`similarity_from`), the same
+        number on every backend for the same vectors. Rows come back in
+        descending ``similarity``, and a row below ``min_similarity`` is not
+        returned. ``distance`` is also on each row and is backend-specific
+        (sqlite-vec: L2; pgvector: cosine distance); nothing should read it.
+
+        A backend that cannot consider every candidate the filters admit says
+        so by returning a :class:`SemanticRows` with ``capped=True``.
         """
         ...
 
-    def has_embeddings(self) -> bool:
-        """Check if any embeddings exist."""
+    def has_embeddings(
+        self, kb_name: str | None = None, kb_names: set[str] | list[str] | None = None
+    ) -> bool:
+        """Do any embeddings exist, in the KBs named?
+
+        With no arguments: anywhere in the index. ``kb_name`` and ``kb_names``
+        (a caller's readable set) narrow it as they do for ``search``: what a
+        scoped search may say about embeddings depends only on KBs it covers.
+        """
         ...
 
     def embedding_stats(self) -> dict[str, Any]:

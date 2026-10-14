@@ -164,6 +164,12 @@
   "GET /api/search UNSCOPED | admin_key": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "all_terms",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "strong",
+      "match_basis": "keyword: every term matched",
       "query": "zebra",
       "results": [
         {
@@ -189,6 +195,12 @@
   "GET /api/search UNSCOPED | anonymous": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "all_terms",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "strong",
+      "match_basis": "keyword: every term matched",
       "query": "zebra",
       "results": [
         {
@@ -210,6 +222,12 @@
   "GET /api/search UNSCOPED | global_user": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "all_terms",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "strong",
+      "match_basis": "keyword: every term matched",
       "query": "zebra",
       "results": [
         {
@@ -231,6 +249,12 @@
   "GET /api/search UNSCOPED | granted_user": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "all_terms",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "strong",
+      "match_basis": "keyword: every term matched",
       "query": "zebra",
       "results": [
         {
@@ -252,6 +276,12 @@
   "GET /api/search UNSCOPED | local_user": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "all_terms",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "strong",
+      "match_basis": "keyword: every term matched",
       "query": "zebra",
       "results": [
         {
@@ -269,6 +299,12 @@
   "GET /api/search UNSCOPED | read_key": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "all_terms",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "strong",
+      "match_basis": "keyword: every term matched",
       "query": "zebra",
       "results": [
         {
@@ -294,6 +330,12 @@
   "GET /api/search UNSCOPED | write_key": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "all_terms",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "strong",
+      "match_basis": "keyword: every term matched",
       "query": "zebra",
       "results": [
         {
@@ -467,6 +509,12 @@
   "kb_search UNSCOPED | admin_key": {
     "count": "<ENUMERATION_CONTENT>",
     "has_more": "<ENUMERATION_CONTENT>",
+    "keyword_match": "all_terms",
+    "legs_run": [
+      "keyword"
+    ],
+    "match": "strong",
+    "match_basis": "keyword: every term matched; semantic: the leg did not run: nothing in the KBs searched is embedded yet",
     "query": "zebra",
     "results": [
       {
@@ -493,6 +541,12 @@
   "kb_search UNSCOPED | anonymous": {
     "count": "<ENUMERATION_CONTENT>",
     "has_more": "<ENUMERATION_CONTENT>",
+    "keyword_match": "all_terms",
+    "legs_run": [
+      "keyword"
+    ],
+    "match": "strong",
+    "match_basis": "keyword: every term matched; semantic: the leg did not run: nothing in the KBs searched is embedded yet",
     "query": "zebra",
     "results": [
       {
@@ -509,12 +563,18 @@
       }
     ],
     "warnings": [
-      "semantic leg skipped: no embeddings exist for this index yet, so only the keyword leg ran; run `pyrite index embed` to build them"
+      "semantic leg skipped: no embeddings exist for the KBs searched yet, so only the keyword leg ran; run `pyrite index embed` to build them"
     ]
   },
   "kb_search UNSCOPED | global_user": {
     "count": "<ENUMERATION_CONTENT>",
     "has_more": "<ENUMERATION_CONTENT>",
+    "keyword_match": "all_terms",
+    "legs_run": [
+      "keyword"
+    ],
+    "match": "strong",
+    "match_basis": "keyword: every term matched; semantic: the leg did not run: nothing in the KBs searched is embedded yet",
     "query": "zebra",
     "results": [
       {
@@ -531,12 +591,18 @@
       }
     ],
     "warnings": [
-      "semantic leg skipped: no embeddings exist for this index yet, so only the keyword leg ran; run `pyrite index embed` to build them"
+      "semantic leg skipped: no embeddings exist for the KBs searched yet, so only the keyword leg ran; run `pyrite index embed` to build them"
     ]
   },
   "kb_search UNSCOPED | granted_user": {
     "count": "<ENUMERATION_CONTENT>",
     "has_more": "<ENUMERATION_CONTENT>",
+    "keyword_match": "all_terms",
+    "legs_run": [
+      "keyword"
+    ],
+    "match": "strong",
+    "match_basis": "keyword: every term matched; semantic: the leg did not run: nothing in the KBs searched is embedded yet",
     "query": "zebra",
     "results": [
       {
@@ -553,12 +619,18 @@
       }
     ],
     "warnings": [
-      "semantic leg skipped: no embeddings exist for this index yet, so only the keyword leg ran; run `pyrite index embed` to build them"
+      "semantic leg skipped: no embeddings exist for the KBs searched yet, so only the keyword leg ran; run `pyrite index embed` to build them"
     ]
   },
   "kb_search UNSCOPED | local_user": {
     "count": "<ENUMERATION_CONTENT>",
     "has_more": "<ENUMERATION_CONTENT>",
+    "keyword_match": "all_terms",
+    "legs_run": [
+      "keyword"
+    ],
+    "match": "strong",
+    "match_basis": "keyword: every term matched; semantic: the leg did not run: nothing in the KBs searched is embedded yet",
     "query": "zebra",
     "results": [
       {
@@ -571,12 +643,18 @@
       }
     ],
     "warnings": [
-      "semantic leg skipped: no embeddings exist for this index yet, so only the keyword leg ran; run `pyrite index embed` to build them"
+      "semantic leg skipped: no embeddings exist for the KBs searched yet, so only the keyword leg ran; run `pyrite index embed` to build them"
     ]
   },
   "kb_search UNSCOPED | read_key": {
     "count": "<ENUMERATION_CONTENT>",
     "has_more": "<ENUMERATION_CONTENT>",
+    "keyword_match": "all_terms",
+    "legs_run": [
+      "keyword"
+    ],
+    "match": "strong",
+    "match_basis": "keyword: every term matched; semantic: the leg did not run: nothing in the KBs searched is embedded yet",
     "query": "zebra",
     "results": [
       {
@@ -603,6 +681,12 @@
   "kb_search UNSCOPED | write_key": {
     "count": "<ENUMERATION_CONTENT>",
     "has_more": "<ENUMERATION_CONTENT>",
+    "keyword_match": "all_terms",
+    "legs_run": [
+      "keyword"
+    ],
+    "match": "strong",
+    "match_basis": "keyword: every term matched; semantic: the leg did not run: nothing in the KBs searched is embedded yet",
     "query": "zebra",
     "results": [
       {

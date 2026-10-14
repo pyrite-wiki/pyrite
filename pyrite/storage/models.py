@@ -6,6 +6,7 @@ are handled separately in virtual_tables.py since they have no ORM equivalent.
 """
 
 from sqlalchemy import (
+    BigInteger,
     Column,
     ForeignKey,
     ForeignKeyConstraint,
@@ -87,6 +88,13 @@ class Entry(Base):
     # SHA-256 of the on-disk file content at index time. Lets check_staleness
     # catch same-second content edits that mtime comparison alone misses.
     content_hash = Column(String(64))
+
+    # The file's st_mtime_ns and st_size when it was indexed. A reconcile
+    # re-reads a known file only when either differs, and the content hash
+    # decides whether it changed (ADR-0038 decision 4). Null on rows indexed
+    # before v27: the first reconcile hashes those once.
+    file_mtime_ns = Column(BigInteger)
+    file_size = Column(BigInteger)
 
     # Attribution
     created_by = Column(String, nullable=True)

@@ -101,6 +101,20 @@ class TestMCPToolRegistration:
                 assert "description" in tool, f"{name} missing description"
                 assert len(tool["description"]) > 10, f"{name} description too short"
 
+    def test_every_registered_tool_starts_with_experimental_notice(self):
+        notice = "EXPERIMENTAL: Unsupported until the 0.28 alpha plugin/API contract."
+        plugin = JournalismInvestigationPlugin()
+        names = set()
+
+        for tier in ("read", "write", "admin"):
+            tools = plugin.get_mcp_tools(tier)
+            names.update(tools)
+            for name, tool in tools.items():
+                assert tool["description"].startswith(notice + " "), name
+
+        assert names
+        assert all(name.startswith("investigation_") for name in names)
+
 
 class TestMCPWriteToolRegistration:
     def test_write_tier_has_create_tools(self):

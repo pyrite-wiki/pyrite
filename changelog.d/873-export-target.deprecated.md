@@ -1,0 +1,1 @@
+- **`pyrite export collection|site --format`/`-f` is deprecated (#873).** It still works for one release as an alias for `--target`, prints one warning on stderr naming `--target`, and is hidden from `--help`. It goes in the next release.

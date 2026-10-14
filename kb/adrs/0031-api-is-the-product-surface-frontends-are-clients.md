@@ -3,7 +3,7 @@ id: adr-0031
 type: adr
 title: "The API Is the Product Surface; Frontends Are Scoped Clients"
 adr_number: 31
-status: draft
+status: superseded
 deciders: ["markr"]
 date: "2026-09-17"
 tags: [architecture, api, frontend, authorization, extensibility, deployment]
@@ -29,11 +29,19 @@ links:
 - target: repo-access-is-a-capability-not-a-tier
   relation: related
   kb: pyrite
+- target: adr-0043
+  relation: superseded_by
+  kb: pyrite
+superseded_by: adr-0043
 ---
 
 # ADR-0031: The API Is the Product Surface; Frontends Are Scoped Clients
 
-> **DRAFT.** Circulated for iteration, not decision. Open questions at the
+> **Withdrawn by the maintainer, 2026-10-03.** Replaced by [[adr-0043]] (two planes:
+> entries by grant, everything else the operator's). The status is `superseded`, the nearest allowed value to "withdrawn"; this draft was never accepted. The text below is kept as the
+> record of the exploration.
+
+> **Was a draft.** Circulated for iteration, not decision. Open questions at the
 > end are genuinely open; several would change the shape of the decision.
 
 ## Context

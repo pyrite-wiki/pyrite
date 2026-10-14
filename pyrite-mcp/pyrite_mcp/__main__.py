@@ -1,7 +1,7 @@
 """Standalone MCP server entry point for Pyrite knowledge bases.
 
 Usage:
-    pyrite-mcp serve [--tier read|write|admin]
+    pyrite-mcp serve [--tier read|write|admin]   (default: write)
     pyrite-mcp init <name> [--path <dir>]
 """
 
@@ -48,9 +48,7 @@ def cmd_init(args):
     from pyrite.config import KBConfig, KBType
 
     if not config.get_kb(args.name):
-        config.add_kb(
-            KBConfig(name=args.name, path=kb_path.resolve(), kb_type=KBType.RESEARCH)
-        )
+        config.add_kb(KBConfig(name=args.name, path=kb_path.resolve(), kb_type=KBType.RESEARCH))
         save_config(config)
 
     db = PyriteDB(config.settings.index_path)
@@ -75,8 +73,9 @@ def main():
     serve_parser.add_argument(
         "--tier",
         choices=["read", "write", "admin"],
-        default="read",
-        help="Access tier (default: read)",
+        # write, as `pyrite mcp` (ADR-0006; #582).
+        default="write",
+        help="Access tier (default: write)",
     )
 
     # init

@@ -228,7 +228,7 @@ def test_cli_import_refuses_a_schema_violation(env):
         )
     )
     result = _cli(env, ["import", str(path), "-k", KB])
-    assert result.exit_code == 1, result.output
+    assert result.exit_code == 3, result.output  # one written, one refused (#526)
     assert "[SCHEMA_VIOLATION]" in result.output
     assert _file(env, "probe-bulk") is None
     assert "role: editor" in _file(env, "probe-fine").read_text()
@@ -238,7 +238,9 @@ def test_cli_import_dry_run_reports_refusals_without_writing(env):
     path = env["tmp_path"] / "d.json"
     path.write_text(json.dumps([{"type": "person", "title": "Dry Bad", "role": "bogus"}]))
     result = _cli(env, ["import", str(path), "-k", KB, "--dry-run"])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, (
+        result.output
+    )  # a dry run that would refuse exits as the real run would (#526)
     assert "Would refuse [SCHEMA_VIOLATION]" in result.output, result.output
     assert _file(env, "dry-bad") is None
 
@@ -379,7 +381,7 @@ def test_cli_add_refuses_an_undeclared_type_unless_allowed(env):
     _stop_enforcing(env)
     src = env["tmp_path"] / "w.md"
     src.write_text("---\ntitle: Added Widget\ntype: widget\n---\n\nbody\n")
-    result = _cli(env, ["add", str(src), "-k", KB])
+    result = _cli(env, ["add", str(src), "-k", KB, "--format", "rich"])
     assert result.exit_code == 1, result.output
     assert "[UNDECLARED_TYPE]" in result.output
     assert _file(env, "added-widget") is None
@@ -392,7 +394,7 @@ def test_cli_add_refuses_an_undeclared_type_unless_allowed(env):
 def test_cli_add_refuses_a_truncated_body(env):
     src = env["tmp_path"] / "t.md"
     src.write_text("---\ntitle: Added Chunk\ntype: person\nbody_truncated: true\n---\n\npartial\n")
-    result = _cli(env, ["add", str(src), "-k", KB])
+    result = _cli(env, ["add", str(src), "-k", KB, "--format", "rich"])
     assert result.exit_code == 1, result.output
     assert "[VALIDATION_FAILED]" in result.output
     assert _file(env, "added-chunk") is None
@@ -416,7 +418,9 @@ def test_cli_import_dry_run_works_on_a_read_only_kb(env):
     path = env["tmp_path"] / "ro.json"
     path.write_text(json.dumps([{"type": "person", "title": "Ro Check", "role": "bogus"}]))
     result = _cli(env, ["import", str(path), "-k", KB, "--dry-run"])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, (
+        result.output
+    )  # a dry run that would refuse exits as the real run would (#526)
     assert "Would refuse [SCHEMA_VIOLATION]" in result.output, result.output
 
 
@@ -956,7 +960,9 @@ def test_cli_import_dry_run_reports_a_duplicate_within_the_batch(env):
         )
     )
     result = _cli(env, ["import", str(path), "-k", KB, "--dry-run"])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 3, (
+        result.output
+    )  # a dry run that would refuse exits as the real run would (#526)
     assert result.output.count("Would refuse [ENTRY_EXISTS]") == 1, result.output
     assert _file(env, "twin-dry") is None
 
@@ -1203,4 +1209,50 @@ def test_before_save_hook_output_is_validated_on_update_and_preserves_file(env):
     finally:
         if registry is not None:
             del registry._plugins[plugin_name]
+        db.close()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("sources", [{"title": "A source", "url": "https://example.com/ref"}]),
+        ("links", [{"target": "other-entry", "relation": "related_to"}]),
+    ],
+)
+def test_update_accepts_read_shaped_source_and_link_dicts(env, field, value):
+    """An update can echo JSON objects returned for Source and Link fields."""
+    from pyrite.services.kb_service import KBService
+
+    db = PyriteDB(env["db_path"])
+    try:
+        svc = KBService(env["config"], db)
+        svc.create_entry(KB, "echo-json", "Echo JSON", "person", "body", role="author")
+        updated = svc.update_entry("echo-json", KB, **{field: value})
+        assert [item.to_dict() for item in getattr(updated, field)] == value
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("sources", [None]),
+        ("links", [None]),
+    ],
+)
+def test_update_rejects_malformed_source_and_link_items_by_field(env, field, value):
+    from pyrite.exceptions import ValidationError
+    from pyrite.services.kb_service import KBService
+
+    db = PyriteDB(env["db_path"])
+    try:
+        svc = KBService(env["config"], db)
+        svc.create_entry(KB, "bad-json", "Bad JSON", "person", "body", role="author")
+        target = next(env["kb_path"].rglob("bad-json.md"))
+        before = target.read_bytes()
+
+        with pytest.raises(ValidationError, match=field):
+            svc.update_entry("bad-json", KB, **{field: value})
+        assert target.read_bytes() == before
+    finally:
         db.close()

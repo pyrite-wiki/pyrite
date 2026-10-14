@@ -26,8 +26,8 @@ pyrite-mcp serve --tier read
 
 ### Tiers
 
-- **read** (default): Search, browse, retrieve entries
-- **write**: Read + create/update/delete entries
+- **read**: Search, browse, retrieve entries
+- **write** (default): Read + create/update/delete entries
 - **admin**: Write + KB management, index rebuild
 
 ## Claude Code Integration

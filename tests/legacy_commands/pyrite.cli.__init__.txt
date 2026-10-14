@@ -1,0 +1,14 @@
+pyrite auth github-login
+pyrite auth github-logout
+pyrite auth github-setup
+pyrite auth status
+pyrite auth whoami
+pyrite ci
+pyrite config
+pyrite import
+pyrite list
+pyrite mcp
+pyrite readme
+pyrite repo add
+pyrite repo remove
+pyrite serve

@@ -82,6 +82,7 @@ def social_reputation(
             console.print(f"  From adjustments: {log_rep}")
     except Exception as e:
         console.print(f"[yellow]Could not compute reputation: {e}[/yellow]")
+        raise typer.Exit(1) from None  # the answer asked for was not produced (#526)
     finally:
         db.close()
 

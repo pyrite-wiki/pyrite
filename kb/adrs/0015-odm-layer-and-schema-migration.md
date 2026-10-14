@@ -189,7 +189,7 @@ Step 1 is the risk-reducing deliverable — schemas can evolve without breaking 
 
 ## Related
 
-- [Schema Versioning backlog item](../backlog/schema-versioning.md) — the migration story (decoupled, pre-0.8)
+- [Schema Versioning backlog item](../backlog/done/schema-versioning.md) — the migration story (decoupled, pre-0.8)
 - [PostgreSQL Storage Backend](../backlog/done/postgres-storage-backend.md) — Postgres as app_backend and/or index_backend (done, 66/66 conformance)
 - [Extension Type Protocols (ADR-0014)](0014-structural-protocols-for-extension-types.md) — `SearchBackend` itself is a protocol
 - [ADR-0013: Unified Database Connection Model](0013-unified-database-connection-and-transaction-model.md) — current DB architecture being evolved

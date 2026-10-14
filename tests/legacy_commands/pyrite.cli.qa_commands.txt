@@ -1,0 +1,10 @@
+pyrite qa assess
+pyrite qa check-urls
+pyrite qa checkers
+pyrite qa compact
+pyrite qa coverage
+pyrite qa fix
+pyrite qa gaps
+pyrite qa stale
+pyrite qa status
+pyrite qa validate

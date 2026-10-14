@@ -356,6 +356,7 @@ class TestParallelSuite:
             for job in ci["jobs"].values()
             for step in job["steps"]
             if "pytest" in str(step.get("run", ""))
+            and "--collect-only" not in str(step.get("run", ""))
         ]
         assert runs, "no pytest step in CI"
         assert all("-n auto" in r for r in runs), runs
@@ -387,7 +388,7 @@ class TestPinnedTestRunner:
     silent `uv pip install` drift.
     """
 
-    _PINNED = {"pytest", "pytest-cov", "pytest-xdist"}
+    _PINNED = {"pytest", "pytest-cov", "pytest-xdist", "pytest-timeout", "pytest-split"}
 
     def _dev_extra(self, pyproject: dict) -> list[str]:
         return pyproject["project"]["optional-dependencies"]["dev"]
@@ -415,6 +416,30 @@ class TestPinnedTestRunner:
                     assert spec.count("==") == 1 and not any(
                         op in spec for op in (">=", "<=", "~=", "!=")
                     ), spec
+
+
+class TestEveryTestIsBounded:
+    """A hung test must end by itself (#766).
+
+    On #752 a local verify-red run of tests/test_file_lock.py spun for 2h01m:
+    with the guard removed a retry loop never ended, and nothing bounded it.
+    pytest-timeout with a default in pyproject.toml bounds every test, on
+    every machine, without a flag anyone has to remember. 600 s is the ceiling
+    (CI's slowest single test is ~40 s); a test that really needs longer says
+    so with `@pytest.mark.timeout(N)` and a reason.
+    """
+
+    CEILING = 600
+
+    def test_pytest_timeout_is_a_dev_dependency(self, pyproject):
+        specs = pyproject["project"]["optional-dependencies"]["dev"]
+        assert any(s.startswith("pytest-timeout") for s in specs), specs
+
+    def test_default_timeout_is_set_and_not_above_the_ceiling(self, pyproject):
+        opts = pyproject["tool"]["pytest"]["ini_options"]
+        assert "timeout" in opts, "no default `timeout` in [tool.pytest.ini_options]"
+        timeout = opts["timeout"]
+        assert isinstance(timeout, int | float) and 0 < timeout <= self.CEILING, timeout
 
 
 class TestChangeClassifier:
@@ -1220,3 +1245,460 @@ class TestDevPushReusesTheMergeQueuesPass:
 
     def test_garbage_from_the_api_runs_everything(self, run_step):
         assert run_step('echo \'{"message": "x"}\'') == "passed=false\n"
+
+
+class TestExperimentalLayer:
+    """A red required check means the core broke (#657).
+
+    Tests of experimental surfaces (tests/experimental_surface.py) are
+    deselected from `test`, the job `gate` needs, and run in `experimental`,
+    which `gate` does not need. That job fails only on a failure missing from
+    tests/experimental_known_failures.txt, so it is red only for news. On a
+    push to `dev` a separate job, the only one with `issues: write`, files the
+    news as an `experimental-broken` issue; on a pull request the news goes to
+    the job summary only.
+    """
+
+    NOT_EXPERIMENTAL = '-m "not slow and not e2e and not experimental"'
+
+    def _runs(self, job: dict) -> str:
+        return "\n".join(str(s.get("run", "")) for s in job["steps"])
+
+    def test_the_gating_job_deselects_experimental_tests(self, ci):
+        assert self.NOT_EXPERIMENTAL in self._runs(ci["jobs"]["test"])
+
+    @pytest.mark.control(reason="a still-true guard: #657 must not change it")
+    def test_the_gating_matrix_is_unchanged(self, ci):
+        # The merge queue's full matrix covers the core, as before.
+        matrix = str(ci["jobs"]["test"]["strategy"]["matrix"]["python-version"])
+        assert "3.11" in matrix and "3.13" in matrix and "pull_request" in matrix
+
+    @pytest.mark.control(reason="a still-true guard: #657 must not change it")
+    def test_gate_needs_neither_experimental_job(self, ci):
+        needs = set(ci["jobs"]["gate"]["needs"])
+        assert "experimental" not in needs and "experimental-issues" not in needs
+
+    def test_the_experimental_job_runs_on_pull_requests_and_dev(self, ci):
+        job = ci["jobs"]["experimental"]
+        cond = str(job["if"])
+        assert "changes" in job["needs"]
+        assert "github.event_name == 'pull_request'" in cond
+        assert "refs/heads/dev" in cond
+        assert "merge_group" not in cond, "the queue proves the core; this is not a gate"
+
+    def test_the_experimental_job_runs_the_marker_into_a_junit_report(self, ci):
+        runs = self._runs(ci["jobs"]["experimental"])
+        assert '-m "experimental and not slow and not e2e"' in runs
+        assert "junit_family=xunit1" in runs and "--junitxml=experimental.xml" in runs
+        assert "--continue-on-collection-errors" in runs
+
+    def test_only_the_ratchet_decides_the_job(self, ci):
+        job = ci["jobs"]["experimental"]
+        steps = job["steps"]
+        (tests,) = [s for s in steps if "pytest" in str(s.get("run", ""))]
+        assert tests.get("continue-on-error") is True
+        # pytest's own status reaches the ratchet; a killed step leaves none.
+        assert 'echo "exit=$?" >> "$GITHUB_OUTPUT"' in tests["run"]
+        assert int(tests["timeout-minutes"]) < int(job["timeout-minutes"]), (
+            "the step must time out before the job, so the ratchet still runs"
+        )
+        (check,) = [s for s in steps if "experimental_ratchet.py check" in str(s.get("run", ""))]
+        assert f"steps.{tests['id']}.outputs.exit" in check["run"]
+        assert "--run-exit" in check["run"]
+        assert "tests/experimental_known_failures.txt" in check["run"]
+        assert "$GITHUB_STEP_SUMMARY" in check["run"]
+        assert "--base-known" in check["run"], "the known-failures list can only shrink"
+        assert "--open-issues" in check["run"], "a failure filed on dev is not news"
+        assert check["env"]["GH_TOKEN"] == "${{ github.token }}"
+        assert "!cancelled()" in str(check.get("if", ""))
+        assert not check.get("continue-on-error")
+
+    def test_the_experimental_job_has_postgres_like_test(self, ci):
+        assert ci["jobs"]["experimental"]["services"] == ci["jobs"]["test"]["services"]
+
+    def test_the_experimental_job_reads_issues_and_cannot_write_them(self, ci):
+        assert ci["jobs"]["experimental"]["permissions"] == {"contents": "read", "issues": "read"}
+
+    def test_issues_are_filed_only_on_a_push_to_dev(self, ci):
+        job = ci["jobs"]["experimental-issues"]
+        cond = str(job["if"])
+        assert "github.event_name == 'push'" in cond and "refs/heads/dev" in cond
+        # failure() is false for a cancelled (timed-out) job: that must file too.
+        assert "always()" in cond and "failure()" not in cond
+        assert "needs.experimental.result != 'success'" in cond
+        assert "needs.experimental.result != 'skipped'" in cond
+        (download,) = [s for s in job["steps"] if "download-artifact" in str(s.get("uses", ""))]
+        assert download.get("continue-on-error") is True, "no result must still file"
+        assert "--job-result" in self._runs(job) and "needs.experimental.result" in self._runs(job)
+        assert "experimental" in job["needs"]
+        assert job["permissions"] == {"contents": "read", "issues": "write"}
+        runs = self._runs(job)
+        assert "experimental_ratchet.py file-issues" in runs
+        envs = [s.get("env", {}) for s in job["steps"]]
+        tokens = {v for e in envs for k, v in e.items() if "TOKEN" in k}
+        assert tokens == {"${{ github.token }}"}, "no secret beyond the workflow token"
+
+    def test_no_other_job_may_write_issues(self, ci):
+        writers = [
+            n for n, j in ci["jobs"].items() if j.get("permissions", {}).get("issues") == "write"
+        ]
+        assert writers == ["experimental-issues"]
+
+    def test_the_pre_push_hook_runs_the_core_only(self):
+        script = (REPO / "scripts" / "test-affected").read_text()
+        assert "not experimental" in script
+        assert '"PYRITE_PUSH_EXPERIMENTAL"' in script
+
+    @pytest.mark.parametrize(
+        "doc",
+        ["CONTRIBUTING.md", "docs/testing.md", ".claude/skills/pyrite-dev/SKILL.md"],
+    )
+    def test_the_docs_say_what_the_marker_means(self, doc):
+        text = (REPO / doc).read_text()
+        assert "`experimental`" in text or "experimental marker" in text
+        assert "tests/experimental_surface.py" in text
+        assert "experimental_known_failures.txt" in text
+
+    def test_contributing_shows_how_to_run_each_set(self):
+        text = (REPO / "CONTRIBUTING.md").read_text()
+        assert '-m "not slow and not e2e and not experimental"' in text
+        assert '-m "experimental and not slow and not e2e"' in text
+        assert "PYRITE_PUSH_EXPERIMENTAL" in text and "--experimental" in text
+
+    @pytest.mark.parametrize("path", ["tests/experimental_surface.py", "conftest.py"])
+    def test_the_mapping_and_its_hook_widen_the_matrix(self, ci, path):
+        import fnmatch
+
+        filt = yaml.safe_load(
+            next(s for s in ci["jobs"]["changes"]["steps"] if s.get("id") == "filter")["with"][
+                "filters"
+            ]
+        )
+        assert any(fnmatch.fnmatch(path, g.replace("**", "*")) for g in filt["infra"]), path
+
+
+class TestAVerifiedCommitIsNotTestedAgain:
+    """One definition of a verified commit (scripts/verified_commit.py), read
+    by the pre-push hook and the release script. The behaviour is pinned in
+    tests/test_verified_commit.py, test_test_affected_verified.py and
+    test_release_rehearsal.py; this pins the layout and that each document
+    describing the hook says what it now does."""
+
+    @pytest.mark.control(
+        reason="pins that the hook layout did NOT change with the verified-commit skip; true before it too"
+    )
+    def test_the_hook_entry_is_unchanged_and_the_decision_is_the_scripts(self, precommit):
+        """The skip is not a second hook, a shell condition or a variable in
+        the entry: any of those would be a way around the suite that
+        `scripts/test-affected --preflight` could not report."""
+        (hook,) = [h for h in _hooks(precommit) if _runs_tests(h)]
+        entry = " ".join(hook["entry"].split())
+        assert entry.endswith(
+            'exec "$PY" scripts/test-affected --run -n "${PYRITE_PUSH_WORKERS:-4}"\''
+        )
+        for word in ("gh ", "verified", "gate", "SKIP", "curl"):
+            assert word not in entry, f"{word!r} in the hook entry"
+        pushed = [h for h in _hooks(precommit) if "pre-push" in _stages(h, precommit)]
+        assert [h["id"] for h in pushed] == ["pytest-full"]
+
+    @pytest.mark.control(
+        reason="pins that the hook layout did NOT change with the verified-commit skip; true before it too"
+    )
+    def test_the_shared_module_is_inside_the_hooks_files_filter(self, precommit):
+        import re
+
+        (hook,) = [h for h in _hooks(precommit) if _runs_tests(h)]
+        assert re.search(hook["files"], "scripts/verified_commit.py")
+
+    def test_the_required_check_the_definition_names_is_a_ci_job(self, ci):
+        """A renamed job must not silently mean "nothing is ever verified" --
+        or, worse, leave the definition pointing at a job that no longer
+        gates."""
+        import sys
+
+        sys.path.insert(0, str(REPO / "scripts"))
+        import verified_commit
+
+        for name in verified_commit.REQUIRED_CHECKS:
+            assert name in ci["jobs"], f"{name} is not a job in ci.yml"
+        # `gate` must always report: a skipped gate would count as a pass.
+        assert ci["jobs"]["gate"]["if"] == "always()"
+
+    @pytest.mark.parametrize(
+        "doc",
+        [
+            "CLAUDE.md",
+            "CONTRIBUTING.md",
+            "kb/standards/testing-standards.md",
+            "kb/maps/development-process-and-releases.md",
+            ".pre-commit-config.yaml",
+        ],
+    )
+    def test_every_doc_that_says_what_the_hook_runs_says_when_it_does_not(self, doc):
+        text = " ".join((REPO / doc).read_text().replace("#", " ").split())
+        assert "scripts/verified_commit.py" in text, doc
+        assert "verified" in text and "`gate`" in text and "exact SHA" in text, doc
+
+    @pytest.mark.parametrize("doc", ["CLAUDE.md", "CONTRIBUTING.md"])
+    def test_the_docs_say_it_fails_closed_and_quote_the_real_timeout(self, doc):
+        import sys
+
+        sys.path.insert(0, str(REPO / "scripts"))
+        import verified_commit
+
+        text = " ".join((REPO / doc).read_text().split())
+        assert "fails closed" in text, doc
+        assert f"{verified_commit.LOOKUP_TIMEOUT_SECONDS} seconds" in text, doc
+        assert "PYRITE_PUSH_FORCE" in text and "PYRITE_PUSH_EXPERIMENTAL" in text
+
+    def test_the_docs_say_what_the_dry_run_rehearses(self):
+        for doc in ("CLAUDE.md", "CONTRIBUTING.md"):
+            text = " ".join((REPO / doc).read_text().split())
+            assert "names each one that would stop `--execute`" in text, doc
+
+
+class TestWhatAVerifiedTipIsEvidenceOf:
+    """Fix round 1 of #854: the docs said a verified tip "covers" the full
+    suite. A pull-request `gate` is one interpreter and passes with `test`
+    skipped, so it does not, and an explicit request for the full suite runs."""
+
+    @pytest.mark.parametrize("doc", ["CLAUDE.md", "CONTRIBUTING.md", ".pre-commit-config.yaml"])
+    def test_the_docs_say_the_full_suite_still_runs_when_asked_for(self, doc):
+        text = " ".join((REPO / doc).read_text().replace("#", " ").split())
+        assert "PYRITE_PUSH_FULL=1" in text and "one interpreter" in text, doc
+        assert "CI accepted the commit" in text, doc
+        assert "covers the full" not in text and "is covered" not in text, doc
+
+    @pytest.mark.control(
+        reason="pins the CI fact the docs now state; true of ci.yml before this branch"
+    )
+    def test_gate_reports_success_when_the_jobs_it_needs_were_skipped(self, ci):
+        """The fact the docs state: `gate` fails only on failure or
+        cancellation, so a skipped `test` leaves it green."""
+        step = ci["jobs"]["gate"]["steps"][0]["run"]
+        assert "(failure|cancelled)" in step and "skipped" in step
+        assert "test" in ci["jobs"]["gate"]["needs"]
+
+    def test_the_runbook_describes_the_rehearsal_and_the_hook_step(self):
+        text = " ".join(
+            (REPO / ".claude/skills/pyrite-conductor/release-runbook.md").read_text().split()
+        )
+        assert "b2. push rehearsal" in text
+        assert "scripts/test-affected --preflight" in text
+        assert "does not stop at the first check that fails" in text and "exits 1" in text
+        assert "scripts/verified_commit.py" in text
+        assert "prints every step" not in text
+        # What to do when it refuses, and when the hook runs anyway.
+        assert "gh run rerun" in text and "red or cancelled" in text
+        assert "lookup fails" in text and "push URL is not a github.com URL" in text
+        assert "happens only with" not in text
+        import sys
+
+        sys.path.insert(0, str(REPO / "scripts"))
+        import release
+
+        assert "push_rehearsal" in [s.key for s in release.STEPS]
+
+
+class TestTheRedLineIsFirstAndEveryGatingRunLeavesATimingRecord:
+    """Test-architecture review findings 3 and 4 (tests Q2).
+
+    mypy printed ~700 `error:` lines ahead of pytest in the `test` job, so the
+    red line was never the first thing in the log; and no gating pytest run
+    recorded durations or junit. The layout pinned here: mypy is its own
+    advisory job, every gating pytest invocation records timings, and the
+    required check names did not move.
+    """
+
+    def _gating_pytest_runs(self, ci) -> list[tuple[str, str]]:
+        out = []
+        for job_id in ("test", "smoke"):
+            for step in ci["jobs"][job_id]["steps"]:
+                run = str(step.get("run", ""))
+                if "pytest" in run:
+                    out.append((job_id, run))
+        return out
+
+    def test_mypy_is_not_a_step_of_the_test_job(self, ci):
+        for step in ci["jobs"]["test"]["steps"]:
+            assert "mypy" not in str(step.get("run", "")), "mypy output would precede pytest"
+            assert "mypy" not in str(step.get("name", "")).lower()
+
+    def test_mypy_is_its_own_advisory_job_outside_the_gate(self, ci):
+        job = ci["jobs"]["mypy"]
+        assert job.get("continue-on-error") is True
+        assert any("mypy pyrite/" in str(s.get("run", "")) for s in job["steps"])
+        assert "mypy" not in ci["jobs"]["gate"]["needs"]
+
+    def test_the_mypy_job_runs_the_ratchet_not_bare_mypy(self, ci):
+        runs = [str(s.get("run", "")) for s in ci["jobs"]["mypy"]["steps"]]
+        assert any("scripts/mypy_ratchet.py" in r for r in runs)
+        # a bare `mypy pyrite/` step would be red on every PR again (#885)
+        for r in runs:
+            if "mypy pyrite/" in r:
+                assert "||" in r or "mypy_ratchet" in r
+        assert (REPO / ".mypy-baseline.json").exists()
+
+    def test_every_gating_pytest_line_records_durations_and_junit(self, ci):
+        runs = self._gating_pytest_runs(ci)
+        assert {j for j, _ in runs} == {"test", "smoke"}
+        for job_id, run in runs:
+            assert "--durations=25" in run and "--durations-min=1.0" in run, job_id
+            assert "junit_family=xunit1" in run and "--junitxml=" in run, job_id
+            assert "--disable-warnings" in run, f"{job_id}: warnings belong after the failure"
+
+    def test_the_test_job_keeps_the_deprecation_escalation(self, ci):
+        run = "\n".join(str(s.get("run", "")) for s in ci["jobs"]["test"]["steps"])
+        assert "error::DeprecationWarning:pyrite" in run
+
+    @pytest.mark.parametrize("job_id", ["test", "smoke"])
+    def test_the_junit_is_uploaded_for_thirty_days_even_when_red(self, ci, job_id):
+        ups = [
+            s
+            for s in ci["jobs"][job_id]["steps"]
+            if str(s.get("uses", "")).startswith("actions/upload-artifact")
+            and "junit" in str(s.get("with", {}).get("name", ""))
+        ]
+        assert len(ups) == 1, job_id
+        up = ups[0]
+        assert up["with"]["retention-days"] == 30
+        assert up["with"]["if-no-files-found"] == "ignore"  # died before pytest wrote it
+        assert "!cancelled()" in str(up["if"])
+
+    def test_gate_changes_kb_and_frontend_keep_their_names_and_gate_aggregates_the_shards(self, ci):
+        # `shard-report` (tests Q2) is the shards' union proof; the shard legs are
+        # `test (<py>, <k>)` and are aggregated by `gate`, never required by name.
+        assert ci["jobs"]["gate"]["needs"] == ["changes", "kb", "test", "shard-report", "frontend"]
+        assert "name" not in ci["jobs"]["test"], "`test (<python>)` is the matrix leg's name"
+        assert "name" not in ci["jobs"]["gate"], "`gate` is looked up by exact name"
+
+    def test_the_slowest_table_reads_a_junit_report(self, tmp_path):
+        import subprocess
+        import sys
+
+        xml = tmp_path / "j.xml"
+        xml.write_text(
+            '<testsuites><testsuite><testcase classname="t.a" name="fast" time="0.1"/>'
+            '<testcase classname="t.a" name="slow" time="9.5"/></testsuite></testsuites>'
+        )
+        script = REPO / "scripts" / "junit_slowest.py"
+        out = subprocess.run(
+            [sys.executable, str(script), str(xml), "x"], capture_output=True, text=True
+        ).stdout
+        assert out.index("slow") < out.index("fast") and "9.50" in out
+        missing = subprocess.run(
+            [sys.executable, str(script), str(tmp_path / "none.xml")],
+            capture_output=True,
+            text=True,
+        )
+        assert missing.returncode == 0 and "no junit report" in missing.stdout
+
+
+class TestTheTestJobIsShardedAndProvesItRanEverything:
+    """Tests Q2 scope addition: `test (3.12)` took 13 min (Sep 23) and 18-21
+    now; the suite doubled and the time followed the count. Each interpreter's
+    run is 3 parallel pytest-split shards, balanced by `.test_durations`.
+    """
+
+    SHARDS = 3
+
+    def test_a_red_shard_does_not_cancel_its_siblings(self, ci):
+        # every leg records its timings; gate still fails on any red leg
+        assert ci["jobs"]["test"]["strategy"]["fail-fast"] is False
+
+    def test_the_test_job_is_a_shard_matrix_under_every_interpreter(self, ci):
+        matrix = ci["jobs"]["test"]["strategy"]["matrix"]
+        assert matrix["shard"] == list(range(1, self.SHARDS + 1))
+        assert "python-version" in matrix
+
+    def test_the_pytest_line_takes_its_shard_and_falls_back_to_an_even_split(self, ci):
+        run = next(
+            str(s["run"])
+            for s in ci["jobs"]["test"]["steps"]
+            if "pytest -n auto" in str(s.get("run", ""))
+        )
+        assert f"--splits {self.SHARDS}" in run
+        assert "--group ${{ matrix.shard }}" in run
+        assert "--durations-path .test_durations" in run
+        assert "--store-durations" in run  # the timings the next balance is made from
+
+    def test_a_missing_durations_file_is_not_a_failure_or_a_dropped_test(self, tmp_path):
+        # pytest-split with no usable durations splits evenly by count; the
+        # three groups together are the whole collection.
+        import subprocess
+        import sys
+
+        (tmp_path / "test_x.py").write_text(
+            "import pytest\n@pytest.mark.parametrize('n', range(10))\ndef test_n(n): pass\n"
+        )
+        ran = []
+        for group in (1, 2, 3):
+            out = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    str(tmp_path / "test_x.py"),
+                    "-p",
+                    "no:cacheprovider",
+                    "--splits",
+                    "3",
+                    "--group",
+                    str(group),
+                    "--durations-path",
+                    str(tmp_path / "missing.json"),
+                    "-v",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=tmp_path,
+            ).stdout
+            ran += [ln.split()[0] for ln in out.splitlines() if " PASSED" in ln]
+        assert len(ran) == 10 and len(set(ran)) == 10
+
+    def test_the_lint_and_pr_hygiene_steps_run_once_per_interpreter(self, ci):
+        for step in ci["jobs"]["test"]["steps"]:
+            name = str(step.get("name", ""))
+            if name.startswith(("Lint with ruff", "Check for circular", "Validate KB")):
+                assert "matrix.shard == 1" in str(step["if"]), name
+
+    def test_shard_report_is_part_of_the_gate_and_runs_after_the_shards(self, ci):
+        job = ci["jobs"]["shard-report"]
+        assert {"test", "collect"} <= set(job["needs"])
+        assert "shard-report" in ci["jobs"]["gate"]["needs"]
+        # The proof cannot be switched off or narrowed by a later edit:
+        step = next(
+            s for s in job["steps"] if "check_shard_union.py check" in str(s.get("run", ""))
+        )
+        assert "--shards 3" in step["run"]
+        assert "|| true" not in step["run"], "a swallowed exit status is no proof"
+        assert "continue-on-error" not in step and "continue-on-error" not in job
+        assert str(step["if"]).strip() == "${{ needs.test.result == 'success' }}"
+        assert str(job["if"]).strip() == "${{ !cancelled() && needs.test.result != 'skipped' }}"
+
+    def test_the_collection_count_uses_the_shards_selection(self, ci):
+        run = "\n".join(str(s.get("run", "")) for s in ci["jobs"]["collect"]["steps"])
+        assert "not slow and not e2e and not experimental" in run
+        assert "--splits" not in run  # the unsplit collection
+
+    def test_the_durations_file_is_committed_gzip_json_under_the_size_limit(self):
+        import gzip
+        import json
+
+        path = REPO / ".test_durations.gz"
+        assert path.exists() and path.stat().st_size < 500 * 1024
+        data = json.loads(gzip.open(path, "rt").read())
+        assert data and all(isinstance(v, (int, float)) for v in data.values())
+
+    def test_the_shards_gunzip_it_and_survive_its_absence(self, ci):
+        run = next(
+            str(s["run"])
+            for s in ci["jobs"]["test"]["steps"]
+            if "pytest -n auto" in str(s.get("run", ""))
+        )
+        assert "gunzip -c .test_durations.gz > .test_durations" in run
+        assert "|| rm -f .test_durations" in run, "a bad file must fall back to an even split"
+
+    def test_every_nested_job_a_required_check_could_name_is_unchanged(self, ci):
+        for job in ("gate", "kb", "frontend", "changes"):
+            assert "name" not in ci["jobs"][job] or ci["jobs"][job]["name"] == job

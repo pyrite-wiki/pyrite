@@ -213,9 +213,9 @@ class TestCancelledState:
         result = svc.update_task(eid, "test-tasks", status="cancelled")
         assert result["status"] == "cancelled"
 
-    def test_rollup_counts_cancelled_as_resolved(self, task_env):
-        """A parent auto-completes when all children are terminal, treating a
-        cancelled child as resolved (so an all-resolved parent doesn't hang)."""
+    def test_cancelled_child_counts_as_resolved_in_derived_completion(self, task_env):
+        """A parent whose children are done or cancelled is complete, as a
+        derived value; the parent's file keeps the status a person set."""
         svc = task_env["svc"]
         parent = svc.create_task(kb_name="test-tasks", title="Parent")
         parent_id = parent["entry_id"]
@@ -228,11 +228,11 @@ class TestCancelledState:
         svc.update_task(c1["entry_id"], "test-tasks", status="claimed")
         svc.update_task(c1["entry_id"], "test-tasks", status="in_progress")
         svc.update_task(c1["entry_id"], "test-tasks", status="done")
-        # Cancel the second child — parent should still roll up.
         svc.update_task(c2["entry_id"], "test-tasks", status="cancelled")
 
         repo = KBRepository(task_env["kb_config"])
-        assert repo.load(parent_id).status == "done"
+        assert repo.load(parent_id).status == "in_progress"
+        assert svc.derived_completion("test-tasks")[parent_id]["completion"]["complete"] is True
 
     def test_cancelled_blocker_satisfies_dependency(self, task_env):
         """A cancelled blocker is resolved-by-removal: unblock_dependents treats
@@ -511,73 +511,66 @@ class TestCheckpointTask:
         assert "last_checkpoint" in entry.agent_context
 
 
-class TestRollupParent:
-    def test_rollup_all_done(self, task_env):
-        svc = task_env["svc"]
-        parent = svc.create_task(kb_name="test-tasks", title="Parent task")
-        parent_id = parent["entry_id"]
+class TestDerivedParentCompletion:
+    """The parent rollup no longer writes (ADR-0042 decision 4); completion is
+    derived. tests/test_derived_task_completion.py covers every consumer."""
 
+    def _walk_to_done(self, svc, tid):
+        svc.update_task(tid, "test-tasks", status="claimed")
+        svc.update_task(tid, "test-tasks", status="in_progress")
+        svc.update_task(tid, "test-tasks", status="done")
+
+    def test_all_children_done_derives_complete_and_writes_nothing(self, task_env):
+        svc = task_env["svc"]
+        parent_id = svc.create_task(kb_name="test-tasks", title="Parent task")["entry_id"]
         c1 = svc.create_task(kb_name="test-tasks", title="Child 1", parent=parent_id)
         c2 = svc.create_task(kb_name="test-tasks", title="Child 2", parent=parent_id)
-
         svc.update_task(parent_id, "test-tasks", status="claimed")
         svc.update_task(parent_id, "test-tasks", status="in_progress")
+        parent_file = next(task_env["tasks_path"].rglob(f"{parent_id}.md"))
+        before = parent_file.read_bytes()
 
-        # Complete first child
-        svc.update_task(c1["entry_id"], "test-tasks", status="claimed")
-        svc.update_task(c1["entry_id"], "test-tasks", status="in_progress")
-        svc.update_task(c1["entry_id"], "test-tasks", status="done")
+        self._walk_to_done(svc, c1["entry_id"])
+        self._walk_to_done(svc, c2["entry_id"])
 
-        # Complete second child — core after_save hook triggers automatic rollup
-        svc.update_task(c2["entry_id"], "test-tasks", status="claimed")
-        svc.update_task(c2["entry_id"], "test-tasks", status="in_progress")
-        svc.update_task(c2["entry_id"], "test-tasks", status="done")
-
-        # Parent should have been auto-rolled-up by the core hook
         repo = KBRepository(task_env["kb_config"])
-        parent_entry = repo.load(parent_id)
-        assert parent_entry.status == "done"
+        assert repo.load(parent_id).status == "in_progress"
+        assert parent_file.read_bytes() == before
+        assert svc.derived_completion("test-tasks")[parent_id]["completion"] == {
+            "complete": True,
+            "basis": "children",
+            "children": 2,
+            "children_complete": 2,
+        }
 
-    def test_rollup_partial(self, task_env):
+    def test_partial_children_derive_not_complete(self, task_env):
         svc = task_env["svc"]
-        parent = svc.create_task(kb_name="test-tasks", title="Partial parent")
-        parent_id = parent["entry_id"]
-
+        parent_id = svc.create_task(kb_name="test-tasks", title="Partial parent")["entry_id"]
         c1 = svc.create_task(kb_name="test-tasks", title="Done child", parent=parent_id)
         svc.create_task(kb_name="test-tasks", title="Open child", parent=parent_id)
+        self._walk_to_done(svc, c1["entry_id"])
 
-        svc.update_task(c1["entry_id"], "test-tasks", status="claimed")
-        svc.update_task(c1["entry_id"], "test-tasks", status="in_progress")
-        svc.update_task(c1["entry_id"], "test-tasks", status="done")
+        derived = svc.derived_completion("test-tasks")[parent_id]["completion"]
+        assert derived["complete"] is False
+        assert (derived["children"], derived["children_complete"]) == (2, 1)
 
-        result = svc.rollup_parent(parent_id, "test-tasks")
-        assert result is None
-
-    def test_rollup_cascading(self, task_env):
+    def test_cascade_is_computed(self, task_env):
         svc = task_env["svc"]
-
-        # Grandparent → parent → child
-        gp = svc.create_task(kb_name="test-tasks", title="Grandparent")
-        gp_id = gp["entry_id"]
-        p = svc.create_task(kb_name="test-tasks", title="Parent", parent=gp_id)
-        p_id = p["entry_id"]
-        c = svc.create_task(kb_name="test-tasks", title="Child", parent=p_id)
-        c_id = c["entry_id"]
-
-        # Advance grandparent and parent to in_progress
+        gp_id = svc.create_task(kb_name="test-tasks", title="Grandparent")["entry_id"]
+        p_id = svc.create_task(kb_name="test-tasks", title="Parent", parent=gp_id)["entry_id"]
+        c_id = svc.create_task(kb_name="test-tasks", title="Child", parent=p_id)["entry_id"]
         for tid in [gp_id, p_id]:
             svc.update_task(tid, "test-tasks", status="claimed")
             svc.update_task(tid, "test-tasks", status="in_progress")
 
-        # Complete child — core hook should cascade: child done → parent done → grandparent done
-        svc.update_task(c_id, "test-tasks", status="claimed")
-        svc.update_task(c_id, "test-tasks", status="in_progress")
-        svc.update_task(c_id, "test-tasks", status="done")
+        self._walk_to_done(svc, c_id)
 
-        # Grandparent should be done (cascading via core hooks)
         repo = KBRepository(task_env["kb_config"])
-        gp_entry = repo.load(gp_id)
-        assert gp_entry.status == "done"
+        assert repo.load(gp_id).status == "in_progress"
+        assert repo.load(p_id).status == "in_progress"
+        derived = svc.derived_completion("test-tasks")
+        assert derived[p_id]["completion"]["complete"] is True
+        assert derived[gp_id]["completion"]["complete"] is True
 
 
 class TestListTasks:

@@ -4,7 +4,8 @@ Render, Fly.io and Railway put the app on a public hostname. A server there
 with auth disabled and no API keys would make every visitor admin -- and the
 Host guard (pyrite/server/request_guard.py) refuses every request addressed to
 a name it was not told about. So each template turns auth on; the operator
-registers the first account (the first registered user is admin).
+creates the first admin with `pyrite-admin user create <username> --role admin`
+(registration stays closed until an admin exists).
 """
 
 import json

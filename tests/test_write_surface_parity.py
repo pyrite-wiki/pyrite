@@ -264,7 +264,7 @@ _CODE = re.compile(r"\[([A-Z_]+)\]")
 def cli_create(env, spec):
     spec = dict(spec)
     args = ["create", "-k", KB, "-t", spec.pop("entry_type"), "--title", spec.pop("title")]
-    args += ["--body", spec.pop("body")]
+    args += ["--body", spec.pop("body"), "--format", "rich"]
     for k, v in spec.items():
         args += ["-f", f"{k}={json.dumps(v) if isinstance(v, bool) else v}"]
     result = _cli(env, args)

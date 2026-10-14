@@ -1,7 +1,7 @@
 ---
 id: adr-0016
 type: adr
-title: "ADR-0016: LanceDB Backend Evaluation — No-Go"
+title: "LanceDB Backend Evaluation — No-Go"
 adr_number: 16
 status: rejected
 date: 2026-03-01

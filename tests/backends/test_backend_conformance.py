@@ -5,10 +5,12 @@ Every test here runs against every registered backend via the parametrized
 ``backend`` fixture.  A backend passes conformance when all tests pass.
 """
 
+import math
 from typing import Any
 
 import pytest
 from pyrite.services.access_policy import UNSCOPED
+from pyrite.storage.backends import sqlite_backend
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +217,65 @@ class TestTags:
 # =========================================================================
 
 
+class TestNonEmptyFilter:
+    """``non_empty`` (#200): leave out entries with no body and no summary.
+
+    Blank means nothing but space, tab, CR or LF (or NULL). The default
+    returns them; a summary without a body is not blank.
+    """
+
+    BLANK_BODIES = {
+        "empty": "",
+        "null": None,
+        "spaces": "   ",
+        "mixed": " \t\r\n \n\t",
+    }
+
+    def _populate(self, backend):
+        for name, body in self.BLANK_BODIES.items():
+            backend.upsert_entry(
+                _make_entry(f"blank-{name}", title="zebra crossing", body=body, summary="")
+            )
+        backend.upsert_entry(
+            _make_entry("blank-summary-ws", title="zebra crossing", body="", summary=" \t\r\n ")
+        )
+        backend.upsert_entry(
+            _make_entry("summary-only", title="zebra crossing", body="", summary="a real summary")
+        )
+        backend.upsert_entry(_make_entry("with-body", title="zebra crossing", body="some words"))
+
+    def test_keyword_leg_excludes_blank_and_keeps_the_rest(self, backend):
+        self._populate(backend)
+        got = {r["id"] for r in backend.search("zebra", non_empty=True)}
+        assert got == {"summary-only", "with-body"}
+
+    def test_keyword_leg_default_returns_them(self, backend):
+        self._populate(backend)
+        got = {r["id"] for r in backend.search("zebra")}
+        assert {f"blank-{n}" for n in self.BLANK_BODIES} | {"blank-summary-ws"} <= got
+
+    def test_limit_counts_only_qualifying_rows(self, backend):
+        self._populate(backend)
+        got = backend.search("zebra", non_empty=True, limit=2)
+        assert {r["id"] for r in got} == {"summary-only", "with-body"}
+
+    def test_semantic_leg(self, backend):
+        if not getattr(backend, "vec_available", False):
+            pytest.skip("vector search not available on this backend")
+        self._populate(backend)
+        vec = [0.05] * 384
+        for eid in [f"blank-{n}" for n in self.BLANK_BODIES] + [
+            "blank-summary-ws",
+            "summary-only",
+            "with-body",
+        ]:
+            backend.upsert_embedding(eid, "test", vec)
+        got = {r["id"] for r in backend.search_semantic(vec, limit=20, non_empty=True)}
+        assert got == {"summary-only", "with-body"}
+        everything = {r["id"] for r in backend.search_semantic(vec, limit=20)}
+        assert "blank-spaces" in everything
+
+
 class TestFullTextSearch:
     def test_search_basic(self, backend):
         backend.upsert_entry(_make_entry("e1", title="quantum computing advances"))
@@ -308,6 +369,79 @@ class TestGraph:
         backlinks = backend.get_backlinks("b", "test", readable_kbs=UNSCOPED)
         assert len(backlinks) == 1
         assert backlinks[0]["id"] == "a"
+
+    def test_backlink_relation_fields_match_contract(self, backend, monkeypatch):
+        """#622: Keep documented backlink relation fields consistent per backend."""
+        from pyrite.schema import provenance
+
+        backend.upsert_entry(_make_entry("target"))
+        backend.upsert_entry(
+            _make_entry(
+                "declared-source",
+                links=[{"target": "target", "relation": "supports"}],
+            )
+        )
+        backend.upsert_entry(
+            _make_entry(
+                "custom-source",
+                links=[{"target": "target", "relation": "informs"}],
+            )
+        )
+        # This type is still unknown when the link is indexed, so its stored
+        # inverse remains the fallback after the type is registered below.
+        backend.upsert_entry(
+            _make_entry(
+                "stale-source",
+                links=[{"target": "target", "relation": "transclusion"}],
+            )
+        )
+
+        declared_types = dict(provenance.get_all_relationship_types())
+        assert "transclusion" not in declared_types
+        monkeypatch.setattr(
+            provenance,
+            "get_all_relationship_types",
+            lambda: {
+                **declared_types,
+                "transclusion": {
+                    "inverse": "transcluded_by",
+                    "description": "Declared after the link was indexed",
+                },
+            },
+        )
+
+        expected = {
+            "declared-source": {
+                "forward_relation": "supports",
+                "relation": "supported_by",
+                "inverse_relation": "supported_by",
+            },
+            "custom-source": {
+                "forward_relation": "informs",
+                "relation": "related_to",
+                "inverse_relation": None,
+            },
+            "stale-source": {
+                "forward_relation": "transclusion",
+                "relation": "related_to",
+                "inverse_relation": "transcluded_by",
+            },
+        }
+
+        def relation_fields(rows):
+            return {
+                row["id"]: {
+                    field: row[field]
+                    for field in ("forward_relation", "relation", "inverse_relation")
+                }
+                for row in rows
+            }
+
+        backlinks = backend.get_backlinks("target", "test", readable_kbs=UNSCOPED)
+        assert relation_fields(backlinks) == expected
+
+        all_backlinks = backend.get_all_backlinks_for_kb("test")["target"]
+        assert relation_fields(all_backlinks) == expected
 
     def test_get_backlinks_empty(self, backend):
         self._setup_linked_entries(backend)
@@ -879,31 +1013,231 @@ class TestSemanticFilterConformance:
         )
         assert {r["id"] for r in rows} == {"mech", "theme", "task", "archived-one"}
 
-    def test_max_distance_does_not_cost_recall(self, embedded_backend):
+    def test_the_similarity_floor_does_not_cost_recall(self, embedded_backend):
         """A cutoff that excludes nothing must not reduce the rows returned.
 
-        Postgres applied ``max_distance`` in Python *after* ``LIMIT``, so a
+        Postgres applied the cutoff in Python *after* ``LIMIT``, so a
         culled row was one the LIMIT had already spent — it under-returned
         where sqlite escalates its ``k``. Asking for as many rows as match,
         with a cutoff wide enough to exclude none, must give all of them on
         every backend.
         """
         rows = embedded_backend.search_semantic(
-            _near_vector(), kb_name="test", limit=3, max_distance=2.0
+            _near_vector(), kb_name="test", limit=3, min_similarity=-1.0
         )
         assert {r["id"] for r in rows} == {"mech", "theme", "task"}
 
+    @pytest.mark.control(
+        reason="the three-entry fixture fits inside the first k on dev, so the filter never "
+        "culls a candidate; the beyond-the-cap regime is "
+        "TestSemanticKnnBudget::test_selective_filter_reaches_candidates_beyond_the_k_cap"
+    )
     def test_search_semantic_fills_limit_despite_selective_filter(self, embedded_backend):
         """A selective filter must not cost recall.
 
-        sqlite-vec applies its ``k`` budget before any join predicate, so an
-        implementation that filters the k nearest afterwards silently
-        under-returns. Two entries share a status; asking for two must get two.
+        Two entries share a status; asking for both must get both after the
+        semantic backend applies the predicate to its KNN candidate set.
         """
         rows = embedded_backend.search_semantic(
             _near_vector(), kb_name="test", limit=2, status="unprocessed"
         )
         assert {r["id"] for r in rows} == {"mech", "task"}
+
+
+# =========================================================================
+# Similarity — one number, the same on every backend (#668)
+# =========================================================================
+
+
+def _vector_at(cosine: float, axis: int, length: float = 1.0) -> list[float]:
+    """A vector of ``length`` whose cosine with ``_QUERY`` (axis 0) is ``cosine``."""
+    vec = [0.0] * 384
+    vec[0] = cosine * length
+    vec[axis] = math.sqrt(1.0 - cosine * cosine) * length
+    return vec
+
+
+_QUERY = [1.0] + [0.0] * 383
+
+
+class TestSimilarityConformance:
+    """Every row of the vector leg carries ``similarity``: cosine, 3 places.
+
+    Before #668 a row carried only ``distance``, which is sqlite-vec's L2 on
+    one backend and pgvector's cosine distance on the other, and one cutoff of
+    1.3 was applied to both: a floor of cos 0.155 on SQLite and no floor at
+    all on Postgres. These tests state the numbers, so each backend is held to
+    the same value rather than to the other backend.
+    """
+
+    @pytest.fixture
+    def known(self, backend_with_db):
+        """Entries at cos 0.8, 0.6, 0.3 and 0.1 to ``_QUERY``; one in another KB.
+
+        ``long`` is three times unit length: its cosine is still 0.6, and
+        ``1 - d**2 / 2`` over its L2 distance is not.
+        """
+        specs = [
+            ("near", "test", 0.8, 1.0),
+            ("long", "test", 0.6, 3.0),
+            ("far", "test", 0.3, 1.0),
+            ("cut", "test", 0.1, 1.0),
+            ("elsewhere", "other", 0.7, 1.0),
+        ]
+        backend, _db = backend_with_db
+        for axis, (entry_id, kb, cosine, length) in enumerate(specs, start=1):
+            backend.upsert_entry(_make_entry(entry_id, kb_name=kb))
+            if not backend.upsert_embedding(entry_id, kb, _vector_at(cosine, axis, length)):
+                pytest.skip("backend cannot store embeddings (no vector support)")
+        if not backend.has_embeddings():
+            pytest.skip("backend cannot store embeddings (no vector support)")
+        return backend
+
+    def test_similarity_is_the_cosine_of_the_two_vectors(self, known):
+        rows = known.search_semantic(_QUERY, kb_name="test", limit=10)
+        assert [(r["id"], r["similarity"]) for r in rows] == [
+            ("near", 0.8),
+            ("long", 0.6),
+            ("far", 0.3),
+        ]
+
+    @pytest.mark.control(reason="`distance` is kept as it was, for one release")
+    def test_rows_still_carry_the_backends_own_distance(self, known):
+        """``distance`` stays for one release; nothing asserts what it means."""
+        rows = known.search_semantic(_QUERY, kb_name="test", limit=10)
+        assert all(isinstance(r["distance"], float) for r in rows)
+
+    @pytest.mark.control(
+        reason="SQLite already cut here (L2 1.3 is cos 0.155); it is Postgres that cut nothing"
+    )
+    def test_an_entry_at_cosine_point_one_is_cut_by_default(self, known):
+        """The default floor is 0.155, on every backend."""
+        rows = known.search_semantic(_QUERY, kb_name="test", limit=10)
+        assert "cut" not in {r["id"] for r in rows}
+
+    def test_the_floor_is_the_callers_to_move(self, known):
+        rows = known.search_semantic(_QUERY, kb_name="test", limit=10, min_similarity=0.0)
+        assert [r["id"] for r in rows] == ["near", "long", "far", "cut"]
+        assert rows[-1]["similarity"] == 0.1
+        rows = known.search_semantic(_QUERY, kb_name="test", limit=10, min_similarity=0.7)
+        assert [r["id"] for r in rows] == ["near"]
+
+    def test_kb_names_is_applied_inside_the_query(self, known):
+        """The readable set costs no recall: ``limit`` readable rows come back
+        however many nearer rows sit in a KB outside it."""
+        rows = known.search_semantic(_QUERY, limit=1, kb_names={"other"})
+        assert [(r["id"], r["similarity"]) for r in rows] == [("elsewhere", 0.7)]
+        rows = known.search_semantic(_QUERY, limit=10, kb_names={"test", "other"})
+        assert [r["id"] for r in rows] == ["near", "elsewhere", "long", "far"]
+        assert known.search_semantic(_QUERY, limit=10, kb_names=set()) == []
+        assert known.search_semantic(_QUERY, limit=10, kb_names={"test"}, kb_name="other") == []
+
+    def test_a_readable_set_reaches_rows_beyond_4096_nearer_unreadable_ones(self, backend_with_db):
+        """The readable set at the real size of sqlite-vec's ceiling (#668).
+
+        4,100 rows in `test`, all nearer to the query than the three rows in
+        `other`. A caller who may read only `other` gets its three rows: the
+        readable set is a candidate filter, inside the KNN, like `kb_name`.
+        Applied after the 4,096 nearest it finds nothing.
+        """
+        backend, _db = backend_with_db
+        backend.upsert_entry(_make_entry("probe"))
+        if not backend.upsert_embedding("probe", "test", _near_vector()):
+            pytest.skip("backend cannot store embeddings (no vector support)")
+        backend.delete_entry("probe", "test")
+        for i in range(4100):
+            backend.upsert_entry(_make_entry(f"n{i}"))
+            backend.upsert_embedding(f"n{i}", "test", _near_vector(i))
+        for i in range(3):
+            backend.upsert_entry(_make_entry(f"mine-{i}", kb_name="other"))
+            far = _near_vector()
+            far[i] += 0.4
+            backend.upsert_embedding(f"mine-{i}", "other", far)
+
+        rows = backend.search_semantic(_near_vector(), limit=3, kb_names={"other"})
+
+        assert {r["id"] for r in rows} == {"mine-0", "mine-1", "mine-2"}
+        assert not getattr(rows, "capped", False)
+        assert {r["kb_name"] for r in rows} == {"other"}
+
+    @pytest.mark.parametrize(
+        ("filters", "expected"),
+        [
+            ({"kb_name": "other"}, {"far-0", "far-1"}),
+            ({"kb_names": {"other"}}, {"far-0", "far-1"}),
+            ({"entry_type": "rare"}, {"far-0", "far-1"}),
+            ({"tags": ["rare"]}, {"far-0", "far-1"}),
+            ({"state": "MI"}, {"far-0", "far-1"}),
+            ({"fips": "26163"}, {"far-0", "far-1"}),
+            ({"status": "processed"}, {"far-0", "far-1"}),
+            ({"date_from": "2026-02-01"}, {"far-0", "far-1"}),
+            ({"date_to": "2025-12-31"}, {"early-0", "early-1"}),
+        ],
+        ids=lambda v: next(iter(v)) if isinstance(v, dict) else None,
+    )
+    def test_every_caller_filter_rides_inside_the_knn(
+        self, backend_with_db, monkeypatch, filters, expected
+    ):
+        """One case per condition that makes a search "selective", the readable
+        set among them: each must put its predicate inside the KNN.
+
+        Twenty rows nearer than the ones the filter admits, at a ceiling of 8,
+        and ``include_archived=True``. That last part matters: without it the
+        archived retry pushes the whole WHERE into the KNN when a search comes
+        up short, and so rescues a filter that was left out of the KNN: the
+        test passes for the wrong reason. With archived rows included there is
+        no retry, and a filter applied after the k nearest finds nothing.
+        """
+        backend, _db = backend_with_db
+        if hasattr(backend, "_raw_conn"):
+            monkeypatch.setattr(sqlite_backend, "_SQLITE_VEC_MAX_K", 8)
+        common = {"status": "unprocessed", "date": "2026-01-10"}
+        backend.upsert_entry(_make_entry("probe"))
+        if not backend.upsert_embedding("probe", "test", _near_vector()):
+            pytest.skip("backend cannot store embeddings (no vector support)")
+        backend.delete_entry("probe", "test")
+        for i in range(20):
+            backend.upsert_entry(_make_entry(f"near-{i}", **common))
+            backend.upsert_embedding(f"near-{i}", "test", _near_vector(i))
+        rare = {
+            "kb_name": "other",
+            "entry_type": "rare",
+            "tags": ["rare"],
+            "state": "MI",
+            "fips": "26163",
+            "status": "processed",
+            "date": "2026-02-20",
+        }
+        for i in range(2):
+            far = _near_vector()
+            far[i] += 0.4
+            backend.upsert_entry(_make_entry(f"far-{i}", **rare))
+            backend.upsert_embedding(f"far-{i}", "other", far)
+            backend.upsert_entry(_make_entry(f"early-{i}", status="unprocessed", date="2025-06-01"))
+            backend.upsert_embedding(f"early-{i}", "test", far)
+
+        rows = backend.search_semantic(_near_vector(), limit=2, include_archived=True, **filters)
+
+        assert {r["id"] for r in rows} == expected
+        assert not getattr(rows, "capped", False)
+
+    def test_has_embeddings_can_be_asked_of_some_kbs(self, known):
+        """What a scoped search says about embeddings depends on its own KBs."""
+        assert known.has_embeddings(kb_name="other")
+        known.delete_embedding("elsewhere", "other")  # `other` keeps its entry, loses its vector
+        assert known.has_embeddings()
+        assert known.has_embeddings(kb_name="test")
+        assert known.has_embeddings(kb_names={"test", "other"})
+        assert not known.has_embeddings(kb_name="other")
+        assert not known.has_embeddings(kb_names={"other"})
+        assert not known.has_embeddings(kb_names=set())
+        assert not known.has_embeddings(kb_name="test", kb_names={"other"})
+
+    def test_a_vector_with_no_direction_is_never_a_match(self, known):
+        known.upsert_entry(_make_entry("zero"))
+        known.upsert_embedding("zero", "test", [0.0] * 384)
+        rows = known.search_semantic(_QUERY, kb_name="test", limit=10, min_similarity=-1.0)
+        assert "zero" not in {r["id"] for r in rows}
 
 
 # =========================================================================
@@ -923,7 +1257,9 @@ class TestSemanticKnnBudget:
     raises on any index bigger than the cap — which reaches users as an HTTP
     400 ``SEARCH_FAILED``, an unhandled exception out of MCP ``kb_search`` and
     a silent keyword-only fallback in the AI endpoint. Postgres has no such
-    ceiling and passes these trivially.
+    ceiling and passes these trivially. Selective SQLite predicates are now
+    applied before KNN, but more than 4096 matching rows or distance culling
+    can still limit recall.
     """
 
     @pytest.fixture
@@ -952,33 +1288,285 @@ class TestSemanticKnnBudget:
         )
         assert {r["id"] for r in rows} == {"e0"}
 
-    def test_unfiltered_search_above_the_k_cap_does_not_raise(self, big_embedded_backend):
-        """``max_distance`` culling drives the same escalation with no filter.
+    def test_rows_the_ceiling_hides_are_returned_or_the_result_says_capped(
+        self, big_embedded_backend
+    ):
+        """An empty result must not look like "nothing matches" when it is not.
+
+        4097 near-identical rows, and one row of another type that is farther
+        than all of them (cos 0.6, well above the floor). Postgres filters in
+        its WHERE and returns it. sqlite-vec considers the 4096 nearest and
+        never reaches it: the result is empty, and must be marked ``capped``
+        (`SemanticRows`) so the search verdict does not call it an absence
+        (#668). A backend that filters before its KNN returns the row, and
+        that passes too.
+        """
+        backend = big_embedded_backend
+        query = _near_vector()
+        norm = math.sqrt(sum(v * v for v in query))
+        far = [0.6 * v / norm for v in query]
+        far[383] += 0.8  # cos 0.6 with the query, to within the 0.05 it adds on that axis
+        backend.upsert_entry(_make_entry("far", entry_type="rare"))
+        backend.upsert_embedding("far", "test", far)
+
+        rows = backend.search_semantic(query, kb_name="test", limit=1, entry_type="rare")
+
+        assert [r["id"] for r in rows] == ["far"] or getattr(rows, "capped", False)
+
+    @pytest.mark.control(reason="the marker must not fire when no filter hid anything")
+    def test_a_result_the_floor_cut_short_is_not_capped(self, big_embedded_backend):
+        """Only filtered rows can hide beyond the ceiling. With no filter, what
+        lies beyond the 4096 nearest is farther still, so a short result is the
+        whole answer."""
+        rows = big_embedded_backend.search_semantic(
+            _near_vector(), kb_name=None, limit=5, min_similarity=2.0
+        )
+        assert rows == [] and not getattr(rows, "capped", False)
+
+    @pytest.fixture
+    def far_needle_backend(self, backend):
+        """More than 4096 rows nearer to the query than the one matching row.
+
+        The needle is the *farthest* vector, so the 4096 nearest are all
+        ``note`` rows: a filter applied after the KNN sees none of them match.
+        """
+        backend.upsert_entry(_make_entry("probe"))
+        if not backend.upsert_embedding("probe", "test", _near_vector()):
+            pytest.skip("backend cannot store embeddings (no vector support)")
+        backend.delete_entry("probe", "test")
+
+        for i in range(4100):
+            backend.upsert_entry(_make_entry(f"n{i}", entry_type="note", tags=["common"]))
+            backend.upsert_embedding(f"n{i}", "test", _near_vector(i))
+        for i in range(3):
+            backend.upsert_entry(_make_entry(f"needle-{i}", entry_type="needle", tags=["rare"]))
+            far = _near_vector()
+            far[i] += 0.4
+            backend.upsert_embedding(f"needle-{i}", "test", far)
+        return backend
+
+    def test_real_cap_filter_reaches_rows_beyond_4096_nearer_rows(
+        self, far_needle_backend, monkeypatch
+    ):
+        """The bug at its real size: 4,100 nearer rows, matches farther than all of them."""
+        by_type = far_needle_backend.search_semantic(
+            _near_vector(), kb_name="test", limit=3, entry_type="needle"
+        )
+        assert {r["id"] for r in by_type} == {"needle-0", "needle-1", "needle-2"}
+        by_tag = far_needle_backend.search_semantic(
+            _near_vector(), kb_name="test", limit=3, tags=["rare"]
+        )
+        assert {r["id"] for r in by_tag} == {"needle-0", "needle-1", "needle-2"}
+
+        # The stated limit of the fix: when more than 4,096 rows match, a
+        # search still caps at 4,096 and must not raise (sqlite-vec refuses
+        # ``k`` above it). Postgres has no such ceiling and returns all 4,100.
+        rows = far_needle_backend.search_semantic(
+            _near_vector(), kb_name="test", limit=4500, entry_type="note"
+        )
+        assert len(rows) == (4096 if hasattr(far_needle_backend, "_raw_conn") else 4100)
+        assert all(r["entry_type"] == "note" for r in rows)
+
+        # A limit between half the cap and the cap (``k`` = 2 * limit clamps
+        # to 4096 on the first pass): filled, so one KNN statement, with the
+        # candidate subquery when filtered and without it when not.
+        if hasattr(far_needle_backend, "_raw_conn"):
+            sql_log = _spy_on_sql(far_needle_backend, monkeypatch)
+            filtered = far_needle_backend.search_semantic(
+                _near_vector(), kb_name="test", limit=3000, entry_type="note"
+            )
+            plain = far_needle_backend.search_semantic(_near_vector(), limit=3000)
+            knn = [" ".join(s.split()) for s, _ in sql_log if "MATCH" in s and "k = ?" in s]
+            assert len(filtered) == len(plain) == 3000
+            assert len(knn) == 2, knn
+            assert "rowid IN" in knn[0] and "rowid IN" not in knn[1], knn
+
+    @pytest.mark.parametrize(
+        (
+            "filter_name",
+            "target_value",
+            "distractor_value",
+            "target_overrides",
+            "distractor_overrides",
+        ),
+        [
+            ("entry_type", "needle", "note", {}, {}),
+            ("tags", ["target"], ["noise"], {"tags": ["target"]}, {"tags": ["noise"]}),
+            ("state", "MI", "LA", {"state": "MI"}, {"state": "LA"}),
+            ("fips", "26163", "22071", {"fips": "26163"}, {"fips": "22071"}),
+            (
+                "status",
+                "processed",
+                "unprocessed",
+                {"status": "processed"},
+                {"status": "unprocessed"},
+            ),
+            (
+                "date_from",
+                "2026-02-01",
+                "2026-02-01",
+                {"date": "2026-02-15"},
+                {"date": "2026-01-15"},
+            ),
+            ("date_to", "2026-02-28", "2026-02-28", {"date": "2026-02-15"}, {"date": "2026-03-15"}),
+        ],
+        ids=["entry-type", "tags", "state", "fips", "status", "date-from", "date-to"],
+    )
+    def test_selective_filter_reaches_candidates_beyond_the_k_cap(
+        self,
+        backend,
+        monkeypatch,
+        filter_name,
+        target_value,
+        distractor_value,
+        target_overrides,
+        distractor_overrides,
+    ):
+        """Each supported filter keeps matching rows beyond the small KNN cap."""
+        if not hasattr(backend, "_raw_conn"):
+            pytest.skip("only SQLite has a hard KNN candidate cap")
+
+        monkeypatch.setattr(sqlite_backend, "_SQLITE_VEC_MAX_K", 8)
+        query = _near_vector()
+        for i in range(20):
+            entry_id = f"distractor-{i}"
+            backend.upsert_entry(_make_entry(entry_id, entry_type="note", **distractor_overrides))
+            if not backend.upsert_embedding(entry_id, "test", query):
+                pytest.skip("backend cannot store embeddings (no vector support)")
+        for i in range(3):
+            entry_id = f"needle-{i}"
+            backend.upsert_entry(_make_entry(entry_id, entry_type="needle", **target_overrides))
+            if not backend.upsert_embedding(entry_id, "test", _near_vector(i + 1)):
+                pytest.skip("backend cannot store embeddings (no vector support)")
+
+        with backend._raw_cursor() as cur:
+            matching_vectors = cur.execute(
+                "SELECT COUNT(*) FROM vec_entry v JOIN entry e ON v.rowid = e.rowid "
+                "WHERE e.kb_name = ?",
+                ("test",),
+            ).fetchone()[0]
+        assert matching_vectors == 23, "embedding rowids must match entry rowids for KNN filters"
+
+        rows = backend.search_semantic(
+            query, kb_name="test", limit=2, **{filter_name: target_value}
+        )
+        assert len(rows) == 2
+        assert all(row["id"].startswith("needle-") for row in rows)
+
+    def test_archived_exclusion_alone_does_not_let_archived_rows_fill_the_cap(
+        self, backend, monkeypatch
+    ):
+        """No caller filter at all: archived rows nearer than live ones must not hide them.
+
+        The default archived exclusion applies to every search, so it must
+        also reach the KNN when the nearest ``k`` rows are all archived
+        (review of #716, item 4). Without a ``kb_name`` nothing else makes
+        the query selective.
+        """
+        if not hasattr(backend, "_raw_conn"):
+            pytest.skip("only SQLite has a hard KNN candidate cap")
+
+        monkeypatch.setattr(sqlite_backend, "_SQLITE_VEC_MAX_K", 8)
+        for i in range(20):
+            backend.upsert_entry(_make_entry(f"gone-{i}", lifecycle="archived"))
+            if not backend.upsert_embedding(f"gone-{i}", "test", _near_vector()):
+                pytest.skip("backend cannot store embeddings (no vector support)")
+        for i in range(3):
+            backend.upsert_entry(_make_entry(f"live-{i}"))
+            far = _near_vector()
+            far[i] += 0.3
+            backend.upsert_embedding(f"live-{i}", "test", far)
+
+        rows = backend.search_semantic(_near_vector(), limit=2)
+        assert len(rows) == 2
+        assert all(r["id"].startswith("live-") for r in rows)
+
+        explicit = backend.search_semantic(_near_vector(), limit=8, include_archived=True)
+        assert len(explicit) == 8, "include_archived=True must still see the archived rows"
+
+    def test_kb_filter_keeps_other_kbs_out_of_the_cap(self, backend_with_db, monkeypatch):
+        """``kb_name`` is a filter like the rest: rows of another KB cannot fill the cap."""
+        backend, _db = backend_with_db
+        if not hasattr(backend, "_raw_conn"):
+            pytest.skip("only SQLite has a hard KNN candidate cap")
+
+        monkeypatch.setattr(sqlite_backend, "_SQLITE_VEC_MAX_K", 8)
+        for i in range(20):
+            backend.upsert_entry(_make_entry(f"other-{i}", kb_name="other"))
+            if not backend.upsert_embedding(f"other-{i}", "other", _near_vector()):
+                pytest.skip("backend cannot store embeddings (no vector support)")
+        for i in range(3):
+            backend.upsert_entry(_make_entry(f"mine-{i}"))
+            far = _near_vector()
+            far[i] += 0.3
+            backend.upsert_embedding(f"mine-{i}", "test", far)
+
+        rows = backend.search_semantic(_near_vector(), kb_name="test", limit=3)
+        assert {r["id"] for r in rows} == {"mine-0", "mine-1", "mine-2"}
+
+    @pytest.mark.control(
+        reason="nothing matches, so dev also returned []; pins empty-not-error after the fix"
+    )
+    def test_zero_matches_beyond_the_k_cap_returns_empty(self, backend, monkeypatch):
+        """A selective filter with no matches returns empty despite nearer distractors."""
+        if not hasattr(backend, "_raw_conn"):
+            pytest.skip("only SQLite has a hard KNN candidate cap")
+
+        monkeypatch.setattr(sqlite_backend, "_SQLITE_VEC_MAX_K", 8)
+        for i in range(20):
+            entry_id = f"distractor-{i}"
+            backend.upsert_entry(_make_entry(entry_id, entry_type="note"))
+            if not backend.upsert_embedding(entry_id, "test", _near_vector(i)):
+                pytest.skip("backend cannot store embeddings (no vector support)")
+
+        rows = backend.search_semantic(
+            _near_vector(), kb_name="test", limit=2, entry_type="no-matches"
+        )
+        assert rows == []
+
+    @pytest.mark.control(
+        reason="dev's unfiltered path already ran one query with no subquery; these tests, "
+        "formerly passing kb_name and so on the filtered path, now pin the unfiltered path"
+    )
+    def test_unfiltered_search_above_the_k_cap_does_not_raise(
+        self, big_embedded_backend, monkeypatch
+    ):
+        """``min_similarity`` culling drives the same escalation with no filter.
 
         A cutoff no row can satisfy means ``limit`` is never reached, so the
         loop escalates ``k`` to its ceiling exactly as a selective filter does.
         The honest answer is an empty list, never an exception.
         """
-        rows = big_embedded_backend.search_semantic(
-            _near_vector(), kb_name="test", limit=5, max_distance=-1.0
+        sql_log = (
+            _spy_on_sql(big_embedded_backend, monkeypatch)
+            if hasattr(big_embedded_backend, "_raw_conn")
+            else None
         )
+        rows = big_embedded_backend.search_semantic(_near_vector(), limit=5, min_similarity=2.0)
         assert rows == []
+        if sql_log is not None:
+            # Culling, not archived rows, made it short: no retry. One statement
+            # per budget, k strictly growing to the cap, none with the subquery.
+            knn = [(" ".join(q.split()), p[1]) for q, p in sql_log if "MATCH" in q and "k = ?" in q]
+            ks = [k for _, k in knn]
+            assert ks == sorted(set(ks)) and ks[-1] == 4096, ks
+            assert not [q for q, _ in knn if "rowid IN" in q], "a cull must not trigger the retry"
 
 
 class TestSemanticKnnEscalation:
-    """The escalation loop must actually run more than once, and be observed.
+    """Filtered recall and distance-driven KNN escalation are both observed.
 
-    The filter-conformance tests above use three entries, where the first ``k``
-    (``limit * 3``) already covers the table — the loop body runs once and the
-    escalation branch is never exercised. These tests put the needle outside
-    the first budget so a second iteration is the only way to find it.
+    The filtered search puts the matching entry beyond the first KNN budget;
+    pushing its predicate into sqlite-vec lets it find that row without
+    unrelated candidates consuming the budget. A separate unfiltered query
+    verifies that distance culling still escalates ``k``.
     """
 
     @pytest.fixture
     def haystack_backend(self, backend):
         """200 rows where only the *farthest* one matches the filter.
 
-        The first ``k`` (``limit * 3`` = 3) cannot reach it, so a correct
+        The first ``k`` (``limit * 2`` = 2) cannot reach it, so a correct
         implementation escalates; one that filters the k nearest afterwards
         returns nothing.
         """
@@ -992,7 +1580,7 @@ class TestSemanticKnnEscalation:
             entry_type = "needle" if i == 199 else "note"
             backend.upsert_entry(_make_entry(f"h{i}", entry_type=entry_type))
             # Distances grow with i but stay well inside the default
-            # ``max_distance`` cutoff, so ordering — not culling — is what
+            # ``min_similarity`` cutoff, so ordering — not culling — is what
             # puts the needle out of reach of the first ``k``.
             vec = [0.05] * 384
             vec[0] += 0.0001 * i
@@ -1006,19 +1594,21 @@ class TestSemanticKnnEscalation:
         )
         assert {r["id"] for r in rows} == {"h199"}
 
-    def test_escalation_loop_runs_a_second_iteration(self, haystack_backend, monkeypatch):
-        """Pin the mechanism, not just the outcome: ``k`` must grow.
+    @pytest.mark.control(reason="distance-culling escalation already held on dev without this fix")
+    def test_unfiltered_distance_culling_escalates(self, haystack_backend, monkeypatch):
+        """Distance culling still requires a larger KNN budget.
 
-        Counts the distinct ``k`` values the backend actually asks for. One
-        value means the loop never escalated and the assertion above passed by
-        accident. Skipped for backends that do not use a KNN budget at all
-        (Postgres puts the predicates in the same ``WHERE`` as the ordering).
+        Selective predicates are now applied inside sqlite-vec's KNN query, so
+        they can find a distant matching row in the first budget. An
+        unfiltered query whose results all fail ``min_similarity`` still has to
+        escalate. Count the distinct ``k`` values to pin that behavior.
         """
         sql_log = _spy_on_sql(haystack_backend, monkeypatch)
-        rows = haystack_backend.search_semantic(
-            _near_vector(), kb_name="test", limit=1, entry_type="needle"
+        rows = haystack_backend.search_semantic(_near_vector(), limit=1, min_similarity=2.0)
+        assert rows == []
+        assert not [s for s, _ in sql_log if "rowid IN" in " ".join(s.split())], (
+            "an unfiltered search must not pay for the candidate subquery"
         )
-        assert {r["id"] for r in rows} == {"h199"}
         seen_k = [p[1] for s, p in sql_log if "MATCH" in s and "k = ?" in s]
         # The same k can appear twice in one round (the main query plus the
         # filter-independent size probe); what must grow is the sequence of
@@ -1027,6 +1617,31 @@ class TestSemanticKnnEscalation:
         assert len(budgets) >= 2, f"escalation loop ran once only; k values: {seen_k}"
         assert seen_k == sorted(seen_k), f"k must never shrink: {seen_k}"
 
+    def test_filtered_search_finds_a_far_match_in_the_first_budget(
+        self, haystack_backend, monkeypatch
+    ):
+        """The filtered query's pinned shape: the predicate rides inside the KNN.
+
+        Before the fix a filtered search over the haystack escalated ``k``
+        (2, 8, 32, 128, ...) until the far needle came into range. With the
+        candidate rowids passed into the KNN the needle is found at the first
+        budget: one distinct ``k``, and every ``MATCH`` query carries the
+        ``rowid IN (...)`` restriction. This replaces the filtered query-count
+        test that the unfiltered rewrite displaced.
+        """
+        sql_log = _spy_on_sql(haystack_backend, monkeypatch)
+        rows = haystack_backend.search_semantic(
+            _near_vector(), kb_name="test", limit=1, entry_type="needle"
+        )
+        assert {r["id"] for r in rows} == {"h199"}
+        knn = [(s, p) for s, p in sql_log if "MATCH" in s and "k = ?" in s]
+        assert {p[1] for _, p in knn} == {knn[0][1][1]}, f"filtered search escalated: {knn}"
+        assert all("rowid IN" in " ".join(s.split()) for s, _ in knn), "predicate not in the KNN"
+
+    @pytest.mark.control(
+        reason="dev's unfiltered path already ran one query with no subquery; these tests, "
+        "formerly passing kb_name and so on the filtered path, now pin the unfiltered path"
+    )
     def test_unfiltered_hot_path_runs_one_query(self, haystack_backend, monkeypatch):
         """No filter, ``limit`` filled on the first budget: one query, no COUNT.
 
@@ -1037,10 +1652,180 @@ class TestSemanticKnnEscalation:
         back than ``k`` asked for means there are no more neighbours.
         """
         sql_log = _spy_on_sql(haystack_backend, monkeypatch)
-        rows = haystack_backend.search_semantic(_near_vector(), kb_name="test", limit=5)
+        rows = haystack_backend.search_semantic(_near_vector(), limit=5)
         assert len(rows) == 5
 
         scans = [s for s, _ in sql_log if "COUNT(*) FROM vec_entry" in " ".join(s.split())]
         assert scans == [], f"unfiltered hot path scanned the whole vector table: {scans}"
         knn = [s for s, _ in sql_log if "MATCH" in s and "k = ?" in s]
         assert len(knn) == 1, f"unfiltered hot path ran {len(knn)} queries against vec_entry"
+        assert "rowid IN" not in " ".join(knn[0].split()), "no filter, so no candidate subquery"
+
+
+class TestArchivedExclusionRetry:
+    """When the archived-exclusion retry fires, and when it must not.
+
+    A first pass with no caller filter can come back shorter than ``limit``
+    for four reasons, and the retry (the KNN run again with the archived
+    exclusion inside it) can help in exactly one:
+
+    ====================================  =====================================
+    cause of the shortfall                retry
+    ====================================  =====================================
+    KNN exhausted (fewer rows than ``k``) must not fire: every row was seen
+    ``min_similarity`` culled a live row    must not fire: farther rows fail too
+    archived rows filled the k-set        fires, and finds the live rows
+    a caller filter, the readable set     never short: it rides inside the KNN
+    ====================================  =====================================
+
+    A search with no caller filter and no archived shortfall runs the queries
+    it ran before the retry existed: one KNN statement per budget, none with
+    ``rowid IN``.
+
+    The documented cost: the retry also fires, and cannot help, in three
+    shapes, all returning the correct result at the price of one extra query
+    (a full ``entry`` scan for the candidate subquery):
+
+    * archived rows fill the k-set and every live row is beyond ``min_similarity``;
+    * every live row is already in the k-set (3 live nearest, 10 archived
+      farther, ``limit=6`` at cap 8; the common shape on a KB over 4,096
+      embedded rows);
+    * ``limit`` above the cap, archived rows in the k-set, no live rows beyond.
+
+    An empty k-set at the cap runs the main query plus the size probe (at the
+    real cap that needs ``limit >= 2048``).
+    """
+
+    @staticmethod
+    def _knn(sql_log):
+        return [(" ".join(s.split()), p) for s, p in sql_log if "MATCH" in s and "k = ?" in s]
+
+    @pytest.fixture
+    def capped(self, backend, monkeypatch):
+        if not hasattr(backend, "_raw_conn"):
+            pytest.skip("only SQLite has a hard KNN candidate cap")
+        monkeypatch.setattr(sqlite_backend, "_SQLITE_VEC_MAX_K", 8)
+        return backend
+
+    def _add(self, backend, entry_id, vec, **overrides):
+        backend.upsert_entry(_make_entry(entry_id, **overrides))
+        if not backend.upsert_embedding(entry_id, "test", vec):
+            pytest.skip("backend cannot store embeddings (no vector support)")
+
+    @pytest.mark.control(
+        reason="dev has no retry, so it never over-fires; this pins that the retry added here "
+        "does not (red against the previous head of this PR, febcbca2)"
+    )
+    def test_exhausted_knn_does_not_retry(self, capped, monkeypatch):
+        """5 live rows, ``limit=6``: the index has fewer rows than ``k``; nothing to find."""
+        for i in range(5):
+            self._add(capped, f"live-{i}", _near_vector(i))
+        sql_log = _spy_on_sql(capped, monkeypatch)
+        rows = capped.search_semantic(_near_vector(), limit=6)
+        assert len(rows) == 5
+        knn = self._knn(sql_log)
+        assert len(knn) == 1 and "rowid IN" not in knn[0][0], knn
+
+    @pytest.mark.control(
+        reason="dev has no retry, so it never over-fires; this pins that the retry added here "
+        "does not (red against the previous head of this PR, febcbca2)"
+    )
+    def test_exhausted_knn_with_some_archived_rows_does_not_retry(self, capped, monkeypatch):
+        """Archived rows in a k-set that covers the whole index hide nothing."""
+        for i in range(3):
+            self._add(capped, f"live-{i}", _near_vector(i))
+            self._add(capped, f"gone-{i}", _near_vector(i), lifecycle="archived")
+        sql_log = _spy_on_sql(capped, monkeypatch)
+        rows = capped.search_semantic(_near_vector(), limit=6)
+        assert len(rows) == 3
+        knn = self._knn(sql_log)
+        assert len(knn) == 1 and "rowid IN" not in knn[0][0], knn
+
+    @pytest.mark.control(
+        reason="dev has no retry, so it never over-fires; this pins that the retry added here "
+        "does not (red against the previous head of this PR, febcbca2)"
+    )
+    def test_distance_culling_does_not_retry(self, capped, monkeypatch):
+        """30 live rows, ``min_similarity=2``: farther rows fail the cutoff too."""
+        for i in range(30):
+            self._add(capped, f"live-{i}", _near_vector(i))
+        sql_log = _spy_on_sql(capped, monkeypatch)
+        assert capped.search_semantic(_near_vector(), limit=2, min_similarity=2.0) == []
+        assert not [q for q, _ in self._knn(sql_log) if "rowid IN" in q]
+
+    @pytest.mark.control(
+        reason="dev has no retry and the previous head did not fire with include_archived "
+        "either (its condition tested `where`, empty here); a control against both"
+    )
+    def test_include_archived_never_retries(self, capped, monkeypatch):
+        """Opting in to archived rows leaves nothing to exclude, so nothing to retry."""
+        for i in range(5):
+            self._add(capped, f"live-{i}", _near_vector(i))
+        sql_log = _spy_on_sql(capped, monkeypatch)
+        rows = capped.search_semantic(_near_vector(), limit=6, include_archived=True)
+        assert len(rows) == 5
+        knn = self._knn(sql_log)
+        assert len(knn) == 1 and "rowid IN" not in knn[0][0], knn
+
+    def test_archived_rows_filling_the_kset_retry_once_and_help(self, capped, monkeypatch):
+        """20 archived rows on the query vector, 3 live ones farther: retried once, found."""
+        for i in range(20):
+            self._add(capped, f"gone-{i}", _near_vector(), lifecycle="archived")
+        for i in range(3):
+            far = _near_vector()
+            far[i] += 0.3
+            self._add(capped, f"live-{i}", far)
+        sql_log = _spy_on_sql(capped, monkeypatch)
+        rows = capped.search_semantic(_near_vector(), limit=2)
+        assert len(rows) == 2 and all(r["id"].startswith("live-") for r in rows)
+        with_subquery = [q for q, _ in self._knn(sql_log) if "rowid IN" in q]
+        assert len(with_subquery) == 1, "the retry runs exactly once"
+
+    def test_filters_combine_inside_the_knn(self, capped):
+        """KB, type, tags, status and a date range at once, beyond the cap."""
+        match = {
+            "entry_type": "needle",
+            "tags": ["t"],
+            "status": "processed",
+            "date": "2026-02-15",
+        }
+        # Each distractor sits on the query vector and fails exactly one predicate.
+        misses = [
+            {"entry_type": "note"},
+            {"tags": ["other"]},
+            {"status": "unprocessed"},
+            {"date": "2026-05-01"},
+        ]
+        for i in range(20):
+            self._add(capped, f"d-{i}", _near_vector(), **{**match, **misses[i % 4]})
+        for i in range(2):
+            far = _near_vector()
+            far[i] += 0.3
+            self._add(capped, f"hit-{i}", far, **match)
+        rows = capped.search_semantic(
+            _near_vector(),
+            kb_name="test",
+            limit=2,
+            entry_type="needle",
+            tags=["t"],
+            status="processed",
+            date_from="2026-02-01",
+            date_to="2026-02-28",
+        )
+        assert {r["id"] for r in rows} == {"hit-0", "hit-1"}
+
+    def test_filtered_search_escalates_under_similarity_culling(self, capped, monkeypatch):
+        """kb_name plus a cutoff no row meets: ``rowid IN`` at each k (4, then 8), result [].
+
+        Restores the filtered-path coverage the unfiltered rewrite of the old
+        tests displaced. Red on dev, which ran no ``rowid IN`` and a different
+        ``k`` sequence (limit * 3).
+        """
+        for i in range(30):
+            self._add(capped, f"live-{i}", _near_vector(i))
+        sql_log = _spy_on_sql(capped, monkeypatch)
+        rows = capped.search_semantic(_near_vector(), kb_name="test", limit=2, min_similarity=2.0)
+        assert rows == []
+        knn = self._knn(sql_log)
+        assert [p[1] for _, p in knn] == [4, 8], knn
+        assert all("rowid IN" in q for q, _ in knn), knn

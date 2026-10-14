@@ -10,6 +10,7 @@ from rich.table import Table
 
 from ..services.access_policy import UNSCOPED
 from .context import cli_context
+from .output import output_format_choice, validate_output_format
 
 qa_app = typer.Typer(help="Quality assurance validation and assessment")
 console = Console()
@@ -26,7 +27,10 @@ def qa_validate(
     kb_name: str | None = typer.Argument(None, help="KB to validate (all if omitted)"),
     entry: str | None = typer.Option(None, "--entry", "-e", help="Validate single entry by ID"),
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
     severity: str | None = typer.Option(
         None, "--severity", "-s", help="Minimum severity filter: error, warning, info"
@@ -120,7 +124,10 @@ def qa_assess(
         False, "--create-tasks", help="Create tasks for failed assessments"
     ),
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Run QA assessment on entries, creating assessment records.
@@ -213,7 +220,10 @@ def qa_assess(
 def qa_status(
     kb_name: str | None = typer.Argument(None, help="KB to check (all if omitted)"),
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Show QA status dashboard with issue counts and coverage."""
@@ -266,7 +276,12 @@ def qa_checkers(
     kb_name: str | None = typer.Option(
         None, "--kb", "-k", help="Show rubric coverage for a specific KB"
     ),
-    output_format: str = typer.Option("rich", "--format", help="Output format: json, rich"),
+    output_format: str = typer.Option(
+        "rich",
+        "--format",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """List available rubric checkers and per-KB coverage.
 
@@ -421,7 +436,12 @@ def qa_gaps(
     threshold: int = typer.Option(
         3, "--threshold", "-t", help="Minimum entries per type to not flag as sparse"
     ),
-    output_format: str = typer.Option("rich", "--format", help="Output format: json, rich"),
+    output_format: str = typer.Option(
+        "rich",
+        "--format",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """Report structural coverage gaps in a KB.
 
@@ -537,7 +557,12 @@ def qa_fix(
         "--fix-rule",
         help="Only fix specific rule types (e.g. invalid_date, broken_link, tag_case)",
     ),
-    output_format: str = typer.Option("rich", "--format", help="Output format: json, rich"),
+    output_format: str = typer.Option(
+        "rich",
+        "--format",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """Auto-fix safe structural issues found by validation.
 
@@ -628,7 +653,10 @@ def qa_stale(
         90, "--max-age", "-a", help="Days since last update to consider stale"
     ),
     output_format: str = typer.Option(
-        "rich", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "rich",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Find entries that haven't been updated recently.
@@ -678,7 +706,10 @@ def qa_compact(
     kb_name: str = typer.Argument(..., help="KB to check for archival candidates"),
     min_age: int = typer.Option(90, "--min-age", "-a", help="Minimum days old to be a candidate"),
     output_format: str = typer.Option(
-        "rich", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "rich",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Find entries that are candidates for archival.
@@ -740,7 +771,12 @@ def qa_check_urls(
     kb_name: str = typer.Argument(..., help="KB to check source URLs"),
     sample: int = typer.Option(0, "--sample", "-s", help="Check a random sample of N URLs (0=all)"),
     cache_file: str = typer.Option("", "--cache", help="Path to URL check cache file"),
-    output_format: str = typer.Option("rich", "--format", help="Output format: json, rich"),
+    output_format: str = typer.Option(
+        "rich",
+        "--format",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """Check source URLs for liveness (HTTP status).
 
@@ -817,7 +853,12 @@ def qa_coverage(
     entry_type: str | None = typer.Option(
         None, "--type", "-t", help="Restrict report to one entry type"
     ),
-    output_format: str = typer.Option("rich", "--format", help="Output format: rich or json"),
+    output_format: str = typer.Option(
+        "rich",
+        "--format",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: rich or json",
+    ),
 ):
     """Curation coverage stats for a KB.
 

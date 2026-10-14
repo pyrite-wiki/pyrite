@@ -22,6 +22,8 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 
+from tests.cli_help import plain
+
 from pyrite.cli import app
 from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.storage.database import PyriteDB
@@ -305,9 +307,8 @@ def test_task_create_field_refuses_managed_fields(task_cli_env, managed_field):
 def test_task_create_help_lists_field_option():
     result = runner.invoke(app, ["task", "create", "--help"])
     assert result.exit_code == 0, result.stdout
-    import re
 
-    clean = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", result.stdout)
+    clean = plain(result.stdout)
     assert "--field" in clean
 
 

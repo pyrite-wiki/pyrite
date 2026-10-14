@@ -268,7 +268,8 @@
   "GET /api/daily/{date_str} | admin_key | no-default-role-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Sunday, May 2, 2021\n\n",
+      "body": "# Sunday, May 2, 2021",
+      "content_hash": "58bcb6c0df255df5542d8583297cfb1293bb6d28a693909c76518e74964cb542",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -293,7 +294,8 @@
   "GET /api/daily/{date_str} | admin_key | private-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Monday, October 30, 2017\n\n",
+      "body": "# Monday, October 30, 2017",
+      "content_hash": "a1e1f1691936c189e41a857759917ec3d35764466fb8b5b2a0be4f898df196f8",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -318,7 +320,8 @@
   "GET /api/daily/{date_str} | admin_key | readable-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Saturday, February 3, 2018\n\n",
+      "body": "# Saturday, February 3, 2018",
+      "content_hash": "c8dd880ea8972954c9e76798d8567f7f02eb61935ca859db3c89e9e197e3e1c4",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -800,6 +803,10 @@
         "event": {
           "description": "Something that happened",
           "fields": {
+            "actors": {
+              "description": "People or organizations involved",
+              "type": "list"
+            },
             "date": {
               "description": "When the event occurred (YYYY-MM-DD)",
               "type": "text"
@@ -811,10 +818,6 @@
             "location": {
               "description": "Where the event took place",
               "type": "text"
-            },
-            "participants": {
-              "description": "People or organizations involved",
-              "type": "list"
             },
             "status": {
               "description": "Verification status: confirmed, disputed, alleged, rumored",
@@ -1109,12 +1112,12 @@
               "description": "Type of relationship (see relationship_types in schema)",
               "type": "text"
             },
-            "source": {
-              "description": "",
+            "source_entity": {
+              "description": "Entry ID of the source entity",
               "type": "text"
             },
-            "target": {
-              "description": "",
+            "target_entity": {
+              "description": "Entry ID of the target entity",
               "type": "text"
             }
           },
@@ -1587,6 +1590,10 @@
         "event": {
           "description": "Something that happened",
           "fields": {
+            "actors": {
+              "description": "People or organizations involved",
+              "type": "list"
+            },
             "date": {
               "description": "When the event occurred (YYYY-MM-DD)",
               "type": "text"
@@ -1598,10 +1605,6 @@
             "location": {
               "description": "Where the event took place",
               "type": "text"
-            },
-            "participants": {
-              "description": "People or organizations involved",
-              "type": "list"
             },
             "status": {
               "description": "Verification status: confirmed, disputed, alleged, rumored",
@@ -1896,12 +1899,12 @@
               "description": "Type of relationship (see relationship_types in schema)",
               "type": "text"
             },
-            "source": {
-              "description": "",
+            "source_entity": {
+              "description": "Entry ID of the source entity",
               "type": "text"
             },
-            "target": {
-              "description": "",
+            "target_entity": {
+              "description": "Entry ID of the target entity",
               "type": "text"
             }
           },
@@ -2374,6 +2377,10 @@
         "event": {
           "description": "Something that happened",
           "fields": {
+            "actors": {
+              "description": "People or organizations involved",
+              "type": "list"
+            },
             "date": {
               "description": "When the event occurred (YYYY-MM-DD)",
               "type": "text"
@@ -2385,10 +2392,6 @@
             "location": {
               "description": "Where the event took place",
               "type": "text"
-            },
-            "participants": {
-              "description": "People or organizations involved",
-              "type": "list"
             },
             "status": {
               "description": "Verification status: confirmed, disputed, alleged, rumored",
@@ -2683,12 +2686,12 @@
               "description": "Type of relationship (see relationship_types in schema)",
               "type": "text"
             },
-            "source": {
-              "description": "",
+            "source_entity": {
+              "description": "Entry ID of the source entity",
               "type": "text"
             },
-            "target": {
-              "description": "",
+            "target_entity": {
+              "description": "Entry ID of the target entity",
               "type": "text"
             }
           },
@@ -3161,6 +3164,10 @@
         "event": {
           "description": "Something that happened",
           "fields": {
+            "actors": {
+              "description": "People or organizations involved",
+              "type": "list"
+            },
             "date": {
               "description": "When the event occurred (YYYY-MM-DD)",
               "type": "text"
@@ -3172,10 +3179,6 @@
             "location": {
               "description": "Where the event took place",
               "type": "text"
-            },
-            "participants": {
-              "description": "People or organizations involved",
-              "type": "list"
             },
             "status": {
               "description": "Verification status: confirmed, disputed, alleged, rumored",
@@ -3470,12 +3473,12 @@
               "description": "Type of relationship (see relationship_types in schema)",
               "type": "text"
             },
-            "source": {
-              "description": "",
+            "source_entity": {
+              "description": "Entry ID of the source entity",
               "type": "text"
             },
-            "target": {
-              "description": "",
+            "target_entity": {
+              "description": "Entry ID of the target entity",
               "type": "text"
             }
           },
@@ -3735,6 +3738,7 @@
     "body": {
       "backlinks": [],
       "body": "a zebra of no fixed abode",
+      "content_hash": "fe7dc60f356dd2997276b0c2e28444db5334e02d626e49d4f617c57c97f33716",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -3758,6 +3762,7 @@
     "body": {
       "backlinks": [],
       "body": "a zebra behind the wall",
+      "content_hash": "0b3eb8d547f96ecac571def342dbb93479b96410fcddef62f2510886021c5173",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -3781,6 +3786,7 @@
     "body": {
       "backlinks": [],
       "body": "a zebra in the open",
+      "content_hash": "75a0ede94d46612f5bd4f9a26fc86dfcf7c40ce08024dae647c9bece56e9e2c1",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -4371,6 +4377,8 @@
           "actor_reference": "Event references an actor (resolved from string or wikilink)",
           "advised_by": "Advised by another entity",
           "advises": "Advisory relationship",
+          "amended_by": "An ADR is amended by a later one",
+          "amends": "A later ADR amends an earlier one",
           "answers_question": "Answers a question",
           "asks_question": "Poses a question",
           "authored": "Authorship",
@@ -4533,17 +4541,17 @@
               }
             ],
             "field_descriptions": {
+              "actors": "People or organizations involved",
               "date": "When the event occurred (YYYY-MM-DD)",
               "importance": "Significance score from 1 (minor) to 10 (major)",
               "location": "Where the event took place",
-              "participants": "People or organizations involved",
               "status": "Verification status: confirmed, disputed, alleged, rumored"
             },
             "fields": {
+              "actors": "list[str]",
               "date": "str",
               "importance": "int",
               "location": "str",
-              "participants": "list[str]",
               "status": "EventStatus"
             }
           },
@@ -4625,8 +4633,8 @@
             },
             "fields": {
               "relationship_type": "str",
-              "source": "str",
-              "target": "str"
+              "source_entity": "str",
+              "target_entity": "str"
             }
           },
           "timeline": {
@@ -4711,6 +4719,8 @@
           "actor_reference": "Event references an actor (resolved from string or wikilink)",
           "advised_by": "Advised by another entity",
           "advises": "Advisory relationship",
+          "amended_by": "An ADR is amended by a later one",
+          "amends": "A later ADR amends an earlier one",
           "answers_question": "Answers a question",
           "asks_question": "Poses a question",
           "authored": "Authorship",
@@ -4873,17 +4883,17 @@
               }
             ],
             "field_descriptions": {
+              "actors": "People or organizations involved",
               "date": "When the event occurred (YYYY-MM-DD)",
               "importance": "Significance score from 1 (minor) to 10 (major)",
               "location": "Where the event took place",
-              "participants": "People or organizations involved",
               "status": "Verification status: confirmed, disputed, alleged, rumored"
             },
             "fields": {
+              "actors": "list[str]",
               "date": "str",
               "importance": "int",
               "location": "str",
-              "participants": "list[str]",
               "status": "EventStatus"
             }
           },
@@ -4965,8 +4975,8 @@
             },
             "fields": {
               "relationship_type": "str",
-              "source": "str",
-              "target": "str"
+              "source_entity": "str",
+              "target_entity": "str"
             }
           },
           "timeline": {
@@ -5051,6 +5061,8 @@
           "actor_reference": "Event references an actor (resolved from string or wikilink)",
           "advised_by": "Advised by another entity",
           "advises": "Advisory relationship",
+          "amended_by": "An ADR is amended by a later one",
+          "amends": "A later ADR amends an earlier one",
           "answers_question": "Answers a question",
           "asks_question": "Poses a question",
           "authored": "Authorship",
@@ -5213,17 +5225,17 @@
               }
             ],
             "field_descriptions": {
+              "actors": "People or organizations involved",
               "date": "When the event occurred (YYYY-MM-DD)",
               "importance": "Significance score from 1 (minor) to 10 (major)",
               "location": "Where the event took place",
-              "participants": "People or organizations involved",
               "status": "Verification status: confirmed, disputed, alleged, rumored"
             },
             "fields": {
+              "actors": "list[str]",
               "date": "str",
               "importance": "int",
               "location": "str",
-              "participants": "list[str]",
               "status": "EventStatus"
             }
           },
@@ -5305,8 +5317,8 @@
             },
             "fields": {
               "relationship_type": "str",
-              "source": "str",
-              "target": "str"
+              "source_entity": "str",
+              "target_entity": "str"
             }
           },
           "timeline": {
@@ -5381,6 +5393,8 @@
         "actor_reference": "Event references an actor (resolved from string or wikilink)",
         "advised_by": "Advised by another entity",
         "advises": "Advisory relationship",
+        "amended_by": "An ADR is amended by a later one",
+        "amends": "A later ADR amends an earlier one",
         "answers_question": "Answers a question",
         "asks_question": "Poses a question",
         "authored": "Authorship",
@@ -5543,17 +5557,17 @@
             }
           ],
           "field_descriptions": {
+            "actors": "People or organizations involved",
             "date": "When the event occurred (YYYY-MM-DD)",
             "importance": "Significance score from 1 (minor) to 10 (major)",
             "location": "Where the event took place",
-            "participants": "People or organizations involved",
             "status": "Verification status: confirmed, disputed, alleged, rumored"
           },
           "fields": {
+            "actors": "list[str]",
             "date": "str",
             "importance": "int",
             "location": "str",
-            "participants": "list[str]",
             "status": "EventStatus"
           }
         },
@@ -5635,8 +5649,8 @@
           },
           "fields": {
             "relationship_type": "str",
-            "source": "str",
-            "target": "str"
+            "source_entity": "str",
+            "target_entity": "str"
           }
         },
         "timeline": {
@@ -5698,6 +5712,8 @@
         "actor_reference": "Event references an actor (resolved from string or wikilink)",
         "advised_by": "Advised by another entity",
         "advises": "Advisory relationship",
+        "amended_by": "An ADR is amended by a later one",
+        "amends": "A later ADR amends an earlier one",
         "answers_question": "Answers a question",
         "asks_question": "Poses a question",
         "authored": "Authorship",
@@ -5860,17 +5876,17 @@
             }
           ],
           "field_descriptions": {
+            "actors": "People or organizations involved",
             "date": "When the event occurred (YYYY-MM-DD)",
             "importance": "Significance score from 1 (minor) to 10 (major)",
             "location": "Where the event took place",
-            "participants": "People or organizations involved",
             "status": "Verification status: confirmed, disputed, alleged, rumored"
           },
           "fields": {
+            "actors": "list[str]",
             "date": "str",
             "importance": "int",
             "location": "str",
-            "participants": "list[str]",
             "status": "EventStatus"
           }
         },
@@ -5952,8 +5968,8 @@
           },
           "fields": {
             "relationship_type": "str",
-            "source": "str",
-            "target": "str"
+            "source_entity": "str",
+            "target_entity": "str"
           }
         },
         "timeline": {
@@ -6015,6 +6031,8 @@
         "actor_reference": "Event references an actor (resolved from string or wikilink)",
         "advised_by": "Advised by another entity",
         "advises": "Advisory relationship",
+        "amended_by": "An ADR is amended by a later one",
+        "amends": "A later ADR amends an earlier one",
         "answers_question": "Answers a question",
         "asks_question": "Poses a question",
         "authored": "Authorship",
@@ -6177,17 +6195,17 @@
             }
           ],
           "field_descriptions": {
+            "actors": "People or organizations involved",
             "date": "When the event occurred (YYYY-MM-DD)",
             "importance": "Significance score from 1 (minor) to 10 (major)",
             "location": "Where the event took place",
-            "participants": "People or organizations involved",
             "status": "Verification status: confirmed, disputed, alleged, rumored"
           },
           "fields": {
+            "actors": "list[str]",
             "date": "str",
             "importance": "int",
             "location": "str",
-            "participants": "list[str]",
             "status": "EventStatus"
           }
         },
@@ -6269,8 +6287,8 @@
           },
           "fields": {
             "relationship_type": "str",
-            "source": "str",
-            "target": "str"
+            "source_entity": "str",
+            "target_entity": "str"
           }
         },
         "timeline": {
@@ -6915,6 +6933,12 @@
   "GET /api/search | admin_key | missing-kb": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "none",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "none",
+      "match_basis": "keyword: nothing matched",
       "query": "zebra",
       "results": []
     },
@@ -6923,6 +6947,12 @@
   "GET /api/search | admin_key | no-default-role-kb": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "all_terms",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "strong",
+      "match_basis": "keyword: every term matched",
       "query": "zebra",
       "results": [
         {
@@ -6936,6 +6966,12 @@
   "GET /api/search | admin_key | private-kb": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "all_terms",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "strong",
+      "match_basis": "keyword: every term matched",
       "query": "zebra",
       "results": [
         {
@@ -6949,6 +6985,12 @@
   "GET /api/search | admin_key | readable-kb": {
     "body": {
       "count": "<ENUMERATION_CONTENT>",
+      "keyword_match": "all_terms",
+      "legs_run": [
+        "keyword"
+      ],
+      "match": "strong",
+      "match_basis": "keyword: every term matched",
       "query": "zebra",
       "results": [
         {
@@ -7564,7 +7606,8 @@
   "POST /api/daily/{date_str} | admin_key | no-default-role-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Thursday, January 22, 2015\n\n",
+      "body": "# Thursday, January 22, 2015",
+      "content_hash": "7ebd95a41f37b2de5053cc6f135c07d83e4788aab1ead76863e8e867baaa7435",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -7589,7 +7632,8 @@
   "POST /api/daily/{date_str} | admin_key | private-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Monday, May 30, 2022\n\n",
+      "body": "# Monday, May 30, 2022",
+      "content_hash": "0a3702b4109ff65973abcaf7ba9a41f0619e005aed2ba68b2fdcb5bac67636a5",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",
@@ -7614,7 +7658,8 @@
   "POST /api/daily/{date_str} | admin_key | readable-kb": {
     "body": {
       "backlinks": [],
-      "body": "# Thursday, November 19, 2020\n\n",
+      "body": "# Thursday, November 19, 2020",
+      "content_hash": "d652f43b80e9e4a5d0aeb3ddcd6739781ff6a731897430c6db7845d7fa24d3a1",
       "created_at": "<TIMESTAMP>",
       "date": null,
       "entry_type": "note",

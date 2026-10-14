@@ -1,1 +1,0 @@
-- **`pyrite qa check-urls` no longer crashes on start (#574).** The command used the database context manager as if it were the database. It now reads the source URLs inside the `with cli_context()` block, so the database is open for the read and closed afterwards.

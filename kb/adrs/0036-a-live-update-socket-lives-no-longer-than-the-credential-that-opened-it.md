@@ -9,6 +9,11 @@ date: 2026-09-25
 
 # ADR-0036: A live-update socket lives no longer than the credential that opened it
 
+> **Lags the code (2026-10-03).** Consequences say KB-wide access changes are
+> "not yet covered". KB-policy epochs now exist
+> (`announce_kb_policy_change` in `pyrite/services/credential_events.py`), so they
+> are covered. The decision is unchanged. Evidence: `kb/designs/adr-audit-2026-10.md`.
+
 ## Context
 
 `/ws` pushes live-update events (entry created, updated, deleted; KB synced) to

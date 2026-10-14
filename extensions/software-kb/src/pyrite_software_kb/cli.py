@@ -8,9 +8,12 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from pyrite.cli.output import output_format_choice
 from pyrite.config import load_config
 from pyrite.services.access_policy import UNSCOPED
 from pyrite.storage.database import PyriteDB
+
+from .adr_listing import adr_relations, adr_sort_key, format_adr_relations
 
 sw_app = typer.Typer(help="Software KB commands (ADRs, backlog, standards, components)")
 console = Console()
@@ -81,7 +84,13 @@ def sw_adrs(
     limit: int | None = typer.Option(None, "--limit", help="Max ADRs to return (default 50)"),
     offset: int = typer.Option(0, "--offset", help="Skip this many ADRs before returning"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    fmt: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    fmt: str = typer.Option(
+        "json",
+        "--format",
+        "-f",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """List Architecture Decision Records.
 
@@ -104,6 +113,8 @@ def sw_adrs(
                 if (r.get("status") or r["_meta"].get("status", "proposed")) == status
             ]
 
+        rows.sort(key=adr_sort_key)
+
         # Bound AFTER filtering, never before (#233): limiting first would cut
         # the list before the filter and return the wrong page.
         rows = rows[offset : offset + effective_limit] if effective_limit else rows[offset:]
@@ -119,10 +130,13 @@ def sw_adrs(
             _json_output(
                 [
                     {
+                        "id": r["id"],
+                        "kb_name": r["kb_name"],
                         "adr_number": r["_meta"].get("adr_number", ""),
                         "title": r["title"],
                         "status": r.get("status") or r["_meta"].get("status", "proposed"),
                         "date": r.get("date") or r["_meta"].get("date", ""),
+                        "relations": adr_relations(db, r, readable_kbs=None),
                     }
                     for r in rows
                 ]
@@ -130,19 +144,26 @@ def sw_adrs(
             return
 
         table = Table(title="Architecture Decision Records")
+        table.add_column("KB", style="dim")
+        table.add_column("ID", style="dim")
         table.add_column("#", style="cyan", justify="right")
         table.add_column("Title")
         table.add_column("Status", style="yellow")
         table.add_column("Date", style="dim")
+        table.add_column("Relations")
 
         for row in rows:
             meta = row["_meta"]
             num = str(meta.get("adr_number", ""))
+            relations = adr_relations(db, row, readable_kbs=None)
             table.add_row(
+                row["kb_name"],
+                row["id"],
                 num,
                 row["title"],
                 row.get("status") or meta.get("status", "proposed"),
                 row.get("date") or meta.get("date", ""),
+                format_adr_relations(relations),
             )
 
         console.print(table)
@@ -262,7 +283,13 @@ def sw_backlog(
     ),
     offset: int = typer.Option(0, "--offset", help="Skip this many items before returning"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    fmt: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    fmt: str = typer.Option(
+        "json",
+        "--format",
+        "-f",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """List backlog items with sorting, filtering, and grouping.
 
@@ -360,7 +387,13 @@ def sw_backlog(
 def sw_epics(
     status: str | None = typer.Option(None, "--status", "-s", help="Filter by status"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    fmt: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    fmt: str = typer.Option(
+        "json",
+        "--format",
+        "-f",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """List epics with subtask progress."""
     from .plugin import SoftwareKBPlugin
@@ -405,7 +438,13 @@ def sw_epics(
 def sw_epic_detail(
     epic_id: str = typer.Argument(..., help="Epic ID"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    fmt: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    fmt: str = typer.Option(
+        "json",
+        "--format",
+        "-f",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """Show an epic's subtasks grouped by status."""
     from .plugin import SoftwareKBPlugin
@@ -475,6 +514,10 @@ def sw_prioritize(
             console.print(f"  [red]{item['id']}: {item['error']}[/red]")
         else:
             console.print(f"  {item['id']} → rank {item['rank']}")
+    from pyrite.utils.errors import exit_unless_whole
+
+    failed = sum(1 for item in result.get("updated", []) if "error" in item)
+    exit_unless_whole(failed, len(result.get("updated", [])) - failed)
 
 
 @sw_app.command("standards")
@@ -483,7 +526,13 @@ def sw_standards(
     limit: int | None = typer.Option(None, "--limit", help="Max standards to return (default 50)"),
     offset: int = typer.Option(0, "--offset", help="Skip this many standards before returning"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    fmt: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    fmt: str = typer.Option(
+        "json",
+        "--format",
+        "-f",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """List all standards (standard + programmatic_validation + development_convention). [deprecated: use validations/conventions]"""
     from .plugin import DEFAULT_LIST_LIMIT
@@ -544,7 +593,13 @@ def sw_standards(
 def sw_validations(
     category: str | None = typer.Option(None, "--category", "-c", help="Filter by category"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    fmt: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    fmt: str = typer.Option(
+        "json",
+        "--format",
+        "-f",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """List programmatic validations (automated checks)."""
     config = load_config()
@@ -595,7 +650,13 @@ def sw_validations(
 def sw_conventions(
     category: str | None = typer.Option(None, "--category", "-c", help="Filter by category"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    fmt: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    fmt: str = typer.Option(
+        "json",
+        "--format",
+        "-f",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """List development conventions (judgment-based guidance)."""
     config = load_config()
@@ -678,15 +739,18 @@ def sw_migrate_standards(
             return
 
         migrated = 0
+        skipped = 0
         for row in rows:
             file_path = row.get("file_path") or row.get("source_path", "")
             if not file_path:
                 console.print(f"  [red]Skip[/red] {row['title']}: no file_path")
+                skipped += 1
                 continue
 
             path = Path(file_path)
             if not path.exists():
                 console.print(f"  [red]Skip[/red] {row['title']}: file not found at {path}")
+                skipped += 1
                 continue
 
             content = path.read_text()
@@ -727,6 +791,9 @@ def sw_migrate_standards(
 
         console.print(f"\n[green]{migrated}[/green] entries migrated.")
         console.print("[dim]Run `pyrite index sync` to update the index.[/dim]")
+        from pyrite.utils.errors import exit_unless_whole
+
+        exit_unless_whole(skipped, migrated)  # a skipped standard was asked for and not done
     finally:
         db.close()
 
@@ -735,7 +802,13 @@ def sw_migrate_standards(
 def sw_milestones(
     status: str | None = typer.Option(None, "--status", "-s", help="Filter by status"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    fmt: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    fmt: str = typer.Option(
+        "json",
+        "--format",
+        "-f",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """List milestones with completion progress."""
     config = load_config()
@@ -809,7 +882,13 @@ def sw_milestones(
 @sw_app.command("board")
 def sw_board_cmd(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    fmt: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    fmt: str = typer.Option(
+        "json",
+        "--format",
+        "-f",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """View kanban board with backlog items grouped by lane."""
     from pathlib import Path
@@ -886,7 +965,13 @@ def sw_board_cmd(
 @sw_app.command("review-queue")
 def sw_review_queue(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    fmt: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    fmt: str = typer.Option(
+        "json",
+        "--format",
+        "-f",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """View items in review status, sorted by wait time."""
     config = load_config()
@@ -1124,7 +1209,13 @@ def sw_transition(
 @sw_app.command("pull-next")
 def sw_pull_next(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    fmt: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    fmt: str = typer.Option(
+        "json",
+        "--format",
+        "-f",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """Recommend the next work item based on priority and WIP limits."""
     from .plugin import SoftwareKBPlugin
@@ -1231,7 +1322,13 @@ def sw_components(
     limit: int | None = typer.Option(None, "--limit", help="Max components to return (default 50)"),
     offset: int = typer.Option(0, "--offset", help="Skip this many components before returning"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    fmt: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    fmt: str = typer.Option(
+        "json",
+        "--format",
+        "-f",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """List component documentation.
 
@@ -1298,7 +1395,13 @@ def sw_components(
 def sw_check_ready(
     item_id: str = typer.Argument(..., help="Backlog item ID"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    fmt: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    fmt: str = typer.Option(
+        "json",
+        "--format",
+        "-f",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """Check Definition of Ready for a backlog item without claiming it."""
     from .plugin import SoftwareKBPlugin
@@ -1334,7 +1437,13 @@ def sw_check_ready(
 def sw_refine_cmd(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
     status: str | None = typer.Option(None, "--status", "-s", help="Filter: proposed or accepted"),
-    fmt: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    fmt: str = typer.Option(
+        "json",
+        "--format",
+        "-f",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """Scan backlog for DoR gaps, sorted by priority."""
     from .plugin import SoftwareKBPlugin
@@ -1389,7 +1498,13 @@ def sw_refine_cmd(
 def sw_context_for_item(
     item_id: str = typer.Argument(..., help="Backlog item ID"),
     kb_name: str = typer.Option(..., "--kb", "-k", help="KB name"),
-    fmt: str = typer.Option("json", "--format", "-f", help="Output format: json, rich"),
+    fmt: str = typer.Option(
+        "json",
+        "--format",
+        "-f",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """Assemble full context bundle for a backlog item: linked ADRs, components, validations, conventions, reviews, work logs, dependencies."""
     from .plugin import SoftwareKBPlugin

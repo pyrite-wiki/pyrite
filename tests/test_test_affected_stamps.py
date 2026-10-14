@@ -71,6 +71,7 @@ def _isolated(tmp_path, monkeypatch):
     for var in ("PRE_COMMIT_FROM_REF", "PRE_COMMIT_TO_REF", "PYRITE_PUSH_FULL"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.delenv("PYRITE_PUSH_FORCE", raising=False)
+    monkeypatch.delenv("PYRITE_PUSH_EXPERIMENTAL", raising=False)
     monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
     monkeypatch.delenv("PYTEST_PLUGINS", raising=False)
     monkeypatch.delenv("FAKE_EXIT", raising=False)
@@ -299,6 +300,20 @@ class TestCoverage:
     def test_a_subset_does_not_cover_a_superset(self, repo):
         assert _run(repo, "--files", "pyrite/b.py").returncode == 0
         assert _run(repo, "--files", "pyrite/a.py", "pyrite/b.py").returncode == 0
+        assert len(_calls()) == 2
+
+    @NEVER
+    def test_a_core_only_pass_does_not_cover_an_experimental_run(self, repo):
+        """#657: the default run deselects experimental tests, so its pass
+        says nothing about them."""
+        assert _run(repo, "--full").returncode == 0
+        assert _run(repo, "--full", PYRITE_PUSH_EXPERIMENTAL="1").returncode == 0
+        assert len(_calls()) == 2
+
+    def test_an_experimental_pass_does_not_vouch_for_the_core_run_either(self, repo):
+        # Kept separate by key: a re-run costs time, a wrong skip costs a gate.
+        assert _run(repo, "--full", "--experimental").returncode == 0
+        assert _run(repo, "--full").returncode == 0
         assert len(_calls()) == 2
 
     def test_full_covers_any_selection(self, repo):

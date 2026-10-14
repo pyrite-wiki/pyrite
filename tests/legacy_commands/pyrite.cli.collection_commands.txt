@@ -1,0 +1,2 @@
+pyrite collections list
+pyrite collections query

@@ -18,7 +18,7 @@ from ...exceptions import (
 from ...services.access_policy import KB, Action, AnyKB, ReadScope
 from ...services.block_service import BlockService
 from ...services.kb_service import KBService
-from ...services.read_shaping import parse_fields_param, project_fields
+from ...services.read_shaping import IDENTITY_FIELDS, parse_fields_param, project_fields
 from ..api import (
     get_block_service,
     get_config,
@@ -413,11 +413,18 @@ def batch_read_entries(
         ids = [(eid, kb) for eid, kb in ids if scope.permits(kb)]
     results = svc.get_entries(ids)
 
-    if fields_param:
+    # `[]` is no projection. A non-empty list that cleans to nothing (`[""]`,
+    # `[" "]`) is still a projection, as it was before the list went through
+    # parse_fields_param: the identity pair only. The body's list is not split
+    # on commas, unlike `?fields=`: `["a,b"]` names one field.
+    fields_list = parse_fields_param(fields_param)
+    if fields_param and not fields_list:
+        fields_list = list(IDENTITY_FIELDS)
+    if fields_list:
         # Same rule as every other read surface (#193). found_ids below reads
         # the identity pair, and dropping it is what made `found` and
         # `not_found` disagree (#134).
-        results = [project_fields(record, fields_param) for record in results]
+        results = [project_fields(record, fields_list) for record in results]
 
     found_ids = {(r["id"], r["kb_name"]) for r in results}
     requested = [(e["entry_id"], e["kb_name"]) for e in entries_spec]
@@ -426,7 +433,7 @@ def batch_read_entries(
     ]
 
     resp_data = {"entries": results, "found": len(results), "not_found": not_found}
-    neg = negotiate_response(request, resp_data)
+    neg = negotiate_response(request, resp_data, fields=fields_list)
     if neg is not None:
         return neg
     return resp_data
@@ -592,6 +599,12 @@ async def import_entries(
     allow_undeclared: bool = Query(
         False, description="Allow entry types the KB's kb.yaml does not declare"
     ),
+    stream: bool = Query(
+        False,
+        description="Markdown only: read the file as a stream of entries (a --- line followed "
+        "directly by title:, type: or id: starts the next). Off by default: a markdown file "
+        "is one entry. A --- inside a code block is not understood.",
+    ),
     svc: KBService = Depends(get_kb_service),
 ):
     """Import entries from an uploaded file."""
@@ -628,9 +641,14 @@ async def import_entries(
             },
         )
 
+    if stream and fmt != "markdown":
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "STREAM_NOT_SUPPORTED", "message": "stream applies to markdown only"},
+        )
     content = await file.read()
     try:
-        parsed = importer(content)
+        parsed = importer(content, stream=True) if stream else importer(content)
     except Exception as e:
         raise HTTPException(
             status_code=400,
@@ -726,7 +744,7 @@ def get_entry(
     fields_list = parse_fields_param(fields)
     if fields_list:
         result = project_fields(result, fields_list)
-        neg = negotiate_response(request, result)
+        neg = negotiate_response(request, result, fields=fields_list, single_entry=True)
         if neg is not None:
             return neg
         return JSONResponse(content=result)
@@ -735,6 +753,9 @@ def get_entry(
     if neg is not None:
         return neg
     return EntryResponse(**result)
+
+
+_CREATE_DEFAULTED = frozenset({"participants", "tags", "metadata"})
 
 
 @router.post(
@@ -780,6 +801,10 @@ def create_entry(
             "metadata": req.metadata,
         }.items()
         if v is not None
+        # A field with a model default (`participants: []`, `tags: []`,
+        # `metadata: {}`) the client did not send was not asked for: leave it
+        # out, so "sent" and "empty" stay different (#720, design principle 3).
+        and (k not in _CREATE_DEFAULTED or k in req.model_fields_set)
     }
 
     try:

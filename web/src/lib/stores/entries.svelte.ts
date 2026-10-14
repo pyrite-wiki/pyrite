@@ -19,6 +19,7 @@ class EntryStore {
 	recentTitles = $state<Record<string, string>>({});
 	sortBy = $state('updated_at');
 	sortOrder = $state<'asc' | 'desc'>('desc');
+	private listRequestId = 0;
 
 	async loadList(options: {
 		kb?: string;
@@ -28,6 +29,7 @@ class EntryStore {
 		min_importance?: number;
 		offset?: number;
 	} = {}) {
+		const requestId = ++this.listRequestId;
 		this.loading = true;
 		this.initialized = false;
 		this.listKB = options.kb;
@@ -44,14 +46,19 @@ class EntryStore {
 				limit: this.limit,
 				offset: options.offset ?? this.offset
 			});
+			if (requestId !== this.listRequestId) return;
 			this.entries = res.entries;
 			this.total = res.total;
 			this.offset = res.offset;
 		} catch (e) {
-			this.error = e instanceof Error ? e.message : 'Failed to load entries';
+			if (requestId === this.listRequestId) {
+				this.error = e instanceof Error ? e.message : 'Failed to load entries';
+			}
 		} finally {
-			this.loading = false;
-			this.initialized = true;
+			if (requestId === this.listRequestId) {
+				this.loading = false;
+				this.initialized = true;
+			}
 		}
 	}
 

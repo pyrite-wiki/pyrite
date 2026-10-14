@@ -1,0 +1,4 @@
+pyrite extension init
+pyrite extension install
+pyrite extension list
+pyrite extension uninstall

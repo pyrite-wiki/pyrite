@@ -315,10 +315,23 @@ Limits on what the setting can do:
 | `PYRITE_SEARCH_MODE` | `keyword` | Default search mode: `keyword`, `semantic`, `hybrid` |
 | `PYRITE_AUTO_EMBED` | `true` | Embed entries when they are written. `0`/`false` turns it off: keyword search only, no torch import and no model download on the write path. `pyrite index embed` backfills later. |
 | `PYRITE_PREWARM_EMBEDDINGS` | `false` | Load the embedding model at server start instead of on the first write or semantic search |
+| `PYRITE_POSTGRES_EXPERIMENTAL_ACK` | unset | `1`/`true`/`yes` silences the once-per-process notice that the Postgres backend is experimental (#718). Shown by default. |
 
-`config.yaml` also sets `embedding_model` (default `all-MiniLM-L6-v2`, ~90 MB,
-downloaded on first use) and `search_backend` (`sqlite` or `postgres`, with
-`database_url` for the latter).
+`config.yaml` also lists `embedding_model` (default `all-MiniLM-L6-v2`, ~90 MB,
+downloaded on first use).
+
+**The Postgres backend is experimental in 0.25.x.** It has no migration for
+columns added after alembic revision 006, so an existing Postgres database may
+not upgrade between releases
+([#718](https://github.com/pyrite-wiki/pyrite/issues/718)). Nothing in 0.25.x
+reads the `search_backend` and `database_url` keys yet: the index is always
+SQLite, and only the test suite builds a Postgres backend. If code does
+construct it, Pyrite says so once per process, on stderr and in the server log
+(never on stdout, and the notice cannot stop the backend being built); set
+`PYRITE_POSTGRES_EXPERIMENTAL_ACK=1` to silence it. Limits: an application
+that routes logging to stdout has chosen that; the check for "logging already
+writes this to stderr" can print the line twice, or, if a child logger's level
+is raised above WARNING, not at all.
 
 ## Bounded reads (MCP)
 

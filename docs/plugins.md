@@ -91,6 +91,21 @@ Example plugin. `social` exists to show how a Pyrite plugin adds entry types, CL
 
 ---
 
+### Journalism Investigation
+
+**EXPERIMENTAL: Unsupported until the 0.28 alpha plugin/API contract.**
+The journalism-investigation MCP tools are not a supported product surface.
+
+Tracked issues: [#92](https://github.com/pyrite-wiki/pyrite/issues/92), [#93](https://github.com/pyrite-wiki/pyrite/issues/93), [#94](https://github.com/pyrite-wiki/pyrite/issues/94), and [#98](https://github.com/pyrite-wiki/pyrite/issues/98).
+
+**Install:** `pip install -e extensions/journalism-investigation`
+
+**Use case:** Local investigative research with sources, claims, entities, and evidence chains. The tools remain available; no tool is removed.
+
+[Full docs](https://github.com/pyrite-wiki/pyrite/tree/main/extensions/journalism-investigation)
+
+---
+
 ### Cascade
 
 Investigative journalism knowledge management covering actors, organizations, events, themes, mechanisms, scenes, victims, statistics, and timelines.

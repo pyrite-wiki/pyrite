@@ -5,12 +5,18 @@ type: adr
 tags: [search, dsl, backend, architecture, agents]
 importance: 5
 adr_number: 28
-status: accepted
+status: proposed
 deciders: ["markr"]
 date: "2026-06-23"
 ---
 
 # ADR-0028: Backend-Agnostic Query DSL
+
+> **Deferred by the maintainer, 2026-10-03.** The query parser was accepted but never built: no parser, AST or
+> compiler exists, and the legacy FTS5 sanitizer is the only path. The status
+> moves from `accepted` to `proposed`, because `deferred` is not an allowed ADR
+> status and `proposed` is the nearest value (the commitment is not current).
+> The decision text below is unchanged. Revisit when a backend needs it.
 
 ## Context
 

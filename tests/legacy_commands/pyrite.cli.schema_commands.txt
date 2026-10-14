@@ -1,0 +1,3 @@
+pyrite schema diff
+pyrite schema migrate
+pyrite schema validate

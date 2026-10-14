@@ -116,9 +116,6 @@ class CascadeOrgEntry(OrganizationEntry):
 
 @dataclass
 class CascadeEventEntry(EventEntry):
-    FRONTMATTER_ALIASES = frozenset(
-        ["event_date", "participants"]
-    )  # legacy keys read under another name
     """A research KB event in the Cascade Series."""
 
     era: str = ""
@@ -171,7 +168,6 @@ class CascadeEventEntry(EventEntry):
 
 @dataclass
 class TimelineEventEntry(InvestigationEventEntry):
-    FRONTMATTER_ALIASES = frozenset(["participants"])  # legacy keys read under another name
     """A timeline event from the Cascade Series timeline KB.
 
     Extends InvestigationEventEntry to inherit actors, source_refs, and
@@ -237,7 +233,6 @@ class TimelineEventEntry(InvestigationEventEntry):
 
 @dataclass
 class SolidarityEventEntry(EventEntry):
-    FRONTMATTER_ALIASES = frozenset(["participants"])  # legacy keys read under another name
     """A solidarity/resistance event from the Infrastructure of Solidarity timeline."""
 
     infrastructure_types: list[str] = field(default_factory=list)

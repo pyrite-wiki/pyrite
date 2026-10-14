@@ -89,15 +89,33 @@ def build_entry(
     # Known dataclass fields go as top-level keys; unknown kwargs are
     # collected into metadata so they persist through round-trips.
     _cls_fields = {f.name for f in _dc.fields(resolved_cls)}
-    _fm_keys = _cls_fields | {
-        "type",
-        "provenance",
-        "sources",
-        "links",
-        "aliases",
-        "created_at",
-        "updated_at",
-    }
+    # A file key the type's aliases name (`actors`, `participants`, `source`):
+    # the class reads it from the top level, so it goes there, never into the
+    # `metadata:` bag where nothing reads it (#697, one name per field).
+    from ..schema.field_aliases import file_keys_of, refuse_conflicting_spellings
+
+    _alias_keys = file_keys_of(resolved_cls, entry_type)
+    # A request naming a field and its alias with different values is refused
+    # here, before either is lifted (#720); equal values fall through to one key.
+    refuse_conflicting_spellings(
+        resolved_cls,
+        entry_type,
+        {k: v for k, v in kwargs.items() if k != "metadata"},
+        kwargs["metadata"] if isinstance(kwargs.get("metadata"), dict) else {},
+    )
+    _fm_keys = (
+        _cls_fields
+        | _alias_keys
+        | {
+            "type",
+            "provenance",
+            "sources",
+            "links",
+            "aliases",
+            "created_at",
+            "updated_at",
+        }
+    )
 
     fm: dict = {
         "id": entry_id,
@@ -110,6 +128,18 @@ def build_entry(
             fm[k] = v
         else:
             _extra_meta[k] = v
+
+    # The REST body and the web form send every non-standard field inside
+    # `metadata`. Lift the alias keys out of it so they land top-level too. An
+    # explicit top-level argument wins, unless it is an empty default (REST
+    # sends `participants: []` when the client gave none).
+    if isinstance(fm.get("metadata"), dict):
+        bag = fm["metadata"]
+        lifted = {mk: mv for mk, mv in bag.items() if mk in _alias_keys}
+        for mk, mv in lifted.items():
+            if not fm.get(mk):
+                fm[mk] = mv
+        fm["metadata"] = {mk: mv for mk, mv in bag.items() if mk not in lifted}
 
     # Merge unknown kwargs into metadata so they survive round-trip
     if _extra_meta:

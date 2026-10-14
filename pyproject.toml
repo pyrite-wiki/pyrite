@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyrite"
-version = "0.25.6"
+version = "0.25.7"
 description = "Knowledge-as-Code for you and your agents"
 readme = "README.md"
 license = {text = "MIT"}
@@ -89,6 +89,10 @@ dev = [
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
     "pytest-xdist==3.8.0",
+    # Bounds every test (#766): a hung retry loop ended nothing for 2h on #752.
+    "pytest-timeout==2.4.0",
+    # Splits the CI suite into balanced parallel shards (tests Q2); ci.yml `test`.
+    "pytest-split==0.11.0",
     # Diff coverage on the PR's 3.12 leg (advisory; see ci.yml's test job).
     "diff-cover==10.6.0",
     # Pinned exactly: tests/test_storage_invariants.py runs derandomized, and
@@ -121,6 +125,9 @@ include = ["pyrite", "pyrite.*"]
 [tool.pytest.ini_options]
 testpaths = ["tests", "extensions"]
 python_files = ["test_*.py"]
+# Per-test ceiling in seconds (#766); TestEveryTestIsBounded pins it <= 600.
+# A test that needs longer is marked @pytest.mark.timeout(N) with a reason.
+timeout = 600
 addopts = "-v --tb=short -m 'not slow and not e2e'"
 markers = [
     "integration: tests requiring full environment setup (DB, indexing, network)",
@@ -139,6 +146,12 @@ markers = [
     # the KB service, read scoping, the REST app factory, MCP dispatch and the
     # CLI entry point. Keep it under a minute at -n 4.
     "core: always run by scripts/test-affected, whatever the branch changed",
+    # #657: a test of a surface kb/designs/alpha-supported-surface.md calls
+    # experimental. Applied by path from tests/experimental_surface.py (never
+    # by hand). The gating CI job and the pre-push hook run -m "not
+    # experimental"; the `experimental` CI job runs the rest against
+    # tests/experimental_known_failures.txt and does not block a merge.
+    "experimental: tests an experimental surface; non-blocking, ratcheted (tests/experimental_surface.py)",
     # verify-red (scripts/verify_red_ci.py): a test the PR adds on purpose to
     # pass without the fix too (a "still works" guard), so it is not warned about.
     # It must say why: reason=... or the test's docstring; a bare marker is rejected.
@@ -212,3 +225,14 @@ ignore = [
 "tests/*" = ["F401", "F841", "E402", "I001", "PT011", "PT012", "PT018", "PT019"]
 # PT is pytest-only style; turn it off everywhere that isn't a test file.
 "!tests/**" = ["PT"]
+
+# Pyright is here for code navigation (go to definition, find references, call
+# hierarchy) through the editor or Claude Code's LSP tool, not as a type gate.
+# It resolves imports from the worktree's own .venv. typeCheckingMode "off"
+# keeps type resolution for navigation but reports no diagnostics: the code is
+# not pyright-clean (418 errors under "basic", 2026-10-03), and an agent should
+# not get unrelated type errors pushed into its context after every edit.
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "off"

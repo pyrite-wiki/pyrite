@@ -22,7 +22,7 @@ from .config import (
     save_config,
 )
 from .logging import configure_entry_point_logging, logging_epilog
-from .utils.errors import PyriteCLIGroup
+from .utils.errors import PyriteCLIGroup, cli_error, exit_unless_whole
 
 app = typer.Typer(
     cls=PyriteCLIGroup,
@@ -210,6 +210,17 @@ def index_sync(
         console.print(
             f"[green]Synced:[/green] +{results['added']} -{results['removed']} ~{results['updated']}"
         )
+        skipped = results.get("skipped", [])
+        if skipped:
+            console.print(f"[yellow]Non-regular: {len(skipped)} file(s) skipped[/yellow]")
+            for entry in skipped[:5]:
+                console.print(
+                    f"  {entry['path']}: {entry['reason']}",
+                    markup=False,
+                    highlight=False,
+                )
+            if len(skipped) > 5:
+                console.print(f"  ... and {len(skipped) - 5} more")
 
 
 @index_app.command("stats")
@@ -232,18 +243,52 @@ def index_stats(kb_name: str | None = typer.Argument(None, help="KB name")):
 def index_embed(kb_name: str = typer.Argument(..., help="KB to generate embeddings for")):
     """Generate vector embeddings for semantic search."""
 
-    from .cli.context import index_db_context
+    from .cli.context import get_config_and_db
+    from .services.embedding_service import (
+        EmbeddingService,
+        is_available,
+        semantic_unavailable_for,
+    )
 
-    config = load_config()
-    with index_db_context(config) as db:
-        try:
-            from .services.embedding_service import EmbeddingService
+    if not is_available():
+        # Nothing was embedded: refused, exit 1 (#526). `cli_error` keeps the
+        # brackets of `pyrite[semantic]` literal; a markup string would not.
+        cli_error(
+            "sentence-transformers is not installed.",
+            error_code="DEPENDENCY_MISSING",
+            suggestion="Install semantic extras: pip install pyrite[semantic]",
+        )
 
-            embed_svc = EmbeddingService(db)
-            count = embed_svc.embed_kb(kb_name)
-            console.print(f"[green]Generated embeddings for {count} entries[/green]")
-        except ImportError:
-            console.print("[red]Error:[/red] Install semantic extras: pip install pyrite[semantic]")
+    config, db = get_config_and_db()
+    try:
+        if config.get_kb(kb_name) is None:
+            cli_error(
+                f"KB '{kb_name}' not found",
+                error_code="KB_NOT_FOUND",
+                suggestion="run `pyrite-admin kb list` to see registered KBs",
+            )
+        if unavailable := semantic_unavailable_for(db):
+            # The same cause and remedy `pyrite index embed` gives.
+            _, cause, remedy = unavailable
+            cli_error(
+                cause[0].upper() + cause[1:] + ".",
+                error_code="DEPENDENCY_MISSING",
+                suggestion=remedy,
+            )
+        # This called `embed_kb`, which EmbeddingService has never had; the
+        # ImportError arm hid that from every run without the extra.
+        stats = EmbeddingService(db, model_name=config.settings.embedding_model).embed_all(
+            kb_name=kb_name
+        )
+    finally:
+        db.close()
+    console.print(
+        f"[green]Embedded {stats['embedded']} entries[/green] ({stats['skipped']} already had a vector)"
+    )
+    if stats["errors"]:
+        console.print(f"[red]Errors: {stats['errors']}[/red] (still owed an embedding)")
+    # The same batch rule as `pyrite index embed` (#526).
+    exit_unless_whole(stats["errors"], stats["embedded"] + stats["skipped"])
 
 
 @index_app.command("health")
@@ -271,6 +316,7 @@ def index_health():
                 console.print(f"  Unindexed files: {len(health['unindexed_files'])}")
             if health["stale_entries"]:
                 console.print(f"  Stale entries: {len(health['stale_entries'])}")
+            raise typer.Exit(1)  # as `pyrite index health` does (#526)
 
 
 # =============================================================================
@@ -318,7 +364,17 @@ def repo_sync(repo_name: str = typer.Argument(..., help="Repository name")):
     with index_db_context(config) as db:
         svc = RepoService(config, db)
         result = svc.sync(repo_name)
-        console.print(f"[green]Synced:[/green] {repo_name} ({result.get('status', 'ok')})")
+    # `sync` reports failure inside its result, not as an exception (#526).
+    if not result.get("success"):
+        cli_error(result.get("error", "Unknown error"), error_code="SYNC_FAILED", retryable=True)
+    repos = result.get("repos", {})
+    for name, info in repos.items():
+        if info["success"]:
+            console.print(f"[green]Synced:[/green] {name} ({info.get('message', 'ok')})")
+        else:
+            console.print(f"[red]{name}:[/red] {info['error']}")
+    failed = sum(1 for info in repos.values() if not info["success"])
+    exit_unless_whole(failed, len(repos) - failed)
 
 
 @repo_app.command("unsubscribe")
@@ -330,8 +386,10 @@ def repo_unsubscribe(repo_name: str = typer.Argument(..., help="Repository name"
     config = load_config()
     with index_db_context(config) as db:
         svc = RepoService(config, db)
-        svc.unsubscribe(repo_name)
-        console.print(f"[green]Unsubscribed:[/green] {repo_name}")
+        result = svc.unsubscribe(repo_name)
+    if not result.get("success"):  # reported in the result, not raised (#526)
+        cli_error(result.get("error", "Unknown error"), error_code="NOT_FOUND")
+    console.print(f"[green]Unsubscribed:[/green] {repo_name}")
 
 
 @repo_app.command("status")
@@ -553,13 +611,24 @@ def schema_show(kb_name: str = typer.Argument(..., help="KB name")):
 
 @app.command("mcp")
 def mcp_server(
-    tier: str = typer.Option("admin", "--tier", "-t", help="Permission tier: read, write, admin"),
+    # write, as `pyrite mcp`: ADR-0006's default for agent integration. It was
+    # admin here, so a config written for `pyrite-admin mcp` with no --tier
+    # served kb_push and kb_registry_remove to any agent (#582).
+    tier: str = typer.Option(
+        "write", "--tier", "-t", help="Permission tier: read, write (default), admin"
+    ),
 ):
     """Start an MCP server at the specified permission tier."""
     import sys
 
     from .server.mcp_server import PyriteMCPServer
 
+    if tier not in PyriteMCPServer.VALID_TIERS:
+        cli_error(
+            f"Invalid tier: {tier!r}",
+            error_code="INVALID_TIER",
+            suggestion=f"choose one of: {', '.join(PyriteMCPServer.VALID_TIERS)}",
+        )
     print(f"Starting MCP server (tier={tier}) on stdio...", file=sys.stderr)
     server = PyriteMCPServer(tier=tier)
     try:
@@ -568,62 +637,20 @@ def mcp_server(
         server.close()
 
 
-@app.command("mcp-setup")
-def mcp_setup(
-    config_path: Path | None = typer.Option(None, "--config", "-c"),
-    tier: str = typer.Option("write", "--tier", "-t", help="Default MCP tier: read, write, admin"),
-):
-    """Set up MCP server integration with Claude Code."""
-    import json
-    import shutil
-
-    if config_path is None:
-        config_path = Path.home() / ".claude" / "claude_desktop_config.json"
-
-    config_path = config_path.expanduser()
-
-    pyrite_exe = shutil.which("pyrite-admin")
-    if not pyrite_exe:
-        pyrite_exe = "python -m pyrite.admin_cli"
-        console.print("[yellow]Warning: pyrite-admin not in PATH, using module path[/yellow]")
-
-    if config_path.exists():
-        with open(config_path) as f:
-            claude_config = json.load(f)
-    else:
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        claude_config = {}
-
-    if "mcpServers" not in claude_config:
-        claude_config["mcpServers"] = {}
-
-    from .services.access_policy import ROLES
-
-    # Register one server per tier
-    for t in ROLES:
-        server_name = f"pyrite-{t}"
-        if "python" in str(pyrite_exe):
-            claude_config["mcpServers"][server_name] = {
-                "command": "python",
-                "args": ["-m", "pyrite.admin_cli", "mcp", "--tier", t],
-                "env": {},
-            }
-        else:
-            claude_config["mcpServers"][server_name] = {
-                "command": pyrite_exe,
-                "args": ["mcp", "--tier", t],
-                "env": {},
-            }
-
-    with open(config_path, "w") as f:
-        json.dump(claude_config, f, indent=2)
-
-    console.print(f"[green]MCP servers configured in {config_path}[/green]")
-    console.print("\nRegistered three MCP servers:")
-    console.print("  pyrite-read  — Search, browse, retrieve (safe for any agent)")
-    console.print("  pyrite-write — Read + create/update/delete entries")
-    console.print("  pyrite-admin — Write + KB management, indexing, repos, config")
-    console.print("\nRestart Claude Code to load the new MCP servers.")
+@app.command(
+    "mcp-setup",
+    hidden=True,
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def mcp_setup_moved(ctx: typer.Context):
+    """Removed (#582): use `pyrite mcp-setup`."""
+    cli_error(
+        "`pyrite-admin mcp-setup` was removed: it wrote three servers to a file no client "
+        "reads (#582)",
+        error_code="COMMAND_MOVED",
+        suggestion="run `pyrite mcp-setup` (options --tier, --client, --project, --config); "
+        "it registers one server where Claude Code and Claude Desktop read it",
+    )
 
 
 # =============================================================================

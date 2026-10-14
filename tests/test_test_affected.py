@@ -46,6 +46,7 @@ def _not_under_a_push(monkeypatch):
     monkeypatch.delenv("PRE_COMMIT_FROM_REF", raising=False)
     monkeypatch.delenv("PRE_COMMIT_TO_REF", raising=False)
     monkeypatch.delenv("PYRITE_PUSH_FULL", raising=False)
+    monkeypatch.delenv("PYRITE_PUSH_EXPERIMENTAL", raising=False)
 
 
 def _write(root: Path, rel: str, text: str = "") -> None:
@@ -565,6 +566,50 @@ class TestCLI:
         assert out.returncode != 0
         assert "auto" in out.stderr
 
+    def test_run_deselects_experimental_tests_by_default(self, repo):
+        """#657: the pre-push hook runs the core; experimental tests do not
+        block a push any more than they block a merge."""
+        out = self._run(repo, "--run", "--dry-run", "--files", "pyrite/b.py")
+        assert "-m 'not slow and not e2e and not experimental'" in out.stdout
+
+    def test_run_says_how_many_experimental_tests_it_left_out(self, repo):
+        """A change under extensions/ can select only experimental tests; the
+        run must say so and how to run them, not pass quietly on nothing."""
+        _write(
+            repo,
+            "tests/experimental_surface.py",
+            "def is_experimental(nodeid):\n    return nodeid.startswith('tests/test_b.py')\n",
+        )
+        out = self._run(repo, "--run", "--dry-run", "--files", "pyrite/b.py")
+        assert out.returncode == 0, out.stderr
+        assert "1 experimental test" in out.stderr and "1 file" in out.stderr
+        assert "--experimental" in out.stderr
+
+    def test_with_experimental_there_is_nothing_to_report(self, repo):
+        _write(
+            repo,
+            "tests/experimental_surface.py",
+            "def is_experimental(nodeid):\n    return True\n",
+        )
+        out = self._run(repo, "--run", "--dry-run", "--experimental", "--files", "pyrite/b.py")
+        assert "experimental test" not in out.stderr
+
+    def test_no_mapping_no_report(self, repo):
+        out = self._run(repo, "--run", "--dry-run", "--files", "pyrite/b.py")
+        assert out.returncode == 0 and "experimental test" not in out.stderr
+
+    @pytest.mark.control(
+        reason="with the variable, the base also runs everything: it never filtered"
+    )
+    @pytest.mark.parametrize("how", [("--experimental",), ()])
+    def test_experimental_tests_are_one_flag_or_variable_away(self, repo, how, monkeypatch):
+        if not how:
+            monkeypatch.setenv("PYRITE_PUSH_EXPERIMENTAL", "1")
+        out = self._run(repo, "--run", "--dry-run", *how, "--files", "pyrite/b.py")
+        assert out.returncode == 0, out.stderr
+        assert "not experimental" not in out.stdout
+        assert "tests/test_b.py" in out.stdout
+
     def test_full_flag_forces_the_full_suite(self, repo):
         out = self._run(repo, "--run", "--dry-run", "--full", "-n", "3", "--files", "pyrite/b.py")
         assert out.returncode == 0, out.stderr
@@ -573,6 +618,10 @@ class TestCLI:
 
 class TestThisRepository:
     """The real tree: the selector parses it and the core set exists."""
+
+    def test_the_real_mapping_loads_and_counts(self):
+        tests, files = ta.experimental_left_out(SCRIPT.parent.parent, ["extensions/social/tests"])
+        assert tests > 0 and files == 1
 
     def test_selector_parses_the_repository(self):
         root = SCRIPT.parent.parent
@@ -588,6 +637,10 @@ class TestThisRepository:
         "tests/test_entry_lifecycle.py",
         # the KB service
         "tests/test_services.py::TestKBService",
+        # authentication, including refusal and session verification
+        "tests/test_auth_service.py::TestLogin::test_login_success",
+        "tests/test_auth_service.py::TestLogin::test_login_wrong_password",
+        "tests/test_auth_service.py::TestSessions::test_verify_session_valid",
         # auth / read scoping, and every entry point passing the policy (ADR-0037 §5)
         "tests/test_read_scoping_is_structural.py",
         "tests/test_every_entry_point_passes_the_policy.py",

@@ -180,6 +180,20 @@ def _safe_message(exc: Exception) -> str:
     return str(exc)
 
 
+def _boolean_arg(args: dict[str, Any], name: str, default: bool = False) -> bool | None:
+    """A boolean tool argument; ``None`` when it is neither a bool nor "true"/"false".
+
+    A client that sends the string "false" must not get the truthy reading
+    ``bool("false")`` gives (#200).
+    """
+    value = args.get(name, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+        return value.strip().lower() == "true"
+    return None
+
+
 def _error(
     code: str,
     message: str,
@@ -402,16 +416,16 @@ class PyriteMCPServer:
         self.db = PyriteDB(self.config.settings.index_path)
         self.db.merge_registered_kbs(self.config)
         self.index_mgr = IndexManager(self.db, self.config)
-        self.svc = KBService(self.config, self.db)
-        self.graph_svc = GraphService(self.db)
-        self.export_svc = ExportService(self.config, self.db)
-        self._index_worker = None  # Lazy-init
 
         # KB registry (seeded from config on init)
         from ..services.kb_registry_service import KBRegistryService
 
         self.registry = KBRegistryService(self.config, self.db, self.index_mgr)
         self.registry.seed_from_config()
+        self.svc = KBService(self.config, self.db, registry=self.registry)
+        self.graph_svc = GraphService(self.db)
+        self.export_svc = ExportService(self.config, self.db)
+        self._index_worker = None  # Lazy-init
 
         # Rate limiter and tool→tier map
         self.rate_limiter = MCPRateLimiter(self.config.settings)
@@ -453,29 +467,34 @@ class PyriteMCPServer:
             body_response_budget=self.body_bounds.response_budget,
         )
 
+    def _register_tool(self, name: str, schema: dict[str, Any], tier: str) -> None:
+        """Label a copy at registration, keeping shared schemas unmodified."""
+        self._tool_tiers[name] = tier
+        self.tools[name] = {
+            **schema,
+            "description": f"[{tier}] {schema.get('description') or ''}",
+        }
+
     def _build_read_tools(self):
         """Register read-only tools (available in all tiers)."""
         from .tool_schemas import READ_TOOLS
 
         for name, schema in self._render_schemas(READ_TOOLS).items():
-            self.tools[name] = {**schema, "handler": getattr(self, f"_{name}")}
-            self._tool_tiers[name] = "read"
+            self._register_tool(name, {**schema, "handler": getattr(self, f"_{name}")}, "read")
 
     def _build_write_tools(self):
         """Register write tools (available in write and admin tiers)."""
         from .tool_schemas import WRITE_TOOLS
 
         for name, schema in self._render_schemas(WRITE_TOOLS).items():
-            self.tools[name] = {**schema, "handler": getattr(self, f"_{name}")}
-            self._tool_tiers[name] = "write"
+            self._register_tool(name, {**schema, "handler": getattr(self, f"_{name}")}, "write")
 
     def _build_admin_tools(self):
         """Register admin tools (available only in admin tier)."""
         from .tool_schemas import ADMIN_TOOLS
 
         for name, schema in self._render_schemas(ADMIN_TOOLS).items():
-            self.tools[name] = {**schema, "handler": getattr(self, f"_{name}")}
-            self._tool_tiers[name] = "admin"
+            self._register_tool(name, {**schema, "handler": getattr(self, f"_{name}")}, "admin")
 
     def _register_plugin_tools(self):
         """Register MCP tools from plugins for the current tier."""
@@ -500,7 +519,8 @@ class PyriteMCPServer:
                     if name not in lower and name in plugin_tools:
                         self._tool_tiers[name] = tier
                 lower.update(at_tier)
-            self.tools.update(plugin_tools)
+            for name, schema in plugin_tools.items():
+                self._register_tool(name, schema, self._tool_tiers[name])
         except Exception:
             logger.warning("Plugin MCP tool loading failed", exc_info=True)
 
@@ -598,7 +618,9 @@ class PyriteMCPServer:
         # docstring, "what a search response owes its caller" (#56).
         warnings: list[str] = []
         try:
-            results = self.search_svc.search(
+            # The one assembler (#668): rows, verdict and warnings. Every key
+            # but `results` goes into the payload as it is.
+            response = self.search_svc.search_response(
                 query=query,
                 kb_name=args.get("kb_name"),
                 kb_names=None if args.get("kb_name") else readable_kbs,
@@ -629,6 +651,7 @@ class PyriteMCPServer:
                 ),
                 retryable=False,
             )
+        results = response.pop("results")
 
         if fields or include_body:
             # kb_search takes no body_limit, so every body it returns is
@@ -649,9 +672,8 @@ class PyriteMCPServer:
             "count": len(results),
             "has_more": len(results) == limit,
             "results": results,
+            **response,
         }
-        if warnings:
-            payload["warnings"] = warnings
         return payload
 
     def _kb_get(
@@ -1034,7 +1056,12 @@ class PyriteMCPServer:
             if kb_name is not None and not isinstance(kb_name, str):
                 raise ValidationError(f"kb_name must be a string, not {type(kb_name).__name__}")
             if not named_kb(kb_name):
-                return self.svc.orient_overview(readable_kbs=readable_kbs, detail=detail)
+                return self.svc.orient_overview(
+                    readable_kbs=readable_kbs,
+                    detail=detail,
+                    limit=args.get("limit", 50),
+                    offset=args.get("offset", 0),
+                )
             return self.svc.orient(kb_name, recent_limit=args.get("recent_limit", 5), detail=detail)
         except KBNotFoundError as e:
             # A scoped caller is refused by the dispatcher before this for any
@@ -1580,22 +1607,34 @@ class PyriteMCPServer:
             parent=task_id,
         )
         children = [
-            {"id": c["id"], "title": c["title"], "status": c["status"]} for c in children_list
+            {"id": c["id"], "title": c["title"], "status": c["status"], "derived": c["derived"]}
+            for c in children_list
         ]
+        task_kb = task.get("kb_name", kb_name or "")
+        from ..models.task import coerce_task_priority as _coerce_task_priority
 
         return {
             "id": task["id"],
             "title": task["title"],
-            "status": meta.get("status", "open"),
-            "assignee": meta.get("assignee", ""),
-            "priority": meta.get("priority", 5),
+            # The index row's columns, as `task get` reads them: `status`
+            # is a column, never in `metadata`, so meta.get("status") said
+            # "open" for every task, whatever its file said.
+            "status": task.get("status") or meta.get("status", "open"),
+            "assignee": task.get("assignee") or meta.get("assignee", ""),
+            # The model's reading, as list_tasks gives it (#554): an index row
+            # may still hold a word such as `medium`.
+            "priority": _coerce_task_priority(
+                task.get("priority") or meta.get("priority", 5), task["id"]
+            ),
             "parent": meta.get("parent", ""),
             "dependencies": meta.get("dependencies", []),
             "evidence": meta.get("evidence", []),
             "due_date": meta.get("due_date", ""),
             "agent_context": meta.get("agent_context", {}),
             "children": children,
-            "kb_name": task.get("kb_name", kb_name or ""),
+            "kb_name": task_kb,
+            # Computed from the children; never a field of the file.
+            "derived": self.task_svc.derived_for(task_kb, task["id"]),
         }
 
     def _kb_batch_suggest(
@@ -1607,6 +1646,10 @@ class PyriteMCPServer:
         if not source_kb or not target_kb:
             return _error("MISSING_PARAMETER", "source_kb and target_kb are required")
 
+        include_empty = _boolean_arg(args, "include_empty")
+        if include_empty is None:
+            return _error("INVALID_PARAMETER", "include_empty must be true or false")
+
         svc = self.link_svc
         pairs = svc.batch_suggest(
             source_kb=source_kb,
@@ -1615,6 +1658,7 @@ class PyriteMCPServer:
             mode=args.get("mode", "keyword"),
             exclude_linked=args.get("exclude_linked", True),
             readable_kbs=readable_kbs,
+            include_empty=include_empty,
         )
 
         return {
@@ -1633,6 +1677,10 @@ class PyriteMCPServer:
         if not entry_id or not kb_name:
             return _error("MISSING_PARAMETER", "entry_id and kb_name are required")
 
+        include_empty = _boolean_arg(args, "include_empty")
+        if include_empty is None:
+            return _error("INVALID_PARAMETER", "include_empty must be true or false")
+
         svc = self.link_svc
         candidates = svc.discover_neighbors(
             entry_id=entry_id,
@@ -1642,6 +1690,7 @@ class PyriteMCPServer:
             mode=args.get("mode", "hybrid"),
             exclude_linked=args.get("exclude_linked", True),
             readable_kbs=readable_kbs,
+            include_empty=include_empty,
         )
 
         return {
@@ -1702,7 +1751,12 @@ class PyriteMCPServer:
                 kb_name=args["kb_name"],
                 children=args["children"],
             )
-            return {"decomposed": True, "parent_id": args["parent_id"], "children": results}
+            return {
+                "decomposed": True,
+                "parent_id": args["parent_id"],
+                "children": results,
+                "parent_derived": self.task_svc.derived_for(args["kb_name"], args["parent_id"]),
+            }
         except (PyriteError, ValueError) as e:
             return _error("OPERATION_FAILED", _safe_message(e))
 
@@ -1739,6 +1793,7 @@ class PyriteMCPServer:
             "added": results["added"],
             "updated": results["updated"],
             "removed": results["removed"],
+            "skipped": results["skipped"],
         }
 
     def _kb_index_job_status(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -2633,8 +2688,9 @@ def main():
     parser.add_argument(
         "--tier",
         choices=list(ROLES),
-        default="read",
-        help="Access tier (default: read)",
+        # write, as `pyrite mcp` and `pyrite-admin mcp` (ADR-0006; #582).
+        default="write",
+        help="Access tier (default: write)",
     )
     args = parser.parse_args()
 

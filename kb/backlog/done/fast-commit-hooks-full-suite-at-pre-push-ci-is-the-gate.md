@@ -19,6 +19,10 @@ effort: S
 rank: 0
 ---
 
+## Current hook contract
+
+The pre-push hook now uses `scripts/test-affected` (core plus affected tests, #356), not an unconditional full suite. [CONTRIBUTING](../../../CONTRIBUTING.md#branches-hooks-and-pull-requests) owns the current flow. The full-suite history/proposal below does not describe the current hook; a suite-lock integration must retain the selector and its full-suite fallback.
+
 ## Problem
 
 The pre-commit config ran the full pytest suite (`tests/ -x`, several minutes)

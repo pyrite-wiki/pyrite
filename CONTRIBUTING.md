@@ -187,6 +187,7 @@ Tests carry no size marker yet.
 cd web && npm ci && npm run check && npm run test:unit && npm run build   # frontend
 HF_HUB_OFFLINE=1 .venv/bin/pytest tests/e2e -m e2e -n 4 --dist loadfile   # large: real server and MCP processes
 PATH="$PWD/.venv/bin:$PATH" bash scripts/run_tutorial.sh                  # large: docs/getting-started.md as a test
+PATH="$PWD/.venv/bin:$PATH" bash scripts/run_tutorial.sh docs/tutorials/pyrite-in-20-minutes.md   # large: the 20-minute tutorial as a test (clones the demo KBs)
 cd web && npx playwright install chromium && npm run test:e2e             # large: browser; manual-only in CI while non-deterministic
 ```
 
@@ -219,6 +220,55 @@ set; and it switches to the full suite when you touch `conftest.py`,
 `pyrite/services/kb_service.py` selects 167 of the 281 test files that
 execute it on import. CI catches the rest.
 
+**CLI output is rendered the same everywhere.** `tests/conftest.py` pins the
+rendering environment before any CLI module is imported: ambient `FORCE_COLOR`,
+`PY_COLORS`, `NO_COLOR` and `TTY_COMPATIBLE` are removed, `COLUMNS` and
+`TERMINAL_WIDTH` are 80, `TERM` is `xterm-256color`, and `_TYPER_FORCE_DISABLE_TERMINAL`
+is set. The last matters most: Typer renders help and usage errors as ANSI in
+any process where `GITHUB_ACTIONS` is set, which is why a test could pass on a
+laptop and fail in CI (#884). A test that checks styling on purpose takes the
+`terminal_colour` fixture (in-process Typer), `Console(force_terminal=True)`, or
+`FORCE_COLOR=1` in a subprocess's env. `tests/test_cli_output_is_deterministic.py`
+runs the CLI under the CI variables to catch a regression.
+
+**Experimental tests** (#657). A red required check means the core broke.
+Tests of the surfaces `kb/designs/alpha-supported-surface.md` calls
+experimental (the extensions, tasks, REST and the web UI, `/site`, `/ws`, the
+AI endpoints, MCP prompts and resources and the non-core tools, Postgres, the
+overlay backend and worktrees, the `repo`/`auth`/`extension`/`export`/
+`collections` CLI groups) carry the `experimental` marker. Nobody writes it
+by hand: `tests/experimental_surface.py` maps paths and node ids to surfaces,
+and the root `conftest.py` applies it. Security properties (authorization,
+read scoping, containment of paths, credential handling, the characterization
+oracle, escaping) are never experimental, whatever surface they go through;
+the same file lists them, and a test checks the mapping against a real
+collection. The gate decides, not a test's name: an experimental test whose
+body touches that vocabulary (paths leaving a root, private or readable sets,
+read-only, redaction, credentials, escaping, tiers) fails
+`tests/test_experimental_surface.py` until it is listed as security
+(`NEVER_EXPERIMENTAL`) or reviewed with a reason (`REVIEWED_EXPERIMENTAL`).
+
+```bash
+.venv/bin/pytest tests/ extensions/ -n 4 -m "not slow and not e2e and not experimental"   # the core, as CI's gating job runs it
+.venv/bin/pytest tests/ extensions/ -n 4 -m "experimental and not slow and not e2e"       # the experimental set
+scripts/test-affected --run --experimental      # the pre-push selection, experimental tests included
+```
+
+A plain `pytest` runs both. `scripts/test-affected --run`, and so the
+pre-push hook, runs the core only (`PYRITE_PUSH_EXPERIMENTAL=1` or
+`--experimental` includes the rest). In CI the `test` job, which `gate`
+needs, runs the core; the `experimental` job runs the rest on every PR and on
+`dev`, does not block a merge, and is red only for news: a failure in neither
+`tests/experimental_known_failures.txt` nor an open `experimental-broken`
+issue, a PR that adds to that list (it can only shrink), or a run that did
+not complete. On `dev` each of those opens or updates an `experimental-broken`
+issue. A file that fails to import stops the core run only if it holds a core
+or security case; one whose tests are all experimental is a warning there and
+a failure in the experimental job. `test-affected --run` says how many
+experimental tests it left out. A new test of an experimental surface needs
+no marker if its path is mapped; a new file for one needs a line in
+`tests/experimental_surface.py`.
+
 **Each tree is tested once.** A `--run` that passes on a clean tree (nothing
 uncommitted in tracked files, no untracked `.py` file, and no untracked or
 gitignored file under `pyrite/`, `tests/`, `extensions/`, `kb/` or `scripts/`
@@ -235,6 +285,37 @@ Stamps older than 14 days are ignored and pruned. A stamp is keyed on the
 tree and the Python version, not the environment: a pass where the Postgres
 tests skipped (`PYRITE_TEST_PG_URL` unset) covers a later run where it is
 set. When what changed is the environment, use `--force`.
+
+**A verified commit is not tested again at the push.** A commit is
+*verified* when the required check (`gate`) is green on that exact SHA on
+GitHub. That rule lives in one place, `scripts/verified_commit.py`, and
+`scripts/release.py` and the pre-push hook both use it. When the tip of the
+ref you push is verified, the hook prints `<sha> is verified (gate=success,
+gate=success on <owner>/<repo>); not re-running the local suite` and exits 0
+(one `gate=` per workflow run that tested the commit: a `dev` tip has two,
+the merge queue's and the push's). You will
+meet this when you push a commit GitHub has already tested to another
+branch; the release's push of `dev`'s tip to `main` is the usual case. An
+ordinary push of new commits is unaffected and makes no request: GitHub
+cannot have tested a commit it has not been sent.
+
+The lookup fails closed. If `gh` is missing or not logged in, the network
+is down, the request takes more than 8 seconds, the API errors, the check
+is pending, red, renamed or absent, or the answer is not one the script
+understands, the commit is *not verified* and the hook runs the tests as it
+always has. Only the pushed tip is asked about: a verified commit says
+nothing for commits on top of it. The check must be named exactly `gate`,
+come from GitHub Actions, and conclude `success` (`skipped` does not count)
+in every workflow run that tested the SHA.
+
+What that is evidence of: CI accepted the commit. Every job `gate` needs
+succeeded or was skipped by CI's change classifier: the full matrix in the
+merge queue, one interpreter (with `test` skipped on a docs-only change) on
+a pull request. It does not say a particular selection of tests ran. So
+`PYRITE_PUSH_FULL=1` still runs the full suite, `PYRITE_PUSH_EXPERIMENTAL=1`
+still runs (`gate` does not need the experimental job), and `--force` or
+`PYRITE_PUSH_FORCE=1` runs the tests whatever CI said. `git push` of several refs at once is examined
+by pre-commit for its first ref only, as before.
 
 **After a failure that looks load-caused** (a timeout, a flaky port), re-run
 only what failed rather than the whole selection:
@@ -253,10 +334,10 @@ and stamps it.
 |---|---|
 | While editing | the test file you are changing; `scripts/test-affected --run` |
 | Before a commit | nothing extra: the commit hooks run ruff and the fast checks in seconds |
-| Before a push | the pre-push hook runs `scripts/test-affected --run` on `PYRITE_PUSH_WORKERS` (default 4) workers, unless your own `--run` already passed on the tree being pushed (see *Each tree is tested once* below). It already runs everything for conftest, fixtures, pyproject and config changes; set `PYRITE_PUSH_FULL=1` yourself for storage or migration changes and cross-cutting refactors |
-| On the pull request | nothing: CI runs the backend suite on one interpreter (all three Pythons when test infrastructure changes), KB validation, the frontend job when `web/` changes, the advisory `verify-red` job (your new tests, without and with your change) and diff coverage; the merge queue runs the full three-Python matrix on the exact commit about to land (#400); the push to `dev` after the merge runs the e2e smoke and the tutorial, and the matrix and frontend again only if the queue did not already pass that SHA |
+| Before a push | the pre-push hook runs `scripts/test-affected --run` on `PYRITE_PUSH_WORKERS` (default 4) workers, unless your own `--run` already passed on the tree being pushed (see *Each tree is tested once* above) or the commit being pushed is already verified by CI (see *A verified commit is not tested again at the push*). It already runs everything for conftest, fixtures, pyproject and config changes; set `PYRITE_PUSH_FULL=1` yourself for storage or migration changes and cross-cutting refactors |
+| On the pull request | nothing: CI runs the backend suite on one interpreter (a failure is the first thing in its log; the 25 slowest tests go to the step summary and a junit artifact is kept 30 days; mypy is its own advisory job: it fails only when a file has more type errors than `.mypy-baseline.json` records, and after you fix errors you lower the baseline with `mypy pyrite/ --ignore-missing-imports > mypy.out; python scripts/mypy_ratchet.py mypy.out --update`); the backend suite runs as 3 parallel shards per interpreter balanced by `.test_durations.gz`, and `shard-report` proves they ran every test once) (all three Pythons when test infrastructure changes), KB validation, the frontend job when `web/` changes, the advisory `verify-red` job (your new tests, without and with your change) and diff coverage; the merge queue runs the full three-Python matrix on the exact commit about to land (#400); the push to `dev` after the merge runs the e2e smoke and the tutorial, and the matrix and frontend again only if the queue did not already pass that SHA |
 | A frontend change | `cd web && npm run check && npm run test:unit && npm run build` |
-| A release | the large tests: `scripts/release.py` installs the release commit into a fresh venv and runs the tutorial against it; Playwright and the smoke layer per the release runbook |
+| A release | first the rehearsal: `scripts/release.py <version>` (a dry run) runs every check and names each one that would stop `--execute` on this machine -- untracked files, the changelog section's date, the branch, whether the commit is verified, and what the pre-push hook will do for the pushes. Then the large tests: `scripts/release.py` installs the release commit into a fresh venv and runs the tutorial against it; Playwright and the smoke layer per the release runbook |
 
 **What CI guarantees:** no pull request merges until the full backend suite
 has passed on top of current `dev`. Run the full suite locally to reproduce a
@@ -314,7 +395,13 @@ uv pip install --python .venv/bin/python -e ".[all,dev]"
 |---|---|---|
 | commit | ruff, formatting, file hygiene, import-cycle check, KB schema validation | seconds |
 | commit-msg | a `fix:` commit must touch `tests/` | — |
-| pre-push | `scripts/test-affected --run`: core + affected tests on `PYRITE_PUSH_WORKERS` (default 4) workers, only when the push touches code, tests, scripts or test config (a docs- or KB-only push skips it); `PYRITE_PUSH_FULL=1` runs the full suite | Seconds to minutes, depending on what changed |
+| pre-push | `scripts/test-affected --run`: core + affected tests on `PYRITE_PUSH_WORKERS` (default 4) workers, only when the push touches code, tests, scripts or test config (a docs- or KB-only push skips it); skipped when the pushed tree already passed here or the pushed tip is verified by CI; `PYRITE_PUSH_FULL=1` runs the full suite | Seconds to minutes, depending on what changed |
+
+The hook trigger uses a three-dot diff; `scripts/test-affected` selects from
+the two-dot pushed range. A history-only force-push can trigger a core-only
+run. pre-commit checks the first non-deletion ref of a multi-ref push only;
+push one branch at a time when relying on the local hook. CI remains the gate.
+
 
 CI runs the same checks plus the full Python matrix, Postgres, the frontend
 build and Playwright, so the pre-push run does not have to be perfect. If it

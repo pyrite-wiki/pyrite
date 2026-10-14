@@ -17,14 +17,23 @@ from typing import Any, ClassVar
 from ..models import Link
 from .base_backend import BaseBackend
 from .capabilities import BackendCapability
+from .protocol import DEFAULT_MIN_SIMILARITY, SemanticRows, similarity_from
 
 #: sqlite-vec's hard ceiling on ``k`` in a KNN query. Asking for more is not a
 #: slow query but an error — sqlite-vec 0.1.9 raises
 #: ``OperationalError: k value in knn query too large, provided N and the limit
-#: is 4096``. Every ``k`` the semantic leg builds is clamped against this, so a
-#: filtered search over an index larger than the cap under-returns rather than
-#: raising (#56).
+#: is 4096``. Every ``k`` the semantic leg builds is clamped against this; a
+#: query can still under-return when more matching candidates exist than the
+#: cap, or when distance culling removes candidates (#56, #194).
 _SQLITE_VEC_MAX_K = 4096
+
+# ``non_empty`` (#200): an entry has something to show when its body or its
+# summary holds a character other than space, tab, CR or LF. SQLite's TRIM
+# takes a one-space default, so the set is spelled out. No length threshold.
+NON_EMPTY_SQL = (
+    " AND (TRIM(COALESCE(e.body, ''), char(32, 9, 10, 13)) != ''"
+    " OR TRIM(COALESCE(e.summary, ''), char(32, 9, 10, 13)) != '')"
+)
 
 
 class SQLiteBackend(BaseBackend):
@@ -242,6 +251,7 @@ class SQLiteBackend(BaseBackend):
         fips: str | None = None,
         state: str | None = None,
         status: str | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         sql = """
             SELECT
@@ -300,8 +310,13 @@ class SQLiteBackend(BaseBackend):
             sql += " AND e.state = ?"
             params.append(state)
         if status:
-            sql += " AND e.status = ?"
+            from .. import effective_status
+
+            keys = effective_status.derived_done_keys(self._session, kb_name, kb_names)
+            sql += f" AND {effective_status.status_sql('e.', keys, params)} = ?"
             params.append(status)
+        if non_empty:
+            sql += NON_EMPTY_SQL
         sql += " ORDER BY rank LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         with self._raw_cursor() as cur:
@@ -397,7 +412,7 @@ class SQLiteBackend(BaseBackend):
         embedding: list[float],
         kb_name: str | None = None,
         limit: int = 20,
-        max_distance: float = 1.3,
+        min_similarity: float = DEFAULT_MIN_SIMILARITY,
         entry_type: str | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
@@ -406,29 +421,64 @@ class SQLiteBackend(BaseBackend):
         state: str | None = None,
         status: str | None = None,
         include_archived: bool = False,
+        kb_names: set[str] | list[str] | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """KNN over ``vec_entry``, filtered by the same predicates as ``search``.
 
         sqlite-vec's ``MATCH`` needs a literal ``k`` (the number of nearest
-        neighbours to consider) and applies it *before* any join predicate, so
-        a filter cannot be pushed into the KNN itself. Filtering the k rows
-        afterwards would silently under-return whenever the k nearest happen
-        not to match the filter. Instead we over-fetch and escalate ``k`` until
-        ``limit`` rows survive the filter, ``k`` covers every embedded row, or
-        ``k`` reaches :data:`_SQLITE_VEC_MAX_K`.
+        neighbours to consider). For a caller-supplied filter, the matching
+        rowids are passed into the KNN query so unrelated neighbours do not
+        consume that budget. The outer predicates remain as a consistency
+        check. The query over-fetches and escalates ``k`` for distance culling,
+        until ``limit`` rows survive, the filtered candidate set is exhausted,
+        or ``k`` reaches :data:`_SQLITE_VEC_MAX_K`.
 
-        **Recall is best-effort at the cap.** sqlite-vec refuses ``k`` above
-        4096 outright, so on an index larger than that a filter selective
-        enough to exclude the 4096 nearest neighbours returns fewer rows than
-        ``limit`` — possibly none. That is a deliberate under-return, never an
-        exception and never a row the filter excluded. The keyword leg, which
-        has no such ceiling, is unaffected; in hybrid mode it carries the
-        result.
+        sqlite-vec refuses ``k`` above 4096 outright. Filtering candidates
+        before KNN avoids losing recall because unrelated rows occupied those
+        4096 slots. A request for more than the cap, or a restrictive
+        ``min_similarity``, can still return fewer than ``limit`` results. The
+        keyword leg, which has no KNN ceiling, is unaffected; in hybrid mode it
+        carries its own result.
+
+        The default archived-entry exclusion is not a caller filter. When the
+        caller passes a filter it rides inside the KNN with the others; when
+        the caller passes none it stays out on the first pass. If such a
+        search reaches the cap short of ``limit`` *because archived rows filled
+        the k-set* (the KNN was not exhausted, no live row was culled by
+        ``min_similarity``, and the k-set held archived rows), it runs once more
+        with the exclusion inside the KNN. A search with no archived shortfall
+        issues the statements it always did. The retry also fires, and cannot
+        help, when every live row is already in the k-set (3 live nearest, 10
+        archived farther, ``limit=6`` at cap 8), when ``limit`` exceeds the cap
+        with archived rows in the k-set and no live rows beyond, and when every
+        live row is below ``min_similarity``: the result is correct, at the price
+        of one extra query. An empty k-set at the cap also costs the size
+        probe (``limit >= 2048`` at the real cap).
 
         The escalation costs one extra query per round, and only when the
         previous budget did not fill ``limit``: an unfiltered search whose
-        nearest neighbours all survive ``max_distance`` runs exactly one query,
-        the same as before filters were threaded through.
+        nearest neighbours all survive ``min_similarity`` runs exactly one
+        query, the same as before filters were threaded through.
+
+        **Two numbers per row** (#668). ``distance`` is the KNN's own L2
+        distance (``vec0``'s default metric) and is what picks the k
+        candidates. ``similarity`` is the cosine of the stored vector and the
+        query, computed from the vectors (``vec_distance_cosine``), not derived
+        from L2: ``1 - d**2 / 2`` is the cosine only between unit vectors, and
+        not every model normalises its output. Rows are returned in descending
+        ``similarity`` and cut at ``min_similarity``. For unit vectors the two
+        orders are the same; for others the k candidates are the L2-nearest,
+        so a long vector with a high cosine can be missed.
+
+        **The readable set is a filter like the others** (#668). ``kb_names``
+        makes the search selective, so it rides inside the KNN with
+        ``kb_name`` and the rest: the k candidates, the rows, their
+        similarities and whatever is concluded from them come from the scoped
+        entries, however many nearer vectors sit in other KBs. A result that
+        is short at the ceiling because the outer WHERE dropped k-set rows
+        would be returned with ``capped=True`` (:class:`SemanticRows`); with
+        every filter inside the KNN that is a backstop, not a path in use.
         """
         if not self.vec_available:
             return []
@@ -444,6 +494,8 @@ class SQLiteBackend(BaseBackend):
             state=state,
             status=status,
             include_archived=include_archived,
+            kb_names=kb_names,
+            non_empty=non_empty,
         )
 
         # The KNN k-set is materialised in a CTE and its size carried on every
@@ -453,45 +505,97 @@ class SQLiteBackend(BaseBackend):
         # would be wasted. That is the exhaustion signal — an unconditional
         # ``COUNT(*) FROM vec_entry`` would instead scan the whole vector table
         # on every semantic search, filtered or not.
-        sql = f"""
+        # Apply caller filters inside the KNN query so unrelated rows cannot exhaust the
+        # hard k cap; keep the unfiltered hot path free of this extra query.
+        knn_candidates = f" AND rowid IN (SELECT e.rowid FROM entry e WHERE 1=1{where})"
+        knn_filter = knn_candidates if selective else ""
+        # The only predicate in play is the default archived exclusion: no
+        # caller filter, and the caller did not opt in to archived rows.
+        archived_exclusion_only = not selective and not include_archived
+        candidate_params = params if selective else []
+        sql_template = """
             WITH knn AS (
-                SELECT rowid, distance
+                SELECT rowid, distance, vec_distance_cosine(embedding, ?1) AS cosine_distance
                 FROM vec_entry
-                WHERE embedding MATCH ? AND k = ?
+                WHERE embedding MATCH ?1 AND k = ?2{knn_filter}
             ), knn_size AS (
                 SELECT COUNT(*) AS n FROM knn
             )
-            SELECT knn.rowid, knn.distance, e.*, knn_size.n AS _knn_size
+            SELECT knn.rowid, knn.distance, knn.cosine_distance AS _cosine_distance,
+                   e.*, knn_size.n AS _knn_size
             FROM knn
             JOIN entry e ON knn.rowid = e.rowid
             CROSS JOIN knn_size
             WHERE 1=1{where}
-            ORDER BY knn.distance
+            ORDER BY knn.cosine_distance, knn.distance
         """
-        size_sql = """
+        size_template = """
             WITH knn AS (
-                SELECT rowid FROM vec_entry WHERE embedding MATCH ? AND k = ?
+                SELECT rowid FROM vec_entry WHERE embedding MATCH ? AND k = ?{knn_filter}
             )
             SELECT COUNT(*) FROM knn
         """
-        # Over-fetch more when a caller-supplied filter may cull the k nearest.
-        # The archived exclusion is not counted: it applies to every search, so
-        # treating it as a filter would triple the budget of every query.
-        k = min(limit * 3 if selective else limit * 2, _SQLITE_VEC_MAX_K)
-        results: list[dict[str, Any]] = []
+        sql = sql_template.format(knn_filter=knn_filter, where=where)
+        size_sql = size_template.format(knn_filter=knn_filter)
+        # Over-fetch for ``min_similarity`` culling only. A caller filter no
+        # longer needs a larger first budget: it is applied inside the KNN, so
+        # every candidate it returns already satisfies it (it used to triple
+        # the budget to survive a post-KNN filter).
+        k = min(limit * 2, _SQLITE_VEC_MAX_K)
+        results = SemanticRows()
         while True:
             with self._raw_cursor() as cur:
-                rows = cur.execute(sql, [blob, k, *params]).fetchall()
-            results = []
+                rows = cur.execute(sql, [blob, k, *candidate_params, *params]).fetchall()
+            results = SemanticRows()
             for row in rows:
                 entry = dict(row)
                 entry.pop("_knn_size", None)
-                if entry.get("distance", 0) > max_distance:
+                cosine_distance = entry.pop("_cosine_distance", None)
+                similarity = similarity_from(cosine_distance)
+                # Cut on the unrounded value, as Postgres does in its WHERE. A
+                # zero vector has no cosine and is never a match.
+                if similarity is None or 1.0 - cosine_distance < min_similarity:
                     continue
+                entry["similarity"] = similarity
                 results.append(entry)
                 if len(results) >= limit:
                     break
             if len(results) >= limit or k >= _SQLITE_VEC_MAX_K:
+                if len(results) < limit and archived_exclusion_only and not knn_filter:
+                    # Short at the ceiling. Of the reasons a first pass can be
+                    # short, only one is helped by asking again with the
+                    # archived exclusion inside the KNN: archived rows filled
+                    # the k-set. Not an exhausted KNN (fewer neighbours than
+                    # ``k``: every row was seen), and not ``min_similarity``
+                    # (a live row was already culled, so farther ones fail
+                    # too).
+                    knn_size = (
+                        rows[0]["_knn_size"]
+                        if rows
+                        else self._raw_scalar(size_sql, (blob, k, *candidate_params))
+                    )
+                    culled = len(rows) > len(results)
+                    if knn_size >= k and knn_size > len(rows) and not culled:
+                        knn_filter, candidate_params = knn_candidates, params
+                        sql = sql_template.format(knn_filter=knn_filter, where=where)
+                        size_sql = size_template.format(knn_filter=knn_filter)
+                        continue
+                if len(results) < limit:
+                    # Short at the ceiling. Every filter rides inside the KNN
+                    # now, so this should find nothing: it is the backstop for
+                    # a predicate applied after the k-set (#668). If rows the
+                    # k-set held were dropped by the outer WHERE, and none by
+                    # the similarity floor, rows the filter admits may lie
+                    # beyond the k nearest, unseen: mark the result so that it
+                    # is not read as "nothing matches".
+                    knn_size = (
+                        rows[0]["_knn_size"]
+                        if rows
+                        else self._raw_scalar(size_sql, (blob, k, *candidate_params))
+                    )
+                    results.capped = (
+                        knn_size >= k and knn_size > len(rows) and len(rows) == len(results)
+                    )
                 # Filled, or at sqlite-vec's hard ceiling — recall is
                 # best-effort from here.
                 break
@@ -502,15 +606,19 @@ class SQLiteBackend(BaseBackend):
                 knn_size = rows[0]["_knn_size"]
             else:
                 with self._raw_cursor() as cur:
-                    knn_size = cur.execute(size_sql, (blob, k)).fetchone()[0]
+                    knn_size = cur.execute(size_sql, (blob, k, *candidate_params)).fetchone()[0]
             if knn_size < k:
                 # The table is exhausted: a larger k cannot find more.
                 break
             k = min(k * 4, _SQLITE_VEC_MAX_K)
         return results
 
-    @staticmethod
+    def _raw_scalar(self, sql: str, params: tuple[Any, ...]) -> Any:
+        with self._raw_cursor() as cur:
+            return cur.execute(sql, params).fetchone()[0]
+
     def _semantic_filter_sql(
+        self,
         kb_name: str | None = None,
         entry_type: str | None = None,
         tags: list[str] | None = None,
@@ -520,6 +628,8 @@ class SQLiteBackend(BaseBackend):
         state: str | None = None,
         status: str | None = None,
         include_archived: bool = False,
+        kb_names: set[str] | list[str] | None = None,
+        non_empty: bool = False,
     ) -> tuple[str, list[Any], bool]:
         """Build the WHERE fragment shared by the semantic leg and ``search``.
 
@@ -529,9 +639,10 @@ class SQLiteBackend(BaseBackend):
 
         Returns ``(sql, params, selective)``. ``selective`` says whether any
         *caller-supplied* filter is present; the archived exclusion does not
-        count, because it is the default on both legs and sizing every KNN
-        budget as if it were a filter would triple the work of an ordinary
-        search.
+        count, because it is the default on both legs and putting its subquery
+        inside the KNN of every ordinary search would be a cost they do not
+        need; :meth:`search_semantic` pushes it in only when a search reaches
+        the cap short.
         """
         sql = ""
         params: list[Any] = []
@@ -542,6 +653,16 @@ class SQLiteBackend(BaseBackend):
         if kb_name:
             sql += " AND e.kb_name = ?"
             params.append(kb_name)
+        if kb_names is not None:
+            # The caller's readable set, as the keyword leg applies it: inside
+            # the query, so the k budget escalates until ``limit`` readable
+            # rows are found however many unreadable ones are nearer (#668).
+            names = list(kb_names)
+            if names:
+                sql += f" AND e.kb_name IN ({','.join('?' * len(names))})"
+                params.extend(names)
+            else:
+                sql += " AND 0"
         if entry_type:
             sql += " AND e.entry_type = ?"
             params.append(entry_type)
@@ -571,17 +692,51 @@ class SQLiteBackend(BaseBackend):
             sql += " AND e.state = ?"
             params.append(state)
         if status:
-            sql += " AND e.status = ?"
+            from .. import effective_status
+
+            keys = effective_status.derived_done_keys(self._session, kb_name)
+            sql += f" AND {effective_status.status_sql('e.', keys, params)} = ?"
             params.append(status)
-        selective = any((kb_name, entry_type, date_from, date_to, tags, fips, state, status))
+        if non_empty:
+            sql += NON_EMPTY_SQL
+        selective = any(
+            (
+                kb_name,
+                kb_names is not None,
+                entry_type,
+                date_from,
+                date_to,
+                tags,
+                fips,
+                state,
+                status,
+                non_empty,
+            )
+        )
         return sql, params, selective
 
-    def has_embeddings(self) -> bool:
+    def has_embeddings(
+        self, kb_name: str | None = None, kb_names: set[str] | list[str] | None = None
+    ) -> bool:
         if not self.vec_available:
             return False
+        if kb_name is None and kb_names is None:
+            with self._raw_cursor() as cur:
+                row = cur.execute("SELECT COUNT(*) FROM vec_entry").fetchone()
+            return row[0] > 0
+        sql = "SELECT 1 FROM entry e WHERE e.rowid IN (SELECT rowid FROM vec_entry)"
+        params: list[Any] = []
+        if kb_name:
+            sql += " AND e.kb_name = ?"
+            params.append(kb_name)
+        if kb_names is not None:
+            names = list(kb_names)
+            if not names:
+                return False
+            sql += f" AND e.kb_name IN ({','.join('?' * len(names))})"
+            params.extend(names)
         with self._raw_cursor() as cur:
-            row = cur.execute("SELECT COUNT(*) FROM vec_entry").fetchone()
-        return row[0] > 0
+            return cur.execute(sql + " LIMIT 1", params).fetchone() is not None
 
     def embedding_stats(self) -> dict[str, Any]:
         if not self.vec_available:

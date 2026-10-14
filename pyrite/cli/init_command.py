@@ -10,6 +10,8 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from .output import validate_output_format
+
 logger = logging.getLogger(__name__)
 
 console = Console()
@@ -32,36 +34,136 @@ BUILTIN_TEMPLATES = {
                 "required": ["title"],
                 "optional": ["adr_number", "status", "deciders", "date", "superseded_by"],
                 "subdirectory": "adrs/",
+                "fields": {
+                    "status": {
+                        "type": "select",
+                        "options": ["proposed", "accepted", "rejected", "deprecated", "superseded"],
+                    }
+                },
             },
             "design_doc": {
                 "description": "Design document or specification",
                 "required": ["title"],
                 "optional": ["status", "reviewers", "date", "author", "url"],
                 "subdirectory": "designs/",
+                "fields": {
+                    "status": {
+                        "type": "select",
+                        "options": [
+                            "draft",
+                            "review",
+                            "approved",
+                            "implemented",
+                            "obsolete",
+                            "active",
+                        ],
+                    }
+                },
             },
             "standard": {
                 "description": "Coding standard or convention",
                 "required": ["title"],
                 "optional": ["category", "enforced"],
                 "subdirectory": "standards/",
+                "fields": {
+                    "category": {
+                        "type": "select",
+                        "options": [
+                            "coding",
+                            "testing",
+                            "api",
+                            "git",
+                            "documentation",
+                            "security",
+                            "deployment",
+                        ],
+                    }
+                },
             },
             "component": {
                 "description": "Module or service documentation",
                 "required": ["title"],
                 "optional": ["kind", "path", "owner", "dependencies"],
                 "subdirectory": "components/",
+                "fields": {
+                    "kind": {
+                        "type": "select",
+                        "options": [
+                            "module",
+                            "service",
+                            "package",
+                            "library",
+                            "cli",
+                            "api",
+                            "database",
+                            "application",
+                            "utility",
+                            "endpoint",
+                            "docs",
+                        ],
+                    }
+                },
             },
             "backlog_item": {
                 "description": "Feature, bug, or tech debt item",
                 "required": ["title"],
                 "optional": ["kind", "status", "priority", "assignee", "effort"],
                 "subdirectory": "backlog/",
+                "fields": {
+                    "status": {
+                        "type": "select",
+                        "options": [
+                            "proposed",
+                            "planned",
+                            "accepted",
+                            "in_progress",
+                            "review",
+                            "done",
+                            "retired",
+                            "deferred",
+                            "superseded",
+                            "wont_do",
+                        ],
+                    },
+                    "kind": {
+                        "type": "select",
+                        "options": [
+                            "feature",
+                            "bug",
+                            "tech_debt",
+                            "improvement",
+                            "spike",
+                            "enhancement",
+                            "documentation",
+                            "docs",
+                            "task",
+                            "epic",
+                        ],
+                    },
+                    "priority": {
+                        "type": "select",
+                        "options": ["critical", "high", "medium", "low"],
+                    },
+                    "effort": {"type": "select", "options": ["XS", "S", "M", "L", "XL"]},
+                },
             },
             "runbook": {
                 "description": "How-to guide or operational procedure",
                 "required": ["title"],
                 "optional": ["runbook_kind", "audience"],
                 "subdirectory": "runbooks/",
+                "fields": {
+                    "runbook_kind": {
+                        "type": "select",
+                        "options": [
+                            "howto",
+                            "troubleshooting",
+                            "setup",
+                            "operations",
+                            "onboarding",
+                        ],
+                    }
+                },
             },
         },
         "policies": {"team_owned": True, "require_adr_number": True},
@@ -69,7 +171,7 @@ BUILTIN_TEMPLATES = {
         # field, and each type here has its own statuses. The software-kb
         # validator checks them per type only for a KB with
         # `kb_type: software`; `pyrite init` registers this one as generic,
-        # so no status vocabulary is enforced yet (#572).
+        # so its per-type fields above enforce the vocabulary.
         "validation": {
             "enforce": True,
             "rules": [],
@@ -321,7 +423,10 @@ def init_kb(
         None, "--schema-file", help="Custom schema YAML file to use as preset override"
     ),
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Initialize a new knowledge base from a template.
@@ -336,6 +441,15 @@ def init_kb(
 
     path = path.expanduser().resolve()
     kb_name = name or path.name
+    from ..exceptions import ConfigError
+    from ..services.kb_names import refuse_reserved_kb_name
+
+    try:
+        refuse_reserved_kb_name(kb_name)
+    except ConfigError as exc:
+        from ..utils.errors import cli_error
+
+        cli_error(str(exc), error_code="INVALID_KB_NAME")
 
     # Idempotency: if kb.yaml exists, warn and return
     kb_yaml_path = path / "kb.yaml"
@@ -414,14 +528,16 @@ def init_kb(
 
     # Index the KB
     entries_indexed = 0
+    index_error: str | None = None
     try:
         config = load_config()  # reload to get the newly added KB
         db = open_index_db(config)
         index_mgr = IndexManager(db, config)
         entries_indexed = index_mgr.index_kb(kb_name)
         db.close()
-    except Exception:
+    except Exception as exc:
         logger.warning("Initial indexing failed for %s", kb_name, exc_info=True)
+        index_error = str(exc) or type(exc).__name__
 
     # Result
     type_names = list(preset.get("types", {}).keys())
@@ -433,6 +549,8 @@ def init_kb(
         "types": type_names,
         "entries_indexed": entries_indexed,
     }
+    if index_error:
+        result["indexing_error"] = index_error
 
     formatted = _format_output(result, output_format)
     if formatted is not None:
@@ -444,3 +562,14 @@ def init_kb(
         if type_names:
             console.print(f"  Types: {', '.join(type_names)}")
         console.print(f"  Entries indexed: {entries_indexed}")
+
+    if index_error:
+        # The KB exists and is registered; the index is what is missing (#526).
+        from ..utils.errors import PARTIAL_EXIT
+
+        typer.echo(
+            f"KB '{kb_name}' was created, but its initial indexing failed: {index_error}\n"
+            f"Run `pyrite index sync -k {kb_name}` to index it.",
+            err=True,
+        )
+        raise typer.Exit(PARTIAL_EXIT)

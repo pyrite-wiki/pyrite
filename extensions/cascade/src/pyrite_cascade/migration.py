@@ -1,6 +1,10 @@
 """Migration scripts for Cascade Series KB import.
 
 Run once on copied files to normalize frontmatter before Pyrite indexing.
+
+These scripts read and write with ``read_text``/``write_text``, so a file
+they change comes out with LF line endings (a CRLF file is converted); a BOM
+is kept.
 """
 
 from __future__ import annotations
@@ -8,6 +12,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from pyrite.utils.frontmatter import Frontmatter, NoFrontmatter, describe, split_frontmatter
 
 if TYPE_CHECKING:
     from pyrite.storage.database import PyriteDB
@@ -31,8 +37,16 @@ _WIKILINK_PREFIX_RE = re.compile(
     r"\[\[(" + "|".join(re.escape(p) for p in _WIKILINK_PREFIXES) + r")/",
 )
 
-# Frontmatter block regex (matches content between first --- and second ---)
-_FRONTMATTER_RE = re.compile(r"\A(---\n)(.*?)(---\n)", re.DOTALL)
+
+def _frontmatter_or_warn(md_file: Path, content: str) -> Frontmatter | None:
+    """The file's frontmatter, or None. A file with none is skipped quietly; one
+    that opens frontmatter it cannot close is skipped with a warning."""
+    split = split_frontmatter(content)
+    if isinstance(split, Frontmatter):
+        return split
+    if not isinstance(split, NoFrontmatter):
+        print(f"WARNING: skipped {md_file}: {describe(split)}")
+    return None
 
 
 def inject_ids(kb_path: str | Path) -> dict[str, str]:
@@ -56,18 +70,24 @@ def inject_ids(kb_path: str | Path) -> dict[str, str]:
             collisions.append(f"ID collision: '{stem}' in {seen_ids[stem]} and {md_file}")
         seen_ids[stem] = md_file
 
-        m = _FRONTMATTER_RE.match(content)
-        if not m:
+        m = _frontmatter_or_warn(md_file, content)
+        if m is None:
             continue
 
-        fm_block = m.group(2)
+        fm_block = m.text
 
         # Skip if already has an id field
         if re.search(r"^id:\s", fm_block, re.MULTILINE):
             continue
 
         # Inject id after the opening ---
-        new_content = m.group(1) + f"id: {stem}\n" + fm_block + m.group(3) + content[m.end() :]
+        new_content = (
+            content[: m.yaml_start]
+            + f"id: {stem}\n"
+            + fm_block
+            + content[m.close_start : m.close_end]
+            + content[m.close_end :]
+        )
         md_file.write_text(new_content, encoding="utf-8")
         injected[str(md_file)] = stem
 
@@ -134,12 +154,12 @@ def normalize_research_frontmatter(kb_path: str | Path) -> dict[str, int]:
         if md_file.name.startswith("_"):
             continue
         content = md_file.read_text(encoding="utf-8")
-        m = _FRONTMATTER_RE.match(content)
-        if not m:
+        m = _frontmatter_or_warn(md_file, content)
+        if m is None:
             continue
 
-        fm = m.group(2)
-        body = content[m.end() :]
+        fm = m.text
+        body = content[m.close_end :]
         changed = False
 
         # essay_type → type
@@ -183,7 +203,7 @@ def normalize_research_frontmatter(kb_path: str | Path) -> dict[str, int]:
                 counts["research_status_normalized"] += 1
 
         if changed:
-            new_content = m.group(1) + fm + m.group(3) + body
+            new_content = content[: m.yaml_start] + fm + content[m.close_start : m.close_end] + body
             md_file.write_text(new_content, encoding="utf-8")
 
     return counts
@@ -208,12 +228,12 @@ def normalize_timeline_frontmatter(kb_path: str | Path) -> dict[str, int]:
         if md_file.name.startswith("_"):
             continue
         content = md_file.read_text(encoding="utf-8")
-        m = _FRONTMATTER_RE.match(content)
-        if not m:
+        m = _frontmatter_or_warn(md_file, content)
+        if m is None:
             continue
 
-        fm = m.group(2)
-        body = content[m.end() :]
+        fm = m.text
+        body = content[m.close_end :]
         changed = False
 
         # Add type: timeline_event if missing
@@ -235,7 +255,7 @@ def normalize_timeline_frontmatter(kb_path: str | Path) -> dict[str, int]:
             counts["date_unquoted"] += n
 
         if changed:
-            new_content = m.group(1) + fm + m.group(3) + body
+            new_content = content[: m.yaml_start] + fm + content[m.close_start : m.close_end] + body
             md_file.write_text(new_content, encoding="utf-8")
 
     return counts

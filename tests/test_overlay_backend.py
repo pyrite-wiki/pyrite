@@ -252,6 +252,93 @@ class TestOverlayWrite:
             diff_db.close()
 
 
+class TestOverlayLinks:
+    @pytest.mark.parametrize("direction", ["backlinks", "outlinks"])
+    @pytest.mark.parametrize(
+        "relations",
+        [("supports", "contradicts"), ("custom_one", "custom_two")],
+    )
+    @pytest.mark.parametrize(
+        ("main_relations", "diff_relations", "expected"),
+        [
+            pytest.param(
+                (0, 1),
+                (),
+                (0, 1),
+                marks=pytest.mark.control(reason="An empty overlay already preserves main rows"),
+                id="main-only",
+            ),
+            pytest.param((0,), (1,), (0, 1), id="split-between-stores"),
+            pytest.param((), (0, 1), (0, 1), id="both-in-overlay"),
+            pytest.param(
+                (0,),
+                (0,),
+                (0,),
+                marks=pytest.mark.control(reason="The same link already uses the overlay row"),
+                id="same-link-diff-wins",
+            ),
+            pytest.param(
+                (0,),
+                (),
+                (0,),
+                marks=pytest.mark.control(
+                    reason="Overlay reads do not hide links removed from diff"
+                ),
+                id="removed-from-overlay",
+            ),
+        ],
+    )
+    def test_relation_identity(
+        self, tmp_path, direction, relations, main_relations, diff_relations, expected
+    ):
+        main_db = _make_db(tmp_path / "main.db")
+        diff_db = _make_db(tmp_path / "diff.db")
+        try:
+            for db, title in [(main_db, "Main"), (diff_db, "Overlay")]:
+                _insert_entry(db, "source", "test", f"{title} source")
+                _insert_entry(db, "target", "test", f"{title} target")
+
+            for db, indices, note in [
+                (main_db, main_relations, "main"),
+                (diff_db, diff_relations, "overlay"),
+            ]:
+                db._backend._sync_links(
+                    "source",
+                    "test",
+                    [{"target": "target", "relation": relations[i], "note": note} for i in indices],
+                )
+                db.session.commit()
+
+            if not diff_relations:
+                # Model a removal in the diff: it has the edited entry but no link.
+                diff_db._backend._sync_links(
+                    "source", "test", [{"target": "target", "relation": relations[0]}]
+                )
+                diff_db.session.commit()
+                diff_db._backend._sync_links("source", "test", [])
+                diff_db.session.commit()
+
+            overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
+            if direction == "backlinks":
+                rows = overlay.get_backlinks("target", "test", readable_kbs=None)
+                relation_field = "forward_relation"
+                other_end = "source"
+            else:
+                rows = overlay.get_outlinks("source", "test", readable_kbs=None)
+                relation_field = "relation"
+                other_end = "target"
+
+            assert len(rows) == len(expected)
+            assert {row[relation_field] for row in rows} == {relations[i] for i in expected}
+            assert {(row["id"], row["kb_name"]) for row in rows} == {(other_end, "test")}
+            for row in rows:
+                index = relations.index(row[relation_field])
+                assert row["note"] == ("overlay" if index in diff_relations else "main")
+        finally:
+            main_db.close()
+            diff_db.close()
+
+
 class TestOverlayMergeHelper:
     def test_empty_diff_returns_main(self):
         main = [{"id": "a", "kb_name": "t", "title": "A"}]

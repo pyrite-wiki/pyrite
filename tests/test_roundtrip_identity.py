@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import difflib
 import shutil
-import time
+import sys
 from pathlib import Path
 
 import pytest
@@ -172,63 +172,70 @@ def _format_diffs(diffs: list[tuple[str, Path, str, str]], limit: int = 10) -> s
     return header + "\n\n" + "\n".join(chunks)
 
 
-@pytest.fixture(scope="module")
-def real_kb_walk(tmp_path_factory):
-    """Walk the real `kb/`, on a temp copy, load->save->compare -- ONCE per
+@pytest.fixture(scope="module", autouse=True)
+def real_kb_walk_calls():
+    """Count actual walks of real-corpus copies, including calls outside the
 
-    test session, in module scope. Every test below that needs the outcome
-    of that walk (the identity assertion, the exact-set check, the 70
-    per-id xfail cases) reads this fixture's result instead of re-copying
-    and re-walking 770 files itself: at ~0.1s/file for load+parse+save,
-    walking once and parametrizing 70 assertions over its already-computed
-    result is the difference between this file running in a couple of
-    seconds and running for minutes. Returns (elapsed_seconds, all_diffs)
-    where all_diffs is the full, UNFILTERED diff list (skip_ids=frozenset())
-    so every test below can apply its own filtering to the same data.
+    shared fixture. Check at module teardown so a later test cannot bypass
+    the guard by walking again after the assertion test has already passed.
+    Smaller synthetic KBs are not part of this shared-corpus budget.
+    """
+    real_copies: set[Path] = set()
+    calls: list[Path] = []
+    original_copy = _copy_kb_to
+    original_walk = _load_save_diffs
+
+    def tracked_copy(tmp_path, source):
+        copied = original_copy(tmp_path, source)
+        if source.resolve() == REAL_KB_DIR.resolve():
+            real_copies.add(copied.resolve())
+        return copied
+
+    def tracked_walk(repo, **kwargs):
+        if repo.path.resolve() in real_copies:
+            calls.append(repo.path.resolve())
+        return original_walk(repo, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(sys.modules[__name__], "_copy_kb_to", tracked_copy)
+        patch.setattr(sys.modules[__name__], "_load_save_diffs", tracked_walk)
+        yield calls
+        if real_copies:
+            assert len(calls) == 1, (
+                f"real kb/ was walked {len(calls)} times in this module; "
+                "reuse real_kb_walk instead of walking the corpus per test"
+            )
+
+
+@pytest.fixture(scope="module")
+def real_kb_walk(tmp_path_factory, real_kb_walk_calls):
+    """Walk a temp copy of the real `kb/` once per module.
+
+    Every real-corpus assertion shares the full, unfiltered diff list instead
+    of re-copying and re-walking the corpus. The call-count guard checks this
+    shape directly, independently of runner load or corpus size.
     """
     tmp_path = tmp_path_factory.mktemp("real_kb_walk")
     kb_copy = _copy_kb_to(tmp_path, REAL_KB_DIR)
     repo = _repo_for(kb_copy)
-
-    start = time.monotonic()
-    all_diffs = _load_save_diffs(repo, skip_ids=frozenset())
-    elapsed = time.monotonic() - start
-
-    return elapsed, all_diffs
+    return _load_save_diffs(repo, skip_ids=frozenset())
 
 
 class TestRealKBRoundTrip:
     """The gate itself: walk the real `kb/`, on a temp copy, load->save->compare."""
 
     def test_real_kb_is_byte_identical_after_noop_roundtrip(self, real_kb_walk):
-        _elapsed, all_diffs = real_kb_walk
+        all_diffs = real_kb_walk
         diffs = [d for d in all_diffs if d[0] not in KNOWN_RESIDUAL_IDS]
 
         assert not diffs, _format_diffs(diffs)
 
-    def test_walk_is_fast(self, real_kb_walk):
-        """The default suite must stay fast: this file's real-corpus walk
+    def test_real_kb_walk_is_shared(self, real_kb_walk, real_kb_walk_calls):
+        """All real-corpus assertions reuse one walk; teardown also catches
 
-        well under a minute. Measured directly (not asserted against a fixed
-        file count) so it stays honest if the corpus grows. Shares the single
-        walk in `real_kb_walk` with every other test in this class, so this
-        measures the actual cost the default suite pays, not an inflated
-        number from walking the corpus once per test.
-
-        The budget is deliberately loose. The walk takes ~2s on an idle
-        machine, but under `-n auto` next to two other full suites it took
-        over 10s and a 10s budget failed on load alone (CLAUDE.md: a fixed
-        wall-clock timeout that fails only under load is a bug in the test).
-        What this guards against is the naive one-walk-per-case shape, which
-        takes minutes; 60s catches that with room for a busy runner.
+        duplicate walks introduced by tests that run after this assertion.
         """
-        elapsed, _all_diffs = real_kb_walk
-
-        assert elapsed < 60.0, (
-            f"load->save walk of the real kb/ took {elapsed:.2f}s, over the "
-            "60s budget for the default suite -- sample deterministically "
-            "instead of walking the full corpus if this regresses"
-        )
+        assert len(real_kb_walk_calls) == 1
 
     def test_known_residual_is_exactly_this_set_no_more_no_less(self, real_kb_walk):
         """Not xfail -- a normal, passing assertion that the excluded set in
@@ -252,7 +259,7 @@ class TestRealKBRoundTrip:
         drop bug while it was open; with #151 fixed they are back in the
         blanket byte-identity assertion.)
         """
-        _elapsed, all_diffs = real_kb_walk
+        all_diffs = real_kb_walk
         residual_ids = {entry_id for entry_id, *_ in all_diffs}
 
         missing_from_reality = KNOWN_RESIDUAL_IDS - residual_ids
@@ -302,7 +309,7 @@ class TestRealKBRoundTrip:
     @pytest.mark.parametrize("entry_id", sorted(KNOWN_RESIDUAL_IDS))
     @pytest.mark.xfail(strict=True, reason="see KNOWN_RESIDUAL_IDS's grouped comments above")
     def test_known_residual_id_fails_roundtrip(self, real_kb_walk, entry_id):
-        _elapsed, all_diffs = real_kb_walk
+        all_diffs = real_kb_walk
         diff_ids = {d[0] for d in all_diffs}
 
         assert entry_id not in diff_ids, f"{entry_id} still fails its no-op round trip"

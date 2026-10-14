@@ -16,21 +16,27 @@ table keyed by exception type.
 
 **MCP and the CLI** (MCP tool `_error`/`_refusal`, and CLI commands with a
 `--format` flag via `cli_error`/`cli_error_from`) return the flat structure
-below. Some write commands (`create`, `add`, `delete`, `link`) have no
-`--format` flag and always print Rich-formatted text, never this JSON shape,
-on error or success — see `docs/agent-write-path.md` for the per-command
-table. Making CLI output consistent regardless of TTY is **#303** (open);
-this page describes the shape you get when you do get JSON, not a promise
-that every command gives you the option.
+below. A CLI command with no `--format` flag prints a refusal as Rich text
+(`ERROR [CODE]: message`), never this JSON; the table under "`--format`
+defaults" says which. With `--format rich` the same refusal is the one
+`ERROR [CODE]: message` line. Each CLI module takes the one shared `--format`
+(JSON by default; #303, decided 2026-10-02) as it moves to the outcome
+contract; until then this page describes the shape you get when you do get
+JSON, not a promise that every command gives you the option.
 
 ```json
 {
   "error": "human-readable message",
   "error_code": "MACHINE_CODE",
   "suggestion": "optional fix hint",
-  "retryable": false
+  "retryable": false,
+  "outcome": "error"
 }
 ```
+
+- `outcome` — on the CLI, from a command on the outcome contract (see "Exit codes (CLI)"): always `"error"` on a refusal, as
+  `"done"`, `"partial"` or `"nothing"` is on a result. Additive: absent from
+  MCP and from a CLI command that has not migrated, so do not require it.
 
 - `error` — always present, human-readable.
 - `error_code` — always present, machine-readable (`QUERY_SYNTAX`,
@@ -101,14 +107,20 @@ Every entry write — REST `POST /api/entries`, `PUT`/`PATCH
 /api/entries/{id}`, `POST /api/entries/import`, `POST /api/clip`; MCP `kb_create`,
 `kb_update`, `kb_bulk_create`; CLI `pyrite create`, `pyrite update`,
 `pyrite add`, `pyrite import` — goes through one pipeline in `KBService`,
-so the same entry is refused with the same `error_code` on every surface:
+so the same entry is refused with the same `error_code` on every surface.
+This is the one table of codes an agent meets while writing; the
+how-to (`docs/agent-write-path.md`) links here instead of repeating it. Each row
+is reproduced by a command in "Reproduce the codes" below, which CI runs.
 
-| `error_code` | Meaning |
-|---|---|
-| `UNDECLARED_TYPE` | the KB's `kb.yaml` declares types and this is not one of them. Core types (`note`, `person`, …) are **not** exempt. Override with `allow_undeclared` (MCP, REST body or import query) / `--allow-undeclared` (CLI). The error carries `declared_types` on MCP and REST. |
-| `ENTRY_EXISTS` | the id (given, or derived from the title) already exists. Create never replaces; use update. REST answers `409`. |
-| `SCHEMA_VIOLATION` | the KB schema or a plugin validator rejected a field: enum, required, range, format. A kb.yaml enum (`options:`/`values:`, list `items:`, rule `enum:`) is refused when `validation.enforce_enums` is on (the default); every other kb.yaml finding when `validation.enforce` is on. The message names the field, the value and the allowed list (`kind: 'chore' is not one of [...]`). An update that leaves an off-list value as it was is not refused (see **Warnings**). |
-| `VALIDATION_FAILED` | anything else the entry model refuses (an event without a date, a missing title), and the ADR-0034 truncated-body refusal below. Unchanged by ADR-0037 theme 2 (2026-09-25): REST, MCP and the CLI already agreed on this code before that theme, and continue to — no `legacy_error_code`. |
+| `error_code` | Meaning | What to do |
+|---|---|---|
+| `KB_NOT_FOUND` | the KB name is not registered (or, for a scoped caller, not readable). Every CLI write command (`create`, `update`, `delete`, `link`) reports it. | `pyrite kb list` shows the registered names; `pyrite orient` lists the KBs you can read. |
+| `NOT_FOUND` | the entry id does not exist: CLI `get`, `update`, `delete`, `link`. `pyrite backlinks` and `pyrite-read backlinks` on an id that no entry has and nothing links to answer `ENTRY_NOT_FOUND` (the class's code, today; #610 settles the spelling). An id that is only linked to (`[[ghost-page]]`) is answered with its linking entries. The intended MCP and REST code is `ENTRY_NOT_FOUND` (see "MCP only, for one release" above); today MCP `kb_get` answers `NOT_FOUND` and `kb_update` answers `UPDATE_FAILED` with `retryable: true` (#761: a bug, do not rely on it). | `pyrite search <term> -k <kb>` to find the id. |
+| `UNDECLARED_TYPE` | the KB's `kb.yaml` declares types and this is not one of them. Core types (`note`, `person`, …) are **not** exempt. Override with `allow_undeclared` (MCP, REST body or import query) / `--allow-undeclared` (CLI). The error carries `declared_types` on MCP and REST. | Use a declared type (`pyrite kb schema show <kb>`), or pass the override. |
+| `ENTRY_EXISTS` | the id (given, or derived from the title) already exists. Create never replaces; use update. REST answers `409`. | `update` it, or choose another title or id. |
+| `SCHEMA_VIOLATION` | the KB schema or a plugin validator rejected a field: enum, required, range, format. A kb.yaml enum (`options:`/`values:`, list `items:`, rule `enum:`) is refused when `validation.enforce_enums` is on (the default); every other kb.yaml finding when `validation.enforce` is on. The message names the field, the value and the allowed list (`kind: 'chore' is not one of [...]`). An update that leaves an off-list value as it was is not refused (see **Warnings**). | Re-read the message: it names the field and the allowed values. |
+| `VALIDATION_FAILED` | anything else the entry model refuses (an event without a date, a missing title), a `managed_fields` key in an update, and the ADR-0034 truncated-body refusal below. Unchanged by ADR-0037 theme 2 (2026-09-25): REST, MCP and the CLI already agreed on this code, so no `legacy_error_code`. | Fix the named field. For a truncated body, reassemble it with `kb_read_body` and retry without the marker. |
+| `QUERY_SYNTAX` | (`search`, not a write, but what an agent hits right after a failed write) a token containing `-`, `:` or `.` used beside `AND`/`OR`/`NOT` or a quote, unquoted. | Quote the token yourself: `"bar-baz"`. |
 
 All are `retryable: false`. REST reports them as
 `{"detail": {"code", "message", "retryable": false, "hint"?, "declared_types"?}}`
@@ -125,11 +137,12 @@ results keep the input order. Each failed item carries `error_code`:
 
 REST import reports the same pair per item in `error_details`
 (`{"title", "error", "error_code"}`). `pyrite import` prints
-`Failed [CODE]: <title>: <message>` per refused record and exits `1` if any
-record was refused (re-importing a file whose entries exist is refused per
-record, so it exits `1`); `--dry-run` prints `Would refuse [CODE]: …`,
-including for a record whose id an earlier record of the same file would
-create, and writes nothing.
+`Failed [CODE]: <title>: <message>` per refused record and exits `3` when some
+records were written and some refused, `1` when none was written
+(re-importing a file whose entries all exist writes nothing, so it exits `1`);
+`--dry-run` prints `Would refuse [CODE]: …`, including for a record whose id
+an earlier record of the same file would create, writes nothing, and exits the
+way the real run would.
 
 **Warnings.** A write that succeeds may still draw non-blocking schema
 findings (an off-list select value when the KB sets
@@ -189,10 +202,175 @@ Source of truth: `pyrite/services/kb_service.py` (`_prepare`,
 `bulk_create_entries`, `update`, `updatable_fields`) and the
 `ValidationError` subclasses in `pyrite/exceptions.py`.
 
-**Success shapes.** What `create`/`update`/`bulk_create` return when they
-*don't* refuse — per surface (CLI, MCP, REST), plus how to discover a
-type's required fields (including the plugin-type gap, #232) and an
-"error X, do Y" table — is `docs/agent-write-path.md`.
+### Reproduce the codes
+
+Each block below is run by `tests/test_doc_agent_contracts.py` in a scratch
+HOME, in order; the exit code and the text it expects are the ones stated.
+A refusal is JSON by default and one `ERROR [CODE]: message` line under `--format rich`; `pyrite import` has no output format and prints Rich text.
+
+<!-- expect-exit: 0 -->
+```bash
+pyrite init -t empty -p ./notes --name notes --no-examples
+mkdir typed && printf 'name: typed\ntypes:\n  ticket:\n    description: A ticket\n    fields:\n      kind:\n        type: select\n        options: [bug, feature]\n' > typed/kb.yaml
+pyrite kb add ./typed --name typed
+pyrite create -k notes -t note --title "Hello" --body "First."
+```
+
+`KB_NOT_FOUND`, in JSON and in Rich:
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: "error_code": "KB_NOT_FOUND" -->
+```bash
+pyrite update hello -k nokb --title x
+```
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: ERROR [KB_NOT_FOUND] -->
+```bash
+pyrite create -k nokb -t note --title x --format rich
+```
+
+`NOT_FOUND`:
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: "error_code": "NOT_FOUND" -->
+```bash
+pyrite update nope -k notes --title x
+```
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: "error_code": "NOT_FOUND" -->
+```bash
+pyrite link hello nope -k notes
+```
+
+`ENTRY_EXISTS`, `UNDECLARED_TYPE`, `SCHEMA_VIOLATION`, `VALIDATION_FAILED`:
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: "error_code": "ENTRY_EXISTS" -->
+```bash
+pyrite create -k notes -t note --title "Hello" --body "Again."
+```
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: "error_code": "UNDECLARED_TYPE" -->
+```bash
+pyrite create -k typed -t note --title "Nope"
+```
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: "error_code": "SCHEMA_VIOLATION" -->
+```bash
+pyrite create -k typed -t ticket --title "T1" -f kind=chore
+```
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: "error_code": "VALIDATION_FAILED" -->
+```bash
+pyrite create -k notes -t event --title "An event"
+```
+
+`QUERY_SYNTAX`, from `search`:
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: "error_code": "QUERY_SYNTAX" -->
+```bash
+pyrite search 'foo AND bar-baz' -k notes
+```
+
+## Write success shapes
+
+What a write returns when it is not refused, per surface. The CLI rows are
+run in "Reproduce the codes" and in `docs/agent-write-path.md`; the MCP
+blocks marked as output are checked by key against the tool handler's real
+result (`tests/test_doc_agent_contracts.py`). REST rows are reference only:
+they are **not run** (a server would be needed).
+
+### `create`
+
+| Surface | Call | Success shape |
+|---|---|---|
+| CLI | `pyrite create -k <kb> -t <type> --title <t> --body <b>` | **`--format` defaults to `json`:** `{"created": true, "entry_id": "<id>", "entry_type": "<type>", "outcome": "done"}`, plus `"warnings"` when any. With `--format rich`: `Created: <id>` / `Type: <type>`, plus a `Warning: ...` line per schema warning. With `--link`, `"linked"` and `"failed_links"` (each failed link carries its `finish_up` command); a link that did not resolve makes the outcome `partial` and the exit `3`. |
+| MCP | `kb_create` | the block below, plus `"warnings": [...]` when any, plus `"qa_issues"` when a QA validator ran and found something. |
+| REST (not run) | `POST /api/entries` | `{"created": true, "id": "<id>", "kb_name": "<kb>", "file_path": "", "warnings": []}`. `file_path` is **always the empty string** here (MCP returns the real path). |
+
+<!-- mcp-output: kb_create -->
+```json
+{"created": true, "entry_id": "hello", "file_path": "/abs/path/hello.md"}
+```
+
+`pyrite add <file>` is the same shape as `create`: `{"added": true, "entry_id": "<id>", "entry_type": "<type>", "outcome": "done"}` (`"valid"` for `--validate-only`), or under `--format rich` `Added: <id>` / `Type: <type>`.
+
+### `update`
+
+| Surface | Call | Success shape |
+|---|---|---|
+| CLI | `pyrite update <id> -k <kb> --title <t>` | **`--format` defaults to `json`:** `{"updated": true, "entry_id": "<id>", "outcome": "done"}`. With `--format rich`: `Updated: <id>`. |
+| MCP | `kb_update` | the block below, plus `"warnings"` when any, `"ignored"` listing keys no update writes, and `"unchanged"` listing fields an echoed read result carried at the value the read returned (not written). |
+| REST (not run) | `PUT /api/entries/{id}` (body carries `kb`) or `PATCH /api/entries/{id}` (body: `kb`, `field`, `value`; one field, `value` a string) | Both return `{"updated": true, "id": "<id>", "warnings": []}`. |
+
+<!-- mcp-output: kb_update -->
+```json
+{"updated": true, "entry_id": "hello", "file_path": "/abs/path/hello.md"}
+```
+
+`update -f key=value` (CLI) and MCP `kb_update` with an extra key store an
+undeclared field under the entry's `metadata` dict, not as a top-level key.
+Which fields an update may set, and which it refuses or sets aside, is the
+**Update fields** paragraph above.
+
+### `bulk_create` / import
+
+| Surface | Call | Success shape |
+|---|---|---|
+| CLI | `pyrite import <file> -k <kb>` | Rich text: one `Created: <id>` / `Failed [CODE]: <title>: <message>` line per record, then `Imported N entries` (or `Imported N entries (M failed)`). Exit `3` if some records were written and some failed, `1` if none was written. Its `--format` selects the *input* file format. |
+| MCP | `kb_bulk_create` | the block below, results in input order. |
+| REST (not run) | `POST /api/entries/import` (multipart) | `{"imported": N, "errors": M, "entries": [{"id", "title"}, ...], "error_details": [{"title", "error", "error_code"}, ...]}`. |
+
+<!-- mcp-output: kb_bulk_create -->
+```json
+{"total": 2, "created": 1, "failed": 1, "results": [{"created": false, "error": "...", "error_code": "ENTRY_EXISTS"}, {"created": true, "entry_id": "two"}]}
+```
+
+### `task create` and `link`
+
+`pyrite task create` takes `--field key=value` (repeatable) for fields a
+KB's task schema allows. It has no short flag: `-f` was `--format` on the
+`task` commands and is deprecated there (see "`--format` defaults"), and is
+**not** `--field` as on `create`/`update`.
+
+`pyrite link <source> <target> -k <kb> -r <relation>` answers
+`{"links": [{"created": true, "source", "relation", "target", "target_kb"}], "outcome": "done"}`
+(`target_kb` is the KB the link points into: the one name for it across the link family, here and in `links bulk-create`; a bare `kb` is not a key of these payloads)
+(`--bidi` adds the inverse as a second item; one that failed is in `"failed"`,
+with `"outcome": "partial"` and exit `3`); under
+`--format rich` it prints
+`Linked: <src> --[<relation>]--> <tgt> (in <kb>)` for a new link, or
+`Already linked: ...` when that `(target, kb, relation)` already exists
+(`"created": false`).
+Another relation between the same two entries is a new link.
+
+`pyrite links check` is a check (ADR-0046): it exits `0` with `"outcome": "done"`
+when no link is broken, and `1` with `"outcome": "nothing"` when any is, with
+the findings still in the document (`missing_targets`, `total_references`,
+`targets`, each target with its `references`).
+
+## Link discovery: what is left out
+
+`pyrite links discover`, `pyrite links batch-suggest`, MCP `kb_discover_neighbors`
+and `kb_batch_suggest`, and REST `GET /api/links/discover-neighbors` and
+`GET /api/links/batch-suggest` leave out candidate entries whose body and
+summary are both blank (nothing but space, tab, CR or LF; a summary without a
+body is kept) (#200). The exclusion is a predicate in the search query, so
+`limit` results come back when that many qualify. It applies to candidates
+only: an entry with no body still gets suggestions. `kb_search` and
+`pyrite search` hide nothing.
+
+| Surface | Switch |
+|---|---|
+| CLI | `--include-empty`; the JSON document carries `"include_empty": true\|false` |
+| MCP | `include_empty` (boolean, default `false`); a value that is not a boolean answers `INVALID_PARAMETER` |
+| REST | `include_empty` query parameter (default `false`) |
 
 ## Repo endpoint errors
 
@@ -268,9 +446,138 @@ Source of truth: `pyrite/server/endpoints/repos.py` (`_relativize_path`,
 {
   "query": "the search string",
   "count": 3,
-  "results": [ { "...": "entry dict" } ]
+  "results": [ { "id": "e1", "kb_name": "notes", "entry_type": "note", "title": "...", "snippet": "...", "similarity": 0.412 } ],
+  "match": "weak",
+  "match_basis": "keyword: nothing matched; semantic: best similarity 0.41, below 0.50 but 0.19 above the next 9 results",
+  "legs_run": ["keyword", "semantic"],
+  "keyword_match": "none"
 }
 ```
+
+### What a result row carries: the lean default (CLI only)
+
+`pyrite search` and `pyrite-read search` return, per result, `id`, `kb_name`,
+`entry_type`, `title`, `snippet` and the score key the mode produced: `rank`
+(keyword), `similarity` (semantic), `rank`, `rrf_score` and `similarity`
+(hybrid; a row only one leg returned has only that leg's) and, in hybrid, the
+per-result `legs`. `distance` is not in the default. The page-level keys below
+(`match`, `match_basis`, `legs_run`, `keyword_match`, `warnings`) are in every
+response whatever the rows carry. A key that is not in the row is absent, not
+`null`: reading it is a `KeyError`, never a wrong answer.
+
+To get more: `--fields '*'` (or `PYRITE_SEARCH_FIELDS='*'`) is the whole row
+as before #54 (`body` still needs `--include-body`), a named list
+(`--fields title,date,status`) is those fields after `id` and `kb_name`, and
+`PYRITE_SEARCH_FIELDS` sets the same list for every search in a shell.
+`--fields` wins over the variable; an empty or blank value of either
+(`--fields ''`, `--fields ','`) is "not given" and gives the lean row (before
+#54 it gave the whole row). Names are case-sensitive and the variable is as
+lenient as the flag: a name that no returned row carries and no search row is
+known to have (`Title`, a typo) is skipped, and a warning naming it goes to
+stderr. A name a row merely lacks (`status` on an entry with none) is silent, and an empty result page gives no warning.
+`--fields '*'` means every field on every CLI command that takes `--fields`
+(`search`, `get`, `list-entries`, `recent`, `batch-read`); on REST and MCP `*`
+is not special. `search --files` ignores both and says so on stderr.
+`--include-body` adds `body` to the default row. In CSV the
+columns are the default row's keys that the page has; Markdown keeps its list.
+MCP `kb_search` and REST `GET /api/search` are unchanged: they return the
+whole row.
+
+### What the page is worth: `match`, `match_basis`, `keyword_match`, `similarity`
+
+Every search response, on the CLI (`pyrite search`, `pyrite-read search`),
+MCP `kb_search` and REST `GET /api/search`, says what its results are worth.
+The three get these keys from one place (`SearchService.search_response`),
+so they are the same keys, with the same values, in the same words.
+
+| key | where | values |
+|---|---|---|
+| `match` | top level, always | `strong`, `weak` or `none` |
+| `match_basis` | top level, always | the reason, in words; for a person or a log, not for parsing |
+| `legs_run` | top level, always | the legs that ran: `["keyword"]`, `["semantic"]`, both, or `[]`. A `hybrid` search with `["keyword"]` here was a keyword search. Not the per-result `legs` |
+| `keyword_match` | top level, when a keyword leg ran (`keyword` and `hybrid` modes) | `all_terms`, `some_terms` or `none` |
+| `warnings` | top level, only when there are any | a leg that was skipped or dropped. Now in the CLI's JSON too; it was on stderr only |
+| `similarity` | each result the vector leg returned | cosine similarity to the query, 3 decimal places, the same number on SQLite and Postgres |
+| `legs` | each result, `hybrid` mode | the legs that returned that result: `keyword`, `semantic` or both |
+
+A search for a term the KB does not have, run as this page's test:
+
+```bash
+pyrite search "zzznosuchterm" -k notes --mode keyword
+```
+
+<!-- output-keys -->
+```json
+{
+  "query": "zzznosuchterm",
+  "count": 0,
+  "results": [],
+  "match": "none",
+  "match_basis": "keyword: nothing matched",
+  "legs_run": ["keyword"],
+  "keyword_match": "none"
+}
+```
+
+How to read it: `match: none` means the KB does not contain an answer; say so,
+do not build an answer from these results. `weak` means verify the entries
+before using them. `weak` with no results means the search could not run in
+full or found nothing strong, not that the KB lacks an answer: read
+`match_basis` and `legs_run`, then try keyword mode or other words.
+`similarity` compares results of the same model; it is not a probability.
+
+- **The results are returned whatever the verdict.** A `none` page holds the
+  nearest entries. The verdict is a hint to verify: on the labelled queries
+  behind it, 2 of 52 answerable queries read `none` in semantic mode (a
+  paraphrase far from the entry's own words), and 1 of 52 in hybrid.
+- **The verdict belongs to the query, not the page.** It is the same for every
+  `limit` and `offset`, and a `fields` projection does not remove it.
+- **`none` is only said with the evidence for it:** the mode searched as it
+  promises and nothing answered. If the semantic leg did not run (the
+  `[semantic]` extra is not installed, nothing in the KBs searched is embedded,
+  the backend cannot filter it), if the embedding model has no thresholds, or
+  if the vector index could not reach every entry in scope, the verdict is
+  `weak` at worst, `match_basis` says which, and `legs_run` shows which legs ran.
+  A `weak` page can be empty. One thing `none` does not account for: entries
+  written since the last `pyrite index embed` and still in the embed queue are
+  not seen by the semantic leg (`pyrite index embed-status`).
+- **It is computed only from entries you may read:** the rows of both legs,
+  whether anything is embedded, and the warning are all asked of the readable
+  KBs, and `match_basis` never quotes an entry outside them. The readable set
+  is applied inside each leg's own query, on SQLite inside the vector search
+  itself, so a scoped search answers as a search of the readable KBs alone
+  would, however many nearer entries sit in KBs outside them. (sqlite-vec
+  considers at most 4096 nearest vectors; they are the 4096 nearest readable
+  ones.)
+- **Keyword:** `strong` when every term matched; `weak` when only some did
+  (the OR-relaxed retry, an `OR` you wrote, or a hit only on `expand`'s terms);
+  `none` with no hits. In `hybrid`, beside a semantic leg that ran, the
+  keyword leg does not relax, so `keyword_match: none` there means no entry
+  has every term.
+- **Semantic:** decided by thresholds measured for the embedding model
+  (`all-MiniLM-L6-v2`: `strong` at 0.50 and above; `none` below 0.35, or
+  between the two when the best hit is less than 0.10 above the mean of the
+  next nine results). The second test needs neighbours: in a KB of a few dozen
+  entries an absent but adjacent topic can read `weak`.
+- **Another embedding model** has no thresholds yet. Results still carry
+  `similarity`; `match_basis` says `uncalibrated model <name>`, and `match` is
+  `strong` only when the keyword leg says so, `weak` when the vector leg
+  returned rows nobody can judge.
+- **Hybrid:** `strong` if either leg is strong; `none` if the semantic leg says
+  none and the keyword leg is not strong; `weak` otherwise. When the semantic
+  leg did not run, the search is a keyword search: it retries with the terms
+  OR-combined as `keyword` mode does, `legs_run` is `["keyword"]`, `warnings` says
+  why, and the verdict is `strong` or `weak`, never `none`.
+
+Ordering fields are not scores. `rank` is a raw BM25 value and `rrf_score` is
+rank arithmetic (a few fixed values, whatever the query); neither compares
+across queries. `distance` is **backend-specific**: sqlite-vec's L2 distance on
+SQLite, pgvector's cosine distance on Postgres. It is kept for this release
+and then leaves the response; read `similarity`. On SQLite, candidates are the
+L2-nearest vectors, then ordered by cosine: with a model that does not
+normalise its output, a long vector with a high cosine can be missed (the
+default model normalises). REST results carry
+`similarity` and `legs` and none of the ordering fields.
 
 `count` is `len(results)`, not a total-matches count for search results —
 none of `search`'s three transports return a separate total. `has_more`
@@ -297,6 +604,8 @@ call: CLI `backlinks` → `entries`, MCP `kb_backlinks` → `backlinks`; CLI
 
 Source of truth: `pyrite/server/mcp_server.py` (`_kb_search`,
 `_kb_list_entries`, `_kb_recent`, `_kb_backlinks`, `_kb_tags`);
+`pyrite/services/search_service.py` (`search_response`, `match_verdict`, and
+`SearchService.search`'s docstring, the one statement of the search contract);
 `pyrite/server/endpoints/search.py` (`search`), `pyrite/server/endpoints/entries.py`
 (`list_entries`) and `pyrite/server/endpoints/tags.py` (`get_tags`) for REST;
 `pyrite/cli/browse_commands.py` for the CLI commands' own JSON assembly.
@@ -306,6 +615,17 @@ Source of truth: `pyrite/server/mcp_server.py` (`_kb_search`,
 A single entry (`kb_get`, `pyrite get`) returns the entry dict directly
 — not wrapped in an `{"entry": ...}` key. `outlinks` and `backlinks` are
 included when resolvable.
+
+A single entry is read from its file as the file is now, so an edit made
+since the last `index sync` is in it; `content_hash` is the SHA-256 of the
+bytes that read. Lists and search are index reads and may lag.
+
+`"content_hash": null` means one of two things. On a single-entry read it
+means the entry has no file (a row only). On a list result it means the
+hash was not computed: `GET /api/entries`, `GET /api/collections/{id}/entries`,
+`POST /api/collections/query-preview` and the daily-note routes when they
+answer from the index build their entries from index rows, which carry no
+hash. Read the entry by id for its hash.
 
 ### Backlink rows
 
@@ -402,38 +722,214 @@ allowed, and is never persisted as entry content.
 
 ## Exit codes (CLI)
 
-- `0` — success.
-- `1` — any error surfaced via `cli_error` (parses the JSON error shape
-  above from stdout/stderr depending on `--format`).
+**One point sets them** (ADR-0046). A command on the outcome contract
+returns what happened -- `done`, `partial` or `nothing` -- or raises a
+refusal; the root group every command runs inside (`PyriteCLIGroup`, in
+`pyrite`, `pyrite-admin` and `pyrite-read`) prints it in the requested
+`--format` and exits `0`, `3` or `1`. Its JSON carries an additive `outcome`
+key: `"done"`, `"partial"`, `"nothing"`, or `"error"` on the error shape of a
+refusal, so a caller that cannot see the exit code can still tell. Every
+result is an object, so the key always has somewhere to go.
+
+A command is on the contract when it declares the shared `--format` option.
+The commands that are not yet are migrated one slice at a time and keep the
+behaviour below until they are; they are named in `tests/legacy_commands/`
+(one file per CLI module), which a test keeps equal to the registry. Every
+command on the contract shows `PYRITE_FORMAT` on its `--format` in `--help`,
+but the sign does not run the other way: `pyrite mcp-setup` has its own
+`--format` honouring `PYRITE_FORMAT` and is still legacy. For a command on the
+contract the root is also the only way *out*, checked on every run: once the
+command's own code has started, anything but a returned outcome or a raised
+refusal is answered `NO_OUTCOME`, exit `1`, in the format you asked for. That
+covers an exit of its own with any code, a crash (one line naming the
+exception; `-vv` shows the traceback), a return of anything else, and any
+byte it wrote to stdout itself, which is moved to stderr. So for these
+commands, in a machine format:
+
+- stdout holds exactly one document, and its `outcome` agrees with the exit
+  code;
+- `NO_OUTCOME` means a bug in the command, not in your request: what it did
+  is unknown, so check before you retry;
+- exit `0` with empty stdout is never an answer. If you see it, the process
+  ended without reaching the root (`os._exit`); treat it as a failure.
+
+What the root does not decide: stderr (progress, warnings and deprecation
+notices go there; do not parse it for failures), the words of `--format rich`
+(a renderer writes for a person; the exit code is still the root's), and
+`--help` or a usage error (`2`), which click answers before the command
+starts. `-f` together with `--format` is a usage error (`2`). Ctrl-C exits
+`130`.
+
+**Check commands** (a command whose answer is a verdict: `kb validate`, `ids
+missing`, `index health`, `qa validate`, `protocol check`) exit `0` when the
+check is clean and `1` when it fails; warnings never change the exit code
+(maintainer, 2026-10-08). A check command adopts this when its module
+migrates; until then `kb validate` drift exits `2` and `ids missing` `3`.
+
+- `0` — success: **every effect you asked for happened.** A command that
+  prints a failure and exits `0` is a bug.
+- `1` — refused, or nothing was done: any error surfaced via `cli_error`
+  (parses the JSON error shape above from stdout/stderr depending on
+  `--format`). A subject that does not exist is a not-found error here, in the
+  command's own format, never an empty result (`pyrite backlinks nope` answers
+  `ENTRY_NOT_FOUND` today, the class's code; the spelling is #610's). Also a
+  batch command that did none of its items (below).
+- `2` — usage, click's own.
+- `3` — the command ran and did only part of what was asked, or left items
+  for a retry. It prints what happened and what did not, so a script reads the
+  output instead of repeating the call. For a command that loops over items
+  the rule is one function, `exit_unless_whole(failed, done)`: nothing failed
+  is `0`, some failed and some were done is `3`, none was done is `1`. A dry
+  run that would refuse exits as the real run would.
+  - `pyrite create --link a --link b` with a link that does not resolve: the
+    entry is kept (a retry answers `ENTRY_EXISTS`), the links that resolved
+    are kept, and the output names the `pyrite link <id> <target> -r <relation>`
+    that finishes each failed one (always `3`: the entry was written);
+  - `pyrite link --bidi` whose forward link was written and whose inverse failed;
+  - the batch commands, by the rule above (done = items written, embedded or
+    already fine; `export collection` counts exported entries, `search --files`
+    counts files scanned, `repo sync` repos synced): `index embed` and
+    `pyrite-admin index embed` (`Errors: N`; the entries stay owed and a rerun
+    retries them, so offline with nothing embedded is `1`), `schema migrate`,
+    `index reconcile`, `import`, `links bulk-create`, `export collection`,
+    `search --files`, `repo sync`, `batch-read` (an id not found), `task decompose`
+    (every child refused is `1`, `"outcome": "nothing"`),
+    `sw prioritize`, `sw migrate-standards`, `investigation bulk-edges` and
+    `ftm-import`;
+  - `pyrite init` that created the KB but could not index it, and
+    `pyrite extension install --verify` that installed a plugin that would not
+    load (always `3`: the install happened);
+  - `pyrite ids missing` (a file has no `id:`, an empty one, or cannot be
+    read) and `pyrite ids pin` (a file or collision group was left, and the
+    output says which and why). See `docs/pinning-entry-ids.md`.
+
+  Single-effect commands that fail answer `1`: `kb commit` when the commit was
+  rejected (a hook, a staging error; "No changes to commit" is `0`), `task claim`
+  when the claim is lost (in `--format json` too), `social reputation` when it
+  cannot compute the reputation, `investigation network` and `evidence-chain`
+  when the answer is an error.
+
+  This amends the 2026-10-02 decision on #303 ("exit codes stay 0/1/2"),
+  which `ids` had already outgrown; the maintainer's decision of 2026-10-08
+  is recorded on #526. `tests/test_requested_effect_exit_code.py` classifies
+  every command that can do part of its job.
 
 ## `--format` defaults
 
-Most *read* commands default to `--format json`. A few interactive/status
-commands (`task` subcommands, `config`) default to a rich terminal
-view instead — pass `--format json` explicitly when scripting against
-those.
+The rule (#303, decided 2026-10-02) is one shared `--format` option
+(`pyrite/cli/output.py`): `json` by default, `PYRITE_FORMAT` sets your own
+default (`PYRITE_FORMAT=rich` in a terminal), an explicit `--format`
+overrides it, and an unknown format is a usage error (`2`). It takes `json`,
+`yaml` and `rich`. `markdown` and `csv` are not offered by the shared option:
+they exist for the shapes the REST API serves (entries, search results) and
+print a Python `repr` for anything else. A refusal is printed in the format
+asked for, YAML included. `-f` no longer
+means `--format`: where it did it still works for one
+release and prints a deprecation line on stderr. Each module takes the
+shared option when it moves to the outcome contract; the commands not named in
+`tests/legacy_commands/` have it. Until then most *read* commands default to `--format json`, `config`
+to a rich terminal view, and the write commands are not uniform. The table is
+checked against each command's Typer signature by
+`tests/test_doc_agent_contracts.py`:
 
-**Write commands are not uniform, and some have no `--format` at all:**
-`create`, `add`, `delete` and `link` always print Rich text, with no flag
-to ask for JSON; `update` and `rename` do have `--format`, defaulting to
-`json`. See `docs/agent-write-path.md` for the full per-command table and
-success shapes, and cite **#303** (open) for the consistency this page
-used to claim already existed.
+| Command | `--format` | Default |
+|---|---|---|
+| `create` | yes (shared) | `json` |
+| `add` | yes (shared) | `json` |
+| `delete` | none | Rich text, always (it asks before it deletes) |
+| `link` | yes (shared) | `json` |
+| `update` | yes (shared) | `json` |
+| `rename` | yes (shared) | `json` |
+| `import` | input file format, not output | Rich text, always |
+| `task create` | yes (shared; `-f` deprecated) | `json` |
 
-## Related contracts
+A command with no `--format` prints its refusals as Rich text too, so branch
+on the exit code, not on JSON, until its module takes the shared option.
+`get` and `delete` do not have the shared option yet: `get` keeps
+`--format markdown` and `csv`, and `delete` asks a question, which a command on
+the contract may not (the prompt rule is still open). On `create`, `update` and `links
+bulk-create` the short `-f` is `--field`/`--file`, never `--format`.
 
-These aren't JSON shapes but are part of the same "don't relearn this
-the hard way" surface — also returned in `pyrite orient`'s
-`operational_contracts` field:
+### Explicit fields and output formats
 
-- **Indexing**: entries are only searchable once indexed. Writes made
-  directly to files under a KB's path (bypassing `pyrite create`/
-  `update`) need `pyrite index sync` afterward — incremental and cheap.
-- **Search auto-quote rule**: special-char tokens (hyphens, dots,
-  colons) are auto-quoted only when the query has no `AND`/`OR`/`NOT`
-  operator and no existing quote. Once you use an operator or a phrase
-  quote, quote special-char tokens yourself or the query can fail with
-  `error_code: QUERY_SYNTAX` (deterministic, not retryable).
-- **Task claims**: atomic. A lost race means the task is already
-  claimed by someone else — don't override; re-run the task list and
-  pick a different item.
+Who accepts `fields`, and what each does per format
+(`tests/test_fields_acceptors.py` lists them and fails on one that is not
+classified):
+
+| Acceptor | CSV, Markdown, Rich | JSON, YAML |
+|---|---|---|
+| CLI `search`, `recent`, `list-entries`, `batch-read`, `get` (`--fields`) | projected | projected |
+| REST `GET /api/search?fields=`, `GET /api/entries/{id}?fields=` (Accept `text/csv`, `text/markdown`, `text/yaml`; YAML is in the JSON column) | projected | projected |
+| REST `POST /api/entries/batch`, body key `fields` (a JSON list, cleaned like `?fields=`: spaces and duplicates dropped; `[]` is no projection; a list that cleans to nothing, such as `[""]`, keeps `id` and `kb_name` only; `["a,b"]` is one field named `a,b`, unlike the query-string form, which splits on commas) | projected | projected |
+| CLI `search --files`, and the file-search fallback in Rich mode | not projected: it prints its own Rich table (KB, Type, Title, ID) whatever `--format` and `--fields` say, and says so on stderr | same |
+| REST `GET /api/entries` | takes no `fields` (the CLI `list-entries` does); the legacy columns, whatever the parameter | same |
+| MCP tools | JSON only | projected |
+
+The identity fields `id`, then `kb_name`, are always retained, followed by
+requested fields in the supplied order, with duplicates removed. JSON and
+YAML omit requested keys absent from a record rather than inventing values.
+
+CSV, Markdown, and Rich retain every requested column, even when all records
+lack that field; absent and null values are empty cells. A single entry
+(`get`, `GET /api/entries/{id}`) is one row. CSV encodes list and
+dictionary cells as JSON; ordinary strings, including snippets with quotes,
+newlines, or `<mark>` tags, are preserved through standard CSV quoting.
+Markdown uses an ordered table (header rule `| --- |`), escaping pipes and
+displaying cell line breaks as `<br>`.
+
+Two Markdown shapes change under `--fields`. A single entry
+(`get X --fields title,body --format markdown`, or `GET /api/entries/{id}?fields=...`
+with `Accept: text/markdown`) used to be a frontmatter block plus the body; it is now a
+one-row table with the body flattened onto one line. And an empty result used to be the
+line `# Search: q (0 results)`; under a projection it is an empty string. Without
+`--fields`, each format keeps its existing rendering.
+
+Rich renders field names and values literally, without interpreting markup. It
+is for people: its width is the console's. Rich takes it from the terminal even
+when stdout is piped (stdin or stderr being a terminal is enough), uses 80 when no
+standard stream is a terminal, and lets `COLUMNS` override both. Scripts should
+use `json`, `yaml` or `csv`. At that width
+it prints a table when the `id` column at its widest id, every header, and the
+widest character of each column fit whole (measured in terminal cells, so a
+wide character counts 2); long values fold onto further lines. When they do not
+fit, it prints each record as `field: value` lines, records separated by a blank
+line, so a value that itself contains a blank line can look like a record
+boundary. Nothing is cut with an ellipsis, and from a console width of 2 no
+value is cut; at width 1 a stacked value made of wide characters is dropped,
+since a wide character needs 2 cells. A projection never changes the
+underlying records. What a command returns when no projection is requested is
+that command's default: the whole record everywhere except `search`, whose
+default row is the lean one above (#54).
+
+Empty projected CSV responses retain their column header and contain no data
+records. Rich retains each command's existing no-results message. JSON and
+YAML retain their existing empty envelope.
+
+For example, `pyrite search needle --fields status,title --format csv`
+returns the columns `id,kb_name,status,title`, including an empty `status`
+cell if a hit has no status. A requested field does not make search acquire
+data its result records do not otherwise carry.
+
+## Operational contracts
+
+Not JSON shapes, but part of the same "don't relearn this the hard way"
+surface. This is the verbatim `operational_contracts` that `pyrite orient`
+and `kb_orient` return (`KBService.orient`); a test fails when the two
+differ, so edit `KBService.orient` and this block together. `error_contract`
+is the error shape above in one line.
+
+<!-- orient-operational-contracts -->
+```json
+{
+  "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
+  "error_contract": {
+    "shape": "{error, error_code, suggestion?, retryable}",
+    "error": "human-readable message",
+    "error_code": "machine-readable code, e.g. QUERY_SYNTAX, KB_NOT_FOUND",
+    "suggestion": "optional fix hint, omitted when not applicable",
+    "retryable": "bool -- whether retrying the same request could succeed"
+  },
+  "search_quoting": "Special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. '\"family separation\" \"cross-link\"') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).",
+  "task_claims": "Task claims are atomic; a lost race means the task is already claimed by someone else. On conflict, do NOT override the claim -- re-run the task list and pick a different item."
+}
+```

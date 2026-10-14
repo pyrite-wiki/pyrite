@@ -205,6 +205,177 @@ class SearchMode(StrEnum):
     HYBRID = "hybrid"
 
 
+#: How an agent reads the verdict. The sentence in ``SearchService.search``'s
+#: docstring (item 4), the ``kb_search`` tool description and ``pyrite search
+#: --help``; `tests/test_search_verdict_on_every_surface.py` holds the three
+#: to these words.
+HOW_TO_READ_MATCH = (
+    "`match: none` means the KB does not contain an answer; say so, do not build "
+    "an answer from these results. `weak` means verify the entries before using "
+    "them. `weak` with no results means the search could not run in full or found "
+    "nothing strong, not that the KB lacks an answer: read `match_basis` and "
+    "`legs_run`, then try keyword mode or other words. "
+    "`similarity` compares results of the same model; it is not a probability."
+)
+
+#: The margin in the semantic rule is the top hit's similarity minus the mean
+#: of this many results after it. The thresholds were measured with nine (#668),
+#: so the vector leg always fetches the top hit and nine more, whatever
+#: ``limit`` and ``offset`` the caller asked for.
+VERDICT_NEIGHBOURS = 9
+
+_KEYWORD_BASIS = {
+    ("all_terms", None): "every term matched",
+    ("some_terms", None): "no entry has every term; these match at least one",
+    ("some_terms", "query_or"): "the query uses OR, so a hit may match only one side of it",
+    ("some_terms", "expansion"): "only the expansion's terms matched, not the query's own",
+    ("none", None): "nothing matched",
+}
+_KEYWORD_VERDICT = {"all_terms": "strong", "some_terms": "weak", "none": "none"}
+
+
+#: Why the vector leg did not run, in the words ``match_basis`` uses. The codes
+#: are the ones ``_semantic_search`` records (and ``semantic_unavailable``'s).
+_SEMANTIC_SKIP_BASIS = {
+    "extra_missing": "the leg did not run: sentence-transformers is not installed",
+    "sqlite_vec_missing": "the leg did not run: the vector index is not available",
+    "sqlite_vec_not_loaded": "the leg did not run: the vector index is not available",
+    "no_embeddings": "the leg did not run: nothing in the KBs searched is embedded yet",
+    "filter_unsupported": "the leg did not run: this backend cannot filter it",
+    "nothing_indexed": "nothing is indexed in the KBs searched",
+}
+
+
+def _semantic_verdict(
+    similarities: list[float], model: str | None, capped: bool = False
+) -> tuple[str, str]:
+    """The vector leg's verdict: ``strong``, ``weak``, ``none`` or ``unjudged``.
+
+    ``none`` is returned only when the leg looked at every embedded entry in
+    scope with a model whose thresholds are known. ``unjudged`` is everything
+    it cannot stand behind: an uncalibrated model, with or without rows, and a
+    result the backend marked ``capped``.
+    """
+    from .embedding_service import match_thresholds_for_model
+
+    thresholds = match_thresholds_for_model(model)
+    if thresholds is None:
+        # Checked before anything else: no verdict is borrowed from another
+        # model's row, and that includes "nothing reached the floor", which is
+        # a threshold too.
+        found = f"best similarity {similarities[0]:.2f}" if similarities else "no result"
+        return "unjudged", f"{found}, not judged: uncalibrated model {model}"
+    verdict, said = _calibrated_verdict(similarities, thresholds)
+    if capped and verdict == "none":
+        return "unjudged", (
+            f"{said}, not judged: the vector index could not reach every entry in the KBs searched"
+        )
+    return verdict, said
+
+
+def _calibrated_verdict(similarities: list[float], thresholds: Any) -> tuple[str, str]:
+    if not similarities:
+        return "none", "no entry reached the similarity floor"
+    best = similarities[0]
+    if best >= thresholds.strong:
+        return "strong", f"best similarity {best:.2f}, at or above {thresholds.strong:.2f}"
+    if best < thresholds.floor:
+        return "none", f"best similarity {best:.2f}, below {thresholds.floor:.2f}"
+    rest = similarities[1 : 1 + VERDICT_NEIGHBOURS]
+    said = f"best similarity {best:.2f}, below {thresholds.strong:.2f}"
+    if not rest:
+        # One row, so no crowd to stand out from. The middle band without its
+        # second test is not evidence of absence: weak, and say why.
+        return "weak", f"{said}, with no other result to compare it with"
+    # Rounded before the comparison: 0.42 - 0.32 is 0.0999... in floats.
+    margin = round(best - sum(rest) / len(rest), 3)
+    others = f"the next {len(rest)} result{'' if len(rest) == 1 else 's'}"
+    if margin < thresholds.margin:
+        return "none", (
+            f"{said} and only {margin:.2f} above {others} (under {thresholds.margin:.2f})"
+        )
+    return "weak", f"{said} but {margin:.2f} above {others}"
+
+
+def match_verdict(
+    mode: str,
+    *,
+    keyword_match: str | None,
+    similarities: list[float] | None,
+    model: str | None = None,
+    keyword_reason: str | None = None,
+    semantic_skip: str | None = None,
+    capped: bool = False,
+) -> tuple[str, str]:
+    """What a page of results is worth: ``(match, match_basis)`` (#668).
+
+    The one definition. ``SearchService.search_response`` is its only caller,
+    and no surface computes or rewords what it returns.
+
+    ``keyword_match`` is the keyword leg's signal (``all_terms``,
+    ``some_terms``, ``none``), or ``None`` when no keyword leg ran.
+    ``similarities`` are the cosine similarities of the vector leg's top
+    results that the caller may read, best first, from before any ``offset``
+    was applied; ``[]`` when the leg ran and returned nothing; ``None`` when it
+    did not run, with ``semantic_skip`` saying why. ``model`` is the embedding
+    model that produced them. ``capped``: the backend could not consider every
+    candidate in scope (``SemanticRows``).
+
+    - keyword: strong when every term matched, weak when only some did
+      (OR-relaxed, or an OR in the query), none with no hits.
+    - semantic: the model's row in ``_MODEL_MATCH_THRESHOLDS`` decides. Strong
+      at or above ``strong``; none below ``floor``, or between the two with
+      less than ``margin`` over the mean of the next ``VERDICT_NEIGHBOURS``
+      results; weak otherwise.
+    - hybrid: strong if either leg is strong; none if the vector leg says none
+      and the keyword leg is not strong; weak otherwise.
+
+    **``none`` is a claim, and every path to it has to carry the evidence.**
+    It means the mode searched as it promises and nothing answered. So a leg
+    that did not run cannot contribute to it, nor can a model with no
+    thresholds, nor a capped result: each of those is ``weak`` at worst,
+    whatever the other leg found, and the basis says which it was. The one
+    skip that is an absence is ``nothing_indexed``: there was nothing to look
+    at. `tests/test_search_match_verdict.py::TestEveryPathToNone` lists the
+    paths.
+
+    ``none`` is a statement about the query, never a reason to return fewer
+    rows: the two measured false ``none`` verdicts were real answers.
+    """
+    keyword_verdict = _KEYWORD_VERDICT.get(keyword_match or "")
+    keyword_said = _KEYWORD_BASIS.get(
+        (keyword_match, keyword_reason), _KEYWORD_BASIS.get((keyword_match, None), "")
+    )
+    if mode == SearchMode.KEYWORD:
+        # No signal at all cannot happen (the leg ran or the search raised);
+        # if it ever does, it is a leg that did not run.
+        return keyword_verdict or "weak", f"keyword: {keyword_said or 'the leg did not run'}"
+
+    if similarities is not None:
+        semantic_verdict, semantic_said = _semantic_verdict(similarities, model, capped)
+    elif semantic_skip == "nothing_indexed":
+        semantic_verdict, semantic_said = "none", _SEMANTIC_SKIP_BASIS[semantic_skip]
+    else:
+        semantic_verdict = "unjudged"
+        semantic_said = _SEMANTIC_SKIP_BASIS.get(semantic_skip or "", "the leg did not run")
+
+    if mode == SearchMode.SEMANTIC:
+        # What nobody can judge is worth checking, never worth trusting, and
+        # never an absence.
+        alone = "weak" if semantic_verdict == "unjudged" else semantic_verdict
+        return alone, f"semantic: {semantic_said}"
+
+    basis = f"keyword: {keyword_said or 'the leg did not run'}; semantic: {semantic_said}"
+    if "strong" in (keyword_verdict, semantic_verdict):
+        return "strong", basis
+    if semantic_verdict == "none":
+        return "none", basis
+    # Weak, or a vector leg nobody can judge (not run, uncalibrated, capped)
+    # beside a keyword leg that is not strong. The keyword leg alone cannot
+    # say none in hybrid: the mode promised a vector search too.
+    return "weak", basis
+
+
 class SearchService:
     """
     Service for search operations.
@@ -219,6 +390,17 @@ class SearchService:
         self.db = db
         self._settings = settings
         self._expansion_service = None
+
+    def _embedder(self):
+        """The embedder for the query: the configured model, like the entries'.
+
+        Built with no model name it embedded every query with the default model
+        while `pyrite index embed` embedded the entries with the configured
+        one (#668). The verdict reads its thresholds for this same name.
+        """
+        from .embedding_service import EmbeddingService, configured_embedding_model
+
+        return EmbeddingService(self.db, model_name=configured_embedding_model(self._settings))
 
     def _get_expansion_service(self):
         """Lazy-load QueryExpansionService from settings."""
@@ -289,10 +471,12 @@ class SearchService:
     def _restrict(
         results: list[dict[str, Any]], kb_names: set[str] | list[str] | None, limit: int
     ) -> list[dict[str, Any]]:
-        """Drop results from KBs the caller may not read (semantic/hybrid legs).
+        """Drop results from KBs the caller may not read: a backstop.
 
-        The keyword leg filters in SQL; the vector KNN and the hybrid merge do
-        not take an allowlist, so those legs over-fetch and are filtered here.
+        Both legs take the readable set inside their own query (the FTS
+        ``WHERE``; the KNN's candidate filter), so nothing should reach here
+        that this removes. It stays so that a leg which one day forgets the
+        set cannot return a row the caller may not read.
         """
         if kb_names is None:
             return results
@@ -431,6 +615,7 @@ class SearchService:
         kb_names: set[str] | list[str] | None = None,
         warnings: list[str] | None = None,
         semantic_query: str | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Search across entries.
@@ -459,6 +644,11 @@ class SearchService:
                 applied on every leg that ran. Never populated on the happy
                 path; a caller that ignores it still gets correctly filtered
                 results, just without knowing a leg was dropped.
+            non_empty: Leave out entries whose body and summary are both blank
+                after trimming whitespace (#200). Applied inside each leg's own
+                query, so ``limit`` rows come back when that many qualify. Off
+                by default: search itself hides nothing; link discovery turns
+                it on.
             semantic_query: The text the semantic leg embeds, when it should
                 differ from ``query``. A feature that derives an OR query from
                 a title or a message passes the query as ``query`` and the
@@ -481,6 +671,59 @@ class SearchService:
            is *absent* on every surface — the MCP payload omits the key, REST
            omits it (``response_model_exclude_none``), the CLI prints nothing.
            A caller may therefore test presence, never truthiness of a null.
+        4. Every response says what its page is worth (#668): ``match`` is
+           ``strong``, ``weak`` or ``none``, and ``match_basis`` gives the
+           reason in words. How to read it (``HOW_TO_READ_MATCH``, the words
+           the ``kb_search`` description and ``pyrite search --help`` repeat):
+           `match: none` means the KB does not contain an answer; say so, do
+           not build an answer from these results. `weak` means verify the
+           entries before using them. `weak` with no results means the search
+           could not run in full or found nothing strong, not that the KB
+           lacks an answer: read `match_basis` and `legs_run`, then try
+           keyword mode or other words. `similarity` compares results of the
+           same model; it is not a probability.
+           The rows are returned whatever the verdict.
+        5. The verdict belongs to the query, not the page: it is the same for
+           every ``limit`` and ``offset``. Every input to it is computed from
+           the KBs the caller may read: the rows of both legs, whether
+           anything there is embedded, the warning. ``match_basis`` never
+           quotes a row the caller cannot read. The readable set is a
+           candidate filter inside each leg's own query, on SQLite inside
+           the KNN itself (sqlite-vec considers at most 4096 nearest
+           vectors, and they are the 4096 nearest *readable* ones), so a
+           scoped search answers as a search of an index holding only the
+           readable KBs would, however many nearer rows sit elsewhere.
+        6. ``keyword_match`` is present when a keyword leg ran: ``all_terms``,
+           ``some_terms`` (the OR-relaxed retry, an ``OR`` in the query, or a
+           hit on ``expand``'s terms only) or ``none``. Hybrid's keyword leg
+           relaxes only when its vector leg did not run (then it is a keyword
+           search); beside a vector leg that ran, ``none`` means no entry has
+           every term.
+        9. ``legs_run`` at the top level names the legs that ran: ``keyword``,
+           ``semantic``, both, or neither. A hybrid search whose ``legs_run``
+           is ``["keyword"]`` was a keyword search; ``warnings`` says why. It
+           is not the per-row ``legs`` (item 7), which says which legs
+           returned that row.
+        10. ``none`` is only said with the evidence for it: the mode searched
+           as it promises and nothing answered. A vector leg that did not
+           run, a model with no thresholds, or a result sqlite-vec's ceiling
+           cut short makes the verdict ``weak`` at worst, and ``match_basis``
+           says which. What ``none`` does not account for: entries still
+           waiting in the embed queue are not seen by the vector leg.
+        7. Every row the vector leg returned carries ``similarity``: cosine
+           similarity, 3 places, the same number on every backend. A hybrid
+           row carries ``legs``, the legs that returned it. ``distance`` (the
+           backend's own measure), ``rank`` (raw BM25) and ``rrf_score`` (rank
+           arithmetic) order results and are not scores; ``distance`` leaves
+           the response after one release.
+        8. The thresholds behind ``match`` belong to an embedding model. With a
+           model that has no row in ``_MODEL_MATCH_THRESHOLDS`` the vector leg
+           is not judged: ``match_basis`` says ``uncalibrated model <name>``,
+           and ``match`` is ``strong`` only from the keyword leg.
+
+        Items 4 to 10 are attached by ``search_response``, which the CLI, MCP
+        and REST all return; this method returns the rows alone, for callers
+        that gather context and show no page.
 
         Returns:
             List of matching entries with snippets and rank
@@ -491,6 +734,11 @@ class SearchService:
         # (not on self) because the service instance is shared across requests
         # on the server/MCP side.
         tr: dict[str, Any] = trace if trace is not None else {}
+        # What each leg learned about the query, for ``search_response``'s
+        # verdict: ``keyword_match``, ``similarities``, ``model``. A key is
+        # absent when its leg did not run.
+        signal: dict[str, Any] = {}
+        tr["match_signal"] = signal
 
         # Before expansion, mode selection or sanitizing: every mode refuses an
         # over-long query the same way.
@@ -521,6 +769,7 @@ class SearchService:
         if kb_name == "All KBs":
             kb_name = None
 
+        signal["mode"] = mode.value
         tr["requested_mode"] = mode.value
         tr["actual_mode"] = mode.value
         tr["reason"] = ""
@@ -537,12 +786,13 @@ class SearchService:
             if mode == SearchMode.SEMANTIC:
                 skip: dict[str, Any] = {}
                 # Semantic uses original natural language query, not expanded
-                fetch = limit * 4 if kb_names is not None else limit
                 results = self._semantic_search(
                     semantic_text,
                     kb_name,
-                    fetch,
+                    limit,
                     offset=offset,
+                    kb_names=kb_names,
+                    signal=signal,
                     filters=self._leg_filters(
                         entry_type=entry_type,
                         tags=tags,
@@ -552,6 +802,7 @@ class SearchService:
                         state=state,
                         status=status,
                         include_archived=include_archived,
+                        non_empty=non_empty,
                     ),
                     warnings=warnings,
                     trace=skip,
@@ -571,7 +822,7 @@ class SearchService:
                     tags,
                     date_from,
                     date_to,
-                    limit * 4 if kb_names is not None else limit,
+                    limit,
                     offset,
                     sanitize,
                     expanded_query=expanded_query,
@@ -582,6 +833,9 @@ class SearchService:
                     trace=tr,
                     warnings=warnings,
                     include_archived=include_archived,
+                    kb_names=kb_names,
+                    signal=signal,
+                    non_empty=non_empty,
                 )
                 results = self._restrict(results, kb_names, limit)
             else:
@@ -590,7 +844,7 @@ class SearchService:
                 if sanitize:
                     kw_query = self.sanitize_fts_query(kw_query)
 
-                def _run(q: str) -> list[dict[str, Any]]:
+                def _run(q: str, page: tuple[int, int] = (limit, offset)) -> list[dict[str, Any]]:
                     return self._db_search(
                         query=q,
                         kb_name=kb_name,
@@ -599,21 +853,39 @@ class SearchService:
                         tags=tags,
                         date_from=date_from,
                         date_to=date_to,
-                        limit=limit,
-                        offset=offset,
+                        limit=page[0],
+                        offset=page[1],
                         include_archived=include_archived,
                         fips=fips,
                         state=state,
                         status=status,
+                        non_empty=non_empty,
                     )
 
-                results = _run(kw_query)
+                def _hits(q: str, page: list[dict[str, Any]] | None = None) -> bool:
+                    """Does ``q`` match anything at all, whatever page was asked for?
 
-                # Implicit-AND zeroes out when one term is absent. On exactly 0
-                # hits, retry once with the terms OR-combined so a near-miss
-                # still surfaces. Skip when the user already used
-                # operators/quotes — _relax_to_or returns None then.
-                if not results:
+                    The first page answers it when it has rows or is the first
+                    page; otherwise one row from offset 0 does.
+                    """
+                    if page or (page is not None and offset == 0):
+                        return bool(page)
+                    return bool(_run(q, (1, 0)))
+
+                results = _run(kw_query)
+                matched = _hits(kw_query, results)
+
+                # Implicit-AND zeroes out when one term is absent. When the AND
+                # query matches nothing, retry once with the terms OR-combined
+                # so a near-miss still surfaces. Skip when the user already
+                # used operators/quotes — _relax_to_or returns None then.
+                #
+                # Decided on the query, not on this page (#668): an empty page
+                # past the end of the AND matches used to be refilled with
+                # OR-relaxed rows from that offset, so page 2 was not the
+                # continuation of page 1, and the two disagreed about what
+                # matched.
+                if not matched:
                     relaxed = self._relax_to_or(expanded_query)
                     if relaxed:
                         logger.debug("keyword search 0 hits; retrying OR-relaxed: %r", relaxed)
@@ -621,6 +893,13 @@ class SearchService:
                         tr["relaxed"] = True
                         if results:
                             tr["reason"] = "or_relaxation_recovered"
+                        if _hits(relaxed, results):
+                            signal["keyword_match"] = "some_terms"
+                if matched:
+                    signal["keyword_match"], signal["keyword_reason"] = self._keyword_signal(
+                        query, kw_query, sanitize, _hits
+                    )
+                signal.setdefault("keyword_match", "none")
         finally:
             tr["latency_ms"] = round((time.perf_counter() - start) * 1000, 2)
             tr["result_count"] = len(results)
@@ -639,6 +918,81 @@ class SearchService:
         )
 
         return results
+
+    def _keyword_signal(
+        self, query: str, ran_query: str, sanitize: bool, hits: Any
+    ) -> tuple[str, str | None]:
+        """``(keyword_match, reason)`` for a keyword query that returned rows.
+
+        FTS5 ANDs bare terms, so a hit means every term matched, unless the
+        query that ran has an ``OR`` in it. One the caller wrote: a hit may
+        match one side only. One ``expand`` added: ask whether the caller's own
+        query matches anything (``hits``, one row).
+        """
+        if " OR " not in ran_query:
+            return "all_terms", None
+        if " OR " in query:
+            return "some_terms", "query_or"
+        own = self.sanitize_fts_query(query) if sanitize else query
+        return ("all_terms", None) if hits(own) else ("some_terms", "expansion")
+
+    def search_response(self, query: str, **kwargs: Any) -> dict[str, Any]:
+        """The response every agent-facing surface returns for a search (#668).
+
+        Takes what ``search`` takes. Returns a mapping with ``results`` (the
+        rows ``search`` returns), ``match`` and ``match_basis``, ``legs_run`` (the
+        legs that ran), ``keyword_match`` when a keyword leg ran, and ``warnings`` when there
+        are any (absent otherwise; see ``search``'s docstring, which states
+        what each key means).
+
+        The CLI, MCP ``kb_search`` and REST ``GET /api/search`` build their
+        payload from this mapping and add only their envelope (``query``,
+        ``count``, ``has_more``): they shape the rows (projection, body
+        bounds) and pass every other key through, so a key added here reaches
+        all three and none of them can reword the verdict.
+        `tests/test_search_verdict_on_every_surface.py` walks them.
+        """
+        warnings: list[str] = kwargs.pop("warnings", None)
+        if warnings is None:
+            warnings = []
+        trace: dict[str, Any] = kwargs.pop("trace", None)
+        if trace is None:
+            trace = {}
+        results = self.search(query, warnings=warnings, trace=trace, **kwargs)
+
+        signal = trace.get("match_signal") or {}
+        match, basis = match_verdict(
+            signal.get("mode", SearchMode.KEYWORD),
+            keyword_match=signal.get("keyword_match"),
+            similarities=signal.get("similarities"),
+            model=signal.get("model"),
+            keyword_reason=signal.get("keyword_reason"),
+            semantic_skip=signal.get("semantic_skip"),
+            capped=signal.get("capped", False),
+        )
+        # Which legs ran, as a fact a caller can read without parsing the
+        # basis or guessing from `warnings`: a hybrid search whose `legs_run` is
+        # ["keyword"] was a keyword search.
+        legs_run = [
+            leg
+            for leg, ran in (
+                ("keyword", "keyword_match" in signal),
+                ("semantic", signal.get("similarities") is not None),
+            )
+            if ran
+        ]
+        response: dict[str, Any] = {
+            "results": results,
+            "match": match,
+            "match_basis": basis,
+            # Not `legs`: that is the per-row key (which legs returned the row).
+            "legs_run": legs_run,
+        }
+        if "keyword_match" in signal:
+            response["keyword_match"] = signal["keyword_match"]
+        if warnings:
+            response["warnings"] = warnings
+        return response
 
     @staticmethod
     def _skip_reason(mode: str, code: str | None) -> str:
@@ -677,14 +1031,21 @@ class SearchService:
         query: str,
         kb_name: str | None = None,
         limit: int = 50,
-        max_distance: float = 1.3,
         offset: int = 0,
         filters: dict[str, Any] | None = None,
         warnings: list[str] | None = None,
         keyword_leg_ran: bool = False,
         trace: dict[str, Any] | None = None,
+        kb_names: set[str] | list[str] | None = None,
+        signal: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Pure semantic vector search, with the keyword leg's filters applied.
+
+        ``kb_names``, the caller's readable set, goes to the backend with the
+        filters, so the rows and the similarities in ``signal`` are those of a
+        search over the readable KBs alone. ``signal`` receives ``model`` and,
+        when the leg ran, ``similarities``: the top hit's and the next
+        ``VERDICT_NEIGHBOURS``', taken before ``offset`` is applied.
 
         ``keyword_leg_ran`` is True when a hybrid search calls this beside a
         keyword leg; it only changes how a skipped leg is worded, because "only
@@ -704,7 +1065,7 @@ class SearchService:
         relabelled as a missing feature and turned into a silently empty
         semantic leg. Bugs now propagate.
         """
-        from .embedding_service import EmbeddingService, semantic_unavailable
+        from .embedding_service import semantic_unavailable
 
         # Checked before anything is encoded: no model is loaded for a search
         # that can only come back empty. Without the extra or the sqlite-vec
@@ -716,14 +1077,27 @@ class SearchService:
             code, cause, remedy = unavailable
             if trace is not None:
                 trace["semantic_skip"] = code
+            if signal is not None:
+                signal["semantic_skip"] = code
             if warnings is not None:
                 outcome = "only the keyword leg ran" if keyword_leg_ran else "it returned nothing"
                 warnings.append(f"semantic leg skipped: {cause}, so {outcome}; {remedy}")
             return []
 
-        svc = EmbeddingService(self.db)
+        svc = self._embedder()
+        if signal is not None:
+            signal["model"] = svc.model_name
+        # Asked of the KBs this search covers, not of the index (#668): whether
+        # some other KB has vectors must not change what a scoped caller is
+        # told, and a KB with none has not been searched by this leg even when
+        # the index as a whole has plenty.
+        scoped = kb_name is not None or kb_names is not None
         try:
-            has_embeddings = svc.has_embeddings()
+            has_embeddings = (
+                svc.has_embeddings(kb_name=kb_name, kb_names=kb_names)
+                if scoped
+                else svc.has_embeddings()
+            )
         except sqlite3.DatabaseError as e:
             raise storage_error_from(e, "Semantic search failed") from e
         if not has_embeddings:
@@ -738,10 +1112,16 @@ class SearchService:
             # embed` would be the wrong advice confidently given.
             if trace is not None:
                 trace["semantic_skip"] = "no_embeddings"
-            if warnings is not None and self._index_has_entries(kb_name):
+            has_entries = self._index_has_entries(kb_name, kb_names)
+            if signal is not None:
+                # Nothing indexed at all is an absence, not a leg that failed
+                # to look: there was nothing for it to look at.
+                signal["semantic_skip"] = "no_embeddings" if has_entries else "nothing_indexed"
+            if warnings is not None and has_entries:
                 outcome = "only the keyword leg ran" if keyword_leg_ran else "it returned nothing"
+                where = "the KBs searched" if scoped else "this index"
                 warnings.append(
-                    "semantic leg skipped: no embeddings exist for this index yet, so "
+                    f"semantic leg skipped: no embeddings exist for {where} yet, so "
                     f"{outcome}; run `pyrite index embed` to build them"
                 )
             return []
@@ -764,10 +1144,16 @@ class SearchService:
                     + "; results come from the keyword leg only"
                 )
             logger.warning("semantic leg dropped — backend cannot filter by %s", named)
+            if trace is not None:
+                trace["semantic_skip"] = "filter_unsupported"
+            if signal is not None:
+                signal["semantic_skip"] = "filter_unsupported"
             return []
 
         # sqlite-vec KNN doesn't support SQL OFFSET, so fetch limit+offset
-        # and slice in Python
+        # and slice in Python. Never fewer than the verdict reads: the margin
+        # is over the next nine results whatever page the caller asked for.
+        fetch = max(limit + offset, 1 + VERDICT_NEIGHBOURS)
         # The embedded text is never parsed, so no sqlite failure here is the
         # caller's query: every one is a storage fault, classified like the
         # keyword leg's (#431). Before this, an OperationalError escaped as a
@@ -776,13 +1162,17 @@ class SearchService:
             results = svc.search_similar(
                 query,
                 kb_name=kb_name,
-                limit=limit + offset,
-                max_distance=max_distance,
+                limit=fetch,
+                kb_names=kb_names,
                 **active,
             )
         except sqlite3.DatabaseError as e:
             raise storage_error_from(e, "Semantic search failed") from e
-        return results[offset:]
+        if signal is not None:
+            signal["similarities"] = [r["similarity"] for r in results[: 1 + VERDICT_NEIGHBOURS]]
+            # Read before the slice makes a plain list of it (see SemanticRows).
+            signal["capped"] = bool(getattr(results, "capped", False))
+        return results[offset : offset + limit]
 
     @staticmethod
     def _leg_filters(
@@ -795,6 +1185,7 @@ class SearchService:
         state: str | None = None,
         status: str | None = None,
         include_archived: bool = False,
+        non_empty: bool = False,
     ) -> dict[str, Any]:
         """The one filter set every leg receives (#56).
 
@@ -812,9 +1203,12 @@ class SearchService:
             "state": state,
             "status": status,
             "include_archived": include_archived,
+            "non_empty": non_empty,
         }
 
-    def _index_has_entries(self, kb_name: str | None = None) -> bool:
+    def _index_has_entries(
+        self, kb_name: str | None = None, kb_names: set[str] | list[str] | None = None
+    ) -> bool:
         """Is there anything indexed that *could* have been embedded?
 
         Distinguishes "indexed but not embedded" (tell them `pyrite index
@@ -823,7 +1217,11 @@ class SearchService:
         backend that cannot answer cheaply gets the benefit of the doubt,
         because a missing warning is a smaller harm than a wrong one.
         """
-        kwargs = {"kb_name": kb_name} if kb_name else {}
+        kwargs: dict[str, Any] = {"kb_name": kb_name} if kb_name else {}
+        if kb_names is not None:
+            # The caller's readable set: entries elsewhere are not theirs to
+            # be warned about (#668).
+            kwargs["kb_names"] = kb_names
         try:
             return self.db.count_entries(**kwargs) > 0
         except Exception:
@@ -862,6 +1260,9 @@ class SearchService:
         trace: dict[str, Any] | None = None,
         warnings: list[str] | None = None,
         include_archived: bool = False,
+        kb_names: set[str] | list[str] | None = None,
+        signal: dict[str, Any] | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Hybrid search using Reciprocal Rank Fusion (RRF).
@@ -877,20 +1278,37 @@ class SearchService:
         fetch_size = max(limit * 2, offset + limit)
         fts_query = expanded_query if expanded_query else query
         kw_query = self.sanitize_fts_query(fts_query) if sanitize else fts_query
-        keyword_results = self._db_search(
-            query=kw_query,
-            kb_name=kb_name,
-            entry_type=entry_type,
-            tags=tags,
-            date_from=date_from,
-            date_to=date_to,
-            limit=fetch_size,
-            offset=0,
-            fips=fips,
-            state=state,
-            status=status,
-            include_archived=include_archived,
-        )
+
+        def _keyword(q: str, size: int) -> list[dict[str, Any]]:
+            # Both legs take the caller's readable set in their own query
+            # (#668): filtering the fused list afterwards let nearer rows the
+            # caller cannot read use up the fetch.
+            return self._db_search(
+                query=q,
+                kb_name=kb_name,
+                kb_names=kb_names,
+                entry_type=entry_type,
+                tags=tags,
+                date_from=date_from,
+                date_to=date_to,
+                limit=size,
+                offset=0,
+                fips=fips,
+                state=state,
+                status=status,
+                include_archived=include_archived,
+                non_empty=non_empty,
+            )
+
+        keyword_results = _keyword(kw_query, fetch_size)
+        if signal is not None:
+            # This leg never relaxes to OR: a hit is every term, unless the
+            # query itself (or ``expand``) carries an OR.
+            signal["keyword_match"], signal["keyword_reason"] = (
+                self._keyword_signal(query, kw_query, sanitize, lambda q: bool(_keyword(q, 1)))
+                if keyword_results
+                else ("none", None)
+            )
 
         skip: dict[str, Any] = {}
         # Try to get semantic results — filtered on the vector leg itself, so
@@ -908,10 +1326,13 @@ class SearchService:
                 state=state,
                 status=status,
                 include_archived=include_archived,
+                non_empty=non_empty,
             ),
             warnings=warnings,
             keyword_leg_ran=True,
             trace=skip,
+            kb_names=kb_names,
+            signal=signal,
         )
 
         if not semantic_results:
@@ -920,7 +1341,24 @@ class SearchService:
             if trace is not None:
                 trace["actual_mode"] = "keyword"
                 trace["reason"] = self._skip_reason("hybrid", skip.get("semantic_skip"))
-            return keyword_results[offset : offset + limit]
+            if not keyword_results and skip.get("semantic_skip"):
+                # The vector leg did not run, so this is a keyword search and
+                # behaves as one: when no entry has every term, retry with the
+                # terms OR-combined, as keyword mode does (#668). Without it
+                # the default `kb_search` on an install with no embeddings
+                # returned nothing for a query keyword mode answers. Not when
+                # the vector leg ran: its near neighbours are the near misses.
+                relaxed = self._relax_to_or(fts_query)
+                if relaxed:
+                    keyword_results = _keyword(relaxed, fetch_size)
+                    if trace is not None:
+                        trace["relaxed"] = True
+                    if keyword_results and signal is not None:
+                        signal["keyword_match"] = "some_terms"
+            page = keyword_results[offset : offset + limit]
+            for row in page:
+                row["legs"] = ["keyword"]
+            return page
 
         if trace is not None:
             trace["actual_mode"] = "hybrid"
@@ -934,12 +1372,22 @@ class SearchService:
             key = (result["id"], result["kb_name"])
             scores[key] = scores.get(key, 0) + 1.0 / (k + rank)
             entries[key] = result
+            result["legs"] = ["keyword"]
 
         for rank, result in enumerate(semantic_results):
             key = (result["id"], result["kb_name"])
             scores[key] = scores.get(key, 0) + 1.0 / (k + rank)
             if key not in entries:
                 entries[key] = result
+                result["legs"] = ["semantic"]
+            else:
+                # The keyword leg's row is the one kept (it has the FTS
+                # snippet). What the vector leg measured goes with it: before
+                # #668 a row both legs returned lost its score.
+                kept = entries[key]
+                kept["legs"] = ["keyword", "semantic"]
+                kept["similarity"] = result["similarity"]
+                kept["distance"] = result.get("distance")
 
         # Sort by RRF score descending
         sorted_keys = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)

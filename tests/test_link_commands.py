@@ -74,10 +74,11 @@ def _patch_config(env):
 
 @pytest.mark.cli
 class TestLinksCheck:
+    @pytest.mark.control(reason="control: asks for rich explicitly, so it passes either way")
     def test_check_empty(self, link_env):
         """Clean KB shows no broken links."""
         with _patch_config(link_env):
-            result = runner.invoke(app, ["links", "check"])
+            result = runner.invoke(app, ["links", "check", "--format", "rich"])
             assert result.exit_code == 0
             assert "No broken links" in result.output
 
@@ -107,7 +108,7 @@ class TestLinksCheck:
 
         with _patch_config(link_env):
             result = runner.invoke(app, ["links", "check", "--format", "json"])
-            assert result.exit_code == 0
+            assert result.exit_code == 1  # a broken link fails the check
             data = json.loads(result.output)
             assert data["missing_targets"] >= 1
             assert data["total_references"] >= 2
@@ -125,6 +126,7 @@ class TestLinksCheck:
             assert "total_references" in data
             assert "targets" in data
 
+    @pytest.mark.control(reason="control: asks for rich explicitly, so it passes either way")
     def test_check_detail_flag(self, link_env):
         """--detail shows per-link breakdown."""
         from pyrite.services.kb_service import KBService
@@ -143,8 +145,8 @@ class TestLinksCheck:
         db.close()
 
         with _patch_config(link_env):
-            result = runner.invoke(app, ["links", "check", "--detail"])
-            assert result.exit_code == 0
+            result = runner.invoke(app, ["links", "check", "--detail", "--format", "rich"])
+            assert result.exit_code == 1  # a broken link fails the check
             # Detail mode shows the arrow notation
             assert "\u2190" in result.output
             assert "detail-target" in result.output

@@ -6,6 +6,7 @@ from rich.table import Table
 
 from ..services.access_policy import UNSCOPED
 from .context import cli_context
+from .output import validate_output_format
 
 collections_app = typer.Typer(help="Collection management")
 console = Console()
@@ -15,7 +16,10 @@ console = Console()
 def list_collections(
     kb: str | None = typer.Option(None, "--kb", "-k", help="Filter by KB name"),
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """List all collections with entry counts."""
@@ -69,7 +73,10 @@ def query_entries(
     kb: str | None = typer.Option(None, "--kb", "-k", help="Filter by KB name"),
     limit: int = typer.Option(50, "--limit", "-n", help="Max results"),
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Run an ad-hoc collection query."""

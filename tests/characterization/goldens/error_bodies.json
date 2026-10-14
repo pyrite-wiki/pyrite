@@ -2,7 +2,8 @@
   "AccessDenied": {
     "cli": {
       "error": "characterization message for AccessDenied",
-      "error_code": "ERROR",
+      "error_code": "INTERNAL_ERROR",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -23,8 +24,9 @@
   },
   "BrandingInvalidError": {
     "cli": {
-      "error": "characterization message for BrandingInvalidError",
-      "error_code": "ERROR",
+      "error": "The server's branding configuration is invalid and could not be loaded. An administrator needs to fix branding.yaml; the server log names the file and the problem.",
+      "error_code": "BRANDING_INVALID",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -46,7 +48,8 @@
   "ClipperBlockedHostError": {
     "cli": {
       "error": "characterization message for ClipperBlockedHostError",
-      "error_code": "ERROR",
+      "error_code": "CLIPPER_BLOCKED_HOST",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -67,8 +70,9 @@
   },
   "ConfigError": {
     "cli": {
-      "error": "characterization message for ConfigError",
-      "error_code": "ERROR",
+      "error": "The configuration is invalid. An administrator needs to check the server log for the file and the problem.",
+      "error_code": "CONFIG_CONFLICT",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -90,8 +94,9 @@
   },
   "ConfigFileUnreadableError": {
     "cli": {
-      "error": "config file unreadable",
-      "error_code": "ERROR",
+      "error": "The configuration was not saved: the config file on the server could not be read. An administrator needs to fix or move config.yaml; the server log names the file and the problem.",
+      "error_code": "CONFIG_SAVE_REFUSED",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -113,8 +118,9 @@
   },
   "ConfigSaveRefusedError": {
     "cli": {
-      "error": "config changed on disk",
-      "error_code": "ERROR",
+      "error": "The configuration was not saved: the config file changed since the server loaded it. Restart the server so it reads the current file, then re-run the request; the server log names the file and the knowledge bases.",
+      "error_code": "CONFIG_SAVE_REFUSED",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -137,7 +143,8 @@
   "DroppedHookRefusedError": {
     "cli": {
       "error": "characterization message for DroppedHookRefusedError",
-      "error_code": "ERROR",
+      "error_code": "PLUGIN_ERROR",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -161,6 +168,7 @@
     "cli": {
       "error": "characterization message for EntryExistsError",
       "error_code": "ENTRY_EXISTS",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -182,7 +190,8 @@
   "EntryNotFoundError": {
     "cli": {
       "error": "characterization message for EntryNotFoundError",
-      "error_code": "ERROR",
+      "error_code": "NOT_FOUND",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -205,7 +214,8 @@
   "Forbidden": {
     "cli": {
       "error": "characterization message for Forbidden",
-      "error_code": "ERROR",
+      "error_code": "FORBIDDEN",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -228,6 +238,7 @@
     "cli": {
       "error": "characterization message for FrontmatterError",
       "error_code": "INVALID_FRONTMATTER",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -250,7 +261,8 @@
   "IndexSyncRecoveryHintError": {
     "cli": {
       "error": "characterization message for IndexSyncRecoveryHintError",
-      "error_code": "ERROR",
+      "error_code": "STORAGE_ERROR",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -274,6 +286,7 @@
     "cli": {
       "error": "characterization message for InvalidGitRefError",
       "error_code": "INVALID_REF",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -295,7 +308,8 @@
   "KBAlreadyExistsError": {
     "cli": {
       "error": "characterization message for KBAlreadyExistsError",
-      "error_code": "ERROR",
+      "error_code": "CONFLICT",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -318,7 +332,8 @@
   "KBDefinedInConfigError": {
     "cli": {
       "error": "characterization message for KBDefinedInConfigError",
-      "error_code": "ERROR",
+      "error_code": "KB_DEFINED_IN_CONFIG",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -341,7 +356,8 @@
   "KBNotFoundError": {
     "cli": {
       "error": "characterization message for KBNotFoundError",
-      "error_code": "ERROR",
+      "error_code": "KB_NOT_FOUND",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -364,7 +380,8 @@
   "KBProtectedError": {
     "cli": {
       "error": "characterization message for KBProtectedError",
-      "error_code": "ERROR",
+      "error_code": "KB_PROTECTED",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -386,7 +403,8 @@
   "KBReadOnlyError": {
     "cli": {
       "error": "characterization message for KBReadOnlyError",
-      "error_code": "ERROR",
+      "error_code": "KB_READ_ONLY",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -410,6 +428,7 @@
     "cli": {
       "error": "characterization message for LastAdminError",
       "error_code": "LAST_ADMIN",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -431,7 +450,8 @@
   "MissingOptionalDependencyError": {
     "cli": {
       "error": "characterization message for MissingOptionalDependencyError",
-      "error_code": "ERROR",
+      "error_code": "PLUGIN_ERROR",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -454,7 +474,8 @@
   "NotAuthenticated": {
     "cli": {
       "error": "characterization message for NotAuthenticated",
-      "error_code": "ERROR",
+      "error_code": "UNAUTHENTICATED",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -475,8 +496,9 @@
   },
   "PluginError": {
     "cli": {
-      "error": "characterization message for PluginError",
-      "error_code": "ERROR",
+      "error": "A plugin operation failed. An administrator needs to check the server log for which plugin and why.",
+      "error_code": "PLUGIN_ERROR",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -499,7 +521,8 @@
   "QuerySyntaxError": {
     "cli": {
       "error": "characterization message for QuerySyntaxError",
-      "error_code": "ERROR",
+      "error_code": "QUERY_SYNTAX",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -522,6 +545,7 @@
     "cli": {
       "error": "characterization message for QueryTooLongError",
       "error_code": "QUERY_TOO_LONG",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -544,6 +568,7 @@
     "cli": {
       "error": "schema violation",
       "error_code": "SCHEMA_VIOLATION",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -564,9 +589,10 @@
   },
   "StorageBusyError": {
     "cli": {
-      "error": "characterization message for StorageBusyError",
-      "error_code": "ERROR",
-      "retryable": false
+      "error": "A storage operation failed. An administrator needs to check the server log for the underlying error.",
+      "error_code": "STORAGE_ERROR",
+      "outcome": "error",
+      "retryable": true
     },
     "mcp": {
       "error": "A storage operation failed. An administrator needs to check the server log for the underlying error.",
@@ -587,8 +613,9 @@
   },
   "StorageError": {
     "cli": {
-      "error": "characterization message for StorageError",
-      "error_code": "ERROR",
+      "error": "A storage operation failed. An administrator needs to check the server log for the underlying error.",
+      "error_code": "STORAGE_ERROR",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {
@@ -612,6 +639,7 @@
     "cli": {
       "error": "body was truncated",
       "error_code": "VALIDATION_FAILED",
+      "outcome": "error",
       "retryable": false,
       "suggestion": "fetch the full body and retry"
     },
@@ -637,6 +665,7 @@
     "cli": {
       "error": "type 'x' is not declared",
       "error_code": "UNDECLARED_TYPE",
+      "outcome": "error",
       "retryable": false,
       "suggestion": "Use `pyrite kb schema show <kb>` to inspect the declared types, or pass --allow-undeclared to override."
     },
@@ -665,6 +694,7 @@
     "cli": {
       "error": "characterization message for ValidationError",
       "error_code": "VALIDATION_FAILED",
+      "outcome": "error",
       "retryable": false
     },
     "mcp": {

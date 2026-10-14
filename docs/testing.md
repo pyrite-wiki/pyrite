@@ -153,3 +153,46 @@ The `verify-red` job waits for `test`, whatever its result, and writes
 PR has no code change, or no new or edited test. `diff_coverage` is `null`
 when the test job produced no report. To collect the file:
 `gh run download <run-id> -n test-evidence`.
+
+## Experimental tests and the ratchet
+
+A third CI job, `experimental`, is not about the PR's own tests: it keeps the
+tests of experimental features (#657) running without letting them block a
+merge.
+
+- **What is experimental**: the surfaces `kb/designs/alpha-supported-surface.md`
+  marks experimental. `tests/experimental_surface.py` maps them to test paths
+  and node ids, and the root `conftest.py` applies the `experimental` marker
+  from it. Security properties are never experimental; that file lists them
+  and `tests/test_experimental_surface.py` checks both lists against a real
+  collection.
+- **The gate**: the `test` job (and the merge queue's full matrix) runs
+  `-m "not slow and not e2e and not experimental"`. `gate` needs `test`, not
+  `experimental`.
+- **The ratchet**: `experimental` runs `-m "experimental and not slow and not
+  e2e"` on Python 3.12 with Postgres, on every backend PR and every push to
+  `dev`, and hands the JUnit report to `scripts/experimental_ratchet.py check`.
+  The job is red only for news: a failure in neither
+  `tests/experimental_known_failures.txt` nor an open `experimental-broken`
+  issue (the job reads them with `issues: read`); a PR that adds a line to
+  the list, which can only shrink; or a run that did not complete (no report,
+  or a pytest exit status other than 0 or 1; the run step times out before
+  the job so the ratchet still runs). A listed test that passes or no longer
+  exists is named for removal, and a filed test that passes again is named so
+  its issue can be closed.
+- **Never silently**: on a push to `dev`, whenever `experimental` did not
+  succeed (failed or cancelled), the `experimental-issues` job (the only job
+  with `issues: write`, using the workflow's token) opens or comments on an
+  `experimental-broken` issue: per test file with a new failure, for a grown
+  known-failures list, and for a run that did not complete, including one
+  that left no result at all. On a PR the news is in the job summary only.
+- **Collection errors**: a file that fails to import stops the core run unless
+  every test in it is experimental by the mapping; then the core run warns and
+  continues, and the experimental job reports it as a failure of that file.
+
+Run either set locally:
+
+```bash
+.venv/bin/pytest tests/ extensions/ -n 4 -m "not slow and not e2e and not experimental"
+.venv/bin/pytest tests/ extensions/ -n 4 -m "experimental and not slow and not e2e"
+```

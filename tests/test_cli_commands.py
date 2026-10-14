@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from tests.cli_help import plain
+
 from pyrite.cli import app
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models import EventEntry
@@ -19,6 +21,13 @@ from pyrite.storage.index import IndexManager
 from pyrite.storage.repository import KBRepository
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _a_person_at_a_terminal(monkeypatch):
+    """These tests read the text a person sees. The write commands print JSON
+    unless asked (#303, ADR-0046); `PYRITE_FORMAT` is how a person asks once."""
+    monkeypatch.setenv("PYRITE_FORMAT", "rich")
 
 
 @pytest.fixture
@@ -151,7 +160,24 @@ class TestTyperBacklinksCommand:
                 app, ["backlinks", "2025-01-10--test-event-0", "--kb", "test-events"]
             )
             assert result.exit_code == 0
-            assert "No backlinks" in result.output
+            assert json.loads(result.output) == {
+                "entry_id": "2025-01-10--test-event-0",
+                "entries": [],
+                "total": 0,
+            }
+            rich = runner.invoke(
+                app,
+                [
+                    "backlinks",
+                    "2025-01-10--test-event-0",
+                    "--kb",
+                    "test-events",
+                    "--format",
+                    "rich",
+                ],
+            )
+            assert rich.exit_code == 0
+            assert "No backlinks" in rich.output
 
 
 @pytest.mark.cli
@@ -310,7 +336,7 @@ def test_entry_write_commands_emit_specific_not_found_codes(cli_env, args, expec
     if "--format" in args:
         assert json.loads(result.output)["error_code"] == expected_code
     else:
-        assert f"[{expected_code}]" in result.output
+        assert f"[{expected_code}]" in plain(result.output)
 
 
 @pytest.mark.cli
@@ -438,7 +464,7 @@ class TestCreateImprovements:
         with _patch_config(cli_env):
             result = runner.invoke(app, ["create", "--template", "--type", "note"])
             assert result.exit_code == 0
-            assert "---" in result.output
+            assert "---" in plain(result.output)
             assert "type: note" in result.output
             assert "Your Title Here" in result.output
 
@@ -491,6 +517,65 @@ class TestCreateImprovements:
             assert "Actual body content." in content
             # Frontmatter block should NOT appear in body
             assert content.count("---") == 2  # only the entry's own frontmatter fences
+
+    def test_create_body_file_frontmatter_with_dashes_in_a_value(self, cli_env):
+        """A `---` inside a quoted value does not end the file's frontmatter."""
+        body_path = cli_env["tmpdir"] / "dashes.md"
+        body_path.write_text(
+            '---\nowner: alice\nnote: "a --- b"\n---\nActual body content.',
+            encoding="utf-8",
+        )
+        with _patch_config(cli_env):
+            result = runner.invoke(
+                app,
+                [
+                    "create",
+                    "--kb",
+                    "test-events",
+                    "--type",
+                    "note",
+                    "--title",
+                    "Dashes Test",
+                    "--body-file",
+                    str(body_path),
+                ],
+            )
+            assert result.exit_code == 0
+            saved = list(cli_env["events_kb"].path.glob("**/*dashes-test*"))
+            assert len(saved) == 1
+            content = saved[0].read_text(encoding="utf-8")
+            assert "owner: alice" in content
+            assert "a --- b" in content
+            assert content.rstrip().endswith("Actual body content.")
+
+    def test_create_body_file_refuses_unclosed_frontmatter(self, cli_env):
+        """A body that opens frontmatter it cannot close is refused, not stored with its YAML as prose."""
+        for name, text in {
+            "unclosed": "---\nowner: alice\nBody text.",
+            "four": "---\nowner: alice\n----\nBody text.",
+            "toml": '+++\nowner = "alice"\n+++\nBody text.',
+            "openfour": "----\nowner: alice\n---\nBody text.",
+            "opentext": "---x\nowner: alice\n---\nBody text.",
+        }.items():
+            body_path = cli_env["tmpdir"] / f"{name}.md"
+            body_path.write_text(text, encoding="utf-8")
+            with _patch_config(cli_env):
+                result = runner.invoke(
+                    app,
+                    [
+                        "create",
+                        "--kb",
+                        "test-events",
+                        "--type",
+                        "note",
+                        "--title",
+                        f"Refused {name}",
+                        "--body-file",
+                        str(body_path),
+                    ],
+                )
+            assert result.exit_code != 0, name
+            assert not list(cli_env["events_kb"].path.glob(f"**/*refused-{name}*")), name
 
     def test_create_body_file_cli_flags_override(self, cli_env):
         """Explicit CLI --field takes precedence over file frontmatter."""

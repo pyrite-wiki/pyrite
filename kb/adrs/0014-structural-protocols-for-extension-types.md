@@ -133,7 +133,7 @@ This is the path toward the BHAG: an agent defines a schema, and the schema gene
 
 ## Related
 
-- [Extension Type Protocols design doc](../designs/extension-type-protocols.md) — full design with examples
+- [Extension Type Protocols design doc](../documents/extension-type-protocols.md) — full design with examples
 - [Intent Layer design doc](../designs/intent-layer-guidelines-and-goals.md) — protocols need guidelines and evaluation rubrics
 - [BHAG: Self-Configuring Knowledge Infrastructure](../designs/bhag-self-configuring-knowledge-infrastructure.md) — protocols enable schema-as-program
 - [ADR-0008: Structured Data and Schema](0008-structured-data-and-schema.md) — schema-as-config foundation

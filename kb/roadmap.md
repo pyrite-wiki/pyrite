@@ -448,11 +448,59 @@ neighbour at once (#63), and block-sequence indentation lost on a round trip
 
 ---
 
+## The working plan (approved 2026-10-03, maintainer)
+
+**How the work runs.** One core theme (write path, index, identity) in flight
+at a time; small independent fixes run alongside. Every theme is groomed
+against [[design]] (principle at stake, the user's model and the
+implementation model, its cluster) before code; a spike wherever scope or
+approach is uncertain; the Andon cord stops dispatch when two themes fail the
+same way; a cold read for the gate, storage, the write path and security; a
+retro after about five landed themes, counting churn first.
+
+**Maintainer decisions that gate work:** accept ADR-0041 (the 0.25.7
+message); accept ADR-0038 with its identity amendment (reconcile, identity);
+ADR-0042 questions 1 and 2 (write path phase 2); the principle 4 sentence on
+reads and derived values.
+
+**Track A: the first hour and agent friction.**
+- A1, 0.25.7 (Oct 8): #582/#647, the contributor PRs #649 and #652 (LF line
+  endings; add `.gitattributes`), the 20-minute tutorial #662 as the release's
+  acceptance test, #583 with a known-issues page, #595, #664. Cut line: #232,
+  #43.
+- A2, 0.25.8, under the CLI contract (#303): `--fields` in every format and a
+  compact default (#667), `sw adrs` sorted with supersession (#666), `orient`
+  recent from content dates (#670); a spike first for search scores and "no
+  strong match" (#668).
+- A3: contributor setup (#665, groomed and decomposed), Pyrite's own KB healthy
+  on `dev` with a CI check (#669), #672, #671, #673 (reproduce first), a spike
+  on making the skills findable (#674), #365.
+- A4: rerun the contributor hallway test on three models, repository attached,
+  after A1 and A3.
+
+**Track B: refactoring toward 0.26, "your files, exactly".** B1 #661
+follow-ups; B2 #659 cleanup, one PR per area (spike first on which migration
+path is live); B3 the divergence register as expected-failure conformance tests
+(ADR-0042 phase 1); B4 `ids missing` and `ids pin`, one release before the
+identity switch (0.25.9); B5 the index reconcile (ADR-0038 steps 2 to 5); B6 the
+write path in phases (spike first on concurrency, the per-file lock and `/` in
+ids); B7 derived task completion, then the rollup hook goes; B8 the ADR-0045
+protocol inventory (done: spike 2, recorded in ADR-0045), then aliases as schema
+data, `field_aliases:` (#697, before B6 lands; maintainer, 2026-10-03).
+
+**Track C: releases.** 0.25.7: A1, ADR-0041, the tutorial, the alpha
+announcement. 0.25.8: A2, A3, B1, first B2 removals. 0.25.9: passage
+embedding, B4, B3. 0.26: B8's aliases (#697) ahead of B6, then B5, B6, B7. 0.27 and 0.28: the
+authorization design, then the rest of B8 and the alpha contracts.
+
+**For contributors:** #664, #671, #666, #670, #672, groomed for strangers and
+left unclaimed a few days.
+
 ## The release line (redesigned 2026-10-02, maintainer)
 
 **Design.** A KB is Markdown files with YAML frontmatter on disk, usable by any
 tool. Pyrite is additive to someone maintaining those files by hand (ADR-0041,
-proposed). A write does what was asked, loses nothing, and reports it.
+accepted 2026-10-03). A write does what was asked, loses nothing, and reports it.
 
 **Who it is for now.** Local use by one operator, usually through a terminal
 coding agent. Multi-user stays experimental until its design is right; no new
@@ -490,7 +538,7 @@ milestones carry the issues; this table carries the promise and the gate.
 - **0.26: your files, exactly.** First the index tells the truth: the ADR-0038
   reconcile (#6, #7, #484 to #487, #495, #51, #22), identity (#639, #494, #488
   to #490), health (#593). Then a write changes only what was asked (ADR-0042,
-  proposed; its rule is re-spiked on the real path first): #637, #638, #640,
+  accepted 2026-10-03; its rule is re-spiked on the real path first): #637, #638, #640,
   #178, #628, a stale-read rule, and explicit format and migrate commands.
   *Gate:* ADR-0038 and the ADR-0042 decisions.
 - **0.27: one operator, many users.** Design first: the authorization model
@@ -731,7 +779,7 @@ maintainer.
 - **CodeQL advanced setup (#228).**
 - **A separate `published` flag.** Being on the anonymous `/site` becomes its
   own switch, apart from `default_role: read` for registered users.
-- **One KB registry** (ADR-0039, proposed after a spike). A single source of
+- **One KB registry** (ADR-0039, accepted 2026-10-03 after a spike). A single source of
   truth for KB membership and per-KB policy; it removes the class behind
   private #61/#69 and the characterization-harness leaks.
 - **Plugins out of tree.** The plugin contract becomes the public API.

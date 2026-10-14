@@ -34,6 +34,8 @@ from .validators import validate_investigation_entry
 
 logger = logging.getLogger(__name__)
 
+_EXPERIMENTAL_NOTICE = "EXPERIMENTAL: Unsupported until the 0.28 alpha plugin/API contract."
+
 
 def _safe_error(e: Exception) -> str:
     """The message an MCP create tool may show for ``e``.
@@ -148,6 +150,13 @@ class JournalismInvestigationPlugin:
             "ownership": OwnershipEntry,
             "membership": MembershipEntry,
             "funding": FundingEntry,
+        }
+
+    def get_type_metadata(self) -> dict[str, dict]:
+        """Aliases for keys older files spell another way (ADR-0045 decision 8)."""
+        return {
+            t: {"field_aliases": {"participants": "actors"}}
+            for t in ("investigation_event", "transaction", "legal_action")
         }
 
     def get_cli_commands(self) -> list[tuple[str, Any]]:
@@ -871,6 +880,8 @@ class JournalismInvestigationPlugin:
                 },
                 "handler": self._mcp_ftm_import,
             }
+        for tool in tools.values():
+            tool["description"] = f"{_EXPERIMENTAL_NOTICE} {tool['description']}"
         return tools
 
     # =========================================================================

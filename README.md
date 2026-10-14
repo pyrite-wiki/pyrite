@@ -50,16 +50,34 @@ pyrite search "career transition" -k my-kb --mode=semantic  # keyword mode finds
 # embed` / `index sync` (or, on a server, at startup). Run `pyrite index
 # embed` to fetch the model and catch up on demand.
 
-# Connect to Claude Desktop / Claude Code
-# Add to your MCP config:
+# Connect to Claude Code and Claude Desktop (every client it finds; restart it after)
+pyrite mcp-setup                  # write tier; --tier read|admin, --client, --project
 ```
+
+`pyrite mcp-setup` points a `pyrite` server entry at this install where each
+client reads it: `claude mcp add -s user` for Claude Code (or `./.mcp.json`
+with `--project`), and Claude Desktop's own `claude_desktop_config.json`. Run it
+again any time. An entry that already points here is not rewritten; one that
+points elsewhere gets its command path changed (and its tier, if you pass
+`--tier`), and keeps its `env`, extra arguments and other keys. Other servers
+are never touched. Each client is all or nothing: one it cannot change safely
+is left as it was with the reason, while another may still be changed, and
+the exit code is 1 unless every client ended up pointing here. The JSON report
+names each client and what changed, says what the file holds when a change
+could not be finished, and names a `pyrite` entry in another Claude Code scope
+(one project's, from `claude mcp add` without `-s user`) that would be used
+instead of this one.
+[Getting started](docs/getting-started.md#connect-an-ai-via-mcp) lists the
+cases.
+
+Or add it by hand to any MCP client's config:
 
 ```json
 {
   "mcpServers": {
     "pyrite": {
       "command": "/absolute/path/to/.venv/bin/pyrite",
-      "args": ["mcp"]
+      "args": ["mcp", "--tier", "write"]
     }
   }
 }
@@ -197,13 +215,18 @@ Six extensions ship:
 | **zettelkasten** *(example plugin)* | CEQRC maturity workflow | Notes with maturity progression |
 | **encyclopedia** *(example plugin)* | Articles with review workflow | Articles, reviews, voting |
 | **social** *(example plugin)* | Engagement tracking | Social interactions |
-| **journalism-investigation** | Investigative research | Sources, claims, actors, evidence chains |
+| **journalism-investigation** *(experimental; unsupported)* | Investigative research | Sources, claims, actors, evidence chains |
 | **cascade** | Timeline research | Timeline events, actors, capture lanes |
 
 `zettelkasten`, `encyclopedia` and `social` are example plugins: reference
 code showing how a Pyrite plugin adds entry types, CLI commands, MCP tools
 and a preset, not supported products. See each extension's `README.md` for
 what it demonstrates.
+
+**EXPERIMENTAL: Unsupported until the 0.28 alpha plugin/API contract.**
+The journalism-investigation MCP tools are not a supported product surface.
+
+Tracked issues: [#92](https://github.com/pyrite-wiki/pyrite/issues/92), [#93](https://github.com/pyrite-wiki/pyrite/issues/93), [#94](https://github.com/pyrite-wiki/pyrite/issues/94), and [#98](https://github.com/pyrite-wiki/pyrite/issues/98).
 
 ## Web UI
 
@@ -327,12 +350,14 @@ cd web && npm ci && npm run build && cd ..   # the web UI (optional)
 Or straight from a release tag, no clone:
 
 ```bash
-pip install "pyrite[server,cli] @ git+https://github.com/pyrite-wiki/pyrite@v0.25.6"
+pip install "pyrite[server,cli] @ git+https://github.com/pyrite-wiki/pyrite@v0.25.7"
 ```
 
 That gives you the CLI, the REST API and the MCP server, but **not the web
 UI** — the built frontend is not packaged yet (tracked in the roadmap; clone
-and `npm run build` above if you want it).
+and `npm run build` above if you want it). Semantic search needs the
+`semantic` extra too (`pyrite[server,cli,semantic] @ git+...`, a large
+download); without it, keyword search works and a semantic search says so.
 
 Narrower extras: `pip install -e ".[server]"` (REST API + web UI),
 `pip install -e ".[ai]"` (OpenAI + Anthropic SDKs),
@@ -354,7 +379,7 @@ pip install -e extensions/journalism-investigation
 
 Prefer not to install anything locally? See [Deploy](#deploy) above for
 Docker, one-click cloud (Railway/Render/Fly.io), and self-hosted VPS
-options — or [pyrite.wiki](https://pyrite.wiki) for a hosted instance.
+options — or [pyrite.wiki](https://pyrite.wiki) for a public demo.
 
 ## Development
 
@@ -364,7 +389,7 @@ pip install -e ".[all]"
 for ext in extensions/*/; do pip install -e "$ext"; done
 pre-commit install
 
-# Tests (~4100, incl. extensions; ~1 min in parallel)
+# Tests (core and extensions; in parallel with -n auto)
 pytest tests/ extensions/ -n auto
 
 # Frontend
@@ -380,7 +405,7 @@ Pyrite's own backlog and architecture docs live in `kb/`:
 
 ```bash
 pyrite sw backlog        # Prioritized backlog
-pyrite sw adrs           # Architecture Decision Records (33 ADRs)
+pyrite sw adrs           # Architecture Decision Records
 pyrite sw components     # Module documentation
 pyrite sw standards      # Coding conventions
 ```

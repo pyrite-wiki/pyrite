@@ -9,6 +9,7 @@ Settings methods use ORM directly (app-state, not in SearchBackend).
 from datetime import UTC, datetime
 from typing import Any
 
+from . import effective_status
 from .backends.base_backend import kb_names_clause
 from .models import Setting
 
@@ -36,6 +37,7 @@ class QueryMixin:
         fips: str | None = None,
         state: str | None = None,
         status: str | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """Full-text search across entries using FTS5."""
         return self._backend.search(
@@ -53,6 +55,7 @@ class QueryMixin:
             fips=fips,
             state=state,
             status=status,
+            non_empty=non_empty,
         )
 
     def search_by_tag(
@@ -374,7 +377,8 @@ class QueryMixin:
         if scope:
             sql += f" AND {scope}"
         if status:
-            sql += " AND status = :status"
+            keys = effective_status.derived_done_keys(self.session, kb_name, kb_names)
+            sql += f" AND {effective_status.status_sql('', keys, params)} = :status"
             params["status"] = status
         sql += " ORDER BY updated_at DESC LIMIT :limit OFFSET :offset"
         params["limit"] = limit
@@ -404,12 +408,15 @@ class QueryMixin:
         if not as_of:
             as_of = datetime.now(UTC).strftime("%Y-%m-%d")
 
+        params: dict[str, Any] = {"as_of": as_of}
+        # The effective status: a task done by its children is not overdue.
+        keys = effective_status.derived_done_keys(self.session, kb_name, kb_names)
+        eff = effective_status.status_sql("", keys, params)
         sql = (
             "SELECT * FROM entry WHERE due_date IS NOT NULL AND due_date != '' "
             "AND due_date < :as_of "
-            "AND (status IS NULL OR status NOT IN ('done', 'failed'))"
+            f"AND ({eff} IS NULL OR {eff} NOT IN ('done', 'failed'))"
         )
-        params: dict[str, Any] = {"as_of": as_of}
         if kb_name:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = kb_name
@@ -440,8 +447,11 @@ class QueryMixin:
         """
         from sqlalchemy import text
 
-        sql = "SELECT * FROM entry WHERE status = :status"
         params: dict[str, Any] = {"status": status}
+        # The effective status (a task done by its children is `done`), not
+        # the column: kb_find_by_status answers what task list answers.
+        keys = effective_status.derived_done_keys(self.session, kb_name, kb_names)
+        sql = f"SELECT * FROM entry WHERE {effective_status.status_sql('', keys, params)} = :status"
         if kb_name:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = kb_name

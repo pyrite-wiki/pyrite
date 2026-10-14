@@ -167,13 +167,11 @@ This is the event body.
             EventEntry.from_markdown(body_yaml_lookalike)
 
     def test_from_markdown_requires_opening_fence_at_line_one(self):
-        """The opening `---` must be on line 1. A leading blank line, a
-        BOM, or any text before the fence means the file lacks a
-        frontmatter block."""
-        # Leading blank line — fence not at top.
+        """The opening `---` must be the first line that has text. Text before the
+        fence means the file lacks a frontmatter block. Blank lines and a BOM before
+        it are ignored, as Hugo ignores them (tests/test_frontmatter_splitter.py)."""
         leading_blank = "\n---\nid: x\ntitle: X\n---\n\nBody\n"
-        with pytest.raises(FrontmatterError):
-            EventEntry.from_markdown(leading_blank)
+        assert EventEntry.from_markdown(leading_blank).title == "X"
 
         # Leading prose — fence not at top.
         leading_text = "preamble line\n---\nid: x\ntitle: X\n---\n\nBody\n"

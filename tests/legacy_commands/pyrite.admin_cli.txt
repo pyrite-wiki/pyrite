@@ -1,0 +1,27 @@
+pyrite-admin auth login
+pyrite-admin auth logout
+pyrite-admin auth whoami
+pyrite-admin config set
+pyrite-admin config show
+pyrite-admin index build
+pyrite-admin index embed
+pyrite-admin index health
+pyrite-admin index stats
+pyrite-admin index sync
+pyrite-admin kb add
+pyrite-admin kb discover
+pyrite-admin kb list
+pyrite-admin kb remove
+pyrite-admin kb validate
+pyrite-admin mcp
+pyrite-admin mcp-setup
+pyrite-admin repo add
+pyrite-admin repo fork
+pyrite-admin repo list
+pyrite-admin repo remove
+pyrite-admin repo status
+pyrite-admin repo subscribe
+pyrite-admin repo sync
+pyrite-admin repo unsubscribe
+pyrite-admin schema
+pyrite-admin user create

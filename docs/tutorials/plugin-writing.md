@@ -401,7 +401,7 @@ This tutorial covered entry types, validators, and presets. Plugins can also pro
 
 - **CLI commands** via `get_cli_commands()` -- add Typer commands under `pyrite <your-command>`
 - **MCP tools** via `get_mcp_tools(tier)` -- expose functionality to AI agents
-- **Lifecycle hooks** via `get_hooks()` -- run logic before/after entry save or delete
+- **Lifecycle hooks** via `get_hooks()` -- run logic before/after entry save or delete. A hook may refuse a write; it may not change one, and an `after_save` hook never writes another entry. Anything computed from other entries (a parent task's completion, counts, rollups) is derived at read time and returned under a `derived` key, not written into a file: core Pyrite's own parent rollup hook was replaced this way (ADR-0042 decision 4; `tests/test_after_save_hooks_write_no_other_entry.py` runs every installed plugin's `after_save` hooks and fails if one writes another entry)
 - **Workflows** via `get_workflows()` -- define state machines for entry fields
 - **Custom DB tables** via `get_db_tables()` -- store engagement-tier data locally
 

@@ -175,6 +175,10 @@ jobs:
               - '.github/workflows/ci.yml'
               - 'scripts/*.sh'
               - 'scripts/*.py'
+              # The experimental mapping and the root conftest that applies
+              # it decide which tests the gate runs (#657).
+              - 'conftest.py'
+              - 'tests/experimental_surface.py'
 
   # Fast check for KB-only changes: schema validation, seconds.
   kb:
@@ -203,6 +207,9 @@ jobs:
     if: (needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main') && needs.changes.outputs.queue_passed != 'true'
     runs-on: ubuntu-latest
     strategy:
+      # A red shard must not cancel its siblings: every leg records its
+      # timings, and `gate` fails on any red leg regardless.
+      fail-fast: false
       matrix:
         # Value chain (ADR-0032 §3): a pull request proves the change on one
         # interpreter, fast; the merge queue and the push to dev that follows
@@ -228,6 +235,16 @@ jobs:
         # the full matrix: queue runner minutes, not wall time, since the
         # legs run in parallel. Only `pull_request` stays narrow.
         python-version: ${{ fromJSON((github.event_name == 'pull_request' && needs.changes.outputs.infra != 'true') && '["3.12"]' || '["3.11", "3.12", "3.13"]') }}
+        # Shards (tests Q2): the suite doubled (3,939 -> 8,143 test defs, Sep 10
+        # -> Oct 14) and `test (3.12)` went 13 -> 18-20 min with it. Each
+        # interpreter's run is split into 3 parallel legs by pytest-split,
+        # balanced by the recorded durations in `.test_durations`; a missing or
+        # stale file falls back to an even split by count, so no test is ever
+        # dropped. `shard-report` proves the legs' union is the full
+        # collection. Three, not two: setup is ~3 min per leg and the work is
+        # ~15 min, so 3 legs finish in about 3 + 15/3 = 8 min and a 4th would
+        # buy under a minute for another install.
+        shard: [1, 2, 3]
 
     # pgvector/pgvector ships the postgres server with the pgvector
     # extension pre-installed (plain postgres:* images don't have it, and
@@ -296,7 +313,10 @@ jobs:
             fi
           done
 
+      # Lint, import-cycle, KB and PR-hygiene checks run once per interpreter,
+      # on shard 1: they are not part of the split.
       - name: Lint with ruff
+        if: matrix.shard == 1
         # extensions/ included: the commit-stage ruff hook already lints it
         # (`.pre-commit-config.yaml`), so a PR that skipped extensions/ here
         # could go green with lint debt a local commit would have blocked
@@ -309,9 +329,11 @@ jobs:
       # The local commit hooks, re-run here: outside contributors' PRs never
       # run local hooks, and hooks can be skipped with --no-verify. CI can't.
       - name: Check for circular imports
+        if: matrix.shard == 1
         run: python scripts/check_import_cycles.py
 
       - name: Validate KB entries
+        if: matrix.shard == 1
         run: pyrite schema validate kb/
 
       # Same reasoning as the two checks above: check_fix_commit_has_tests.py
@@ -324,7 +346,7 @@ jobs:
       # diff), so an earlier offending commit isn't hidden by a later,
       # unrelated commit that happens to touch tests/.
       - name: "Check fix: commits have tests (pull_request only)"
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && matrix.shard == 1
         run: >-
           python scripts/check_fix_commit_has_tests.py --range
           ${{ github.event.pull_request.base.sha }} ${{ github.sha }}
@@ -340,7 +362,7 @@ jobs:
       # newcomers hit on their first PR is the friction #276 set out to remove
       # (maintainer, 2026-09-22). `Changelog: none` in the PR body opts out.
       - name: Warn if no changelog fragment (pull_request only, advisory)
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && matrix.shard == 1
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
@@ -349,10 +371,6 @@ jobs:
             --base "${{ github.event.pull_request.base.sha }}" \
             --head "${{ github.sha }}" \
             --body-file /tmp/pr-body.txt
-
-      - name: Type check with mypy
-        continue-on-error: true
-        run: mypy pyrite/ --ignore-missing-imports
 
       - name: Run tests
         # A bare `-W error::DeprecationWarning` promotes THIRD-PARTY
@@ -372,6 +390,11 @@ jobs:
         # tracer; --cov-fail-under=0 because [tool.coverage.report] fail_under
         # would otherwise fail this step, and with it `gate`. Every other leg
         # and every push runs without it.
+        #
+        # The core only (#657): tests of experimental surfaces carry the
+        # `experimental` marker (tests/experimental_surface.py) and run in the
+        # `experimental` job, which `gate` does not need. The -m here replaces
+        # pyproject's addopts -m, so it restates "not slow and not e2e".
         env:
           PYRITE_TEST_PG_URL: postgresql://postgres:postgres@localhost:5432/pyrite_test
           COVER: ${{ github.event_name == 'pull_request' && matrix.python-version == '3.12' }}
@@ -379,33 +402,171 @@ jobs:
         run: |
           cov=()
           if [ "$COVER" = true ]; then
-            cov=(--cov=pyrite --cov-report=xml --cov-fail-under=0)
+            cov=(--cov=pyrite --cov-report=xml:coverage-${{ matrix.shard }}.xml --cov-fail-under=0)
             for d in extensions/*/src/*/; do cov+=("--cov=$d"); done
           fi
-          pytest -n auto \
+          # The committed balance, uncompressed (it is 1.4 MB of JSON, over the
+          # repo's 500 KB file limit). Missing or unreadable: pytest-split splits
+          # evenly by count; no test is dropped.
+          gunzip -c .test_durations.gz > .test_durations 2>/dev/null || rm -f .test_durations
+          pytest -n auto -m "not slow and not e2e and not experimental" \
             -W "error::DeprecationWarning:pyrite" \
             -W "error::DeprecationWarning:tests" \
+            --disable-warnings \
+            --durations=25 --durations-min=1.0 \
+            -o junit_family=xunit1 --junitxml=junit-test-${{ matrix.python-version }}-${{ matrix.shard }}.xml \
+            --splits 3 --group ${{ matrix.shard }} --splitting-algorithm least_duration \
+            --durations-path .test_durations --store-durations \
             ${cov[@]+"${cov[@]}"}
 
+      # Timing record (test-architecture review, findings 3 and 4): every
+      # gating pytest run leaves a junit XML artifact and its 25 slowest tests
+      # in the step summary. `if: !cancelled()` so a red run records too; a
+      # job that dies before pytest writes the file uploads nothing.
+      # --disable-warnings: the warnings block (12k lines on 3.12) sat between
+      # the failure and the summary line; the count stays on the final line and
+      # the -W error::DeprecationWarning escalation still fails the run.
+      - name: Slowest tests
+        if: ${{ !cancelled() }}
+        run: python scripts/junit_slowest.py "junit-test-${{ matrix.python-version }}-${{ matrix.shard }}.xml" "test (${{ matrix.python-version }}, shard ${{ matrix.shard }}/3)" >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Keep the junit report and the durations
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-test-${{ matrix.python-version }}-${{ matrix.shard }}
+          path: |
+            junit-test-${{ matrix.python-version }}-${{ matrix.shard }}.xml
+            .test_durations
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Keep this shard's coverage for diff coverage
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && matrix.python-version == '3.12' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.shard }}
+          path: coverage-${{ matrix.shard }}.xml
+          if-no-files-found: ignore
+          retention-days: 1
+
+  # ===========================================================================
+  # collect: how many tests the selection holds, unsplit, per interpreter. Runs
+  # beside the shards (off the critical path); `shard-report` compares it with
+  # what the shards ran.
+  # ===========================================================================
+  collect:
+    needs: changes
+    if: (needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main') && needs.changes.outputs.queue_passed != 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ${{ fromJSON((github.event_name == 'pull_request' && needs.changes.outputs.infra != 'true') && '["3.12"]' || '["3.11", "3.12", "3.13"]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            extensions/*/pyproject.toml
+      - name: Install dependencies
+        run: |
+          uv pip install --system -e ".[all,postgres]"
+          for ext in extensions/*/; do
+            if [ -f "$ext/pyproject.toml" ]; then
+              uv pip install --system -e "$ext"
+            fi
+          done
+      - name: Count the selection
+        # The same -m expression as the shards, no split.
+        run: |
+          pytest --collect-only -qq -m "not slow and not e2e and not experimental" \
+            -p no:cacheprovider | tee collect.txt | tail -3
+          python scripts/check_shard_union.py count collect.txt > collected-${{ matrix.python-version }}.txt
+          cat collected-${{ matrix.python-version }}.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: collected-${{ matrix.python-version }}
+          path: collected-${{ matrix.python-version }}.txt
+          retention-days: 7
+
+  # ===========================================================================
+  # shard-report: after the shards. (1) Every test ran in exactly one shard:
+  # per interpreter, the shards' junit testcases are unique and their number
+  # equals the unsplit collection's. A required part of `gate`. (2) The shard
+  # balance, to the step summary. (3) Diff coverage on a PR, from the three
+  # shards' coverage files (advisory, as before), kept for verify-red. (4) The
+  # merged durations as an artifact: committing it as `.test_durations.gz`
+  # refreshes the balance; nothing depends on that for correctness.
+  # ===========================================================================
+  shard-report:
+    needs: [changes, test, collect]
+    if: ${{ !cancelled() && needs.test.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: junit-test-*
+          path: reports
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: collected-*
+          path: reports
+      - name: Every test ran in exactly one shard
+        if: ${{ needs.test.result == 'success' }}
+        run: python scripts/check_shard_union.py check reports --shards 3 >> "$GITHUB_STEP_SUMMARY"
+      - name: Shard balance
+        if: ${{ !cancelled() }}
+        run: python scripts/check_shard_union.py balance reports >> "$GITHUB_STEP_SUMMARY" || true
+      - name: Merge the durations
+        if: ${{ !cancelled() }}
+        run: python scripts/merge_test_durations.py --old .test_durations.gz --out test_durations.gz reports/junit-test-3.12-*/.test_durations || true
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: test-durations
+          path: test_durations.gz
+          if-no-files-found: ignore
+          retention-days: 30
+      - uses: actions/download-artifact@v4
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.test.result == 'success' }}
+        continue-on-error: true
+        with:
+          pattern: coverage-*
+          path: coverage
+      - name: Install diff-cover
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.test.result == 'success' }}
+        continue-on-error: true
+        run: pip install diff-cover==10.6.0
       # Diff coverage (the 0.26 test-evidence item): are the lines this PR
       # changes run by some test? ADVISORY -- continue-on-error, so a low
-      # number never fails this job or `gate`. The table of uncovered changed
-      # lines goes to the step summary; the JSON goes to the verify-red job,
-      # which files it with the verdicts for the gate decision after ~10 PRs.
+      # number never fails this job or `gate`. The table goes to the step
+      # summary; the JSON goes to verify-red.
       - name: Diff coverage (pull_request, advisory)
-        if: ${{ !cancelled() && github.event_name == 'pull_request' && matrix.python-version == '3.12' }}
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.test.result == 'success' }}
         continue-on-error: true
         run: |
           status=0
-          diff-cover coverage.xml --compare-branch=${{ github.event.pull_request.base.sha }} \
+          diff-cover coverage/coverage-*/coverage-*.xml --compare-branch=${{ github.event.pull_request.base.sha }} \
             --fail-under=80 --format json:diff-cover.json,markdown:diff-cover.md || status=$?
           cat diff-cover.md >> "$GITHUB_STEP_SUMMARY" || true
           if [ "$status" -ne 0 ]; then
             echo "::warning title=diff coverage::below 80% of changed lines (advisory; see the summary)"
           fi
-
       - name: Keep the diff coverage for verify-red
-        if: ${{ !cancelled() && github.event_name == 'pull_request' && matrix.python-version == '3.12' }}
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
@@ -413,6 +574,52 @@ jobs:
           path: diff-cover.json
           if-no-files-found: ignore
           retention-days: 1
+
+  # ===========================================================================
+  # mypy: advisory, in its own job so the `test` log opens with the failure,
+  # not with ~700 `error:` lines (test-architecture review, finding 3). Same
+  # condition and install as `test`, one interpreter. Deliberately NOT in
+  # `gate`'s needs and not a required check: it was `continue-on-error` inside
+  # `test`, so it never failed anything, and it still does not. The verdict
+  # is the job's own conclusion plus its annotations.
+  # ===========================================================================
+  mypy:
+    name: mypy (advisory)
+    needs: changes
+    if: (needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main') && needs.changes.outputs.queue_passed != 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            extensions/*/pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          uv pip install --system -e ".[all,postgres]"
+          for ext in extensions/*/; do
+            if [ -f "$ext/pyproject.toml" ]; then
+              uv pip install --system -e "$ext"
+            fi
+          done
+
+      # Red means this change ADDED type errors (#885): mypy's output is
+      # compared per file to the committed `.mypy-baseline.json`. The mypy
+      # exit code is ignored on purpose; the ratchet decides (and exits 2 if
+      # mypy never finished, so a crash cannot read as zero errors).
+      - name: Type check with mypy (ratchet)
+        run: |
+          mypy pyrite/ --ignore-missing-imports > mypy.out || true
+          python scripts/mypy_ratchet.py mypy.out
 
   # ===========================================================================
   # Coverage: its own job so the matrix stays the fast gate. Not a required
@@ -633,10 +840,32 @@ jobs:
         # worker. Splitting one file across ten workers starts ten servers
         # instead of one and makes the run SLOWER (46 s vs 22 s locally).
         # loadfile keeps each file whole on one worker.
-        run: pytest tests/e2e -m e2e -n auto --dist loadfile
+        run: |
+          pytest tests/e2e -m e2e -n auto --dist loadfile --disable-warnings \
+            --durations=25 --durations-min=1.0 \
+            -o junit_family=xunit1 --junitxml=junit-smoke.xml
+
+      - name: Slowest tests
+        if: ${{ !cancelled() }}
+        run: python scripts/junit_slowest.py junit-smoke.xml smoke >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Keep the junit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-smoke
+          path: junit-smoke.xml
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Getting-started tutorial (docs-as-tests)
         run: bash scripts/run_tutorial.sh
+
+      # The 20-minute tutorial clones the demo KBs from GitHub and indexes
+      # about 5,300 entries (no embeddings: PYRITE_AUTO_EMBED=0), so it runs
+      # after the cheaper getting-started one.
+      - name: Pyrite in 20 minutes tutorial (docs-as-tests)
+        run: bash scripts/run_tutorial.sh docs/tutorials/pyrite-in-20-minutes.md
 
   # ===========================================================================
   # verify-red (#352; redesigned in 0.26): do the PR's new and edited tests
@@ -652,7 +881,7 @@ jobs:
   # (for the diff coverage) but runs whatever `test` concluded.
   # ===========================================================================
   verify-red:
-    needs: [changes, test]
+    needs: [changes, test, shard-report]
     if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
     # Two pytest runs of at most --timeout each, plus setup.
@@ -712,6 +941,165 @@ jobs:
           retention-days: 90
 
   # ===========================================================================
+  # Experimental (#657): "a red check means the core broke; an experimental
+  # feature can be broken without stopping the core, but never silently."
+  #
+  # Runs the tests tests/experimental_surface.py marks `experimental` (the
+  # surfaces kb/designs/alpha-supported-surface.md calls experimental), on
+  # every PR that touches the backend and on every push to dev. NOT in
+  # `gate`'s needs and not a required check, so it never blocks a merge. It
+  # is red only for news: scripts/experimental_ratchet.py fails it on a
+  # failure missing from tests/experimental_known_failures.txt, or when a PR
+  # grows that file (it can only shrink), and lists in the summary a known
+  # failure that now passes. Not in the merge queue: the queue proves the
+  # core. One interpreter: breadth is the core's job.
+  # ===========================================================================
+  experimental:
+    needs: changes
+    if: >-
+      (github.event_name == 'pull_request' && needs.changes.outputs.backend == 'true')
+      || (github.event_name == 'push' && github.ref == 'refs/heads/dev')
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Reading the open experimental-broken issues tells a failure already
+    # filed on dev (not news) from a new one; writing them is the next job's.
+    permissions:
+      contents: read
+      issues: read
+    # The Postgres backend is experimental, so its conformance legs run here.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pyrite_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The base's known-failures file, to check the list only shrank.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            extensions/*/pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          uv pip install --system -e ".[all,postgres]"
+          for ext in extensions/*/; do
+            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -e "$ext"; fi
+          done
+
+      # Never fails the job itself: the ratchet below reads the report and
+      # pytest's exit status, and decides. xunit1 records each case's file,
+      # from which the ratchet rebuilds the node id; a module that fails to
+      # import is reported as a failure of that file instead of stopping the
+      # run. The step times out before the job does, so the ratchet still
+      # runs and reports the run incomplete (no exit status) instead of the
+      # job ending cancelled.
+      - name: Run the experimental tests
+        id: run
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          PYRITE_TEST_PG_URL: postgresql://postgres:postgres@localhost:5432/pyrite_test
+          HF_HUB_OFFLINE: "1"
+        run: |
+          set +e
+          pytest -n auto -m "experimental and not slow and not e2e" \
+            --continue-on-collection-errors \
+            -o junit_family=xunit1 --junitxml=experimental.xml
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+
+      # Red only for news: a failure in neither the known-failures list nor
+      # an open experimental-broken issue, a grown list, or a run that did
+      # not complete (exit 2).
+      - name: Compare with the known failures and the open issues
+        if: ${{ !cancelled() }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          git show "$BASE_SHA:tests/experimental_known_failures.txt" > /tmp/base-known.txt 2>/dev/null \
+            || rm -f /tmp/base-known.txt
+          python scripts/experimental_ratchet.py check \
+            --junit experimental.xml \
+            --run-exit "${{ steps.run.outputs.exit }}" \
+            --known tests/experimental_known_failures.txt \
+            --base-known /tmp/base-known.txt \
+            --open-issues \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --result-json experimental-result.json
+
+      - name: Keep the result for issue filing
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: experimental-result
+          path: |
+            experimental-result.json
+            experimental.xml
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # On a push to dev only, whenever `experimental` did not succeed: a test
+  # file with a new failure, a grown known-failures list, or a run that did
+  # not complete gets an `experimental-broken` issue (or a comment on the open
+  # one) naming the commit and the run. always(), not failure(): a job that
+  # hit its timeout ends `cancelled`, and failure() is false for that, so the
+  # one run that reported nothing would file nothing. A separate job so that
+  # the only grant of issues: write is here, on dev pushes, with the
+  # workflow's own token; a pull request's run reports in its job summary and
+  # can write nothing.
+  experimental-issues:
+    needs: experimental
+    if: >-
+      ${{ always()
+      && github.event_name == 'push' && github.ref == 'refs/heads/dev'
+      && needs.experimental.result != 'success'
+      && needs.experimental.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # gh label create / issue create / issue comment.
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # No artifact (the job timed out or crashed) is itself the news.
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: experimental-result
+
+      - name: File or update experimental-broken issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          python3 scripts/experimental_ratchet.py file-issues
+          --result-json experimental-result.json
+          --job-result "${{ needs.experimental.result }}"
+          --sha "$GITHUB_SHA"
+          --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+  # ===========================================================================
   # The one required check. A skipped matrix job reports as `test`, not
   # `test (3.12)`, so requiring the matrix legs by name hangs every docs-only
   # PR (the classifier skipped the matrix, the required context never
@@ -720,7 +1108,7 @@ jobs:
   # is what the classifier means by it.
   # ===========================================================================
   gate:
-    needs: [changes, kb, test, frontend]
+    needs: [changes, kb, test, shard-report, frontend]
     if: always()
     runs-on: ubuntu-latest
     steps:

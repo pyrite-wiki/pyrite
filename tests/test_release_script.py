@@ -67,7 +67,28 @@ def repo(tmp_path):
     return tmp_path
 
 
-FAKE_SHA = "abc1234def5678"
+# A full SHA: the verified-commit lookup refuses to ask about anything shorter
+# (the API would resolve an abbreviation or a branch name for itself).
+FAKE_SHA = "abc1234def5678" + "0" * 26
+
+
+def _as_ci_reports(run: dict) -> dict:
+    """A run as this repository's CI reports it: for FAKE_SHA, from the GitHub
+    Actions app, in a check suite. The shared verdict counts no other kind."""
+    return {
+        "head_sha": FAKE_SHA,
+        "app": {"slug": "github-actions"},
+        "check_suite": {"id": 1},
+        **run,
+    }
+
+
+def check_runs(*runs: dict) -> str:
+    """The body `gh api .../check-runs` returns for FAKE_SHA: every run is for
+    that commit and the page is whole, as the shared reader requires."""
+    return release.json.dumps(
+        {"total_count": len(runs), "check_runs": [_as_ci_reports(r) for r in runs]}
+    )
 
 
 @pytest.fixture
@@ -109,10 +130,9 @@ def no_network(monkeypatch):
             return ""  # origin/main is an ancestor
         if "check-runs" in joined:
             # `gate` green, `e2e` red: the release must proceed anyway.
-            return (
-                '{"check_runs":['
-                '{"name":"gate","status":"completed","conclusion":"success"},'
-                '{"name":"e2e","status":"completed","conclusion":"failure"}]}'
+            return check_runs(
+                {"name": "gate", "status": "completed", "conclusion": "success"},
+                {"name": "e2e", "status": "completed", "conclusion": "failure"},
             )
         if "gh pr list" in joined:
             return "[]"
@@ -204,12 +224,12 @@ def every_composed_command(dry_run, monkeypatch):
     # `--wait-ci 0` on the pending sweep: the default is now a real wait.
     for payload, argv in (
         (
-            '{"check_runs":[{"name":"gate","status":"completed","conclusion":"failure"}]}',
+            check_runs({"name": "gate", "status": "completed", "conclusion": "failure"}),
             ("0.24.2",),
         ),
-        ('{"check_runs":[]}', ("0.24.2",)),
+        (check_runs(), ("0.24.2",)),
         (
-            '{"check_runs":[{"name":"gate","status":"in_progress","conclusion":null}]}',
+            check_runs({"name": "gate", "status": "in_progress", "conclusion": None}),
             ("0.24.2", "--wait-ci", "0"),
         ),
     ):
@@ -562,7 +582,7 @@ class TestContributorWindow:
 
 
 def _run(status, conclusion, name="gate"):
-    return {"status": status, "conclusion": conclusion, "name": name}
+    return _as_ci_reports({"status": status, "conclusion": conclusion, "name": name})
 
 
 class TestCiDecision:
@@ -598,10 +618,14 @@ class TestCiDecision:
     def test_timed_out_is_a_failure(self):
         assert release.ci_decision([_run("completed", "timed_out")]) == release.CI_FAILED
 
-    def test_skipped_required_check_passes(self):
-        """ADR-0032: a skipped job is the classifier saying "nothing to test
-        here", and `gate` itself reports success. A skipped check is a pass."""
-        assert release.ci_decision([_run("completed", "skipped")]) == release.CI_PASSED
+    def test_a_skipped_required_check_is_not_a_pass(self):
+        """This pinned the opposite until fix round 1 of #854. `gate` runs
+        `if: always()`, so a skipped `gate` means the workflow is no longer
+        the one the rule was written against; and for any required check,
+        "it did not run" is not "it passed". Jobs `gate` NEEDS may still be
+        skipped by the classifier -- that is `gate`'s business, and it
+        reports success when they are."""
+        assert release.ci_decision([_run("completed", "skipped")]) == release.CI_FAILED
 
     def test_an_advisory_red_check_does_not_block(self):
         """The coupling that matters: `e2e` runs on pushes to main, is not in
@@ -621,11 +645,15 @@ class TestCiDecision:
         checks = [_run("completed", "success", "gate"), _run("queued", None, "kb")]
         assert release.ci_decision(checks, required=("gate", "kb")) == release.CI_PENDING
 
-    def test_matrix_legs_match_by_prefix(self):
-        """`test` reports as `test (3.12)` on a matrix and as `test` when the
-        matrix is skipped -- requiring `test` must match both."""
+    def test_a_required_check_is_matched_by_its_exact_name(self):
+        """Requiring `test` used to match `test (3.12)`, which made a lone
+        `gate (docs)` a green `gate`. A matrix leg is required by its own
+        name."""
         checks = [_run("completed", "success", "test (3.12)")]
-        assert release.ci_decision(checks, required=("test",)) == release.CI_PASSED
+        assert release.ci_decision(checks, required=("test",)) == release.CI_MISSING
+        assert release.ci_decision(checks, required=("test (3.12)",)) == release.CI_PASSED
+        lone_leg = [_run("completed", "success", "gate (docs)")]
+        assert release.ci_decision(lone_leg) == release.CI_MISSING
 
     def test_the_default_required_check_is_gate(self):
         assert release.DEFAULT_REQUIRED_CHECKS == ("gate",)
@@ -654,12 +682,15 @@ class TestCiDecision:
         ]
         assert release.ci_decision(checks) == release.CI_FAILED
 
-    def test_completed_at_breaks_the_tie_when_started_at_is_absent(self):
+    def test_runs_that_disagree_with_no_started_at_cannot_be_ordered(self):
+        """`completed_at` used to break the tie. A rerun is ordered by when it
+        STARTED, and only by a `started_at` every run carries; without one the
+        answer is unknown, never the green one."""
         checks = [
             _run("completed", "failure") | {"completed_at": "2026-09-18T10:05:00Z"},
             _run("completed", "success") | {"completed_at": "2026-09-18T11:05:00Z"},
         ]
-        assert release.ci_decision(checks) == release.CI_PASSED
+        assert release.ci_decision(checks) == release.CI_UNKNOWN
 
     def test_a_rerun_in_progress_is_pending_not_the_old_pass(self):
         checks = [
@@ -668,14 +699,18 @@ class TestCiDecision:
         ]
         assert release.ci_decision(checks) == release.CI_PENDING
 
+    @pytest.mark.control(
+        reason="pre-existing test, respelled for exact names; its property held before and after"
+    )
     def test_matrix_legs_are_still_all_required_together(self):
-        """Newest-per-name, not newest-overall: `test (3.11)` and `test (3.12)`
-        are different names and both must pass."""
+        """Each required name is judged on its own: `test (3.11)` and
+        `test (3.12)` are different names and both must pass."""
         checks = [
             _run("completed", "success", "test (3.11)") | {"started_at": "2026-09-18T11:00:00Z"},
             _run("completed", "failure", "test (3.12)") | {"started_at": "2026-09-18T10:00:00Z"},
         ]
-        assert release.ci_decision(checks, required=("test",)) == release.CI_FAILED
+        required = ("test (3.11)", "test (3.12)")
+        assert release.ci_decision(checks, required=required) == release.CI_FAILED
 
     def test_e2e_is_never_required_by_default(self):
         assert "e2e" not in release.DEFAULT_REQUIRED_CHECKS
@@ -711,7 +746,8 @@ class TestCiDecision:
             )
 
         monkeypatch.setattr(release, "_check_output", explode)
-        assert release._checks_for("deadbeef", "markramm/pyrite") == []
+        verdict = release.commit_verdict(FAKE_SHA, "markramm/pyrite")
+        assert verdict.state == release.CI_MISSING
 
     def test_other_gh_errors_still_surface(self, monkeypatch):
         """Only 'no commit' is translated: a network or auth failure must not
@@ -721,8 +757,28 @@ class TestCiDecision:
             raise release.ReleaseError("command failed (1): gh api ...\nHTTP 401 Bad credentials")
 
         monkeypatch.setattr(release, "_check_output", explode)
-        with pytest.raises(release.ReleaseError, match="401"):
-            release._checks_for("deadbeef", "markramm/pyrite")
+        verdict = release.commit_verdict(FAKE_SHA, "markramm/pyrite")
+        assert verdict.state == release.CI_UNKNOWN and "401" in verdict.detail
+
+    def test_a_lookup_that_failed_stops_the_release_and_says_why(
+        self, dry_run, monkeypatch, capsys
+    ):
+        """...and it reaches the maintainer as itself: not as "CI is red", and
+        not as "CI has not run yet"."""
+        original = release._check_output
+
+        def unauthenticated(cmd, **kwargs):
+            if "check-runs" in " ".join(cmd):
+                raise release.ReleaseError(
+                    "command failed (1): gh api ...\nHTTP 401 Bad credentials"
+                )
+            return original(cmd, **kwargs)
+
+        monkeypatch.setattr(release, "_check_output", unauthenticated)
+        code, runner, _calls = dry_run()
+        assert code != 0 and runner.planned == []
+        err = capsys.readouterr().err
+        assert "could not establish" in err and "401" in err
 
 
 # --------------------------------------------------------------------------
@@ -755,6 +811,7 @@ class TestStepOrdering:
         assert [s.key for s in release.STEPS] == [
             "preconditions",
             "ci",
+            "push_rehearsal",
             "release_layer",
             "publish",
             "post_release",
@@ -765,10 +822,11 @@ class TestStepOrdering:
         irreversible = {s.key for s in release.STEPS if s.irreversible}
         assert irreversible == {"publish", "post_release"}
 
-    def test_the_checks_are_the_three_steps_before_the_tag(self):
+    def test_the_checks_are_the_four_steps_before_the_tag(self):
         assert {s.key for s in release.STEPS if s.is_check} == {
             "preconditions",
             "ci",
+            "push_rehearsal",
             "release_layer",
         }
 
@@ -1134,6 +1192,9 @@ class TestDryRunOverThisRepo:
         code, _runner, _calls = dry_run()
         assert code == 0
 
+    @pytest.mark.control(
+        reason="pre-existing test, adapted to the shared lookup's seam; its property held before and after"
+    )
     def test_dry_run_shells_out_only_to_reads(self, dry_run):
         """Every subprocess the dry run attempted must be a read. A write that
         slipped past the Runner would show up here.
@@ -1147,8 +1208,11 @@ class TestDryRunOverThisRepo:
         reads_named_tag = (["tag", "-l"], ["tag", "--list"], ["ls-remote", "--tags"])
         for cmd in calls:
             joined = " ".join(cmd)
-            for write in ("push", "release create", "label create", "uv venv", "uv pip"):
+            for write in ("release create", "label create", "uv venv", "uv pip"):
                 assert write not in joined, f"dry run ran a write: {write!r} in {joined}"
+            # As an argument, not a substring: asking git where the pre-push
+            # hook lives (`rev-parse --git-path hooks/pre-push`) is a read.
+            assert "push" not in cmd, f"dry run pushed: {joined}"
             if "tag" in cmd and not any(
                 all(part in cmd for part in read) for read in reads_named_tag
             ):
@@ -1396,6 +1460,9 @@ class TestWaitCiDefault:
         assert release.parse_args(["0.24.2", "--wait-ci", "0"]).wait_ci == 0
         assert release.parse_args(["0.24.2", "--wait-ci", "40"]).wait_ci == 40
 
+    @pytest.mark.control(
+        reason="pre-existing test, adapted to the shared lookup's seam; its property held before and after"
+    )
     def test_the_poll_never_sleeps_past_the_deadline(self, monkeypatch):
         """A fixed 30s sleep past a deadline that is 5s away wastes 25s and
         reports a timeout later than it found one."""
@@ -1406,8 +1473,10 @@ class TestWaitCiDefault:
         monkeypatch.setattr(release.time, "monotonic", lambda: next(clock))
         monkeypatch.setattr(
             release,
-            "_checks_for",
-            lambda sha, slug: [{"name": "gate", "status": "in_progress", "conclusion": None}],
+            "_check_output",
+            lambda cmd, **kw: check_runs(
+                {"name": "gate", "status": "in_progress", "conclusion": None}
+            ),
         )
         ctx = release.Context(
             repo=REPO,
@@ -1415,6 +1484,7 @@ class TestWaitCiDefault:
             runner=release.Runner(execute=False),
             wait_ci_minutes=0,
             sha=FAKE_SHA,
+            slug="markramm/pyrite",
         )
         ctx.wait_ci_minutes = 10 / 60  # a 10-second deadline
         with pytest.raises(release.ReleaseError, match="still running"):

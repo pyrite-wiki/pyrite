@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from ..config import PyriteConfig
 from ..exceptions import EntryNotFoundError, KBNotFoundError, ValidationError
 from ..models.task import coerce_task_priority
+from ..models.task_completion import derive_completion, no_derived
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
 from ..utils.metadata import parse_metadata
@@ -25,7 +26,8 @@ class TaskService:
     """Service for task-specific operations.
 
     Wraps KBService for standard CRUD and adds task-specific
-    atomic operations: claim, decompose, checkpoint, rollup.
+    atomic operations: claim, decompose, checkpoint. A parent's completion
+    is derived from its children (``derived_completion``), never written.
     """
 
     def __init__(self, config: PyriteConfig, db: PyriteDB, kb_svc=None):
@@ -277,6 +279,26 @@ class TaskService:
             return None
         return rows[0]
 
+    def derived_completion(self, kb_name: str) -> dict[str, dict[str, Any]]:
+        """Every task's derived completion in ``kb_name``, keyed by task id.
+
+        One index read of the KB's rows, then :func:`derive_completion`.
+        Readers attach the value under the ``derived`` key, beside the
+        file's fields and never among them (ADR-0042 decision 9).
+        """
+        rows = self._query(
+            "SELECT id, entry_type, "
+            "COALESCE(status, json_extract(metadata, '$.status')) AS status, "
+            "json_extract(metadata, '$.parent') AS parent "
+            "FROM entry WHERE kb_name = :kb_name",
+            {"kb_name": kb_name},
+        )
+        return derive_completion(rows)
+
+    def derived_for(self, kb_name: str, task_id: str) -> dict[str, Any]:
+        """One task's derived value; a task missing from the index derives nothing."""
+        return self.derived_completion(kb_name).get(task_id) or no_derived()
+
     def list_tasks(
         self,
         kb_name: str | None = None,
@@ -290,6 +312,13 @@ class TaskService:
 
         ``kb_names`` restricts the result to the caller's readable KBs;
         ``None`` means unrestricted, an empty set means no rows.
+
+        Each row carries ``derived`` (:func:`derive_completion`) beside the
+        file's own ``status``. Every ``status`` filter matches
+        ``derived.effective_status``: a task whose children are all resolved
+        counts as ``done``, so it is not listed as ``open`` or
+        ``in_progress`` and is listed as ``done`` (ADR-0042's acceptance; the
+        drain check and the web worklist read the ``open`` filter).
         """
         query = "SELECT id, title, kb_name, status, assignee, priority, metadata, updated_at FROM entry WHERE entry_type = 'task'"
         params: dict[str, Any] = {}
@@ -307,12 +336,8 @@ class TaskService:
                     params[f"kbn_{i}"] = name
                     keys.append(f":kbn_{i}")
                 query += f" AND kb_name IN ({', '.join(keys)})"
-        if status:
-            if status == "open":
-                query += " AND (status = 'open' OR status IS NULL)"
-            else:
-                query += " AND status = :status"
-                params["status"] = status
+        # No SQL clause for `status`: the filter matches the effective status
+        # (derive_completion), which only the whole KB's rows can decide.
         if assignee:
             query += " AND assignee = :assignee"
             params["assignee"] = assignee
@@ -359,6 +384,15 @@ class TaskService:
                     "updated_at": row.get("updated_at") or "",
                 }
             )
+
+        derived_by_kb: dict[str, dict[str, dict[str, Any]]] = {}
+        for t in tasks:
+            kb = t["kb_name"]
+            if kb not in derived_by_kb:
+                derived_by_kb[kb] = self.derived_completion(kb)
+            t["derived"] = derived_by_kb[kb].get(t["id"]) or no_derived()
+        if status:
+            tasks = [t for t in tasks if t["derived"]["effective_status"] == status]
 
         # Hydrate parked_awaiting from the entries themselves. Only done when
         # a caller is looking at a bounded set (a specific assignee, e.g. the
@@ -591,55 +625,6 @@ class TaskService:
             "evidence": partial_evidence or [],
         }
 
-    def rollup_parent(self, parent_id: str, kb_name: str) -> dict[str, Any] | None:
-        """Auto-complete a parent task when all children are resolved (done or
-        cancelled). A cancelled child counts as resolved-by-retirement."""
-        from ..models.task import TASK_RESOLVED_STATUSES
-
-        rows = self._query(
-            """SELECT id, status
-               FROM entry
-               WHERE kb_name = :kb_name
-               AND json_extract(metadata, '$.parent') = :parent_id""",
-            {"kb_name": kb_name, "parent_id": parent_id},
-        )
-
-        if not rows:
-            return None
-
-        all_resolved = all(row["status"] in TASK_RESOLVED_STATUSES for row in rows)
-        if not all_resolved:
-            return None
-
-        parent_rows = self._query(
-            """SELECT status
-               FROM entry WHERE id = :parent_id AND kb_name = :kb_name""",
-            {"parent_id": parent_id, "kb_name": kb_name},
-        )
-        if not parent_rows:
-            return None
-        parent_status = parent_rows[0]["status"]
-        if parent_status in ("done", "failed"):
-            return None
-
-        entry = self.kb_svc.update_entry(parent_id, kb_name, status="done")
-
-        result = {
-            "rolled_up": True,
-            "parent_id": parent_id,
-            "children_count": len(rows),
-        }
-
-        # Cascade: check if the parent itself has a parent
-        grandparent_id = getattr(entry, "parent", "")
-        if grandparent_id:
-            try:
-                self.rollup_parent(grandparent_id, kb_name)
-            except Exception as e:
-                logger.warning("Cascading rollup failed for %s: %s", grandparent_id, e)
-
-        return result
-
     def unblock_dependents(self, task_id: str, kb_name: str) -> list[dict[str, Any]]:
         """When a task resolves, auto-unblock tasks that depended on it.
 
@@ -725,15 +710,20 @@ class TaskService:
 
         Returns entries (not tasks) that need QA review.
         """
-        query = """SELECT DISTINCT e.id, e.title, e.kb_name, e.entry_type
+        from ..storage import effective_status
+
+        params: dict[str, Any] = {}
+        # The QA task's effective status: one done by its children is not open.
+        keys = effective_status.derived_done_keys(self.db.session, kb_name)
+        t_status = effective_status.status_sql("t.", keys, params)
+        query = f"""SELECT DISTINCT e.id, e.title, e.kb_name, e.entry_type
                    FROM entry t
                    JOIN entry e ON json_extract(t.metadata, '$.target_entry') = e.id
                                 AND t.kb_name = e.kb_name
                    WHERE t.entry_type = 'task'
-                   AND t.status IN ('open', NULL)
+                   AND {t_status} IN ('open', NULL)
                    AND (t.assignee IS NULL OR t.assignee = '')
                    AND json_extract(t.metadata, '$.task_type') = 'qa_validation'"""
-        params: dict[str, str] = {}
         if kb_name:
             query += " AND t.kb_name = :kb_name"
             params["kb_name"] = kb_name
@@ -772,8 +762,8 @@ class TaskService:
         result: list[dict[str, Any]] = []
         visited: set[str] = set()
 
-        def _collect(parent_id: str) -> None:
-            children = self._query(
+        def _children(parent_id: str) -> list[dict[str, Any]]:
+            return self._query(
                 """SELECT id, title, status, entry_type,
                           json_extract(metadata, '$.parent') as parent,
                           json_extract(metadata, '$.assignee') as assignee,
@@ -783,15 +773,22 @@ class TaskService:
                    AND json_extract(metadata, '$.parent') = :parent_id""",
                 {"kb_name": kb_name, "parent_id": parent_id},
             )
-            for child in children:
-                cid = child["id"]
-                if cid in visited:
-                    continue
-                visited.add(cid)
-                result.append(child)
-                _collect(cid)
 
-        _collect(task_id)
+        # Depth-first pre-order (the order the recursive version returned)
+        # with an explicit stack: any depth of chain is a valid KB shape and
+        # must not raise RecursionError.
+        stack = list(reversed(_children(task_id)))
+        while stack:
+            child = stack.pop()
+            cid = child["id"]
+            if cid in visited:
+                continue
+            visited.add(cid)
+            result.append(child)
+            stack.extend(reversed(_children(cid)))
+        derived = self.derived_completion(kb_name) if result else {}
+        for node in result:
+            node["derived"] = derived.get(node["id"]) or no_derived()
         return result
 
     def get_ancestors(self, task_id: str, kb_name: str) -> list[dict[str, Any]]:
@@ -828,6 +825,9 @@ class TaskService:
             )
             current_id = parent_id
 
+        derived = self.derived_completion(kb_name) if result else {}
+        for node in result:
+            node["derived"] = derived.get(node["id"]) or no_derived()
         return result
 
     def get_blocked_by(self, task_id: str, kb_name: str) -> list[dict[str, Any]]:
@@ -916,16 +916,16 @@ def _parse_metadata(raw) -> dict[str, Any]:
 
 
 # =============================================================================
-# Core hooks — moved from kb_service.py in extract-hookrunner-from-kb-service
-# step 3. These are platform-level lifecycle hooks specific to tasks
-# (transition validation, parent rollup). They live here because they belong
-# with task semantics, not with generic CRUD. KBService registers them on its
-# HookRunner at startup via register_task_hooks().
+# Core hook — moved from kb_service.py in extract-hookrunner-from-kb-service
+# step 3. A platform-level lifecycle hook specific to tasks (transition
+# validation). It lives here because it belongs with task semantics, not with
+# generic CRUD. KBService registers it on its HookRunner at startup via
+# register_task_hooks().
 #
-# Both hooks are polymorphic over Entry: _task_validate_transition early-exits
-# unless entry_type == "task"; _parent_rollup runs for any Parentable entry
-# that reaches a terminal status. Hence the Entry type hint rather than
-# TaskEntry.
+# It only refuses (kb/design.md principle 4: a hook may refuse a write, it may
+# not change one). The parent rollup that used to sit beside it wrote the
+# parent's file; it is replaced by derive_completion
+# (pyrite/models/task_completion.py).
 # =============================================================================
 
 
@@ -1013,39 +1013,6 @@ def _task_validate_transition(entry: Entry, context: dict) -> Entry:
     return entry
 
 
-def _parent_rollup(entry: Entry, context: dict) -> Entry:
-    """Auto-complete parent when all Parentable children reach terminal status."""
-    from ..models.task import TASK_RESOLVED_STATUSES
-
-    if not hasattr(entry, "entry_type"):
-        return entry
-    # Trigger on any *resolved* terminal state (done or cancelled) so an
-    # all-resolved parent rolls up even when some children were cancelled.
-    if getattr(entry, "status", "") not in TASK_RESOLVED_STATUSES:
-        return entry
-
-    parent_id = getattr(entry, "parent", "")
-    if not parent_id:
-        return entry
-
-    kb_name = context.get("kb_name", "")
-    if not kb_name:
-        return entry
-
-    try:
-        config = context.get("config")
-        db = context.get("db")
-        if not config or not db:
-            return entry
-
-        svc = TaskService(config, db)
-        svc.rollup_parent(parent_id, kb_name)
-    except Exception as e:
-        logger.warning("Parent rollup failed for %s: %s", parent_id, e)
-
-    return entry
-
-
 def register_task_hooks(runner: HookRunner) -> None:
     """Register the task-system core hooks on a HookRunner.
 
@@ -1055,4 +1022,7 @@ def register_task_hooks(runner: HookRunner) -> None:
     next-extracted service has a worked example to follow.
     """
     runner.register_core_hook("before_save", _task_validate_transition)
-    runner.register_core_hook("after_save", _parent_rollup)
+    # No after_save hook: a parent's completion is derived at read time
+    # (derive_completion), never written into the parent's file (ADR-0042
+    # decision 4). tests/test_after_save_hooks_write_no_other_entry.py fails
+    # if any after_save hook writes another entry.

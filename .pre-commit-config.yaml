@@ -11,8 +11,13 @@
 #   commit-msg `fix:` commits must touch tests/.
 #   pre-push   core + affected tests (scripts/test-affected), only when the
 #              pushed range touches code, and not again on a tree whose run
-#              already passed; PYRITE_PUSH_FULL=1 for everything.
-#   CI         the authority. Full suite + everything above, on every push and PR.
+#              already passed or a tip commit CI already verified (`gate`
+#              green on that exact SHA; scripts/verified_commit.py);
+#              PYRITE_PUSH_FULL=1 for everything. Experimental
+#              tests (#657) are deselected, as in the gating CI job;
+#              PYRITE_PUSH_EXPERIMENTAL=1 includes them.
+#   CI         the authority. Full suite + everything above, on every push and PR;
+#              experimental tests in their own non-blocking job.
 #
 # The commit stage must stay fast because pre-commit stashes EVERY unstaged edit
 # in the working tree while commit hooks run. Several sessions share this tree
@@ -82,7 +87,19 @@ repos:
         stages: [pre-commit]
       - id: pyrite-schema-validate
         name: Validate KB entries
-        entry: bash -c 'P=.venv/bin/pyrite; [ -x "$P" ] || P=pyrite; exec "$P" schema validate --changed'
+        # Prefer this worktree's venv. A bare name is only acceptable when it
+        # is an executable file: with no venv, PATH (or a shell that searches
+        # `.`) resolves `pyrite` to this checkout's `./pyrite` package
+        # directory, and exec then fails with "Is a directory" (exit 126,
+        # #664). Say what is missing instead of executing that path.
+        entry: >-
+          bash -c 'P=.venv/bin/pyrite; if [ ! -x "$P" ] || [ -d "$P" ]; then
+          P=$(command -v pyrite || true); fi; if [ -z "$P" ] || [ ! -f "$P" ] ||
+          [ ! -x "$P" ]; then echo "pyrite-schema-validate: no pyrite executable
+          found in .venv or on PATH. The ./pyrite path in this checkout is the
+          package, not the CLI. Create a venv with scripts/new-worktree.sh, or
+          install pyrite so the pyrite command is an executable." >&2; exit 1; fi; exec
+          "$P" schema validate --changed'
         language: system
         pass_filenames: false
         stages: [pre-commit]
@@ -103,6 +120,20 @@ repos:
         # covers the selection -- the worker's own run and this one were the
         # same tests on the same code, about 45 minutes under load
         # (2026-09-25). PYRITE_PUSH_FORCE=1 ignores stamps.
+        #
+        # A verified tip is not tested again: when the required check
+        # (`gate`) is green on the pushed tip's exact SHA on GitHub, the
+        # script says so in one line and skips. The definition is
+        # scripts/verified_commit.py, the one scripts/release.py uses; on
+        # 0.25.7 this hook re-ran the full suite on the release commit, in
+        # a venv missing a dev dependency, and blocked the push to main. It
+        # fails closed (any lookup failure or ambiguous answer runs the
+        # suite), asks once with a short timeout, and PYRITE_PUSH_FORCE=1
+        # still forces a run, as do PYRITE_PUSH_FULL=1 and
+        # PYRITE_PUSH_EXPERIMENTAL=1: a green `gate` says CI accepted the
+        # commit, not that everything ran (a pull-request gate is one
+        # interpreter and passes with `test` skipped). The entry below is unchanged by it: the
+        # decision is the script's, so `--preflight` can report it.
         #
         # Refuse rather than fall back. This used to end `|| PY=python`, and in
         # a worktree created with a bare `git worktree add` (no venv) that

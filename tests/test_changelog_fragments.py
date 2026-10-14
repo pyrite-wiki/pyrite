@@ -281,3 +281,48 @@ class TestTwoBranchesDoNotConflict:
         combined = proc.stdout + proc.stderr
         assert proc.returncode == 0, f"the merge failed:\n{combined}"
         assert "CONFLICT" not in combined
+
+
+class TestNoTestReadsAFragmentByName:
+    """A release deletes every fragment after moving its text into CHANGELOG.md,
+    so a test that opens `changelog.d/<slug>.<section>.md` breaks at every
+    release (the v0.25.7 chore PR's merge queue). Fixture names inside a
+    temporary directory are fine; the real directory is not."""
+
+    FRAGMENT_PATH = re.compile(
+        r"changelog\.d/[\w.-]*?\.(?:" + "|".join(release.FRAGMENT_SECTIONS) + r")\.md"
+    )
+    # Test files that only use fragment names as fixtures or as strings under
+    # test, never as a path into the real directory.
+    EXEMPT = {
+        "test_changelog_fragments.py",
+        "test_changelog_fragment_check.py",
+        "test_release_script.py",
+        "test_test_affected.py",
+        "test_verify_red_ci.py",
+    }
+
+    def _offenders(self, files):
+        found = []
+        for f in files:
+            if f.name in self.EXEMPT:
+                continue
+            for n, line in enumerate(f.read_text().splitlines(), 1):
+                if self.FRAGMENT_PATH.search(line):
+                    found.append(f"{f}:{n}: {line.strip()}")
+        return found
+
+    def test_no_test_names_a_real_fragment(self):
+        files = list((REPO / "tests").rglob("test_*.py"))
+        files += list((REPO / "extensions").glob("*/tests/**/*.py"))
+        assert self._offenders(files) == [], (
+            "a test reads a changelog fragment by name; fragments are deleted at "
+            "release (see changelog.d/README.md)"
+        )
+
+    def test_the_check_would_catch_the_old_line(self, tmp_path):
+        planted = tmp_path / "test_planted.py"
+        planted.write_text(
+            'text = pathlib.Path("changelog.d/66-orient-true-as-first-call.changed.md").read_text()\n'
+        )
+        assert len(self._offenders([planted])) == 1

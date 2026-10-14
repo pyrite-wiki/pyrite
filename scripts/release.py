@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """One command from a CI-verified `dev` commit to a GitHub release.
 
-    scripts/release.py 0.24.2              # dry run: prints every step, changes nothing
+    scripts/release.py 0.24.2              # dry run: every check, every one that
+                                           # would stop --execute; changes nothing
     scripts/release.py 0.24.2 --execute    # actually cuts the release
     scripts/release.py 0.24.2 --wait-ci 20 # wait up to 20 min for a pending CI run
 
@@ -11,7 +12,7 @@ maintainer keeps the *decision* to cut a release; this script makes executing
 that decision one command, with every check in front of the first thing that
 cannot be undone.
 
-The order is the point (ADR-0032 §3a). Six steps, and the only two that can
+The order is the point (ADR-0032 §3a). Seven steps, and the only two that can
 change the world come after every check:
 
   a. preconditions  -- clean `dev` at `origin/dev`; the repo is taken FROM
@@ -23,11 +24,24 @@ change the world come after every check:
                        <version>; CHANGELOG has a dated section with content
                        and no stranded `[Unreleased]` entries; no open PR
                        labelled `release-blocker`
-  b. ci             -- the REQUIRED checks for that exact SHA concluded
-                       `success` (default `gate`; `--require-check` to change
-                       it). Checks not named are advisory and never block --
+  b. ci             -- the commit is VERIFIED: the REQUIRED checks for that
+                       exact SHA concluded `success` (default `gate`;
+                       `--require-check` to change it; exact names, runs
+                       from the GitHub Actions app only, `skipped` is not
+                       success, and every workflow run that ran the check
+                       on this SHA must be green). The definition is
+                       scripts/verified_commit.py, shared with the pre-push
+                       hook. Checks not named are advisory and never block --
                        the breadth jobs that run after the merge gate must not
                        hold a tag. Never starts a run; waits, with `--wait-ci`.
+  b2. push rehearsal -- what THIS MACHINE's pre-push hook will do for the
+                       pushes step d makes, asked of the hook's own decision
+                       (`scripts/test-affected --preflight`) with the hook's
+                       own interpreter: skip (the commit is verified, or its
+                       tree already passed here), or run -- and if it would
+                       run, that the suite imports. On 0.25.7 the hook re-ran
+                       the suite in a venv missing a dev dependency and
+                       blocked the push to `main`; no check was in front of it.
   c. release layer  -- what a *user* gets, checked before the tag exists:
                        install from the SHA into a fresh temp venv with `uv`,
                        `pyrite --version`, and the getting-started tutorial run
@@ -47,7 +61,17 @@ change the world come after every check:
                        counts that go stale), the deploys the tag does not
                        trigger, the [Unreleased] PR. Changes nothing.
 
-Safety rules, pinned by tests/test_release_script.py:
+The dry run is the rehearsal, so it does not stop at the first check that
+fails: it runs every check it can, names each one that would stop `--execute`,
+plans no write, and exits 1. (It used to stop at the first, so a rehearsal run
+anywhere but a clean `dev` at `origin/dev` never reached the changelog date,
+CI or the hook -- and all of those failed on release day.) `--execute` stops
+at the first, before anything is written. A dry run that ends "looks
+releasable" means `--execute`, run now in this checkout, stops at none of
+them. They describe this checkout on this machine: rehearse where you release.
+
+Safety rules, pinned by tests/test_release_script.py and
+tests/test_release_rehearsal.py:
 
   * `--dry-run` is the default. `--execute` is the only way anything is written.
   * It never passes `--no-verify`, never force-pushes, never deletes a ref.
@@ -75,9 +99,15 @@ import tempfile
 import time
 import tomllib
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
+
+# Run as a script, scripts/ is already first on sys.path; imported from
+# elsewhere, it may not be.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import verified_commit  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 BLOCKER_LABEL = "release-blocker"
@@ -96,11 +126,11 @@ MAINTAINER = "markramm"
 
 SEMVER = re.compile(r"^\d+\.\d+\.\d+([-.][0-9A-Za-z.]+)?$")
 
-# The checks a release waits on, by name. `gate` is the required check on dev
-# and main: it needs the jobs that must pass and fails on any of their
-# failures, so requiring it requires them. Advisory checks (breadth jobs that
-# run after the gate) are deliberately not here -- see ci_decision.
-DEFAULT_REQUIRED_CHECKS = ("gate",)
+# The checks a release waits on, by name -- the ones that make a commit
+# VERIFIED. The definition is scripts/verified_commit.py and nowhere else: the
+# pre-push hook reads the same one, so the hook and this script cannot
+# disagree about whether the commit being pushed has been tested.
+DEFAULT_REQUIRED_CHECKS = verified_commit.REQUIRED_CHECKS
 
 # The commonest case is "I just merged to dev, CI is running". Defaulting to no
 # wait made that an immediate failure and a re-run, which teaches the
@@ -117,10 +147,15 @@ DEFAULT_WAIT_CI_MINUTES = 15
 # it was checking.
 INSTALL_CHECK_EXTRAS = "all"
 
-CI_PASSED = "passed"
-CI_FAILED = "failed"
-CI_PENDING = "pending"
-CI_MISSING = "missing"
+# The second document step (c) runs against the install, after getting-started:
+# the tutorial a newcomer is sent to first (docs/tutorials/pyrite-in-20-minutes.md).
+TUTORIAL_20_MIN = "docs/tutorials/pyrite-in-20-minutes.md"
+
+CI_PASSED = verified_commit.PASSED
+CI_FAILED = verified_commit.FAILED
+CI_PENDING = verified_commit.PENDING
+CI_MISSING = verified_commit.MISSING
+CI_UNKNOWN = verified_commit.UNKNOWN
 
 # --- changelog fragments (#243) --------------------------------------------
 #
@@ -226,7 +261,12 @@ class Runner:
 
 
 def git_status_porcelain(repo: Path) -> str:
-    return _check_output(["git", "-C", str(repo), "status", "--porcelain"]).strip()
+    # Every untracked FILE, not its directory collapsed to one line: the check
+    # that reads this names them. Trailing newlines only are stripped -- the
+    # first line's leading space is part of its status column.
+    return _check_output(
+        ["git", "-C", str(repo), "status", "--porcelain", "--untracked-files=all"]
+    ).rstrip()
 
 
 def current_branch(repo: Path) -> str:
@@ -636,73 +676,22 @@ def compose_notes(repo: Path, version: str, logins: list[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# CI decision (pure, over `gh run list` JSON)
+# CI decision: the one definition of a verified commit
 # ---------------------------------------------------------------------------
 
-
-def _matches(check_name: str, required: str) -> bool:
-    """`test` must match the matrix leg `test (3.12)` and the bare `test` a
-    skipped matrix reports -- requiring one by name cannot mean requiring the
-    exact string, or a docs-only run hangs the release the way it hung PRs."""
-    return check_name == required or check_name.startswith(f"{required} (")
-
-
-def _run_age(check: dict) -> tuple[str, str]:
-    """Sort key for "which run of this check is the newest".
-
-    `started_at` first (a rerun starts later even when it finishes sooner),
-    `completed_at` as the fallback when the API omits it. Both are ISO-8601 in
-    UTC, so string order is time order; a run missing both sorts oldest, which
-    is the conservative reading when the newest run is the one with timestamps.
-    """
-    return (str(check.get("started_at") or ""), str(check.get("completed_at") or ""))
+# Bound here, not copied: these ARE scripts/verified_commit.py's functions, so
+# the tests that pin the release's verdict pin the hook's too.
+_matches = verified_commit.matches
+ci_decision = verified_commit.decide
+remote_slug = verified_commit.remote_slug
 
 
-def ci_decision(checks: list[dict], required: tuple[str, ...] | None = None) -> str:
-    """Verdict over the NAMED checks a release requires, for one SHA.
-
-    Gating on "every check on the commit" is wrong and would get worse: `e2e`
-    runs on pushes to `main` and is deliberately *not* in `gate`'s needs
-    (ADR-0032 §3a keeps breadth out of the merge gate), so a red or slow e2e
-    must not block a tag. What must be green is `gate` -- and `gate` is green
-    only when the jobs it needs are.
-
-    Conservative within that set: a required check still running outranks a
-    sibling that passed, and any non-success conclusion is a failure. A
-    `skipped` check passes (ADR-0032: the classifier saying "nothing to test
-    here"). A required check that is absent entirely is CI_MISSING, not a pass.
-
-    This function only reads a verdict; it cannot start a run.
-    """
-    required = required or DEFAULT_REQUIRED_CHECKS
-    if not checks:
-        return CI_MISSING
-
-    verdicts = []
-    for name in required:
-        matching = [c for c in checks if _matches(c.get("name", ""), name)]
-        if not matching:
-            return CI_MISSING
-        # Newest run PER CHECK NAME. A rerun of `gate` is a second check run
-        # with the same name, so reading every run and failing on any red one
-        # means a rerun to green can never unblock a release. Per name, not
-        # overall: `test (3.11)` and `test (3.12)` are different names and both
-        # must pass, however long ago each ran.
-        for leg in sorted({c.get("name", "") for c in matching}):
-            runs = [c for c in matching if c.get("name", "") == leg]
-            newest = max(runs, key=_run_age)
-            if newest.get("status") != "completed":
-                verdicts.append(CI_PENDING)
-            elif newest.get("conclusion") not in ("success", "skipped"):
-                verdicts.append(CI_FAILED)
-            else:
-                verdicts.append(CI_PASSED)
-
-    if CI_FAILED in verdicts:
-        return CI_FAILED
-    if CI_PENDING in verdicts:
-        return CI_PENDING
-    return CI_PASSED
+def commit_verdict(
+    sha: str, slug: str, required: tuple[str, ...] | None = None
+) -> verified_commit.Verdict:
+    """Is this commit verified? Asked of GitHub through this module's one
+    subprocess seam, so the tests' `_check_output` answers it."""
+    return verified_commit.verdict_for(sha, slug, lambda cmd: _check_output(cmd), required)
 
 
 def check_no_release_blockers(prs: list[dict]) -> None:
@@ -713,22 +702,21 @@ def check_no_release_blockers(prs: list[dict]) -> None:
         )
 
 
-def remote_slug(url: str) -> str | None:
-    """`owner/repo` from a git remote URL, in either spelling, or None.
+def origin_push_url(repo: Path) -> str:
+    """Where `git push origin ...` goes. THE read of the remote: the slug, the
+    re-check of it and the URL handed to the pre-push hook all come from here.
 
-    Both forms have to be understood because both are in use on the
-    maintainer's machines: `https://github.com/owner/repo(.git)` and
-    `git@github.com:owner/repo.git` (and its `ssh://` spelling).
+    `--push`, because the release pushes: with a `pushurl` set, `main` and the
+    tag go there, not to the fetch URL, and it is that repository whose CI
+    must have passed the commit and on which the release must be cut. Three
+    reads that disagreed (two fetch, one push) would be the very split
+    `check_remote_is_the_release_repo` exists to refuse.
     """
-    url = url.strip()
-    if not url:
-        return None
-    match = re.search(r"github\.com[:/](?P<slug>[^/\s]+/[^/\s]+?)(?:\.git)?/?$", url)
-    return match.group("slug") if match else None
+    return _check_output(["git", "-C", str(repo), "remote", "get-url", "--push", "origin"]).strip()
 
 
 def resolve_repo_slug(repo: Path) -> str:
-    """The `owner/name` this checkout releases, from `origin`.
+    """The `owner/name` this checkout releases: where `origin` pushes to.
 
     Every `gh --repo` call and the install spec read this, so the script
     releases the repository it is actually run from. Hard-coding it meant the
@@ -740,7 +728,7 @@ def resolve_repo_slug(repo: Path) -> str:
     A remote that is not a recognisable GitHub URL is a hard failure: a
     release cut against a guessed repository is not undoable.
     """
-    url = _check_output(["git", "-C", str(repo), "remote", "get-url", "origin"]).strip()
+    url = origin_push_url(repo)
     slug = remote_slug(url)
     if not slug:
         raise ReleaseError(
@@ -766,7 +754,7 @@ def check_remote_is_the_release_repo(repo: Path, slug: str) -> None:
     trusting the value it was handed: the resolve happens once at startup and
     a release is long enough for a remote to be re-pointed under it.
     """
-    url = _check_output(["git", "-C", str(repo), "remote", "get-url", "origin"]).strip()
+    url = origin_push_url(repo)
     current = remote_slug(url)
     if current != slug:
         raise ReleaseError(
@@ -831,20 +819,45 @@ def check_main_can_fast_forward(repo: Path, sha: str) -> None:
         ) from exc
 
 
-def check_clean_checkout(repo: Path) -> str:
-    """Clean `dev`, exactly at `origin/dev`. Returns the SHA to release."""
+def check_no_local_changes(repo: Path) -> None:
+    """Nothing uncommitted and nothing untracked.
+
+    Untracked files count: `git status` counts them, and three of them made
+    the 0.25.7 checkout dirty on release day. They are named, one per line,
+    apart from the modified files -- "the checkout is dirty" sent the
+    maintainer looking for an edit that was not there.
+    """
     dirty = git_status_porcelain(repo)
-    if dirty:
-        raise ReleaseError(
-            "the checkout is dirty -- uncommitted changes would not be in the "
-            f"released commit:\n{dirty}"
+    if not dirty:
+        return
+    lines = dirty.splitlines()
+    untracked = [line[3:] for line in lines if line.startswith("??")]
+    changed = [line for line in lines if not line.startswith("??")]
+    parts = []
+    if changed:
+        parts.append(
+            "uncommitted changes would not be in the released commit:\n"
+            + "\n".join(f"    {line}" for line in changed)
         )
+    if untracked:
+        parts.append(
+            f"{len(untracked)} untracked file(s) -- commit, ignore or remove each:\n"
+            + "\n".join(f"    {path}" for path in untracked)
+        )
+    raise ReleaseError("the checkout is dirty -- " + "\n".join(parts))
+
+
+def check_on_dev(repo: Path) -> None:
     branch = current_branch(repo)
     if branch != "dev":
         raise ReleaseError(
             f"on branch {branch!r}; a release is cut from dev. "
             "`git checkout dev && git pull --ff-only` first."
         )
+
+
+def check_at_origin_dev(repo: Path) -> str:
+    """HEAD is exactly `origin/dev`. Returns the SHA to release."""
     head = rev_parse(repo, "HEAD")
     upstream = rev_parse(repo, "origin/dev")
     if head != upstream:
@@ -856,8 +869,15 @@ def check_clean_checkout(repo: Path) -> str:
     return head
 
 
+def check_clean_checkout(repo: Path) -> str:
+    """Clean `dev`, exactly at `origin/dev`. Returns the SHA to release."""
+    check_no_local_changes(repo)
+    check_on_dev(repo)
+    return check_at_origin_dev(repo)
+
+
 # ---------------------------------------------------------------------------
-# the five steps
+# the steps
 # ---------------------------------------------------------------------------
 
 
@@ -878,6 +898,34 @@ class Context:
     # checkout actually points at rather than a literal that goes stale the
     # day the project moves (#259).
     slug: str = ""
+    # Dry run only: every check that would stop `--execute`, as (step, why).
+    # A rehearsal that stops at the first one hides the rest until release day.
+    problems: list[tuple[str, str]] = field(default_factory=list)
+    # Not failures, but things a "looks releasable" must not be silent about.
+    cautions: list[str] = field(default_factory=list)
+    step_key: str = ""
+
+    def attempt(self, check: Callable[[], object]) -> bool:
+        """Run one check; True when it passed.
+
+        Under `--execute` a failure stops the release right here, as it always
+        has: the ReleaseError propagates and nothing after it runs. In a dry
+        run it is recorded and printed, and the next check still runs, so one
+        rehearsal names everything that would stop the real thing.
+        """
+        try:
+            check()
+        except ReleaseError as exc:
+            if self.runner.execute:
+                raise
+            self.record(exc)
+            return False
+        return True
+
+    def record(self, exc: ReleaseError) -> None:
+        message = str(exc)
+        self.problems.append((self.step_key, message))
+        print(f"    !! WOULD STOP --execute: {message.splitlines()[0]}")
 
 
 @dataclass
@@ -893,20 +941,68 @@ class Step:
 
 
 def step_preconditions(ctx: Context) -> None:
-    ctx.sha = check_clean_checkout(ctx.repo)
-    ctx.runner.note(f"dev is clean at origin/dev: {ctx.sha}")
+    ctx.runner.note(f"this checkout: {ctx.repo} (the checks below describe it, and this machine)")
+    # Not a git checkout at all: nothing below can be asked, in either mode.
+    ctx.sha = rev_parse(ctx.repo, "HEAD")
 
-    check_version_matches(ctx.repo, ctx.version)
-    ctx.runner.note(f"pyproject.toml version == {ctx.version}")
+    clean = ctx.attempt(lambda: check_no_local_changes(ctx.repo))
+    on_dev = ctx.attempt(lambda: check_on_dev(ctx.repo))
+    at_origin = ctx.attempt(lambda: check_at_origin_dev(ctx.repo))
+    if clean and on_dev and at_origin:
+        ctx.runner.note(f"dev is clean at origin/dev: {ctx.sha}")
+    else:
+        # Dry run only (`--execute` has already stopped). The rest is still
+        # worth knowing, and it is asked about the commit that is checked out.
+        ctx.runner.note(f"rehearsing the remaining checks against HEAD, {ctx.sha[:12]}")
 
-    check_changelog(ctx.repo, ctx.version)
-    ctx.runner.note(f"CHANGELOG has `## [{ctx.version}] - {date.today().isoformat()}` with content")
+    if ctx.attempt(lambda: check_version_matches(ctx.repo, ctx.version)):
+        ctx.runner.note(f"pyproject.toml version == {ctx.version}")
 
+    if ctx.attempt(lambda: check_changelog(ctx.repo, ctx.version)):
+        ctx.runner.note(
+            f"CHANGELOG has `## [{ctx.version}] - {date.today().isoformat()}` with content"
+        )
+    ctx.attempt(lambda: _print_notes(ctx))
+
+    # Resolve the repository here, inside the step, so a bad `origin` reads as
+    # `FAIL at preconditions` with the header above it rather than as a raw
+    # git error printed before the run has announced itself.
+    def resolve() -> None:
+        ctx.slug = resolve_repo_slug(ctx.repo)
+        check_remote_is_the_release_repo(ctx.repo, ctx.slug)
+
+    if not ctx.attempt(resolve):
+        # Everything further asks GitHub about a repository, and there is none
+        # to ask about. Said once, as its own finding, rather than as four
+        # failures that all mean "origin".
+        ctx.slug = ""
+        ctx.record(
+            ReleaseError(
+                "not checked, because `origin` names no GitHub repository: that "
+                f"v{ctx.version} is free, that main can fast-forward, the "
+                f"{BLOCKER_LABEL} label and its PRs, and CI"
+            )
+        )
+        return
+    ctx.runner.note(f"origin is {ctx.slug}, the repo this releases")
+
+    if ctx.attempt(lambda: check_tag_is_free(ctx.repo, ctx.version, ctx.slug)):
+        ctx.runner.note(f"v{ctx.version} exists neither locally, on origin, nor as a release")
+
+    if ctx.attempt(lambda: check_main_can_fast_forward(ctx.repo, ctx.sha)):
+        ctx.runner.note(f"origin/main is an ancestor of {ctx.sha[:12]}: step d can fast-forward")
+
+    if ctx.attempt(lambda: _check_blockers(ctx)):
+        ctx.runner.note(f"no open PRs labelled {BLOCKER_LABEL}")
+
+
+def _print_notes(ctx: Context) -> None:
     # Print the notes here rather than in step (d): by step (d) the next thing
     # to happen is the push, and "the release notes are wrong" is a reason to
     # stop. Fragments make this the only place the assembled section can be
     # read before the tag -- CHANGELOG.md does not contain it yet.
     fragments = collect_fragments(ctx.repo)
+    notes = release_notes_for(ctx.repo, ctx.version)
     ctx.runner.note(
         f"{len(fragments)} changelog fragment(s) under {FRAGMENT_DIR_NAME}/"
         if fragments
@@ -914,23 +1010,12 @@ def step_preconditions(ctx: Context) -> None:
     )
     ctx.runner.note(f"release notes for v{ctx.version} (the section plus the fragments):")
     print()
-    for line in release_notes_for(ctx.repo, ctx.version).rstrip().splitlines():
+    for line in notes.rstrip().splitlines():
         print(f"      {line}" if line else "")
     print()
 
-    # Resolve the repository here, inside the step, so a bad `origin` reads as
-    # `FAIL at preconditions` with the header above it rather than as a raw
-    # git error printed before the run has announced itself.
-    ctx.slug = resolve_repo_slug(ctx.repo)
-    check_remote_is_the_release_repo(ctx.repo, ctx.slug)
-    ctx.runner.note(f"origin is {ctx.slug}, the repo this releases")
 
-    check_tag_is_free(ctx.repo, ctx.version, ctx.slug)
-    ctx.runner.note(f"v{ctx.version} exists neither locally, on origin, nor as a release")
-
-    check_main_can_fast_forward(ctx.repo, ctx.sha)
-    ctx.runner.note(f"origin/main is an ancestor of {ctx.sha[:12]}: step d can fast-forward")
-
+def _check_blockers(ctx: Context) -> None:
     # `--repo` on every gh call: it otherwise infers the repo from the cwd,
     # which is not necessarily the repo being released.
     labels = _gh_json(
@@ -966,55 +1051,23 @@ def step_preconditions(ctx: Context) -> None:
         ]
     )
     check_no_release_blockers(blockers if isinstance(blockers, list) else [])
-    ctx.runner.note(f"no open PRs labelled {BLOCKER_LABEL}")
-
-
-def _checks_for(sha: str, slug: str) -> list[dict]:
-    """The check runs GitHub reports for a commit, by name.
-
-    Check runs, not workflow runs: what a release waits on is the named check
-    `gate`, which is a job inside ci.yml, and `gh run list` only knows about
-    the workflow as a whole.
-    """
-    try:
-        payload = _gh_json(["gh", "api", f"repos/{slug}/commits/{sha}/check-runs"])
-    except ReleaseError as exc:
-        # The likeliest real failure is a commit that was never pushed, and the
-        # API answers 422 "No commit found". That is exactly CI_MISSING -- the
-        # caller's advice ("push it to dev and let CI run") is what you need.
-        # Anything else (auth, network) is a genuine error and must surface.
-        if "No commit found" in str(exc):
-            return []
-        raise
-    if isinstance(payload, dict):
-        runs = payload.get("check_runs", [])
-        return runs if isinstance(runs, list) else []
-    return []
-
-
-def _describe(checks: list[dict], required: tuple[str, ...]) -> str:
-    relevant = [c for c in checks if any(_matches(c.get("name", ""), r) for r in required)]
-    return (
-        ", ".join(f"{c.get('name')}={c.get('conclusion') or c.get('status')}" for c in relevant)
-        or "none"
-    )
 
 
 def step_ci(ctx: Context) -> None:
     required = tuple(ctx.required_checks)
     deadline = time.monotonic() + ctx.wait_ci_minutes * 60
     while True:
-        checks = _checks_for(ctx.sha, ctx.slug)
-        verdict = ci_decision(checks, required=required)
-        if verdict == CI_PASSED:
+        verdict = commit_verdict(ctx.sha, ctx.slug, required)
+        checks = list(verdict.checks)
+        if verdict.state == CI_PASSED:
             ctx.runner.note(
-                f"required check(s) green on {ctx.sha[:12]}: {_describe(checks, required)}"
+                f"{ctx.sha[:12]} is verified: required check(s) green: {verdict.detail}"
             )
             other = [
                 c.get("name")
                 for c in checks
                 if not any(_matches(c.get("name", ""), r) for r in required)
-                and c.get("conclusion") not in ("success", "skipped", None)
+                and c.get("conclusion") not in ("success", "skipped", None)  # advisory only
             ]
             if other:
                 ctx.runner.note(
@@ -1022,24 +1075,30 @@ def step_ci(ctx: Context) -> None:
                     "--require-check, so it does not hold the release)"
                 )
             return
-        if verdict == CI_FAILED:
+        if verdict.state == CI_FAILED:
+            raise ReleaseError(_not_green_message(ctx.sha, verdict))
+        if verdict.state == CI_MISSING:
             raise ReleaseError(
-                f"a required check is not green on {ctx.sha[:12]}: "
-                f"{_describe(checks, required)}. Fix it on dev; the tagged "
-                "commit must be one CI passed."
-            )
-        if verdict == CI_MISSING:
-            raise ReleaseError(
-                f"no run of {', '.join(required)} exists for {ctx.sha[:12]}. Push the "
+                f"no run of {', '.join(required)} exists for {ctx.sha[:12]} "
+                f"({verdict.detail}). Push the "
                 "commit to dev and let CI run -- this script never starts one, because "
                 "a run it started is not the run the merge gate saw."
+            )
+        if verdict.state != CI_PENDING:
+            # The lookup failed, or answered with something that cannot be
+            # read as a verdict. Never a pass, and never "CI has not run yet":
+            # a network or auth failure must not be mistaken for either.
+            raise ReleaseError(
+                f"could not establish whether {ctx.sha[:12]} is verified: "
+                f"{verdict.detail}. Nothing was assumed; fix the lookup "
+                "(`gh auth status`, the network) and run this again."
             )
         # pending
         now = time.monotonic()
         if now >= deadline:
             raise ReleaseError(
                 f"a required check is still running on {ctx.sha[:12]} after "
-                f"{ctx.wait_ci_minutes} min: {_describe(checks, required)}. "
+                f"{ctx.wait_ci_minutes} min: {verdict.detail}. "
                 "Re-run with a longer --wait-ci, or wait and try again."
             )
         # Never sleep past the deadline: a fixed 30s against 5s remaining
@@ -1048,6 +1107,128 @@ def step_ci(ctx: Context) -> None:
         nap = min(30.0, remaining)
         ctx.runner.note(f"required check(s) still running on {ctx.sha[:12]}; waiting {nap:.0f}s")
         time.sleep(nap)
+
+
+def _not_green_message(sha: str, verdict: verified_commit.Verdict) -> str:
+    """Why a red verdict refuses, naming the workflow run and the remedy.
+
+    Every workflow run that ran the check on this commit must be green, so a
+    single cancelled or flaky run refuses a commit whose other runs passed.
+    Nothing is wrong on dev then, and "fix it on dev" sends the maintainer
+    nowhere: the remedy is to re-run THAT run, and it has to be named. This
+    script never runs the command it prints.
+    """
+    lines = [
+        f"a required check is not green on {sha[:12]}, in "
+        f"{len(verdict.not_green)} of the workflow run(s) that ran it: {verdict.detail}.",
+        "Every workflow run that ran the check on this commit must be green.",
+    ]
+    for name, conclusion, where, run_id in verdict.not_green:
+        if run_id:
+            lines.append(
+                f"  {name}={conclusion}: {where}\n"
+                f"    if that run was cancelled or flaky, re-run it and release when it "
+                f"is green:  gh run rerun {run_id} --repo {verdict.slug}"
+            )
+        else:
+            lines.append(
+                f"  {name}={conclusion}: {where} -- re-run that workflow run from the "
+                "commit's checks page if it was cancelled or flaky"
+            )
+    lines.append(
+        "If it is red for a real reason, fix it on dev: the tagged commit must be one CI passed."
+    )
+    return "\n".join(lines)
+
+
+def step_push_rehearsal(ctx: Context) -> None:
+    """What this machine's pre-push hook will do for the pushes step d makes.
+
+    Step d pushes the commit to `main`, then the tag. git runs the pre-push
+    hook for each, and on 0.25.7 the first one re-ran the full local suite --
+    on a commit CI had passed -- in a venv with no `hypothesis`, and blocked
+    the release at its first write. Nothing in front of it had asked.
+
+    The answer comes from the hook's own decision code, run with the hook's
+    own interpreter (`scripts/test-affected --preflight`), so this cannot
+    drift from what the push will meet:
+
+      skip        the commit is verified (the same definition step b used), or
+                  its tree already passed here. Nothing will run.
+      would run   the suite will run at the push, and it imports. That is
+                  allowed -- PYRITE_PUSH_FORCE=1 asks for exactly this -- and
+                  it is said loudly: whether it passes is unknown until it
+                  runs. A red run stops `--execute` at its first write, before
+                  anything has moved.
+      cannot run  the suite would run and does not import, or there is no
+                  `.venv` and the hook refuses. A failed check.
+
+    It is conservative about one thing: the hook runs only when the pushed
+    range touches code, and this asks as though it always does.
+    """
+    hook = _check_output(["git", "-C", str(ctx.repo), "rev-parse", "--git-path", "hooks/pre-push"])
+    hook_path = Path(hook.strip() or "hooks/pre-push")
+    if not hook_path.is_absolute():
+        hook_path = ctx.repo / hook_path
+    if not hook_path.is_file():
+        ctx.runner.note(
+            f"no pre-push hook is installed here ({hook_path}): "
+            "the pushes in step d run nothing on this machine"
+        )
+        return
+
+    python = ctx.repo / ".venv" / "bin" / "python"
+    if not os.access(python, os.X_OK):
+        raise ReleaseError(
+            f"the pre-push hook would refuse the push to main: there is no {python}, "
+            "and the hook does not fall back to another checkout's interpreter. "
+            'Create it (`uv venv && uv pip install -e ".[all,dev]"`) and run this again.'
+        )
+    script = ctx.repo / "scripts" / "test-affected"
+    url = origin_push_url(ctx.repo)
+    env = {
+        **os.environ,
+        # What pre-commit hands the hook for `git push origin <sha>:refs/heads/main`.
+        "PRE_COMMIT_FROM_REF": rev_parse(ctx.repo, "origin/main"),
+        "PRE_COMMIT_TO_REF": ctx.sha,
+        "PRE_COMMIT_REMOTE_NAME": "origin",
+        "PRE_COMMIT_REMOTE_URL": url,
+        # A dry run changes nothing on disk, a `scripts/__pycache__` included.
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    workers = os.environ.get("PYRITE_PUSH_WORKERS") or "4"
+    try:
+        out = _check_output(
+            [str(python), str(script), "--preflight", "-n", workers], cwd=ctx.repo, env=env
+        )
+    except ReleaseError as exc:
+        raise ReleaseError(
+            "the pre-push hook would stop the push to main on this machine. "
+            "Its own preflight says:\n" + str(exc)
+        ) from exc
+    answer = next((line for line in out.splitlines() if line.startswith("preflight: ")), "")
+    if answer.startswith("preflight: skip: "):
+        ctx.runner.note(f"push to main: the hook skips -- {answer[len('preflight: skip: ') :]}")
+    elif answer.startswith("preflight: would run: "):
+        caution = (
+            "the pre-push hook WILL RUN the suite at the push to main "
+            f"({answer[len('preflight: would run: ') :]}). Whether it passes is not "
+            "known until it runs; a red run stops --execute at its first write, "
+            "before anything has moved."
+        )
+        ctx.cautions.append(caution)
+        ctx.runner.note(f"!! {caution}")
+    else:
+        raise ReleaseError(
+            f"the pre-push hook's preflight gave no answer this script understands: {out!r}"
+        )
+    # pre-commit's pre-push shim (hook_impl._pre_push_ns, 4.7) runs hooks for a
+    # new ref only over the commits the remote lacks. After the push to main
+    # it lacks none, so the tag push runs nothing; were that to change, the
+    # tag's commit is this same SHA and gets this same answer.
+    ctx.runner.note(
+        "push of the tag: the same commit, which origin then has -- the hook has nothing to run"
+    )
 
 
 def step_release_layer(ctx: Context) -> None:
@@ -1072,6 +1253,9 @@ def step_release_layer(ctx: Context) -> None:
         print(f'    WOULD RUN: uv pip install --python <tmp>/bin/python "{spec}"')
         print(f"    WOULD RUN: <tmp>/bin/pyrite --version    (must contain {ctx.version})")
         print("    WOULD RUN: PYRITE_TUTORIAL_VENV=<tmp> scripts/run_tutorial.sh")
+        print(
+            f"    WOULD RUN: PYRITE_TUTORIAL_VENV=<tmp> scripts/run_tutorial.sh {TUTORIAL_20_MIN}"
+        )
         if ctx.docker_check:
             print(f"    WOULD RUN: docker build -t pyrite:{ctx.version} .")
         else:
@@ -1115,6 +1299,16 @@ def step_release_layer(ctx: Context) -> None:
         )
         _check_output([str(ctx.repo / "scripts" / "run_tutorial.sh")], cwd=ctx.repo, env=env)
         ctx.runner.note("getting-started tutorial ran clean against the install")
+        print(
+            f"    RUN: PYRITE_TUTORIAL_VENV={venv} scripts/run_tutorial.sh {TUTORIAL_20_MIN}"
+            "   (the 20-minute tutorial against the install)"
+        )
+        _check_output(
+            [str(ctx.repo / "scripts" / "run_tutorial.sh"), TUTORIAL_20_MIN],
+            cwd=ctx.repo,
+            env=env,
+        )
+        ctx.runner.note("Pyrite-in-20-minutes tutorial ran clean against the install")
     finally:
         shutil.rmtree(venv, ignore_errors=True)
 
@@ -1480,6 +1674,12 @@ def step_handoff(ctx: Context) -> None:
 STEPS: list[Step] = [
     Step("preconditions", "a. preconditions", False, step_preconditions),
     Step("ci", "b. CI is green on this SHA", False, step_ci),
+    Step(
+        "push_rehearsal",
+        "b2. this machine's pre-push hook, for the pushes in step d",
+        False,
+        step_push_rehearsal,
+    ),
     Step("release_layer", "c. release layer: install, tutorial, docker", False, step_release_layer),
     Step("publish", "d. main, tag, GitHub release", True, step_publish, is_check=False),
     Step("post_release", "e. reopen [Unreleased]", True, step_post_release, is_check=False),
@@ -1520,7 +1720,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--require-check",
         action="append",
         metavar="NAME",
-        help="a check that must be green before the tag, by name. Repeatable. "
+        help="a check that must be green before the tag, by its exact name "
+        "(a matrix leg is `test (3.12)`, not `test`). Repeatable. "
         f"Default: {', '.join(DEFAULT_REQUIRED_CHECKS)}. Checks NOT named here are "
         "advisory and never block the release -- that is deliberate for the breadth "
         "jobs that run after the merge gate.",
@@ -1600,11 +1801,24 @@ def run_release(args: argparse.Namespace) -> tuple[int, Runner]:
     print()
 
     for step in STEPS:
+        if ctx.problems and not step.is_check:
+            # Dry run only: every check has now been asked. The steps that
+            # write are not rehearsed past a check that would have stopped
+            # them, so no write is ever planned behind a failure.
+            break
         marker = " (IRREVERSIBLE)" if step.irreversible else ""
         print(f"  {step.name}{marker}")
+        ctx.step_key = step.key
         try:
             step.run(ctx)
         except ReleaseError as exc:
+            if step.is_check and not args.execute and ctx.sha:
+                # A check that failed as a whole, in a rehearsal: record it and
+                # ask the next one. (No `ctx.sha` means not even HEAD could be
+                # read -- nothing further can be asked, so that still stops.)
+                ctx.record(exc)
+                print()
+                continue
             # Piped, stdout block-buffers and stderr does not: without this the
             # failure prints above the header and the step it failed in, which
             # is how it reads in a log or a CI transcript.
@@ -1631,8 +1845,27 @@ def run_release(args: argparse.Namespace) -> tuple[int, Runner]:
             return 1, runner
         print()
 
+    if ctx.problems:
+        sys.stdout.flush()
+        for key, message in ctx.problems:
+            print(f"\nFAIL at {key}: {message}", file=sys.stderr)
+        count = len(ctx.problems)
+        print(
+            f"\nDry run: v{version} is NOT ready. --execute would stop at the first of "
+            f"the {count} check(s) above; each has to be fixed. Nothing was changed. "
+            "Nothing further was attempted.",
+            file=sys.stderr,
+        )
+        sys.stderr.flush()
+        return 1, runner
+
     if args.execute:
         print(f"Released v{version}. Deploy with pyrite_deployments/deploy.sh.")
+    elif ctx.cautions:
+        print(
+            f"Dry run complete: v{version} looks releasable, with "
+            f"{len(ctx.cautions)} caution(s) marked !! above. Re-run with --execute."
+        )
     else:
         print(f"Dry run complete: v{version} looks releasable. Re-run with --execute.")
     return 0, runner

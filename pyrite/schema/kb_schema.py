@@ -93,6 +93,7 @@ class KBSchema:
                     edge_type=type_data.get("edge_type", False),
                     endpoints=endpoints,
                     state_machine=type_data.get("state_machine"),
+                    field_aliases=type_data.get("field_aliases") or {},
                 )
             else:
                 types[type_name] = TypeSchema(name=type_name)

@@ -1035,7 +1035,9 @@ class TestTheVerifyRedJob:
 
     @pytest.mark.control(reason="kept from the old job")
     def test_it_is_not_a_gate(self, ci):
-        assert ci["jobs"]["gate"]["needs"] == ["changes", "kb", "test", "frontend"]
+        # `shard-report` (tests Q2) joined the gate: it proves the test shards'
+        # union is the full collection. verify-red is still not in it.
+        assert ci["jobs"]["gate"]["needs"] == ["changes", "kb", "test", "shard-report", "frontend"]
 
     @pytest.mark.control(reason="kept from the old job")
     def test_it_is_read_only(self, ci):
@@ -1084,7 +1086,7 @@ class TestDiffCoverage:
         assert "--cov=pyrite" in run
         # [tool.coverage.report] fail_under would otherwise fail the suite (and gate).
         assert "--cov-fail-under=0" in run
-        assert "--cov-report=xml" in run
+        assert "--cov-report=xml" in run  # one file per shard; shard-report merges them
 
     def test_only_the_312_pr_leg_pays_for_it(self, ci):
         step = next(s for s in self._test_job(ci)["steps"] if "--cov=pyrite" in s.get("run", ""))
@@ -1093,8 +1095,10 @@ class TestDiffCoverage:
         assert "github.event_name == 'pull_request'" in run
 
     def test_diff_cover_is_advisory(self, ci):
-        steps = self._test_job(ci)["steps"]
-        step = next(s for s in steps if "diff-cover" in s.get("run", ""))
+        # Sharded (tests Q2): the shards each write coverage; `shard-report`
+        # runs diff-cover over the three files.
+        steps = ci["jobs"]["shard-report"]["steps"]
+        step = next(s for s in steps if "diff-cover coverage" in s.get("run", ""))
         assert "--fail-under=80" in step["run"]
         assert "--compare-branch" in step["run"]
         assert "github.event.pull_request.base.sha" in step["run"]

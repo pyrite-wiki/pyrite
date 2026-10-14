@@ -1,0 +1,7 @@
+pyrite index build
+pyrite index embed
+pyrite index health
+pyrite index jobs
+pyrite index reconcile
+pyrite index stats
+pyrite index sync

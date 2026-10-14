@@ -11,6 +11,9 @@ Inherits shared ORM/SQL logic from BaseBackend.  Only overrides:
 from __future__ import annotations
 
 import logging
+import os
+import sys
+import threading
 from typing import Any, ClassVar
 
 from sqlalchemy import Engine, create_engine, text
@@ -21,8 +24,100 @@ from ...exceptions import StorageError
 from ..models import Link
 from .base_backend import BaseBackend
 from .capabilities import BackendCapability
+from .protocol import DEFAULT_MIN_SIMILARITY, similarity_from
 
 logger = logging.getLogger(__name__)
+
+# The Postgres backend is experimental in 0.25.x (#718): the alembic chain stops
+# at revision 006, so an existing Postgres database cannot take a column added
+# since. Said once per process, from the one place the backend is built, so the
+# CLI, the REST server and the MCP server all get it without a per-command change.
+EXPERIMENTAL_ACK_ENV = "PYRITE_POSTGRES_EXPERIMENTAL_ACK"
+_EXPERIMENTAL_NOTICE = (
+    "The Postgres backend is experimental in Pyrite 0.25.x: an existing Postgres "
+    "database may not upgrade between releases. "
+    "Details: https://github.com/pyrite-wiki/pyrite/issues/718 "
+    f"(set {EXPERIMENTAL_ACK_ENV}=1 to silence this notice)"
+)
+_experimental_notice_shown = False
+_experimental_notice_lock = threading.Lock()
+
+# ``non_empty`` (#200), the same predicate as SQLite's: a body or a summary
+# with a character other than space, tab, CR or LF.
+NON_EMPTY_SQL = (
+    " AND (btrim(COALESCE(e.body, ''), chr(32) || chr(9) || chr(10) || chr(13)) != ''"
+    " OR btrim(COALESCE(e.summary, ''), chr(32) || chr(9) || chr(10) || chr(13)) != '')"
+)
+
+
+def _logging_reaches_stderr() -> bool:
+    """True when a handler on the ``pyrite`` chain will write a WARNING to stderr."""
+    log = logging.getLogger("pyrite")
+    if not log.isEnabledFor(logging.WARNING):
+        return False
+    while log is not None:
+        for h in log.handlers:
+            if (
+                isinstance(h, logging.StreamHandler)
+                and getattr(h, "stream", None) is sys.stderr
+                and h.level <= logging.WARNING
+            ):
+                return True
+        log = log.parent if log.propagate else None
+    return False
+
+
+def _announce_experimental() -> None:
+    """Say once per process that this backend is experimental.
+
+    **Cannot stop the backend being constructed.** What can raise, and how each
+    is handled: ``os.environ.get(...).strip().lower()`` cannot (a ``str``);
+    the ``threading.Lock`` cannot; ``logger.warning`` can (a custom handler or
+    filter may raise) and is guarded; ``_logging_reaches_stderr`` can (odd
+    handler objects) and is guarded, assuming "not reached"; the stderr write
+    and flush can (closed file, broken pipe) and are guarded. Each step is
+    guarded on its own, so a failing log handler does not skip stderr. The
+    outer ``try`` is the backstop. The latch is set before any write, so a
+    failure loses the notice but never repeats it.
+
+    **Never writes to stdout by Pyrite's own doing** (``--format json`` output
+    and the MCP stdio stream stay clean). ``sys.stderr`` is read once; if it is
+    ``None`` (``2>&-``) the direct write is skipped, never redirected to stdout.
+    The log gets the notice for the server; stderr gets it directly unless a
+    ``pyrite`` log handler already writes warnings to stderr.
+
+    **Limits, not bugs.** That handler detection can print twice (``sys.stderr``
+    rebound after logging was configured, or a non-``StreamHandler`` that writes
+    to stderr) and can print nothing (a child logger's level raised above
+    WARNING). Worst case under deliberate configuration is silence. An embedding
+    application that routes logging to stdout has chosen that: it is not
+    prevented.
+    """
+    global _experimental_notice_shown
+    try:
+        if os.environ.get(EXPERIMENTAL_ACK_ENV, "").strip().lower() in ("1", "true", "yes"):
+            return
+        with _experimental_notice_lock:
+            if _experimental_notice_shown:
+                return
+            _experimental_notice_shown = True
+        try:
+            logger.warning(_EXPERIMENTAL_NOTICE)
+        except Exception:  # noqa: BLE001 - a notice must never break construction
+            pass
+        try:
+            covered = _logging_reaches_stderr()
+        except Exception:  # noqa: BLE001
+            covered = False
+        err = sys.stderr  # read once; None when fd 2 was closed at startup
+        if not covered and err is not None:
+            try:
+                err.write(f"pyrite: {_EXPERIMENTAL_NOTICE}\n")
+                err.flush()
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001 - backstop
+        pass
 
 
 # The DBAPI the ``postgres`` extra installs (``psycopg2-binary``). A bare
@@ -147,6 +242,7 @@ class PostgresBackend(BaseBackend):
         # the backend's lifetime. A shared psycopg connection under concurrent
         # use raises rather than corrupting results the way SQLite does, so the
         # symptom differs — the lifetime bug is the same one.
+        _announce_experimental()
         self._owner = owner
         self._explicit_session = session
         self._engine = engine
@@ -253,6 +349,7 @@ class PostgresBackend(BaseBackend):
         fips: str | None = None,
         state: str | None = None,
         status: str | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         # Build the tsquery — plainto_tsquery handles user input safely
         sql = """
@@ -319,8 +416,14 @@ class PostgresBackend(BaseBackend):
             sql += " AND e.state = :state"
             params["state"] = state
         if status:
-            sql += " AND e.status = :status"
+            # The effective status, as the sqlite backend applies it.
+            from .. import effective_status
+
+            keys = effective_status.derived_done_keys(self._session, kb_name)
+            sql += f" AND {effective_status.status_sql('e.', keys, params)} = :status"
             params["status"] = status
+        if non_empty:
+            sql += NON_EMPTY_SQL
 
         sql += " ORDER BY rank DESC LIMIT :limit OFFSET :offset"
         params["limit"] = limit
@@ -400,7 +503,7 @@ class PostgresBackend(BaseBackend):
         embedding: list[float],
         kb_name: str | None = None,
         limit: int = 20,
-        max_distance: float = 1.3,
+        min_similarity: float = DEFAULT_MIN_SIMILARITY,
         entry_type: str | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
@@ -409,11 +512,13 @@ class PostgresBackend(BaseBackend):
         state: str | None = None,
         status: str | None = None,
         include_archived: bool = False,
+        kb_names: set[str] | list[str] | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """KNN over pgvector, honouring the same filters as ``search`` (#56).
 
         Unlike sqlite-vec there is no separate KNN budget to escalate: every
-        predicate, ``max_distance`` included, goes into the same ``WHERE`` as
+        predicate, the similarity floor included, goes into the same ``WHERE`` as
         the distance ordering, so ``LIMIT`` applies after filtering and cannot
         under-return. The predicates below mirror
         :meth:`SQLiteBackend._semantic_filter_sql` one for one — the two
@@ -435,6 +540,14 @@ class PostgresBackend(BaseBackend):
         if kb_name:
             sql += " AND e.kb_name = :kb_name"
             params["kb_name"] = kb_name
+        if kb_names is not None:
+            # The caller's readable set, as the keyword leg applies it (#668).
+            names = list(kb_names)
+            if names:
+                sql += " AND e.kb_name = ANY(:kb_names)"
+                params["kb_names"] = names
+            else:
+                sql += " AND FALSE"
         if entry_type:
             sql += " AND e.entry_type = :entry_type"
             params["entry_type"] = entry_type
@@ -467,24 +580,48 @@ class PostgresBackend(BaseBackend):
             sql += " AND e.state = :state"
             params["state"] = state
         if status:
-            sql += " AND e.status = :status"
+            # The effective status, as the sqlite backend applies it.
+            from .. import effective_status
+
+            keys = effective_status.derived_done_keys(self._session, kb_name)
+            sql += f" AND {effective_status.status_sql('e.', keys, params)} = :status"
             params["status"] = status
-        # ``max_distance`` belongs in the WHERE, not in a Python filter after
-        # the fact: applied post-LIMIT it culls rows the LIMIT already paid for
-        # and under-returns, where sqlite escalates its k instead. One
+        if non_empty:
+            sql += NON_EMPTY_SQL
+        # The similarity floor belongs in the WHERE, not in a Python filter
+        # after the fact: applied post-LIMIT it culls rows the LIMIT already
+        # paid for and under-returns, where sqlite escalates its k instead. One
         # predicate here keeps the two backends returning the same rows (#56).
-        sql += " AND (e.embedding <=> CAST(:vec3 AS vector)) <= :max_distance"
+        # ``<=>`` is cosine distance, so the floor is ``1 - min_similarity``;
+        # a zero vector's distance is NaN, which no comparison admits.
+        sql += " AND (e.embedding <=> CAST(:vec3 AS vector)) <= :max_cosine_distance"
         params["vec3"] = vec_str
-        params["max_distance"] = max_distance
+        params["max_cosine_distance"] = 1.0 - min_similarity
         sql += " ORDER BY e.embedding <=> CAST(:vec2 AS vector) LIMIT :limit"
         params["vec2"] = vec_str
         params["limit"] = limit
 
-        return self._exec(sql, params)
+        rows = self._exec(sql, params)
+        for row in rows:
+            # ``distance`` here is already cosine distance (#668).
+            row["similarity"] = similarity_from(row.get("distance"))
+        return rows
 
-    def has_embeddings(self) -> bool:
-        count = self._exec_scalar("SELECT COUNT(*) FROM entry WHERE embedding IS NOT NULL")
-        return (count or 0) > 0
+    def has_embeddings(
+        self, kb_name: str | None = None, kb_names: set[str] | list[str] | None = None
+    ) -> bool:
+        sql = "SELECT COUNT(*) FROM entry e WHERE e.embedding IS NOT NULL"
+        params: dict[str, Any] = {}
+        if kb_name:
+            sql += " AND e.kb_name = :kb_name"
+            params["kb_name"] = kb_name
+        if kb_names is not None:
+            names = list(kb_names)
+            if not names:
+                return False
+            sql += " AND e.kb_name = ANY(:kb_names)"
+            params["kb_names"] = names
+        return (self._exec_scalar(sql, params) or 0) > 0
 
     def embedding_stats(self) -> dict[str, Any]:
         vec_count = self._exec_scalar("SELECT COUNT(*) FROM entry WHERE embedding IS NOT NULL") or 0

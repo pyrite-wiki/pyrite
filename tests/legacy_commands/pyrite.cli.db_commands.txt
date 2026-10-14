@@ -1,0 +1,2 @@
+pyrite db backup
+pyrite db restore

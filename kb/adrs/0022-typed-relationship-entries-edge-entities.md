@@ -1,6 +1,6 @@
 ---
 id: adr-0022
-title: 'ADR-0022: Typed Relationship Entries (Edge-Entities)'
+title: 'Typed Relationship Entries (Edge-Entities)'
 type: adr
 adr_number: 22
 status: accepted

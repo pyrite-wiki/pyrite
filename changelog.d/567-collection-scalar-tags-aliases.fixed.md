@@ -1,1 +1,0 @@
-- **Scalar `tags` and `aliases` in `__collection.yaml` are treated as one-item lists (#567).**

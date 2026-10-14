@@ -14,8 +14,8 @@ from functools import cache
 from pathlib import Path
 from typing import Any, ClassVar
 
-from ..exceptions import FrontmatterError
 from ..schema import Link, Provenance, Source
+from ..utils.frontmatter import require_frontmatter
 from ..utils.yaml import dump_yaml, load_yaml
 
 logger = logging.getLogger(__name__)
@@ -175,10 +175,13 @@ def capture_extra_frontmatter(entry: "Entry", meta: dict[str, Any]) -> None:
             exc_info=True,
         )
         return
+    from ..schema.field_aliases import entry_alias_names
+
+    alias_names = entry_alias_names(entry)
     extras = {
         k: v
         for k, v in meta.items()
-        if k not in emitted and k not in _BASE_CONSUMED_KEYS and k not in entry.FRONTMATTER_ALIASES
+        if k not in emitted and k not in _BASE_CONSUMED_KEYS and k not in alias_names
     }
     if extras:
         entry.extra_frontmatter = extras
@@ -193,7 +196,7 @@ def capture_extra_frontmatter(entry: "Entry", meta: dict[str, Any]) -> None:
         if k not in extras
         and k not in _TIMESTAMP_KEYS
         and k not in _NEVER_FRONTMATTER_KEYS
-        and k not in entry.FRONTMATTER_ALIASES
+        and k not in alias_names
         and _plain(v) != _plain(emitted.get(k, _ABSENT))
     }
     if unrepresented:
@@ -464,9 +467,11 @@ class Entry(ABC):
     # restyling the whole block (#46). Never read as data -- only as style.
     _source_frontmatter: Any = field(default=None, init=False, repr=False, compare=False)
 
-    # Legacy frontmatter keys a class reads under another name (e.g. `participants`
-    # -> `actors`). They are consumed, not unknown, so they are not preserved
-    # as extras (which would write the value twice).
+    # DEPRECATED (#697, ADR-0045 decision 8): a bare set of alias names has no
+    # target. Declare `field_aliases: {alias: target}` in the type's schema
+    # (core metadata, a plugin's get_type_metadata(), or kb.yaml) instead; see
+    # pyrite/schema/field_aliases.py. Still honoured for one release, with a
+    # warning per class, so a third-party plugin keeps loading.
     FRONTMATTER_ALIASES: ClassVar[frozenset[str]] = frozenset()
 
     # Fields this type's own service logic maintains -- an audit trail, a
@@ -697,34 +702,20 @@ class Entry(ABC):
     def from_markdown(cls, text: str) -> "Entry":
         """Parse from markdown string with YAML frontmatter.
 
-        The opening `---` fence MUST be on line 1. If the file starts
-        with anything else (body prose, a blank line, a BOM), the file is
-        treated as having no frontmatter — even if a stray `---` divider
-        appears later in the body. Pre-fix, ``re.split`` on
-        ``^---\\s*$`` with ``MULTILINE`` would match body horizontal-rule
-        dividers and feed body prose to the YAML loader, producing
-        confusing ``ComposerError``/alias errors deep in ruamel
-        (see Tier A bug r1030).
+        The opening `---` fence must be the first line (a leading BOM and
+        blank lines are ignored, as Hugo ignores them). If the file starts
+        with anything else (body prose), the file is treated as having no
+        frontmatter, even if a stray `---` divider
+        appears later in the body (a split on any ``---`` line used to feed
+        body prose to the YAML loader, producing confusing
+        ``ComposerError``/alias errors deep in ruamel: Tier A bug r1030).
+        The rule is ``pyrite.utils.frontmatter.split_frontmatter``.
         """
-        # Strip a UTF-8 BOM if present so files saved by Windows editors
-        # still match the fence-at-line-1 rule.
-        if text.startswith("﻿"):
-            text = text[1:]
+        # One rule for where the frontmatter ends: pyrite.utils.frontmatter.
+        split = require_frontmatter(text)
 
-        # Require the fence at line 1. Anything else means no frontmatter
-        # block, regardless of body content.
-        if not text.startswith(("---\n", "---\r\n")):
-            raise FrontmatterError("Invalid entry format: missing YAML frontmatter")
-
-        # Drop the opening fence and split on the next `---` line.
-        # maxsplit=1 here so any later `---` lines stay in the body.
-        after_open = text.split("\n", 1)[1] if "\n" in text else ""
-        close_parts = re.split(r"^---\s*$", after_open, flags=re.MULTILINE, maxsplit=1)
-        if len(close_parts) < 2:
-            raise FrontmatterError("Invalid entry format: missing YAML frontmatter")
-
-        meta = load_yaml(close_parts[0])
-        body = close_parts[1].strip()
+        meta = load_yaml(split.text)
+        body = split.body
 
         entry = cls.from_frontmatter(meta, body)
         # Restore lifecycle from frontmatter (base field, not in subclass constructors)

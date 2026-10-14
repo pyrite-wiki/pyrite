@@ -981,6 +981,7 @@
       "assignee": null,
       "backlinks": [],
       "body": "a zebra of no fixed abode",
+      "content_hash": "fe7dc60f356dd2997276b0c2e28444db5334e02d626e49d4f617c57c97f33716",
       "coordinates": null,
       "created_at": "<TIMESTAMP>",
       "created_by": null,
@@ -1015,6 +1016,7 @@
       "assignee": null,
       "backlinks": [],
       "body": "a zebra behind the wall",
+      "content_hash": "0b3eb8d547f96ecac571def342dbb93479b96410fcddef62f2510886021c5173",
       "coordinates": null,
       "created_at": "<TIMESTAMP>",
       "created_by": null,
@@ -1049,6 +1051,7 @@
       "assignee": null,
       "backlinks": [],
       "body": "a zebra in the open",
+      "content_hash": "75a0ede94d46612f5bd4f9a26fc86dfcf7c40ce08024dae647c9bece56e9e2c1",
       "coordinates": null,
       "created_at": "<TIMESTAMP>",
       "created_by": null,
@@ -1080,24 +1083,28 @@
   "kb_index_sync | admin_key | missing-kb": {
     "added": "<ENUMERATION_CONTENT>",
     "removed": "<ENUMERATION_CONTENT>",
+    "skipped": [],
     "synced": "<ENUMERATION_CONTENT>",
     "updated": "<ENUMERATION_CONTENT>"
   },
   "kb_index_sync | admin_key | no-default-role-kb": {
     "added": "<ENUMERATION_CONTENT>",
     "removed": "<ENUMERATION_CONTENT>",
+    "skipped": [],
     "synced": "<ENUMERATION_CONTENT>",
     "updated": "<ENUMERATION_CONTENT>"
   },
   "kb_index_sync | admin_key | private-kb": {
     "added": "<ENUMERATION_CONTENT>",
     "removed": "<ENUMERATION_CONTENT>",
+    "skipped": [],
     "synced": "<ENUMERATION_CONTENT>",
     "updated": "<ENUMERATION_CONTENT>"
   },
   "kb_index_sync | admin_key | readable-kb": {
     "added": "<ENUMERATION_CONTENT>",
     "removed": "<ENUMERATION_CONTENT>",
+    "skipped": [],
     "synced": "<ENUMERATION_CONTENT>",
     "updated": "<ENUMERATION_CONTENT>"
   },
@@ -1300,6 +1307,8 @@
         "actor_reference": "Event references an actor (resolved from string or wikilink)",
         "advised_by": "Advised by another entity",
         "advises": "Advisory relationship",
+        "amended_by": "An ADR is amended by a later one",
+        "amends": "A later ADR amends an earlier one",
         "answers_question": "Answers a question",
         "asks_question": "Poses a question",
         "authored": "Authorship",
@@ -1462,17 +1471,17 @@
             }
           ],
           "field_descriptions": {
+            "actors": "People or organizations involved",
             "date": "When the event occurred (YYYY-MM-DD)",
             "importance": "Significance score from 1 (minor) to 10 (major)",
             "location": "Where the event took place",
-            "participants": "People or organizations involved",
             "status": "Verification status: confirmed, disputed, alleged, rumored"
           },
           "fields": {
+            "actors": "list[str]",
             "date": "str",
             "importance": "int",
             "location": "str",
-            "participants": "list[str]",
             "status": "EventStatus"
           }
         },
@@ -1554,8 +1563,8 @@
           },
           "fields": {
             "relationship_type": "str",
-            "source": "str",
-            "target": "str"
+            "source_entity": "str",
+            "target_entity": "str"
           }
         },
         "timeline": {
@@ -1637,6 +1646,8 @@
         "actor_reference": "Event references an actor (resolved from string or wikilink)",
         "advised_by": "Advised by another entity",
         "advises": "Advisory relationship",
+        "amended_by": "An ADR is amended by a later one",
+        "amends": "A later ADR amends an earlier one",
         "answers_question": "Answers a question",
         "asks_question": "Poses a question",
         "authored": "Authorship",
@@ -1799,17 +1810,17 @@
             }
           ],
           "field_descriptions": {
+            "actors": "People or organizations involved",
             "date": "When the event occurred (YYYY-MM-DD)",
             "importance": "Significance score from 1 (minor) to 10 (major)",
             "location": "Where the event took place",
-            "participants": "People or organizations involved",
             "status": "Verification status: confirmed, disputed, alleged, rumored"
           },
           "fields": {
+            "actors": "list[str]",
             "date": "str",
             "importance": "int",
             "location": "str",
-            "participants": "list[str]",
             "status": "EventStatus"
           }
         },
@@ -1891,8 +1902,8 @@
           },
           "fields": {
             "relationship_type": "str",
-            "source": "str",
-            "target": "str"
+            "source_entity": "str",
+            "target_entity": "str"
           }
         },
         "timeline": {
@@ -1974,6 +1985,8 @@
         "actor_reference": "Event references an actor (resolved from string or wikilink)",
         "advised_by": "Advised by another entity",
         "advises": "Advisory relationship",
+        "amended_by": "An ADR is amended by a later one",
+        "amends": "A later ADR amends an earlier one",
         "answers_question": "Answers a question",
         "asks_question": "Poses a question",
         "authored": "Authorship",
@@ -2136,17 +2149,17 @@
             }
           ],
           "field_descriptions": {
+            "actors": "People or organizations involved",
             "date": "When the event occurred (YYYY-MM-DD)",
             "importance": "Significance score from 1 (minor) to 10 (major)",
             "location": "Where the event took place",
-            "participants": "People or organizations involved",
             "status": "Verification status: confirmed, disputed, alleged, rumored"
           },
           "fields": {
+            "actors": "list[str]",
             "date": "str",
             "importance": "int",
             "location": "str",
-            "participants": "list[str]",
             "status": "EventStatus"
           }
         },
@@ -2228,8 +2241,8 @@
           },
           "fields": {
             "relationship_type": "str",
-            "source": "str",
-            "target": "str"
+            "source_entity": "str",
+            "target_entity": "str"
           }
         },
         "timeline": {
@@ -2447,6 +2460,8 @@
       "actor_reference": "Event references an actor (resolved from string or wikilink)",
       "advised_by": "Advised by another entity",
       "advises": "Advisory relationship",
+      "amended_by": "An ADR is amended by a later one",
+      "amends": "A later ADR amends an earlier one",
       "answers_question": "Answers a question",
       "asks_question": "Poses a question",
       "authored": "Authorship",
@@ -2609,17 +2624,17 @@
           }
         ],
         "field_descriptions": {
+          "actors": "People or organizations involved",
           "date": "When the event occurred (YYYY-MM-DD)",
           "importance": "Significance score from 1 (minor) to 10 (major)",
           "location": "Where the event took place",
-          "participants": "People or organizations involved",
           "status": "Verification status: confirmed, disputed, alleged, rumored"
         },
         "fields": {
+          "actors": "list[str]",
           "date": "str",
           "importance": "int",
           "location": "str",
-          "participants": "list[str]",
           "status": "EventStatus"
         }
       },
@@ -2701,8 +2716,8 @@
         },
         "fields": {
           "relationship_type": "str",
-          "source": "str",
-          "target": "str"
+          "source_entity": "str",
+          "target_entity": "str"
         }
       },
       "timeline": {
@@ -2761,6 +2776,8 @@
       "actor_reference": "Event references an actor (resolved from string or wikilink)",
       "advised_by": "Advised by another entity",
       "advises": "Advisory relationship",
+      "amended_by": "An ADR is amended by a later one",
+      "amends": "A later ADR amends an earlier one",
       "answers_question": "Answers a question",
       "asks_question": "Poses a question",
       "authored": "Authorship",
@@ -2923,17 +2940,17 @@
           }
         ],
         "field_descriptions": {
+          "actors": "People or organizations involved",
           "date": "When the event occurred (YYYY-MM-DD)",
           "importance": "Significance score from 1 (minor) to 10 (major)",
           "location": "Where the event took place",
-          "participants": "People or organizations involved",
           "status": "Verification status: confirmed, disputed, alleged, rumored"
         },
         "fields": {
+          "actors": "list[str]",
           "date": "str",
           "importance": "int",
           "location": "str",
-          "participants": "list[str]",
           "status": "EventStatus"
         }
       },
@@ -3015,8 +3032,8 @@
         },
         "fields": {
           "relationship_type": "str",
-          "source": "str",
-          "target": "str"
+          "source_entity": "str",
+          "target_entity": "str"
         }
       },
       "timeline": {
@@ -3075,6 +3092,8 @@
       "actor_reference": "Event references an actor (resolved from string or wikilink)",
       "advised_by": "Advised by another entity",
       "advises": "Advisory relationship",
+      "amended_by": "An ADR is amended by a later one",
+      "amends": "A later ADR amends an earlier one",
       "answers_question": "Answers a question",
       "asks_question": "Poses a question",
       "authored": "Authorship",
@@ -3237,17 +3256,17 @@
           }
         ],
         "field_descriptions": {
+          "actors": "People or organizations involved",
           "date": "When the event occurred (YYYY-MM-DD)",
           "importance": "Significance score from 1 (minor) to 10 (major)",
           "location": "Where the event took place",
-          "participants": "People or organizations involved",
           "status": "Verification status: confirmed, disputed, alleged, rumored"
         },
         "fields": {
+          "actors": "list[str]",
           "date": "str",
           "importance": "int",
           "location": "str",
-          "participants": "list[str]",
           "status": "EventStatus"
         }
       },
@@ -3329,8 +3348,8 @@
         },
         "fields": {
           "relationship_type": "str",
-          "source": "str",
-          "target": "str"
+          "source_entity": "str",
+          "target_entity": "str"
         }
       },
       "timeline": {
@@ -3364,12 +3383,24 @@
   "kb_search | admin_key | missing-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "has_more": "<ENUMERATION_CONTENT>",
+    "keyword_match": "none",
+    "legs_run": [
+      "keyword"
+    ],
+    "match": "none",
+    "match_basis": "keyword: nothing matched",
     "query": "zebra",
     "results": []
   },
   "kb_search | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "has_more": "<ENUMERATION_CONTENT>",
+    "keyword_match": "all_terms",
+    "legs_run": [
+      "keyword"
+    ],
+    "match": "strong",
+    "match_basis": "keyword: every term matched",
     "query": "zebra",
     "results": [
       {
@@ -3381,6 +3412,12 @@
   "kb_search | admin_key | private-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "has_more": "<ENUMERATION_CONTENT>",
+    "keyword_match": "all_terms",
+    "legs_run": [
+      "keyword"
+    ],
+    "match": "strong",
+    "match_basis": "keyword: every term matched",
     "query": "zebra",
     "results": [
       {
@@ -3392,6 +3429,12 @@
   "kb_search | admin_key | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "has_more": "<ENUMERATION_CONTENT>",
+    "keyword_match": "all_terms",
+    "legs_run": [
+      "keyword"
+    ],
+    "match": "strong",
+    "match_basis": "keyword: every term matched",
     "query": "zebra",
     "results": [
       {

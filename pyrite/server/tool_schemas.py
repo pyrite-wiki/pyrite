@@ -16,6 +16,8 @@ deployment whose ceiling is 20,000 has been misled by its own tool schema.
 import copy
 from typing import Any
 
+from ..services.search_service import HOW_TO_READ_MATCH
+
 
 def render_tool_schemas(schemas: dict[str, Any], **values: int) -> dict[str, Any]:
     """Return a deep copy of ``schemas`` with description placeholders filled.
@@ -47,7 +49,9 @@ READ_TOOLS = {
         "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     "kb_search": {
-        "description": 'Full-text search across knowledge bases. Supports FTS5 query syntax (AND, OR, NOT, phrases in quotes). Returns entries with snippets ranked by relevance. Filters (entry_type, tags, date_from/date_to, fips, state, status) apply in every mode, on every search leg -- keyword, semantic and hybrid alike -- so a filtered result never contains an entry the filter excluded. When a leg cannot honour a filter it is dropped rather than returning unfiltered rows, and the response carries a "warnings" array naming it; no "warnings" key means every filter was applied on every leg (the key is absent, never null -- test for its presence). The full contract is stated once, in the docstring of SearchService.search: "what a search response owes its caller". Auto-quote rule: special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. \'"family separation" "cross-link"\') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).',
+        "description": 'Full-text search across knowledge bases. Supports FTS5 query syntax (AND, OR, NOT, phrases in quotes). Returns entries with snippets ranked by relevance. Filters (entry_type, tags, date_from/date_to, fips, state, status) apply in every mode, on every search leg -- keyword, semantic and hybrid alike -- so a filtered result never contains an entry the filter excluded. When a leg cannot honour a filter it is dropped rather than returning unfiltered rows, and the response carries a "warnings" array naming it; no "warnings" key means every filter was applied on every leg (the key is absent, never null -- test for its presence). Every response says what its page is worth: "match" (strong, weak or none) with "match_basis", the reason in words; "legs_run", the search legs that ran (a hybrid search with only "keyword" there was a keyword search, and "warnings" says why); "keyword_match" (all_terms, some_terms, none) when a keyword leg ran; and "similarity" (cosine, the same on every backend) on each result the vector leg returned. '
+        + HOW_TO_READ_MATCH
+        + ' "none" is only said when the search ran as asked: if the semantic leg did not run the verdict is weak at worst. The results are returned whatever the verdict, and the verdict is the same on every page. The full contract is stated once, in the docstring of SearchService.search: "what a search response owes its caller". Auto-quote rule: special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. \'"family separation" "cross-link"\') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).',
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -250,7 +254,7 @@ READ_TOOLS = {
         },
     },
     "kb_orient": {
-        "description": "Use this first. With no kb_name it lists the KBs you can read. With kb_name it returns a one-shot summary of that KB: description, entry counts by type, top tags, recent changes, and the schema of the types the KB accepts. Pass detail='brief' for a read session: it omits the write-side schema blocks (ai_instructions, evaluation_rubric, guidelines, goals), which kb_schema returns when you need to write. brief keeps relationship_types, for following links.",
+        "description": "Use this first. With no kb_name it lists up to 50 KBs you can read (maximum 100 per page); pass offset to continue when has_more is true. With kb_name it returns a one-shot summary of that KB: description, entry counts by type, top tags, recent changes, and the schema of the types the KB accepts. Pass detail='brief' for a read session: it omits the write-side schema blocks (ai_instructions, evaluation_rubric, guidelines, goals), which kb_schema returns when you need to write. brief keeps relationship_types, for following links.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -268,6 +272,17 @@ READ_TOOLS = {
                     "type": ["string", "null"],
                     "enum": ["brief", "full", None],
                     "description": "full (default; null is the same): everything. brief: omits ai_instructions, evaluation_rubric, guidelines and goals.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Maximum KBs in the no-name overview (default 50).",
+                },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "KB offset for the no-name overview; use with has_more to page.",
                 },
             },
         },
@@ -648,7 +663,7 @@ READ_TOOLS = {
         },
     },
     "kb_batch_suggest": {
-        "description": "Batch-compare all entries between two KBs to find potential cross-KB links. For each entry in source_kb, finds similar entries in target_kb. Deduplicates bidirectional matches.",
+        "description": "Batch-compare all entries between two KBs to find potential cross-KB links. For each entry in source_kb, finds similar entries in target_kb. Deduplicates bidirectional matches. Entries with no body and no summary are left out of the targets unless include_empty is true.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -673,12 +688,16 @@ READ_TOOLS = {
                     "type": "boolean",
                     "description": "Exclude already-linked pairs (default: true)",
                 },
+                "include_empty": {
+                    "type": "boolean",
+                    "description": "Also return entries with no body and no summary (default: false, they are left out)",
+                },
             },
             "required": ["source_kb", "target_kb"],
         },
     },
     "kb_discover_neighbors": {
-        "description": "Find related entries across all KBs, including the source KB, unless target_kb limits the search. Excludes the source entry and, by default, already-linked entries.",
+        "description": "Find related entries across all KBs, including the source KB, unless target_kb limits the search. Excludes the source entry and, by default, already-linked entries. Entries with no body and no summary are left out unless include_empty is true.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -706,6 +725,10 @@ READ_TOOLS = {
                 "exclude_linked": {
                     "type": "boolean",
                     "description": "Exclude entries that already have a link to the source (default: true)",
+                },
+                "include_empty": {
+                    "type": "boolean",
+                    "description": "Also return entries with no body and no summary (default: false, they are left out)",
                 },
             },
             "required": ["entry_id", "kb_name"],

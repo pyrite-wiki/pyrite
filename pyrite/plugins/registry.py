@@ -674,17 +674,38 @@ class PluginRegistry:
                     plugin_meta = plugin.get_type_metadata()
                     if plugin_meta:
                         for type_name, meta in plugin_meta.items():
-                            metadata.setdefault(type_name, {})
-                            if meta.get("ai_instructions"):
-                                metadata[type_name]["ai_instructions"] = meta["ai_instructions"]
-                            if meta.get("field_descriptions"):
-                                metadata[type_name].setdefault("field_descriptions", {}).update(
-                                    meta["field_descriptions"]
-                                )
-                            if meta.get("display"):
-                                metadata[type_name].setdefault("display", {}).update(
-                                    meta["display"]
-                                )
+                            merged = metadata.setdefault(type_name, {})
+                            # Generic: a key a plugin supplies is never dropped
+                            # (the old merge named three keys and silently lost
+                            # protocols, guidelines, goals, evaluation_rubric
+                            # and, from #697, field_aliases). Maps merge per
+                            # key; any other non-empty value replaces.
+                            for key, value in meta.items():
+                                if not value:
+                                    continue
+                                if key in merged and type(merged[key]) is not type(value):
+                                    # Two plugins disagree on the shape of a
+                                    # key (a map vs a string): keep the first,
+                                    # say so, never drop the rest of the
+                                    # second plugin's metadata.
+                                    logger.warning(
+                                        "Plugin %s type metadata '%s.%s' is a %s but another "
+                                        "plugin gave a %s; keeping the first",
+                                        plugin.name,
+                                        type_name,
+                                        key,
+                                        type(value).__name__,
+                                        type(merged[key]).__name__,
+                                    )
+                                    continue
+                                if isinstance(value, dict):
+                                    merged.setdefault(key, {}).update(value)
+                                elif isinstance(value, list):
+                                    # A copy: the caller may mutate the result,
+                                    # and the plugin's own list must not change.
+                                    merged[key] = list(value)
+                                else:
+                                    merged[key] = value
                 except Exception as e:
                     logger.warning("Plugin %s get_type_metadata failed: %s", plugin.name, e)
         return metadata

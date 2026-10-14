@@ -30,6 +30,7 @@ import threading
 
 import pytest
 import yaml
+from sqlalchemy import event, text as sql_text
 from typer.testing import CliRunner
 
 from pyrite.config import AuthConfig, KBConfig, PyriteConfig, Settings
@@ -724,6 +725,37 @@ class TestAKbNameThatIsNotAStringIsRefused:
         assert "knowledge_bases" in sw.dispatch("kb_orient", {"kb_name": blank})
 
 
+_ORIENT_FRAGMENT = "66-orient-true-as-first-call.changed.md"
+_ORIENT_ENTRY_TITLE = "**`kb_orient` / `pyrite orient` is true as the first call**"
+
+
+def _orient_changelog_entry() -> str:
+    """The changelog's statement about orient, wherever it lives now.
+
+    Before a release it is the fragment; a release moves its text into
+    CHANGELOG.md and deletes the file, so this test must not depend on the
+    file. The entry is found by its title and ends at the next top-level bullet
+    or heading, so a later release's text cannot satisfy or break the checks.
+    """
+    import pathlib
+
+    repo = pathlib.Path(__file__).resolve().parent.parent
+    fragment = repo / "changelog.d" / _ORIENT_FRAGMENT
+    if fragment.exists():
+        return fragment.read_text()
+    lines = (repo / "CHANGELOG.md").read_text().splitlines()
+    start = next(
+        (i for i, ln in enumerate(lines) if ln.startswith("- ") and _ORIENT_ENTRY_TITLE in ln),
+        None,
+    )
+    assert start is not None, "the orient entry is in neither the fragment nor CHANGELOG.md"
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i].startswith(("- ", "## "))),
+        len(lines),
+    )
+    return "\n".join(lines[start:end])
+
+
 class TestTheScopedRefusalSaysWhatToDoNext:
     """Item 4: one static hint, the same for an absent and an unreadable name."""
 
@@ -745,9 +777,7 @@ class TestTheScopedRefusalSaysWhatToDoNext:
                     assert out["suggestion"] == SCOPED_REFUSAL_HINT, (tool, key)
 
     def test_the_changelog_does_not_promise_scoped_callers_near_matches(self):
-        import pathlib
-
-        text = pathlib.Path("changelog.d/66-orient-true-as-first-call.changed.md").read_text()
+        text = _orient_changelog_entry()
         flat = " ".join(text.split())
         assert "Names are drawn only from the KBs the caller may read" not in flat
         assert "never from a KB the caller may not read" in flat
@@ -804,3 +834,55 @@ class TestAPluginCannotOverwriteTheDetailMarkers:
         assert out["detail"] == "brief"
         assert out["detail_note"].startswith("brief omits")
         assert out["board"] == 1
+
+
+def test_no_name_overview_is_bounded_paginated_and_uses_bounded_queries(make_world):
+    world = make_world([(f"kb-{i:03d}", None) for i in range(60)])
+    server = world.server()
+    engine = server.db.session.get_bind()
+    statements = []
+
+    def record_statement(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record_statement)
+    try:
+        first = world.mcp("kb_orient")
+    finally:
+        event.remove(engine, "before_cursor_execute", record_statement)
+
+    selects = [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]
+    assert len(selects) <= 3
+    assert len(first["knowledge_bases"]) == 50
+    assert first["limit"] == 50
+    assert first["offset"] == 0
+    assert first["has_more"] is True
+
+    second = world.mcp("kb_orient", {"limit": 50, "offset": 50})
+    assert len(second["knowledge_bases"]) == 10
+    assert second["offset"] == 50
+    assert second["has_more"] is False
+    scoped = world.mcp("kb_orient", {"limit": 1}, readable={"kb-059"})
+    assert [kb["name"] for kb in scoped["knowledge_bases"]] == ["kb-059"]
+    assert scoped["has_more"] is False
+    assert {kb["name"] for kb in first["knowledge_bases"]}.isdisjoint(
+        kb["name"] for kb in second["knowledge_bases"]
+    )
+
+
+def test_no_name_overview_matches_kb_list_registry_type_and_count(make_world):
+    world = make_world([("notes", None)])
+    world.svc.create_entry("notes", "first", "First", "note", "hello")
+    world.mcp("kb_list")
+    server = world.server()
+    server.db.session.execute(
+        sql_text("UPDATE kb SET kb_type = :kb_type, entry_count = :entry_count WHERE name = :name"),
+        {"kb_type": "project", "entry_count": 17, "name": "notes"},
+    )
+    server.db.session.commit()
+
+    listed = world.mcp("kb_list")["knowledge_bases"][0]
+    oriented = world.mcp("kb_orient")["knowledge_bases"][0]
+
+    assert oriented["type"] == listed["type"] == "project"
+    assert oriented["entry_count"] == listed["entry_count"] == 1

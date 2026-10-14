@@ -9,7 +9,7 @@ dependencies: ["sqlalchemy", "sqlite3", "sqlite-vec", "psycopg2 (optional)", "pg
 tags: [core, storage]
 ---
 
-Three-layer persistence architecture. At the bottom, `backends/` define a `SearchBackend` protocol implemented by SQLite and Postgres backends. In the middle, `PyriteDB` composes six mixin classes into a single facade — app-state tables use SQLAlchemy ORM while virtual tables (FTS5, vec_entry) use raw SQL. At the top, `KBRepository` handles file I/O, `IndexManager` syncs files to DB, and `DocumentManager` composes both into an atomic write path.
+Three-layer persistence architecture. At the bottom, `backends/` define a `SearchBackend` protocol implemented by SQLite and Postgres backends (Postgres is experimental in 0.25.x: an existing Postgres database may not upgrade between releases, [#718](https://github.com/pyrite-wiki/pyrite/issues/718)). In the middle, `PyriteDB` composes six mixin classes into a single facade — app-state tables use SQLAlchemy ORM while virtual tables (FTS5, vec_entry) use raw SQL. At the top, `KBRepository` handles file I/O, `IndexManager` syncs files to DB, and `DocumentManager` composes both into an atomic write path.
 
 ## Architecture
 

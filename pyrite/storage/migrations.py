@@ -16,7 +16,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Current schema version
-CURRENT_VERSION = 26
+CURRENT_VERSION = 27
 
 
 @dataclass
@@ -512,6 +512,16 @@ MIGRATIONS: list[Migration] = [
         -- SQLite < 3.35 does not support DROP COLUMN; column remains but is unused.
         """,
     ),
+    Migration(
+        version=27,
+        description="Add entry.file_mtime_ns and entry.file_size: reconcile staleness (ADR-0038)",
+        # ALTER handled conditionally in _apply_v27() since the columns may
+        # already exist from ORM create_all.
+        up="",
+        down="""
+        -- SQLite < 3.35 does not support DROP COLUMN; columns remain but are unused.
+        """,
+    ),
 ]
 
 
@@ -757,6 +767,19 @@ class MigrationManager:
         # scoping and keeps what its global role gave it. New rows default to
         # 0: an insert that omits the column grants nothing.
         self.conn.execute("UPDATE local_user SET global_access = 1")
+        self.conn.commit()
+
+    def _apply_v27(self) -> None:
+        """Conditionally add the recorded file stat to entry (one reconcile)."""
+        table_exists = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='entry'"
+        ).fetchone()
+        if not table_exists:
+            return
+        existing = {row[1] for row in self.conn.execute("PRAGMA table_info(entry)").fetchall()}
+        for column in ("file_mtime_ns", "file_size"):
+            if column not in existing:
+                self.conn.execute(f"ALTER TABLE entry ADD COLUMN {column} INTEGER")
         self.conn.commit()
 
     def _apply_v24(self) -> None:

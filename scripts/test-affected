@@ -36,6 +36,12 @@ A change under extensions/*/src/ also selects every test that mentions
 ``get_registry``, ``entry_points`` or ``PluginRegistry``: core tests reach
 plugins through entry points, which no import names.
 
+Experimental tests (#657) are deselected: ``--run`` passes ``-m "not slow and
+not e2e and not experimental"``, the gating CI job's expression, so a push is
+held to what a merge is. ``--experimental`` or ``PYRITE_PUSH_EXPERIMENTAL=1``
+runs them too. A pass is stamped per scope: a core-only pass never vouches for
+a run that includes experimental tests.
+
 Known blind spots, by design (CI covers them): autouse fixtures are not
 attributed to the tests they wrap. Importing ``pkg.x`` executes
 ``pkg/__init__.py``, and so everything that ``__init__`` imports; that
@@ -51,13 +57,60 @@ Usage
                                                (or PYRITE_PUSH_FULL=1|true|yes)
   scripts/test-affected --run -- --lf          re-run only the last run's failures
                                                (anything after -- goes to pytest)
-  --force             ignore pass stamps (or PYRITE_PUSH_FORCE=1|true|yes)
+  scripts/test-affected --preflight            what the pre-push hook would do
+                                               for a push, without running it
+  --force             ignore pass stamps and CI's verdict
+                      (or PYRITE_PUSH_FORCE=1|true|yes)
   --base REF          compare against REF's merge base (default origin/dev)
   --committed         ignore uncommitted and untracked changes
   --files A B ...     use these changed paths instead of asking git
 
 Under the pre-push hook (PRE_COMMIT_FROM_REF / PRE_COMMIT_TO_REF set) the
-changed paths are those of the pushed range, not the working tree.
+changed paths are those of the pushed range, not the working tree. Selection
+uses a two-dot diff; pre-commit's trigger uses a three-dot diff. A history-only
+force-push can therefore trigger a run that selects core only. pre-commit
+checks only the first non-deletion ref in a multi-ref push: push one branch
+at a time when relying on the local hook.
+
+A verified tip is not tested again (under the hook only)
+  When the commit being pushed is VERIFIED -- the required check (`gate`) is
+  green on that exact SHA on GitHub, by the one definition in
+  scripts/verified_commit.py, which scripts/release.py also uses -- the hook
+  prints one line naming the SHA, the check and the repository, and skips.
+  The 0.25.7 release push re-ran the full suite here on a commit CI had
+  passed, in a venv missing a dev dependency, and was blocked.
+
+  It fails closed. No `gh`, no network, a timeout, an API error, a pending or
+  red check, an answer that is not understood: the commit is not verified and
+  the run goes ahead exactly as it would have. One request, 8 seconds at most,
+  no retry; and no request at all unless a remote-tracking ref already
+  contains the tip, so an ordinary push of new commits never waits on the
+  network. Only the pushed tip is asked about: a verified ancestor says
+  nothing for commits on top of it. A push of several refs is seen by
+  pre-commit as its first ref only, as before.
+
+  ``--force`` / PYRITE_PUSH_FORCE=1 runs anyway and asks nothing.
+  ``--experimental`` / PYRITE_PUSH_EXPERIMENTAL=1 runs too: `gate` does not
+  need the experimental job. ``--full`` / PYRITE_PUSH_FULL=1 runs too (below).
+  A verified skip writes no stamp. Outside the hook (no PRE_COMMIT_TO_REF)
+  nothing is asked.
+
+  What a verified tip is evidence of, exactly: every job `gate` needs ended
+  in success or was skipped by CI's change classifier, in every workflow run
+  that tested this SHA. For a commit the merge queue tested that is the full
+  three-Python matrix. For a pull-request run it is one interpreter, and a
+  job the classifier judged irrelevant (`test` on a docs-only change) did not
+  run at all. It says CI accepted this commit; it does not say any particular
+  selection of tests ran. So an explicit request for the full suite
+  (``--full`` / PYRITE_PUSH_FULL=1) is honoured and runs. A selection that is
+  "full" only because of what the pushed range touches (the release range
+  always touches pyproject.toml) is still skipped: that is the case the skip
+  exists for.
+
+  ``--preflight`` answers with the same decision and runs only a collection:
+  ``preflight: skip: ...``, ``preflight: would run: ...`` (the selection
+  imports with the hook's interpreter), or ``preflight: cannot run: ...`` and
+  exit 1. The release dry run asks it for the pushes ``--execute`` makes.
 
 Pass stamps: each tree is tested once
   A ``--run`` that exits 0 on a clean tree (no uncommitted change to a
@@ -99,9 +152,11 @@ from __future__ import annotations
 
 import argparse
 import ast
+import importlib.util
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -109,6 +164,12 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# Run as a script, scripts/ is already first on sys.path; loaded by path (the
+# tests do), it is not.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import verified_commit  # noqa: E402
 
 DEFAULT_BASE = "origin/dev"
 DEFAULT_WORKERS = 4
@@ -119,7 +180,7 @@ _FULL_SUITE_PATHS = {".pre-commit-config.yaml"}
 _FULL_SUITE_PREFIXES = (".github/workflows/",)
 # Content trees: a change here is matched by basename only, never by its
 # directory's name ("backlog", "docs" are words half the suite uses).
-_CONTENT_TOPS = {"kb", "docs", "web"}
+_CONTENT_TOPS = {"kb", "docs", "web", ".claude"}
 # Directory names too common to stand for a file in them: "tests" and
 # "scripts" appear in a third of the suite.
 _GENERIC_DIRS = {"tests", "scripts"}
@@ -731,6 +792,57 @@ def pytest_args(selection: Selection, workers: int | str = DEFAULT_WORKERS) -> l
     return [*args, *files, *extra]
 
 
+def _test_ids(path: Path, rel: str) -> list[str]:
+    """Node ids (without parameters) of the test functions in one file."""
+    try:
+        tree = ast.parse(path.read_text())
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return []
+    ids: list[str] = []
+
+    def walk(node: ast.AST, prefix: list[str]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef):
+                walk(child, [*prefix, child.name])
+            elif isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
+                if child.name.startswith("test"):
+                    ids.append("::".join([rel, *prefix, child.name]))
+
+    walk(tree, [])
+    return ids
+
+
+def experimental_left_out(root: Path, items: list[str]) -> tuple[int, int] | None:
+    """(tests, files) among the selection that the mapping marks experimental,
+    which the default --run deselects (#657). None without a mapping."""
+    mapping = root / "tests" / "experimental_surface.py"
+    if not mapping.exists():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("_experimental_surface", mapping)
+        module = importlib.util.module_from_spec(spec)
+        # Registered first: its dataclasses look their module up by name.
+        sys.modules["_experimental_surface"] = module
+        spec.loader.exec_module(module)
+        is_experimental = module.is_experimental
+    except Exception:  # noqa: BLE001 - a note, never a reason to block a run
+        return None
+    tests, files = 0, set()
+    for item in items:
+        target = item.split("::", 1)[0]
+        path = root / target
+        paths = sorted(path.rglob("test_*.py")) if path.is_dir() else [path]
+        for test_file in paths:
+            rel = test_file.relative_to(root).as_posix()
+            for nodeid in _test_ids(test_file, rel):
+                if "::" in item and not (nodeid == item or nodeid.startswith(item + "::")):
+                    continue
+                if is_experimental(nodeid):
+                    tests += 1
+                    files.add(rel)
+    return tests, len(files)
+
+
 # --------------------------------------------------------------------------
 # Pass stamps: each tree is tested once
 
@@ -745,6 +857,11 @@ _OUTPUT_ONLY_ARGS = {
     "--showlocals", "--no-header", "--no-summary",
 }  # fmt: skip
 _OUTPUT_ONLY_PREFIXES = ("--tb=", "--durations=", "--color=", "-r", "--capture=")
+
+
+# The gating CI job's marker expression (#657). It replaces pyproject's
+# addopts -m, so it restates "not slow and not e2e".
+CORE_ONLY = "not slow and not e2e and not experimental"
 
 
 def _truthy(name: str) -> bool:
@@ -924,6 +1041,41 @@ def _skip_line(tree: str, stamp: dict) -> str:
 
 
 # --------------------------------------------------------------------------
+# A verified tip is not tested again
+
+
+def pushed_tip_verdict(root: Path, to_ref: str) -> verified_commit.Verdict | None:
+    """What GitHub says about the commit being pushed, or None when it was not
+    asked. Under the hook only: ``to_ref`` is pre-commit's PRE_COMMIT_TO_REF.
+
+    Not asked, and so not verified, when the ref names no commit, the push
+    is not to a GitHub repository, or no remote-tracking ref contains the tip
+    (GitHub cannot have tested a commit it has never been sent, and this keeps
+    an ordinary push off the network). The definition itself, and every way
+    its lookup fails closed, is verified_commit.verdict_for.
+
+    The tip is peeled to a commit: an annotated tag is pushed as a tag object.
+    """
+    try:
+        sha = _git(root, "rev-parse", "--verify", "--quiet", f"{to_ref}^{{commit}}").strip()
+        slug = verified_commit.remote_slug(os.environ.get("PRE_COMMIT_REMOTE_URL", ""))
+        if not sha or not slug:
+            return None
+        if not _git(root, "for-each-ref", "--count=1", "--contains", sha, "refs/remotes/").strip():
+            return None
+        return verified_commit.verdict_for(sha, slug, verified_commit.run_bounded)
+    except Exception:  # noqa: BLE001 - whatever went wrong, the commit is not verified
+        return None
+
+
+def _verified_line(verdict: verified_commit.Verdict) -> str:
+    return (
+        f"test-affected: {verdict.sha[:12]} is verified ({verdict.detail} on "
+        f"{verdict.slug}); not re-running the local suite"
+    )
+
+
+# --------------------------------------------------------------------------
 # CLI
 
 
@@ -932,6 +1084,43 @@ def _python(root: Path) -> str:
     ``python3`` may have no pytest, or import another checkout's code."""
     venv = root / ".venv" / "bin" / "python"
     return str(venv) if os.access(venv, os.X_OK) else sys.executable
+
+
+def _preflight(
+    root: Path,
+    python: str,
+    args: list[str],
+    scope: list[str],
+    label: str,
+    skip: str | None,
+    forced: bool,
+) -> int:
+    """Say what ``--run`` would do, on stdout, and run nothing but a
+    collection: importing every selected test file is what shows that the
+    interpreter the hook uses has what the suite needs (0.25.7: it had no
+    ``hypothesis``, found at the push to main)."""
+    if skip is not None:
+        print(f"preflight: skip: {skip}")
+        return 0
+    why = "PYRITE_PUSH_FORCE or --force is set; " if forced else ""
+    # No -n: collection needs no workers. No cache: a preflight writes nothing.
+    collect = [python, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"]
+    collect += [*args[2:], *scope]
+    try:
+        proc = subprocess.run(collect, cwd=root, capture_output=True, text=True)
+    except OSError as exc:
+        print(f"preflight: cannot run: {python} could not be started ({exc})")
+        return 1
+    if proc.returncode != 0:
+        print(
+            f"preflight: cannot run: {label}, and the selection does not import with "
+            f"{python} (pytest --collect-only exited {proc.returncode}):"
+        )
+        for line in (proc.stdout + proc.stderr).strip().splitlines()[-25:]:
+            print(f"  {line}")
+        return 1
+    print(f"preflight: would run: {why}{label}; it collects cleanly with {python}")
+    return 0
 
 
 def _default_base(root: Path, base: str) -> str:
@@ -952,6 +1141,11 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--list", action="store_true", help="print selected paths (default)")
     mode.add_argument("--explain", action="store_true", help="print why each test was selected")
     mode.add_argument("--run", action="store_true", help="run the selection with pytest")
+    mode.add_argument(
+        "--preflight",
+        action="store_true",
+        help="say what --run would do for this push, and check the selection imports",
+    )
     parser.add_argument(
         "-n", "--workers", type=_workers, default=str(DEFAULT_WORKERS), help="N or auto"
     )
@@ -959,10 +1153,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--committed", action="store_true")
     parser.add_argument("--files", nargs="*", help="changed paths (skip git)")
     parser.add_argument("--full", action="store_true", help="select the full suite")
+    parser.add_argument(
+        "--experimental",
+        action="store_true",
+        help="with --run: include experimental tests (PYRITE_PUSH_EXPERIMENTAL=1)",
+    )
     parser.add_argument("--helper-threshold", type=int, default=DEFAULT_HELPER_THRESHOLD)
     parser.add_argument("--dry-run", action="store_true", help="with --run: print the command only")
     parser.add_argument(
-        "--force", action="store_true", help="with --run: ignore pass stamps (PYRITE_PUSH_FORCE=1)"
+        "--force",
+        action="store_true",
+        help="with --run: ignore pass stamps and CI's verdict (PYRITE_PUSH_FORCE=1)",
     )
     parser.add_argument("--root", default=None, help=argparse.SUPPRESS)
     parser.add_argument("pytest_extra", nargs=argparse.REMAINDER, help="after --: passed to pytest")
@@ -974,22 +1175,30 @@ def main(argv: list[str] | None = None) -> int:
     if opts.full or env_full:
         selection = Selection(files={}, core=[], full="--full" if opts.full else "PYRITE_PUSH_FULL")
     else:
+        diff_context = f"base {opts.base!r}"
+        diff_hint = "fetch origin dev, or push with PYRITE_PUSH_FULL=1"
         try:
             if opts.files is not None:
                 changed = opts.files
             elif to_ref:
                 # Under the pre-push hook: what is being pushed, not the tree.
                 base = _default_base(root, opts.base)
-                changed = pushed_files(root, os.environ.get("PRE_COMMIT_FROM_REF"), to_ref, base)
+                from_ref = os.environ.get("PRE_COMMIT_FROM_REF")
+                diff_context = f"pushed range {from_ref!r}..{to_ref!r} (fallback base {base!r})"
+                diff_hint = (
+                    "check PRE_COMMIT_FROM_REF and PRE_COMMIT_TO_REF, "
+                    "fetch missing refs, or push with PYRITE_PUSH_FULL=1"
+                )
+                changed = pushed_files(root, from_ref, to_ref, base)
             else:
                 changed = changed_files(root, _default_base(root, opts.base), opts.committed)
         except subprocess.CalledProcessError as exc:
             # Fail closed: selecting nothing would pass a push untested.
             detail = (exc.stderr or "").strip().splitlines()
             print(
-                f"test-affected: could not diff against {opts.base!r}"
+                f"test-affected: could not diff {diff_context}"
                 + (f" ({detail[-1]})" if detail else "")
-                + " -- fetch origin dev, or push with PYRITE_PUSH_FULL=1",
+                + f" -- {diff_hint}",
                 file=sys.stderr,
             )
             return 2
@@ -1008,21 +1217,35 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     args = pytest_args(selection, opts.workers)
-    if opts.run:
+    if opts.run or opts.preflight:
         extra = [a for a in opts.pytest_extra if a != "--"]
         python = _python(root)
-        cmd = [python, "-m", "pytest", *args, "-q", "--tb=short", *extra]
+        with_experimental = opts.experimental or _truthy("PYRITE_PUSH_EXPERIMENTAL")
+        scope = [] if with_experimental else ["-m", CORE_ONLY]
+        cmd = [python, "-m", "pytest", *args, *scope, "-q", "--tb=short", *extra]
         label = (
             selection.full
             and f"full suite: {selection.full}"
             or (f"{len(selection.files)} affected test files + {len(selection.core)} core")
         )
         print(f"test-affected: {label}", file=sys.stderr)
-        if opts.dry_run:
-            print(" ".join(cmd))
+        left_out = None if with_experimental else experimental_left_out(root, args[2:])
+        if left_out and left_out[0]:
+            tests, files = left_out
+            print(
+                f"test-affected: {tests} experimental test function{'s' * (tests != 1)} in "
+                f"{files} file{'s' * (files != 1)} left out, as in CI's gating job; "
+                "run them too with: scripts/test-affected --run --experimental",
+                file=sys.stderr,
+            )
+        if opts.dry_run and not opts.preflight:
+            print(shlex.join(cmd))
             return 0
         needed: str | list[str] = "full" if selection.full is not None else args[2:]
         version = python_version(python)
+        if version is not None and with_experimental:
+            # Its own stamp key: neither scope's pass vouches for the other.
+            version = f"{version}+experimental"
         # Stamps only with the worktree's own venv. The fallback interpreter
         # belongs to another checkout, whose editable installs import THAT
         # checkout's code (#210): its pass says nothing about this tree, and
@@ -1031,18 +1254,39 @@ def main(argv: list[str] | None = None) -> int:
         stamps = stamp_dir(root) if own_venv else None
         clean = is_clean(root)
         head_tree = tree_of(root, "HEAD")
-        if (
-            stamps is not None
-            and version is not None
-            and not (opts.force or _truthy("PYRITE_PUSH_FORCE"))
-        ):
+        forced = opts.force or _truthy("PYRITE_PUSH_FORCE")
+        # Why this run need not happen, if it need not: one line, or None.
+        # --run and --preflight read the same answer.
+        skip: str | None = None
+        if not forced and stamps is not None and version is not None:
             # The tree under test: under the hook, the one being pushed --
             # never the working tree's, which may be another commit.
             looked_up = tree_of(root, to_ref) if to_ref else (clean and head_tree)
             stamp = looked_up and find_stamp(stamps, looked_up, version, needed)
             if stamp:
-                print(_skip_line(looked_up, stamp), file=sys.stderr)
-                return 0
+                skip = _skip_line(looked_up, stamp)
+        asked_for_all = opts.full or env_full or with_experimental
+        if skip is None and not forced and to_ref and not asked_for_all:
+            # A green `gate` says CI accepted this commit -- not that a given
+            # selection ran: a pull-request `gate` is one interpreter and
+            # passes with `test` skipped, and no `gate` needs the experimental
+            # job. So an explicit request for more (PYRITE_PUSH_FULL,
+            # PYRITE_PUSH_EXPERIMENTAL) is honoured and runs. Asked after the
+            # stamp: a stamp costs no request.
+            verdict = pushed_tip_verdict(root, to_ref)
+            if verdict is not None and verdict.verified:
+                skip = _verified_line(verdict)
+            elif verdict is not None:
+                print(
+                    f"test-affected: {verdict.sha[:12]} is not verified "
+                    f"({verdict.detail}); running the suite",
+                    file=sys.stderr,
+                )
+        if opts.preflight:
+            return _preflight(root, python, args, scope, label, skip, forced)
+        if skip is not None:
+            print(skip, file=sys.stderr)
+            return 0
         code = subprocess.call(cmd, cwd=root, env={**os.environ})
         if code == 0 and not own_venv:
             print("test-affected: passed; not stamped (no .venv in this worktree)", file=sys.stderr)

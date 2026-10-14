@@ -1,0 +1,15 @@
+pyrite kb add
+pyrite kb commit
+pyrite kb create
+pyrite kb discover
+pyrite kb gc
+pyrite kb health
+pyrite kb list
+pyrite kb push
+pyrite kb reindex
+pyrite kb remove
+pyrite kb schema add-type
+pyrite kb schema remove-type
+pyrite kb schema set
+pyrite kb schema show
+pyrite kb validate

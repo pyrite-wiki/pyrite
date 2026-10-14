@@ -210,7 +210,10 @@ class TestChangesFailsClosedOnAMergeGroup:
             for s in ci["jobs"]["test"]["steps"]
             if "check_fix_commit_has_tests.py" in str(s.get("run", ""))
         )
-        assert str(step["if"]).strip() == "github.event_name == 'pull_request'", step["if"]
+        # shard 1 only (tests Q2): the test job is a 3-way shard matrix
+        assert (
+            str(step["if"]).strip() == "github.event_name == 'pull_request' && matrix.shard == 1"
+        ), step["if"]
 
     def test_outputs_do_not_silently_default_to_false(self, changes_job):
         # `x == 'true'` on an empty string is false -- a skip. The merge_group

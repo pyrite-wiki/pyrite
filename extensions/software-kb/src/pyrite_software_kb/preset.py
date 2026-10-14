@@ -1,5 +1,18 @@
 """Software KB preset definition."""
 
+from .entry_types import (
+    ADR_STATUSES,
+    BACKLOG_EFFORTS,
+    BACKLOG_KINDS,
+    BACKLOG_PRIORITIES,
+    BACKLOG_STATUSES,
+    COMPONENT_KINDS,
+    DESIGN_DOC_STATUSES,
+    MILESTONE_STATUSES,
+    RUNBOOK_KINDS,
+    STANDARD_CATEGORIES,
+)
+
 SOFTWARE_KB_PRESET = {
     "name": "my-project",
     "description": "Software team knowledge base with ADRs, design docs, standards, components, backlog, and runbooks",
@@ -71,7 +84,7 @@ SOFTWARE_KB_PRESET = {
     # No rule enum on `status`: a rule applies to every type with the field,
     # and each type here has its own statuses. `validators.py` checks them
     # per type only for a KB with `kb_type: software`; a KB registered as
-    # generic gets no status check yet (#572).
+    # generic uses the declared per-type fields too.
     "validation": {
         "enforce": True,
         "rules": [],
@@ -98,3 +111,24 @@ SOFTWARE_KB_PRESET = {
         "wip_policy": "warn",
     },
 }
+
+# Keep the preset vocabulary tied to the plugin validator constants.
+for _name, _fields in {
+    "adr": {"status": ADR_STATUSES},
+    "design_doc": {"status": DESIGN_DOC_STATUSES},
+    "standard": {"category": STANDARD_CATEGORIES},
+    "component": {"kind": COMPONENT_KINDS},
+    "backlog_item": {
+        "status": BACKLOG_STATUSES,
+        "kind": BACKLOG_KINDS,
+        "priority": BACKLOG_PRIORITIES,
+        "effort": BACKLOG_EFFORTS,
+    },
+    "runbook": {"runbook_kind": RUNBOOK_KINDS},
+    "milestone": {"status": MILESTONE_STATUSES},
+    "programmatic_validation": {"category": STANDARD_CATEGORIES},
+    "development_convention": {"category": STANDARD_CATEGORIES},
+}.items():
+    SOFTWARE_KB_PRESET["types"][_name]["fields"] = {
+        field: {"type": "select", "options": list(options)} for field, options in _fields.items()
+    }

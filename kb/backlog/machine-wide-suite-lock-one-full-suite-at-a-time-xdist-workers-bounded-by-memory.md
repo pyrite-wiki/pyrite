@@ -16,6 +16,10 @@ rank: 0
 github_issue: 168
 ---
 
+## Current hook contract
+
+The pre-push hook now uses `scripts/test-affected` (core plus affected tests, #356), not an unconditional full suite. [CONTRIBUTING](../../CONTRIBUTING.md#branches-hooks-and-pull-requests) owns the current flow. The full-suite history/proposal below does not describe the current hook; a suite-lock integration must retain the selector and its full-suite fallback.
+
 ## Problem
 
 On 2026-09-18 ~11:10Z the conductor loop ran the maintainer's machine (16 GB, 10 cores) out of memory (#168): up to eight concurrent `pytest tests/ extensions/ -n auto` runs (10 xdist workers each, ~80 Python processes, torch where embeddings load) plus a Playwright run. Nothing serialises full suites across worktrees, and `-n auto` sizes itself to the core count, not to memory or to what else is running. The suite is started from four places that do not know about each other: the pre-push hook inside every worker, workers' own verification runs, reviewers, and the conductor.

@@ -20,6 +20,7 @@ import atexit
 import os
 import shutil
 import tempfile
+import warnings
 from pathlib import Path
 
 import pytest
@@ -81,6 +82,84 @@ def _isolate_pyrite_config_environment() -> None:
 
 
 _isolate_pyrite_config_environment()
+
+
+def _isolate_hypothesis_storage() -> None:
+    """Keep Hypothesis's cache out of the checkout.
+
+    Hypothesis writes ``<cwd>/.hypothesis/constants`` even when a test sets
+    ``database=None``, and a test that lists the repository root while other
+    xdist workers run then sees it appear (#708's CI, 2026-10-03).
+    tests/test_suite_writes_outside_checkout.py is the canary.
+    """
+    from hypothesis.configuration import set_hypothesis_home_dir
+
+    home = Path(tempfile.mkdtemp(prefix="pyrite-test-hypothesis-"))
+    atexit.register(shutil.rmtree, home, ignore_errors=True)
+    set_hypothesis_home_dir(home)
+
+
+_isolate_hypothesis_storage()
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(config, items):
+    """Mark experimental tests, from the one mapping (#657).
+
+    tests/experimental_surface.py decides; this only applies it. tryfirst so
+    the marker is on every item before ``-m`` deselects (the mark plugin's own
+    collection_modifyitems), whichever order plugins registered in.
+    """
+    from tests.experimental_surface import is_experimental
+
+    marker = pytest.mark.experimental
+    for item in items:
+        if is_experimental(item.nodeid):
+            item.add_marker(marker)
+
+
+def _deselects_experimental(config) -> bool:
+    """Does this run's -m leave experimental tests out (the core run)?"""
+    from _pytest.mark.expression import Expression
+
+    expr = config.getoption("markexpr", "") or ""
+    if not expr:
+        return False
+    try:
+        compiled = Expression.compile(expr)
+    except Exception:  # noqa: BLE001 - pytest reports a bad -m itself
+        return False
+    # A test whose only marker is `experimental`: is it selected?
+    return not compiled.evaluate(lambda name, **_: name == "experimental")
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(collector):
+    """A module that fails to import cannot be marked, so it would stop the
+    core run for a broken experimental feature (#657). When the run leaves
+    experimental tests out and the mapping says EVERY test in the file is
+    experimental (`wholly_experimental_file`), the error is a warning here;
+    the `experimental` job still reports it as a failure of that file. A file
+    with any core or security case still stops the run."""
+    report = yield
+    if not (report.failed and isinstance(collector, pytest.Module)):
+        return report
+    if not _deselects_experimental(collector.config):
+        return report
+    from tests.experimental_surface import wholly_experimental_file
+
+    rel = Path(collector.path).relative_to(collector.config.rootpath).as_posix()
+    if not wholly_experimental_file(rel):
+        return report
+    # Not collector.warn: that re-imports the module to locate the warning.
+    warnings.warn_explicit(
+        f"{rel} failed to collect; every test in it is experimental, so the core "
+        'run continues. See the error with -m "experimental".',
+        pytest.PytestWarning,
+        str(collector.path),
+        1,
+    )
+    return pytest.CollectReport(report.nodeid, "passed", None, [])
 
 
 @pytest.fixture(autouse=True)

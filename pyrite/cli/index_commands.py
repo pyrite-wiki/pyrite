@@ -10,8 +10,9 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from ..utils.errors import cli_error
+from ..utils.errors import PARTIAL_EXIT, cli_error, exit_unless_whole
 from .context import cli_db_context, get_config_and_db
+from .output import validate_output_format
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ def _format_output(data: dict, fmt: str) -> str | None:
     return format_output(data, fmt)
 
 
-def _settle_embed_queue(db) -> int:
+def _settle_embed_queue(db, model_name: str | None = None) -> int:
     """Pay off whatever ADR-0035 writes left in `embed_queue`.
 
     Shares one implementation with the server (`settle_embed_queue`), which is
@@ -44,7 +45,7 @@ def _settle_embed_queue(db) -> int:
     """
     from ..services.embedding_worker import settle_embed_queue
 
-    return settle_embed_queue(db)
+    return settle_embed_queue(db, model_name=model_name)
 
 
 def _embed_counts(stats: dict, from_queue: int, force: bool) -> tuple[int, int, int]:
@@ -65,6 +66,22 @@ def _embed_counts(stats: dict, from_queue: int, force: bool) -> tuple[int, int, 
         return stats["embedded"], stats["skipped"], 0
     skipped = stats["skipped"] - from_queue
     return stats["embedded"] + from_queue, max(0, skipped), max(0, -skipped)
+
+
+def _duplicate_lines(duplicates: list[dict], limit: int = 10) -> list[str]:
+    """One line per id held by several files, the indexed file first.
+
+    The index holds the lexicographically first KB-relative path (ADR-0038,
+    decided 2026-09-26); the others are not indexed until the duplicate is
+    resolved -- by deleting a copy, or giving one its own `id:`.
+    """
+    lines = []
+    for dup in duplicates[:limit]:
+        others = [p for p in dup["paths"] if p != dup["winner"]]
+        lines.append(f"{dup['kb']}/{dup['id']}: {dup['winner']} (indexed), {', '.join(others)}")
+    if len(duplicates) > limit:
+        lines.append(f"… and {len(duplicates) - limit} more")
+    return lines
 
 
 @index_app.command("build")
@@ -171,7 +188,7 @@ def index_build(
                 # *skip* it -- it only asks whether a vector exists, not
                 # whether it is current -- so an update's row must be settled
                 # before, not after.
-                _settle_embed_queue(db)
+                _settle_embed_queue(db, model_name=config.settings.embedding_model)
                 svc = EmbeddingService(db, model_name=config.settings.embedding_model)
                 stats = svc.embed_all(kb_name=kb_name, force=force)
                 if stats["embedded"] > 0:
@@ -220,6 +237,25 @@ def index_sync(
             console.print(f"    [dim]• {entry['path']}[/dim]")
         if len(malformed) > 5:
             console.print(f"    [dim]… and {len(malformed) - 5} more[/dim]")
+    skipped = results.get("skipped", [])
+    if skipped:
+        console.print(f"  [yellow]Non-regular: {len(skipped)} file(s) skipped[/yellow]")
+        for entry in skipped[:5]:
+            console.print(
+                f"    {entry['path']}: {entry['reason']}",
+                markup=False,
+                highlight=False,
+            )
+        if len(skipped) > 5:
+            console.print(f"    [dim]... and {len(skipped) - 5} more[/dim]")
+
+    duplicates = results.get("duplicates", [])
+    if duplicates:
+        console.print(
+            f"  [yellow]Duplicate ids: {len(duplicates)} (one file indexed per id)[/yellow]"
+        )
+        for line in _duplicate_lines(duplicates):
+            console.print(f"    • {line}", markup=False, highlight=False)
 
     # Auto-embed new/updated entries if embeddings are available.
     #
@@ -232,7 +268,7 @@ def index_sync(
     # `embed_all(force=False)` would skip it because a (stale) vector exists.
     changed = results["added"] + results["updated"]
     if not no_embed:
-        _settle_embed_queue(db)
+        _settle_embed_queue(db, model_name=config.settings.embedding_model)
 
     if changed > 0 and not no_embed:
         try:
@@ -250,7 +286,10 @@ def index_sync(
 @index_app.command("stats")
 def index_stats(
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Show index statistics."""
@@ -354,7 +393,7 @@ def index_embed(
             )
             return
 
-    by_kb = settle_embed_queue_by_kb(db)
+    by_kb = settle_embed_queue_by_kb(db, model_name=config.settings.embedding_model)
     from_queue = sum(by_kb.values()) if kb_name is None else by_kb.get(kb_name, 0)
     # The drain settles every KB's queue, whatever --kb says; entries in other
     # KBs are embedded too, and are not in this run's counts below.
@@ -405,12 +444,21 @@ def index_embed(
         )
     if stats["errors"]:
         console.print(f"  [red]Errors: {stats['errors']}[/red]")
+        console.print(
+            "  [dim]Those entries are still owed an embedding; "
+            "`pyrite index embed` retries them.[/dim]"
+        )
+        # The batch rule (#526): 3 if some were embedded or already were, 1 if none.
+        exit_unless_whole(stats["errors"], embedded + skipped)
 
 
 @index_app.command("health")
 def index_health(
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
     kb_name: str = typer.Option(
         None, "--kb", "-k", help="Only check this KB (default: every configured KB)"
@@ -454,11 +502,16 @@ def index_health(
     # unhealthy; `warning` (switch off, or a plugin enum) is a warning; `info`
     # (an `allow_other` field) does not move the status.
     off_list_severities = {row.get("severity") for row in off_list_values}
+    duplicates = health.get("duplicates", [])
     is_unhealthy = (
         health["missing_files"]
         or health["unindexed_files"]
         or health["stale_entries"]
         or health.get("content_changed")
+        # Two files claiming one id: only the first path is indexed, so the
+        # other is invisible to search. Unhealthy, named loudly (maintainer,
+        # 2026-10-03, ADR-0038 decided question 3).
+        or duplicates
         or "error" in off_list_severities
     )
     has_warning = (
@@ -486,6 +539,7 @@ def index_health(
             "malformed_frontmatter": malformed_frontmatter,
             "invalid_statuses": invalid_statuses,
             "off_list_values": off_list_values,
+            "duplicates": duplicates,
             "checks": health,
         },
         output_format,
@@ -504,6 +558,7 @@ def index_health(
         malformed_frontmatter=malformed_frontmatter,
         invalid_statuses=invalid_statuses,
         off_list_values=off_list_values,
+        duplicates=duplicates,
         health=health,
     )
     if is_unhealthy and fail:
@@ -522,6 +577,7 @@ def _report_health(
     malformed_frontmatter,
     invalid_statuses,
     off_list_values,
+    duplicates=(),
     health,
 ):
     """Print the health report. Returns nothing; the caller sets the exit code."""
@@ -617,6 +673,14 @@ def _report_health(
         if len(off_list_values) > 10:
             console.print(f"  ... and {len(off_list_values) - 10} more")
 
+    if duplicates:
+        console.print(
+            f"[red]{len(duplicates)} id(s) held by more than one file"
+            " (the first path is indexed; the rest are not):[/red]"
+        )
+        for line in _duplicate_lines(list(duplicates)):
+            console.print(f"  • {line}", markup=False, highlight=False)
+
     if health["missing_files"]:
         console.print(f"[red]Missing files ({len(health['missing_files'])}):[/red]")
         for item in health["missing_files"][:10]:
@@ -679,6 +743,8 @@ def index_reconcile(
             console.print(
                 f"[yellow]No moves planned; {len(result.errors)} entry path(s) could not be checked.[/yellow]"
             )
+        if result.errors:
+            raise typer.Exit(PARTIAL_EXIT)
         return
 
     table = Table(title=f"{'[DRY RUN] ' if not apply else ''}Files to move")
@@ -700,14 +766,18 @@ def index_reconcile(
 
     if not apply:
         console.print("\n[yellow]Dry run. Use --apply to execute moves.[/yellow]")
+        if result.errors:
+            raise typer.Exit(PARTIAL_EXIT)
         return
 
     if result.read_only:
         console.print("[red]Cannot move files in a read-only KB.[/red]")
-        return
+        raise typer.Exit(1)
 
     console.print(f"\n[green]Moved {result.moved} file(s).[/green]")
     console.print("The index was updated for successfully moved files.")
+    # Moves that failed were reported above; some moved, some did not.
+    exit_unless_whole(len(result.errors), result.moved)
 
 
 @index_app.command("jobs")

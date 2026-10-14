@@ -10,10 +10,17 @@ from pyrite.config import load_config
 from pyrite.exceptions import QueryTooLongError
 from pyrite.storage.database import PyriteDB
 
-from .plugin import JournalismInvestigationPlugin
+from .plugin import _EXPERIMENTAL_NOTICE, JournalismInvestigationPlugin
 
-investigation_app = typer.Typer(help="Journalism investigation commands")
+investigation_app = typer.Typer(help=f"{_EXPERIMENTAL_NOTICE}\n\nJournalism investigation commands")
 console = Console()
+
+
+def _emit_json_result(result: dict) -> None:
+    """Render a result and preserve the failure exit status."""
+    typer.echo(json_mod.dumps(result, indent=2))
+    if "error" in result:
+        raise typer.Exit(1)
 
 
 def _get_plugin_with_db():
@@ -260,11 +267,13 @@ def network(
 
         if output_json:
             typer.echo(json_mod.dumps(result, indent=2))
+            if "error" in result:
+                raise typer.Exit(1)  # the answer is an error: say so in the exit (#526)
             return
 
         if "error" in result:
             console.print(f"[red]Error:[/red] {result['error']}")
-            return
+            raise typer.Exit(1)
 
         console.print(f"[bold]{result['center']['title']}[/bold] ({entry_id})")
         console.print()
@@ -299,11 +308,13 @@ def evidence_chain(
 
         if output_json:
             typer.echo(json_mod.dumps(result, indent=2))
+            if "error" in result:
+                raise typer.Exit(1)  # the answer is an error: say so in the exit (#526)
             return
 
         if "error" in result:
             console.print(f"[red]Error:[/red] {result['error']}")
-            return
+            raise typer.Exit(1)
 
         claim = result["claim"]
         console.print(f"[bold]Claim:[/bold] {claim['title']}")
@@ -522,7 +533,7 @@ def start_investigation(
         )
 
         if output_json:
-            typer.echo(json_mod.dumps(result, indent=2))
+            _emit_json_result(result)
             return
 
         if "error" in result:
@@ -804,8 +815,12 @@ def bulk_edges(
 
         result = create_edge_batch(db, kb_name, edges, dry_run=dry_run)
 
+        from pyrite.utils.errors import exit_unless_whole
+
+        # A dry run that would refuse exits as the real run would (#526).
         if output_json:
             typer.echo(json_mod.dumps(result, indent=2))
+            exit_unless_whole(result["errors"], result["created"] + result["skipped"])
             return
 
         if dry_run:
@@ -836,6 +851,7 @@ def bulk_edges(
                     f"[{status_style}]{e['status']}[/{status_style}]",
                 )
             console.print(table)
+        exit_unless_whole(result["errors"], result["created"] + result["skipped"])
     finally:
         db.close()
 
@@ -885,8 +901,11 @@ def ftm_import(
 
         result = import_ftm(db, kb_name, entities, dry_run=dry_run)
 
+        from pyrite.utils.errors import exit_unless_whole
+
         if output_json:
             typer.echo(json_mod.dumps(result, indent=2))
+            exit_unless_whole(result["errors"], result["imported"] + result["skipped"])
             return
 
         if dry_run:
@@ -920,6 +939,7 @@ def ftm_import(
                     f"[{status_style}]{e['status']}[/{status_style}]",
                 )
             console.print(table)
+        exit_unless_whole(result["errors"], result["imported"] + result["skipped"])
     finally:
         db.close()
 
@@ -1016,7 +1036,7 @@ def promote_claim(
         )
 
         if output_json:
-            typer.echo(json_mod.dumps(result, indent=2))
+            _emit_json_result(result)
             return
 
         if "error" in result:

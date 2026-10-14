@@ -26,7 +26,7 @@ one person running several loops can list across desks.
 ## Use it
 
 ```bash
-# the whole queue, oldest first
+# the whole queue, oldest first (JSON; add --format rich, or set PYRITE_FORMAT=rich, for a table)
 pyrite task list -k <project>-desk --status open
 
 # the conductor files a decision when a tick reaches a kept item, in one step

@@ -38,7 +38,7 @@ from ..exceptions import (
 from ..logging import configure_entry_point_logging
 from ..services.access_policy import UNSCOPED
 from ..services.kb_service import KBService
-from ..utils.errors import PyriteCLIGroup, cli_error
+from ..utils.errors import PyriteCLIGroup, cli_error, exit_unless_whole
 from .browse_commands import register_browse_commands
 from .collection_commands import collections_app
 from .context import cli_context, open_index_db
@@ -46,10 +46,13 @@ from .db_commands import db_app
 from .entry_commands import register_entry_commands
 from .export_commands import export_app
 from .extension_commands import extension_app
+from .ids_commands import ids_app
 from .index_commands import index_app
 from .init_command import init_kb
 from .kb_commands import kb_app
 from .link_commands import links_app
+from .mcp_setup_command import MCP_CHECK_OK, mcp_setup, mcp_tool_counts
+from .output import output_format_choice, validate_output_format
 from .protocol_commands import protocol_app
 from .qa_commands import qa_app
 from .repo_commands import repo_collab_app
@@ -59,10 +62,14 @@ from .task_commands import task_app
 
 logger = logging.getLogger(__name__)
 
+# The one-line description, as the README gives it. Defined once: `--help`
+# prints it, and the callback below carries no docstring of its own.
+TAGLINE = "Knowledge-as-Code for humans and AI agents."
+
 app = typer.Typer(
     cls=PyriteCLIGroup,
     name="pyrite",
-    help="Multi-KB research infrastructure for citizen journalists and AI agents",
+    help=TAGLINE,
     no_args_is_help=True,
     epilog="New to a KB? Run `pyrite orient -k <kb-name>` first -- it summarizes "
     "types, tags, recent changes, and schema in one call.",
@@ -106,7 +113,8 @@ def _main(
         "(any position; PYRITE_LOG_LEVEL sets it without a flag).",
     ),
 ) -> None:
-    """Multi-KB research infrastructure for citizen journalists and AI agents."""
+    # No docstring: `TAGLINE` is the help text.
+    return None
 
 
 def _get_svc():
@@ -151,6 +159,9 @@ app.add_typer(repo_collab_app, name="repo")
 app.add_typer(extension_app, name="extension")
 app.add_typer(schema_app, name="schema")
 app.add_typer(protocol_app, name="protocol")
+
+# Entry ids: list id-less files and pin them (#700, ADR-0042 decision 5)
+app.add_typer(ids_app, name="ids")
 
 # Init command (headless KB init)
 app.command("init")(init_kb)
@@ -202,7 +213,12 @@ def _format_output(data: dict, fmt: str) -> str | None:
 @app.command("ci")
 def ci_command(
     kb: str | None = typer.Option(None, "--kb", help="Validate specific KB"),
-    output_format: str = typer.Option("text", "--format", help="Output format: text or json"),
+    output_format: str = typer.Option(
+        "text",
+        "--format",
+        callback=output_format_choice("text", "json"),
+        help="Output format: text or json",
+    ),
     severity: str = typer.Option(
         "warning", "--severity", help="Minimum severity to fail on: error or warning"
     ),
@@ -374,7 +390,10 @@ def ci_command(
 @app.command("list")
 def list_kbs(
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """List all knowledge bases."""
@@ -456,6 +475,8 @@ def serve(
     web_dir = Path(__file__).parent.parent.parent / "web"
     dist_dir = web_dir / "dist"
 
+    if build and not web_dir.is_dir():
+        console.print("[yellow]--build did nothing: this install has no web/ directory.[/yellow]")
     if build and web_dir.is_dir():
         console.print("[dim]Building frontend...[/dim]")
         result = subprocess.run(
@@ -475,10 +496,17 @@ def serve(
         console.print(f"[dim]Starting Pyrite at http://{host}:{port}[/dim]")
     else:
         console.print(f"[dim]Starting API server at http://{host}:{port}[/dim]")
-        console.print(
-            "[yellow]No web/dist/ found — run 'pyrite serve --build' or "
-            "'cd web && npm run build' first.[/yellow]"
-        )
+        if web_dir.is_dir():
+            console.print(
+                "[yellow]No web/dist/ found — run 'pyrite serve --build' or "
+                "'cd web && npm install && npm run build' first.[/yellow]"
+            )
+        else:
+            console.print(
+                "[yellow]No web UI in this install: the built frontend is not packaged "
+                "yet. The API and MCP server work; to get the UI, clone the repository "
+                "and run 'cd web && npm install && npm run build'.[/yellow]"
+            )
 
     from ..server.api import create_app
 
@@ -585,7 +613,10 @@ def repo_remove(
 @auth_app.command("status")
 def auth_status(
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Check GitHub authentication status."""
@@ -607,7 +638,10 @@ def auth_status(
 @auth_app.command("whoami")
 def auth_whoami(
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Show current user identity."""
@@ -702,18 +736,8 @@ def _mcp_command_help() -> str:
     wiki_*, social_*) started exposing 41+ tools at read tier alone (#229).
     Mirrors how PyriteMCPServer.__init__ assembles self.tools, without
     constructing a full server (no DB/config needed for --help text)."""
-    from ..plugins import get_registry
-    from ..server.tool_schemas import ADMIN_TOOLS, READ_TOOLS, WRITE_TOOLS
-
-    registry = get_registry()
-    read_total = len(READ_TOOLS) + len(registry.get_all_mcp_tools("read"))
-    write_total = len(READ_TOOLS) + len(WRITE_TOOLS) + len(registry.get_all_mcp_tools("write"))
-    admin_total = (
-        len(READ_TOOLS)
-        + len(WRITE_TOOLS)
-        + len(ADMIN_TOOLS)
-        + len(registry.get_all_mcp_tools("admin"))
-    )
+    counts = mcp_tool_counts()
+    read_total, write_total, admin_total = counts["read"], counts["write"], counts["admin"]
 
     return (
         "Start the MCP (Model Context Protocol) server.\n\n"
@@ -741,6 +765,9 @@ def mcp_server(
         "--tier",
         help="Tool tier to expose: read, write, or admin",
     ),
+    # For `pyrite mcp-setup`'s start check, not part of the CLI surface: read
+    # the arguments exactly as a start would, then stop before the server.
+    check: bool = typer.Option(False, "--check", hidden=True),
 ):
     from ..server.mcp_server import PyriteMCPServer
 
@@ -751,6 +778,9 @@ def mcp_server(
             error_code="INVALID_TIER",
             suggestion=f"choose one of: {', '.join(PyriteMCPServer.VALID_TIERS)}",
         )
+    if check:
+        typer.echo(f"{MCP_CHECK_OK} (tier {tier})")
+        return
 
     # stderr, not stdout -- stdout carries the MCP protocol stream itself.
     Console(stderr=True).print(f"[dim]Starting MCP server ({tier} tier) on stdio...[/dim]")
@@ -761,68 +791,7 @@ def mcp_server(
         server.close()
 
 
-@app.command("mcp-setup")
-def mcp_setup(
-    config_path: Path | None = typer.Option(
-        None,
-        "--config",
-        "-c",
-        help="Path to Claude Code config (default: ~/.claude/claude_desktop_config.json)",
-    ),
-):
-    """
-    Set up MCP server integration with Claude Code.
-
-    Adds pyrite to Claude Code's MCP server configuration.
-    """
-    import json
-    import shutil
-
-    if config_path is None:
-        config_path = Path.home() / ".claude" / "claude_desktop_config.json"
-
-    config_path = config_path.expanduser()
-
-    pyrite_exe = shutil.which("pyrite-admin")
-    if not pyrite_exe:
-        pyrite_exe = "python -m pyrite.admin_cli"
-        console.print("[yellow]Warning: pyrite-admin not in PATH, using module path[/yellow]")
-
-    if config_path.exists():
-        with open(config_path) as f:
-            claude_config = json.load(f)
-    else:
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        claude_config = {}
-
-    if "mcpServers" not in claude_config:
-        claude_config["mcpServers"] = {}
-
-    claude_config["mcpServers"]["pyrite"] = {
-        "command": pyrite_exe if "python" not in pyrite_exe else "python",
-        "args": ["-m", "pyrite.admin_cli", "mcp"] if "python" in pyrite_exe else ["mcp"],
-        "env": {},
-    }
-
-    with open(config_path, "w") as f:
-        json.dump(claude_config, f, indent=2)
-
-    console.print(f"[green]MCP server configured in {config_path}[/green]")
-    console.print("\nRestart Claude Code to load the new MCP server.")
-    console.print("\nAvailable tools:")
-    console.print("  • kb_list - List knowledge bases")
-    console.print("  • kb_search - Full-text search across KBs")
-    console.print("  • kb_get - Get entry by ID")
-    console.print("  • kb_schema - Get KB schema for agents")
-    console.print("  • kb_create - Create new entry")
-    console.print("  • kb_update - Update entry")
-    console.print("  • kb_delete - Delete entry")
-    console.print("  • kb_timeline - Query timeline events")
-    console.print("  • kb_backlinks - Find entries linking to an entry")
-    console.print("  • kb_tags - Get all tags with counts")
-    console.print("  • kb_stats - Get index statistics")
-    console.print("  • kb_index_sync - Sync index (admin tier)")
-    console.print("  • kb_manage - Manage KBs (admin tier)")
+app.command("mcp-setup")(mcp_setup)
 
 
 # =============================================================================
@@ -832,9 +801,13 @@ def mcp_setup(
 
 @app.command("import")
 def import_entries(
-    file_path: Path = typer.Argument(..., help="Path to JSON or YAML file"),
+    file_path: Path = typer.Argument(..., help="Path to a JSON, YAML or markdown file"),
     kb_name: str = typer.Option(..., "--kb", "-k", help="Target knowledge base"),
-    fmt: str = typer.Option(None, "--format", help="json or yaml (auto-detected from extension)"),
+    fmt: str = typer.Option(
+        None,
+        "--format",
+        help="json, yaml or markdown (json and yaml are auto-detected from the extension)",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Validate without creating entries"),
     allow_undeclared: bool = typer.Option(
         False,
@@ -842,13 +815,26 @@ def import_entries(
         help="Allow entry types not declared in the KB's kb.yaml (the entries "
         "will be flagged by `pyrite index health`).",
     ),
+    stream: bool = typer.Option(
+        False,
+        "--stream",
+        help="Markdown only: read a file as a stream of entries. A `---` line followed "
+        "directly by `title:`, `type:` or `id:` starts the next entry. Limits: an entry must "
+        "start with one of those keys, and a `---` inside a code block is not understood, so "
+        "a fenced frontmatter example in a body splits or refuses the file. Off by default: "
+        "a markdown file is one entry with its whole body.",
+    ),
 ):
-    """Bulk import entries from a JSON or YAML file.
+    """Bulk import entries from a JSON, YAML or markdown file.
 
     Every record goes through the same write pipeline as `pyrite create`
     (declared type, existing id, schema and plugin validation, the ADR-0034
     truncated-body refusal). A refused record fails on its own, its siblings
     are imported, and the command exits 1.
+    A markdown file is one entry (`--format markdown`); with `--stream` it may
+    hold several (see the option for its limits). A markdown file the importer
+    cannot read (frontmatter it refuses, or with `--stream` an entry whose block
+    does not close or parse) is refused whole before any record is written.
     """
     from ..formats.importers import get_importer_registry
 
@@ -870,6 +856,13 @@ def import_entries(
                 suggestion="Use --format json or --format yaml.",
             )
 
+    if stream and fmt != "markdown":
+        cli_error(
+            "--stream applies to markdown files only.",
+            error_code="VALIDATION_FAILED",
+            suggestion="Use --format markdown, or drop --stream.",
+        )
+
     registry = get_importer_registry()
     importer = registry.get(fmt)
     if importer is None:
@@ -881,7 +874,7 @@ def import_entries(
 
     data = file_path.read_text(encoding="utf-8")
     try:
-        parsed = importer(data)
+        parsed = importer(data, stream=True) if stream else importer(data)
     except Exception as e:
         cli_error(f"Error parsing file: {e}", error_code="VALIDATION_FAILED")
 
@@ -916,6 +909,9 @@ def import_entries(
                 if not r.get("valid"):
                     console.print(_refusal_line("Would refuse", record, r))
             console.print("\n[dim]No entries were created (--dry-run).[/dim]")
+            # A dry run that would refuse exits as the real run would (#526).
+            would_refuse = sum(1 for r in results if not r.get("valid"))
+            exit_unless_whole(would_refuse, len(results) - would_refuse)
             return
 
         created = 0
@@ -944,8 +940,8 @@ def import_entries(
         # body, an existing id, an undeclared type, a schema violation. Exit
         # non-zero so a script or agent cannot read "Imported N" off a run
         # that silently dropped records.
-        if failed:
-            raise typer.Exit(1)
+        # Some written and some refused is a partial run (3); none written is 1.
+        exit_unless_whole(failed, created)
 
 
 # =============================================================================

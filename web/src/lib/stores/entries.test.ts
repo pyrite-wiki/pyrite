@@ -15,6 +15,18 @@ const mockListEntries = vi.mocked(api.listEntries);
 const mockGetEntry = vi.mocked(api.getEntry);
 const mockUpdateEntry = vi.mocked(api.updateEntry);
 
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	let reject!: (reason: unknown) => void;
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+	return { promise, resolve, reject };
+}
+
+type ListResponse = Awaited<ReturnType<typeof api.listEntries>>;
+
 const sampleEntry = {
 	id: 'test-entry',
 	kb_name: 'test-kb',
@@ -45,6 +57,97 @@ beforeEach(() => {
 
 describe('EntryStore', () => {
 	describe('loadList', () => {
+		it.each([
+			['different KBs', { kb: 'A' }, { kb: 'B', offset: 50 }],
+			[
+				'same KB with different filters and offsets',
+				{ kb: 'B', tag: 'old' },
+				{ kb: 'B', tag: 'new', offset: 50 }
+			]
+		])('keeps the latest response for %s when requests finish out of order', async (_, first, latest) => {
+			const a = deferred<ListResponse>();
+			const b = deferred<ListResponse>();
+			mockListEntries.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
+			const pa = entryStore.loadList(first);
+			const pb = entryStore.loadList(latest);
+			const newest = { ...sampleEntry, id: 'newest', kb_name: 'B' };
+			b.resolve({ entries: [newest], total: 80, limit: 50, offset: 50 });
+			await pb;
+			a.resolve({ entries: [sampleEntry], total: 1, limit: 50, offset: 0 });
+			await pa;
+			expect(entryStore.entries).toEqual([newest]);
+			expect(entryStore.total).toBe(80);
+			expect(entryStore.offset).toBe(50);
+			expect(entryStore.listKB).toBe('B');
+			expect(entryStore.loading).toBe(false);
+			expect(entryStore.initialized).toBe(true);
+			expect(entryStore.error).toBeNull();
+		});
+
+		it('does not publish an older response or finish loading while the latest request is pending', async () => {
+			entryStore.entries = [sampleEntry];
+			entryStore.total = 17;
+			entryStore.offset = 10;
+			const a = deferred<ListResponse>();
+			const b = deferred<ListResponse>();
+			mockListEntries.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
+			const pa = entryStore.loadList({ kb: 'A' });
+			const pb = entryStore.loadList({ kb: 'B' });
+			a.resolve({ entries: [], total: 0, limit: 50, offset: 0 });
+			await pa;
+			expect(entryStore.entries).toEqual([sampleEntry]);
+			expect(entryStore.total).toBe(17);
+			expect(entryStore.offset).toBe(10);
+			expect(entryStore.loading).toBe(true);
+			expect(entryStore.initialized).toBe(false);
+			b.resolve({ entries: [], total: 0, limit: 50, offset: 0 });
+			await pb;
+		});
+
+		it.each(['pending', 'successful'])('ignores an older error while the latest request is %s', async (state) => {
+			const a = deferred<ListResponse>();
+			const b = deferred<ListResponse>();
+			mockListEntries.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
+			const pa = entryStore.loadList({ kb: 'A' });
+			const pb = entryStore.loadList({ kb: 'B' });
+			if (state === 'successful') {
+				b.resolve({ entries: [sampleEntry], total: 1, limit: 50, offset: 0 });
+				await pb;
+			}
+			a.reject(new Error('Stale failure'));
+			await pa;
+			expect(entryStore.error).toBeNull();
+			expect(entryStore.loading).toBe(state === 'pending');
+			expect(entryStore.initialized).toBe(state === 'successful');
+			if (state === 'pending') {
+				b.resolve({ entries: [], total: 0, limit: 50, offset: 0 });
+				await pb;
+			}
+		});
+
+		it.each(['success', 'error'])('preserves the latest failure after an older %s completes', async (outcome) => {
+			entryStore.entries = [sampleEntry];
+			entryStore.total = 17;
+			entryStore.offset = 10;
+			const a = deferred<ListResponse>();
+			const b = deferred<ListResponse>();
+			mockListEntries.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
+			const pa = entryStore.loadList({ kb: 'A' });
+			const pb = entryStore.loadList({ kb: 'B' });
+			b.reject(new Error('Latest failure'));
+			await pb;
+			if (outcome === 'success') a.resolve({ entries: [], total: 0, limit: 50, offset: 0 });
+			else a.reject(new Error('Stale failure'));
+			await pa;
+			expect(entryStore.entries).toEqual([sampleEntry]);
+			expect(entryStore.total).toBe(17);
+			expect(entryStore.offset).toBe(10);
+			expect(entryStore.error).toBe('Latest failure');
+			expect(entryStore.loading).toBe(false);
+			expect(entryStore.initialized).toBe(true);
+			expect(entryStore.listKB).toBe('B');
+		});
+
 		it('populates entries from API', async () => {
 			mockListEntries.mockResolvedValueOnce({
 				entries: [sampleEntry],

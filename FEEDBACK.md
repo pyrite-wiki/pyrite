@@ -1,5 +1,8 @@
 # Pyrite field feedback
 
+**New entries go in [`feedback/`](feedback/README.md), one file per entry
+(since 2026-10-03, #727).** This file keeps the entries written before then.
+
 Hallway-testing log. Append entries; do not edit or rewrite someone else's — the
 series is the value. Maintainers: triage visibly with `[fixed <commit>]`,
 `[wontfix — reason]`, or `[tracked]`, and leave the original text intact.
@@ -566,3 +569,195 @@ The JSON result says `{"updated": true}`, with no hint that a value changed type
 **Worked well:** JSON arrays and objects in `-f` (`-f 'options=[{"label": "A", …}]'`) become clean structured YAML. That made structured records easy once I knew the rule.
 
 **Severity:** slowed, plus silent corruption of free text. Anything an agent writes in prose through `-f` is at risk.
+
+---
+
+## 2026-10-03 · a worker on one storage theme (ADR-0038 step 2, PR #707) in its own worktree · claude-opus-5-5
+
+I built one reconcile for `index build`, `index sync` and `kb reindex`: plan from a groom and an ADR, TDD, `scripts/test-affected`, `scripts/verify-red.sh`, pre-commit and pre-push, `pyrite` on the project KB, and a draft PR. Six frictions below, the most costly first.
+
+**Friction 1: the scratchpad is shared between parallel sessions, and nothing says so.** I ran `git push ... > <scratchpad>/push.log` in the background. The log I read back reported a forced update of `feature/700-ids-missing-and-pin`, another worker's branch. For a minute it looked as if I had force-pushed someone else's work. The cause was another session writing `push.log` in the same directory, which holds about 750 files from other sessions. The system prompt calls the directory "session-specific, isolated". **Would have helped:** a scratchpad that is per session, or that wording removed, and the pyrite-dev skill advising unique file names (`<branch>-push.log`).
+
+**Friction 2: `scripts/test-affected --run` on a storage change is the whole suite, and it takes longer than the tool timeout.** `storage/index.py` is imported by almost everything, so "affected" meant 7021 tests and 15 minutes at `-n 4`. The 10-minute call moved to the background, and my `| tail -15` hid all progress until it finished. Re-running the one failure with `scripts/test-affected --run -- --lf`, as the skill says to, ran all 7021 again (14 minutes). It then printed `passed; not stamped (pytest args ... may narrow the run)`, so the pre-push hook ran a third full suite. **Would have helped:** `--lf` that narrows the run (or a `--rerun-failed` mode that keeps the stamp when the failures pass), and the skill saying "a storage or CLI-core change is the full suite: start it in the background".
+
+**Friction 3: the skill's lint line fails on files nobody touched.** `ruff check . && ruff format --check .` reports 20 errors in `deploy/*/create-user.py` and `scripts/*appointee*.py`. I guessed it should be scoped to the diff (`ruff check $(git diff --name-only origin/dev...HEAD -- '*.py')`). **Would have helped:** that command in the skill's table, or those files excluded in `pyproject.toml`.
+
+**Friction 4: the footprint in the groom and the ADR was smaller than the decision.** "Staleness by mtime or size differs from the indexed one" needs the stat recorded on the row. That meant a schema migration (`models.py`, `migrations.py`, `backends/base_backend.py`), and none of them is in step 2's file list. #494's fix needed `document_manager.py` and `repository.py`. `index_with_attribution`, a fourth walk-and-write that also never retired a row, is not named in the goal, but the structural test the brief asks for has to cover it. I found all three by reading code, not from the ticket. **Would have helped:** a groom line for each decided rule naming the data it needs ("needs the recorded size: schema change").
+
+**Friction 5: `--label <area>` in pyrite-dev names labels that do not exist.** `gh issue create --label bug --label storage` failed with `'storage' not found`. The real labels are `cli server mcp web extensions docs quality ...`, with nothing for storage or index. I filed #711 under `quality`. **Would have helped:** the skill listing the area labels, or a `storage` label.
+
+**Friction 6: per-case controls in a parametrized test were mine to invent.** `verify-red.sh` reported 16 "unexpected pass" cases: the paths dev already got right for a case (`sync_incremental` already retired a deleted file's row). Marking the whole test as a control would hide the real reds, so I wrote a helper that returns `pytest.param(..., marks=pytest.mark.control(reason=...))` for named cases. **Would have helped:** one line in `tdd.md` showing that pattern.
+
+**Found on the way:** #711. A pyrite KB backlog item has `title:` as a YAML list. That is almost certainly the comma split reported in the 2026-09-27 entry above (`_parse_field_value`). The row write failed, and every index path on dev skipped the entry with one log line, so it was missing from search and `sw backlog` with nothing in any result. The split has now caused silent data loss downstream, not only a strange-looking field.
+
+**Worked well:** the strict-xfail invariant harness. Removing five markers gave five red tests that went green one by one, which showed exactly where the work stood. `pyrite kb list` confirmed the worktree's KB before I started. `pyrite update <id> -k pyrite -f status=done` changed one line and nothing else. The coordinator's mid-task decision (duplicates are unhealthy) cost one small commit.
+
+**Severity:** friction 1 alarming (it looked like a destructive action on another branch); friction 2 slowed me by about 30 minutes of suite time; the rest were minor.
+## 2026-10-03 · building `pyrite ids missing` / `ids pin` (#700) under the pyrite-dev skill, in a worktree · claude-opus-5-5
+
+One theme from groom to draft PR: read the groom and ADR-0042, test the riskiest assumption with a scratch script, TDD the service and CLI, a doc run as a test, the pre-push suite. The KB CLI, the ADR's spike data and `KBRepository.id_of_file`'s docstring carried most of it. Seven places made me guess, look up or route around something, in the order they cost time.
+
+**Command:**
+```
+gh issue view 700                                      # the groom
+sed -n 330,460p kb/adrs/0042-a-write-changes-what-was-asked-and-nothing-else.md
+scripts/test-affected --run 2>&1 | tail -5             # piped
+.venv/bin/ruff check . && .venv/bin/ruff format --check .
+PYRITE_CONFIG_DIR=$d/cfg .venv/bin/pyrite ids pin -k notes
+```
+
+**Expected:** the groom names its riskiest assumption and the decisions that bind it; the skill's verification commands pass on a clean branch; a new command's output is its result.
+
+**Got / Friction:**
+
+1. **The groom had no "this groom is wrong if" line**, though the dispatch and the skill both say to start from it. I chose the assumption myself ("an id-less file's id today is what the current code derives, and that code can be reused") and tested it with a scratch script that indexed 15 fixtures. It held, and it also showed that an id-less file can shadow a file whose own `id:` states the id (commented on #485).
+2. **The groom's open question was already answered by the ADR it cites.** The groom asked whether the line goes first or after the leading comments. ADR-0042 decision 6, about 80 lines below the cited section, says "a new key goes on the last line of the frontmatter". I found it only by reading past the line I was pointed to.
+3. **"The code that derives it today" is two pieces of code.** `read_entry_id` / `_frontmatter_of` (regex `^---\s*$`) and `KBRepository._load_entry` (a `\n---` scan that wants `\n` or `\r` next) split frontmatter differently. I used `id_of_file`, which the docstrings call the one answer, and had to import the private `_frontmatter_of` to find the delimiter the same way.
+4. **The exit codes and default formats have no rule for a new command.** `docs/json-contracts.md` lists only `0` and `1`. `kb validate` uses `2` for drift, which is also click's usage error. The same page says read commands default to JSON, `mcp-setup` defaults to JSON with `PYRITE_FORMAT`, and ADR-0042's steps imply a human default with `--format json` for agents. I chose `3` and a text default, and recorded them; #303 is the open contract.
+5. **The skill's lint line fails on a clean branch.** `ruff check .` reports 6 errors in `deploy/*/create-user.py` and `scripts/*appointee*.py`, files no branch touches, so "Lint passes" cannot be shown as written. I quietly narrowed it to `ruff check pyrite tests`. That is the silent workaround.
+6. **"Run `scripts/test-affected --run` in the foreground" ran for 8 minutes** (4,586 tests, because the branch touches `pyrite/cli/__init__.py`), so the tool timeout pushed it to the background. Nothing tells you in advance that touching the CLI root selects nearly the full suite.
+7. **`ids pin` on an untyped file prints two loader warnings per file** (`Entry frontmatter missing 'type:' — falling back to 'note'`) on stderr, one from the scan and one from the re-parse check. On the ADR's 111-file id-less KB that is 200+ lines unrelated to ids. Not fixed here.
+
+**Had to figure out:**
+- How CLI tests inject a KB: patch `pyrite.cli.context.load_config` (copied from `tests/test_cli_json_output.py`).
+- That the CLI may not import `pyrite.storage`, from `tests/test_layer_boundaries.py`. Clear once found.
+- That `index health` does not list id-less files yet, although ADR-0042 decision 5 says it does. So the doc's last check uses `ids missing` exiting 0.
+- That a title YAML reads as a number (`title: 1e3`) gives no id and is silently not indexed. Filed as #704.
+
+**Would have helped:**
+1. A required "wrong if" line in the groom template, plus a "decisions that bind this" list naming the ADR clauses (decision 6 here).
+2. One CLI contract section on exit codes for "ran, found something" vs error vs usage, and on the default `--format`.
+3. A lint line in the skill that matches what CI lints, or fix or exclude `deploy/` and the appointee scripts.
+4. `scripts/test-affected --list | wc -l` shown before `--run`, with a note that touching `pyrite/cli/__init__.py` selects nearly everything.
+
+**Worked well:** `KBRepository.id_of_file` and `read_entry_id`'s docstrings pointed straight at the one derivation, and the ADR's spike numbers gave the scratch test a target. `atomic_write_text` does no newline translation, so CRLF survived without special handling. `scripts/verify-red.sh` classified the two import-only tests precisely. The `.pyrite/config.yaml` per worktree made `pyrite kb list` correct with no setup.
+
+**Severity:** slowed. Nothing blocked. Items 2 and 4 could have produced a command that contradicts its ADR, and item 5 is a check the skill asks for but nobody can pass as written.
+
+## 2026-10-03 · a pyrite-worker building a schema-data theme (#697 field aliases) from a groomed draft PR · claude-sonnet-5-5
+
+One theme, start to push, in a worktree made by `scripts/new-worktree.sh`: read the groom, test its riskiest assumption, TDD a new resolver module, switch two readers, run the affected suite, push. The tooling carried it; four things cost time, ordered by cost.
+
+---
+
+**Friction 1 — the verification command the skill prescribes does not fit the tool timeout, and its output is easy to misread.**
+
+**Command:**
+```
+git add <paths> && git commit -q -m "..." && (time scripts/test-affected --run 2>&1 | tail -15)
+```
+(piped through `tail -15`; the commit and the suite were chained in one call)
+
+**Expected:** pyrite-dev says "run `scripts/test-affected --run` in the foreground on a committed tree" and look for `N passed, 0 failed`.
+
+**Got:** 6m29s (`6586 passed, 1 failed`). The agent shell's command timeout is 2 minutes, so the call was moved to the background. The output file I read first held only the commit's pre-commit hook lines (the chain ran the commit hooks first, then the suite), so it looked finished when it was not. Two further unknowns: `pgrep -f pytest` also matched another worker's suite in a sibling worktree, so "is mine done?" needed a worktree-specific pattern; and the suite ran only after I had already committed twice, so the one red test cost a third commit.
+
+**Friction:** the foreground rule and the 2-minute limit contradict each other for an agent. Nothing in the skill says to start it in the background, or how to tell mine from a sibling's.
+
+**Had to figure out:** run it as its own background call, wait on `pgrep -f "<worktree>/.venv/bin/python -m pytest"`, read the summary line from the output file.
+
+**Would have helped:** a line in pyrite-dev: "the suite takes ~6 minutes; start it alone with run_in_background, wait with a worktree-scoped pgrep, never chain it after a commit". Or `scripts/test-affected --run` printing a final one-line `RESULT: N passed, M failed` and writing it to a file I can `cat`.
+
+**Severity:** slowed.
+
+---
+
+**Friction 2 — a groom's "checked: nothing implements X" is true only until the theme implements X, and the test that depended on it was not in the groom's Touches.**
+
+**Command:** (the suite above) failed `tests/test_type_metadata.py::TestPluginTypeMetadata::test_registry_get_all_type_metadata_empty`.
+
+**Expected:** the groom listed 20-odd files to touch and said "no in-tree plugin implements `get_type_metadata`, checked". I expected a clean run apart from my own new tests.
+
+**Got:** that test builds `PluginRegistry()` and asserts `get_all_type_metadata() == {}` under the docstring "registry with no plugins". A bare registry discovers the installed plugins, so the test passes only while no installed plugin returns type metadata. The groom's grep found the implementers (none) but not the test that encoded the same assumption.
+
+**Friction:** a test whose name says "no plugins" and whose setup does not isolate plugins is coupled to what the venv has installed. I found it only at the end of a 6-minute run.
+
+**Had to figure out:** whether the test or the change was wrong (the test: it now sets `_discovered = True`). Fix is in the PR.
+
+**Would have helped:** in grooms, "tests that assert the absence of what this theme adds" next to Touches; a quick `grep -rn "get_all_type_metadata" tests/` is the one command that would have found it before the run.
+
+**Severity:** slowed (one extra run-cycle).
+
+---
+
+**Friction 3 — a groom rule contradicted the data it was applied to.**
+
+**Command:** none; found while writing the failing test for `pyrite schema validate`.
+
+**Expected:** the groom's acceptance says the validate check reports "an alias that is a reserved name or a declared field of the type".
+
+**Got:** core `event` declares `participants` as a field in `CORE_TYPES`, and core `relationship` declares `source` and `target`. Applied literally to the merged map, the rule would flag the two core types the theme exists to describe. I limited the check to fields the operator declares in `kb.yaml`, and said so on the PR.
+
+**Friction:** small, but a worker who follows acceptance text literally ships a validate that warns on a clean install.
+
+**Would have helped:** grooms checking each new rule against the in-tree data it will run on (one loop over `CORE_TYPES`), and saying so under "Checked versus assumed".
+
+**Severity:** annoying.
+
+---
+
+**Friction 4 — the pre-push hook says only "Passed".**
+
+**Command:** `git push -u origin feature/697-field-aliases` (output piped through `tail -8`)
+
+**Expected:** after a 6-minute suite and a later test-file edit, to know whether the hook re-ran, reused a stamp, or ran a subset.
+
+**Got:** `pytest core + affected tests (pre-push, code changes only)....Passed`, in seconds. I cannot tell from the output whether the tree I pushed was tested.
+
+**Would have helped:** one line: `reused stamp for <tree sha>` or `ran N tests in Ns`.
+
+**Severity:** annoying.
+
+---
+
+**Smaller things:**
+- `git diff --name-only origin/dev...HEAD` (the skill's footprint check) lists the claim commit's `kb/backlog/...md`, so "a file not on the list is not yours" needs the reader to know the claim commit adds it.
+- `EventEntry.entry_type` is a property, so a test that wants "all classes for type T" must go through the registry's type-to-class map or instantiate; there is no class-level `entry_type`. I used the registry map.
+- `Entry` is abstract, so a conformance fixture has to subclass a concrete class (`EventEntry`) to be instantiable.
+
+**Worked well:**
+- `.venv/bin/pyrite kb list` showed the worktree's own `kb/` path, which confirmed the CLAUDE.md worktree contract in one command.
+- The groom's "this groom is wrong if" line and its table of alias to target made the riskiest-assumption test a single parametrized test written in minutes (it passed first time, so scope held).
+- The pre-commit stage was seconds and caught a format change and an invalid `parametrize` argument type (`PT006`) before any run.
+- `tests/test_schema_validate_db_only_kb.py` was a ready pattern for driving `schema validate` with a KB held only in `_db_kb_cache`.
+
+**Severity (overall):** slowed. Nothing wrong silently; the costs were all timing and a missed grep.
+## 2026-10-03 · B7, derived task completion: one worker theme in a worktree (pyrite-dev skill, CLI, test tooling) · claude-opus-5-5
+
+Replaced the parent rollup hook with a derived completion value across `task list`, `task get`, `task decompose`, MCP and REST. Pyrite's own tooling, used as a worker would use it.
+
+**Friction 1: the local test run cannot finish inside one tool call. Severity: slowed.** `scripts/test-affected --run` for a change to `task_service.py`, `task_commands.py` and `mcp_server.py` ran 5,847 tests in 12m45s, past the 10-minute tool limit, so it moved to the background. Its output is buffered: for 12 minutes the log showed only the pre-commit lines, with no sign of progress or of which selection it had made. The pre-push hook then ran the same selection again on the rebased tree (another ~12 minutes), because a rebase onto a newer `dev` changes the tree and voids the stamp. Known as #706. **Would have helped:** a first line naming the selection and its size ("core + 212 files importing mcp_server.py: full suite"), and progress lines that are not buffered.
+
+**Friction 2: two lint commands, and the one the skill names is red on `dev`. Severity: had to figure out.** The pyrite-dev verification table says `ruff check .`. On a clean `dev` that reports about 20 errors in `deploy/*/create-user.py` and `scripts/*appointee*.py`. CLAUDE.md says `ruff check pyrite/`. I took CLAUDE.md's command and checked my own files. **Would have helped:** one command in both places, or those paths excluded in `pyproject.toml`.
+
+**Friction 3: `verify-red` marked every test in the new file "import-only". Severity: had to figure out.** The test module imported the new function at the top (`from pyrite.services.task_service import TaskService, derive_completion`). Without the fix the file does not collect, so all 16 tests, including the end-to-end CLI, MCP and REST ones, counted as weak evidence. I fixed it by reaching the function through the module (`task_service.derive_completion`) inside the tests. The result went from 13 import-only to 23 red and 3 import-only. **Would have helped:** one line in the skill's verification table: "import a name the PR adds inside the test, or through its module, so the other tests in the file still collect."
+
+**Friction 4: the structural hook test passed against the hook it was written to catch. Severity: nearly shipped a vacuous guard.** My first "no after_save hook writes another entry" test changed the child's status in memory and called every hook. `_parent_rollup` reads the children's statuses from the index, not from the entry it is given, so it saw no resolved child and wrote nothing. The test only went red once I persisted the child and re-indexed before calling the hooks. Neither `HookRunner` nor `protocol.py` says what state is on disk and in the index when `after_save` runs. **Would have helped:** a docstring line on `run_after_save`: "the entry is written and indexed; hooks that query the index see the new value."
+
+**Friction 5: the consumers and the data were not where the ADR said. Severity: had to look up.**
+- The investigation conductor's "drain check" is in another repo (`~/tcp-skills/plugins/tcp-skills/skills/investigation-conductor/SKILL.md:68`). I found it with `find / -name tcp-skills`. It shells out to `kb task list --status open -f json`, so fixing the open filter covers it.
+- The ADR's measurements (10 all-resolved parents not done, 8 dangling `parent` values) were 3 and 12 in today's research KB.
+- Several "dangling" parents name ids that are not tasks. So the dangling check has to look at every entry in the KB, not only tasks. The ADR does not say this.
+
+**Friction 6: the characterization goldens did not notice a change to the shape of the task list. Severity: a gap, not a slowdown.** Every `task_list` row gained a `derived` key, and every golden still passed. The characterization worlds hold no tasks (`{'tasks': []}`), so MCP and REST task output is not pinned anywhere.
+
+**Minor:** `pyrite search` prints JSON by default, while CLAUDE.md shows it as a quick-context lookup. I had to pipe it or read the JSON.
+
+**Worked well:**
+- `scripts/new-worktree.sh` gave a worktree, venv and `-k pyrite` pointed at this branch's `kb/`, and `pyrite kb list` confirmed it.
+- The groom and the ADRs had the line numbers right (`task_service.py:594`, `:1016`).
+- Hand-authored trees with `IndexManager(db, config).index_all()` made medium tests across CLI, MCP and REST cheap to write. `verify-red`'s per-test table is exactly what a reviewer needs.
+
+## 2026-10-03 · a pyrite-worker closing three test-harness limits (#703) in `tests/test_doc_write_as_patch.py` · claude-sonnet-5-5
+
+**Task:** make a write example's verdict depend only on the write-path behaviour it names.
+
+**Got:** the ticket asked for "a KB type whose links are derived". None exists for `actors` (the index derives links from body wikilinks and `references:`, not `actors`; `entry_ref` rows hold the bracket-wrapped value and `kb_backlinks` does not return them). I found that only after probing seven KB types with a script.
+
+**Would have helped:** the groom naming the missing production piece, so the limit is stated as "blocked on ADR-0045 reference fields" rather than "use a derived type".
+
+**Severity:** slowed.
+
+**Worked well:**
+- The strict-xfail design meant the new controls were unreachable by the real examples; a small model of the correct write path was the only way to see them red and green.
+- `verify-red.sh` said "nothing to verify (no code change)" at once; hand mutations were the evidence.

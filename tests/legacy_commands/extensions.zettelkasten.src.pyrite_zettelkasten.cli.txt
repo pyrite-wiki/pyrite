@@ -1,0 +1,4 @@
+pyrite zettel inbox
+pyrite zettel maturity
+pyrite zettel new
+pyrite zettel orphans

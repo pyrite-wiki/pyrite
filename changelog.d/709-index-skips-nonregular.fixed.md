@@ -1,0 +1,1 @@
+- **Index sync skips non-regular `.md` paths instead of opening them (#709).** Directories and special files are reported in sync results; symlinks to regular Markdown files remain indexable.

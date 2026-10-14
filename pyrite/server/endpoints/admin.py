@@ -82,7 +82,7 @@ def sync_index(
         # embed`, because there is nobody left to wait for it.
         from ..api import _drain_embed_queue
 
-        _drain_embed_queue(index_mgr.db)
+        _drain_embed_queue(index_mgr.db, model_name=index_mgr.config.settings.embedding_model)
 
         # Broadcast WebSocket event
         from ..websocket import broadcast_event
@@ -136,6 +136,7 @@ def sync_index(
             added=result.get("added", 0),
             updated=result.get("updated", 0),
             removed=result.get("removed", 0),
+            skipped=result.get("skipped", []),
             site_cache=site_cache_status,
         )
 

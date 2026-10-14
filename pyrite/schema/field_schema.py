@@ -193,6 +193,10 @@ class TypeSchema:
     edge_type: bool = False  # Whether this type represents an edge/relationship
     endpoints: dict[str, EndpointSpec] = field(default_factory=dict)  # Edge endpoint specs
     state_machine: dict[str, Any] | None = None  # Per-type workflow override (Tier A r1175)
+    #: ``{alias: target}`` as the operator wrote it (#697). Kept raw so a malformed
+    #: declaration is reported by ``pyrite schema validate`` and ignored by
+    #: ``field_aliases()``, never a crash at load.
+    field_aliases: Any = field(default_factory=dict)
 
     def resolve_subdirectory(self, entry: Entry) -> str:
         """Return the resolved subdirectory, expanding template placeholders."""

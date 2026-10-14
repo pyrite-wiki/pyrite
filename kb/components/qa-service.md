@@ -36,6 +36,7 @@ Structural validation and assessment service for knowledge bases. Validates KB i
 | `broken_link` | warning | Wikilink target doesn't exist |
 | `orphan` | info | Entry has no incoming links |
 | `schema_violation` | error/warning | Field violates kb.yaml type schema |
+| `frontmatter_line_in_body` | warning | First body line repeats a scalar frontmatter field; may be a migration leak |
 | `rubric_violation` | warning | Entry fails a named rubric checker |
 | `config_error` | warning | Unknown checker name in rubric config |
 

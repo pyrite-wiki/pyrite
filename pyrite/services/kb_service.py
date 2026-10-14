@@ -10,7 +10,7 @@ import copy
 import dataclasses
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -34,13 +34,16 @@ from ..exceptions import (
 )
 from ..models import Entry
 from ..models.base import parse_datetime
+from ..models.core_types import id_text
 from ..models.factory import build_entry
 from ..plugins.context import PluginContext
+from ..schema import Link, Source
 from ..schema.enum_check import is_off_list, is_per_element
 from ..storage.database import PyriteDB
 from ..storage.document_manager import DocumentManager
-from ..storage.index import IndexManager
+from ..storage.index import IndexManager, content_hash
 from ..storage.repository import KBRepository
+from ..utils.frontmatter import Frontmatter, NoFrontmatter, describe, split_frontmatter
 from ..utils.metadata import parse_metadata
 from .access_policy import named_kb
 from .body_bounds import MARKER_KEYS, ensure_not_truncated
@@ -397,7 +400,9 @@ class KBService:
         try:
             from .embedding_worker import EmbeddingWorker
 
-            self._embedding_worker = EmbeddingWorker(self.db)
+            self._embedding_worker = EmbeddingWorker(
+                self.db, model_name=self.config.settings.embedding_model
+            )
         except Exception:
             # A DB that cannot hold the queue (read-only, locked, out of disk)
             # must not fail the write: the entry is on disk and in the index
@@ -546,25 +551,133 @@ class KBService:
         computed over readable KBs only (P-R4). A named KB the caller
         cannot read is the caller's to refuse; here it reads as a miss. A
         blank ``kb_name`` names no KB (``access_policy.named_kb``).
+
+        The entry is read from its file as it is now (``_read_entry``), so
+        every surface that calls this -- CLI ``get``, ``pyrite-read get``,
+        REST ``GET /api/entries/{id}``, MCP ``kb_get`` and ``kb_read_body``
+        -- returns a hand edit before the next sync (#753). Without a KB,
+        readable KBs are tried in config order, ids the index knows first.
+        A read the index can answer (its row's file still holds the id) opens
+        that one file and walks no directory; only a miss looks for files by
+        name (``_entry_file``).
         """
         kb_name = named_kb(kb_name)
         if kb_name:
             if readable_kbs is not None and kb_name not in readable_kbs:
                 return None
-            result = self.db.get_entry(entry_id, kb_name)
+            result = self._read_entry(entry_id, kb_name)
             if result:
                 self._attach_links(result, entry_id, kb_name, readable_kbs)
             return result
 
         # Search all KBs the caller can read
-        for kb in self.config.all_kbs():
-            if readable_kbs is not None and kb.name not in readable_kbs:
-                continue
-            result = self.db.get_entry(entry_id, kb.name)
-            if result:
-                self._attach_links(result, entry_id, kb.name, readable_kbs)
-                return result
+        readable = [
+            kb.name
+            for kb in self.config.all_kbs()
+            if readable_kbs is None or kb.name in readable_kbs
+        ]
+        for unindexed in (False, True):
+            for name in readable:
+                result = self._read_entry(entry_id, name, unindexed=unindexed)
+                if result:
+                    self._attach_links(result, entry_id, name, readable_kbs)
+                    return result
         return None
+
+    def _read_entry(
+        self, entry_id: str, kb_name: str, *, unindexed: bool | None = None
+    ) -> dict[str, Any] | None:
+        """THE single-entry read: the entry's file, parsed now (ADR-0042 decision 9).
+
+        The index row only says where to look. Its file is read if it still
+        holds the id (ADR-0038 I8); otherwise, and when there is no row, the
+        files named ``<id>.md`` in the KB are tried, each verified. No file
+        holding the id is a miss (``None``) even when a row remains: the file
+        decides (principle 5). A miss reads no file's content, because the
+        whole-KB scan ``find_file`` falls back to costs seconds on a large KB
+        (#135); a file whose id is not its name is found once it is indexed.
+
+        A row whose path lies outside the KB root is a user's worktree file
+        (the overlay read service, ``WorktreeResolver.get_read_service``): it
+        is read where it points and never replaced by a file in main.
+
+        A row with no ``file_path`` (rows the experimental journalism tools
+        create, #92) is returned as it is, with ``content_hash: None``.
+
+        ``unindexed``: None reads either way; False only ids with a row; True
+        only ids without one (``get_entry``'s two passes without a KB).
+
+        Lists, search and batch reads stay index reads and may lag.
+        """
+        row = self.db.get_entry(entry_id, kb_name)
+        if unindexed is not None and unindexed != (row is None):
+            return None
+        kb_config = self.get_kb(kb_name)
+        if row is not None and (not row.get("file_path") or kb_config is None):
+            row["content_hash"] = None  # no file to read: the row, as before
+            return row
+        if kb_config is None:
+            return None
+        found = self._entry_file(kb_config, entry_id, row)
+        if found is None:
+            return None
+        path, digest, entry = found
+        return self._index_mgr.read_fields(entry, kb_name, path, content_hash=digest, row=row)
+
+    def _entry_file(
+        self, kb_config: KBConfig, entry_id: str, row: dict[str, Any] | None
+    ) -> tuple[Path, str, Entry] | None:
+        """``(path, content_hash, entry)`` of the file holding ``entry_id``, or None."""
+        repo = KBRepository(kb_config)
+        indexed = Path(row["file_path"]) if row else None
+
+        def candidates() -> Iterator[Path]:
+            # Lazy: the indexed file is tried first, and the KB's directories
+            # are walked (``_filename_candidates`` runs ``rglob``) only when it
+            # does not hold the id. A hit never walks a directory.
+            if indexed is not None:
+                yield indexed
+            if indexed is not None and not repo._lexically_inside(indexed):
+                return  # an overlay row: never main's file in its place
+            # find_file's first step, without its whole-KB tail (see _read_entry).
+            try:
+                repo._validate_entry_id(entry_id)
+            except ValidationError:
+                return
+            for c in repo._filename_candidates(entry_id):
+                if c != indexed and repo._lexically_inside(c):
+                    yield c
+
+        unreadable: tuple[Path, Exception] | None = None
+        tried: set[Path] = set()
+        for path in candidates():
+            if path in tried:
+                continue
+            tried.add(path)
+            try:
+                raw = path.read_bytes()
+            except OSError:
+                continue
+            try:
+                # One read: the entry is parsed from the bytes that are hashed.
+                entry = repo.load_entry_from_bytes(path, raw)
+            except Exception as exc:
+                unreadable = unreadable or (path, exc)
+                continue
+            if id_text(entry.id) == entry_id:
+                return path, content_hash(raw), entry
+        if unreadable is not None:
+            self._unreadable_entry_file(kb_config.name, entry_id, *unreadable)
+        return None
+
+    @staticmethod
+    def _unreadable_entry_file(kb_name: str, entry_id: str, path: Path, exc: Exception) -> None:
+        """The file that may hold ``entry_id`` cannot be parsed.
+
+        A miss for now, with one log line and never a traceback. #777 gives
+        this its own error (``MALFORMED_ENTRY``): raise it here.
+        """
+        logger.warning("get %s/%s: cannot parse %s: %s", kb_name, entry_id, path, exc)
 
     def _attach_links(
         self,
@@ -1014,18 +1127,17 @@ class KBService:
 
         # Read and parse frontmatter
         text = source_path.read_text(encoding="utf-8")
-        if not text.startswith("---"):
+        split = split_frontmatter(text)
+        if isinstance(split, NoFrontmatter):
             raise ValidationError("File must start with YAML frontmatter (---)")
+        if not isinstance(split, Frontmatter):
+            raise ValidationError(f"Could not read the frontmatter: {describe(split)}")
 
-        end = text.find("---", 3)
-        if end < 0:
-            raise ValidationError("Could not find closing frontmatter delimiter (---)")
-
-        meta = load_yaml(text[3:end])
+        meta = load_yaml(split.text)
         if not meta or not isinstance(meta, dict):
             raise ValidationError("Frontmatter is empty or invalid")
 
-        body = text[end + 3 :].strip()
+        body = split.body
 
         # Require type and title
         if "type" not in meta:
@@ -1149,7 +1261,11 @@ class KBService:
         each written as sent; the CLI's ``-f`` never passes through here.
         """
         updatable = self.updatable_fields(entry_id, kb_name)
-        row = self.db.get_entry(entry_id, kb_name)
+        # The reading an echo is compared with is the read a get returns -- the
+        # file now -- not the row, which may lag it: a value the read
+        # normalised is then "unchanged" and not written over the file's own
+        # spelling (#753).
+        row = self._read_entry(entry_id, kb_name)
         entry_type = row.get("entry_type") if row else None
         managed = (
             self._field_sets(entry_type, self.config.get_kb(kb_name))[2]
@@ -1274,6 +1390,33 @@ class KBService:
         for ts_key in ("created_at", "updated_at"):
             if ts_key in updates and not isinstance(updates[ts_key], datetime):
                 updates[ts_key] = parse_datetime(updates[ts_key])
+
+        # One name per field (#697): an alias or target key (`actors`,
+        # `participants`, `source`) sets the attribute the class reads, whether
+        # it arrives at the top level or inside `metadata`, never the bag.
+        from ..schema.field_aliases import attribute_for, refuse_conflicting_spellings
+
+        refuse_conflicting_spellings(
+            type(entry),
+            entry.entry_type,
+            {k: v for k, v in updates.items() if k != "metadata"},
+            updates["metadata"] if isinstance(updates.get("metadata"), dict) else {},
+        )
+        routed: dict[str, Any] = {}
+        for key, value in updates.items():
+            if key == "metadata" and isinstance(value, dict):
+                rest = {}
+                for mk, mv in value.items():
+                    attr = attribute_for(entry, mk)
+                    if attr is None:
+                        rest[mk] = mv
+                    else:
+                        routed[attr] = mv
+                if rest or not value:
+                    routed["metadata"] = rest
+                continue
+            routed[attribute_for(entry, key) or key] = value
+        updates = routed
 
         # Apply updates
         for key, value in updates.items():
@@ -2036,7 +2179,12 @@ class KBService:
         return [], how
 
     def orient_overview(
-        self, *, readable_kbs: set[str] | None, detail: str | None = None
+        self,
+        *,
+        readable_kbs: set[str] | None,
+        detail: str | None = None,
+        limit: int | None = 50,
+        offset: int = 0,
     ) -> dict[str, Any]:
         """Orient with no KB named: the first call of a session.
 
@@ -2047,18 +2195,43 @@ class KBService:
         per-type blocks here to omit.
         """
         self._orient_detail(detail)
+        if limit is not None and (
+            isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100
+        ):
+            raise ValidationError("limit must be between 1 and 100")
+        if (
+            isinstance(offset, bool)
+            or not isinstance(offset, int)
+            or offset < 0
+            or (limit is None and offset)
+        ):
+            raise ValidationError("offset must be non-negative and requires a limit")
+
+        registry = self._registry
+        if registry is None:
+            from .kb_registry_service import KBRegistryService
+
+            registry = KBRegistryService(self.config, self.db)
+        page = registry.list_kbs(
+            limit=limit + 1 if limit is not None else None,
+            offset=offset,
+            kb_names=readable_kbs,
+            include_yaml_origin=False,
+        )
+        has_more = limit is not None and len(page) > limit
+        if limit is not None:
+            page = page[:limit]
         kbs = [
             {
-                "name": kb.name,
-                "type": kb.kb_type or "default",
-                "description": kb.description or "",
-                "entry_count": self.count_entries(kb_name=kb.name),
-                "read_only": kb.read_only,
+                "name": kb["name"],
+                "type": kb["type"],
+                "description": kb.get("description") or "",
+                "entry_count": kb["entries"],
+                "read_only": kb.get("read_only", False),
             }
-            for kb in sorted(self.config.all_kbs(), key=lambda k: k.name)
-            if readable_kbs is None or kb.name in readable_kbs
+            for kb in page
         ]
-        return {
+        result = {
             "knowledge_bases": kbs,
             "operational_contracts": self._operational_contracts(),
             "next": (
@@ -2066,6 +2239,9 @@ class KBService:
                 "(CLI). Add detail='brief' (`--detail brief`) for a read session."
             ),
         }
+        if limit is not None:
+            result.update({"limit": limit, "offset": offset, "has_more": has_more})
+        return result
 
     def orient(
         self, kb_name: str, recent_limit: int = 5, *, detail: str | None = None
@@ -2306,6 +2482,30 @@ class KBService:
                 dates.append(entry_id[6:])  # strip "daily-"
         return dates
 
+    def require_entry(self, entry_id: str, kb_name: str) -> None:
+        """Raise unless ``entry_id`` exists in ``kb_name``: an empty answer about
+        a subject that is not there is a lie, so a reader asks this first.
+
+        Index first, disk as the verdict, as ``add_link``'s target check does:
+        the index is a derived cache, so a miss in it is a reason to ask the
+        repository, not an answer (design principle 5). Raises
+        ``KBNotFoundError`` for an unknown KB, ``EntryNotFoundError`` for an
+        absent entry.
+        """
+        kb_config = self.config.get_kb(kb_name)
+        if kb_config is None:
+            raise KBNotFoundError(f"KB not found: {kb_name}")
+        if self.db.get_entry(entry_id, kb_name) is not None:
+            return
+        if KBRepository(kb_config).load(entry_id) is not None:
+            return
+        # A link to a page that does not exist yet is stored and answered (a
+        # red link, `[[ghost-page]]`): the subject is absent, but the question
+        # "what links here" has an answer. Refuse only when nothing links to it.
+        if self.db.get_backlinks(entry_id, kb_name, limit=1, readable_kbs=None):
+            return
+        raise EntryNotFoundError(f"Entry not found: {entry_id}")
+
     def load_entry_from_disk(self, entry_id: str, kb_name: str) -> Entry | None:
         """Load an entry from disk via KBRepository."""
         kb_config = self.config.get_kb(kb_name)
@@ -2328,6 +2528,47 @@ class KBService:
     # Protocol-level operations
     # =========================================================================
 
+    def _refuse_claim_of_complete_task(self, entry_id: str, kb_name: str) -> dict[str, Any] | None:
+        """Refuse to claim a task whose children are all resolved.
+
+        ADR-0042 decision 4 allows a refusal; it closes the risk the ADR names
+        when the parent rollup stopped writing (a worker could claim a parent
+        whose work is finished). The answer comes from the same function every
+        other reader uses (``derive_completion``), so a claim, a filter and a
+        read never disagree. A task whose own file says ``done`` or
+        ``cancelled`` is left to the CAS below, which refuses it with the
+        status.
+
+        Check-then-CAS, so the answer can be stale in either direction: a
+        child that resolves between the check and the CAS lets a claim
+        through on a task that has just become complete, and a child that
+        reopens (or is added) in that window gives a refusal that a retry
+        would not. Both windows are the length of one index read.
+        """
+        rows = self.db.execute_sql(
+            "SELECT entry_type FROM entry WHERE id = :entry_id AND kb_name = :kb_name",
+            {"entry_id": entry_id, "kb_name": kb_name},
+        )
+        if not rows or rows[0].get("entry_type") != "task":
+            return None
+        from .task_service import TaskService
+
+        derived = TaskService(self.config, self.db, kb_svc=self).derived_for(kb_name, entry_id)
+        completion = derived["completion"]
+        if not (completion["complete"] and completion["basis"] == "children"):
+            return None
+        return {
+            "claimed": False,
+            "error": (
+                f"Task '{entry_id}' counts as done: all {completion['children']} of its "
+                "children are resolved (derived), so there is nothing left to claim. "
+                "Add a child (task decompose) to reopen the work; to write done into "
+                "its file, walk it with task update (claimed, in_progress, done)."
+            ),
+            "current_status": derived["effective_status"],
+            "derived": derived,
+        }
+
     def claim_entry(
         self,
         entry_id: str,
@@ -2346,6 +2587,10 @@ class KBService:
             Dict with claimed=True on success, or error details.
         """
         from sqlalchemy import text
+
+        refusal = self._refuse_claim_of_complete_task(entry_id, kb_name)
+        if refusal:
+            return refusal
 
         session = self.db.session
 
@@ -2634,15 +2879,13 @@ class KBService:
     @staticmethod
     def _extract_frontmatter(content: str) -> dict | None:
         """Extract YAML frontmatter from markdown content."""
-        if not content.startswith("---"):
-            return None
-        parts = content.split("---", 2)
-        if len(parts) < 3:
+        split = split_frontmatter(content)
+        if not isinstance(split, Frontmatter):
             return None
         try:
             from ..utils.yaml import load_yaml
 
-            return load_yaml(parts[1])
+            return load_yaml(split.text)
         except Exception:
             return None
 
@@ -2733,14 +2976,32 @@ class KBService:
 
 
 def _as_field_type(entry: Entry, key: str, value: Any) -> Any:
-    """``value`` as the type an Enum-valued field holds, or refused.
+    """Coerce an update value to the model type expected for its field.
 
-    Every surface sends a field's value as a string (`status: disputed`), and
-    an Enum field (`EventEntry.status`) assigned a str failed later, at
-    `to_frontmatter`'s `.value`, as `INTERNAL: 'str' object has no attribute
-    'value'` -- for a deliberate set and for an echoed read result alike
-    (#561). An unknown value is refused before anything is written.
+    Enum fields arrive as strings such as status values, and assigning a
+    string to EventEntry.status failed later during frontmatter serialization
+    (#561). Source and Link lists arrive as JSON dictionaries on reads and are
+    restored to typed objects here, before validation or serialization.
+    Unsupported input is refused before anything is written.
     """
+    if key in ("sources", "links"):
+        item_type = Source if key == "sources" else Link
+        if not isinstance(value, list):
+            raise ValidationError(
+                f"Cannot set {key} on {entry.entry_type} '{entry.id}': expected a list of objects."
+            )
+        converted = []
+        for index, item in enumerate(value):
+            if isinstance(item, item_type):
+                converted.append(item)
+            elif isinstance(item, dict):
+                converted.append(item_type.from_dict(item))
+            else:
+                raise ValidationError(
+                    f"Cannot set {key}[{index}] on {entry.entry_type} '{entry.id}': expected an object."
+                )
+        return converted
+
     current = getattr(entry, key, None)
     if not isinstance(current, Enum) or isinstance(value, type(current)):
         return value

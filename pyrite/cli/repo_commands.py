@@ -10,6 +10,7 @@ from rich.table import Table
 
 from ..config import load_config
 from ..utils.errors import cli_error
+from .output import validate_output_format
 
 repo_collab_app = typer.Typer(help="Repository collaboration commands")
 console = Console()
@@ -106,7 +107,8 @@ def repo_sync(
                 retryable=True,
             )
 
-        for repo_name, info in result.get("repos", {}).items():
+        repos = result.get("repos", {})
+        for repo_name, info in repos.items():
             if info["success"]:
                 console.print(f"[green]{repo_name}:[/green] {info['message']}")
                 if info.get("changes", 0) > 0:
@@ -114,6 +116,10 @@ def repo_sync(
                     console.print(f"  Re-indexed: {info.get('reindexed', 0)}")
             else:
                 console.print(f"[red]{repo_name}:[/red] {info['error']}")
+        from ..utils.errors import exit_unless_whole
+
+        failed = sum(1 for info in repos.values() if not info["success"])
+        exit_unless_whole(failed, len(repos) - failed)
     finally:
         db.close()
 
@@ -153,7 +159,10 @@ def repo_unsubscribe(
 def repo_status(
     name: str = typer.Argument(..., help="Repository name"),
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """Show detailed status for a repository."""
@@ -205,7 +214,10 @@ def repo_status(
 @repo_collab_app.command("list")
 def repo_list_extended(
     output_format: str = typer.Option(
-        "json", "--format", help="Output format: json, rich, markdown, csv, yaml"
+        "json",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: json, rich, markdown, csv, yaml",
     ),
 ):
     """List all repositories with sync status."""

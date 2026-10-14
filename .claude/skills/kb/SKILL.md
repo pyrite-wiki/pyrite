@@ -138,7 +138,7 @@ pyrite auth status                              # Check GitHub auth
 pyrite auth whoami                              # Current identity
 pyrite auth github-login                        # OAuth flow
 pyrite mcp                                      # Start MCP server (stdio, write tier)
-pyrite mcp-setup                                # Configure Claude Code integration
+pyrite mcp-setup                                # Register with Claude Code / Claude Desktop
 ```
 
 ---
