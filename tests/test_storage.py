@@ -565,7 +565,10 @@ class TestIndexManager:
     def setup(self):
         """Create temporary DB and KB for indexing tests."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            tmpdir = Path(tmpdir)
+            # resolve(): on macOS the temp dir is under /var, a symlink to /private/var;
+            # the index stores the resolved path, so tests that look a file up by
+            # the path they built must build it resolved (#893).
+            tmpdir = Path(tmpdir).resolve()
 
             # Create DB
             db_path = tmpdir / "index.db"
