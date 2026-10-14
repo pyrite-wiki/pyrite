@@ -356,6 +356,7 @@ class TestParallelSuite:
             for job in ci["jobs"].values()
             for step in job["steps"]
             if "pytest" in str(step.get("run", ""))
+            and "--collect-only" not in str(step.get("run", ""))
         ]
         assert runs, "no pytest step in CI"
         assert all("-n auto" in r for r in runs), runs
@@ -387,7 +388,7 @@ class TestPinnedTestRunner:
     silent `uv pip install` drift.
     """
 
-    _PINNED = {"pytest", "pytest-cov", "pytest-xdist", "pytest-timeout"}
+    _PINNED = {"pytest", "pytest-cov", "pytest-xdist", "pytest-timeout", "pytest-split"}
 
     def _dev_extra(self, pyproject: dict) -> list[str]:
         return pyproject["project"]["optional-dependencies"]["dev"]
@@ -1556,7 +1557,9 @@ class TestTheRedLineIsFirstAndEveryGatingRunLeavesATimingRecord:
         assert "!cancelled()" in str(up["if"])
 
     def test_the_required_check_names_did_not_move(self, ci):
-        assert ci["jobs"]["gate"]["needs"] == ["changes", "kb", "test", "frontend"]
+        # `shard-report` (tests Q2) is the shards' union proof; the shard legs are
+        # `test (<py>, <k>)` and are aggregated by `gate`, never required by name.
+        assert ci["jobs"]["gate"]["needs"] == ["changes", "kb", "test", "shard-report", "frontend"]
         assert "name" not in ci["jobs"]["test"], "`test (<python>)` is the matrix leg's name"
         assert "name" not in ci["jobs"]["gate"], "`gate` is looked up by exact name"
 
@@ -1580,3 +1583,92 @@ class TestTheRedLineIsFirstAndEveryGatingRunLeavesATimingRecord:
             text=True,
         )
         assert missing.returncode == 0 and "no junit report" in missing.stdout
+
+
+class TestTheTestJobIsShardedAndProvesItRanEverything:
+    """Tests Q2 scope addition: `test (3.12)` took 13 min (Sep 23) and 18-21
+    now; the suite doubled and the time followed the count. Each interpreter's
+    run is 3 parallel pytest-split shards, balanced by `.test_durations`.
+    """
+
+    SHARDS = 3
+
+    def test_the_test_job_is_a_shard_matrix_under_every_interpreter(self, ci):
+        matrix = ci["jobs"]["test"]["strategy"]["matrix"]
+        assert matrix["shard"] == list(range(1, self.SHARDS + 1))
+        assert "python-version" in matrix
+
+    def test_the_pytest_line_takes_its_shard_and_falls_back_to_an_even_split(self, ci):
+        run = next(
+            str(s["run"])
+            for s in ci["jobs"]["test"]["steps"]
+            if "pytest -n auto" in str(s.get("run", ""))
+        )
+        assert f"--splits {self.SHARDS}" in run
+        assert "--group ${{ matrix.shard }}" in run
+        assert "--durations-path .test_durations" in run
+        assert "--store-durations" in run  # the timings the next balance is made from
+
+    def test_a_missing_durations_file_is_not_a_failure_or_a_dropped_test(self, tmp_path):
+        # pytest-split with no usable durations splits evenly by count; the
+        # three groups together are the whole collection.
+        import subprocess
+        import sys
+
+        (tmp_path / "test_x.py").write_text(
+            "import pytest\n@pytest.mark.parametrize('n', range(10))\ndef test_n(n): pass\n"
+        )
+        ran = []
+        for group in (1, 2, 3):
+            out = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    str(tmp_path / "test_x.py"),
+                    "-p",
+                    "no:cacheprovider",
+                    "--splits",
+                    "3",
+                    "--group",
+                    str(group),
+                    "--durations-path",
+                    str(tmp_path / "missing.json"),
+                    "-v",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=tmp_path,
+            ).stdout
+            ran += [ln.split()[0] for ln in out.splitlines() if " PASSED" in ln]
+        assert len(ran) == 10 and len(set(ran)) == 10
+
+    def test_the_lint_and_pr_hygiene_steps_run_once_per_interpreter(self, ci):
+        for step in ci["jobs"]["test"]["steps"]:
+            name = str(step.get("name", ""))
+            if name.startswith(("Lint with ruff", "Check for circular", "Validate KB")):
+                assert "matrix.shard == 1" in str(step["if"]), name
+
+    def test_shard_report_is_part_of_the_gate_and_runs_after_the_shards(self, ci):
+        job = ci["jobs"]["shard-report"]
+        assert {"test", "collect"} <= set(job["needs"])
+        assert "shard-report" in ci["jobs"]["gate"]["needs"]
+        runs = "\n".join(str(s.get("run", "")) for s in job["steps"])
+        assert "check_shard_union.py check" in runs and "--shards 3" in runs
+
+    def test_the_collection_count_uses_the_shards_selection(self, ci):
+        run = "\n".join(str(s.get("run", "")) for s in ci["jobs"]["collect"]["steps"])
+        assert "not slow and not e2e and not experimental" in run
+        assert "--splits" not in run  # the unsplit collection
+
+    def test_the_durations_file_is_committed_json_and_nothing_requires_it(self):
+        import json
+
+        path = REPO / ".test_durations"
+        if path.exists():
+            data = json.loads(path.read_text())
+            assert all(isinstance(v, (int, float)) for v in data.values())
+
+    def test_every_nested_job_a_required_check_could_name_is_unchanged(self, ci):
+        for job in ("gate", "kb", "frontend", "changes"):
+            assert "name" not in ci["jobs"][job] or ci["jobs"][job]["name"] == job
