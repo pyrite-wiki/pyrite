@@ -37,7 +37,7 @@ for ext in extensions/*/; do uv pip install -e "$ext"; done
 pre-commit install
 
 # Verify installation
-.venv/bin/pytest tests/ extensions/*/tests/ -q
+scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/*/tests/ -n 4 -q
 ```
 
 Pytest prints the current collected and passed test counts in its summary;
@@ -186,17 +186,37 @@ Tests carry no size marker yet.
 **Everything**
 
 ```bash
-.venv/bin/pytest tests/ extensions/ -n 4       # backend, ~6,000 tests, ~10 min on a busy laptop
+scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/ -n 4   # backend, ~6,000 tests, ~10 min on a busy laptop
 cd web && npm ci && npm run check && npm run test:unit && npm run build   # frontend
 HF_HUB_OFFLINE=1 .venv/bin/pytest tests/e2e -m e2e -n 4 --dist loadfile   # large: real server and MCP processes
 PATH="$PWD/.venv/bin:$PATH" bash scripts/run_tutorial.sh                  # large: docs/getting-started.md as a test
 PATH="$PWD/.venv/bin:$PATH" bash scripts/run_tutorial.sh docs/tutorials/pyrite-in-20-minutes.md   # large: the 20-minute tutorial as a test (clones the demo KBs)
-cd web && npx playwright install chromium && npm run test:e2e             # large: browser; manual-only in CI while non-deterministic
+cd web && npx playwright install chromium && cd .. && scripts/e2e.sh      # large: browser; manual-only in CI while non-deterministic
 ```
 
 Use `-n 4`, not `-n auto`, on a laptop: `-n auto` starts a worker per core,
 each with its own databases and temp trees, and several worktrees doing that
 at once ran a 16 GB machine out of memory (#168) and filled its disk (#356).
+
+**One heavy run at a time per machine.** `scripts/test-affected --run` (and
+so the pre-push hook), `scripts/verify-red.sh` and `scripts/e2e.sh` (and so
+`npm run test:e2e`) take one lock per user per machine,
+`~/.cache/pyrite/heavy.lock` (`scripts/heavy_lock.py`), shared by every
+worktree. A second run waits its turn, in the order it arrived, and prints
+`heavy-lock: waiting for the heavy-run lock ..., held by pid P (command) in
+<directory> since <time>` on entry and every minute; it starts when the
+holder ends. Anything else heavy goes through the same lock with
+`scripts/heavy_lock.py -- <command>`, as in the commands above.
+
+- The kernel releases the lock when its holder exits, killed or crashed
+  included: there is never a stale lock to delete.
+- `PYRITE_SUITE_LOCK_SKIP=1` runs without it (a run you know is small, a
+  machine that can afford two). A single test file through plain `pytest`
+  takes no lock.
+- `PYRITE_SUITE_LOCK_TIMEOUT` (seconds, default 3600) bounds the wait; when
+  it runs out the command is not run and the exit status is 75.
+  `PYRITE_SUITE_LOCK` moves the lock file (tests use a temporary one).
+- CI takes no lock (`CI` or `GITHUB_ACTIONS` set).
 
 **A subset**
 
@@ -252,8 +272,8 @@ read-only, redaction, credentials, escaping, tiers) fails
 (`NEVER_EXPERIMENTAL`) or reviewed with a reason (`REVIEWED_EXPERIMENTAL`).
 
 ```bash
-.venv/bin/pytest tests/ extensions/ -n 4 -m "not slow and not e2e and not experimental"   # the core, as CI's gating job runs it
-.venv/bin/pytest tests/ extensions/ -n 4 -m "experimental and not slow and not e2e"       # the experimental set
+scripts/test-affected --run --full             # the core, as CI's gating job runs it (-m "not slow and not e2e and not experimental")
+scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/ -n 4 -m "experimental and not slow and not e2e"   # the experimental set
 scripts/test-affected --run --experimental      # the pre-push selection, experimental tests included
 ```
 

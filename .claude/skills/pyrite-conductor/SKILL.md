@@ -410,8 +410,18 @@ failure happened. Scale them to your cores and memory, and keep the rule:
   no slot **only** under an explicit instruction to run no suite, no `-n`
   flag, no server and no browser — the conductor runs the suite once and
   hands them the result;
-- the health step reads `uptime` and `memory_pressure` and starts nothing
-  heavy above load 8 or below 30% free memory, whatever the slot count says.
+- the health step runs `scripts/machine_ok.sh` and **starts no worker,
+  review suite or Playwright run when it exits 1** (1-minute load above
+  0.8 x cores, or available memory under 30% of total: load 8 and 30% on the
+  example machine; `PYRITE_MACHINE_MAX_LOAD`, `PYRITE_MACHINE_MIN_FREE_PCT`
+  for yours), whatever the slot count says; the tick log records the refusal
+  with the line it printed. A number it cannot read is reported, not a
+  refusal;
+- the suites themselves cannot stack: `scripts/test-affected --run` (the
+  pre-push hook included), `scripts/verify-red.sh` and `scripts/e2e.sh` take
+  one machine-wide lock (`scripts/heavy_lock.py`) and queue behind each
+  other. The slot budget still matters -- a waiting worker is a worker
+  whose report is late.
 
 *The pull-request budget* — every merge puts every other open PR `BEHIND`,
 and until a merge queue exists each of those is a rebase and a gate run:

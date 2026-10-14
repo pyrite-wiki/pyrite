@@ -50,7 +50,7 @@ def test_search(tmp_kb):
 cd web && npx vitest run src/path/file.test.ts -t "test name"
 
 # Frontend E2E
-cd web && npx playwright test e2e/file.spec.ts
+scripts/e2e.sh e2e/file.spec.ts   # Playwright under the machine lock
 ```
 
 Confirm:

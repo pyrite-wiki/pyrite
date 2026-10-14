@@ -129,7 +129,10 @@ work" is not evidence.
   committed tree, and the pre-push hook reuses the pass.
 - After a failure that looks load-caused, re-run only the failures
   (`scripts/test-affected --run -- --lf`); never start a second suite while
-  one is running.
+  one is running. `test-affected --run`, `verify-red.sh` and `scripts/e2e.sh`
+  (Playwright) share one machine-wide lock: a second run waits, naming the
+  holder, instead of running beside it (#168; CONTRIBUTING, "One heavy run at
+  a time per machine").
 - A test that passes alone and fails in parallel is a bug in that test.
 
 ## Capture what you learned

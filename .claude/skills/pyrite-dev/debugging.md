@@ -107,13 +107,13 @@ This isn't a failed hypothesis — it's likely a wrong architecture. STOP.
 cd web && npx vitest run src/lib/stores/entries.test.ts
 
 # Playwright with headed browser (see what's happening)
-cd web && npx playwright test --headed
+scripts/e2e.sh --headed
 
 # Playwright debug mode
-cd web && npx playwright test --debug
+scripts/e2e.sh --debug
 
 # Check console errors
-cd web && npx playwright test --reporter=line
+scripts/e2e.sh --reporter=line
 ```
 
 ### API issues

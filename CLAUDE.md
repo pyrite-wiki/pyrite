@@ -119,6 +119,8 @@ cd web && npm run build && npm run test:unit
 ruff check pyrite/
 ```
 
+**One heavy run at a time per machine (#168).** `scripts/test-affected --run` (the pre-push hook too), `scripts/verify-red.sh` and `scripts/e2e.sh` (Playwright; `npm run test:e2e` calls it) take one lock, `~/.cache/pyrite/heavy.lock`, shared by every worktree. A second run waits its turn and prints who holds it; a killed holder releases it. Wrap anything else heavy, the full suite included, in `scripts/heavy_lock.py -- <command>`. `PYRITE_SUITE_LOCK_SKIP=1` skips the lock; CI takes none. Details: CONTRIBUTING, "One heavy run at a time per machine".
+
 ## Two skills: worker and conductor
 
 - **pyrite-dev** — for an agent writing Pyrite code: one theme, one branch, one worktree, TDD, evidence, a report. It opens a draft PR after its first push so CI starts; it does not choose work or mark the PR ready.
@@ -150,7 +152,7 @@ One-time setup on a fresh clone: `.venv/bin/pip install -e ".[dev]"` (installs `
 |-------|-----------|
 | commit | ruff, ruff-format, trailing-whitespace, end-of-file, check-yaml, check-large-files, check-merge-conflict, debug-statements, import-cycle check, KB schema validation. Seconds. **No pytest.** |
 | commit-msg | `fix:` commits must touch `tests/` |
-| pre-push | `scripts/test-affected --run`: the `core` tests plus every test importing what the push changed, `-n 4` (`PYRITE_PUSH_WORKERS`); the full suite for conftest/config/CI changes or `PYRITE_PUSH_FULL=1`; only when the pushed range touches code, scripts or config; skipped when a passing `--run` already stamped the pushed tree, or when the pushed tip commit is verified (`gate` green on that exact SHA on GitHub); `PYRITE_PUSH_FORCE=1` re-runs either way |
+| pre-push | `scripts/test-affected --run`: the `core` tests plus every test importing what the push changed, `-n 4` (`PYRITE_PUSH_WORKERS`); the full suite for conftest/config/CI changes or `PYRITE_PUSH_FULL=1`; only when the pushed range touches code, scripts or config; skipped when a passing `--run` already stamped the pushed tree, or when the pushed tip commit is verified (`gate` green on that exact SHA on GitHub); `PYRITE_PUSH_FORCE=1` re-runs either way; waits for the machine-wide heavy-run lock (below) |
 | CI | the authority — everything above plus the full matrix |
 
 If ruff-format modifies files, re-stage and commit again.
