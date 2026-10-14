@@ -80,7 +80,16 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.delenv("FAKE_DURING", raising=False)
     # The machine-wide lock (scripts/heavy_lock.py) lives under HOME, which
     # is tmp here: each case has its own, never the real one.
-    for var in ("PYRITE_SUITE_LOCK", "PYRITE_SUITE_LOCK_SKIP", "PYRITE_SUITE_LOCK_TIMEOUT"):
+    # CI and the escape hatch skip the lock, and a held marker means "nested":
+    # the lock cases must see the lock path on a laptop and in CI alike.
+    for var in (
+        "PYRITE_SUITE_LOCK",
+        "PYRITE_SUITE_LOCK_SKIP",
+        "PYRITE_SUITE_LOCK_TIMEOUT",
+        "PYRITE_SUITE_LOCK_HELD",
+        "CI",
+        "GITHUB_ACTIONS",
+    ):
         monkeypatch.delenv(var, raising=False)
     for var in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
         monkeypatch.setenv(var, "Test")
