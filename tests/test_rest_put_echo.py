@@ -140,3 +140,24 @@ def test_put_response_lists_empty_when_nothing_was_set_aside(rest_env):
     body = res.json()
     assert body["ignored"] == [], body
     assert body["unchanged"] == [], body
+
+
+def test_put_echoing_unchanged_read_fields_does_not_rewrite(rest_env):
+    """An echo-only PUT is a no-op just like the MCP update surface."""
+    client = rest_env["client"]
+    path = rest_env["kb_path"] / "notes" / "d.md"
+    original = path.read_bytes()
+    entry = client.get("/api/entries/d", params={"kb": KB}).json()
+
+    response = client.put(
+        "/api/entries/d",
+        json={
+            "kb": KB,
+            "importance": entry["importance"],
+            "tags": entry["tags"],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["updated"] is False, response.text
+    assert path.read_bytes() == original

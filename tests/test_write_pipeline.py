@@ -646,7 +646,7 @@ def test_task_audit_fields_are_not_updatable_through_mcp(task_env):
         fields = server.svc.updatable_fields("t", "tk")
         assert not fields & {"status_change_log", "evidence", "agent_context", "assigned_at"}
         path = next(task_env["kb_path"].rglob("t.md"))
-        before = path.read_text()
+        before = path.read_bytes()
         res = server._dispatch_tool(
             "kb_update",
             {
@@ -657,9 +657,9 @@ def test_task_audit_fields_are_not_updatable_through_mcp(task_env):
                 "agent_context": {"forged": True},
             },
         )
-        assert res.get("updated"), res
+        assert res.get("updated") is False, res
+        assert path.read_bytes() == before
         assert "forged" not in path.read_text()
-        assert path.read_text().count("---") == before.count("---")
     finally:
         server.close()
 
@@ -1256,3 +1256,35 @@ def test_update_rejects_malformed_source_and_link_items_by_field(env, field, val
         assert target.read_bytes() == before
     finally:
         db.close()
+
+
+def test_mcp_echo_of_unchanged_hugo_entry_is_a_noop(env, mcp):
+    """#640: sending a read result back unchanged must preserve hand-authored bytes."""
+    path = env["kb_path"] / "notes" / "hugo-entry.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    original = (
+        "---\r\n"
+        "title: Hugo entry\r\n"
+        "type: note\r\n"
+        "importance: high\r\n"
+        "tags: Foo\r\n"
+        "---\r\n"
+        "\r\n"
+        "Hand-authored body.\r\n"
+    )
+    path.write_bytes(original.encode("utf-8"))
+    mcp.index_mgr.index_all()
+
+    rows = mcp.db.list_entries(kb_name=KB)
+    row = next(row for row in rows if row.get("title") == "Hugo entry")
+    entry_id = row["id"]
+    read = mcp._dispatch_tool("kb_get", {"entry_id": entry_id, "kb_name": KB})
+    assert "entry" in read, read
+
+    echoed = dict(read["entry"])
+    echoed.update({"entry_id": entry_id, "kb_name": KB})
+    result = mcp._dispatch_tool("kb_update", echoed)
+
+    assert path.read_bytes() == original.encode("utf-8")
+    assert result.get("updated") is False, result
+    assert result.get("entry_id") == entry_id, result
