@@ -9,9 +9,12 @@ principle 8), so each test enters through a surface -- the CLI's Typer app, the
 MCP server's ``_dispatch_tool``, the REST app -- and the service behind it runs
 for real:
 
-- a link spec is checked by ``kb_service.check_link_spec``, which
-  ``KBService.add_link`` and ``KBService.add_links`` call before they load or
-  append anything (and ``pyrite create --link`` calls before it creates);
+- a link the caller is creating is checked by ``kb_service.check_link_spec``,
+  which ``KBService.add_link`` and ``KBService.add_links`` call before they
+  load or append anything (and ``pyrite create --link`` before it creates);
+  a link that arrives in a file or frontmatter (``add``, a create's
+  ``links:``) gets only ``check_link_target``: a target the index cannot
+  store is refused, nothing else (fix round 1);
 - a KB a link read names is looked up at the top of each
   ``LinkDiscoveryService`` read and ``WikilinkService.check_links``;
 - an input path is read through one CLI helper,
@@ -233,6 +236,45 @@ class TestNewEntryCarryingALink:
         assert out.exit_code == REFUSED, out.output
         assert _json(out)["error_code"] == "VALIDATION_FAILED"
         assert not list(env["rs"].rglob("three.md"))
+
+    @pytest.mark.control(
+        reason="control vs dev, which added these; red against round 0 of this branch (ef43954b)"
+    )
+    @pytest.mark.parametrize(
+        ("links", "expect"),
+        [
+            ("- target: 2024\n  relation: related_to\n", "target: 2024"),
+            ("- target: 3.5\n", "target: 3.5"),
+            ("- target: fresh\n  relation: ''\n", "relation: ''"),
+        ],
+        ids=["int-target", "float-target", "empty-relation"],
+    )
+    def test_add_takes_a_hand_file_that_update_and_sync_take(self, env, links, expect):
+        """Ingest refuses only a link with no target (fix round 1).
+
+        dev added these files, and `update` and `index sync` accept them; the
+        same file gets the same answer from `add` (principle 2). The file is
+        not rewritten in Pyrite's spelling: the int target stays an int.
+        """
+        src = env["tmp"] / "four.md"
+        src.write_text(f"---\ntype: note\ntitle: Four\nlinks:\n{links}---\nbody\n")
+        out = cli("add", str(src), "-k", "rs")
+        assert out.exit_code == 0, out.output
+        assert expect in _file(env, "rs", "four").read_text()
+
+    @pytest.mark.control(
+        reason="control: pins the docstring claim; sync already reported it on dev"
+    )
+    def test_index_sync_reports_a_null_target_link_on_disk_as_malformed(self, env):
+        """The module docstring's claim: reported, not repaired, not a crash."""
+        path = _file(env, "rs", "hello")
+        path.write_text(path.read_text().replace("tags:", "links:\n- target:\ntags:"))
+        with _unchanged(path):
+            out = CliRunner().invoke(__import__("pyrite.cli", fromlist=["app"]).app,
+                                     ["index", "sync"])  # fmt: skip
+        assert out.exit_code == 0, out.output
+        assert "Malformed: 1 file(s) skipped" in out.output
+        assert "hello.md" in out.output.replace("\n", "")
 
     @pytest.mark.control(
         reason="control: an update of a file already holding a bad link is not refused for it"
@@ -490,6 +532,61 @@ class TestMCP:
     def test_kb_discover_neighbors_on_a_missing_kb(self, env, mcp, args):
         out = mcp("kb_discover_neighbors", {**args, "mode": "keyword"})
         assert out.get("error_code") == "KB_NOT_FOUND", out
+
+
+class TestMCPKbLinkOtherRefusals:
+    def test_only_the_spec_check_answers_validation_failed(self):
+        """A ValidationError subclass raised inside add_link (storage's id and
+        containment checks, FrontmatterError) keeps the LINK_FAILED answer it
+        had on dev (fix round 1): the handler maps VALIDATION_FAILED only
+        around its own `check_link_spec` call, never around `add_link`.
+
+        Structural, because no input found reaches such a subclass through
+        add_link today (tried: `../x` and `.hidden` ids, a templated
+        subdirectory escape, malformed frontmatter -- `load` answers None and
+        save writes in place), and patching storage behind `_dispatch_tool` is
+        what tests/test_tests_drive_the_surface_not_the_mock.py forbids.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        from pyrite.server.mcp_server import PyriteMCPServer
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(PyriteMCPServer._kb_link)))
+
+        def calls(node, name):
+            return any(
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute | ast.Name)
+                and getattr(n.func, "attr", getattr(n.func, "id", None)) == name
+                for n in ast.walk(node)
+            )
+
+        def catches_validation(handler):
+            names = [
+                n.id if isinstance(n, ast.Name) else getattr(n, "attr", "")
+                for n in ast.walk(handler.type)
+                if isinstance(n, ast.Name | ast.Attribute)
+            ] if handler.type is not None else ["<bare>"]  # fmt: skip
+            return "ValidationError" in names or "<bare>" in names
+
+        tries = [n for n in ast.walk(tree) if isinstance(n, ast.Try)]
+        around_add = [t for t in tries if any(calls(b, "add_link") for b in t.body)]
+        around_check = [t for t in tries if any(calls(b, "check_link_spec") for b in t.body)]
+        assert around_add and around_check
+        for t in around_add:
+            assert not any(catches_validation(h) for h in t.handlers)
+            assert not any(calls(b, "check_link_spec") for b in t.body)
+
+    @pytest.mark.control(
+        reason="control: a missing source answered LINK_FAILED on dev and still does"
+    )
+    def test_an_unknown_source_still_answers_link_failed(self, env, mcp):
+        """The spec check runs first, but a good spec on a missing source
+        keeps its dev answer."""
+        out = mcp("kb_link", {"source_id": "ghost", "source_kb": "rs", "target_id": "hello"})
+        assert (out.get("error_code"), out["retryable"]) == ("LINK_FAILED", False), out
 
 
 class TestREST:

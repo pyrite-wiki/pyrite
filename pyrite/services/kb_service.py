@@ -121,6 +121,29 @@ def _norm_relation(relation: str) -> str:
     return _DEFAULT_RELATION if relation == _LEGACY_DEFAULT_RELATION else relation
 
 
+def check_link_target(target: Any) -> str:
+    """The link target as text, or the refusal for one that cannot be stored.
+
+    The rule for a link that arrives in a file or a frontmatter mapping
+    (``add``, a create's own ``links:``, ``import``): only a target that is
+    missing, null, blank, or a list or mapping is refused -- the cases the
+    index cannot store, which used to be written and then fail the index
+    insert (#846). Any other scalar YAML gives is accepted and read as text,
+    as the index reads it: ``target: 2024`` is the id ``"2024"`` and
+    ``target: 2024-01-01`` is ``"2024-01-01"``. The relation and note are
+    not judged here: a hand-written ``relation: ''`` is accepted by
+    ``update`` and ``index sync``, so ``add`` accepts it too (principle 2;
+    fix round 1). The caller decides whether to write the text back; the
+    ingest paths do not, so the file keeps its own spelling.
+    """
+    if target is None or isinstance(target, list | tuple | set | dict):
+        raise ValidationError(f"A link needs a target entry id; got {target!r}.")
+    text = target if isinstance(target, str) else str(target)
+    if not text.strip():
+        raise ValidationError(f"A link needs a target entry id; got {target!r}.")
+    return text
+
+
 def check_link_spec(
     target: Any,
     relation: Any = None,
@@ -128,32 +151,29 @@ def check_link_spec(
     note: Any = None,
     target_kb: Any = None,
 ) -> tuple[str, str, str]:
-    """The one check a link request passes before anything is written (#846).
+    """The check a link the caller is creating passes before anything is written (#846).
 
-    Returns ``(target, relation, note)`` as they will be written: a relation
-    left out (``None``) is ``related_to``, a note left out is ``""``. Raises
-    ``ValidationError`` for a target that is missing, not text or blank, a
-    relation or note that is given but is not text, a relation that is blank,
-    and a ``target_kb`` that is given but is not text.
-
-    Every write of a new link calls this first: ``add_link`` (CLI ``link``,
+    For the explicit link-creation surfaces only: ``add_link`` (CLI ``link``,
     MCP ``kb_link``), ``add_links`` (``links bulk-create``) and ``pyrite
     create --link``, which calls it for every spec before it creates the
-    entry. Before this, a null target was appended, the file saved, and the
-    index insert then failed: the link was on disk and the item reported
-    failed.
+    entry. There the caller typed the link, so more is refused than on
+    ingest (:func:`check_link_target`): a relation that is given but blank
+    or not text, a note that is not text, a ``target_kb`` that is not text,
+    and a boolean target (YAML's ``yes``; written back it would read
+    ``True``). A numeric or date target is turned into text.
 
-    Only for writes. A file that already holds such a link is read as it is
-    and reported, never refused on read or repaired (``kb/design.md``,
-    principle 2), so this is not a check in the ``Link`` model, which also
-    loads files. A ``:`` in a relation is accepted here: it is ambiguous
-    only in the CLI's ``--link target:relation`` syntax, whose parser
-    refuses a third part.
+    Returns ``(target, relation, note)`` as they will be written: a relation
+    left out (``None``) is ``related_to``, a note left out is ``""``.
+
+    Never on read, and never on a file's own links: those get
+    :func:`check_link_target`, which refuses only what cannot be stored
+    (``kb/design.md``, principle 2). A ``:`` in a relation is accepted: it is
+    ambiguous only in the CLI's ``--link target:relation`` syntax, whose
+    parser refuses a third part.
     """
-    if not isinstance(target, str) or not target.strip():
-        raise ValidationError(
-            f"A link needs a target entry id; got {target!r}.",
-        )
+    if isinstance(target, bool):
+        raise ValidationError(f"A link needs a target entry id; got {target!r}.")
+    target = check_link_target(target)
     if relation is None:
         relation = _DEFAULT_RELATION
     elif not isinstance(relation, str) or not relation.strip():
@@ -913,14 +933,17 @@ class KBService:
         errors = entry.validate()
         if errors:
             raise ValidationError("; ".join(errors))
-        # A new entry's own links pass the check every link write passes
-        # (#846): a null target used to be written, then fail the index
-        # insert. Here, in the create pipeline only -- not `_validate_write`,
-        # which an update also runs: a link already in a hand-edited file is
-        # reported, never a reason to refuse an unrelated update (principle 2).
+        # A new entry's own links (a file given to `add`, a create's `links`
+        # field, an import) are ingest, not a link the caller is typing: only
+        # a target the index cannot store is refused -- a null one used to be
+        # written, then fail the index insert (#846). Nothing else, so the
+        # file that `update` and `index sync` accept, `add` accepts
+        # (principle 2). The target is not rewritten: `target: 2024` stays an
+        # int in the file. Not in `_validate_write`, which an update also
+        # runs: a link already in a hand-edited file is not the update's.
         for link in entry.links:
             try:
-                check_link_spec(link.target, link.relation, note=link.note, target_kb=link.kb)
+                check_link_target(link.target)
             except ValidationError as e:
                 raise ValidationError(f"links: {e}") from None
         warnings = self._validate_write(entry, kb_name, kb_config)

@@ -41,7 +41,7 @@ from ..services.body_bounds import (
 )
 from ..services.export_service import ExportService
 from ..services.graph_service import GraphService
-from ..services.kb_service import KBService
+from ..services.kb_service import KBService, check_link_spec
 from ..services.read_shaping import project_fields
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
@@ -1453,6 +1453,16 @@ class PyriteMCPServer:
         note = args.get("note", "")
         allow_dangling = args.get("allow_dangling", False)
 
+        # The spec is checked here, outside the try below, so VALIDATION_FAILED
+        # is the answer for this refusal only: a ValidationError subclass
+        # raised later inside add_link (storage, frontmatter) keeps the
+        # LINK_FAILED answer it always had (#846, fix round 1). add_link runs
+        # the same check again; it is the rule's home for every other caller.
+        try:
+            check_link_spec(target_id, relation, note=note, target_kb=target_kb)
+        except ValidationError as e:
+            return _refusal(e)
+
         try:
             result = self.svc.add_link(
                 source_id=source_id,
@@ -1470,11 +1480,6 @@ class PyriteMCPServer:
             # this handler deliberately diverges on the code but not on
             # retryability.
             return _error("LINK_FAILED", str(e), retryable=False)
-        except ValidationError as e:
-            # A malformed link (empty target or relation) is refused by
-            # `check_link_spec` before anything is written, with the code the
-            # CLI gives the same request; a retry cannot succeed (#846).
-            return _refusal(e)
         except PyriteError as e:
             return _error("LINK_FAILED", _safe_message(e), retryable=True)
 
