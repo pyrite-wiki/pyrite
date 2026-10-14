@@ -210,6 +210,23 @@ class TestAdminCli:
         assert health.exit_code == 0 and "Index is healthy." in health.output
         assert "Indexed 2 entries from notes" in one.output
 
+    @pytest.mark.control(
+        reason="characterization: a refactor keeps this behaviour; the layer-boundary ratchet is the red"
+    )
+    def test_index_health_exits_1_and_names_the_problem_when_a_file_is_gone(self, tmp_path):
+        from pyrite.admin_cli import app
+
+        config = _config(tmp_path, indexed=True)
+        gone = next(config.knowledge_bases[0].path.glob("*.md"))
+        gone.unlink()
+
+        with _patched(config):
+            result = runner.invoke(app, ["index", "health"])
+
+        assert result.exit_code == 1, result.output
+        assert "Index has issues:" in result.output
+        assert "Missing files: 1" in result.output
+
     def test_index_sync_reports_non_regular_paths(self, tmp_path):
         from pyrite.admin_cli import app
 

@@ -179,17 +179,17 @@ def index_build(
 ):
     """Build or rebuild the search index."""
     from .cli.context import index_db_context
-    from .storage import IndexManager
+    from .services.kb_service import KBService
 
     config = load_config()
     with index_db_context(config) as db:
-        index_mgr = IndexManager(db, config)
+        kb_svc = KBService(config, db)
 
         if kb_name:
-            count = index_mgr.index_kb(kb_name)
+            count = kb_svc.index_kb(kb_name)
             console.print(f"[green]Indexed {count} entries from {kb_name}[/green]")
         else:
-            results = index_mgr.index_all()
+            results = kb_svc.build_index()
             total = sum(results.values())
             console.print(f"[green]Indexed {total} entries across {len(results)} KBs[/green]")
 
@@ -200,13 +200,13 @@ def index_sync(
 ):
     """Incremental index sync with file changes."""
     from .cli.context import index_db_context
-    from .storage import IndexManager
+    from .services.kb_service import KBService
 
     config = load_config()
     with index_db_context(config) as db:
-        index_mgr = IndexManager(db, config)
+        kb_svc = KBService(config, db)
 
-        results = index_mgr.sync_incremental(kb_name)
+        results = kb_svc.sync_index(kb_name)
         console.print(
             f"[green]Synced:[/green] +{results['added']} -{results['removed']} ~{results['updated']}"
         )
@@ -227,13 +227,13 @@ def index_sync(
 def index_stats(kb_name: str | None = typer.Argument(None, help="KB name")):
     """Show index statistics."""
     from .cli.context import index_db_context
-    from .storage import IndexManager
+    from .services.kb_service import KBService
 
     config = load_config()
     with index_db_context(config) as db:
-        index_mgr = IndexManager(db, config)
+        kb_svc = KBService(config, db)
 
-        stats = index_mgr.get_index_stats()
+        stats = kb_svc.get_index_stats()
         console.print(f"[bold]Total entries:[/bold] {stats.get('total_entries', 0)}")
         console.print(f"[bold]Total tags:[/bold] {stats.get('total_tags', 0)}")
         console.print(f"[bold]Total links:[/bold] {stats.get('total_links', 0)}")
@@ -295,13 +295,13 @@ def index_embed(kb_name: str = typer.Argument(..., help="KB to generate embeddin
 def index_health():
     """Check index health and consistency."""
     from .cli.context import index_db_context
-    from .storage import IndexManager
+    from .services.kb_service import KBService
 
     config = load_config()
     with index_db_context(config) as db:
-        index_mgr = IndexManager(db, config)
+        kb_svc = KBService(config, db)
 
-        health = index_mgr.check_health()
+        health = kb_svc.check_index_health()
         is_healthy = not (
             health["missing_files"] or health["unindexed_files"] or health["stale_entries"]
         )

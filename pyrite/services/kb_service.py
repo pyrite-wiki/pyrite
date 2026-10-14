@@ -2773,6 +2773,14 @@ class KBService:
         """Index every configured KB from its files (``IndexManager.index_all``)."""
         return self._index_mgr.index_all()
 
+    def index_kb(self, kb_name: str) -> int:
+        """Index one KB from its files; returns the entry count (``IndexManager.index_kb``)."""
+        return self._index_mgr.index_kb(kb_name)
+
+    def check_index_health(self, kb_name: str | None = None) -> dict[str, Any]:
+        """Compare the index with the files (``IndexManager.check_health``)."""
+        return self._index_mgr.check_health(kb_name)
+
     def stale_kbs(self, kb_name: str | None = None) -> list[str]:
         """Names of KBs with a file on disk newer than the index (cheap mtime probe).
 

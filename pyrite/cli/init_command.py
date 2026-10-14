@@ -435,7 +435,7 @@ def init_kb(
     and runs initial indexing. Zero interactive prompts.
     """
     from ..config import KBConfig, load_config, save_config
-    from ..storage.index import IndexManager
+    from ..services.kb_service import KBService
     from ..utils.yaml import dump_yaml_file, load_yaml_file
     from .context import open_index_db
 
@@ -532,8 +532,7 @@ def init_kb(
     try:
         config = load_config()  # reload to get the newly added KB
         db = open_index_db(config)
-        index_mgr = IndexManager(db, config)
-        entries_indexed = index_mgr.index_kb(kb_name)
+        entries_indexed = KBService(config, db).index_kb(kb_name)
         db.close()
     except Exception as exc:
         logger.warning("Initial indexing failed for %s", kb_name, exc_info=True)
