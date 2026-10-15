@@ -879,11 +879,19 @@ def test_sw_prioritize_changes_only_rank(tmp_path: Path):
     db.close()
     path = kb_path / "backlog" / "b1.md"
     before = _text(path)
-    with (
-        patch("pyrite.config.load_config", return_value=config),
-        patch.object(plugin, "_get_db", lambda: (PyriteDB(config.settings.index_path), True)),
-    ):
-        result = plugin._mcp_prioritize({"kb_name": "sw", "item_ids": ["b1"]})
+    from pyrite.plugins.context import PluginContext
+
+    db = PyriteDB(config.settings.index_path)
+    # The plugin takes its database from the context the dispatcher injects.
+    plugin.ctx = PluginContext(
+        config=config, db=db, kb_name="sw", user="", operation="update", kb_type="software"
+    )
+    try:
+        with patch("pyrite.config.load_config", return_value=config):
+            result = plugin._mcp_prioritize({"kb_name": "sw", "item_ids": ["b1"]})
+    finally:
+        plugin.ctx = None
+        db.close()
     after = _text(path)
     assert (
         result["updated"] == [{"id": "b1", "rank": 100}] or "error" not in result["updated"][0]
