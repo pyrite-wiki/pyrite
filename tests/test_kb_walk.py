@@ -142,15 +142,10 @@ def _rest_ops(world):
 
 class TestRest:
     def test_the_world_offers_no_near_match_for_the_probe_names(self, world):
-        """The byte comparison below relies on it: near matches are a function
-        of the name, so two names with none compare whole."""
-        for principal_name, names in (
-            ("admin_key", (UNKNOWN,)),
-            ("local_user", (UNKNOWN, PRIVATE, SHORT[PRIVATE])),
-        ):
-            readable = _readable(world, principal_name)
-            for name in names:
-                assert near_kb_names(world.config, name, readable) == [], (principal_name, name)
+        """The byte comparison below relies on it for the unscoped caller
+        (a scoped one is offered no near match at all): near matches are a
+        function of the name, so two names with none compare whole."""
+        assert near_kb_names(world.config, UNKNOWN, _readable(world, "admin_key")) == []
 
     @pytest.mark.parametrize("principal_name", PRINCIPALS)
     def test_a_full_name_is_never_kb_not_found(self, world, principal_name):

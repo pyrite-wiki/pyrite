@@ -16,9 +16,10 @@ The rule (`kb/design.md` principle 8; ADR-0037 §4; ADR-0049 Q3):
   KB the caller may not read (the same answer, byte for byte, so the refusal
   is not an oracle for private KB names), and a **shortname**, which is link
   syntax only (`[[short:id]]`; the maintainer, 2026-10-15). The refusal
-  carries `did_you_mean`, near matches drawn only from the KBs the caller may
-  read; for a shortname whose KB the caller may read, that is the full name,
-  and the suggestion says so.
+  carries `did_you_mean`: for a shortname whose KB the caller may read, the
+  full name, and the suggestion says so; for an unscoped caller, near
+  matches; for a scoped caller, nothing but the static hint (0.25.7's
+  decision: no name in a scoped refusal).
 - Existence is one lookup: config.yaml, then the registry cache
   (`PyriteConfig.get_kb`), then the live `kb` table when a database is given,
   so a KB registered after a long-running server loaded its config is found
@@ -130,7 +131,12 @@ def _refusal(config: PyriteConfig, name: str, readable_kbs: set[str] | None) -> 
             ),
             did_you_mean=[short.name],
         )
-    matches = near_kb_names(config, name, readable_kbs)
+    # Near matches for an unscoped caller only. A scoped caller gets the
+    # static hint and no names (0.25.7, #66 round 1 item 4): a match would
+    # be drawn from outside its readable set or confirm what is inside it,
+    # and the readable set is one `orient` call away. The shortname case
+    # above is the issue's own exception (#952): the KB named is readable.
+    matches = near_kb_names(config, name, readable_kbs) if readable_kbs is None else []
     how = HOW_TO_LIST_KBS
     if matches:
         how = f"Did you mean: {', '.join(matches)}? {how}"

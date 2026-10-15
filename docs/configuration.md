@@ -27,7 +27,9 @@ A command prints its result and nothing else by default; `-v` or `-vv` (or `PYRI
 **A repo-local `.pyrite/config.yaml` (3) is not trusted.** It may have come with
 a cloned or downloaded tree, so Pyrite reads only what stays inside that tree:
 `knowledge_bases` whose paths resolve inside it (keys `name`, `path`,
-`kb_type`, `description`, `read_only`, `shortname`, and `default_role` only
+`kb_type`, `description`, `read_only`, `shortname` (the prefix of a
+cross-KB wikilink, `[[short:id]]`, and nothing else: `-k`, REST `kb` and MCP
+`kb_name` take the full name), and `default_role` only
 when it is `none`), and `settings.index_path` (inside it), `auto_embed`,
 `search_mode` and `summary_length`. (`workspace_path` is never read from any
 `config.yaml`.) KBs registered in that tree's index are held to the same rule:

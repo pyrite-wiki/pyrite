@@ -50,7 +50,7 @@ PUBLIC, PRIVATE = "public-kb", "private-kb"
 # exist. A refusal must be byte-identical to it: a caller must not be able to
 # tell "you may not read this" from "there is no such KB", or `/mcp` becomes
 # an oracle for the existence of private KBs. Both come from the dispatcher's
-# `_kb_not_found`: a scoped caller never reaches a handler with a name outside
+# `_kb_refusal` (the one resolver, #952): a scoped caller never reaches a handler with a name outside
 # its readable set. The code is the contract's `KB_NOT_FOUND` since 0.25.7
 # (#66), with the old `NOT_FOUND` carried one release.
 def _absent_kb_payload(kb_name):
@@ -58,7 +58,8 @@ def _absent_kb_payload(kb_name):
         "error": f"KB '{kb_name}' not found",
         "error_code": "KB_NOT_FOUND",
         "retryable": False,
-        "suggestion": "Call kb_orient with no kb_name to list the KBs you can read.",
+        "suggestion": "Call orient with no KB name to list the KBs you can read.",
+        "did_you_mean": [],
         "legacy_error_code": "NOT_FOUND",
     }
 

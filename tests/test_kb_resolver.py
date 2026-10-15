@@ -7,8 +7,8 @@ the services -- and none decides on its own. This file pins the function;
 
 - Blank means "not named" (an unplaced id, #846/#528), never "unknown".
 - A full name the caller may read is its KB.
-- An unknown name is `KBNotFoundError` (`KB_NOT_FOUND`), with near matches
-  drawn only from the KBs the caller may read.
+- An unknown name is `KBNotFoundError` (`KB_NOT_FOUND`); an unscoped caller
+  is offered near matches, a scoped one the static hint and no name.
 - A KB the caller cannot read answers exactly like an unknown one (ADR-0037
   §4): the same class, message, suggestion and near matches.
 - A shortname is link syntax only (ADR-0049 Q3; maintainer, 2026-10-15):
@@ -26,7 +26,7 @@ import pytest
 from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.exceptions import KBNotFoundError
 from pyrite.services.access_policy import UNSCOPED
-from pyrite.services.kb_resolver import kb_set, resolve_kb
+from pyrite.services.kb_resolver import HOW_TO_LIST_KBS, kb_set, resolve_kb
 from pyrite.storage.database import PyriteDB
 
 
@@ -116,14 +116,14 @@ class TestAnUnknownNameIsRefused:
         assert e.value.did_you_mean == ["notes"]
         assert "notes" in e.value.suggestion
 
-    def test_near_matches_come_only_from_the_readable_set(self, config):
-        with pytest.raises(KBNotFoundError) as e:
-            resolve_kb(config, "prv", readable_kbs=READS_PUB_AND_NOTES)
-        assert "priv" not in e.value.did_you_mean
-        assert "priv" not in e.value.suggestion
-        with pytest.raises(KBNotFoundError) as e:
-            resolve_kb(config, "prv", readable_kbs=set())
-        assert e.value.did_you_mean == []
+    def test_a_scoped_caller_is_offered_no_near_match(self, config):
+        """0.25.7's decision (#66): a scoped refusal names no KB. 'note' is
+        one edit from 'notes', which this caller may read, and still nothing."""
+        for readable in (READS_PUB_AND_NOTES, set()):
+            with pytest.raises(KBNotFoundError) as e:
+                resolve_kb(config, "note", readable_kbs=readable)
+            assert e.value.did_you_mean == []
+            assert e.value.suggestion == HOW_TO_LIST_KBS
 
     def test_near_matches_are_capped(self, tmp_path):
         for i in range(12):

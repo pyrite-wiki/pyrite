@@ -62,7 +62,7 @@ Configuration for a subscribed remote KB with `url`, `local_path`, `auto_sync`, 
 - YAML serialization uses `pyrite.utils.yaml` wrappers around `ruamel.yaml`, not the stdlib `yaml` module.
 - `KBConfig.kb_type` is a free-form string for extensibility; the `KBType` enum exists only for legacy compatibility.
 - Ephemeral KBs are tracked via `ephemeral`, `ttl`, and `created_at_ts` fields and garbage-collected by `KBService.gc_ephemeral_kbs()`.
-- The `shortname` field on `KBConfig` enables concise cross-KB wikilink syntax (`shortname:entry-id`).
+- The `shortname` field on `KBConfig` enables concise cross-KB wikilink syntax (`[[shortname:entry-id]]`) and nothing else (#952, ADR-0049 Q3): `kb_name_for` and `get_kb_by_shortname` serve the link prefix; every `kb` parameter, `-k` and `kb_name` takes the full name, and a shortname there is refused by the one resolver, `services/kb_resolver.py`, with the full name suggested. `require_kb(name, db=None)` is that resolver for a caller with no scope: a blank name is `ValidationError`, an unknown one `KBNotFoundError` with `did_you_mean`, and with `db` a KB registered after the config was loaded is found (#925).
 
 ## Consumers
 

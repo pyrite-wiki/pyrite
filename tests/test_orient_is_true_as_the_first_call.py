@@ -38,6 +38,7 @@ from pyrite.exceptions import UndeclaredTypeError, ValidationError
 from pyrite.schema.core_types import CORE_TYPES
 from pyrite.server.mcp_server import PyriteMCPServer
 from pyrite.services.access_policy import AccessPolicy, Principal
+from pyrite.services.kb_resolver import HOW_TO_LIST_KBS
 from pyrite.services.auth_service import AuthService
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
@@ -45,9 +46,10 @@ from tests.auth_seed import seed_user
 
 WRITE_SIDE_KEYS = ("ai_instructions", "evaluation_rubric", "guidelines", "goals")
 ABSENT = "no-such-kb-at-all"
-#: What the dispatcher's refusal says to do next: one string, for an absent and
-#: an unreadable name alike, and no KB name in it (round 1, item 4).
-SCOPED_REFUSAL_HINT = "Call kb_orient with no kb_name to list the KBs you can read."
+#: What the refusal says to do next when nothing is near: one string, for an
+#: absent and an unreadable name alike, and no KB name in it (round 1, item 4;
+#: the one resolver's wording for every surface, #952).
+SCOPED_REFUSAL_HINT = HOW_TO_LIST_KBS
 
 
 def _presets() -> dict[str, dict]:
@@ -304,8 +306,8 @@ class TestABadNameIsKBNotFound:
         out = one_kb.mcp("kb_orient", {"kb_name": "nope"})
         assert out["error_code"] == "KB_NOT_FOUND", out
         assert out["retryable"] is False
-        assert out["legacy_error_code"] == "OPERATION_FAILED", (
-            "the code orient reported before this release, kept one release (ADR-0037)"
+        assert out["legacy_error_code"] == "NOT_FOUND", (
+            "one refusal for every caller: the dispatcher's, not orient's own (#952)"
         )
 
     def test_mcp_scoped_caller_over_the_http_wiring(self, scoped):
@@ -372,6 +374,7 @@ class TestUnreadableAndAbsentAreOneAnswer:
             "error_code": "KB_NOT_FOUND",
             "retryable": False,
             "suggestion": SCOPED_REFUSAL_HINT,
+            "did_you_mean": [],
             "legacy_error_code": "NOT_FOUND",
         }
 
@@ -764,7 +767,8 @@ class TestTheScopedRefusalSaysWhatToDoNext:
         absent = scoped.mcp("kb_orient", {"kb_name": ABSENT}, readable=scoped.peer)
         assert refused["suggestion"] == absent["suggestion"] == SCOPED_REFUSAL_HINT
         assert PRIVATE not in json.dumps(refused).replace(f"KB '{PRIVATE}' not found", "")
-        assert "did_you_mean" not in refused and "did_you_mean" not in absent
+        # Near matches come only from the readable set; here there are none.
+        assert refused["did_you_mean"] == absent["did_you_mean"] == []
 
     def test_every_tool_refuses_with_the_hint(self, scoped):
         server = scoped.server("admin")
