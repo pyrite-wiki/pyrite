@@ -250,6 +250,11 @@ def ci_command(
     that count at the gate, and an entry the model did not answer for is an
     `evaluation_failed` error. With no model configured, --tier 2 is refused
     (AI_NOT_CONFIGURED); an unknown tier is refused (INVALID_TIER).
+
+    Without --kb, every KB is validated: those in the config and those
+    registered in the index (`pyrite kb add`). A KB whose folder is missing or
+    unreadable fails with one `kb_unreadable` error, and the others are still
+    validated.
     """
     from ..services.llm_service import LLMService
     from ..services.qa_service import QAService

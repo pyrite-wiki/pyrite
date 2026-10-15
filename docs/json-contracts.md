@@ -1037,6 +1037,9 @@ The codes:
 - `AI_NOT_CONFIGURED`: tier 2 was asked for and no model is configured. REST's
   AI routes use the same code. Configure `ai_provider`, `ai_api_key` and
   `ai_model`, or use tier 1.
+- `KB_UNREADABLE`: `qa assess` / `kb_qa_assess` on a KB whose folder is
+  missing or cannot be read. The message names the KB and the reason, not
+  the path. Restore the folder, or its permissions.
 - `EVALUATION_FAILED`: `qa assess --entry`, or `kb_qa_assess` with `entry_id`,
   and the model did not answer. The call raised, or the reply was empty, not
   JSON, not a JSON list, or did not judge every rubric item with a boolean
@@ -1079,7 +1082,18 @@ did not run. `ci` resolves KBs as the other commands do, with KBs registered
 in the index (`pyrite kb add`, or indexed before they left `config.yaml`)
 merged in, so a named KB's schema, file and rubric checks read its real
 configuration. `ci --kb <name>` for a KB that resolves to nothing is refused
-with `KB_NOT_FOUND`; it used to validate nothing and pass. In `--format text`
+with `KB_NOT_FOUND`; it used to validate nothing and pass. Plain `ci`, with
+no `--kb`, now validates the DB-registered KBs too, not only those in
+`config.yaml`.
+
+**A KB whose folder cannot be read.** When a KB's folder is missing, is not a
+folder, or cannot be read (its `kb.yaml` included), `ci` and `qa validate`
+(KB, entry or all) report one `kb_unreadable` **error** for that KB. The
+message gives the reason and says the file and schema checks did not run.
+Those checks are skipped, the index-only checks still run, and the other KBs
+are still validated. `qa assess` and `kb_qa_assess` refuse such a KB with
+`KB_UNREADABLE` and write nothing; a missing folder is not recreated to hold a
+record. In `--format text`
 an entry the model did not answer for is printed as an `ERROR` line and the
 result is `FAIL`.
 

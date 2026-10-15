@@ -144,6 +144,7 @@ _NEW_IN_THIS_THEME = frozenset(
         "InvalidQATierError",
         "AINotConfiguredError",
         "EvaluationFailedError",
+        "KBUnreadableError",
     }
 )
 

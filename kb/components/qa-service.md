@@ -44,6 +44,7 @@ Structural validation and assessment service for knowledge bases. Validates KB i
 | `checker_failed` | warning | A named rubric checker raised, so its item was not checked (#795) |
 | `file_unloadable` | error | `validate_entry`: the entry's file would not load, so the checks that read it did not run (#795) |
 | `llm_rubric_violation` | warning | Tier 2: the model judged a rubric item failed (was `info` until #795, which no status counted) |
+| `kb_unreadable` | error | The KB's folder is missing or cannot be read; the file, schema and kb.yaml checks were skipped (#950) |
 | `evaluation_failed` | error | Tier 2 in `validate_kb`/`ci`: the model did not answer for this entry; the message says why |
 
 ## Schema Validation

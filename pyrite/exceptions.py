@@ -607,3 +607,14 @@ class EvaluationFailedError(PyriteError):
         self.entry_id = entry_id
         self.reason = reason
         super().__init__(f"Tier 2 evaluation of '{entry_id}' did not run: {reason}")
+
+
+class KBUnreadableError(PyriteError):
+    """A KB's folder is missing or cannot be read (#950).
+
+    QA refuses to assess it: no record could be read back from, or written
+    to, a folder that is not there, and writing one would recreate a missing
+    folder. The message names the KB and the reason, never the path.
+    """
+
+    error_code = "KB_UNREADABLE"

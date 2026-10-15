@@ -20,6 +20,7 @@ from ..exceptions import (
     EntryNotFoundError,
     EvaluationFailedError,
     InvalidQATierError,
+    KBUnreadableError,
     PyriteError,
 )
 from ..plugins.registry import get_registry
@@ -126,10 +127,12 @@ class QAService:
 
         entry = rows[0]
         self._check_entry_fields(entry, issues)
-        sources = self._check_file_values(issues, kb_name, entry_id=entry_id)
         self._check_entry_links(entry_id, kb_name, issues, readable_kbs=readable_kbs)
-        self._check_schema_validation(entry, issues, sources.get(entry_id))
-        self._check_rubric_evaluation(entry, issues)
+        # The checks below read the KB's folder (its files, its kb.yaml).
+        if not self._report_unreadable_kb(issues, kb_name):
+            sources = self._check_file_values(issues, kb_name, entry_id=entry_id)
+            self._check_schema_validation(entry, issues, sources.get(entry_id))
+            self._check_rubric_evaluation(entry, issues)
 
         return {"entry_id": entry_id, "kb_name": kb_name, "issues": issues}
 
@@ -171,20 +174,25 @@ class QAService:
         self._check_broken_links(issues, kb_name, readable_kbs=readable_kbs)
         self._check_orphans(issues, kb_name, readable_kbs=readable_kbs)
 
-        # Per-file pass: what the index cannot show, because it keeps only
-        # Pyrite's reading -- reserved keys the KB uses for fields of its own
-        # (#557), a task priority read from a word (#554)
-        sources = self._check_file_values(issues, kb_name)
-
-        # Per-entry schema pass (only if kb.yaml exists): the kb.yaml itself,
-        # then each entry, its typed attributes read from its file
-        self._check_schema_retypes_core_fields(issues, kb_name)
-        self._check_schema_all(issues, kb_name, sources)
-
-        # Rubric evaluation pass
+        # Rubric evaluation pass (index only)
         self._check_rubric_all(issues, kb_name)
-        if tier >= 2:
-            self._check_llm_rubric_all(issues, kb_name)
+
+        # Everything below reads the KB's folder: its files, its kb.yaml. A
+        # folder that is missing or unreadable is one error for the KB, and
+        # those checks are skipped, never passed or crashed (#950 round 2).
+        if not self._report_unreadable_kb(issues, kb_name, tier=tier):
+            # Per-file pass: what the index cannot show, because it keeps only
+            # Pyrite's reading -- reserved keys the KB uses for fields of its own
+            # (#557), a task priority read from a word (#554)
+            sources = self._check_file_values(issues, kb_name)
+
+            # Per-entry schema pass (only if kb.yaml exists): the kb.yaml itself,
+            # then each entry, its typed attributes read from its file
+            self._check_schema_retypes_core_fields(issues, kb_name)
+            self._check_schema_all(issues, kb_name, sources)
+
+            if tier >= 2:
+                self._check_llm_rubric_all(issues, kb_name)
 
         # Optional staleness check (delegated to analytics service)
         if check_staleness:
@@ -196,6 +204,70 @@ class QAService:
             "checked": total,
             "issues": issues,
         }
+
+    def _report_unreadable_kb(
+        self, issues: list[dict[str, Any]], kb_name: str, *, tier: int = 1
+    ) -> bool:
+        """Add one ``kb_unreadable`` error when the KB's folder cannot be read.
+
+        Returns True when it did: the caller then skips every check that
+        reads the folder. A KB that resolves to no config is not judged here
+        (#959).
+        """
+        problem = self._kb_folder_problem(kb_name)
+        if problem is None:
+            return False
+        skipped = "file, schema and kb.yaml checks" + (
+            " and the tier 2 rubric" if tier >= 2 else ""
+        )
+        issues.append(
+            {
+                "entry_id": "",
+                "kb_name": kb_name,
+                "rule": "kb_unreadable",
+                "severity": "error",
+                "field": "path",
+                "message": f"KB '{kb_name}': {problem}, so its {skipped} did not run",
+            }
+        )
+        return True
+
+    def _require_readable_kb(self, kb_name: str) -> None:
+        """Refuse to assess a KB whose folder cannot be read (``KB_UNREADABLE``).
+
+        An assessment is a record written into the KB: a folder that is not
+        there, or cannot be read, can hold none, and writing one would
+        recreate a missing folder (#950 round 2).
+        """
+        problem = self._kb_folder_problem(kb_name)
+        if problem is not None:
+            raise KBUnreadableError(f"KB '{kb_name}': {problem}; nothing was assessed")
+
+    def _kb_folder_problem(self, kb_name: str) -> str | None:
+        """Why the KB's folder cannot be read, or None when it can.
+
+        Names no path: the message can reach an MCP or REST caller.
+        """
+        import os
+        from pathlib import Path
+
+        kb_config = self.config.get_kb(kb_name)
+        if kb_config is None:
+            return None
+        path = Path(kb_config.path)
+        try:
+            if not path.exists():
+                return "its folder is missing"
+            if not path.is_dir():
+                return "its path is not a folder"
+            with os.scandir(path) as listing:
+                next(listing, None)
+            kb_yaml = path / "kb.yaml"
+            if kb_yaml.exists():
+                kb_yaml.open("rb").close()
+        except OSError as exc:
+            return f"its folder cannot be read ({exc.strerror or type(exc).__name__})"
+        return None
 
     def validate_all(
         self,
@@ -315,6 +387,7 @@ class QAService:
         as ``task_failed: {entry_id, reason}``.
         """
         self.require_tier(tier)
+        self._require_readable_kb(kb_name)
         result = self.validate_entry(entry_id, kb_name, readable_kbs=readable_kbs)
         issues = result["issues"]
 
@@ -395,6 +468,7 @@ class QAService:
         raises before any entry is touched.
         """
         self.require_tier(tier)
+        self._require_readable_kb(kb_name)
         rows = self.db.execute_sql(
             "SELECT id, entry_type FROM entry WHERE kb_name = :kb_name",
             {"kb_name": kb_name},

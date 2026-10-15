@@ -823,3 +823,118 @@ def test_ci_runs_the_checks_of_a_db_registered_kb(tmp_path):
     assert code == 1, body
     rules = {i["rule"] for kb in body["kbs"] for i in kb["issues"]}
     assert "schema_violation" in rules, body
+
+
+# =========================================================================
+# Fix round 2: a KB whose files cannot be read is a failed check, never a
+# pass and never a crash that loses the other KBs' results
+# =========================================================================
+
+#: How kbB's folder is broken, and the words its issue gives as the reason.
+FOLDER_FAULTS = {
+    "missing": "missing",  # moved away
+    "unreadable": "cannot be read",  # chmod 000
+    "unlistable": "cannot be read",  # chmod 311: can be entered, not listed
+    "kb_yaml_unreadable": "cannot be read",  # the folder is fine, its kb.yaml is not
+    "not_a_folder": "not a folder",  # a file where the folder was
+}
+#: The faults that rely on permissions (root ignores them).
+PERMISSION_FAULTS = {"unreadable", "unlistable", "kb_yaml_unreadable"}
+#: How kbB reaches QA: listed in the config, or registered in the index only.
+KB_SOURCES = ["configured", "registered"]
+
+
+@pytest.fixture
+def broken_plain(tmp_path, request):
+    """`judged` is fine; `plain` (kbB) has a broken folder. Yields the config."""
+    fault, source = request.param
+    if fault in PERMISSION_FAULTS and hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root ignores directory permissions")
+    config = _build(tmp_path, model=False)
+    folder = config.get_kb(PLAIN).path
+    if source == "registered":
+        # Indexing registered it (`kb` row, source user); the config forgets it.
+        config = _without(config, PLAIN)
+    kb_yaml = folder / "kb.yaml"
+    if fault == "missing":
+        shutil.rmtree(folder)
+    elif fault == "not_a_folder":
+        shutil.rmtree(folder)
+        folder.write_text("not a folder\n")
+    elif fault == "kb_yaml_unreadable":
+        kb_yaml.write_text(f"name: {PLAIN}\n")
+        kb_yaml.chmod(0o000)
+    else:
+        folder.chmod(0o000 if fault == "unreadable" else 0o311)
+    try:
+        yield config, fault
+    finally:
+        if folder.is_dir():
+            folder.chmod(0o755)
+            if kb_yaml.exists():
+                kb_yaml.chmod(0o644)
+
+
+BROKEN = [(f, s) for f in FOLDER_FAULTS for s in KB_SOURCES]
+BROKEN_IDS = [f"{f}-{s}" for f, s in BROKEN]
+
+
+def _unreadable_issues(issues: list[dict]) -> list[dict]:
+    return [i for i in issues if i["rule"] == "kb_unreadable"]
+
+
+@pytest.mark.parametrize("broken_plain", BROKEN, ids=BROKEN_IDS, indirect=True)
+def test_ci_json_fails_a_kb_whose_files_cannot_be_read(broken_plain):
+    config, fault = broken_plain
+    result = _invoke(config, ["ci", "--severity", "error", "--format", "json"])
+    body = json.loads(result.stdout)
+    assert result.exit_code == 1, result.stdout + result.stderr
+    assert body["result"] == "fail"
+    by_kb = {kb["kb_name"]: kb for kb in body["kbs"]}
+    assert set(by_kb) == {JUDGED, PLAIN}, body  # the other KB's result is kept
+    (issue,) = _unreadable_issues(by_kb[PLAIN]["issues"])
+    assert issue["severity"] == "error"
+    assert FOLDER_FAULTS[fault] in issue["message"]
+    assert "did not run" in issue["message"]
+    assert _unreadable_issues(by_kb[JUDGED]["issues"]) == []
+
+
+@pytest.mark.parametrize("broken_plain", BROKEN, ids=BROKEN_IDS, indirect=True)
+def test_ci_text_fails_a_kb_whose_files_cannot_be_read(broken_plain):
+    config, _fault = broken_plain
+    result = _invoke(config, ["ci", "--severity", "error"])
+    assert result.exit_code == 1, result.stdout + result.stderr
+    assert f"{JUDGED}:" in result.stdout and f"{PLAIN}:" in result.stdout
+    assert "did not run" in result.stdout
+    assert "Result: FAIL" in result.stdout
+
+
+@pytest.mark.parametrize("broken_plain", BROKEN, ids=BROKEN_IDS, indirect=True)
+@pytest.mark.parametrize("scope", ["kb", "entry", "all"])
+def test_qa_validate_reports_a_kb_whose_files_cannot_be_read(broken_plain, scope):
+    config, _fault = broken_plain
+    args = {"kb": [PLAIN], "entry": [PLAIN, "--entry", "solo"], "all": []}[scope]
+    result = _invoke(config, ["qa", "validate", *args, "--format", "json"])
+    body = json.loads(result.stdout)
+    assert len(_unreadable_issues(body["issues"])) == 1, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("broken_plain", BROKEN, ids=BROKEN_IDS, indirect=True)
+@pytest.mark.parametrize(
+    "surface", ["cli-assess-entry", "cli-assess-kb", "mcp-assess-entry", "mcp-assess-kb"]
+)
+@pytest.mark.parametrize("tier", QA_TIERS)
+def test_assess_refuses_a_kb_whose_files_cannot_be_read(broken_plain, surface, tier):
+    """No record can be read back or written there: refused, not a crash, and a
+    missing folder is not recreated to hold a record."""
+    config, fault = broken_plain
+    config.settings.ai_provider, config.settings.ai_api_key = "anthropic", "k"
+    folder = (config.get_kb(PLAIN) or config.get_kb(JUDGED)).path.parent / PLAIN
+    with _model(FakeAnthropic("passes")):
+        refused, code, body = run_surface(
+            surface, config, kb=PLAIN, tier=tier, entry="solo" if "entry" in surface else None
+        )
+    assert refused, body
+    assert code == "KB_UNREADABLE", body
+    # A missing folder is not recreated to hold a record.
+    assert folder.exists() == (fault != "missing")

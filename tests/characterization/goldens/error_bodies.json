@@ -534,6 +534,29 @@
       "status": 403
     }
   },
+  "KBUnreadableError": {
+    "cli": {
+      "error": "characterization message for KBUnreadableError",
+      "error_code": "KB_UNREADABLE",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for KBUnreadableError",
+      "error_code": "KB_UNREADABLE",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "KB_UNREADABLE",
+          "message": "characterization message for KBUnreadableError",
+          "retryable": false
+        }
+      },
+      "status": 500
+    }
+  },
   "LastAdminError": {
     "cli": {
       "error": "characterization message for LastAdminError",
