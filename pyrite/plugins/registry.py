@@ -929,10 +929,10 @@ class PluginRegistry:
         the factory (it must be able to build any declared type) but wrong
         for type *resolution*, where picking the first subclass of a core
         type out of a globally-merged dict makes the answer depend on
-        site-packages enumeration order. Concretely: both cascade's `actor`
-        and social's `user_profile` subclass PersonEntry, so `person`
-        resolved to whichever plugin happened to be discovered first --
-        `actor` on one machine, `user_profile` on another, for the same code.
+        site-packages enumeration order. Concretely: two plugins' PersonEntry
+        subclasses (the former cascade `actor` and social's `user_profile`)
+        made `person` resolve to whichever plugin happened to be discovered
+        first -- `actor` on one machine, `user_profile` on another, for the same code.
         See plugin-type-resolution-scoping.
         """
         return self._aggregate_dict_for_kb("get_entry_types", kb_type)

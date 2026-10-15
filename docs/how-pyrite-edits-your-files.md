@@ -44,11 +44,12 @@ carry controls the page does not show:
 - the stale example also replaces with the hash of a re-read after the hand
   edit, in the same KB, and expects that write to happen: a refusal because
   the hash is stale must not look like a refusal because the file changed;
-- the hook example needs the actor's link to show up in the actor's
-  backlinks or as a link under a derived key of a read. Today the backlink
-  exists only because the cascade plugin writes a `links:` block that is then
-  indexed; the example does not read that block directly, and a read's
-  normalised `actors` value is not a link;
+- the hook example needs the link to each entry the connection names to
+  show up in that entry's backlinks or as a link under a derived key of a
+  read. Today the backlink exists only because the journalism-investigation
+  plugin writes a `links:` block that is then indexed; the example does not
+  read that block directly, and a read's normalised field value is not a
+  link;
 - an example that watches the YAML emitter looks at the top-level keys of
   every mapping either library emits (limits: #741), and counts as not entered a run whose update opens an emitter the
   watch cannot see. An update that quotes one value passes; one that emits
@@ -128,27 +129,28 @@ Text.
 
 ## A save does not add what a hook used to add
 
-A `timeline_event` in a KB with the plugin installed that resolves its actors.
-The plugin may check the entry, and may refuse a save; it does not write
-links into your file that you did not ask for.
+A `membership` in a journalism-investigation KB, whose plugin links a
+connection to the entries it names. The plugin may check the entry, and may
+refuse a save; it does not write links into your file that you did not ask
+for.
 
 ```file
 ---
-id: hearing
-title: The hearing
-type: timeline_event
-date: 2026-01-01
-actors: ["[[jane-doe]]"]
+id: jane-at-acme
+title: Jane at Acme
+type: membership
+person: "[[jane-doe]]"
+organization: "[[acme]]"
 ---
 
 Text.
 ```
 ```update
-{"set": {"title": "The hearing, postponed"}}
+{"set": {"title": "Jane at Acme, renewed"}}
 ```
 ```diff
--title: The hearing
-+title: The hearing, postponed
+-title: Jane at Acme
++title: Jane at Acme, renewed
 ```
 
 ## Two writers on different keys both survive

@@ -496,6 +496,7 @@ def index_health(
     # (an `allow_other` field) does not move the status.
     off_list_severities = {row.get("severity") for row in off_list_values}
     duplicates = health.get("duplicates", [])
+    removed_extensions = health.get("removed_extensions", [])
     is_unhealthy = (
         health["missing_files"]
         or health["unindexed_files"]
@@ -515,6 +516,7 @@ def index_health(
         or bool(malformed_frontmatter)
         or bool(invalid_statuses)
         or "warning" in off_list_severities
+        or bool(removed_extensions)
     )
     status = "unhealthy" if is_unhealthy else ("warning" if has_warning else "healthy")
 
@@ -533,6 +535,7 @@ def index_health(
             "invalid_statuses": invalid_statuses,
             "off_list_values": off_list_values,
             "duplicates": duplicates,
+            "removed_extensions": removed_extensions,
             "checks": health,
         },
         output_format,
@@ -552,6 +555,7 @@ def index_health(
         invalid_statuses=invalid_statuses,
         off_list_values=off_list_values,
         duplicates=duplicates,
+        removed_extensions=removed_extensions,
         health=health,
     )
     if is_unhealthy and fail:
@@ -571,6 +575,7 @@ def _report_health(
     invalid_statuses,
     off_list_values,
     duplicates=(),
+    removed_extensions=(),
     health,
 ):
     """Print the health report. Returns nothing; the caller sets the exit code."""
@@ -592,6 +597,13 @@ def _report_health(
             f"[yellow]⚠ {broken_links} broken link(s) found.[/yellow]"
             " Run 'pyrite links check' for details."
         )
+
+    if removed_extensions:
+        console.print(
+            f"[yellow]⚠ {len(removed_extensions)} KB(s) typed by a removed extension:[/yellow]"
+        )
+        for row in removed_extensions:
+            console.print(f"  • {row['message']}")
 
     if undeclared_types:
         total = sum(row["count"] for row in undeclared_types)

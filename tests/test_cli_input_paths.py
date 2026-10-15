@@ -86,14 +86,6 @@ INPUT_FILE_PARAMS: dict[tuple[tuple[str, ...], str], object] = {
         "-k",
         "k",
     ],  # fmt: skip
-    (("cascade", "extract-actors"), "alias_file"): lambda p: [
-        "cascade",
-        "extract-actors",
-        "-k",
-        "k",
-        "--alias-file",
-        p,
-    ],  # fmt: skip
     (("db", "restore"), "backup_path"): lambda p: ["db", "restore", p, "--force"],
 }
 
@@ -183,7 +175,7 @@ def _run(env, key, path: Path):
     argv = INPUT_FILE_PARAMS[key](str(path))
     # The legacy plugin commands spell machine output `--json`; the rest `--format`.
     machine = ["--json"] if key[0][0] == "investigation" else ["--format", "json"]
-    if key[0] in (("db", "restore"), ("cascade", "extract-actors"), ("import",)):
+    if key[0] in (("db", "restore"), ("import",)):
         machine = []  # no machine format: the error is the rich line
     return CliRunner().invoke(app, [*argv, *machine], env={"COLUMNS": "500"})
 
@@ -324,7 +316,7 @@ def test_a_refusal_comes_before_any_config_lookup_that_opens_the_index(env, key,
     from pyrite.cli import app
 
     machine = ["--json"] if key[0][0] == "investigation" else ["--format", "json"]
-    if key[0] in (("db", "restore"), ("cascade", "extract-actors"), ("import",)):
+    if key[0] in (("db", "restore"), ("import",)):
         machine = []
     out = CliRunner().invoke(app, [*argv, *machine], env={"COLUMNS": "500"})
     assert out.exit_code == 1, out.output

@@ -173,7 +173,7 @@ def test_mcp_tool_principal_matrix(world, write_world, principal_name):
 
 
 # 106 -> 107: social_reputation filters by the readable set (no longer content-free).
-PINNED_MCP_TOOL_COUNT = 107
+PINNED_MCP_TOOL_COUNT = 101  # 107 until #953 deleted cascade's six tools
 
 
 def test_no_golden_mcp_tool_is_orphaned(world):

@@ -54,9 +54,8 @@ class Surface:
 EXPERIMENTAL: tuple[Surface, ...] = (
     # -- Section 5 and 2: extensions ---------------------------------------
     Surface(
-        "Extensions: software-kb, journalism-investigation, social, encyclopedia,"
-        " zettelkasten; cascade (unsupported)",
-        "5, 2 (`sw`, `investigation`, `social`, `wiki`, `zettel`, `cascade`)",
+        "Extensions: software-kb, journalism-investigation, social, encyclopedia, zettelkasten",
+        "5, 2 (`sw`, `investigation`, `social`, `wiki`, `zettel`)",
         (
             "extensions/*/tests/*",
             # Core-tree tests whose subject is an extension's behaviour.
@@ -324,7 +323,6 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     "tests/test_websocket_delivery.py::*private_entry_reaches_granted_socket_only*": SCOPE,
     "tests/test_websocket_delivery.py::*reaches_unscoped_sockets_only*": SCOPE,
     "tests/test_llm_usage_service.py::*scopes_to_requested_user_only*": SCOPE,
-    "extensions/cascade/tests/test_cascade_readable_set.py": SCOPE,
     "extensions/journalism-investigation/tests/test_cross_kb_readable_set.py": SCOPE,
     "extensions/journalism-investigation/tests/test_single_kb_readable_set.py": SCOPE,
     "extensions/journalism-investigation/tests/test_dedup.py::*readable*": SCOPE,

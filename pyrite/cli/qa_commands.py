@@ -867,8 +867,8 @@ def qa_coverage(
     and per-type breakdown. Read-only — never mutates the KB.
 
     Examples:
-        pyrite qa coverage cascade-research
-        pyrite qa coverage cascade-research --type actor
+        pyrite qa coverage my-research
+        pyrite qa coverage my-research --type person
         pyrite qa coverage pyrite --format json
     """
     import json as _json

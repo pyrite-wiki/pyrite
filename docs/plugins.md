@@ -106,25 +106,6 @@ Tracked issues: [#92](https://github.com/pyrite-wiki/pyrite/issues/92), [#93](ht
 
 ---
 
-### Cascade
-
-Investigative journalism knowledge management covering actors, organizations, events, themes, mechanisms, scenes, victims, statistics, and timelines.
-
-**Install:** `pip install -e extensions/cascade`
-
-**Adds:**
-
-- **Entry types:** `actor`, `cascade_org`, `cascade_event`, `timeline_event`, `theme`, `victim`, `statistic`, `mechanism`, `scene`, `solidarity_event`
-- **MCP tools:** `cascade_actors`, `cascade_timeline`, `cascade_network`, `solidarity_timeline`, `solidarity_infrastructure_types`, `cascade_capture_lanes`
-- **KB types:** `cascade-research`, `cascade-timeline`, `cascade-solidarity`
-- **Relationships:** `member_of`, `investigated`, `funded_by`, `capture_mechanism`, `built_on`, `responded_to` (and inverses)
-
-**Use case:** Investigative journalists and researchers mapping networks of actors, organizations, events, and power structures across large-scale investigations.
-
-[Full docs](https://github.com/pyrite-wiki/pyrite/tree/main/extensions/cascade)
-
----
-
 ## Community Plugins
 
 Community plugins will be listed here. See [Building Your Own](#building-your-own) to create and submit one.

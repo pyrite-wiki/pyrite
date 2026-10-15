@@ -385,7 +385,7 @@ class TestCollectionErrors:
         ("path", "expected"),
         [
             ("extensions/zettelkasten/tests/test_zettelkasten.py", False),  # has security cases
-            ("extensions/cascade/tests/test_aliases.py", True),
+            ("extensions/journalism-investigation/tests/test_plugin.py", True),
             ("tests/test_task_dag.py", True),
             ("tests/test_settings.py", False),  # only a class is experimental
             ("tests/test_storage.py", False),

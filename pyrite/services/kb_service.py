@@ -492,7 +492,7 @@ class KBService:
                 parts.append(f"{field}: {message or 'required'}")
             elif message:
                 # A rule this renderer does not know, or none at all (e.g.
-                # cascade's "Importance must be 1-10, got: 99"): the
+                # journalism-investigation's "Importance must be 1-10, got: 99"): the
                 # validator's own message beats "(expected None, got None)".
                 parts.append(f"{field}: {message}" if field != "?" else message)
             else:
@@ -829,17 +829,17 @@ class KBService:
 
         If a plugin ACTIVE FOR THIS KB provides a type that subclasses the
         core type for the given name, prefer the plugin type. E.g.
-        "event" -> "timeline_event" in a cascade-timeline KB, because the
-        Cascade plugin registers TimelineEventEntry(EventEntry) and declares
-        cascade-timeline in get_kb_types().
+        "event" -> "investigation_event" in a journalism-investigation KB,
+        because that plugin registers InvestigationEventEntry(EventEntry)
+        and declares journalism-investigation in get_kb_types().
 
         Scoping by kb_type is load-bearing, not an optimization. Resolution
         picks the FIRST subclass found, and the unscoped registry dict is
         ordered by plugin discovery, which follows site-packages enumeration
-        and therefore varies between machines. Both cascade's `actor` and
-        social's `user_profile` subclass PersonEntry, so an unscoped
-        `person` resolved to `actor` on one host and `user_profile` on
-        another for identical code -- with the wrong answer silently written
+        and therefore varies between machines. Two plugins' PersonEntry
+        subclasses (the former cascade `actor` and social's `user_profile`)
+        made an unscoped `person` resolve to `actor` on one host and
+        `user_profile` on another for identical code -- with the wrong answer silently written
         to disk. It also meant installing an unrelated extension rewrote
         types in every KB (the tutorial-KB `undeclared_types` symptom).
         See plugin-type-resolution-scoping.
@@ -858,13 +858,13 @@ class KBService:
 
             plugin_types = get_registry().get_all_entry_types_for_kb(kb_type)
             # Even within one KB type several types can subclass the same
-            # core type (cascade declares cascade_event, solidarity_event and
-            # timeline_event, all EventEntry subclasses). Discovery order must
-            # not decide the winner, but neither may alphabetical order --
-            # that picks `cascade_event` over `timeline_event`, silently
-            # changing the type of every new entry in the 5,505-entry
-            # cascade-timeline KB. Prefer the MOST DERIVED class (longest
-            # MRO): TimelineEventEntry -> InvestigationEventEntry ->
+            # core type (journalism-investigation declares investigation_event,
+            # transaction and legal_action, all EventEntry subclasses).
+            # Discovery order must not decide the winner, but neither may
+            # alphabetical order -- that once picked `cascade_event` over
+            # `timeline_event`, silently changing the type of every new entry
+            # in a 5,505-entry timeline KB. Prefer the MOST DERIVED class
+            # (longest MRO): a subclass of InvestigationEventEntry ->
             # EventEntry beats a direct EventEntry subclass, because a deeper
             # chain is a strictly more specific declaration of the same
             # concept. Name is the final tiebreak so equal-depth candidates
@@ -2489,6 +2489,15 @@ class KBService:
             "schema": schema_info,
             "operational_contracts": self._operational_contracts(),
         }
+
+        # A KB type that belonged to an extension Pyrite has deleted (#953):
+        # said here, the first call an agent makes in a KB, and nowhere else
+        # but `index health`; the rule is `plugins/removed.py`'s.
+        from ..plugins.removed import removed_extension_notice
+
+        notice = removed_extension_notice(kb_name, kb_config.kb_type)
+        if notice:
+            result["notices"] = [notice]
 
         # Plugin orient supplements
         from ..plugins.registry import get_registry

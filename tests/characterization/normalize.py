@@ -257,9 +257,6 @@ def _project_identity_only(items: list) -> list | None:
 # if its shape isn't recognised) or a scalar count/aggregate (always blanked
 # -- it carries no identity of its own).
 ENUMERATION_SENSITIVE_FIELDS: dict[str, tuple[str, ...]] = {
-    "cascade_actors": ("count", "actors"),
-    "cascade_capture_lanes": ("count", "lanes"),
-    "cascade_timeline": ("count", "events"),
     "investigation_claims": ("count", "claims", "summary"),
     "investigation_entities": ("count", "entities", "summary"),
     "investigation_export_pack": ("content",),
@@ -305,7 +302,6 @@ ENUMERATION_SENSITIVE_FIELDS: dict[str, tuple[str, ...]] = {
     "kb_timeline": ("count", "has_more", "events"),
     "social_newest": ("count", "newest"),
     "social_top": ("count", "top"),
-    "solidarity_timeline": ("count", "events"),
     "sw_adrs": ("count", "total", "has_more", "adrs"),
     "sw_backlog": ("count", "total", "has_more", "items"),
     "sw_board": ("lanes",),

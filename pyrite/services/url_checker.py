@@ -75,8 +75,6 @@ class URLChecker:
         if entry_types is None:
             entry_types = [
                 "timeline_event",
-                "solidarity_event",
-                "scene",
                 "investigation_event",
                 "note",
             ]

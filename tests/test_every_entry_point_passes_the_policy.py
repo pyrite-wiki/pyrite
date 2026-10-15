@@ -227,10 +227,6 @@ REST_READS_OVER_POST_SIZE = 4  # a new entry is a reviewed diff to this constant
 #: MCP tools that do not resolve an `Action` yet: all of them until theme 4.
 MCP_NOT_YET_MIGRATED: frozenset[str] = frozenset(
     {
-        "cascade_actors",
-        "cascade_capture_lanes",
-        "cascade_network",
-        "cascade_timeline",
         "investigation_bulk_edges",
         "investigation_claims",
         "investigation_create_claim",
@@ -295,8 +291,6 @@ MCP_NOT_YET_MIGRATED: frozenset[str] = frozenset(
         "social_reputation",
         "social_top",
         "social_vote",
-        "solidarity_infrastructure_types",
-        "solidarity_timeline",
         "sw_adrs",
         "sw_backlog",
         "sw_board",
@@ -341,7 +335,7 @@ MCP_NOT_YET_MIGRATED: frozenset[str] = frozenset(
         "zettel_inbox",
     }
 )
-MCP_NOT_YET_MIGRATED_SIZE = 112  # lower it with every entry removed; never raise it
+MCP_NOT_YET_MIGRATED_SIZE = 106  # lower it with every entry removed; never raise it
 
 #: Where a tool handler may be read out of the registry: (file, function).
 HANDLER_READ_SITES = {

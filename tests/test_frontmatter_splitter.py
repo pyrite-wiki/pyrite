@@ -304,39 +304,11 @@ def test_export_does_not_build_an_entry_from_prose_between_two_rules(tmp_path):
     assert got == "from-disk"
 
 
-def test_cascade_alias_hook_reads_quoted_dashes(tmp_path):
-    from pyrite_cascade.hooks import _load_aliases_for_actor
-
-    path = _write(tmp_path, TRICKY)
-    lookup: dict[str, str] = {}
-    _load_aliases_for_actor(None, "kb", "e1", {"file_path": str(path)}, lookup)
-    assert lookup == {"foo": "e1", "bar": "e1"}
-
-
 def test_journalism_known_entities_reads_quoted_dashes(tmp_path):
     from pyrite_journalism_investigation.known_entities import _extract_aliases
 
     path = _write(tmp_path, TRICKY)
     assert _extract_aliases({"file_path": str(path)}) == ["Foo", "Bar"]
-
-
-def test_cascade_inject_ids_sees_an_id_after_a_dashed_value(tmp_path):
-    from pyrite_cascade.migration import inject_ids
-
-    text = "---\ntitle: Wait ---\nid: keep\n---\nbody\n"
-    (tmp_path / "e.md").write_text(text, encoding="utf-8")
-    assert inject_ids(tmp_path) == {}
-    assert (tmp_path / "e.md").read_text(encoding="utf-8") == text
-
-
-def test_cascade_migration_keeps_a_bom_and_converts_crlf_to_lf(tmp_path):
-    """BOM files are reached; the scripts write with write_text, so CRLF becomes LF (stated in
-    migration.py's docstring)."""
-    from pyrite_cascade.migration import inject_ids
-
-    (tmp_path / "e.md").write_bytes("\ufeff---\r\ntitle: T\r\n---   \r\nbody\r\n".encode())
-    assert inject_ids(tmp_path)
-    assert (tmp_path / "e.md").read_bytes().decode() == "\ufeff---\nid: e\ntitle: T\n---   \nbody\n"
 
 
 def test_markdown_importer_reads_a_file_with_no_body_and_no_final_newline():
@@ -927,30 +899,12 @@ def _readers(tmp_path, kb_service):
         out = insert_id_line(text, "abc")
         return ("loaded", "A", "") if "id: abc" in out else ("refused", "no id")
 
-    def inject(text):
-        from pyrite_cascade.migration import inject_ids
+    def aliases(text):
+        from pyrite_journalism_investigation.known_entities import _extract_aliases
 
-        d = tmp_path / "inj"
-        d.mkdir(exist_ok=True)
-        (d / "e.md").write_bytes(text.encode("utf-8"))
-        return ("loaded", "A", "") if inject_ids(d) else ("refused", "skipped")
-
-    def aliases(which):
-        def run(text):
-            p = path_of(text.replace("type: note", "type: note\naliases: [Zed]"))
-            if which == "hooks":
-                from pyrite_cascade.hooks import _load_aliases_for_actor
-
-                lk: dict = {}
-                _load_aliases_for_actor(None, "k", "i", {"file_path": str(p)}, lk)
-                found = list(lk)
-            else:
-                from pyrite_journalism_investigation.known_entities import _extract_aliases
-
-                found = [a.lower() for a in _extract_aliases({"file_path": str(p)})]
-            return ("loaded", "A", "") if found == ["zed"] else ("refused", "no aliases")
-
-        return run
+        p = path_of(text.replace("type: note", "type: note\naliases: [Zed]"))
+        found = [a.lower() for a in _extract_aliases({"file_path": str(p)})]
+        return ("loaded", "A", "") if found == ["zed"] else ("refused", "no aliases")
 
     return {
         "repository": guard(repo),
@@ -962,9 +916,7 @@ def _readers(tmp_path, kb_service):
         "create-body-file": guard(create),
         "export": guard(export),
         "ids-pin": guard(pin),
-        "cascade-inject_ids": guard(inject),
-        "cascade-aliases": guard(aliases("hooks")),
-        "journalism-aliases": guard(aliases("known")),
+        "journalism-aliases": guard(aliases),
     }
 
 
@@ -1006,8 +958,6 @@ def test_every_reader_follows_the_rule_or_refuses(row, tmp_path, kb_service):
             if name in (
                 "git-change-summary",
                 "ids-pin",
-                "cascade-inject_ids",
-                "cascade-aliases",
                 "journalism-aliases",
                 "create-body-file",  # drops type/title from the returned fields
             ):
@@ -1023,11 +973,7 @@ def test_every_reader_follows_the_rule_or_refuses(row, tmp_path, kb_service):
         elif name == "create-body-file" and pyrite == "Unsupported" and _id == "json":
             assert got == ("plain",)  # a body is not a file: a leading { is text (stated)
         else:
-            # inject_ids edits text and never parses the YAML, so it does not see the bad quote
-            assert got[0] == "refused" or (_id == SPANS_FENCE and name == "cascade-inject_ids"), (
-                name,
-                got,
-            )
+            assert got[0] == "refused", (name, got)
 
 
 def test_a_bad_template_does_not_break_the_listing(tmp_path):

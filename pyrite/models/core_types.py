@@ -161,8 +161,8 @@ class EventEntry(Temporal, Locatable, Statusable, Entry):
         if self.location:
             meta["location"] = self.location
         if self.participants:
-            # Serialize as `actors` — the cascade-timeline convention used by
-            # the existing corpus and CONTRIBUTING.md. The internal property
+            # Serialize as `actors` — the timeline convention used by the
+            # existing corpora and CONTRIBUTING.md. The internal property
             # stays `participants`; only the frontmatter key is `actors`.
             meta["actors"] = self.participants
         if self.notes:

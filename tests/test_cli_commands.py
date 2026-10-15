@@ -777,7 +777,7 @@ class TestMcpCommandTier:
 
         #229 found the next fix (core dict counts: 29/11/8) had drifted the
         same way: it omitted 41+ plugin tools (sw_*, investigation_*,
-        cascade_*, ...) registered dynamically per tier
+        ...) registered dynamically per tier
         (`PyriteMCPServer._register_plugin_tools`), understating the real
         read-tier total by 2.4x (29 claimed vs. 70 actual). The help text
         now counts core + plugin tools per tier, the same way

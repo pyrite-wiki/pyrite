@@ -937,7 +937,6 @@ SAFE = {
     "pyrite auth github-login": "one credential store; failure raises",
     "pyrite auth github-logout": "one credential store; failure raises",
     "pyrite auth github-setup": "one credential store; failure raises",
-    "pyrite cascade backfill-ji": "single backfill pass; scans clean",
     "pyrite ci": "exits non-zero on the checks' own result",
     "pyrite db backup": "one file copy; failure raises",
     "pyrite db restore": "one file copy; failure raises",
@@ -1024,10 +1023,6 @@ SAFE = {
 READ_ONLY = [
     "pyrite auth status",
     "pyrite auth whoami",
-    "pyrite cascade audit-compat",
-    "pyrite cascade export",
-    "pyrite cascade extract-actors",
-    "pyrite cascade suggest-aliases",
     "pyrite collections list",
     "pyrite collections query",
     "pyrite config",

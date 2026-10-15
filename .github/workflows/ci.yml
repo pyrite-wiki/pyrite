@@ -306,7 +306,7 @@ jobs:
           # Extensions are separate distributions, covered by NO pyrite extra.
           # Without this loop 37 test modules fail at collection with
           # ModuleNotFoundError (pyrite_journalism_investigation,
-          # pyrite_cascade, pyrite_encyclopedia). With [all] plus this loop the
+          # pyrite_encyclopedia). With [all] plus this loop the
           # matrix job collects the full suite, which is why the old
           # `test-optional-deps` job (same install, 3.12 only) was removed as a
           # pure duplicate.

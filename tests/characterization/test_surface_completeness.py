@@ -38,7 +38,7 @@ from tests.characterization.surfaces import (
 )
 
 PINNED_REST_TOTAL_ROUTE_COUNT = 143
-PINNED_MCP_TOTAL_TOOL_COUNT = 112
+PINNED_MCP_TOTAL_TOOL_COUNT = 106  # 112 until #953 deleted cascade's six tools
 
 
 def _all_rest_routes(app) -> set[tuple[str, str]]:

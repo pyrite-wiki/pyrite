@@ -745,7 +745,7 @@ def _mcp_command_help() -> str:
     per tier, so this can't drift the way two fixed enumerations already
     have: a hardcoded "8 read tools" once drifted to 29 as orient/batch_read/
     task_* etc. were added; then 29/11/8 (core tools only) drifted from the
-    live count once plugins (sw_*, investigation_*, cascade_*, zettel_*,
+    live count once plugins (sw_*, investigation_*, zettel_*,
     wiki_*, social_*) started exposing 41+ tools at read tier alone (#229).
     Mirrors how PyriteMCPServer.__init__ assembles self.tools, without
     constructing a full server (no DB/config needed for --help text)."""
@@ -759,7 +759,7 @@ def _mcp_command_help() -> str:
         "exposed (counts include plugin tools registered for that tier):\n\n"
         f"- read: {read_total} tools (kb_orient, kb_search, kb_get, "
         "kb_timeline, kb_backlinks, kb_tags, kb_stats, kb_schema, task_*, "
-        "sw_*/investigation_*/cascade_* and other plugin tools, and more)\n"
+        "sw_*/investigation_* and other plugin tools, and more)\n"
         f"- write: read tier + {write_total - read_total} more (kb_create, "
         "kb_update, kb_delete, kb_link, task_claim, and more)\n"
         f"- admin: write tier + {admin_total - write_total} more (kb_registry_*, "

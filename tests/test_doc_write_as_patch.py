@@ -100,9 +100,10 @@ KNOWN_DIVERGENCES: dict[str, tuple[str, str]] = {
         r"diff was:\n\(end of diff\)",
     ),
     "a-save-does-not-add-what-a-hook-used-to-add": (
-        "principle 4: cascade's resolve_actor_links writes a `links:` block for the "
-        "actor into the file on an unrelated title edit",
-        r"diff was:\n-title: The hearing\n\+title: The hearing, postponed\n"
+        "principle 4: journalism-investigation's enrich_connection_links writes a "
+        "`links:` block for the person and the organization into the file on an "
+        "unrelated title edit",
+        r"diff was:\n-title: Jane at Acme\n\+title: Jane at Acme, renewed\n"
         r"\+links:\n\+- target: jane-doe\n",
     ),
     "two-writers-on-different-keys-both-survive": (
@@ -127,23 +128,24 @@ KNOWN_DIVERGENCES: dict[str, tuple[str, str]] = {
     ),
 }
 
-#: (See ``_require_actor_link_derived`` for why this is still a cascade KB:
-#: no type derives links from `actors` yet.)
+#: (See ``_require_reference_link_derived`` for why this is still a plugin
+#: KB: no type derives links from its reference fields yet.)
 #: The KB type whose save hooks an entry type's example needs. The hook that
-#: adds links to a `timeline_event` on save is the cascade plugin's
-#: `resolve_actor_links`, which runs only in the cascade KB types. ADR-0042
-#: says "journalism derivations", but in a journalism-investigation KB no hook
-#: touches a timeline_event, and the example passes without entering the case
-#: it is about.
-KB_TYPE_FOR_ENTRY_TYPE = {"timeline_event": "cascade-timeline"}
+#: adds links to a `membership` on save is journalism-investigation's
+#: `enrich_connection_links`, which runs only in that plugin's KB types (it
+#: replaced the cascade plugin's `resolve_actor_links` on a `timeline_event`
+#: when #953 deleted cascade: same divergence, measured by an extension that
+#: stays).
+KB_TYPE_FOR_ENTRY_TYPE = {"membership": "journalism-investigation"}
 
-#: Entries an example's file refers to, written beside it. The hook only adds
-#: a link for an actor it can resolve; without `jane-doe` in the KB, the
-#: hook example would pass for lack of an actor, not because the hook wrote
-#: nothing.
+#: Entries an example's file refers to, written beside it. Without
+#: `jane-doe` and `acme` in the KB the hook example's link could not be seen
+#: anywhere, so it would pass for lack of a target, not because the hook
+#: wrote nothing.
 NEIGHBOURS = {
     "a-save-does-not-add-what-a-hook-used-to-add": {
-        "content/jane-doe.md": "---\nid: jane-doe\ntitle: Jane Doe\ntype: actor\n---\n\nShe testifies.\n",
+        "content/jane-doe.md": "---\nid: jane-doe\ntitle: Jane Doe\ntype: person\n---\n\nShe testifies.\n",
+        "content/acme.md": "---\nid: acme\ntitle: Acme\ntype: organization\n---\n\nA company.\n",
     },
 }
 
@@ -624,13 +626,21 @@ def _require_entered(ex: Example, config: PyriteConfig, path: Path, entry_id: st
         _require(raw.count(b"\r\n") == raw.count(b"\n"), "the crlf file is not all CRLF")
     if "noid" in ex.file_flags:
         _require("id" not in meta, "the noid file has an id: line")
-    for actor in _actors(meta):
-        got = _call(config, "kb_get", {"kb_name": KB, "entry_id": actor})
-        _require(not _is_error(got), f"actor {actor} is not in the KB, so nothing links to it")
+    for ref in _references(meta):
+        got = _call(config, "kb_get", {"kb_name": KB, "entry_id": ref})
+        _require(not _is_error(got), f"{ref} is not in the KB, so nothing links to it")
 
 
-def _actors(meta: dict[str, Any]) -> list[str]:
-    return [str(ref).strip("[]") for ref in meta.get("actors", [])]
+def _references(meta: dict[str, Any]) -> list[str]:
+    """The entries a file's own fields name by wikilink (`links:` is not one)."""
+    found: list[str] = []
+    for key, value in meta.items():
+        if key == "links":
+            continue
+        for ref in value if isinstance(value, list) else [value]:
+            if isinstance(ref, str) and ref.startswith("[[") and ref.endswith("]]"):
+                found.append(ref.strip("[]"))
+    return found
 
 
 def _link_items(value: Any) -> list[dict[str, Any]]:
@@ -661,12 +671,12 @@ def _is_link_to(value: Any, target: str) -> bool:
 def _derived_link_seen(
     config: PyriteConfig, actor: str, entry_id: str, *, call: Any = None
 ) -> str | None:
-    """How the actor link is visible, or None.
+    """How the link to a referenced entry (`actor`) is visible, or None.
 
-    - ``kb_backlinks`` on the actor lists the entry. That is the index's row.
-      Today the row exists because the cascade hook wrote a `links:` block that
+    - ``kb_backlinks`` on the target lists the entry. That is the index's row.
+      Today the row exists because the plugin hook wrote a `links:` block that
       was then indexed; under ADR-0042 decision 4 the index derives it.
-    - ``kb_get`` on the entry or on the actor returns a link (a mapping with a
+    - ``kb_get`` on the entry or on the target returns a link (a mapping with a
       ``relation``) under a key whose name says it is derived. Which sub-key
       holds it is not fixed yet, so any link under such a key counts, and
       nothing that is not a link does.
@@ -687,37 +697,37 @@ def _derived_link_seen(
     return None
 
 
-def _require_actor_link_derived(
+def _require_reference_link_derived(
     config: PyriteConfig, meta: dict[str, Any], entry_id: str, *, call: Any = None
 ) -> None:
-    """After the save, something other than the file shows the actor link.
+    """After the save, something other than the file shows each referenced link.
 
     What rules this out: an empty diff that proves nothing about hooks because
-    the KB derives no link to the actor at all (a type with no actor
-    handling, an actor the lookup cannot resolve). It must not rule out a
-    write path that is correct: one that writes no hook links into the file
-    and has the index derive them (ADR-0042 decision 4). So the link is read
-    from `kb_backlinks` or as a link under the derived key of a read, never
-    from the file's `links:` block as a read returns it, and no KB type is
-    named here. A derived field value (the normalised `actors`) is not a link
-    and does not count.
+    the KB derives no link to the referenced entry at all (a type with no
+    reference handling, a target the lookup cannot resolve). It must not rule
+    out a write path that is correct: one that writes no hook links into the
+    file and has the index derive them (ADR-0042 decision 4). So the link is
+    read from `kb_backlinks` or as a link under the derived key of a read,
+    never from the file's `links:` block as a read returns it, and no KB type
+    is named here. A derived field value (the normalised `person`) is not a
+    link and does not count.
 
-    Limit, stated because it is real: no KB type derives links from `actors`
-    at index time yet (the index derives them from body wikilinks and
-    `references:`, not from `actors`; ADR-0045's reference fields are not
-    built). Until one does, the only link a save leaves is the one the
-    cascade hook writes into the file, which the index then reads back, so
-    the hook example still needs the cascade KB type
+    Limit, stated because it is real: no KB type derives links from its
+    reference fields at index time yet (the index derives them from body
+    wikilinks and `references:`; ADR-0045's reference fields are not built).
+    Until one does, the only link a save leaves is the one the
+    journalism-investigation hook writes into the file, which the index then
+    reads back, so the hook example still needs that KB type
     (``KB_TYPE_FOR_ENTRY_TYPE``). When a derived-link type exists, put it
     there; this check needs no change.
     """
-    for actor in _actors(meta):
+    for actor in _references(meta):
         seen = _derived_link_seen(config, actor, entry_id, call=call)
         _require(
             seen,
             f"{actor} shows no link from {entry_id} after the save, neither in "
-            "kb_backlinks nor under a derived key of kb_get, so nothing derived an actor link "
-            "and the example did not enter its case",
+            "kb_backlinks nor under a derived key of kb_get, so nothing derived a link to "
+            "it and the example did not enter its case",
         )
 
 
@@ -914,8 +924,8 @@ def _check(
             leaked = sorted(watched.keys() & untouched)
             assert not leaked, f"the emitter was handed keys nobody asked to change: {leaked}"
 
-    if _actors(meta):
-        _require_actor_link_derived(config, meta, entry_id)
+    if _references(meta):
+        _require_reference_link_derived(config, meta, entry_id)
     assert path.exists(), (
         f"the file is gone; KB now holds {sorted(map(str, path.parent.parent.rglob('*.md')))}"
     )
@@ -1079,7 +1089,7 @@ def test_emitter_flag_on_the_one_field_edit(
 #   `safe_dump` (limits in `_watch_emitter`'s docstring, #741). Rejected by
 #   test_emitter_leak_is_seen_through_an_import_bound_dump; accepted by
 #   test_emitter_control_passes_a_splice_that_emits_a_scalar.
-# - hook precondition (`_require_actor_link_derived`): a derived LINK, not a
+# - hook precondition (`_require_reference_link_derived`): a derived LINK, not a
 #   derived value and not the file's own `links:` block. Accepted: the model
 #   (derived link) and the real backlinks path; rejected: the normalised
 #   echo, the unindexed `links:` block, nothing at all.
@@ -1148,17 +1158,17 @@ class ModelWritePath:
         incoming: list[str] = []
         for path in sorted(config.knowledge_bases[0].path.rglob("*.md")):
             meta = _front(path.read_text())
-            actors = [str(r).strip("[]") for r in meta.get("actors", [])]
+            refs = _references(meta)
             if meta.get("id") == entry_id:
-                outgoing = actors
-            if entry_id in actors:
+                outgoing = refs
+            if entry_id in refs:
                 incoming.append(str(meta["id"]))
         if self.derived == "normalised":
             # A read's normalised field value, which is not a link.
-            return {"actors": outgoing}
+            return {"references": outgoing}
         return {
-            "links": [{"target": t, "relation": "actor_reference"} for t in outgoing]
-            + [{"id": i, "relation": "actor_reference"} for i in incoming]
+            "links": [{"target": t, "relation": "references"} for t in outgoing]
+            + [{"id": i, "relation": "references"} for i in incoming]
         }
 
     def _update(self, config: PyriteConfig, args: dict[str, Any]) -> dict[str, Any]:
@@ -1215,9 +1225,9 @@ def test_a_correct_write_path_is_not_hard_failed_by_the_hook_example(
     """A path that writes no hook link, with the link derived, passes the hook example.
 
     What it rules out: the example's precondition reading the link from the
-    file's `links:` block or requiring a cascade-only KB type. The KB is a
+    file's `links:` block or requiring a plugin-only KB type. The KB is a
     generic one, ModelWritePath writes no link, and the link is visible only
-    as a derived link under `kb_get`'s derived key. (The cascade hook is not
+    as a derived link under `kb_get`'s derived key. (The plugin hook is not
     in play here: ModelWritePath replaces the update, so it is neither
     switched off nor run.)
     """
@@ -1237,7 +1247,9 @@ def test_the_hook_precondition_accepts_the_real_backlinks_path(tmp_path: Path) -
     text = path.read_text()
     path.write_text(
         text.replace(
-            "---\n\nText.", "links:\n- target: jane-doe\n  relation: actor_reference\n---\n\nText."
+            "---\n\nText.",
+            "links:\n- target: jane-doe\n  relation: has_member\n"
+            "- target: acme\n  relation: member_of\n---\n\nText.",
         )
     )
     db = PyriteDB(config.settings.index_path)
@@ -1246,7 +1258,7 @@ def test_the_hook_precondition_accepts_the_real_backlinks_path(tmp_path: Path) -
     finally:
         db.close()
     assert _derived_link_seen(config, "jane-doe", entry_id) == "kb_backlinks"
-    _require_actor_link_derived(config, _front(ex.file), entry_id)
+    _require_reference_link_derived(config, _front(ex.file), entry_id)
 
 
 def test_the_hook_precondition_accepts_a_derived_link_alone(tmp_path: Path) -> None:
@@ -1258,30 +1270,30 @@ def test_the_hook_precondition_accepts_a_derived_link_alone(tmp_path: Path) -> N
     ex = _example("a-save-does-not")
     config, _path, entry_id = _build_kb(tmp_path, ex)
     model = ModelWritePath()
-    _require_actor_link_derived(config, _front(ex.file), entry_id, call=model)
+    _require_reference_link_derived(config, _front(ex.file), entry_id, call=model)
     assert _derived_link_seen(config, "jane-doe", entry_id, call=model) == "kb_get['derived']"
 
 
 def test_the_hook_precondition_rejects_a_normalised_field_under_the_derived_key(
     tmp_path: Path,
 ) -> None:
-    """`derived: {actors: [...]}` is the field echoed back, not a link.
+    """`derived: {references: [...]}` is the field echoed back, not a link.
 
     What it rules out: the example being entered because a read returned the
-    entry's own `actors` under the derived key (ADR-0042 decision 9 puts
-    normalised values there) when nothing linked to the actor.
+    entry's own reference fields under the derived key (ADR-0042 decision 9
+    puts normalised values there) when nothing linked to the target.
     """
     ex = _example("a-save-does-not")
     config, _path, entry_id = _build_kb(tmp_path, ex)
     echo = ModelWritePath(derived="normalised")
     with pytest.raises(CaseNotEnteredError, match="shows no link"):
-        _require_actor_link_derived(config, _front(ex.file), entry_id, call=echo)
+        _require_reference_link_derived(config, _front(ex.file), entry_id, call=echo)
 
 
 def test_the_hook_precondition_rejects_a_links_block_in_the_file_that_is_not_indexed(
     tmp_path: Path,
 ) -> None:
-    """A file whose `links:` names the actor, with no backlink and no derived key, is not enough.
+    """A file whose `links:` names the target, with no backlink and no derived key, is not enough.
 
     What it rules out: reading the file's own `links:` block as proof that a
     link was derived. The KB is not re-indexed after the block is written, so
@@ -1294,7 +1306,7 @@ def test_the_hook_precondition_rejects_a_links_block_in_the_file_that_is_not_ind
     path.write_text(
         path.read_text().replace(
             "---\n\nText.",
-            "links:\n- target: jane-doe\n  relation: actor_reference\n---\n\nText.",
+            "links:\n- target: jane-doe\n  relation: has_member\n---\n\nText.",
         )
     )
 
@@ -1308,7 +1320,7 @@ def test_the_hook_precondition_rejects_a_links_block_in_the_file_that_is_not_ind
 
     assert _call(config, "kb_backlinks", {"kb_name": KB, "entry_id": "jane-doe"})["backlinks"] == []
     with pytest.raises(CaseNotEnteredError, match="shows no link"):
-        _require_actor_link_derived(config, _front(ex.file), entry_id, call=reads_the_file)
+        _require_reference_link_derived(config, _front(ex.file), entry_id, call=reads_the_file)
 
 
 def test_the_hook_precondition_still_fails_when_nothing_derives_the_link(tmp_path: Path) -> None:
@@ -1320,7 +1332,7 @@ def test_the_hook_precondition_still_fails_when_nothing_derives_the_link(tmp_pat
     ex = _example("a-save-does-not")
     config, _path, entry_id = _build_kb(tmp_path, ex)
     with pytest.raises(CaseNotEnteredError, match="shows no link"):
-        _require_actor_link_derived(
+        _require_reference_link_derived(
             config, _front(ex.file), entry_id, call=ModelWritePath(derived="none")
         )
 

@@ -554,8 +554,8 @@ class TestOmittingTheKBNameIsNotAWayIn:
     def test_a_tool_that_cannot_filter_is_refused_not_served(self, env):
         """Fail closed, against a set of tools that is deliberately shrinking.
 
-        The six extensions have all landed (#223): social, zettelkasten,
-        encyclopedia, cascade, software-kb and journalism-investigation read
+        The extensions have all landed (#223): social, zettelkasten,
+        encyclopedia, software-kb and journalism-investigation read
         through the readable set now. The example here comes from the tools
         that keep the fail-closed listing -- journalism-investigation's
         write-path tools, which take no readable set (a caller who may write

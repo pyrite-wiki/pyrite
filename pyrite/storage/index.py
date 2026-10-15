@@ -1174,6 +1174,7 @@ class IndexManager:
             "invalid_statuses": [],
             "off_list_values": [],
             "duplicates": [],
+            "removed_extensions": [],
         }
 
         # The file's own value of each protocol column, per (kb, id), read
@@ -1205,6 +1206,23 @@ class IndexManager:
         # One scoped list drives every check below, so `-k` cannot scope some
         # of the report and leave the rest global.
         kbs = [kb for kb in self.config.all_kbs() if kb_name is None or kb.name == kb_name]
+
+        # A KB whose type belonged to an extension Pyrite has deleted (#953):
+        # its types are undeclared for a reason the user should be told. The
+        # rule is `plugins/removed.py`'s; this report only shows it.
+        from ..plugins.removed import removed_extension_for_kb_type, removed_extension_notice
+
+        for kb in kbs:
+            ext = removed_extension_for_kb_type(kb.kb_type)
+            if ext is not None:
+                health["removed_extensions"].append(
+                    {
+                        "kb": kb.name,
+                        "kb_type": kb.kb_type,
+                        "extension": ext.name,
+                        "message": removed_extension_notice(kb.name, kb.kb_type),
+                    }
+                )
 
         for kb in kbs:
             if not kb.path.exists():

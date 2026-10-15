@@ -106,7 +106,7 @@ class KBRepository:
             raise
         except Exception as e:
             # Log a one-line warning instead of a full traceback. Per-file
-            # tracebacks spam the operator during bulk sync (cascade-research
+            # tracebacks spam the operator during bulk sync (a research KB's
             # drafts hit ~13 of these every operation). The underlying parse
             # error is wrapped into FrontmatterError on re-raise from
             # EventEntry.load if the cause is YAML; sync_incremental's

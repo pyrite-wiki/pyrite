@@ -61,10 +61,10 @@ class TestTestSide:
             ("tests/unit/helpers.py", True),
             ("tests/fixtures/data.json", True),
             ("conftest.py", True),
-            ("extensions/cascade/tests/test_plugin.py", True),
-            ("extensions/cascade/tests/conftest.py", True),
+            ("extensions/social/tests/test_plugin.py", True),
+            ("extensions/social/tests/conftest.py", True),
             ("pyrite/services/kb_service.py", False),
-            ("extensions/cascade/src/pyrite_cascade/plugin.py", False),
+            ("extensions/social/src/pyrite_social/plugin.py", False),
             ("scripts/release.py", False),
             (".github/workflows/ci.yml", False),
             ("pyproject.toml", False),
@@ -77,7 +77,7 @@ class TestTestSide:
 
     def test_only_test_modules_are_run(self, vr):
         assert vr.is_test_file("tests/unit/test_nested.py")
-        assert vr.is_test_file("extensions/cascade/tests/test_plugin.py")
+        assert vr.is_test_file("extensions/social/tests/test_plugin.py")
         assert not vr.is_test_file("tests/conftest.py")
         assert not vr.is_test_file("tests/fixtures/data.py")
         assert not vr.is_test_file("pyrite/test_mode.py")

@@ -51,18 +51,8 @@ class TestResolverAnswers:
         assert field_aliases("note") == {}
         assert field_aliases("no_such_type") == {}
 
-    def test_cascade_and_journalism_event_types(self):
-        assert field_aliases("cascade_event") == {
-            "event_date": "date",
-            "participants": "actors",
-        }
-        for t in (
-            "timeline_event",
-            "solidarity_event",
-            "investigation_event",
-            "transaction",
-            "legal_action",
-        ):
+    def test_journalism_event_types(self):
+        for t in ("investigation_event", "transaction", "legal_action"):
             assert field_aliases(t) == {"participants": "actors"}, t
 
     def test_answer_is_a_copy(self):
@@ -171,7 +161,7 @@ class TestPluginLayer:
         reg._discovered = True
         monkeypatch.setattr("pyrite.plugins.get_registry", lambda: reg)
         assert field_aliases("event") == {"participants": "actors"}
-        assert field_aliases("cascade_event") == {}
+        assert field_aliases("investigation_event") == {}
 
 
 def _parity_cases():
@@ -187,7 +177,9 @@ class TestParity:
     """The declared target is what the class reads (the groom's riskiest assumption)."""
 
     def test_the_cases_are_not_empty(self):
-        assert len(_parity_cases()) >= 9
+        # event 1, relationship 2, the three journalism event types 1 each (#953
+        # took cascade's four cases with it).
+        assert len(_parity_cases()) >= 6
 
     @pytest.mark.parametrize(("cls", "entry_type", "alias", "target"), _parity_cases())
     def test_alias_and_target_load_the_same(self, cls, entry_type, alias, target):
@@ -229,16 +221,13 @@ class Bond(RelationshipEntry):
 
 #: Dev's aliases, class by class, as literals: the names are the
 #: `FRONTMATTER_ALIASES` declared on dev (c93387b7) -- on `EventEntry` and
-#: `RelationshipEntry`, re-declared on six extension classes, inherited by a
+#: `RelationshipEntry`, re-declared on the extension classes, inherited by a
 #: subclass -- and each target is what that class's `from_frontmatter` reads.
 #: Not derived from `field_aliases` or `_type_names_of`: a dropped inherited
 #: alias must fail here, not shrink its own expectation.
 LEGACY_ALIASES: dict[str, dict[str, str]] = {
     "event": {"participants": "actors"},
     "relationship": {"source": "source_entity", "target": "target_entity"},
-    "cascade_event": {"event_date": "date", "participants": "actors"},
-    "timeline_event": {"participants": "actors"},
-    "solidarity_event": {"participants": "actors"},
     "investigation_event": {"participants": "actors"},
     "transaction": {"participants": "actors"},
     "legal_action": {"participants": "actors"},
@@ -325,11 +314,6 @@ class TestLoadPathIsUnchanged:
                 "source: a\ntarget: b\n",
                 "other: 1\nsource_entity: a\ntarget_entity: b\n",
             ),
-            (
-                "cascade_event",
-                "participants: [a, b]\nevent_date: 2024-01-02\n",
-                "other: 1\ndate: '2024-01-02'\nactors: [a, b]\n",
-            ),
         ],
     )
     def test_files_match_what_dev_wrote(self, entry_type, front, written):
@@ -339,7 +323,7 @@ class TestLoadPathIsUnchanged:
         assert cls.from_markdown(source).to_markdown() == expected
 
     def test_event_date_stays_an_extra_where_it_was_never_an_alias(self):
-        # dev: only cascade_event aliased event_date; on `event` it is an unknown key.
+        # dev: only the deleted cascade_event aliased event_date; on `event` it is an unknown key.
         entry = EventEntry.from_markdown(
             "---\nid: x\ntitle: T\ntype: event\nevent_date: 2024-01-02\n---\n"
         )

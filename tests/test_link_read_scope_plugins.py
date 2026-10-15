@@ -1,6 +1,6 @@
 """Plugin tools learn nothing about a KB the caller cannot read (P-R4, P-R5).
 
-Private #39 names `zettel_graph`, `investigation_network`, `cascade_network`
+Private #39 names `zettel_graph`, `investigation_network` (and `cascade_network`, deleted with cascade)
 and the software-kb tools that read link data (`sw_check_ready`,
 `sw_context_for_item`, `sw_epic_detail`, ...). Each takes the named KB
 through the MCP chokepoint, which checks it, but the links it follows lead
@@ -146,7 +146,7 @@ def _by_id(rows, entry_id):
 # -- graph-shaped tools ------------------------------------------------------
 
 
-@pytest.mark.parametrize("tool", ["zettel_graph", "investigation_network", "cascade_network"])
+@pytest.mark.parametrize("tool", ["zettel_graph", "investigation_network"])
 def test_network_tools_drop_private_backlinks(w, scope, tool):
     result = _call(w, tool, {"entry_id": READABLE_ENTRY, "kb_name": READABLE}, scope)
     assert "error" not in result, result
@@ -154,7 +154,7 @@ def test_network_tools_drop_private_backlinks(w, scope, tool):
     assert PRIVATE_SPY not in text and PRIVATE_SPY_TITLE not in text
 
 
-@pytest.mark.parametrize("tool", ["zettel_graph", "investigation_network", "cascade_network"])
+@pytest.mark.parametrize("tool", ["zettel_graph", "investigation_network"])
 def test_network_tools_private_target_reads_like_missing(w, scope, tool):
     result = _call(w, tool, {"entry_id": READABLE_POINTER, "kb_name": READABLE}, scope)
     rows = result["outlinks"]
@@ -176,7 +176,7 @@ def test_zettel_graph_neighbours_stay_readable(w, scope):
 
 
 @pytest.mark.control(reason="unscoped network tools still see the private backlink")
-@pytest.mark.parametrize("tool", ["zettel_graph", "investigation_network", "cascade_network"])
+@pytest.mark.parametrize("tool", ["zettel_graph", "investigation_network"])
 def test_network_tools_unscoped_unchanged(w, tool):
     result = _call(w, tool, {"entry_id": READABLE_ENTRY, "kb_name": READABLE}, None)
     assert PRIVATE_SPY in json.dumps(result)

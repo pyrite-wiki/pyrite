@@ -98,7 +98,7 @@ Paths: `pyrite/services/block_service.py`, `pyrite/services/wikilink_service.py`
   open defect on creating a collection in the web UI (#480).
 - The import pipeline of [[adr-0010]] section 7 is "future"; the link rule is
   unbuilt.
-- Hooks still write links (cascade and journalism-investigation); until
+- A hook still writes links (journalism-investigation's connection types); until
   ADR-0042 and ADR-0045 are accepted, a save can add links the caller did not
   send.
 - Not decided: path spelling of an id with `/`, which wikilinks and routes

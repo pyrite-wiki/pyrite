@@ -1,114 +1,4 @@
 {
-  "cascade_actors | granted_user | missing-kb": {
-    "error": "KB 'missing-kb' not found",
-    "error_code": "KB_NOT_FOUND",
-    "legacy_error_code": "NOT_FOUND",
-    "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
-  },
-  "cascade_actors | granted_user | no-default-role-kb": {
-    "error": "KB 'no-default-role-kb' not found",
-    "error_code": "KB_NOT_FOUND",
-    "legacy_error_code": "NOT_FOUND",
-    "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
-  },
-  "cascade_actors | granted_user | private-kb": {
-    "actors": [],
-    "count": "<ENUMERATION_CONTENT>"
-  },
-  "cascade_actors | granted_user | readable-kb": {
-    "actors": [],
-    "count": "<ENUMERATION_CONTENT>"
-  },
-  "cascade_capture_lanes | granted_user | missing-kb": {
-    "error": "KB 'missing-kb' not found",
-    "error_code": "KB_NOT_FOUND",
-    "legacy_error_code": "NOT_FOUND",
-    "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
-  },
-  "cascade_capture_lanes | granted_user | no-default-role-kb": {
-    "error": "KB 'no-default-role-kb' not found",
-    "error_code": "KB_NOT_FOUND",
-    "legacy_error_code": "NOT_FOUND",
-    "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
-  },
-  "cascade_capture_lanes | granted_user | private-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "lanes": []
-  },
-  "cascade_capture_lanes | granted_user | readable-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "lanes": []
-  },
-  "cascade_network | granted_user | missing-kb": {
-    "error": "KB 'missing-kb' not found",
-    "error_code": "KB_NOT_FOUND",
-    "legacy_error_code": "NOT_FOUND",
-    "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
-  },
-  "cascade_network | granted_user | no-default-role-kb": {
-    "error": "KB 'no-default-role-kb' not found",
-    "error_code": "KB_NOT_FOUND",
-    "legacy_error_code": "NOT_FOUND",
-    "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
-  },
-  "cascade_network | granted_user | private-kb": {
-    "backlinks": [],
-    "center": {
-      "id": "private-note",
-      "title": "Private note"
-    },
-    "limit": 50,
-    "offset": 0,
-    "outlinks": [],
-    "totals": {
-      "backlinks": 0,
-      "outlinks": 0
-    },
-    "truncated": false
-  },
-  "cascade_network | granted_user | readable-kb": {
-    "backlinks": [],
-    "center": {
-      "id": "readable-note",
-      "title": "Readable note"
-    },
-    "limit": 50,
-    "offset": 0,
-    "outlinks": [],
-    "totals": {
-      "backlinks": 0,
-      "outlinks": 0
-    },
-    "truncated": false
-  },
-  "cascade_timeline | granted_user | missing-kb": {
-    "error": "KB 'missing-kb' not found",
-    "error_code": "KB_NOT_FOUND",
-    "legacy_error_code": "NOT_FOUND",
-    "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
-  },
-  "cascade_timeline | granted_user | no-default-role-kb": {
-    "error": "KB 'no-default-role-kb' not found",
-    "error_code": "KB_NOT_FOUND",
-    "legacy_error_code": "NOT_FOUND",
-    "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
-  },
-  "cascade_timeline | granted_user | private-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "events": []
-  },
-  "cascade_timeline | granted_user | readable-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "events": []
-  },
   "investigation_bulk_edges | granted_user | missing-kb": {
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
@@ -1335,7 +1225,6 @@
         "sourcing": "Claims should link to evidence. Prefer primary sources."
       },
       "relationship_types": {
-        "actor_reference": "Event references an actor (resolved from string or wikilink)",
         "advised_by": "Advised by another entity",
         "advises": "Advisory relationship",
         "amended_by": "An ADR is amended by a later one",
@@ -1349,8 +1238,6 @@
         "blocked_by": "Backlog item cannot start until blocker completes",
         "blocks": "Backlog item must complete before another can start",
         "branches_from": "Branches from a parent note",
-        "built_on": "Solidarity infrastructure built on earlier infrastructure",
-        "capture_mechanism": "Mechanism used in a capture event",
         "causally_follows": "Causal successor",
         "causally_precedes": "Causal predecessor",
         "contains_part": "Contains a part",
@@ -1370,13 +1257,10 @@
         "elaborates": "Elaborates on another note",
         "employed_by": "Employment relationship",
         "employs": "Employs",
-        "enabled": "Earlier infrastructure enabled later solidarity infrastructure",
-        "enabled_capture": "Event enabled by a capture mechanism",
         "extended_by": "Extended by",
         "extends": "Extends or elaborates on",
-        "funded_by": "Organization is funded by another organization",
-        "funds": "Organization funds another organization",
-        "has_actor": "Actor is referenced by an event",
+        "funded_by": "Entity is funded by another entity",
+        "funds": "Entity funds another entity",
         "has_branch": "Has a branch note",
         "has_example": "Has example",
         "has_member": "Organization has a member",
@@ -1385,15 +1269,13 @@
         "has_subtask": "Epic or large item decomposed into subtasks",
         "implemented_by": "Component implements a design doc",
         "implements": "Design doc implemented by a component",
-        "investigated": "Actor investigated an event",
-        "investigated_by": "Event was investigated by an actor",
         "involved_in": "Involved in",
         "involves": "Involvement",
         "is_example_of": "Example of a concept",
         "is_part_of": "Part of a larger whole",
         "located_at": "Location relationship",
         "location_of": "Location of",
-        "member_of": "Actor is a member of an organization",
+        "member_of": "Person is a member of an organization",
         "mentioned_by": "Mentioned by",
         "mentions": "Mentions",
         "owned_by": "Asset or organization is owned by an entity",
@@ -1401,11 +1283,9 @@
         "party_to": "Entity is a party to a legal action",
         "produced_by": "Entry was produced by a task",
         "produces": "Task produces an entry as evidence",
-        "provoked_response": "Capture event provoked a solidarity response",
         "received_transaction_from": "Entity received a transaction from another entity",
         "refined_by": "Refined by",
         "refines": "Refines or narrows",
-        "responded_to": "Solidarity action responded to a capture event",
         "session_for": "Work log records a session for a backlog item",
         "source_for": "Document is a source for a claim or fact",
         "sourced_from": "Claim or fact is sourced from a document",
@@ -1674,7 +1554,6 @@
         "sourcing": "Claims should link to evidence. Prefer primary sources."
       },
       "relationship_types": {
-        "actor_reference": "Event references an actor (resolved from string or wikilink)",
         "advised_by": "Advised by another entity",
         "advises": "Advisory relationship",
         "amended_by": "An ADR is amended by a later one",
@@ -1688,8 +1567,6 @@
         "blocked_by": "Backlog item cannot start until blocker completes",
         "blocks": "Backlog item must complete before another can start",
         "branches_from": "Branches from a parent note",
-        "built_on": "Solidarity infrastructure built on earlier infrastructure",
-        "capture_mechanism": "Mechanism used in a capture event",
         "causally_follows": "Causal successor",
         "causally_precedes": "Causal predecessor",
         "contains_part": "Contains a part",
@@ -1709,13 +1586,10 @@
         "elaborates": "Elaborates on another note",
         "employed_by": "Employment relationship",
         "employs": "Employs",
-        "enabled": "Earlier infrastructure enabled later solidarity infrastructure",
-        "enabled_capture": "Event enabled by a capture mechanism",
         "extended_by": "Extended by",
         "extends": "Extends or elaborates on",
-        "funded_by": "Organization is funded by another organization",
-        "funds": "Organization funds another organization",
-        "has_actor": "Actor is referenced by an event",
+        "funded_by": "Entity is funded by another entity",
+        "funds": "Entity funds another entity",
         "has_branch": "Has a branch note",
         "has_example": "Has example",
         "has_member": "Organization has a member",
@@ -1724,15 +1598,13 @@
         "has_subtask": "Epic or large item decomposed into subtasks",
         "implemented_by": "Component implements a design doc",
         "implements": "Design doc implemented by a component",
-        "investigated": "Actor investigated an event",
-        "investigated_by": "Event was investigated by an actor",
         "involved_in": "Involved in",
         "involves": "Involvement",
         "is_example_of": "Example of a concept",
         "is_part_of": "Part of a larger whole",
         "located_at": "Location relationship",
         "location_of": "Location of",
-        "member_of": "Actor is a member of an organization",
+        "member_of": "Person is a member of an organization",
         "mentioned_by": "Mentioned by",
         "mentions": "Mentions",
         "owned_by": "Asset or organization is owned by an entity",
@@ -1740,11 +1612,9 @@
         "party_to": "Entity is a party to a legal action",
         "produced_by": "Entry was produced by a task",
         "produces": "Task produces an entry as evidence",
-        "provoked_response": "Capture event provoked a solidarity response",
         "received_transaction_from": "Entity received a transaction from another entity",
         "refined_by": "Refined by",
         "refines": "Refines or narrows",
-        "responded_to": "Solidarity action responded to a capture event",
         "session_for": "Work log records a session for a backlog item",
         "source_for": "Document is a source for a claim or fact",
         "sourced_from": "Claim or fact is sourced from a document",
@@ -2168,7 +2038,6 @@
       "sourcing": "Claims should link to evidence. Prefer primary sources."
     },
     "relationship_types": {
-      "actor_reference": "Event references an actor (resolved from string or wikilink)",
       "advised_by": "Advised by another entity",
       "advises": "Advisory relationship",
       "amended_by": "An ADR is amended by a later one",
@@ -2182,8 +2051,6 @@
       "blocked_by": "Backlog item cannot start until blocker completes",
       "blocks": "Backlog item must complete before another can start",
       "branches_from": "Branches from a parent note",
-      "built_on": "Solidarity infrastructure built on earlier infrastructure",
-      "capture_mechanism": "Mechanism used in a capture event",
       "causally_follows": "Causal successor",
       "causally_precedes": "Causal predecessor",
       "contains_part": "Contains a part",
@@ -2203,13 +2070,10 @@
       "elaborates": "Elaborates on another note",
       "employed_by": "Employment relationship",
       "employs": "Employs",
-      "enabled": "Earlier infrastructure enabled later solidarity infrastructure",
-      "enabled_capture": "Event enabled by a capture mechanism",
       "extended_by": "Extended by",
       "extends": "Extends or elaborates on",
-      "funded_by": "Organization is funded by another organization",
-      "funds": "Organization funds another organization",
-      "has_actor": "Actor is referenced by an event",
+      "funded_by": "Entity is funded by another entity",
+      "funds": "Entity funds another entity",
       "has_branch": "Has a branch note",
       "has_example": "Has example",
       "has_member": "Organization has a member",
@@ -2218,15 +2082,13 @@
       "has_subtask": "Epic or large item decomposed into subtasks",
       "implemented_by": "Component implements a design doc",
       "implements": "Design doc implemented by a component",
-      "investigated": "Actor investigated an event",
-      "investigated_by": "Event was investigated by an actor",
       "involved_in": "Involved in",
       "involves": "Involvement",
       "is_example_of": "Example of a concept",
       "is_part_of": "Part of a larger whole",
       "located_at": "Location relationship",
       "location_of": "Location of",
-      "member_of": "Actor is a member of an organization",
+      "member_of": "Person is a member of an organization",
       "mentioned_by": "Mentioned by",
       "mentions": "Mentions",
       "owned_by": "Asset or organization is owned by an entity",
@@ -2234,11 +2096,9 @@
       "party_to": "Entity is a party to a legal action",
       "produced_by": "Entry was produced by a task",
       "produces": "Task produces an entry as evidence",
-      "provoked_response": "Capture event provoked a solidarity response",
       "received_transaction_from": "Entity received a transaction from another entity",
       "refined_by": "Refined by",
       "refines": "Refines or narrows",
-      "responded_to": "Solidarity action responded to a capture event",
       "session_for": "Work log records a session for a backlog item",
       "source_for": "Document is a source for a claim or fact",
       "sourced_from": "Claim or fact is sourced from a document",
@@ -2484,7 +2344,6 @@
       "sourcing": "Claims should link to evidence. Prefer primary sources."
     },
     "relationship_types": {
-      "actor_reference": "Event references an actor (resolved from string or wikilink)",
       "advised_by": "Advised by another entity",
       "advises": "Advisory relationship",
       "amended_by": "An ADR is amended by a later one",
@@ -2498,8 +2357,6 @@
       "blocked_by": "Backlog item cannot start until blocker completes",
       "blocks": "Backlog item must complete before another can start",
       "branches_from": "Branches from a parent note",
-      "built_on": "Solidarity infrastructure built on earlier infrastructure",
-      "capture_mechanism": "Mechanism used in a capture event",
       "causally_follows": "Causal successor",
       "causally_precedes": "Causal predecessor",
       "contains_part": "Contains a part",
@@ -2519,13 +2376,10 @@
       "elaborates": "Elaborates on another note",
       "employed_by": "Employment relationship",
       "employs": "Employs",
-      "enabled": "Earlier infrastructure enabled later solidarity infrastructure",
-      "enabled_capture": "Event enabled by a capture mechanism",
       "extended_by": "Extended by",
       "extends": "Extends or elaborates on",
-      "funded_by": "Organization is funded by another organization",
-      "funds": "Organization funds another organization",
-      "has_actor": "Actor is referenced by an event",
+      "funded_by": "Entity is funded by another entity",
+      "funds": "Entity funds another entity",
       "has_branch": "Has a branch note",
       "has_example": "Has example",
       "has_member": "Organization has a member",
@@ -2534,15 +2388,13 @@
       "has_subtask": "Epic or large item decomposed into subtasks",
       "implemented_by": "Component implements a design doc",
       "implements": "Design doc implemented by a component",
-      "investigated": "Actor investigated an event",
-      "investigated_by": "Event was investigated by an actor",
       "involved_in": "Involved in",
       "involves": "Involvement",
       "is_example_of": "Example of a concept",
       "is_part_of": "Part of a larger whole",
       "located_at": "Location relationship",
       "location_of": "Location of",
-      "member_of": "Actor is a member of an organization",
+      "member_of": "Person is a member of an organization",
       "mentioned_by": "Mentioned by",
       "mentions": "Mentions",
       "owned_by": "Asset or organization is owned by an entity",
@@ -2550,11 +2402,9 @@
       "party_to": "Entity is a party to a legal action",
       "produced_by": "Entry was produced by a task",
       "produces": "Task produces an entry as evidence",
-      "provoked_response": "Capture event provoked a solidarity response",
       "received_transaction_from": "Entity received a transaction from another entity",
       "refined_by": "Refined by",
       "refines": "Refines or narrows",
-      "responded_to": "Solidarity action responded to a capture event",
       "session_for": "Work log records a session for a backlog item",
       "source_for": "Document is a source for a claim or fact",
       "sourced_from": "Claim or fact is sourced from a document",
@@ -3056,50 +2906,6 @@
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
     "error_code": "FORBIDDEN",
     "retryable": false
-  },
-  "solidarity_infrastructure_types | granted_user | missing-kb": {
-    "error": "KB 'missing-kb' not found",
-    "error_code": "KB_NOT_FOUND",
-    "legacy_error_code": "NOT_FOUND",
-    "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
-  },
-  "solidarity_infrastructure_types | granted_user | no-default-role-kb": {
-    "error": "KB 'no-default-role-kb' not found",
-    "error_code": "KB_NOT_FOUND",
-    "legacy_error_code": "NOT_FOUND",
-    "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
-  },
-  "solidarity_infrastructure_types | granted_user | private-kb": {
-    "count": 0,
-    "infrastructure_types": []
-  },
-  "solidarity_infrastructure_types | granted_user | readable-kb": {
-    "count": 0,
-    "infrastructure_types": []
-  },
-  "solidarity_timeline | granted_user | missing-kb": {
-    "error": "KB 'missing-kb' not found",
-    "error_code": "KB_NOT_FOUND",
-    "legacy_error_code": "NOT_FOUND",
-    "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
-  },
-  "solidarity_timeline | granted_user | no-default-role-kb": {
-    "error": "KB 'no-default-role-kb' not found",
-    "error_code": "KB_NOT_FOUND",
-    "legacy_error_code": "NOT_FOUND",
-    "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
-  },
-  "solidarity_timeline | granted_user | private-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "events": []
-  },
-  "solidarity_timeline | granted_user | readable-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "events": []
   },
   "sw_adrs | granted_user | missing-kb": {
     "error": "KB 'missing-kb' not found",

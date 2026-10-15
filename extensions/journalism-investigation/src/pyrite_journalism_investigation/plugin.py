@@ -174,10 +174,27 @@ class JournalismInvestigationPlugin:
         }
 
     def get_relationship_types(self) -> dict[str, dict]:
-        # Note: member_of/has_member, funded_by/funds, investigated/investigated_by
-        # are already registered by the cascade plugin. We only register types
-        # that are new to journalism-investigation.
+        # member_of/has_member and funded_by/funds are the relations
+        # `enrich_connection_links` writes for `membership` and `funding`;
+        # declared here so `kb schema show` lists them and their inverse is
+        # known (they came from the cascade extension until #953 deleted it).
         return {
+            "member_of": {
+                "inverse": "has_member",
+                "description": "Person is a member of an organization",
+            },
+            "has_member": {
+                "inverse": "member_of",
+                "description": "Organization has a member",
+            },
+            "funded_by": {
+                "inverse": "funds",
+                "description": "Entity is funded by another entity",
+            },
+            "funds": {
+                "inverse": "funded_by",
+                "description": "Entity funds another entity",
+            },
             "owns": {
                 "inverse": "owned_by",
                 "description": "Entity owns an asset or organization",

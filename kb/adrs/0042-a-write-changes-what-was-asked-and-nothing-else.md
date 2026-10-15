@@ -853,26 +853,28 @@ Text.
 +  relation: related
 ```
 
-**A save does not add what a hook used to add.** A `timeline_event` in a KB
-with the journalism derivations installed.
+**A save does not add what a hook used to add.** A `membership` in a
+journalism-investigation KB, whose plugin links a connection to the entries
+it names. (Until #953 deleted the cascade extension this example was a
+`timeline_event` with `actors`; the connection hook is the same divergence.)
 
 ```file
 ---
-id: hearing
-title: The hearing
-type: timeline_event
-date: 2026-01-01
-actors: ["[[jane-doe]]"]
+id: jane-at-acme
+title: Jane at Acme
+type: membership
+person: "[[jane-doe]]"
+organization: "[[acme]]"
 ---
 
 Text.
 ```
 ```update
-{"set": {"title": "The hearing, postponed"}}
+{"set": {"title": "Jane at Acme, renewed"}}
 ```
 ```diff
--title: The hearing
-+title: The hearing, postponed
+-title: Jane at Acme
++title: Jane at Acme, renewed
 ```
 
 **Two writers on different keys both survive** (`concurrent`: two processes

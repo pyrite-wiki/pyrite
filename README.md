@@ -207,7 +207,7 @@ Extensions implement a Python protocol class with up to 19 methods:
 - `get_relationship_types()` — semantic relationship definitions
 - `get_hooks()` — lifecycle hooks: `before_save`, `after_save`, `before_delete`, `after_delete`, `before_index`
 
-Six extensions ship:
+Five extensions ship:
 
 | Extension | Purpose | Key Types |
 |-----------|---------|-----------|
@@ -216,7 +216,6 @@ Six extensions ship:
 | **encyclopedia** *(example plugin)* | Articles with review workflow | Articles, reviews, voting |
 | **social** *(example plugin)* | Engagement tracking | Social interactions |
 | **journalism-investigation** *(experimental; unsupported)* | Investigative research | Sources, claims, actors, evidence chains |
-| **cascade** | Timeline research | Timeline events, actors, capture lanes |
 
 `zettelkasten`, `encyclopedia` and `social` are example plugins: reference
 code showing how a Pyrite plugin adds entry types, CLI commands, MCP tools
@@ -270,7 +269,7 @@ pyrite/
 ├── plugins/         # Plugin discovery and protocol
 └── formats/         # Content negotiation (JSON, Markdown, CSV, YAML)
 
-extensions/          # Domain-specific plugins (software-kb, zettelkasten [example], encyclopedia [example], social [example], journalism-investigation, cascade)
+extensions/          # Domain-specific plugins (software-kb, zettelkasten [example], encyclopedia [example], social [example], journalism-investigation)
 web/                 # SvelteKit 2 + Svelte 5 frontend (TypeScript + Tailwind)
 kb/                  # Pyrite's own KB (ADRs, backlog, components, standards)
 ```
@@ -370,7 +369,6 @@ pip install -e extensions/software-kb
 pip install -e extensions/zettelkasten
 pip install -e extensions/encyclopedia
 pip install -e extensions/social
-pip install -e extensions/cascade
 pip install -e extensions/journalism-investigation
 ```
 

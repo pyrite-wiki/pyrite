@@ -242,7 +242,7 @@ class TestPluginTypeMetadata:
 
     @pytest.mark.control(
         reason="passes on dev, where no installed plugin returns type metadata; "
-        "the test only breaks once cascade and journalism do (#697), and isolates itself now"
+        "the test only breaks once journalism does (#697), and isolates itself now"
     )
     def test_registry_get_all_type_metadata_empty(self):
         """Registry with no plugins should return empty metadata."""
@@ -250,7 +250,7 @@ class TestPluginTypeMetadata:
 
         registry = PluginRegistry()
         # "No plugins" means none discovered: a bare registry would discover the
-        # installed ones (cascade and journalism declare field_aliases, #697).
+        # installed ones (journalism declares field_aliases, #697).
         registry._discovered = True
         assert registry.get_all_type_metadata() == {}
 
