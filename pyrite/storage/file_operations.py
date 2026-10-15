@@ -2211,9 +2211,10 @@ def _emit_scalar(value: Any, style: str | None, tag: str | None, flow: bool) -> 
     if isinstance(value, float):
         return _emit_float(value)
     if isinstance(value, datetime):
-        # The house spelling of a timestamp, and sqlite3's: a space before
-        # the time (``updated_at: 2026-10-15 07:41:12+00:00``), as ruamel's
-        # dumper wrote it. Both forms read as one YAML timestamp.
+        # The house spelling of a timestamp in a file: a space before the
+        # time (``updated_at: 2026-10-15 07:41:12+00:00``), as ruamel's
+        # dumper wrote it. Both forms read as one YAML timestamp; the index
+        # row holds ``isoformat()`` whatever the file says (``crud.temporal_text``).
         return value.isoformat(sep=" ")
     if isinstance(value, date):
         return value.isoformat()
