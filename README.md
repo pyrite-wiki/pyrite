@@ -389,8 +389,8 @@ pip install -e ".[all]"
 for ext in extensions/*/; do pip install -e "$ext"; done
 pre-commit install
 
-# Tests (core and extensions; in parallel with -n auto)
-pytest tests/ extensions/ -n auto
+# Tests (core and extensions; -n 4, not -n auto, and through the heavy-run lock)
+scripts/heavy_lock.py -- pytest tests/ extensions/ -n 4
 
 # Frontend
 cd web && npm install && npm run dev

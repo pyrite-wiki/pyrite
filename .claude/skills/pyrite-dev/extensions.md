@@ -395,4 +395,4 @@ cd /path/to/repo
 .venv/bin/python -c "from pyrite.plugins.registry import get_registry; print(get_registry().list_plugins())"
 ```
 
-**Pre-commit hook:** The pytest pre-commit hook uses `.venv/`. If your extension isn't `pip install -e` in the venv, tests importing it will fail with `ModuleNotFoundError`.
+**Pre-push hook:** the affected tests run from `.venv/`. If your extension isn't `pip install -e` in the venv, tests importing it will fail with `ModuleNotFoundError`.

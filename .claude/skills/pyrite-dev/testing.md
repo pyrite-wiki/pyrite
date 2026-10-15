@@ -208,8 +208,8 @@ class TestValidators:
 # Extension tests
 .venv/bin/pytest extensions/my-extension/tests/ -v
 
-# All backend tests
-.venv/bin/pytest tests/ -v
+# All backend tests (the whole suite is a heavy run: take the lock)
+scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/*/tests/ -n 4 -q
 
 # With print output visible
 .venv/bin/pytest tests/test_file.py -v -s --tb=long
@@ -259,16 +259,15 @@ times out at 1-2 workers (#906); bound it once that is fixed.
 
 ## Pre-Commit Hooks
 
-The `.pre-commit-config.yaml` runs:
+The commit stage runs **no pytest** (seconds only: ruff, ruff-format, file
+hygiene, the import-cycle check, KB schema validation); the affected tests run
+at **pre-push** (`scripts/test-affected --run`). The table of stages and the
+reasons are in CONTRIBUTING, "Branches, hooks and pull requests".
 
-1. **ruff** — lint check
-2. **ruff-format** — auto-format
-3. **pytest** — runs in `.venv/`
-
-**Double-failure pattern:** If ruff-format reformats files, the first commit attempt fails. The reformatted files are unstaged. Re-stage and commit again:
+**Double-failure pattern:** If ruff-format reformats files, the first commit attempt fails. The reformatted files are unstaged. Re-stage those paths and commit again:
 
 ```bash
-git add -u && git commit -m "same message"
+git add <the files ruff-format changed> && git commit -m "same message"
 ```
 
-**Extension discovery:** pytest pre-commit uses `.venv/`. If your extension isn't `pip install -e` in the venv, its tests will fail with `ModuleNotFoundError: No module named 'pyrite_my_extension'`.
+**Extension discovery:** the tests run from `.venv/`. If your extension isn't `pip install -e` in the venv, its tests will fail with `ModuleNotFoundError: No module named 'pyrite_my_extension'`.

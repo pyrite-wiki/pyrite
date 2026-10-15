@@ -428,6 +428,19 @@ uv pip install --python .venv/bin/python -e ".[all,dev]"
 | commit-msg | a `fix:` commit must touch `tests/` | — |
 | pre-push | `scripts/test-affected --run`: core + affected tests on `PYRITE_PUSH_WORKERS` (default 4) workers, only when the push touches code, tests, scripts or test config (a docs- or KB-only push skips it); skipped when the pushed tree already passed here or the pushed tip is verified by CI; `PYRITE_PUSH_FULL=1` runs the full suite | Seconds to minutes, depending on what changed |
 
+If `pre-commit install` refuses with "Cowardly refusing to install hooks with
+`core.hooksPath` set", run `git config --unset-all core.hooksPath` first; some
+environments point it at a directory of unused `.sample` files. If
+ruff-format reformats files, the commit stops: re-stage and commit again.
+
+The commit stage stays fast on purpose: pre-commit stashes every unstaged
+edit in the working tree to `~/.cache/pre-commit/patch*` while the commit
+hooks run, so a slow hook makes edits vanish for the minutes it takes, and
+there is deliberately **no pytest** at commit. `tests/test_dev_process_config.py`
+pins this layout; change the config and the tests together. If a commit is
+killed mid-hook, unstaged edits may exist only in the newest patch file:
+`git apply --check ~/.cache/pre-commit/patch<newest>`, then `git apply` it.
+
 The hook trigger uses a three-dot diff; `scripts/test-affected` selects from
 the two-dot pushed range. A history-only force-push can trigger a core-only
 run. pre-commit checks the first non-deletion ref of a multi-ref push only;
@@ -460,13 +473,23 @@ and "it's in a local commit" has cost a round trip more than once.
 
 **Pull requests:**
 
-1. `git checkout -b fix/what-it-fixes dev` (or `feature/...`)
-2. Write the failing test, then the fix
+1. `git checkout -b fix/what-it-fixes dev` (or `feature/...`), ideally in its
+   own worktree (`scripts/new-worktree.sh fix/what-it-fixes`): one branch,
+   one worktree, so parallel work never shares a tree.
+2. Write the failing test, then the fix. Commit each passing step.
 3. Push; the pre-push hook runs the affected tests (CI runs the full suite)
-4. Open the PR against `dev` and fill in the template (`Fixes #N` for bugs)
+4. Open the PR against `dev` and fill in the template (`Fixes #N` for bugs).
+   Open it as a **draft** right after your first push so CI starts; mark it
+   ready when you think it is done. From a fork, name the upstream:
+   `gh pr create --repo pyrite-wiki/pyrite --base dev --draft`. Review and
+   merge are the maintainer's; you do not arm auto-merge.
 5. Expect a first response **within 72 hours**. If you have heard nothing
    after that, comment on the PR — it is a lapse, not a verdict, and saying
    so is doing us a favour.
+
+Stage explicit paths (`git add <file>`), never `git add -A`, `git add -u` or
+`git add .`: they sweep in edits you did not mean to commit, including a
+sub-agent's.
 
 Commit messages use conventional commits (`feat:`, `fix:`, `docs:`, `test:`,
 `refactor:`, `ci:`, `kb:`).
@@ -566,7 +589,9 @@ names, for anything that is not yours to publish; no absolute home paths.
 ## Project Configuration
 
 - KB config: `kb.yaml` in each KB directory
-- Claude Code skill: `.claude/skills/pyrite-dev/SKILL.md`
+- AI agents: start at [AGENTS.md](AGENTS.md); Claude Code users also get the
+  `pyrite-dev` skill (`.claude/skills/pyrite-dev/SKILL.md`), which adds a method
+  (tests first, evidence, a report) and links back here for every command
 - Plugin developer guide: `kb/notes/plugin-developer-guide.md`
 - Architecture docs: `kb/components/` and `kb/adrs/`
 

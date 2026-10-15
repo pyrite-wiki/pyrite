@@ -193,6 +193,6 @@ merge.
 Run either set locally:
 
 ```bash
-.venv/bin/pytest tests/ extensions/ -n 4 -m "not slow and not e2e and not experimental"
-.venv/bin/pytest tests/ extensions/ -n 4 -m "experimental and not slow and not e2e"
+scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/ -n 4 -m "not slow and not e2e and not experimental"
+scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/ -n 4 -m "experimental and not slow and not e2e"
 ```

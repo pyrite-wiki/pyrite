@@ -76,9 +76,10 @@ Write the simplest code that makes the test pass. Nothing more.
 Run the specific test AND the full suite for the area:
 
 ```bash
-# Backend: specific test then full suite
+# Backend: specific test, then the affected tests (the whole suite is CI's
+# job; if you need it, scripts/heavy_lock.py -- <command>)
 .venv/bin/pytest tests/path/test_file.py::test_name -v
-.venv/bin/pytest tests/ -v
+scripts/test-affected --run
 
 # Frontend: specific then full
 cd web && npx vitest run src/path/file.test.ts

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -772,18 +773,15 @@ class TestHeavyRunnersTakeTheLock:
 # --- instructions name the locked runners ------------------------------------
 
 INSTRUCTION_FILES = [
-    ".claude/agents/pyrite-worker.md",
-    ".claude/agents/pyrite-reviewer.md",
-    ".claude/agents/pyrite-explorer.md",
     ".claude/skills/pyrite-dev/SKILL.md",
     ".claude/skills/pyrite-dev/testing.md",
     ".claude/skills/pyrite-dev/tdd.md",
     ".claude/skills/pyrite-dev/debugging.md",
-    ".claude/skills/pyrite-conductor/SKILL.md",
-    ".claude/skills/pyrite-conductor/dispatch.md",
-    ".claude/skills/pyrite-conductor/review.md",
     "CONTRIBUTING.md",
     "CLAUDE.md",
+    "AGENTS.md",
+    "README.md",
+    "docs/testing.md",
 ]
 
 
@@ -793,7 +791,17 @@ FIXED_BY_THE_LOCK = {
     ".claude/skills/pyrite-dev/tdd.md",
     ".claude/skills/pyrite-dev/debugging.md",
     "CONTRIBUTING.md",
+    # Found by the wider pattern (the whole suite as `pytest tests/ -v`, or
+    # `-n auto`, with no lock) once the conductor files left the repo.
+    "README.md",
+    "docs/testing.md",
 }
+
+
+# The whole backend suite through bare pytest: `pytest tests/` followed by a
+# space or the end of the line (so `pytest tests/test_x.py` is not it) --
+# `tests/ -v` and `tests/ extensions/ -n 4` both are.
+WHOLE_SUITE = re.compile(r"\bpytest\s+tests/(?=\s|$)")
 
 
 def unlocked_instructions(text: str) -> list[str]:
@@ -809,7 +817,7 @@ def unlocked_instructions(text: str) -> list[str]:
             continue
         if "npx playwright test" in line:
             bad.append(line)
-        elif "pytest tests/ extensions" in line and "-m core" not in line:
+        elif WHOLE_SUITE.search(line) and "-m core" not in line:
             bad.append(line)
     return bad
 
@@ -846,12 +854,17 @@ class TestInstructions:
             ".venv/bin/pytest tests/ extensions/ -n 4   # as CI's gating job runs it\n"
             "scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/ -n 4\n"
             "scripts/e2e.sh --headed\n"
+            ".venv/bin/pytest tests/ -v\n"
+            ".venv/bin/pytest tests/test_one.py -v\n"
+            "pytest tests/\n"
         )
         assert unlocked_instructions(text) == [
             "cd web && npx playwright test --headed",
             ".venv/bin/pytest tests/ extensions/ -n auto",
             ".venv/bin/pytest tests/ extensions/*/tests/ -q",
             ".venv/bin/pytest tests/ extensions/ -n 4   # as CI's gating job runs it",
+            ".venv/bin/pytest tests/ -v",
+            "pytest tests/",
         ]
 
 

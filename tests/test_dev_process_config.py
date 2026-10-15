@@ -586,42 +586,52 @@ class TestCloudSessionSetup:
         text = self.START.read_text()
         assert "CLAUDE_ENV_FILE" in text and ".venv/bin" in text
 
-    def test_skills_and_agents_carry_no_machine_specific_paths(self):
+    def _agent_instruction_files(self):
+        """Every file a contributor's agent loads from this repo."""
+        skills = sorted((REPO / ".claude" / "skills").rglob("*.md"))
+        return [*skills, REPO / "CLAUDE.md", REPO / "AGENTS.md", REPO / "CONTRIBUTING.md"]
+
+    def test_agent_instructions_carry_no_machine_specific_paths(self):
         # A cloud session's (or a contributor's) checkout is not one
         # maintainer's home directory. (A bare "/Users/" grep pattern is fine.)
+        # CLAUDE.md, AGENTS.md and CONTRIBUTING.md are scanned too: CLAUDE.md
+        # once named /Users/markr/pyrite and nothing checked it.
         import re
 
         home = re.compile(r"/(Users|home)/[A-Za-z]")
         offenders = [
             f"{path.relative_to(REPO)}:{n}"
-            for base in (REPO / ".claude" / "skills", REPO / ".claude" / "agents")
-            for path in base.rglob("*.md")
+            for path in self._agent_instruction_files()
             for n, line in enumerate(path.read_text().splitlines(), 1)
             if home.search(line)
         ]
         assert offenders == []
 
-    def test_skills_and_agents_name_no_private_kb_or_plugin(self):
-        # The loop must run for any contributor: the tick log's location is a
-        # setting (PYRITE_CONDUCTOR_LOG_DIR), and the maintainer's private KB
-        # and plugin are not part of the project's workflow.
+    def test_agent_instructions_name_no_private_kb_or_plugin(self):
+        # The maintainer's private KB, desk and plugin are not part of the
+        # project's workflow; a contributor's agent must never be sent there.
         import re
 
         private = re.compile(r"tcp-kb-internal|tcp-skills|pyrite-desk|desk/notes")
         offenders = [
             f"{path.relative_to(REPO)}:{n}"
-            for base in (REPO / ".claude" / "skills", REPO / ".claude" / "agents")
-            for path in base.rglob("*.md")
+            for path in self._agent_instruction_files()
             for n, line in enumerate(path.read_text().splitlines(), 1)
             if private.search(line)
         ]
         assert offenders == []
 
-    def test_conductor_log_dir_setting_is_stated_once_and_gitignored(self):
-        conductor = (REPO / ".claude/skills/pyrite-conductor/SKILL.md").read_text()
-        meta = (REPO / ".claude/skills/pyrite-meta-conductor/SKILL.md").read_text()
-        assert conductor.count("PYRITE_CONDUCTOR_LOG_DIR") >= 1
-        assert "PYRITE_CONDUCTOR_LOG_DIR" in meta, "the retro must find the log"
+    def test_the_repo_ships_only_the_contributor_skills_and_no_loop_agents(self):
+        # The maintainer's orchestration loop (conductor, meta-conductor, the
+        # loop agents) lives outside the repo; a second copy here drifted from
+        # the real one (#244). What stays is what a contributor's agent loads.
+        skills = {p.name for p in (REPO / ".claude" / "skills").iterdir() if p.is_dir()}
+        assert skills == {"pyrite-dev", "kb", "software-kb", "extension-builder", "kb-lifecycle"}
+        assert not (REPO / ".claude" / "agents").exists()
+
+    def test_the_external_loops_default_log_dir_stays_gitignored(self):
+        # The loop outside the repo writes its tick log to `.pyrite-conductor/`
+        # at a checkout's root by default; it must never be committed.
         ignored = (REPO / ".gitignore").read_text().splitlines()
         assert ".pyrite-conductor/" in ignored, "the default log dir must be gitignored"
 
@@ -1434,7 +1444,6 @@ class TestAVerifiedCommitIsNotTestedAgain:
     @pytest.mark.parametrize(
         "doc",
         [
-            "CLAUDE.md",
             "CONTRIBUTING.md",
             "kb/standards/testing-standards.md",
             "kb/maps/development-process-and-releases.md",
@@ -1446,7 +1455,7 @@ class TestAVerifiedCommitIsNotTestedAgain:
         assert "scripts/verified_commit.py" in text, doc
         assert "verified" in text and "`gate`" in text and "exact SHA" in text, doc
 
-    @pytest.mark.parametrize("doc", ["CLAUDE.md", "CONTRIBUTING.md"])
+    @pytest.mark.parametrize("doc", ["CONTRIBUTING.md"])
     def test_the_docs_say_it_fails_closed_and_quote_the_real_timeout(self, doc):
         import sys
 
@@ -1459,9 +1468,24 @@ class TestAVerifiedCommitIsNotTestedAgain:
         assert "PYRITE_PUSH_FORCE" in text and "PYRITE_PUSH_EXPERIMENTAL" in text
 
     def test_the_docs_say_what_the_dry_run_rehearses(self):
-        for doc in ("CLAUDE.md", "CONTRIBUTING.md"):
+        for doc in ("CONTRIBUTING.md",):
             text = " ".join((REPO / doc).read_text().split())
             assert "names each one that would stop `--execute`" in text, doc
+
+    def test_claude_md_and_agents_md_link_to_the_process_and_do_not_restate_it(self):
+        """One place per fact: the process lives in CONTRIBUTING.md. The agent
+        entry points link to it and hold none of the hook/verified-commit text
+        (CLAUDE.md once carried 832 words of it, pinned in two places)."""
+        for doc in ("CLAUDE.md", "AGENTS.md"):
+            text = " ".join((REPO / doc).read_text().split())
+            assert "CONTRIBUTING.md" in text, doc
+            for restated in ("exact SHA", "fails closed", "PYRITE_PUSH_WORKERS", "core.hooksPath"):
+                assert restated not in text, (
+                    f"{doc} restates {restated!r}; it belongs in CONTRIBUTING.md"
+                )
+        claude = (REPO / "CLAUDE.md").read_text()
+        assert "@AGENTS.md" in claude, "CLAUDE.md imports the neutral entry point"
+        assert len(claude.splitlines()) <= 60
 
 
 class TestWhatAVerifiedTipIsEvidenceOf:
@@ -1469,7 +1493,7 @@ class TestWhatAVerifiedTipIsEvidenceOf:
     suite. A pull-request `gate` is one interpreter and passes with `test`
     skipped, so it does not, and an explicit request for the full suite runs."""
 
-    @pytest.mark.parametrize("doc", ["CLAUDE.md", "CONTRIBUTING.md", ".pre-commit-config.yaml"])
+    @pytest.mark.parametrize("doc", ["CONTRIBUTING.md", ".pre-commit-config.yaml"])
     def test_the_docs_say_the_full_suite_still_runs_when_asked_for(self, doc):
         text = " ".join((REPO / doc).read_text().replace("#", " ").split())
         assert "PYRITE_PUSH_FULL=1" in text and "one interpreter" in text, doc
@@ -1486,25 +1510,18 @@ class TestWhatAVerifiedTipIsEvidenceOf:
         assert "(failure|cancelled)" in step and "skipped" in step
         assert "test" in ci["jobs"]["gate"]["needs"]
 
-    def test_the_runbook_describes_the_rehearsal_and_the_hook_step(self):
-        text = " ".join(
-            (REPO / ".claude/skills/pyrite-conductor/release-runbook.md").read_text().split()
-        )
-        assert "b2. push rehearsal" in text
-        assert "scripts/test-affected --preflight" in text
-        assert "does not stop at the first check that fails" in text and "exits 1" in text
-        assert "scripts/verified_commit.py" in text
-        assert "prints every step" not in text
-        # What to do when it refuses, and when the hook runs anyway.
-        assert "gh run rerun" in text and "red or cancelled" in text
-        assert "lookup fails" in text and "push URL is not a github.com URL" in text
-        assert "happens only with" not in text
+    def test_the_release_script_has_the_push_rehearsal_step_the_docs_describe(self):
+        """The release runbook left the repo with the maintainer's loop, so its
+        prose is no longer pinned here. What stays pinned is the code the
+        contributor-facing docs describe: the dry run has a push-rehearsal step
+        and the hook's preflight exists."""
         import sys
 
         sys.path.insert(0, str(REPO / "scripts"))
         import release
 
         assert "push_rehearsal" in [s.key for s in release.STEPS]
+        assert "--preflight" in (REPO / "scripts" / "test-affected").read_text()
 
 
 class TestTheRedLineIsFirstAndEveryGatingRunLeavesATimingRecord:

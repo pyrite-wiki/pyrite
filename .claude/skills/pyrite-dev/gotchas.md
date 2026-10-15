@@ -58,7 +58,7 @@ The `context` dict contains: `kb_name`, `kb_schema`, `user`, `existing_entry` (f
 
 ## Plugin Validators Always Run
 
-In `pyrite/schema.py`, plugin validators run for **all entries** during schema validation, not just entries of the plugin's declared types. This is by design — it allows cross-type validation rules.
+In `pyrite/schema/` (a package), plugin validators run for **all entries** during schema validation, not just entries of the plugin's declared types. This is by design — it allows cross-type validation rules.
 
 **Consequence:** Your validator MUST check `entry_type` and return `[]` for types it doesn't handle:
 

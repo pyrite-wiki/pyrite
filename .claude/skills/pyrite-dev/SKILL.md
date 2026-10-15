@@ -1,17 +1,18 @@
 ---
 name: pyrite-dev
-description: "This skill should be used by an agent developing Pyrite code — fixing a bug, adding a feature, writing or running tests, debugging, or completing a backlog item — on its own branch in its own worktree. Enforces TDD, root-cause debugging and evidence-before-claims, and ends with a report the conductor can review. For picking work, dispatching agents, reviewing branches, opening PRs, releasing or deploying, use pyrite-conductor."
+description: "This skill should be used by an agent developing Pyrite code — fixing a bug, adding a feature, writing or running tests, debugging, or completing a backlog item — on its own branch in its own worktree. Enforces TDD, root-cause debugging and evidence-before-claims, and ends with a report for the PR. Opens a draft PR after the first push; the maintainer reviews and merges it. Process commands (setup, hooks, branches, PRs) live in CONTRIBUTING.md."
 ---
 
-# Pyrite Development Skill (the worker)
+# Pyrite Development Skill
 
 **Announce at start:** "I'm using the pyrite-dev skill."
 
-You develop Pyrite on **one branch, in one worktree, on one theme**. Picking the
-theme, and reviewing, readying or merging the PR, belong to
-[pyrite-conductor](../pyrite-conductor/SKILL.md); you never touch `dev`. If
-nobody dispatched you, you are also the conductor: finish here, then load
-pyrite-conductor for review and the PR.
+You develop Pyrite on **one branch, in one worktree, on one theme**, and you
+never push to `dev`. Review and merge are the maintainer's. Every process
+fact (setup, hooks, branches, the PR, the heavy-run lock) has one home,
+[CONTRIBUTING.md](../../../CONTRIBUTING.md), "Branches, hooks and pull
+requests"; this skill gives the method and links there rather than repeating
+it.
 
 A theme produces code and what was learned building it; record both. Why each
 rule exists: [history.md](history.md).
@@ -34,7 +35,7 @@ pwd                           # a worktree under ../pyrite-wt/, with its own .ve
 ```
 
 - Any of them wrong: stop, and run `scripts/new-worktree.sh <branch>` from the
-  main checkout (ADR-0032).
+  main checkout (CONTRIBUTING; ADR-0032).
 - Use the worktree's `.venv/bin/...`; the main checkout's venv imports the main
   checkout's code.
 - Sub-agents share your branch and worktree: give them disjoint files, never
@@ -65,7 +66,7 @@ Bugs and user requests live in GitHub Issues, the roadmap (epics, backlog
 items, ADRs) in `kb/`, never both (ADR-0033). A bug you fix here needs no
 issue. A bug you find and do not fix:
 `gh issue create --label bug --label <area>`, with placeholders for anything
-private. A security finding goes to the conductor, not a public issue.
+private. A security finding goes to the maintainer privately (SECURITY.md), never to a public issue.
 
 Editing a function on the `tests/test_layer_boundaries.py` allowlist? Remove
 its entry: move the storage access behind a service.
@@ -82,10 +83,10 @@ Find the root cause before any fix: reproduce, trace the bad value to its
 origin, test one hypothesis at a time ([debugging.md](debugging.md)). After
 three failed fixes, stop and question the design in your report.
 
-You may pull the Andon cord (pyrite-conductor, "The Andon cord"): when the
-work is churning, when the fix you are asked for would patch one instance of
-a missing rule, or when it runs against `kb/design.md`, open an `andon` issue
-with the evidence and stop. That is a finding, not a failure.
+You may stop and say so: when the work is churning, when the fix you are asked
+for would patch one instance of a missing rule, or when it runs against
+`kb/design.md`, comment on the ticket with the evidence and stop. That is a
+finding, not a failure.
 
 ## Verification
 
@@ -95,7 +96,7 @@ work" is not evidence.
 | Claim | Run | Look for |
 |---|---|---|
 | Backend tests pass (local) | `scripts/test-affected --run` | `N passed, 0 failed` |
-| Backend tests pass (all) | the draft PR's CI: `gh pr checks <n>` | `gate` passes (it waits for every `test (<py>, <shard>)` leg) |
+| Backend tests pass (all) | the draft PR's CI: `gh pr checks <n>` (the whole suite locally: `scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/*/tests/ -n 4 -q`) | `gate` passes (it waits for every `test (<py>, <shard>)` leg) |
 | The tests guard the change (every branch that changes code, `feat` included) | `scripts/verify-red.sh`, once (CI's `verify-red` job runs the same code) | `verify-red: N red · 0 import-only · 0 unexpected pass · 0 n/a`; paste its summary line into the report |
 | Each guard is tested | delete that guard alone, run the tests | a test fails, for every guard you added |
 | Frontend passes | `cd web && npm run check && npm run test:unit && npm run build` | all green |
@@ -124,15 +125,17 @@ work" is not evidence.
   Uncommitted work and the thinking behind it are lost when a session stops
   (2026-10-02: a worker died with eight files edited and no note of why).
 - Open a draft PR right after your first push (`gh pr create --draft --base dev
-  --fill`, `Fixes #N` in the body). Its CI is the authority.
+  --fill`, `Fixes #N` in the body; from a fork add `--repo pyrite-wiki/pyrite`).
+  Its CI is the authority. Leave it a draft until your report is done; review
+  and merge are the maintainer's (CONTRIBUTING, "Pull requests").
 - Test each tree once: run `scripts/test-affected --run` in the foreground on a
   committed tree, and the pre-push hook reuses the pass.
 - After a failure that looks load-caused, re-run only the failures
   (`scripts/test-affected --run -- --lf`); never start a second suite while
   one is running. `test-affected --run`, `verify-red.sh` and `scripts/e2e.sh`
-  (Playwright) share one machine-wide lock: a second run waits, naming the
-  holder, instead of running beside it (#168; CONTRIBUTING, "One heavy run at
-  a time per machine").
+  (Playwright) share one machine-wide lock, and anything else heavy goes
+  through `scripts/heavy_lock.py -- <command>` (CONTRIBUTING, "One heavy run
+  at a time per machine").
 - A test that passes alone and fails in parallel is a bug in that test.
 
 ## Capture what you learned
