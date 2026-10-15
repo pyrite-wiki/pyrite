@@ -4,7 +4,7 @@ title: "A KB declares its text conventions in kb.yaml; Pyrite emits them in new 
 type: adr
 importance: 4
 adr_number: 48
-status: proposed
+status: accepted
 date: '2026-10-15'
 tags: [architecture, files, write-path, kb-yaml, qa]
 links:
@@ -88,16 +88,16 @@ What ADR-0042 does not answer:
    `text.final_newline`, `text.bom`, `text.trailing_whitespace`).
    `index health` counts the files. Excluded files are skipped.
 
-6. **Repair only when asked.** `pyrite kb normalise-text -k <kb>`
-   (`--dry-run` lists the files and the properties it would change) rewrites
-   only the declared properties. It writes each file with the stale check of
+6. **Repair only when asked.** A `pyrite qa fix` rule for the `text.*`
+   findings (its dry run lists the files and the properties it would change)
+   rewrites only the declared properties. It writes each file with the stale check of
    ADR-0042 decision 11, and its outcome lists every file it changed.
    `trailing_whitespace` is never stripped by it: in Markdown two trailing
    spaces are a line break, so that property is report-only.
 
 ## Questions for the maintainer
 
-- **Q1. kb.yaml or .editorconfig?** Recommendation: kb.yaml only. It is where
+- **Q1. kb.yaml or .editorconfig?** **Decided: kb.yaml only.** Recommendation was kb.yaml only. It is where
   the operator already configures this KB, and `exclude:` set the precedent on
   2026-10-14. Counter-case: `.editorconfig` is already read by every editor,
   so a hand-editor's own tools would enforce the same convention for free.
@@ -108,11 +108,14 @@ What ADR-0042 does not answer:
   LF, so a declared `lf` would flag every file. Recommendation: the check
   reads the working tree, and when git reports that it converts line endings
   for the file (`git check-attr eol`, `core.autocrlf`), the line-ending check
-  is skipped for that file and the report names the reason. Counter-case:
+  is skipped for that file and the report names the reason. **Decided: skip
+  and say why.** Counter-case:
   compare the index blob instead. That is truer, but it costs a git call per
   file.
-- **Q3. Is the repair a `qa fix` rule or its own command?** Recommendation:
-  its own command, because it rewrites files that hold no error, only a style.
+- **Q3. Is the repair a `qa fix` rule or its own command?** Recommendation
+  was its own command, because it rewrites files that hold no error, only a
+  style. **Decided: a `qa fix` rule** (decision 6), so the finding and its repair
+  live in one place.
 
 ## Alternatives considered
 
@@ -128,9 +131,13 @@ What ADR-0042 does not answer:
 
 - Phase 1, which can land before #730: parse and validate `text:`,
   make create emit by it, and document it. Phase 2: the qa findings and the
-  health count. Phase 3: the normalise command.
+  health count. Phase 3: the `qa fix` rule.
 - The update-keeps-CRLF acceptance of #908 is satisfied by #730 P3, not by this
   ADR. `tests/test_doc_write_as_patch.py` already holds the `crlf` example as an
   expected failure.
 - #638 (BOM read as `event`, BOM dropped on save) stays a bug. Its save half is
   closed by #730.
+
+## Decided
+
+Accepted by the maintainer (Mark), 2026-10-15, through the desk.

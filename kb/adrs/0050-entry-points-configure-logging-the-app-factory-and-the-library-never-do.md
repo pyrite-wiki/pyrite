@@ -4,7 +4,7 @@ title: "Entry points configure logging; the app factory and the library never do
 type: adr
 importance: 3
 adr_number: 50
-status: proposed
+status: accepted
 date: '2026-10-15'
 tags: [architecture, logging, server, deployment]
 links:
@@ -85,3 +85,7 @@ path, a 500's cause is lost.
 - One small theme: the lazy `app`, a test that a `pyrite.*` warning reaches
   stderr under `uvicorn pyrite.server.api:app`, a test that `create_app()`
   leaves logging alone, and a README note.
+
+## Decided
+
+Accepted by the maintainer (Mark), 2026-10-15, through the desk.

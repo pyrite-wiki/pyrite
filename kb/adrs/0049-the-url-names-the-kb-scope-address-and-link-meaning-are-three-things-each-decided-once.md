@@ -4,7 +4,7 @@ title: "The URL names the KB: scope, an entry's address and a link's meaning are
 type: adr
 importance: 4
 adr_number: 49
-status: proposed
+status: accepted
 date: '2026-10-15'
 tags: [architecture, web, links, wikilinks, kb-context]
 links:
@@ -66,20 +66,21 @@ answers each of them in its own way.
    from the entry the link is written in. The scope never decides an address
    or a link's meaning.
 
-2. **Scope lives in the query string, `?kb=<name>`, and only there.** One web
-   module (`kbScope`) reads it from the URL and builds URLs with it. Absent
-   means every readable KB on a page that can show several. On a page that
-   needs one KB (new entry, clip, daily, new collection, changes, merge
-   queue), absent shows a KB picker; it never silently defaults. The switcher
-   navigates: it sets `?kb=` on the current page, or opens `/entries?kb=` from
-   a page that has no scope. The store keeps the KB list and no longer holds
-   an active KB. The last KB chosen is kept in `localStorage` and is used only
-   to redirect a bare `/`.
+2. **Scope lives in the path, `/kb/<name>/...`, and only there.** One web
+   module (`kbScope`) reads it from the URL and builds URLs with it. A route
+   without the prefix means every readable KB on a page that can show
+   several. On a page that needs one KB (new entry, clip, daily, new
+   collection, changes, merge queue), no prefix shows a KB picker; it never
+   silently defaults. The switcher navigates: it moves the current page under
+   `/kb/<name>/`, or opens `/kb/<name>/entries` from a page that has no
+   scope. The store keeps the KB list and no longer holds an active KB. The
+   last KB chosen is kept in `localStorage` and is used only to redirect a
+   bare `/`. A legacy `?kb=<name>` URL redirects to the path form.
 
-3. **An address is (kb, id): `/entries/<id>?kb=<kb>`.** Every link to an
-   entry is built by `entryHref`. Without `kb`, a unique id resolves and the
-   page rewrites its URL to carry the KB (`replaceState`). An ambiguous id
-   shows the chooser of #912.
+3. **An address is (kb, id): `/kb/<kb>/entries/<id>`.** Every link to an
+   entry is built by `entryHref`. A bare `/entries/<id>` with a unique id
+   resolves and the page rewrites its URL to the path form (`replaceState`).
+   An ambiguous id shows the chooser of #912.
 
 4. **One rule maps wikilink text to (kb, id).** Its inputs are the text, the
    host KB and the caller's readable set.
@@ -103,17 +104,19 @@ answers each of them in its own way.
 
 ## Questions for the maintainer
 
-- **Q1. Query or path?** Recommendation: the query string. #912 already
+- **Q1. Query or path?** **Decided: the path, `/kb/<name>/`** (decisions 2
+  and 3); the maintainer chose the form a new page cannot forget.
+  Recommendation was the query string. #912 already
   moved every entry link to `?kb=`, and the path form (`/kb/<name>/...`)
   rewrites every route. Counter-case: a path makes the KB impossible for a new
   page to forget, which is how the six regimes arose. Decision 2's single
   `kbScope` module, together with a test that fails when a route reads `kb`
   any other way, covers the same risk.
-- **Q2. A bare link that only another KB holds.** Recommendation: a red link
+- **Q2. A bare link that only another KB holds.** **Decided: a red link.** Recommendation: a red link
   (decision 4). This is what the indexer already records as a wanted page.
   Counter-case: KBs that were split apart lose links that work today. They
   can be fixed with an explicit prefix, which a qa finding can list.
-- **Q3. Shortnames in the index.** Recommendation: the indexer stores the
+- **Q3. Shortnames in the index.** **Decided: the full KB name.** Recommendation: the indexer stores the
   KB **name** the prefix resolves to, so backlinks and wanted pages agree with
   resolution. A change of shortname in the config needs a reindex, and
   `index health` reports link rows whose KB is not a KB name. Counter-case:
@@ -136,7 +139,13 @@ answers each of them in its own way.
 
 - Phase 0 is #912 as in Q4. Phase 1 is the server rule and the shared table
   (#936). Phase 2 is the web parser and its six call sites. Phase 3 is
-  scope (#10): `kbScope`, the switcher and the 18 readers. Phase 3 shares no
+  scope (#10): `kbScope`, the switcher and the 18 readers, the routes moved
+  under `/kb/<name>/`, `entryHref` switched to the path form, and a redirect
+  from `?kb=` URLs (including links #912 shipped). Phase 3 shares no
   file with phases 1 and 2, so it can run beside them.
 - #911 (extension id lookups) and #684/#781 (rename rewrites links by regex)
   should call the server rule once it exists.
+
+## Decided
+
+Accepted by the maintainer (Mark), 2026-10-15, through the desk.
