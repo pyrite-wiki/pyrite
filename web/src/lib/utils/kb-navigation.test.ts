@@ -7,7 +7,11 @@ vi.mock('$app/stores', async () => {
     return { page: writable({ url: new URL('http://localhost/graph') }) };
 });
 vi.mock('$lib/stores/kbs.svelte', () => ({
-    kbStore: { kbs: [{ name: 'otherkb' }, { name: 'linkkb' }], activeKB: 'linkkb' }
+    kbStore: {
+        kbs: [{ name: 'otherkb' }, { name: 'linkkb' }],
+        activeKB: 'linkkb',
+        resolveName: (name: string | undefined) => name
+    }
 }));
 import { page } from '$app/stores';
 import GraphPage from '../../routes/graph/+page.svelte';

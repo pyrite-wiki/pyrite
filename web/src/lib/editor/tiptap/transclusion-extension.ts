@@ -142,7 +142,11 @@ export const Transclusion = Node.create({
 								const depthCleanup = incrementDepth();
 								try {
 									const { api } = await import('$lib/api/client');
-									const res = await api.resolveEntry(target, el.dataset.transclusionKb || undefined);
+									const { kbStore } = await import('$lib/stores/kbs.svelte');
+									const res = await api.resolveEntry(
+										target,
+										kbStore.resolveName(el.dataset.transclusionKb || undefined)
+									);
 									if (res.resolved && res.entry) {
 										// Collection transclusion: render compact entry list
 										if (res.entry.entry_type === 'collection') {

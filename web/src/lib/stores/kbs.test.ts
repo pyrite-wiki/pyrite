@@ -89,3 +89,32 @@ describe('KBStore', () => {
 		});
 	});
 });
+
+describe('resolveName', () => {
+	const kb = (name: string, shortname: string | null) => ({
+		name, type: 'generic', path: `/tmp/${name}`, entries: 0, indexed: true, source: 'local',
+		description: '', read_only: false, last_indexed: null, shortname, default_role: null
+	});
+
+	beforeEach(() => {
+		kbStore.kbs = [kb('pub', 'pb'), kb('notes', null), kb('alpha', 'notes')];
+	});
+
+	it('maps a shortname to the full name', () => {
+		expect(kbStore.resolveName('pb')).toBe('pub');
+	});
+
+	it('leaves a full name as it is, even when it is another KB\'s shortname', () => {
+		expect(kbStore.resolveName('pub')).toBe('pub');
+		expect(kbStore.resolveName('notes')).toBe('notes');
+	});
+
+	it('leaves a name it does not know unchanged, for the API to refuse', () => {
+		expect(kbStore.resolveName('nope')).toBe('nope');
+	});
+
+	it('passes an absent name through', () => {
+		expect(kbStore.resolveName(undefined)).toBeUndefined();
+		expect(kbStore.resolveName('')).toBe('');
+	});
+});

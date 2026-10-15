@@ -18,6 +18,7 @@
 	import { buildEntrySeo } from '$lib/utils/seo';
 	import { jsonForScriptTag } from '$lib/utils/sanitize';
 	import { api, ApiError } from '$lib/api/client';
+	import { kbStore } from '$lib/stores/kbs.svelte';
 	import { page } from '$app/stores';
 	import { onMount, untrack } from 'svelte';
 	import { parseWikilinks } from '$lib/editor/wikilink-utils';
@@ -32,13 +33,19 @@
 	let resolvedIds = $state<Set<string>>(new Set());
 
 	const entryId = $derived($page.params.id as string);
-	const entryKb = $derived($page.url.searchParams.get('kb') || undefined);
+	const requestedKb = $derived($page.url.searchParams.get('kb') || undefined);
+	// `?kb=` may be a shortname (a link built before the KB list was known,
+	// or typed): the API takes the full name only, so it is resolved here,
+	// against the KB list, before anything is requested.
+	const entryKb = $derived(kbStore.resolveName(requestedKb));
 
 	// The layout remounts the page only when the pathname changes, so
 	// /entries/dup -> /entries/dup?kb=a (the chooser's links) and a -> b
 	// reuse it: load again whenever the id or the KB changes (#912).
 	$effect(() => {
 		const id = entryId;
+		// Derived from the KB list too: a shortname link opened before the
+		// list arrived loads again, under the full name, once it does.
 		const kb = entryKb;
 		untrack(() => {
 			editing = false;
