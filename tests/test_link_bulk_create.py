@@ -364,8 +364,8 @@ class TestBulkCreate:
             )
             assert result.exit_code == 1
             assert "not found" in result.output and "no-such-kb" in result.output
-            # The hint this command gave before it moved to the outcome contract.
-            assert "Run `pyrite kb list`" in result.output
+            # The one resolver's hint (#952): the CLI resolves -k before the body.
+            assert "orient" in result.output
 
 
 @pytest.mark.cli

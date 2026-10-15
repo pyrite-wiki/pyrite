@@ -156,7 +156,7 @@ REFUSALS = [
         "bulk-kb",
         ["links", "bulk-create", "{links}", "-k", "nokb"],
         "KB_NOT_FOUND",
-        "pyrite kb list",  # bulk-create's own hint; the resolver's once the CLI resolves first (#924)
+        "orient",  # the one resolver's hint: the CLI resolves -k before the body (#924)
     ),
     ("create-ro", ["create", "-k", "ro", "-t", "note", "--title", "x"], "KB_READ_ONLY", None),
     ("update-ro", ["update", "hello", "-k", "ro", "--title", "x"], "KB_READ_ONLY", None),
