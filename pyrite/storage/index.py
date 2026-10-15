@@ -13,7 +13,7 @@ import re
 import stat as stat_module
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -114,32 +114,6 @@ _READ_COLUMNS = (
 #: Metadata keys the backend lifts to the top of a row (Tier A 1200, r1175).
 _LIFTED_METADATA_KEYS = ("rank", "effort", "kind", "status_reason", "parked_awaiting")
 
-#: TEXT columns that hold a date or a time. A value YAML 1.2 loads as a date
-#: or a timestamp is stored as text in one form (``_temporal_text``), whatever
-#: Python type the loader gave it (#951).
-_TEMPORAL_COLUMNS = ("date", "start_date", "end_date", "due_date", "assigned_at")
-
-
-def _temporal_text(value: Any) -> Any:
-    """A date or datetime as the ISO text a temporal column stores; anything
-    else as it is.
-
-    ``2025-06-01`` for a date and ``2025-06-01 00:00:00+00:00`` for a
-    datetime: the text sqlite3's own adapter writes for a plain ``datetime``
-    (``isoformat`` with a space), and what ``_as_text`` gives a read of the
-    file. Spelled out rather than ``str()``, because ruamel's ``TimeStamp``
-    (a ``datetime`` subclass) keeps the file's ``T`` in its ``str()``. The
-    conversion is done here, before the row is bound, because the adapter
-    does not cover that subclass: a typed entry whose ``date:`` held a full
-    timestamp was never indexed, with a log warning as the only signal (#951).
-    """
-    if isinstance(value, datetime):
-        return value.isoformat(sep=" ")
-    if isinstance(value, date):
-        return value.isoformat()
-    return value
-
-
 #: What a read keeps from the index row whatever the file says: the index's
 #: own bookkeeping and the derived link list (decision 9: derived values may
 #: lag, like search; outlinks and backlinks come from the index too).
@@ -149,14 +123,15 @@ _ROW_ONLY_KEYS = ("indexed_at", "created_by", "modified_by")
 def _as_text(value: Any) -> Any:
     """``value`` as a TEXT column returns it once SQLite has stored it: a YAML
     number or date as its text, a bool as ``"1"``/``"0"`` (sqlite3 binds a
-    bool as an integer). A date or datetime is the ISO text the row stores
-    (``_temporal_text``)."""
+    bool as an integer). A date or datetime is its ``str()``: for ruamel's
+    ``TimeStamp`` that keeps the file's ``T`` (``2026-01-01T10:00:00``), so a
+    read reports the file's own spelling, as far as the loader keeps it (a
+    ``Z`` reads back ``+00:00``). The index row holds one form instead
+    (``crud.temporal_text``); the file is the truth for a read (#951)."""
     if value is None or isinstance(value, str):
         return value
     if isinstance(value, bool):
         return str(int(value))
-    if isinstance(value, datetime | date):
-        return _temporal_text(value)
     return str(value)
 
 
@@ -449,11 +424,6 @@ class IndexManager:
             data["fips"] = getattr(entry, "fips", "")
         if "state" not in data and hasattr(entry, "state"):
             data["state"] = getattr(entry, "state", "")
-
-        # One text form per temporal column, whatever the loader's type (#951).
-        for key in _TEMPORAL_COLUMNS:
-            if key in data:
-                data[key] = _temporal_text(data[key])
 
         # Store extension-specific fields in metadata column
         # Use to_frontmatter() to capture all fields, then strip keys
