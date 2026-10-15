@@ -165,6 +165,26 @@ class TestUnreadableAnswersLikeUnknown:
         assert _refusal(a.value) == _refusal(b.value)
         assert "priv" not in str(_refusal(a.value))
 
+    def test_a_shared_shortname_is_the_readable_kbs(self, tmp_path):
+        """A private KB that shares the shortname, and is listed first, does
+        not change the answer: the shortname is looked up among the KBs the
+        caller may read, so `did_you_mean` names the readable one, the same
+        as when no private KB exists (#965 review, blocking 3)."""
+        (tmp_path / "hidden").mkdir()
+        hidden = KBConfig(
+            name="hidden", path=tmp_path / "hidden", default_role="none", shortname="pb"
+        )
+        with_priv = _config(tmp_path)
+        with_priv.knowledge_bases.insert(0, hidden)
+        without = _config(tmp_path, with_private=False)
+        with pytest.raises(KBNotFoundError) as a:
+            resolve_kb(with_priv, "pb", readable_kbs=READS_PUB_AND_NOTES)
+        with pytest.raises(KBNotFoundError) as b:
+            resolve_kb(without, "pb", readable_kbs=READS_PUB_AND_NOTES)
+        assert _refusal(a.value) == _refusal(b.value)
+        assert a.value.did_you_mean == ["pub"]
+        assert "hidden" not in str(_refusal(a.value))
+
     def test_an_empty_readable_set_reads_nothing(self, config):
         with pytest.raises(KBNotFoundError):
             resolve_kb(config, "pub", readable_kbs=set())

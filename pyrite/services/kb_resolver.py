@@ -120,12 +120,28 @@ def kb_set(
     return None if readable_kbs is None else set(readable_kbs)
 
 
+def _readable_kb_with_shortname(
+    config: PyriteConfig, name: str, readable_kbs: set[str] | None
+) -> KBConfig | None:
+    """The KB among the caller's readable ones whose shortname is `name`.
+
+    Looked up in the readable set only, not in every KB and then checked: a
+    private KB that shares the shortname would otherwise be the one found
+    (whichever config.yaml lists first) and the caller's answer would
+    change with a KB it cannot see (#965 review, blocking 3).
+    """
+    for kb in config.all_kbs():
+        if kb.shortname == name and (readable_kbs is None or kb.name in readable_kbs):
+            return kb
+    return None
+
+
 def _not_a_kb(config: PyriteConfig, name: str, readable_kbs: set[str] | None) -> KBNotFoundError:
     """The refusal for `name`: the same class and message whether the name is
     unknown, unreadable or a shortname; only the suggestion knows which."""
     message = f"KB '{name}' not found"
-    short = config.get_kb_by_shortname(name)
-    if short is not None and (readable_kbs is None or short.name in readable_kbs):
+    short = _readable_kb_with_shortname(config, name, readable_kbs)
+    if short is not None:
         return KBNotFoundError(
             message,
             suggestion=(
