@@ -1751,6 +1751,10 @@ PRINTS: dict[tuple[str, str], tuple[str, str]] = {
         "index health exits 1 when unhealthy, in its caller",
     ),
     ("pyrite/cli/kb_commands.py", "kb_gc"): ("safe", "'red' is colour: each removal is reported"),
+    ("pyrite/cli/kb_commands.py", "kb_health"): (
+        "safe",
+        "a report: a kb.yaml that fails to load is a finding, not a failed effect",
+    ),
     ("pyrite/cli/kb_commands.py", "kb_validate"): (
         "safe",
         "exits 1 on structural errors, 2 on drift",

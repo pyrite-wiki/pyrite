@@ -152,3 +152,34 @@ def test_cli_surfaces_drift_as_warning_not_failure(drift, fmt):
     else:
         assert "Type name drift" in result.stdout
         assert "research_note" in result.stdout
+
+
+BROKEN_KB_YAML = {
+    "types-null": "name: one\ntypes: null\n",
+    "types-list": "name: one\ntypes: [a, b]\n",
+    "invalid-yaml": "name: one\ntypes: {research-note: [\n",
+}
+
+
+@pytest.mark.parametrize("fmt", ["json", "rich"])
+@pytest.mark.parametrize("shape", sorted(BROKEN_KB_YAML))
+def test_kb_health_answers_for_a_kb_whose_schema_fails_to_load(drift, shape, fmt):
+    """A health check must not fail on the broken KB it is meant to diagnose:
+    a kb.yaml that does not load counts as declaring no types, and the report
+    says it failed to load."""
+    _, config = drift
+    kb = config.get_kb("one")
+    kb.kb_yaml_path.write_text(BROKEN_KB_YAML[shape], encoding="utf-8")
+    kb.invalidate_schema_cache()
+    with patch("pyrite.cli.context.load_config", return_value=config):
+        result = CliRunner().invoke(app, ["kb", "health", "-k", "one", "--format", fmt])
+    assert result.exit_code == 0, result.output
+    if fmt == "json":
+        data = json.loads(result.stdout)
+        assert data["schema_errors"] == [{"kb": "one", "error": data["schema_errors"][0]["error"]}]
+        assert data["schema_errors"][0]["error"]
+        spellings = data["type_name_drift"][0]["spellings"]
+        assert {s["type"] for s in spellings} == {"research-note", "research_note", "research note"}
+        assert not any(s["declared"] for s in spellings)
+    else:
+        assert "kb.yaml failed to load" in result.stdout

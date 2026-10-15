@@ -1395,8 +1395,17 @@ class IndexManager:
         JSON is bounded to 100 groups and 50 spellings per group, with totals.
         """
         groups = []
+        schema_errors = []
         for kb in sorted(kbs, key=lambda item: item.name):
-            declared = kb.kb_schema.declared_types() if kb.kb_yaml_path.exists() else set()
+            declared: set[str] = set()
+            if kb.kb_yaml_path.exists():
+                # Health diagnoses broken KBs, so a kb.yaml that fails to load
+                # (invalid YAML, `types: null`, `types: [a, b]`) counts as
+                # declaring no types and is reported, never raised.
+                try:
+                    declared = kb.kb_schema.declared_types()
+                except Exception as exc:
+                    schema_errors.append({"kb": kb.name, "error": str(exc) or type(exc).__name__})
             by_name: dict[str, list[dict[str, Any]]] = {}
             rows = self.db.execute_sql(
                 "SELECT entry_type, COUNT(*) AS cnt FROM entry "
@@ -1426,6 +1435,7 @@ class IndexManager:
             "type_name_drift": groups[:100],
             "type_name_drift_total": len(groups),
             "type_name_drift_has_more": len(groups) > 100,
+            "schema_errors": schema_errors,
         }
 
     #: Index columns that are never an enum-constrained field value.

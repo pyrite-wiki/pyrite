@@ -1772,6 +1772,7 @@
       "name": "readable-kb",
       "path": "<TMPDIR>/readable-kb",
       "path_exists": true,
+      "schema_errors": [],
       "source": "config",
       "type_name_drift": [],
       "type_name_drift_has_more": false,

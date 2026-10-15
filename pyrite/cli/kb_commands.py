@@ -532,6 +532,10 @@ def kb_health(
         console.print(f"  Files: {result['file_count']}, Indexed entries: {result['entry_count']}")
         console.print(f"  Last indexed: {result['last_indexed'] or 'never'}")
         console.print(f"  Source: {result['source']}")
+        for err in result.get("schema_errors", []):
+            console.print(
+                f"  kb.yaml failed to load: {err['error']}", markup=False, highlight=False
+            )
         if result.get("type_name_drift_total"):
             console.print(
                 f"  [yellow]Type name drift: {result['type_name_drift_total']} group(s); use --format json for spellings[/yellow]"
