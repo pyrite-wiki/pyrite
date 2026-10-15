@@ -10,8 +10,9 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from ..config import load_config
 from ..utils.errors import PARTIAL_EXIT, cli_error, exit_unless_whole
-from .context import cli_db_context, get_config_and_db, load_config_for_kb, require_kb
+from .context import cli_db_context, get_config_and_db, require_kb
 from .output import validate_output_format
 
 logger = logging.getLogger(__name__)
@@ -354,7 +355,7 @@ def index_embed(
 
     # The KB first (#952): a name that is not a KB is refused before the
     # dependency check, so the answer names the thing that is wrong.
-    load_config_for_kb(kb_name, output_format="rich")
+    require_kb(load_config(), kb_name, output_format="rich")
     if not is_available():
         cli_error(
             "sentence-transformers is not installed.",

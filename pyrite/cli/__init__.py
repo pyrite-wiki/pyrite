@@ -41,7 +41,7 @@ from ..services.kb_service import KBService
 from ..utils.errors import PyriteCLIGroup, cli_error, exit_unless_whole
 from .browse_commands import register_browse_commands
 from .collection_commands import collections_app
-from .context import cli_context, get_config_and_db, load_config_for_kb, open_index_db
+from .context import cli_context, get_config_and_db, open_index_db, require_kb
 from .db_commands import db_app
 from .entry_commands import register_entry_commands
 from .export_commands import export_app
@@ -260,7 +260,7 @@ def ci_command(
     from ..services.qa_service import QAService
     from ..utils.errors import cli_error_from
 
-    config = load_config_for_kb(kb, output_format=output_format)
+    config = load_config()
 
     # A tier that cannot run is refused before anything else, even with no
     # KB to validate: `ci` never says "pass" for a tier that did not run (#795).
@@ -275,8 +275,9 @@ def ci_command(
     # and validating nothing is not a pass (#795).
     config, db = get_config_and_db(config)
     try:
-        if kb and config.get_kb(kb) is None:
-            cli_error_from(KBNotFoundError(f"KB '{kb}' is not configured"), output_format)
+        # The one resolver (#952, #924): an unknown name or a shortname is
+        # KB_NOT_FOUND with its hint, the same as every other command.
+        require_kb(config, kb, db=db, output_format=output_format)
 
         # Handle no KBs configured
         if not config.knowledge_bases:

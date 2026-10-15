@@ -32,10 +32,12 @@ def require_kb(
     runs as the local principal and so is unscoped: an unknown name and a
     shortname (link syntax only) are ``KBNotFoundError`` -- ``KB_NOT_FOUND``,
     exit 1, with the resolver's suggestion and ``did_you_mean``; a blank
-    name is None. With ``db`` a KB registered after the config was loaded
-    is found. Every command that takes a KB resolves it here before reading
-    or writing anything (#924); ``tests/test_kb_walk_cli.py`` walks the
-    Typer trees to check.
+    name is None. A KB ``pyrite kb add`` registered in the index rather than
+    config.yaml is found too: through ``db`` when the command has the index
+    open, else through :func:`get_config_with_registered_kbs`, which opens
+    the registry only for a name config.yaml does not know. Every command
+    that takes a KB resolves it here before reading or writing anything
+    (#924); ``tests/test_kb_walk_cli.py`` walks the Typer trees to check.
 
     A command on the ADR-0046 outcome contract passes no ``output_format``
     and the refusal is raised for the root to render. A legacy command
@@ -46,6 +48,8 @@ def require_kb(
     from ..services.access_policy import UNSCOPED
     from ..services.kb_resolver import resolve_kb
 
+    if db is None and isinstance(name, str) and name.strip() and config.get_kb(name) is None:
+        config = get_config_with_registered_kbs(config, name=name)
     try:
         return resolve_kb(config, name, readable_kbs=UNSCOPED, db=db)
     except PyriteError as exc:
@@ -55,25 +59,6 @@ def require_kb(
 
         cli_error_from(exc, output_format)
         raise  # unreachable: cli_error_from always exits
-
-
-def load_config_for_kb(
-    name: object, *more: object, output_format: str | None = None
-) -> PyriteConfig:
-    """The config, with every KB in ``name``/``more`` resolved (#952, #924).
-
-    For a command that loads the config itself rather than opening a
-    context: the registry is consulted only when a name is not in
-    config.yaml (:func:`get_config_with_registered_kbs`), and each name goes
-    through :func:`require_kb`, so an unknown name or a shortname is refused
-    before the body runs. None and blank names name no KB.
-    """
-    config = load_config()
-    for kb in (name, *more):
-        if isinstance(kb, str) and kb.strip():
-            config = get_config_with_registered_kbs(config, name=kb)
-            require_kb(config, kb, output_format=output_format)
-    return config
 
 
 def _init_base(

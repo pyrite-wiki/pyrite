@@ -6,7 +6,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from pyrite.cli.context import load_config_for_kb
+from pyrite.cli.context import require_kb
+from pyrite.config import load_config
 from pyrite.storage.database import PyriteDB
 
 wiki_app = typer.Typer(help="Encyclopedia (wiki) commands")
@@ -26,7 +27,9 @@ def wiki_review(
         console.print("[red]Error:[/red] Action must be 'approve', 'reject', or 'comment'")
         raise typer.Exit(1)
 
-    config = load_config_for_kb(kb_name, output_format="rich")
+    config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -60,7 +63,9 @@ def wiki_quality(
     """Assess or set article quality level."""
     from .entry_types import QUALITY_LEVELS
 
-    config = load_config_for_kb(kb_name, output_format="rich")
+    config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -111,7 +116,8 @@ def wiki_stats(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
 ):
     """Show quality distribution and review queue length."""
-    config = load_config_for_kb(kb_name, output_format="rich")
+    config = load_config()
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -174,7 +180,8 @@ def wiki_stubs(
     limit: int = typer.Option(20, "--limit", "-n", help="Number of results"),
 ):
     """List stub articles needing expansion."""
-    config = load_config_for_kb(kb_name, output_format="rich")
+    config = load_config()
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:

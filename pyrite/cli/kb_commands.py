@@ -21,7 +21,6 @@ from .context import (
     cli_context,
     cli_registry_context,
     get_config_with_registered_kbs,
-    load_config_for_kb,
     open_index_for_validation,
     require_kb,
 )
@@ -270,7 +269,8 @@ def kb_validate(
     && deploy` blocks on structural errors; scripts that want to gate on
     drift too can check for exit code 2.
     """
-    config = load_config_for_kb(name, output_format=output_format)
+    config = load_config()
+    require_kb(config, name, output_format=output_format)
 
     def _select_kbs(current_config) -> list[KBConfig]:
         if name:

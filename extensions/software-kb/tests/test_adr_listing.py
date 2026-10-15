@@ -2,12 +2,12 @@ import importlib
 import json
 from io import StringIO
 from pathlib import Path
-from types import SimpleNamespace
 
 from pyrite_software_kb.plugin import SoftwareKBPlugin
 from rich.console import Console
 
 import pyrite.cli
+from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.storage.database import PyriteDB
 
 KB = "public-kb"
@@ -17,6 +17,14 @@ KB = "public-kb"
 # `sw` drops out of `app` for the whole worker (#900). A plain `from
 # pyrite_software_kb import cli` gets re-sorted above `import pyrite.cli`.
 cli = importlib.import_module("pyrite_software_kb.cli") if pyrite.cli else None
+
+
+def _config(tmp_path: Path) -> PyriteConfig:
+    """A config naming the KB: the CLI resolves ``--kb`` before reading (#952)."""
+    return PyriteConfig(
+        knowledge_bases=[KBConfig(name=KB, path=tmp_path, kb_type="software")],
+        settings=Settings(index_path=tmp_path / "index.db"),
+    )
 
 
 def _make_db(tmp_path: Path, entries: list[dict], links: list[dict] | None = None) -> PyriteDB:
@@ -158,11 +166,7 @@ def test_mcp_adrs_are_numbered_and_show_standing_relations(tmp_path):
 
 def test_cli_adrs_are_numbered_and_show_standing_relations(tmp_path, monkeypatch, capsys):
     db = _make_db(tmp_path, _entries(), _links())
-    monkeypatch.setattr(
-        cli,
-        "load_config",
-        lambda: SimpleNamespace(settings=SimpleNamespace(index_path=tmp_path / "index.db")),
-    )
+    monkeypatch.setattr(cli, "load_config", lambda: _config(tmp_path))
     monkeypatch.setattr(cli, "PyriteDB", lambda _path: db)
     cli.sw_adrs(status=None, limit=None, offset=0, kb_name=KB, fmt="json")
     result = json.loads(capsys.readouterr().out)
@@ -214,11 +218,7 @@ def test_mcp_adrs_do_not_reveal_unreadable_link_sources(tmp_path):
 def test_cli_rich_adrs_show_ids_and_standing_relations(tmp_path, monkeypatch):
     db = _make_db(tmp_path, _entries(), _links())
     output = StringIO()
-    monkeypatch.setattr(
-        cli,
-        "load_config",
-        lambda: SimpleNamespace(settings=SimpleNamespace(index_path=tmp_path / "index.db")),
-    )
+    monkeypatch.setattr(cli, "load_config", lambda: _config(tmp_path))
     monkeypatch.setattr(cli, "PyriteDB", lambda _path: db)
     monkeypatch.setattr(cli, "console", Console(file=output, width=180))
 

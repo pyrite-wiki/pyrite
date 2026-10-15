@@ -59,7 +59,7 @@ def cli_env():
 
         from pyrite.services.kb_service import KBService
 
-        def mock_get_svc():
+        def mock_get_svc(*kbs, **kwargs):  # _get_svc(kb_name, output_format=...)
             svc = KBService(config, db)
             return svc, db
 

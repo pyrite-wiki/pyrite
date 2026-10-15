@@ -1525,6 +1525,16 @@ def _make_test_db(tmpdir, entries=None, links=None):
     return db
 
 
+def _cli_config(tmpdir):
+    """A config naming the test KB: the CLI resolves ``--kb`` before the body (#952)."""
+    from pyrite.config import KBConfig, PyriteConfig, Settings
+
+    return PyriteConfig(
+        knowledge_bases=[KBConfig(name="test", path=Path(tmpdir), kb_type="software")],
+        settings=Settings(index_path=Path(tmpdir) / "test.db"),
+    )
+
+
 def _make_plugin_with_db(db):
     """Create a plugin with injected DB context.
 
@@ -3578,9 +3588,12 @@ class TestContextForItemCLI:
                 ],
             )
             try:
-                with patch(
-                    "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
-                    return_value=(db, False),
+                with (
+                    patch("pyrite_software_kb.cli.load_config", return_value=_cli_config(tmpdir)),
+                    patch(
+                        "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
+                        return_value=(db, False),
+                    ),
                 ):
                     result = runner.invoke(
                         sw_app,
@@ -3633,9 +3646,12 @@ class TestContextForItemCLI:
                 ],
             )
             try:
-                with patch(
-                    "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
-                    return_value=(db, False),
+                with (
+                    patch("pyrite_software_kb.cli.load_config", return_value=_cli_config(tmpdir)),
+                    patch(
+                        "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
+                        return_value=(db, False),
+                    ),
                 ):
                     result = runner.invoke(
                         sw_app,
@@ -3678,9 +3694,12 @@ class TestContextForItemCLI:
                 ],
             )
             try:
-                with patch(
-                    "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
-                    return_value=(db, False),
+                with (
+                    patch("pyrite_software_kb.cli.load_config", return_value=_cli_config(tmpdir)),
+                    patch(
+                        "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
+                        return_value=(db, False),
+                    ),
                 ):
                     result = runner.invoke(
                         sw_app,
@@ -3712,9 +3731,12 @@ class TestContextForItemCLI:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = _make_test_db(tmpdir)
             try:
-                with patch(
-                    "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
-                    return_value=(db, False),
+                with (
+                    patch("pyrite_software_kb.cli.load_config", return_value=_cli_config(tmpdir)),
+                    patch(
+                        "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
+                        return_value=(db, False),
+                    ),
                 ):
                     result = runner.invoke(
                         sw_app,
@@ -4378,7 +4400,11 @@ class TestBacklogCliPaginationFlags:
         mock_plugin = MagicMock()
         mock_plugin._mcp_backlog.return_value = {"count": 0, "items": [], "has_more": False}
 
-        with patch("pyrite_software_kb.plugin.SoftwareKBPlugin", return_value=mock_plugin):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("pyrite_software_kb.cli.load_config", return_value=_cli_config(tmpdir)),
+            patch("pyrite_software_kb.plugin.SoftwareKBPlugin", return_value=mock_plugin),
+        ):
             result = runner.invoke(
                 sw_app,
                 ["backlog", "--limit", "5", "--offset", "10", "--kb", "test"],

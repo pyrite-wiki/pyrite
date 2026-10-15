@@ -6,6 +6,6 @@
   empty result and exit 0; `get`, `update`, `delete` and the task commands
   reported the entry, not the KB. A shortname there is refused with the full
   name suggested. The check is one helper in `pyrite.cli.context`
-  (`require_kb`, `cli_context(kbs=...)`, `load_config_for_kb`), and
+  (`require_kb` and `cli_context(kbs=...)`), and
   `tests/test_kb_walk_cli.py` walks every command of `pyrite`, `pyrite-read` and
   `pyrite-admin` to prove it.

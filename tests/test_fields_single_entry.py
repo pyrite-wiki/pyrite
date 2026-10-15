@@ -51,7 +51,7 @@ def test_get_projects_in_every_format(fmt, console_width):
     svc.get_entry.return_value = deepcopy(ENTRY)
 
     @contextmanager
-    def context():
+    def context(*args, **kwargs):  # cli_context(kbs=..., output_format=...)
         yield MagicMock(), MagicMock(), svc
 
     console_width(120)

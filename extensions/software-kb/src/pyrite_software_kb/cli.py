@@ -8,8 +8,9 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from pyrite.cli.context import load_config_for_kb
+from pyrite.cli.context import require_kb
 from pyrite.cli.output import output_format_choice
+from pyrite.config import load_config
 from pyrite.services.access_policy import UNSCOPED
 from pyrite.storage.database import PyriteDB
 
@@ -100,7 +101,8 @@ def sw_adrs(
     from .plugin import DEFAULT_LIST_LIMIT
 
     effective_limit = DEFAULT_LIST_LIMIT if limit is None else (None if limit <= 0 else limit)
-    config = load_config_for_kb(kb_name, output_format=fmt)
+    config = load_config()
+    require_kb(config, kb_name, output_format=fmt)
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -195,8 +197,9 @@ def sw_new_adr(
     from pyrite.services.kb_service import KBService
     from pyrite.utils.errors import cli_error
 
-    config = load_config_for_kb(kb_name, output_format="rich")
+    config = load_config()
 
+    require_kb(config, kb_name, output_format="rich")
     # Resolve the KB up front: with none resolved, refuse -- do NOT fall back
     # to writing into the cwd, where the ADR is never indexed and the
     # numbering query (scoped to KBs) would never see it again.
@@ -296,7 +299,7 @@ def sw_backlog(
     Defaults to the 50 highest-sorted items; pass --limit/--offset to page
     through the rest, or --limit 0 for the full, unbounded list.
     """
-    load_config_for_kb(kb_name, output_format=fmt)
+    require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import DEFAULT_LIST_LIMIT, SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -397,7 +400,7 @@ def sw_epics(
     ),
 ):
     """List epics with subtask progress."""
-    load_config_for_kb(kb_name, output_format=fmt)
+    require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -449,7 +452,7 @@ def sw_epic_detail(
     ),
 ):
     """Show an epic's subtasks grouped by status."""
-    load_config_for_kb(kb_name, output_format=fmt)
+    require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -489,7 +492,7 @@ def sw_prioritize(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
 ):
     """Set explicit rank ordering for backlog items."""
-    load_config_for_kb(kb_name, output_format="rich")
+    require_kb(load_config(), kb_name, output_format="rich")
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -542,7 +545,8 @@ def sw_standards(
     from .plugin import DEFAULT_LIST_LIMIT
 
     effective_limit = DEFAULT_LIST_LIMIT if limit is None else (None if limit <= 0 else limit)
-    config = load_config_for_kb(kb_name, output_format=fmt)
+    config = load_config()
+    require_kb(config, kb_name, output_format=fmt)
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -606,7 +610,8 @@ def sw_validations(
     ),
 ):
     """List programmatic validations (automated checks)."""
-    config = load_config_for_kb(kb_name, output_format=fmt)
+    config = load_config()
+    require_kb(config, kb_name, output_format=fmt)
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -663,7 +668,8 @@ def sw_conventions(
     ),
 ):
     """List development conventions (judgment-based guidance)."""
-    config = load_config_for_kb(kb_name, output_format=fmt)
+    config = load_config()
+    require_kb(config, kb_name, output_format=fmt)
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -713,7 +719,9 @@ def sw_migrate_standards(
     import re
     from pathlib import Path
 
-    config = load_config_for_kb(kb_name, output_format="rich")
+    config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -815,7 +823,8 @@ def sw_milestones(
     ),
 ):
     """List milestones with completion progress."""
-    config = load_config_for_kb(kb_name, output_format=fmt)
+    config = load_config()
+    require_kb(config, kb_name, output_format=fmt)
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -899,7 +908,9 @@ def sw_board_cmd(
 
     from .board import load_board_config
 
-    config = load_config_for_kb(kb_name, output_format=fmt)
+    config = load_config()
+
+    require_kb(config, kb_name, output_format=fmt)
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -978,7 +989,8 @@ def sw_review_queue(
     ),
 ):
     """View items in review status, sorted by wait time."""
-    config = load_config_for_kb(kb_name, output_format=fmt)
+    config = load_config()
+    require_kb(config, kb_name, output_format=fmt)
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -1045,7 +1057,9 @@ def sw_claim(
 
     from .workflows import BACKLOG_WORKFLOW, can_transition, get_allowed_transitions
 
-    config = load_config_for_kb(kb_name, output_format="rich")
+    config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -1098,7 +1112,9 @@ def sw_submit(
 
     from .workflows import BACKLOG_WORKFLOW, can_transition
 
-    config = load_config_for_kb(kb_name, output_format="rich")
+    config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -1158,7 +1174,9 @@ def sw_transition(
         requires_reason,
     )
 
-    config = load_config_for_kb(kb_name, output_format="rich")
+    config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -1222,7 +1240,7 @@ def sw_pull_next(
     ),
 ):
     """Recommend the next work item based on priority and WIP limits."""
-    load_config_for_kb(kb_name, output_format=fmt)
+    require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -1265,7 +1283,7 @@ def sw_review_cmd(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
 ):
     """Record a review outcome for an item in review status."""
-    load_config_for_kb(kb_name, output_format="rich")
+    require_kb(load_config(), kb_name, output_format="rich")
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -1298,7 +1316,7 @@ def sw_log_cmd(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
 ):
     """Log a work session for a backlog item."""
-    load_config_for_kb(kb_name, output_format="rich")
+    require_kb(load_config(), kb_name, output_format="rich")
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -1345,7 +1363,8 @@ def sw_components(
     from .plugin import DEFAULT_LIST_LIMIT
 
     effective_limit = DEFAULT_LIST_LIMIT if limit is None else (None if limit <= 0 else limit)
-    config = load_config_for_kb(kb_name, output_format=fmt)
+    config = load_config()
+    require_kb(config, kb_name, output_format=fmt)
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -1411,7 +1430,7 @@ def sw_check_ready(
     ),
 ):
     """Check Definition of Ready for a backlog item without claiming it."""
-    load_config_for_kb(kb_name, output_format=fmt)
+    require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -1454,7 +1473,7 @@ def sw_refine_cmd(
     ),
 ):
     """Scan backlog for DoR gaps, sorted by priority."""
-    load_config_for_kb(kb_name, output_format=fmt)
+    require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -1516,7 +1535,7 @@ def sw_context_for_item(
     ),
 ):
     """Assemble full context bundle for a backlog item: linked ADRs, components, validations, conventions, reviews, work logs, dependencies."""
-    load_config_for_kb(kb_name, output_format=fmt)
+    require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()

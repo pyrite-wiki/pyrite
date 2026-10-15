@@ -13,7 +13,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from .cli.context import load_config_for_kb, require_kb
+from .cli.context import require_kb
 from .config import (
     CONFIG_FILE,
     KBConfig,
@@ -113,8 +113,8 @@ def kb_add(
 @kb_app.command("remove")
 def kb_remove(name: str = typer.Argument(..., help="KB name")):
     """Remove a KB from the registry."""
-    config = load_config_for_kb(name, output_format="rich")
-
+    config = load_config()
+    require_kb(config, name, output_format="rich")
     if not config.get_kb(name):
         console.print(f"[red]Error:[/red] KB '{name}' not found")
         raise typer.Exit(1)
@@ -149,7 +149,8 @@ def kb_discover(path: Path = typer.Argument(".", help="Path to search")):
 @kb_app.command("validate")
 def kb_validate(name: str = typer.Argument(..., help="KB name")):
     """Validate a KB configuration."""
-    config = load_config_for_kb(name, output_format="rich")
+    config = load_config()
+    require_kb(config, name, output_format="rich")
     kb = config.get_kb(name)
 
     if not kb:
@@ -182,7 +183,9 @@ def index_build(
     from .cli.context import index_db_context
     from .services.kb_service import KBService
 
-    config = load_config_for_kb(kb_name, output_format="rich")
+    config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     with index_db_context(config) as db:
         kb_svc = KBService(config, db)
 
@@ -203,7 +206,9 @@ def index_sync(
     from .cli.context import index_db_context
     from .services.kb_service import KBService
 
-    config = load_config_for_kb(kb_name, output_format="rich")
+    config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     with index_db_context(config) as db:
         kb_svc = KBService(config, db)
 
@@ -230,7 +235,9 @@ def index_stats(kb_name: str | None = typer.Argument(None, help="KB name")):
     from .cli.context import index_db_context
     from .services.kb_service import KBService
 
-    config = load_config_for_kb(kb_name, output_format="rich")
+    config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     with index_db_context(config) as db:
         kb_svc = KBService(config, db)
 
@@ -253,7 +260,7 @@ def index_embed(kb_name: str = typer.Argument(..., help="KB to generate embeddin
 
     # The KB first (#952): a name that is not a KB is refused before the
     # dependency check, so the answer names the thing that is wrong.
-    load_config_for_kb(kb_name, output_format="rich")
+    require_kb(load_config(), kb_name, output_format="rich")
     if not is_available():
         # Nothing was embedded: refused, exit 1 (#526). `cli_error` keeps the
         # brackets of `pyrite[semantic]` literal; a markup string would not.
@@ -596,7 +603,9 @@ def schema_show(kb_name: str = typer.Argument(..., help="KB name")):
     """Show schema for a KB (agent-friendly output)."""
     import json
 
-    config = load_config_for_kb(kb_name, output_format="rich")
+    config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     kb = config.get_kb(kb_name)
 
     if not kb:

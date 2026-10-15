@@ -519,7 +519,8 @@ def check(found: IdScan, the_plan: dict[str, Any]) -> dict[str, Any]:
 def find_kb_without_writes(kb_name: str) -> KBConfig | None:
     """The KB named ``kb_name``, found the way every command finds it
     (config.yaml, then the KBs ``pyrite kb add`` registered in the index),
-    without creating or changing a file.
+    without creating or changing a file; ``KBNotFoundError`` from the one
+    resolver when it is not a KB (an unknown name, a shortname).
 
     ``cli_context`` cannot be used for this: it creates the config directory,
     opens the index (creating ``index.db`` and its ``-wal``/``-shm`` files,
@@ -537,9 +538,15 @@ def find_kb_without_writes(kb_name: str) -> KBConfig | None:
     """
     config = pyrite_config.load_config(create_dir=False)
     kb = config.get_kb(kb_name)
+    if kb is None:
+        kb = _registered_kb(config, kb_name)
     if kb is not None:
         return kb
-    return _registered_kb(config, kb_name)
+    # Not a KB: the one refusal (#952), with the shortname rule and the hint.
+    from .access_policy import UNSCOPED
+    from .kb_resolver import resolve_kb
+
+    return resolve_kb(config, kb_name, readable_kbs=UNSCOPED)
 
 
 def _registered_kb(config: PyriteConfig, kb_name: str) -> KBConfig | None:
