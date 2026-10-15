@@ -101,7 +101,7 @@ without being a principal at all.
 
 | # | Principal | ADR-0037 `Principal` | Should reach | Must not reach |
 |---|---|---|---|---|
-| **U0** | Anonymous visitor | `anonymous(tier)` | public KBs (`default_role: read`), `/site`, the public entry points; with `anonymous_tier`, that rung on KBs whose default allows it | any private KB (S1, S2); any S4 or S5 |
+| **U0** | Anonymous visitor | `anonymous(tier)` | public KBs (`default_role: read`), the public entry points; with `anonymous_tier`, that rung on KBs whose default allows it | any private KB (S1, S2); any S4 or S5 |
 | **U1** | Registered user, no grant | `user(row)`, global role | what the global role and each KB's `default_role` give; their own profile, keys and tokens (`SELF`) | other users' `SELF`; private KBs with no grant |
 | **U2** | User with a read grant on KB *k* | `user` | read *k* | write *k*; anything on another private KB |
 | **U3** | User with a write grant on *k* | `user` | read and write *k* | KB-admin actions on *k*; writes to any other KB, including through a body, row id or bulk item that names another KB |
@@ -595,7 +595,7 @@ Every brief shares these rules:
 
 - **Scope.**
   - `services/export_service.py`, `services/template_service.py`,
-    `services/site_cache.py`, `services/kb_service.py`, and the storage
+    `services/kb_service.py` (`services/site_cache.py` was removed by #953), and the storage
     layer (`storage/document_manager.py`, `find_file`).
   - A collection's `folder_path` (`endpoints/collections.py`), and
     `entries/import`.
@@ -684,7 +684,7 @@ refusal is a bug.
 | `alpha` | none (private) | alice's private notes |
 | `beta` | none (private) | bob's private notes |
 | `shared` | none (private) | a collaboration KB |
-| `public` | `read` | public notes (the control for U0 and `/site`) |
+| `public` | `read` | public notes (the control for U0) |
 
 **Canaries.** Every entry's title, body, one tag and one field carries the
 token `<KB>-CANARY-<n>` (for example `ALPHA-CANARY-3`), so that a leak is
@@ -705,14 +705,14 @@ seed, not attack steps.
 | **alice** | U4 on `alpha`, U3 on `shared` | a session, plus a user API key for `/mcp` | admin on `alpha`; write on `shared` | read, write and manage grants on `alpha`; read and write on `shared`; read on `public` | anything in `beta`; grants on `shared`; instance administration |
 | **bob** | U4 on `beta`, U2 on `shared` | invite registration; a session and an API key | admin on `beta`; read on `shared` | read, write and manage grants on `beta`; read `shared`; read `public` | **any write to `shared`**; anything in `alpha`; instance administration |
 | **mallory** | U1, no grant | open registration; a session and an API key | none | read `public`; her own `SELF` | anything in `alpha`, `beta` or `shared`, including their existence (P-R5); anything of anyone else's `SELF` |
-| **anon** | U0 | none | none | `public`; `/site` showing `public` only | the three private KBs, including their names, in any form |
+| **anon** | U0 | none | none | `public` only | the three private KBs, including their names, in any form |
 | **opkey** | U6 read key | `X-API-Key` | read, instance-wide | read on every KB (unscoped, by design) | any write, admin or capability action |
 
 ### 7.4 Scenarios L1 must cover
 
 These are coverage goals, not steps. Each run covers the persona's row
-across the UI and the four network surfaces (REST, `/mcp` SSE, `/ws`,
-`/site`), for reads and writes.
+across the UI and the three network surfaces (REST, `/mcp` SSE, `/ws`;
+`/site` was removed by #953), for reads and writes.
 
 - **Revocation (P-A2, P-M4, P-W3).** Mid-session, root revokes bob's grant
   on `shared`, and later logs mallory out everywhere. Each persona's open

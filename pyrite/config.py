@@ -398,7 +398,7 @@ class Settings:
     # Embed entries on write. Off = keyword search only, no torch import, no
     # model download; `pyrite index embed` can backfill later. Env: PYRITE_AUTO_EMBED
     auto_embed: bool = True
-    # Extra Content-Security-Policy sources for the public /site pages, in CSP
+    # Extra Content-Security-Policy sources for the web app's pages, in CSP
     # syntax, appended to the built-in policy (script-src 'self' ...), e.g.
     # "script-src https://plausible.io 'sha256-...'; connect-src https://plausible.io"
     # for a reverse proxy that injects an analytics script. Env: PYRITE_SITE_CSP_EXTRA
