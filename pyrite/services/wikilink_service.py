@@ -9,7 +9,9 @@ import logging
 from typing import Any
 
 from ..config import PyriteConfig
+from ..exceptions import AmbiguousEntryError
 from ..storage.database import PyriteDB
+from .access_policy import named_kb
 
 logger = logging.getLogger(__name__)
 
@@ -102,17 +104,26 @@ class WikilinkService:
             if prefixed:
                 actual_target = rest
                 actual_kb = prefixed
+        actual_kb = named_kb(actual_kb)  # a blank names no KB
         scope_sql, scope_params = _scope_clause("kb_name", readable_kbs)
 
-        # First pass: exact ID match
+        # First pass: exact ID match. Without a KB, an id held by more than
+        # one readable KB is refused, never picked (#528, #912): the caller
+        # embedding ![[kb-b:dup]] must not get kb-a's body. The title and
+        # alias passes below stay first-match: a title is not an identity.
         sql = "SELECT id, kb_name, entry_type, title FROM entry WHERE id = :target"
         params: dict[str, Any] = {"target": actual_target, **scope_params}
         if actual_kb:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = actual_kb
-        sql += scope_sql + " LIMIT 1"
+        sql += scope_sql + " ORDER BY kb_name"
 
         rows = self.db.execute_sql(sql, params)
+        if len({r["kb_name"] for r in rows}) > 1:
+            held = {r["kb_name"] for r in rows}
+            # Candidates in config order, as every other surface lists them.
+            ordered = [k.name for k in self.config.all_kbs() if k.name in held]
+            raise AmbiguousEntryError(actual_target, ordered)
         if rows:
             return rows[0]
 
@@ -159,7 +170,10 @@ class WikilinkService:
         for t in targets:
             if ":" in t and not t.startswith("http"):
                 # Resolve cross-KB targets individually
-                resolved = self.resolve_entry(t, kb_name, readable_kbs=readable_kbs)
+                try:
+                    resolved = self.resolve_entry(t, kb_name, readable_kbs=readable_kbs)
+                except AmbiguousEntryError:
+                    resolved = {}  # held by several KBs: it exists
                 result[t] = resolved is not None
             else:
                 simple_targets.append(t)

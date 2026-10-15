@@ -335,8 +335,17 @@ def test_mcp_entry_resource_refuses_and_a_kb_resource_resolves(world):
 #: Path parameters that name an entry.
 ID_PATH_PARAMS = ("{entry_id}", "{collection_id}", "{task_id}")
 
+#: Query parameters and body fields (besides `entry_id`) that carry an entry id
+#: or a link target, so a route taking its id in the query is inventoried too.
+ID_QUERY_PARAMS = ("entry_id", "target", "center", "parent")
+ID_BODY_FIELDS = ("entry_id", "targets")
+
 #: Every REST route that takes an id and a `kb`, driven with a blank `kb`.
 REST_CASES = {
+    ("GET", "/api/entries/resolve"): f"/api/entries/resolve?target={DUPLICATE}&kb=",
+    ("GET", "/api/links/discover-neighbors"): (
+        f"/api/links/discover-neighbors?entry_id={DUPLICATE}&kb="
+    ),
     ("GET", "/api/entries/{entry_id}"): f"/api/entries/{DUPLICATE}?kb=",
     ("GET", "/api/entries/{entry_id}/blocks"): f"/api/entries/{DUPLICATE}/blocks?kb=",
     ("GET", "/api/collections/{collection_id}"): f"/api/collections/{DUP_COLLECTION}?kb=",
@@ -348,7 +357,19 @@ _NAMED_ONLY = (
     "reads only the KB it is given: a blank kb is a KB named '' holding nothing, so "
     "the answer is a miss, never a pick (test_rest_named_kb_routes_never_pick_for_a_blank_kb)"
 )
+_QUERY_NAMED = (
+    "kb required (Query(...)): reads the rows of that (entry, kb) pair only, "
+    "resolves no id across KBs"
+)
 REST_EXCLUDED = {
+    ("POST", "/api/entries/resolve-batch"): "answers whether each target exists in any "
+    "readable KB (a bool per target); picks and returns no entry",
+    ("GET", "/api/reviews"): _QUERY_NAMED,
+    ("GET", "/api/reviews/latest"): _QUERY_NAMED,
+    ("GET", "/api/reviews/status"): _QUERY_NAMED,
+    ("GET", "/api/graph"): "`center` is read only with `center_kb` (no centre without it): "
+    "the walk starts from a named (id, kb) pair or from none",
+    ("GET", "/api/tasks"): "`parent` filters rows by a parent id; it selects no entry to read",
     ("DELETE", "/api/entries/{entry_id}"): "kb required and checked by the write guard "
     "(requires_kb_tier on the named KB); deletes only in that KB",
     ("DELETE", "/api/starred/{entry_id}"): "removes the caller's own star rows; resolves no entry",
@@ -393,8 +414,11 @@ def _id_routes(app) -> set[tuple[str, str]]:
         by_path = any(p in path for p in ID_PATH_PARAMS) and (
             "kb" in queries or path.startswith("/api/entries/{entry_id}")
         )
-        by_body = "entry_id" in body_fields and ({"kb", "kb_name"} & body_fields)
-        if by_path or by_body:
+        by_body = bool(set(ID_BODY_FIELDS) & body_fields) and ({"kb", "kb_name"} & body_fields)
+        by_query = bool(set(ID_QUERY_PARAMS) & queries) and bool(
+            {"kb", "center_kb", "target_kb"} & queries or path == "/api/tasks"
+        )
+        if by_path or by_body or by_query:
             for method in route.methods or ():
                 if method not in ("HEAD", "OPTIONS"):
                     out.add((method, path))
@@ -494,6 +518,14 @@ def test_rest_ai_route_refuses_an_ambiguous_id_with_a_blank_kb(world, ai_writer,
     assert detail["code"] == "AMBIGUOUS"
     assert PRIVATE not in detail["candidate_kbs"]
     assert PRIVATE not in response.text
+
+
+def test_rest_resolve_with_a_kb_prefix_or_param_picks_that_kb(world):
+    """`![[kb-b:dup]]` must resolve to kb-b: the prefix names the KB (#912)."""
+    by_prefix = _rest(world, "GET", f"/api/entries/resolve?target={READABLE}:{DUPLICATE}")
+    by_param = _rest(world, "GET", f"/api/entries/resolve?target={DUPLICATE}&kb={READ_ONLY}")
+    assert by_prefix.json()["entry"]["kb_name"] == READABLE, by_prefix.text
+    assert by_param.json()["entry"]["kb_name"] == READ_ONLY, by_param.text
 
 
 def test_rest_get_without_kb_refuses_an_ambiguous_id(world):
