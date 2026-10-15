@@ -32,6 +32,7 @@ import functools
 from fastapi import Depends, HTTPException
 from starlette.requests import HTTPConnection, Request
 
+from ..config import PyriteConfig
 from ..services.access_policy import KB, AccessPolicy, Action, AnyKB, Principal, ReadScope
 
 
@@ -93,7 +94,13 @@ def authorize(action: Action, resource: type):
             "decided by REST's policy adapter yet (ADR-0037 themes 3b, 3c)"
         )
     # Lazy: `api` imports this module for `get_principal`.
-    from .api import _resolve_kb_names, _UnparseableBodyError, get_access_policy, kb_not_found
+    from .api import (
+        _resolve_kb_names,
+        _UnparseableBodyError,
+        get_access_policy,
+        get_config,
+        kb_not_found,
+    )
 
     if resource is AnyKB:
 
@@ -105,7 +112,9 @@ def authorize(action: Action, resource: type):
         return authorize_kb_read_any
 
     async def authorize_kb_read_named(
-        request: Request, policy: AccessPolicy = Depends(get_access_policy)
+        request: Request,
+        policy: AccessPolicy = Depends(get_access_policy),
+        config: PyriteConfig = Depends(get_config),
     ) -> ReadScope:
         if get_principal(request) is None:
             raise not_authenticated()
@@ -120,7 +129,10 @@ def authorize(action: Action, resource: type):
             ) from None
         scope = read_scope(request, policy)
         for name in names:
-            if not scope.permits(name):
+            # Check the KB the services will read: a shortname names its KB
+            # (#912). The refusal repeats the caller's own spelling, so a
+            # private KB's shortname answers as an unknown name does.
+            if not scope.permits(config.kb_name_for(name)):
                 raise kb_not_found(name)
         return scope
 

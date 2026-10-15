@@ -482,6 +482,25 @@ class PyriteConfig:
         """Rebuild the lookup indexes."""
         self._kb_by_name = {kb.name: kb for kb in self.knowledge_bases}
         self._repo_by_name = {repo.name: repo for repo in self.repositories}
+        for message in self._shortname_collisions():
+            logger.warning("%s; the full name wins", message)
+
+    def _shortname_collisions(self) -> list[str]:
+        """Shortnames that equal another KB's full name, or each other (#912)."""
+        found: list[str] = []
+        seen: dict[str, str] = {}
+        for kb in self.knowledge_bases:
+            short = kb.shortname
+            if not short:
+                continue
+            if short in self._kb_by_name and short != kb.name:
+                found.append(
+                    f"KB '{kb.name}' has shortname '{short}', which is KB '{short}'s full name"
+                )
+            if short in seen and seen[short] != kb.name:
+                found.append(f"KBs '{seen[short]}' and '{kb.name}' share shortname '{short}'")
+            seen.setdefault(short, kb.name)
+        return found
 
     # Fallback lookup for DB-registered KBs not in config.yaml
     _db_kb_cache: dict[str, KBConfig] = field(default_factory=dict, repr=False)
@@ -633,10 +652,12 @@ class PyriteConfig:
         return None
 
     def kb_name_for(self, name: str) -> str:
-        """The KB a name given as ``kb`` means: a shortname maps to its KB's
-        full name; anything else is returned unchanged (a full name, or an
-        unknown name the caller's lookup will miss). The one mapping every
+        """The KB a name given as ``kb`` means: a KB's full name is itself; a
+        shortname maps to its KB's full name; anything else is returned
+        unchanged (an unknown name the caller's lookup will miss). The one mapping every
         ``kb`` parameter and ``kb:`` wikilink prefix shares (#912)."""
+        if self.get_kb(name):
+            return name  # a full name wins over another KB's shortname
         kb = self.get_kb_by_shortname(name)
         return kb.name if kb else name
 
@@ -704,6 +725,9 @@ class PyriteConfig:
     def validate(self) -> dict[str, list[str]]:
         """Validate all KBs and repos. Returns dict of name -> errors."""
         results = {}
+        collisions = self._shortname_collisions()
+        if collisions:
+            results["shortnames"] = collisions
         for kb in self.knowledge_bases:
             errors = kb.validate()
             if errors:

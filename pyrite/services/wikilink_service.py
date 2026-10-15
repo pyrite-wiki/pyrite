@@ -81,8 +81,9 @@ class WikilinkService:
         """The KB a ``prefix:`` names -- a shortname or a KB name -- if the
         caller may read it. An unreadable KB is answered as an unknown
         prefix, which is what a KB that does not exist gets."""
-        kb_by_short = self.config.get_kb_by_shortname(prefix)
-        name = kb_by_short.name if kb_by_short else (prefix if self.config.get_kb(prefix) else None)
+        name = self.config.kb_name_for(prefix)
+        if not self.config.get_kb(name):
+            name = None
         if name is None or (readable_kbs is not None and name not in readable_kbs):
             return None
         return name
@@ -127,7 +128,7 @@ class WikilinkService:
         # First pass: exact ID match. Without a KB, an id held by more than
         # one readable KB is refused, never picked (#528, #912): the caller
         # embedding ![[kb-b:dup]] must not get kb-a's body. The title and
-        # alias passes below stay first-match: a title is not an identity.
+        # alias passes below apply the same rule (`_one_or_ambiguous`).
         sql = "SELECT id, kb_name, entry_type, title FROM entry WHERE id = :target"
         params: dict[str, Any] = {"target": actual_target, **scope_params}
         if actual_kb:

@@ -50,8 +50,10 @@ class WorktreeResolver:
         """Get a DB handle for reading, with overlay if user has pending edits.
 
         Returns a WorktreeDB (overlay) if the user has an active worktree,
-        otherwise returns the main DB unchanged.
+        otherwise returns the main DB unchanged. ``kb_name`` may be a
+        shortname; the worktree is the full name's (#912).
         """
+        kb_name = self._config.kb_name_for(kb_name)
         if not auth_user:
             return self._main_db
         user_id = auth_user["id"]
@@ -70,8 +72,11 @@ class WorktreeResolver:
 
         Creates the worktree on first write. Returns a modified config
         where the KB path points to the worktree, and an overlay DB.
+        ``kb_name`` may be a shortname (#912).
         """
         import dataclasses
+
+        kb_name = self._config.kb_name_for(kb_name)
 
         user_id = auth_user["id"]
         username = auth_user.get("username", f"user-{user_id}")

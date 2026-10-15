@@ -1016,7 +1016,9 @@ def requires_kb_tier(tier: str, *, resolve_kb=None):
             )
 
         for kb_name in kb_names:
-            await _enforce_kb_tier(request, config, db, kb_name, tier, kb_not_found(kb_name))
+            await _enforce_kb_tier(
+                request, config, db, config.kb_name_for(kb_name), tier, kb_not_found(kb_name)
+            )
 
     return _check_kb_tier
 
