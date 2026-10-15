@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { entryHref } from '$lib/utils/entry-href';
 	import KBSwitcher from '$lib/components/common/KBSwitcher.svelte';
 	import ThemeToggle from '$lib/components/common/ThemeToggle.svelte';
 	import StarredSidebar from '$lib/components/StarredSidebar.svelte';
@@ -184,7 +185,7 @@
 			<p class="mb-1 text-xs font-medium uppercase tracking-wider text-zinc-500">Recent</p>
 			{#each entryStore.recentIds.slice(0, 5) as id}
 				<a
-					href="/entries/{id}"
+					href={entryHref(id, entryStore.recentKbs[id])}
 					onclick={handleNavClick}
 					class="block truncate rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800"
 				title={id}

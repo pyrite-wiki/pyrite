@@ -552,6 +552,8 @@ class TestCountsDoNotRevealPrivateRows:
         body = r.json()
         assert body["count"] == len(body["events"]) == 1
         assert {e["id"] for e in body["events"]} == {"public-event"}
+        # Each event names its KB, so the web timeline can link to it (#910).
+        assert {e["kb_name"] for e in body["events"]} == {PUBLIC}
 
     def test_tags_count_excludes_private_tags(self, env, who):
         r = env[who].get("/api/tags")

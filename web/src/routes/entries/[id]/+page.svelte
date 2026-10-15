@@ -14,6 +14,7 @@
 	import { uiStore } from '$lib/stores/ui.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { brandStore } from '$lib/stores/brand.svelte';
+	import AmbiguousEntry from '$lib/components/entry/AmbiguousEntry.svelte';
 	import { buildEntrySeo } from '$lib/utils/seo';
 	import { jsonForScriptTag } from '$lib/utils/sanitize';
 	import { api } from '$lib/api/client';
@@ -33,7 +34,7 @@
 	const entryId = $derived($page.params.id as string);
 
 	onMount(() => {
-		entryStore.loadEntry(entryId);
+		entryStore.loadEntry(entryId, $page.url.searchParams.get('kb') || undefined);
 
 		function handleKeydown(e: KeyboardEvent) {
 			if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'B') {
@@ -230,6 +231,8 @@
 				<SkeletonLoader lines={4} header />
 			</aside>
 		</div>
+	{:else if entryStore.ambiguousKbs}
+		<AmbiguousEntry {entryId} kbs={entryStore.ambiguousKbs} />
 	{:else if entryStore.error}
 		<div class="flex flex-1 items-center justify-center text-red-500">{entryStore.error}</div>
 	{:else if entryStore.current}

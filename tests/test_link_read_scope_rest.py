@@ -108,9 +108,14 @@ def test_entry_without_kb_is_not_shadowed_by_a_private_twin(w):
     assert r.json()["kb_name"] == READ_ONLY
 
 
-@pytest.mark.control(reason="unscoped caller keeps config order: the private twin answers")
-def test_entry_without_kb_unscoped_unchanged(w):
-    assert _admin(w, f"/api/entries/{SHADOWED}").json()["kb_name"] == PRIVATE
+def test_entry_without_kb_unscoped_is_refused_as_ambiguous(w):
+    """An admin reads every KB, so the twin ids are ambiguous to them (#910):
+    no config-order pick; the refusal names the KBs they can read."""
+    r = _admin(w, f"/api/entries/{SHADOWED}")
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == "AMBIGUOUS"
+    assert {PRIVATE, READ_ONLY} <= set(detail["candidate_kbs"])
 
 
 # -- entry links (#56) -------------------------------------------------------

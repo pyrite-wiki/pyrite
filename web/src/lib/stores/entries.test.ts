@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('$lib/api/client', () => ({
+vi.mock('$lib/api/client', async (importOriginal) => ({
+	ApiError: (await importOriginal<typeof import('$lib/api/client')>()).ApiError,
 	api: {
 		listEntries: vi.fn(),
 		getEntry: vi.fn(),
@@ -8,7 +9,7 @@ vi.mock('$lib/api/client', () => ({
 	}
 }));
 
-import { api } from '$lib/api/client';
+import { api, ApiError } from '$lib/api/client';
 import { entryStore } from './entries.svelte';
 
 const mockListEntries = vi.mocked(api.listEntries);
@@ -52,6 +53,7 @@ beforeEach(() => {
 	entryStore.listKB = undefined;
 	entryStore.saving = false;
 	entryStore.error = null;
+	entryStore.ambiguousKbs = null;
 	entryStore.dirty = false;
 });
 
@@ -179,6 +181,28 @@ describe('EntryStore', () => {
 			await entryStore.loadEntry('test-entry', 'test-kb');
 			expect(entryStore.current?.id).toBe('test-entry');
 			expect(entryStore.dirty).toBe(false);
+		});
+
+		it('keeps the candidate KBs when the API refuses the id as AMBIGUOUS', async () => {
+			mockGetEntry.mockRejectedValueOnce(
+				new ApiError(409, 'ambiguous', 'AMBIGUOUS', ['kb-a', 'kb-b'])
+			);
+			await entryStore.loadEntry('dup');
+			expect(entryStore.current).toBeNull();
+			expect(entryStore.ambiguousKbs).toEqual(['kb-a', 'kb-b']);
+		});
+
+		it('clears the candidates on the next load', async () => {
+			entryStore.ambiguousKbs = ['kb-a', 'kb-b'];
+			mockGetEntry.mockResolvedValueOnce(sampleEntry);
+			await entryStore.loadEntry('dup', 'kb-a');
+			expect(entryStore.ambiguousKbs).toBeNull();
+		});
+
+		it('remembers the KB a recent entry was opened from', async () => {
+			mockGetEntry.mockResolvedValueOnce(sampleEntry);
+			await entryStore.loadEntry('test-entry');
+			expect(entryStore.recentKbs['test-entry']).toBe('test-kb');
 		});
 
 		it('adds to recent IDs', async () => {

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { entryHref } from '$lib/utils/entry-href';
 	import Topbar from '$lib/components/layout/Topbar.svelte';
 	import EntryList from '$lib/components/entry/EntryList.svelte';
 	import { entryStore } from '$lib/stores/entries.svelte';
@@ -328,7 +329,7 @@
 		<div class="space-y-2">
 			{#each searchStore.results as result}
 				<a
-					href="/entries/{result.id}"
+					href={entryHref(result.id, result.kb_name)}
 					class="block rounded-lg border border-zinc-200 p-3 hover:border-zinc-400 dark:border-zinc-700"
 				>
 					<div class="flex items-center justify-between">

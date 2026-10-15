@@ -44,7 +44,7 @@ test.describe('Search Page', () => {
 		await input.fill(ALPHA.title);
 		await input.press('Enter');
 
-		const link = page.locator(`a[href="/entries/${ALPHA.id}"]`);
+		const link = page.locator(`a[href="/entries/${ALPHA.id}?kb=${E2E_KB}"]`);
 		await expect(link).toBeVisible({ timeout: 10000 });
 		await expect(link).toContainText(ALPHA.title);
 
@@ -78,7 +78,7 @@ test.describe('Search Page', () => {
 
 		await expect(page.getByTestId('search-skeleton')).toHaveCount(0, { timeout: 10000 });
 		for (const person of SEEDED_PEOPLE) {
-			const link = page.locator(`a[href="/entries/${person.id}"]`);
+			const link = page.locator(`a[href="/entries/${person.id}?kb=${E2E_KB}"]`);
 			await expect(link).toBeVisible();
 			await expect(link).toContainText(person.title);
 		}
@@ -89,14 +89,14 @@ test.describe('Search Page', () => {
 		const input = page.getByPlaceholder('Search entries...');
 		await input.fill(ALPHA.title);
 		await input.press('Enter');
-		await expect(page.locator(`a[href="/entries/${ALPHA.id}"]`)).toBeVisible({
+		await expect(page.locator(`a[href="/entries/${ALPHA.id}?kb=${E2E_KB}"]`)).toBeVisible({
 			timeout: 10000
 		});
 
 		// Select the seeded KB by value, not by its option text.
 		await page.getByLabel('Filter by knowledge base').selectOption(E2E_KB);
 
-		const link = page.locator(`a[href="/entries/${ALPHA.id}"]`);
+		const link = page.locator(`a[href="/entries/${ALPHA.id}?kb=${E2E_KB}"]`);
 		await expect(link).toBeVisible({ timeout: 10000 });
 		await expect(link).toContainText(ALPHA.title);
 	});
@@ -119,7 +119,7 @@ test.describe('Search Page', () => {
 		const input = page.getByPlaceholder('Search entries...');
 		await input.fill(ALPHA.title);
 		await input.press('Enter');
-		await expect(page.locator(`a[href="/entries/${ALPHA.id}"]`)).toBeVisible({
+		await expect(page.locator(`a[href="/entries/${ALPHA.id}?kb=${E2E_KB}"]`)).toBeVisible({
 			timeout: 10000
 		});
 
@@ -133,7 +133,7 @@ test.describe('Search Page', () => {
 		await hybridBtn.click();
 		await expect(hybridBtn).toHaveAttribute('aria-pressed', 'true');
 		await expect(semanticBtn).toHaveAttribute('aria-pressed', 'false');
-		await expect(page.locator(`a[href="/entries/${ALPHA.id}"]`)).toBeVisible({
+		await expect(page.locator(`a[href="/entries/${ALPHA.id}?kb=${E2E_KB}"]`)).toBeVisible({
 			timeout: 10000
 		});
 
@@ -141,7 +141,7 @@ test.describe('Search Page', () => {
 		await keywordBtn.click();
 		await expect(keywordBtn).toHaveAttribute('aria-pressed', 'true');
 		await expect(hybridBtn).toHaveAttribute('aria-pressed', 'false');
-		await expect(page.locator(`a[href="/entries/${ALPHA.id}"]`)).toBeVisible({
+		await expect(page.locator(`a[href="/entries/${ALPHA.id}?kb=${E2E_KB}"]`)).toBeVisible({
 			timeout: 10000
 		});
 	});

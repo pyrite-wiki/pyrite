@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { entryHref } from '$lib/utils/entry-href';
 	import Topbar from '$lib/components/layout/Topbar.svelte';
 	import TypeDistributionChart from '$lib/components/charts/TypeDistributionChart.svelte';
 	import { kbStore } from '$lib/stores/kbs.svelte';
@@ -153,7 +154,7 @@
 				<div class="space-y-2">
 					{#each recentEntries as entry}
 						<a
-							href="/entries/{entry.id}"
+							href={entryHref(entry.id, entry.kb_name)}
 							class="flex items-center justify-between rounded-lg border border-zinc-200 px-4 py-3 transition-colors hover:border-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
 						>
 							<div class="min-w-0 flex-1">

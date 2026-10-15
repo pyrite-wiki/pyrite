@@ -191,6 +191,7 @@ class TimelineEvent(BaseModel):
     """Timeline event."""
 
     id: str
+    kb_name: str = ""
     date: str
     title: str
     importance: int

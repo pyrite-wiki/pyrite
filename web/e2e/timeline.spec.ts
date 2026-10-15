@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-import { SEEDED_EVENTS } from './fixtures';
+import { E2E_KB, SEEDED_EVENTS } from './fixtures';
 
 test.describe('Timeline Page', () => {
 	test('loads and shows timeline heading', async ({ page }) => {
@@ -27,7 +27,7 @@ test.describe('Timeline Page', () => {
 		await expect(page.getByText(`${SEEDED_EVENTS.length} events`)).toBeVisible();
 
 		for (const event of SEEDED_EVENTS) {
-			const link = page.locator(`a[href="/entries/${event.id}"]`);
+			const link = page.locator(`a[href="/entries/${event.id}?kb=${E2E_KB}"]`);
 			await expect(link).toBeVisible();
 			await expect(link).toContainText(event.title);
 			await expect(link).toContainText(event.date);
@@ -46,9 +46,9 @@ test.describe('Timeline Page', () => {
 		await page.getByRole('button', { name: 'Apply' }).click();
 
 		await expect(page.getByText('1 events')).toBeVisible();
-		await expect(page.locator('a[href="/entries/e2e-event-second-signal"]')).toBeVisible();
-		await expect(page.locator('a[href="/entries/e2e-event-first-light"]')).toHaveCount(0);
-		await expect(page.locator('a[href="/entries/e2e-event-third-pass"]')).toHaveCount(0);
+		await expect(page.locator(`a[href="/entries/e2e-event-second-signal?kb=${E2E_KB}"]`)).toBeVisible();
+		await expect(page.locator(`a[href="/entries/e2e-event-first-light?kb=${E2E_KB}"]`)).toHaveCount(0);
+		await expect(page.locator(`a[href="/entries/e2e-event-third-pass?kb=${E2E_KB}"]`)).toHaveCount(0);
 	});
 
 	test('date filter with no matches shows the empty state', async ({ page }) => {

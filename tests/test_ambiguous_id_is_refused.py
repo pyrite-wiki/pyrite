@@ -337,6 +337,7 @@ ID_PATH_PARAMS = ("{entry_id}", "{collection_id}", "{task_id}")
 
 #: Every REST route that takes an id and a `kb`, driven with a blank `kb`.
 REST_CASES = {
+    ("GET", "/api/entries/{entry_id}"): f"/api/entries/{DUPLICATE}?kb=",
     ("GET", "/api/entries/{entry_id}/blocks"): f"/api/entries/{DUPLICATE}/blocks?kb=",
     ("GET", "/api/collections/{collection_id}"): f"/api/collections/{DUP_COLLECTION}?kb=",
     ("GET", "/api/collections/{collection_id}/entries"): (
@@ -348,8 +349,6 @@ _NAMED_ONLY = (
     "the answer is a miss, never a pick (test_rest_named_kb_routes_never_pick_for_a_blank_kb)"
 )
 REST_EXCLUDED = {
-    ("GET", "/api/entries/{entry_id}"): "first readable match kept for web links without "
-    "?kb= (#528 groom's decision, #910; test_rest_get_without_kb_remains_compatible_for_web)",
     ("DELETE", "/api/entries/{entry_id}"): "kb required and checked by the write guard "
     "(requires_kb_tier on the named KB); deletes only in that KB",
     ("DELETE", "/api/starred/{entry_id}"): "removes the caller's own star rows; resolves no entry",
@@ -497,13 +496,15 @@ def test_rest_ai_route_refuses_an_ambiguous_id_with_a_blank_kb(world, ai_writer,
     assert PRIVATE not in response.text
 
 
-@pytest.mark.control(
-    reason="REST GET without kb keeps its existing first readable match for web links"
-)
-def test_rest_get_without_kb_remains_compatible_for_web(world):
+def test_rest_get_without_kb_refuses_an_ambiguous_id(world):
+    """The web client's entry page sends no `kb` only for an id it could not
+    place; REST answers it as CLI and MCP do, never from the first KB (#910)."""
     result = _rest(world, "GET", f"/api/entries/{DUPLICATE}")
-    assert result.status_code == 200
-    assert result.json()["kb_name"] == READABLE
+    assert result.status_code == 409, result.text
+    detail = result.json()["detail"]
+    assert detail["code"] == "AMBIGUOUS"
+    assert detail["candidate_kbs"] == SCOPED
+    assert PRIVATE not in result.text
 
 
 # ---------------------------------------------------------------------------

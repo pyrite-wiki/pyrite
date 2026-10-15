@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { entryHref } from '$lib/utils/entry-href';
 	import TagBadge from '$lib/components/common/TagBadge.svelte';
 	import type { EntryResponse } from '$lib/api/types';
 	import { isSafeLinkUrl } from '$lib/utils/safe-url';
@@ -97,7 +98,7 @@
 			<div class="mt-1 space-y-0.5">
 				{#each entry.outlinks as link}
 					<a
-						href="/entries/{link.id || link.target_id}"
+						href={entryHref(String(link.id || link.target_id), (link.kb_name || link.target_kb) as string | undefined)}
 						class="block rounded px-2 py-0.5 text-xs text-blue-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
 					>
 						{link.title || link.id || link.target_id}

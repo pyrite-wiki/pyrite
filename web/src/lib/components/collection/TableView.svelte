@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { entryHref } from '$lib/utils/entry-href';
 	import TagBadge from '$lib/components/common/TagBadge.svelte';
 	import type { EntryResponse } from '$lib/api/types';
 	import { goto } from '$app/navigation';
@@ -70,7 +71,7 @@
 			{#each entries as entry}
 				<tr
 					class="cursor-pointer border-b border-zinc-100 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800/50"
-					onclick={() => goto(`/entries/${entry.id}`)}
+					onclick={() => goto(entryHref(entry.id, entry.kb_name))}
 				>
 					{#each columns as col}
 						<td class="px-3 py-2">

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { entryHref } from '$lib/utils/entry-href';
 	import { aiChatStore } from '$lib/stores/ai.svelte';
 	import { uiStore } from '$lib/stores/ui.svelte';
 	import { tick } from 'svelte';
@@ -108,7 +109,7 @@
 					<div class="space-y-1">
 						{#each aiChatStore.sources as src}
 							<a
-								href="/entries/{src.id}"
+								href={entryHref(src.id, src.kb_name)}
 								class="block rounded border border-zinc-200 px-2 py-1.5 text-xs hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
 							>
 								<span class="font-medium text-blue-600 dark:text-blue-400">{src.title}</span>

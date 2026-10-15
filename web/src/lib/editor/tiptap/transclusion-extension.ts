@@ -15,6 +15,7 @@ import {
 	incrementDepth,
 	CIRCULAR_REF_MESSAGE
 } from '$lib/editor/transclusion-utils';
+import { entryHref } from '$lib/utils/entry-href';
 
 export const Transclusion = Node.create({
 	name: 'transclusion',
@@ -228,7 +229,7 @@ export const Transclusion = Node.create({
 																				const nli = document.createElement('li');
 																				nli.style.cssText = 'margin: 0.1rem 0;';
 																				const nlink = document.createElement('a');
-																				nlink.href = `/entries/${encodeURIComponent(nestedEntry.id)}`;
+																				nlink.href = entryHref(nestedEntry.id, nestedEntry.kb_name);
 																				nlink.textContent = nestedEntry.title;
 																				nlink.style.cssText = 'color: #3b82f6; text-decoration: none;';
 																				nlink.addEventListener('click', (e) => { e.preventDefault(); window.location.href = nlink.href; });
@@ -250,7 +251,7 @@ export const Transclusion = Node.create({
 															});
 														} else {
 															const link = document.createElement('a');
-															link.href = `/entries/${encodeURIComponent(entry.id)}`;
+															link.href = entryHref(entry.id, entry.kb_name);
 															link.textContent = entry.title;
 															link.style.cssText = 'color: #3b82f6; text-decoration: none;';
 															link.addEventListener('mouseenter', () => { link.style.textDecoration = 'underline'; });
@@ -309,7 +310,7 @@ export const Transclusion = Node.create({
 																				const nli = document.createElement('li');
 																				nli.style.cssText = 'margin: 0.1rem 0;';
 																				const nlink = document.createElement('a');
-																				nlink.href = `/entries/${encodeURIComponent(nestedEntry.id)}`;
+																				nlink.href = entryHref(nestedEntry.id, nestedEntry.kb_name);
 																				nlink.textContent = nestedEntry.title;
 																				nlink.style.cssText = 'color: #3b82f6; text-decoration: none;';
 																				nlink.addEventListener('click', (e) => { e.preventDefault(); window.location.href = nlink.href; });
@@ -331,7 +332,7 @@ export const Transclusion = Node.create({
 															});
 														} else {
 															const link = document.createElement('a');
-															link.href = `/entries/${encodeURIComponent(entry.id)}`;
+															link.href = entryHref(entry.id, entry.kb_name);
 															link.textContent = entry.title;
 															link.style.cssText = 'color: #3b82f6; text-decoration: none;';
 															link.addEventListener('mouseenter', () => { link.style.textDecoration = 'underline'; });

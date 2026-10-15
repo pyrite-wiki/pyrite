@@ -657,15 +657,11 @@ class KBService:
         kb_name: str | None = None,
         *,
         readable_kbs: set[str] | None,
-        legacy_first_match: bool = False,
     ) -> dict[str, Any] | None:
         """
         Get entry by ID, with its outlinks and backlinks.
 
         If kb_name is omitted, searches readable KBs and refuses duplicate IDs.
-        ``legacy_first_match`` is for REST GET without ``kb`` until its web
-        links consistently carry KB names; it preserves the old first-hit read
-        (#910 removes it).
 
         ``readable_kbs`` is the caller's ``ReadScope`` set (``None``:
         unscoped). With it, a lookup without a KB walks only readable KBs,
@@ -709,9 +705,6 @@ class KBService:
             for name in readable:
                 result = self._read_entry(entry_id, name, unindexed=unindexed)
                 if result:
-                    if legacy_first_match:
-                        self._attach_links(result, entry_id, name, readable_kbs)
-                        return result
                     matches.append((name, result))
             if len(matches) > 1:
                 raise AmbiguousEntryError(entry_id, [name for name, _ in matches])

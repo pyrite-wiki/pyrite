@@ -103,7 +103,7 @@ test.describe('Entries Page', () => {
 	test('shows the seeded people, events, and notes by their known ids', async ({ page }) => {
 		await page.goto('/entries');
 		for (const entry of [...SEEDED_PEOPLE, ...SEEDED_EVENTS, ...SEEDED_NOTES]) {
-			await expect(page.locator(`a[href="/entries/${entry.id}"]`)).toBeVisible();
+			await expect(page.locator(`a[href="/entries/${entry.id}?kb=${E2E_KB}"]`)).toBeVisible();
 		}
 	});
 

@@ -75,9 +75,10 @@ every refusal from a prompt or resource, `KB_NOT_FOUND` included; a KB in
 `pyrite://kbs/<kb>/entries/<id>` that does not exist answers `KB_NOT_FOUND`,
 as one the caller cannot read does.
 
-**Not yet:** REST `GET /api/entries/{id}` without `kb` still answers the first
-readable match, because web entry links can omit `?kb=` (#528's groom;
-#910). A REST caller that needs an unambiguous answer passes `kb`. Extension commands and tools that look ids up through
+REST `GET /api/entries/{id}` without `kb` is refused the same way (`409`,
+`candidate_kbs` in `detail`); the web client's entry links carry `?kb=` (#910).
+
+**Not yet:** extension commands and tools that look ids up through
 their own queries (`sw`, `wiki`, `social vote`, `investigation_*`) and bare
 `[[id]]` resolution (`/api/entries/resolve`) are not covered either (#911).
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { entryHref } from '$lib/utils/entry-href';
 	import { api } from '$lib/api/client';
 	import { uiStore } from '$lib/stores/ui.svelte';
 	import { aiChatStore } from '$lib/stores/ai.svelte';
@@ -202,7 +203,7 @@
 						{#each linkSuggestions as link}
 							<div class="flex items-center gap-2 text-sm">
 								<a
-									href="/entries/{link.target_id}"
+									href={entryHref(link.target_id, link.target_kb)}
 									class="font-medium text-blue-600 hover:underline dark:text-blue-400"
 								>
 									{link.target_title || link.target_id}
