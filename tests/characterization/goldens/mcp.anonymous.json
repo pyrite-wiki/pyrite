@@ -1,10 +1,11 @@
 {
   "investigation_bulk_edges | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_bulk_edges | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -12,11 +13,12 @@
     "retryable": false
   },
   "investigation_bulk_edges | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_bulk_edges | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -24,11 +26,12 @@
     "retryable": false
   },
   "investigation_claims | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_claims | anonymous | no-default-role-kb": {
     "claims": [],
@@ -36,11 +39,12 @@
     "summary": "<ENUMERATION_CONTENT>"
   },
   "investigation_claims | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_claims | anonymous | readable-kb": {
     "claims": [],
@@ -48,11 +52,12 @@
     "summary": "<ENUMERATION_CONTENT>"
   },
   "investigation_create_claim | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_create_claim | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -60,11 +65,12 @@
     "retryable": false
   },
   "investigation_create_claim | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_create_claim | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -72,11 +78,12 @@
     "retryable": false
   },
   "investigation_create_entity | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_create_entity | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -84,11 +91,12 @@
     "retryable": false
   },
   "investigation_create_entity | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_create_entity | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -96,11 +104,12 @@
     "retryable": false
   },
   "investigation_create_event | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_create_event | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -108,11 +117,12 @@
     "retryable": false
   },
   "investigation_create_event | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_create_event | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -120,11 +130,12 @@
     "retryable": false
   },
   "investigation_entities | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_entities | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -132,11 +143,12 @@
     "summary": "<ENUMERATION_CONTENT>"
   },
   "investigation_entities | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_entities | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -144,93 +156,102 @@
     "summary": "<ENUMERATION_CONTENT>"
   },
   "investigation_evidence_chain | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_evidence_chain | anonymous | no-default-role-kb": {
     "error": "Claim 'characterization-placeholder-id-investigation_evidence_chain-anonymous-no-default-role-kb' not found"
   },
   "investigation_evidence_chain | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_evidence_chain | anonymous | readable-kb": {
     "error": "Claim 'characterization-placeholder-id-investigation_evidence_chain-anonymous-readable-kb' not found"
   },
   "investigation_export_pack | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_export_pack | anonymous | no-default-role-kb": {
     "content": "<ENUMERATION_CONTENT>",
     "format": "json"
   },
   "investigation_export_pack | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_export_pack | anonymous | readable-kb": {
     "content": "<ENUMERATION_CONTENT>",
     "format": "json"
   },
   "investigation_find_duplicates | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_find_duplicates | anonymous | no-default-role-kb": {
     "duplicates": []
   },
   "investigation_find_duplicates | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_find_duplicates | anonymous | readable-kb": {
     "duplicates": []
   },
   "investigation_ftm_export | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_ftm_export | anonymous | no-default-role-kb": {
     "entities": []
   },
   "investigation_ftm_export | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_ftm_export | anonymous | readable-kb": {
     "entities": []
   },
   "investigation_ftm_import | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_ftm_import | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -238,11 +259,12 @@
     "retryable": false
   },
   "investigation_ftm_import | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_ftm_import | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -250,11 +272,12 @@
     "retryable": false
   },
   "investigation_log_source | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_log_source | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -262,11 +285,12 @@
     "retryable": false
   },
   "investigation_log_source | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_log_source | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -274,11 +298,12 @@
     "retryable": false
   },
   "investigation_money_flow | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_money_flow | anonymous | no-default-role-kb": {
     "circular_flows": [],
@@ -291,11 +316,12 @@
     "summary": "Traced both flows for No-default-role note; 0 flow path(s) found"
   },
   "investigation_money_flow | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_money_flow | anonymous | readable-kb": {
     "circular_flows": [],
@@ -308,11 +334,12 @@
     "summary": "Traced both flows for Readable note; 0 flow path(s) found"
   },
   "investigation_network | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_network | anonymous | no-default-role-kb": {
     "backlinks": [],
@@ -330,11 +357,12 @@
     "truncated": false
   },
   "investigation_network | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_network | anonymous | readable-kb": {
     "backlinks": [],
@@ -352,11 +380,12 @@
     "truncated": false
   },
   "investigation_ownership_chain | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_ownership_chain | anonymous | no-default-role-kb": {
     "beneficial_owners": [],
@@ -368,11 +397,12 @@
     "shell_indicators": []
   },
   "investigation_ownership_chain | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_ownership_chain | anonymous | readable-kb": {
     "beneficial_owners": [],
@@ -384,11 +414,12 @@
     "shell_indicators": []
   },
   "investigation_promote_claim | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_promote_claim | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -396,11 +427,12 @@
     "retryable": false
   },
   "investigation_promote_claim | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_promote_claim | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -408,11 +440,12 @@
     "retryable": false
   },
   "investigation_qa_report | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_qa_report | anonymous | no-default-role-kb": {
     "claims": "<ENUMERATION_CONTENT>",
@@ -421,11 +454,12 @@
     "warnings": []
   },
   "investigation_qa_report | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_qa_report | anonymous | readable-kb": {
     "claims": "<ENUMERATION_CONTENT>",
@@ -434,11 +468,12 @@
     "warnings": []
   },
   "investigation_search_all | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_search_all | anonymous | no-default-role-kb": {
     "groups": "<ENUMERATION_CONTENT>",
@@ -446,11 +481,12 @@
     "total_count": "<ENUMERATION_CONTENT>"
   },
   "investigation_search_all | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_search_all | anonymous | readable-kb": {
     "groups": "<ENUMERATION_CONTENT>",
@@ -458,11 +494,12 @@
     "total_count": "<ENUMERATION_CONTENT>"
   },
   "investigation_sources | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_sources | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -470,11 +507,12 @@
     "summary": "<ENUMERATION_CONTENT>"
   },
   "investigation_sources | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_sources | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -482,11 +520,12 @@
     "summary": "<ENUMERATION_CONTENT>"
   },
   "investigation_start | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_start | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -494,11 +533,12 @@
     "retryable": false
   },
   "investigation_start | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_start | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -506,11 +546,12 @@
     "retryable": false
   },
   "investigation_status | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_status | anonymous | no-default-role-kb": {
     "claim_breakdown": "<ENUMERATION_CONTENT>",
@@ -522,11 +563,12 @@
     "unverified_claims": []
   },
   "investigation_status | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_status | anonymous | readable-kb": {
     "claim_breakdown": "<ENUMERATION_CONTENT>",
@@ -538,11 +580,12 @@
     "unverified_claims": []
   },
   "investigation_timeline | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_timeline | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -550,11 +593,12 @@
     "summary": "<ENUMERATION_CONTENT>"
   },
   "investigation_timeline | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_timeline | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -562,11 +606,12 @@
     "summary": "<ENUMERATION_CONTENT>"
   },
   "kb_backlinks | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_backlinks | anonymous | no-default-role-kb": {
     "backlink_count": "<ENUMERATION_CONTENT>",
@@ -575,11 +620,12 @@
     "has_more": "<ENUMERATION_CONTENT>"
   },
   "kb_backlinks | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_backlinks | anonymous | readable-kb": {
     "backlink_count": "<ENUMERATION_CONTENT>",
@@ -680,11 +726,12 @@
     "not_found": []
   },
   "kb_batch_suggest | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_batch_suggest | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -693,11 +740,12 @@
     "target_kb": "no-default-role-kb"
   },
   "kb_batch_suggest | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_batch_suggest | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -706,11 +754,12 @@
     "target_kb": "readable-kb"
   },
   "kb_bulk_create | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_bulk_create | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -718,11 +767,12 @@
     "retryable": false
   },
   "kb_bulk_create | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_bulk_create | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -730,11 +780,12 @@
     "retryable": false
   },
   "kb_commit | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_commit | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -742,11 +793,12 @@
     "retryable": false
   },
   "kb_commit | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_commit | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -754,11 +806,12 @@
     "retryable": false
   },
   "kb_create | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_create | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -766,11 +819,12 @@
     "retryable": false
   },
   "kb_create | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_create | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -778,11 +832,12 @@
     "retryable": false
   },
   "kb_delete | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_delete | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -790,11 +845,12 @@
     "retryable": false
   },
   "kb_delete | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_delete | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -802,11 +858,12 @@
     "retryable": false
   },
   "kb_discover_neighbors | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_discover_neighbors | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -815,11 +872,12 @@
     "kb_name": "no-default-role-kb"
   },
   "kb_discover_neighbors | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_discover_neighbors | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -828,11 +886,12 @@
     "kb_name": "readable-kb"
   },
   "kb_find_by_assignee | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_find_by_assignee | anonymous | no-default-role-kb": {
     "assignee": "characterization-assignee",
@@ -840,11 +899,12 @@
     "entries": []
   },
   "kb_find_by_assignee | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_find_by_assignee | anonymous | readable-kb": {
     "assignee": "characterization-assignee",
@@ -852,11 +912,12 @@
     "entries": []
   },
   "kb_find_by_location | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_find_by_location | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -864,11 +925,12 @@
     "location": "characterization-location-kb_find_by_location-anonymous-no-default-role-kb"
   },
   "kb_find_by_location | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_find_by_location | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -876,11 +938,12 @@
     "location": "characterization-location-kb_find_by_location-anonymous-readable-kb"
   },
   "kb_find_by_status | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_find_by_status | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -888,11 +951,12 @@
     "status": "open"
   },
   "kb_find_by_status | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_find_by_status | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -900,33 +964,36 @@
     "status": "open"
   },
   "kb_find_overdue | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_find_overdue | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "entries": []
   },
   "kb_find_overdue | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_find_overdue | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "entries": []
   },
   "kb_get | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_get | anonymous | no-default-role-kb": {
     "entry": {
@@ -964,11 +1031,12 @@
     }
   },
   "kb_get | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_get | anonymous | readable-kb": {
     "entry": {
@@ -1006,11 +1074,12 @@
     }
   },
   "kb_index_sync | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_index_sync | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -1018,11 +1087,12 @@
     "retryable": false
   },
   "kb_index_sync | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_index_sync | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -1030,11 +1100,12 @@
     "retryable": false
   },
   "kb_link | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_link | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -1042,11 +1113,12 @@
     "retryable": false
   },
   "kb_link | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_link | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -1106,11 +1178,12 @@
     ]
   },
   "kb_list_entries | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_list_entries | anonymous | no-default-role-kb": {
     "entries": [
@@ -1125,11 +1198,12 @@
     "total": "<ENUMERATION_CONTENT>"
   },
   "kb_list_entries | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_list_entries | anonymous | readable-kb": {
     "entries": [
@@ -1144,11 +1218,12 @@
     "total": "<ENUMERATION_CONTENT>"
   },
   "kb_manage | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_manage | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -1156,11 +1231,12 @@
     "retryable": false
   },
   "kb_manage | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_manage | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -1168,11 +1244,12 @@
     "retryable": false
   },
   "kb_orient | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_orient | anonymous | no-default-role-kb": {
     "description": "",
@@ -1504,11 +1581,12 @@
     "types": "<ENUMERATION_CONTENT>"
   },
   "kb_orient | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_orient | anonymous | readable-kb": {
     "description": "",
@@ -1840,11 +1918,12 @@
     "types": "<ENUMERATION_CONTENT>"
   },
   "kb_push | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_push | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -1852,11 +1931,12 @@
     "retryable": false
   },
   "kb_push | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_push | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -1864,11 +1944,12 @@
     "retryable": false
   },
   "kb_qa_assess | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_qa_assess | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -1876,11 +1957,12 @@
     "retryable": false
   },
   "kb_qa_assess | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_qa_assess | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -1888,11 +1970,12 @@
     "retryable": false
   },
   "kb_qa_status | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_qa_status | anonymous | no-default-role-kb": {
     "coverage": "<ENUMERATION_CONTENT>",
@@ -1902,11 +1985,12 @@
     "total_issues": "<ENUMERATION_CONTENT>"
   },
   "kb_qa_status | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_qa_status | anonymous | readable-kb": {
     "coverage": "<ENUMERATION_CONTENT>",
@@ -1916,11 +2000,12 @@
     "total_issues": "<ENUMERATION_CONTENT>"
   },
   "kb_qa_validate | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_qa_validate | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -1928,11 +2013,12 @@
     "truncated": "<ENUMERATION_CONTENT>"
   },
   "kb_qa_validate | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_qa_validate | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -1940,11 +2026,12 @@
     "truncated": "<ENUMERATION_CONTENT>"
   },
   "kb_read_body | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_read_body | anonymous | no-default-role-kb": {
     "body": "a zebra of no fixed abode",
@@ -1954,11 +2041,12 @@
     "has_more": false
   },
   "kb_read_body | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_read_body | anonymous | readable-kb": {
     "body": "a zebra in the open",
@@ -1968,11 +2056,12 @@
     "has_more": false
   },
   "kb_recent | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_recent | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -1984,11 +2073,12 @@
     ]
   },
   "kb_recent | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_recent | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2000,11 +2090,12 @@
     ]
   },
   "kb_schema | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_schema | anonymous | no-default-role-kb": {
     "evaluation_rubric": [
@@ -2313,11 +2404,12 @@
     }
   },
   "kb_schema | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_schema | anonymous | readable-kb": {
     "evaluation_rubric": [
@@ -2626,11 +2718,12 @@
     }
   },
   "kb_search | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_search | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2650,11 +2743,12 @@
     ]
   },
   "kb_search | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_search | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2702,11 +2796,12 @@
     "type_counts": "<ENUMERATION_CONTENT>"
   },
   "kb_tags | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_tags | anonymous | no-default-role-kb": {
     "has_more": "<ENUMERATION_CONTENT>",
@@ -2714,11 +2809,12 @@
     "tags": []
   },
   "kb_tags | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_tags | anonymous | readable-kb": {
     "has_more": "<ENUMERATION_CONTENT>",
@@ -2746,11 +2842,12 @@
     "has_more": "<ENUMERATION_CONTENT>"
   },
   "kb_update | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_update | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -2758,11 +2855,12 @@
     "retryable": false
   },
   "kb_update | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_update | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2770,55 +2868,60 @@
     "retryable": false
   },
   "list_edge_types | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "list_edge_types | anonymous | no-default-role-kb": {
     "edge_types": [],
     "total": 0
   },
   "list_edge_types | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "list_edge_types | anonymous | readable-kb": {
     "edge_types": [],
     "total": 0
   },
   "social_newest | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "social_newest | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "newest": []
   },
   "social_newest | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "social_newest | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "newest": []
   },
   "social_post | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "social_post | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -2826,11 +2929,12 @@
     "retryable": false
   },
   "social_post | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "social_post | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2862,33 +2966,36 @@
     "user_id": "characterization-author"
   },
   "social_top | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "social_top | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "top": []
   },
   "social_top | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "social_top | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "top": []
   },
   "social_vote | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "social_vote | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -2896,11 +3003,12 @@
     "retryable": false
   },
   "social_vote | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "social_vote | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -2908,11 +3016,12 @@
     "retryable": false
   },
   "sw_adrs | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_adrs | anonymous | no-default-role-kb": {
     "adrs": [],
@@ -2923,11 +3032,12 @@
     "total": "<ENUMERATION_CONTENT>"
   },
   "sw_adrs | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_adrs | anonymous | readable-kb": {
     "adrs": [],
@@ -2938,11 +3048,12 @@
     "total": "<ENUMERATION_CONTENT>"
   },
   "sw_backlog | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_backlog | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2953,11 +3064,12 @@
     "total": "<ENUMERATION_CONTENT>"
   },
   "sw_backlog | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_backlog | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2968,11 +3080,12 @@
     "total": "<ENUMERATION_CONTENT>"
   },
   "sw_board | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_board | anonymous | no-default-role-kb": {
     "lanes": [
@@ -2995,11 +3108,12 @@
     "wip_policy": "warn"
   },
   "sw_board | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_board | anonymous | readable-kb": {
     "lanes": [
@@ -3022,31 +3136,34 @@
     "wip_policy": "warn"
   },
   "sw_check_ready | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_check_ready | anonymous | no-default-role-kb": {
     "error": "Backlog item 'characterization-placeholder-id-sw_check_ready-anonymous-no-default-role-kb' not found in KB 'no-default-role-kb'"
   },
   "sw_check_ready | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_check_ready | anonymous | readable-kb": {
     "error": "Backlog item 'characterization-placeholder-id-sw_check_ready-anonymous-readable-kb' not found in KB 'readable-kb'"
   },
   "sw_claim | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_claim | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -3054,11 +3171,12 @@
     "retryable": false
   },
   "sw_claim | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_claim | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -3066,11 +3184,12 @@
     "retryable": false
   },
   "sw_component | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_component | anonymous | no-default-role-kb": {
     "components": [],
@@ -3081,11 +3200,12 @@
     "total": "<ENUMERATION_CONTENT>"
   },
   "sw_component | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_component | anonymous | readable-kb": {
     "components": [],
@@ -3096,53 +3216,58 @@
     "total": "<ENUMERATION_CONTENT>"
   },
   "sw_context_for_item | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_context_for_item | anonymous | no-default-role-kb": {
     "error": "Entry 'characterization-placeholder-id-sw_context_for_item-anonymous-no-default-role-kb' not found in KB 'no-default-role-kb'"
   },
   "sw_context_for_item | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_context_for_item | anonymous | readable-kb": {
     "error": "Entry 'characterization-placeholder-id-sw_context_for_item-anonymous-readable-kb' not found in KB 'readable-kb'"
   },
   "sw_conventions | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_conventions | anonymous | no-default-role-kb": {
     "conventions": [],
     "count": 0
   },
   "sw_conventions | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_conventions | anonymous | readable-kb": {
     "conventions": [],
     "count": 0
   },
   "sw_create_adr | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_create_adr | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -3150,11 +3275,12 @@
     "retryable": false
   },
   "sw_create_adr | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_create_adr | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -3162,11 +3288,12 @@
     "retryable": false
   },
   "sw_create_backlog_item | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_create_backlog_item | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -3174,11 +3301,12 @@
     "retryable": false
   },
   "sw_create_backlog_item | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_create_backlog_item | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -3186,53 +3314,58 @@
     "retryable": false
   },
   "sw_epic_detail | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_epic_detail | anonymous | no-default-role-kb": {
     "error": "Epic 'characterization-placeholder-id-sw_epic_detail-anonymous-no-default-role-kb' not found in KB 'no-default-role-kb'"
   },
   "sw_epic_detail | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_epic_detail | anonymous | readable-kb": {
     "error": "Epic 'characterization-placeholder-id-sw_epic_detail-anonymous-readable-kb' not found in KB 'readable-kb'"
   },
   "sw_epics | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_epics | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "epics": []
   },
   "sw_epics | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_epics | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "epics": []
   },
   "sw_log | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_log | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -3240,11 +3373,12 @@
     "retryable": false
   },
   "sw_log | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_log | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -3252,33 +3386,36 @@
     "retryable": false
   },
   "sw_milestones | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_milestones | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "milestones": []
   },
   "sw_milestones | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_milestones | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "milestones": []
   },
   "sw_prioritize | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_prioritize | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -3286,11 +3423,12 @@
     "retryable": false
   },
   "sw_prioritize | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_prioritize | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -3298,11 +3436,12 @@
     "retryable": false
   },
   "sw_pull_next | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_pull_next | anonymous | no-default-role-kb": {
     "reason": "<ENUMERATION_CONTENT>",
@@ -3310,11 +3449,12 @@
     "wip_status": "<ENUMERATION_CONTENT>"
   },
   "sw_pull_next | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_pull_next | anonymous | readable-kb": {
     "reason": "<ENUMERATION_CONTENT>",
@@ -3322,33 +3462,36 @@
     "wip_status": "<ENUMERATION_CONTENT>"
   },
   "sw_refine | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_refine | anonymous | no-default-role-kb": {
     "items": [],
     "summary": "<ENUMERATION_CONTENT>"
   },
   "sw_refine | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_refine | anonymous | readable-kb": {
     "items": [],
     "summary": "<ENUMERATION_CONTENT>"
   },
   "sw_review | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_review | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -3356,11 +3499,12 @@
     "retryable": false
   },
   "sw_review | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_review | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -3368,11 +3512,12 @@
     "retryable": false
   },
   "sw_review_queue | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_review_queue | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -3381,11 +3526,12 @@
     "wip_limit": 3
   },
   "sw_review_queue | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_review_queue | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -3394,11 +3540,12 @@
     "wip_limit": 3
   },
   "sw_standards | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_standards | anonymous | no-default-role-kb": {
     "count": 0,
@@ -3409,11 +3556,12 @@
     "total": 0
   },
   "sw_standards | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_standards | anonymous | readable-kb": {
     "count": 0,
@@ -3424,11 +3572,12 @@
     "total": 0
   },
   "sw_submit | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_submit | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -3436,11 +3585,12 @@
     "retryable": false
   },
   "sw_submit | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_submit | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -3448,11 +3598,12 @@
     "retryable": false
   },
   "sw_transition | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_transition | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -3460,11 +3611,12 @@
     "retryable": false
   },
   "sw_transition | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_transition | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -3472,33 +3624,36 @@
     "retryable": false
   },
   "sw_validations | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_validations | anonymous | no-default-role-kb": {
     "count": 0,
     "validations": []
   },
   "sw_validations | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_validations | anonymous | readable-kb": {
     "count": 0,
     "validations": []
   },
   "task_ancestors | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_ancestors | anonymous | no-default-role-kb": {
     "error": "Task 'characterization-placeholder-id-task_ancestors-anonymous-no-default-role-kb' not found",
@@ -3506,11 +3661,12 @@
     "retryable": false
   },
   "task_ancestors | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_ancestors | anonymous | readable-kb": {
     "error": "Task 'characterization-placeholder-id-task_ancestors-anonymous-readable-kb' not found",
@@ -3518,11 +3674,12 @@
     "retryable": false
   },
   "task_blocked_by | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_blocked_by | anonymous | no-default-role-kb": {
     "error": "Task 'characterization-placeholder-id-task_blocked_by-anonymous-no-default-role-kb' not found",
@@ -3530,11 +3687,12 @@
     "retryable": false
   },
   "task_blocked_by | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_blocked_by | anonymous | readable-kb": {
     "error": "Task 'characterization-placeholder-id-task_blocked_by-anonymous-readable-kb' not found",
@@ -3542,11 +3700,12 @@
     "retryable": false
   },
   "task_checkpoint | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_checkpoint | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -3554,11 +3713,12 @@
     "retryable": false
   },
   "task_checkpoint | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_checkpoint | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -3566,11 +3726,12 @@
     "retryable": false
   },
   "task_claim | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_claim | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -3578,11 +3739,12 @@
     "retryable": false
   },
   "task_claim | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_claim | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -3590,11 +3752,12 @@
     "retryable": false
   },
   "task_create | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_create | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -3602,11 +3765,12 @@
     "retryable": false
   },
   "task_create | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_create | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -3614,11 +3778,12 @@
     "retryable": false
   },
   "task_critical_path | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_critical_path | anonymous | no-default-role-kb": {
     "error": "Task 'characterization-placeholder-id-task_critical_path-anonymous-no-default-role-kb' not found",
@@ -3626,11 +3791,12 @@
     "retryable": false
   },
   "task_critical_path | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_critical_path | anonymous | readable-kb": {
     "error": "Task 'characterization-placeholder-id-task_critical_path-anonymous-readable-kb' not found",
@@ -3638,11 +3804,12 @@
     "retryable": false
   },
   "task_decompose | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_decompose | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -3650,11 +3817,12 @@
     "retryable": false
   },
   "task_decompose | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_decompose | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -3662,33 +3830,36 @@
     "retryable": false
   },
   "task_list | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_list | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "tasks": []
   },
   "task_list | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_list | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "tasks": []
   },
   "task_status | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_status | anonymous | no-default-role-kb": {
     "error": "Task 'characterization-placeholder-id-task_status-anonymous-no-default-role-kb' not found",
@@ -3696,11 +3867,12 @@
     "retryable": false
   },
   "task_status | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_status | anonymous | readable-kb": {
     "error": "Task 'characterization-placeholder-id-task_status-anonymous-readable-kb' not found",
@@ -3708,11 +3880,12 @@
     "retryable": false
   },
   "task_subtree | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_subtree | anonymous | no-default-role-kb": {
     "error": "Task 'characterization-placeholder-id-task_subtree-anonymous-no-default-role-kb' not found",
@@ -3720,11 +3893,12 @@
     "retryable": false
   },
   "task_subtree | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_subtree | anonymous | readable-kb": {
     "error": "Task 'characterization-placeholder-id-task_subtree-anonymous-readable-kb' not found",
@@ -3732,11 +3906,12 @@
     "retryable": false
   },
   "task_update | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_update | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -3744,11 +3919,12 @@
     "retryable": false
   },
   "task_update | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_update | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -3756,11 +3932,12 @@
     "retryable": false
   },
   "wiki_assess_quality | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_assess_quality | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -3768,11 +3945,12 @@
     "retryable": false
   },
   "wiki_assess_quality | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_assess_quality | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -3780,11 +3958,12 @@
     "retryable": false
   },
   "wiki_protect | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_protect | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -3792,11 +3971,12 @@
     "retryable": false
   },
   "wiki_protect | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_protect | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -3804,11 +3984,12 @@
     "retryable": false
   },
   "wiki_quality_stats | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_quality_stats | anonymous | no-default-role-kb": {
     "quality_distribution": "<ENUMERATION_CONTENT>",
@@ -3817,11 +3998,12 @@
     "total_articles": "<ENUMERATION_CONTENT>"
   },
   "wiki_quality_stats | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_quality_stats | anonymous | readable-kb": {
     "quality_distribution": "<ENUMERATION_CONTENT>",
@@ -3830,55 +4012,60 @@
     "total_articles": "<ENUMERATION_CONTENT>"
   },
   "wiki_review_queue | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_review_queue | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "queue": []
   },
   "wiki_review_queue | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_review_queue | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "queue": []
   },
   "wiki_stubs | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_stubs | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "stubs": []
   },
   "wiki_stubs | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_stubs | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "stubs": []
   },
   "wiki_submit_review | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_submit_review | anonymous | no-default-role-kb": {
     "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
@@ -3886,11 +4073,12 @@
     "retryable": false
   },
   "wiki_submit_review | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_submit_review | anonymous | readable-kb": {
     "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
@@ -3898,11 +4086,12 @@
     "retryable": false
   },
   "zettel_graph | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "zettel_graph | anonymous | no-default-role-kb": {
     "backlinks": [],
@@ -3913,11 +4102,12 @@
     "outlinks": []
   },
   "zettel_graph | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "zettel_graph | anonymous | readable-kb": {
     "backlinks": [],
@@ -3928,22 +4118,24 @@
     "outlinks": []
   },
   "zettel_inbox | anonymous | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "zettel_inbox | anonymous | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "inbox": []
   },
   "zettel_inbox | anonymous | private-kb": {
+    "did_you_mean": [],
     "error": "KB 'private-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call kb_orient with no kb_name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "zettel_inbox | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",

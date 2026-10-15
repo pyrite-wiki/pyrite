@@ -1,19 +1,11 @@
 {
   "investigation_bulk_edges | admin_key | missing-kb": {
-    "created": 0,
-    "entries": [
-      {
-        "errors": [
-          "Invalid type 'characterization-placeholder'. Must be one of: funding, membership, ownership"
-        ],
-        "id": null,
-        "status": "error",
-        "title": null,
-        "type": "characterization-placeholder"
-      }
-    ],
-    "errors": 1,
-    "skipped": 0
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_bulk_edges | admin_key | no-default-role-kb": {
     "created": 0,
@@ -64,9 +56,12 @@
     "skipped": 0
   },
   "investigation_claims | admin_key | missing-kb": {
-    "claims": [],
-    "count": "<ENUMERATION_CONTENT>",
-    "summary": "<ENUMERATION_CONTENT>"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_claims | admin_key | no-default-role-kb": {
     "claims": [],
@@ -84,7 +79,12 @@
     "summary": "<ENUMERATION_CONTENT>"
   },
   "investigation_create_claim | admin_key | missing-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_create_claim | admin_key | no-default-role-kb": {
     "error": "No KB service available \u2014 write tools require a running server context"
@@ -96,7 +96,12 @@
     "error": "No KB service available \u2014 write tools require a running server context"
   },
   "investigation_create_entity | admin_key | missing-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_create_entity | admin_key | no-default-role-kb": {
     "error": "No KB service available \u2014 write tools require a running server context"
@@ -108,7 +113,12 @@
     "error": "No KB service available \u2014 write tools require a running server context"
   },
   "investigation_create_event | admin_key | missing-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_create_event | admin_key | no-default-role-kb": {
     "error": "No KB service available \u2014 write tools require a running server context"
@@ -120,9 +130,12 @@
     "error": "No KB service available \u2014 write tools require a running server context"
   },
   "investigation_entities | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "entities": [],
-    "summary": "<ENUMERATION_CONTENT>"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_entities | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -140,7 +153,12 @@
     "summary": "<ENUMERATION_CONTENT>"
   },
   "investigation_evidence_chain | admin_key | missing-kb": {
-    "error": "Claim 'characterization-placeholder-id-investigation_evidence_chain-admin_key-missing-kb' not found"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_evidence_chain | admin_key | no-default-role-kb": {
     "error": "Claim 'characterization-placeholder-id-investigation_evidence_chain-admin_key-no-default-role-kb' not found"
@@ -152,8 +170,12 @@
     "error": "Claim 'characterization-placeholder-id-investigation_evidence_chain-admin_key-readable-kb' not found"
   },
   "investigation_export_pack | admin_key | missing-kb": {
-    "content": "<ENUMERATION_CONTENT>",
-    "format": "json"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_export_pack | admin_key | no-default-role-kb": {
     "content": "<ENUMERATION_CONTENT>",
@@ -168,7 +190,12 @@
     "format": "json"
   },
   "investigation_find_duplicates | admin_key | missing-kb": {
-    "duplicates": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_find_duplicates | admin_key | no-default-role-kb": {
     "duplicates": []
@@ -180,7 +207,12 @@
     "duplicates": []
   },
   "investigation_ftm_export | admin_key | missing-kb": {
-    "entities": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_ftm_export | admin_key | no-default-role-kb": {
     "entities": []
@@ -192,12 +224,12 @@
     "entities": []
   },
   "investigation_ftm_import | admin_key | missing-kb": {
-    "entries": [],
-    "errors": 0,
-    "imported": 0,
-    "skipped": 0,
-    "unmapped": 1,
-    "unmapped_schemas": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_ftm_import | admin_key | no-default-role-kb": {
     "entries": [],
@@ -224,7 +256,12 @@
     "unmapped_schemas": []
   },
   "investigation_log_source | admin_key | missing-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_log_source | admin_key | no-default-role-kb": {
     "error": "No KB service available \u2014 write tools require a running server context"
@@ -236,14 +273,12 @@
     "error": "No KB service available \u2014 write tools require a running server context"
   },
   "investigation_money_flow | admin_key | missing-kb": {
-    "circular_flows": [],
-    "direction": "both",
-    "entity": {
-      "id": "characterization-missing-entry",
-      "title": "characterization-missing-entry"
-    },
-    "flows": [],
-    "summary": "Traced both flows for characterization-missing-entry; 0 flow path(s) found"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_money_flow | admin_key | no-default-role-kb": {
     "circular_flows": [],
@@ -276,7 +311,12 @@
     "summary": "Traced both flows for Readable note; 0 flow path(s) found"
   },
   "investigation_network | admin_key | missing-kb": {
-    "error": "Entry 'characterization-missing-entry' not found"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_network | admin_key | no-default-role-kb": {
     "backlinks": [],
@@ -324,13 +364,12 @@
     "truncated": false
   },
   "investigation_ownership_chain | admin_key | missing-kb": {
-    "beneficial_owners": [],
-    "chains": [],
-    "entity": {
-      "id": "characterization-missing-entry",
-      "title": "characterization-missing-entry"
-    },
-    "shell_indicators": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_ownership_chain | admin_key | no-default-role-kb": {
     "beneficial_owners": [],
@@ -360,7 +399,12 @@
     "shell_indicators": []
   },
   "investigation_promote_claim | admin_key | missing-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_promote_claim | admin_key | no-default-role-kb": {
     "error": "No KB service available \u2014 write tools require a running server context"
@@ -372,10 +416,12 @@
     "error": "No KB service available \u2014 write tools require a running server context"
   },
   "investigation_qa_report | admin_key | missing-kb": {
-    "claims": "<ENUMERATION_CONTENT>",
-    "quality_score": "<ENUMERATION_CONTENT>",
-    "source_tiers": "<ENUMERATION_CONTENT>",
-    "warnings": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_qa_report | admin_key | no-default-role-kb": {
     "claims": "<ENUMERATION_CONTENT>",
@@ -396,9 +442,12 @@
     "warnings": []
   },
   "investigation_search_all | admin_key | missing-kb": {
-    "groups": [],
-    "query": "zebra",
-    "total_count": "<ENUMERATION_CONTENT>"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_search_all | admin_key | no-default-role-kb": {
     "groups": "<ENUMERATION_CONTENT>",
@@ -416,9 +465,12 @@
     "total_count": "<ENUMERATION_CONTENT>"
   },
   "investigation_sources | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "sources": [],
-    "summary": "<ENUMERATION_CONTENT>"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_sources | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -436,9 +488,12 @@
     "summary": "<ENUMERATION_CONTENT>"
   },
   "investigation_start | admin_key | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "suggestion": "Pass kb_name, or create an investigation KB first"
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_start | admin_key | no-default-role-kb": {
     "created": "characterization-title-investigation-start-admin-key-no-default-role-kb",
@@ -453,13 +508,12 @@
     "title": "characterization-title-investigation_start-admin_key-readable-kb"
   },
   "investigation_status | admin_key | missing-kb": {
-    "claim_breakdown": "<ENUMERATION_CONTENT>",
-    "claim_count": "<ENUMERATION_CONTENT>",
-    "entity_count": "<ENUMERATION_CONTENT>",
-    "event_count": "<ENUMERATION_CONTENT>",
-    "source_count": "<ENUMERATION_CONTENT>",
-    "summary": "<ENUMERATION_CONTENT>",
-    "unverified_claims": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_status | admin_key | no-default-role-kb": {
     "claim_breakdown": "<ENUMERATION_CONTENT>",
@@ -489,9 +543,12 @@
     "unverified_claims": []
   },
   "investigation_timeline | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "events": [],
-    "summary": "<ENUMERATION_CONTENT>"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_timeline | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -509,10 +566,12 @@
     "summary": "<ENUMERATION_CONTENT>"
   },
   "kb_backlinks | admin_key | missing-kb": {
-    "backlink_count": "<ENUMERATION_CONTENT>",
-    "backlinks": [],
-    "entry_id": "characterization-missing-entry",
-    "has_more": "<ENUMERATION_CONTENT>"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_backlinks | admin_key | no-default-role-kb": {
     "backlink_count": "<ENUMERATION_CONTENT>",
@@ -651,10 +710,12 @@
     "not_found": []
   },
   "kb_batch_suggest | admin_key | missing-kb": {
-    "error": "KB not found: missing-kb",
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
-    "retryable": false
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_batch_suggest | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -675,9 +736,12 @@
     "target_kb": "readable-kb"
   },
   "kb_bulk_create | admin_key | missing-kb": {
-    "error": "KB not found: missing-kb",
-    "error_code": "BULK_CREATE_FAILED",
-    "retryable": true
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_bulk_create | admin_key | no-default-role-kb": {
     "created": 0,
@@ -716,9 +780,12 @@
     "total": 1
   },
   "kb_commit | admin_key | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
-    "error_code": "OPERATION_FAILED",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_commit | admin_key | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' is not in a git repository",
@@ -736,10 +803,12 @@
     "retryable": false
   },
   "kb_create | admin_key | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Use kb_list to see available KBs"
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_create | admin_key | no-default-role-kb": {
     "created": true,
@@ -757,9 +826,12 @@
     "file_path": "<TMPDIR>/readable-kb/characterization-title-kb-create-admin-key-readable-kb.md"
   },
   "kb_delete | admin_key | missing-kb": {
-    "error": "KB not found: missing-kb",
-    "error_code": "DELETE_FAILED",
-    "retryable": true
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_delete | admin_key | no-default-role-kb": {
     "deleted": true,
@@ -774,10 +846,12 @@
     "entry_id": "characterization-disposable-mutation-target"
   },
   "kb_discover_neighbors | admin_key | missing-kb": {
-    "error": "KB not found: missing-kb",
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
-    "retryable": false
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_discover_neighbors | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -798,9 +872,12 @@
     "kb_name": "readable-kb"
   },
   "kb_find_by_assignee | admin_key | missing-kb": {
-    "assignee": "characterization-assignee",
-    "count": "<ENUMERATION_CONTENT>",
-    "entries": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_find_by_assignee | admin_key | no-default-role-kb": {
     "assignee": "characterization-assignee",
@@ -818,9 +895,12 @@
     "entries": []
   },
   "kb_find_by_location | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "entries": [],
-    "location": "characterization-location-kb_find_by_location-admin_key-missing-kb"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_find_by_location | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -838,9 +918,12 @@
     "location": "characterization-location-kb_find_by_location-admin_key-readable-kb"
   },
   "kb_find_by_status | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "entries": [],
-    "status": "open"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_find_by_status | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -858,8 +941,12 @@
     "status": "open"
   },
   "kb_find_overdue | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "entries": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_find_overdue | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -874,10 +961,12 @@
     "entries": []
   },
   "kb_get | admin_key | missing-kb": {
-    "error": "Entry 'characterization-missing-entry' not found",
-    "error_code": "NOT_FOUND",
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Use kb_list_entries or kb_search to find entries"
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_get | admin_key | no-default-role-kb": {
     "entry": {
@@ -985,11 +1074,12 @@
     }
   },
   "kb_index_sync | admin_key | missing-kb": {
-    "added": "<ENUMERATION_CONTENT>",
-    "removed": "<ENUMERATION_CONTENT>",
-    "skipped": [],
-    "synced": "<ENUMERATION_CONTENT>",
-    "updated": "<ENUMERATION_CONTENT>"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_index_sync | admin_key | no-default-role-kb": {
     "added": "<ENUMERATION_CONTENT>",
@@ -1013,9 +1103,12 @@
     "updated": "<ENUMERATION_CONTENT>"
   },
   "kb_link | admin_key | missing-kb": {
-    "error": "KB not found: missing-kb",
-    "error_code": "LINK_FAILED",
-    "retryable": false
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_link | admin_key | no-default-role-kb": {
     "error": "Entry not found: characterization-placeholder-id-kb_link-admin_key-no-default-role-kb",
@@ -1097,11 +1190,12 @@
     ]
   },
   "kb_list_entries | admin_key | missing-kb": {
-    "entries": [],
-    "has_more": "<ENUMERATION_CONTENT>",
-    "limit": 50,
-    "offset": 0,
-    "total": "<ENUMERATION_CONTENT>"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_list_entries | admin_key | no-default-role-kb": {
     "entries": [
@@ -1140,9 +1234,12 @@
     "total": "<ENUMERATION_CONTENT>"
   },
   "kb_manage | admin_key | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_manage | admin_key | no-default-role-kb": {
     "types": [],
@@ -1160,9 +1257,9 @@
     "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
-    "legacy_error_code": "OPERATION_FAILED",
+    "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Call orient with no KB name to list the KBs you can read."
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_orient | admin_key | no-default-role-kb": {
     "description": "",
@@ -2152,9 +2249,12 @@
     "types": "<ENUMERATION_CONTENT>"
   },
   "kb_push | admin_key | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
-    "error_code": "OPERATION_FAILED",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_push | admin_key | no-default-role-kb": {
     "error": "KB 'no-default-role-kb' is not in a git repository",
@@ -2172,12 +2272,12 @@
     "retryable": false
   },
   "kb_qa_assess | admin_key | missing-kb": {
-    "assessed": "<ENUMERATION_CONTENT>",
-    "failed": [],
-    "kb_name": "missing-kb",
-    "results": [],
-    "skipped": "<ENUMERATION_CONTENT>",
-    "tasks_failed": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_qa_assess | admin_key | no-default-role-kb": {
     "assessed": "<ENUMERATION_CONTENT>",
@@ -2204,11 +2304,12 @@
     "tasks_failed": []
   },
   "kb_qa_status | admin_key | missing-kb": {
-    "coverage": "<ENUMERATION_CONTENT>",
-    "issues_by_rule": "<ENUMERATION_CONTENT>",
-    "issues_by_severity": "<ENUMERATION_CONTENT>",
-    "total_entries": "<ENUMERATION_CONTENT>",
-    "total_issues": "<ENUMERATION_CONTENT>"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_qa_status | admin_key | no-default-role-kb": {
     "coverage": "<ENUMERATION_CONTENT>",
@@ -2232,9 +2333,12 @@
     "total_issues": "<ENUMERATION_CONTENT>"
   },
   "kb_qa_validate | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "issues": [],
-    "truncated": "<ENUMERATION_CONTENT>"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_qa_validate | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2252,10 +2356,12 @@
     "truncated": "<ENUMERATION_CONTENT>"
   },
   "kb_read_body | admin_key | missing-kb": {
-    "error": "Entry 'characterization-missing-entry' not found",
-    "error_code": "NOT_FOUND",
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
     "retryable": false,
-    "suggestion": "Use kb_list_entries or kb_search to find entries"
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_read_body | admin_key | no-default-role-kb": {
     "body": "a zebra of no fixed abode",
@@ -2279,8 +2385,12 @@
     "has_more": false
   },
   "kb_recent | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "entries": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_recent | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2310,9 +2420,12 @@
     ]
   },
   "kb_schema | admin_key | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_schema | admin_key | no-default-role-kb": {
     "evaluation_rubric": [
@@ -3233,16 +3346,12 @@
     }
   },
   "kb_search | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "has_more": "<ENUMERATION_CONTENT>",
-    "keyword_match": "none",
-    "legs_run": [
-      "keyword"
-    ],
-    "match": "none",
-    "match_basis": "keyword: nothing matched",
-    "query": "zebra",
-    "results": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_search | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -3324,9 +3433,12 @@
     "type_counts": "<ENUMERATION_CONTENT>"
   },
   "kb_tags | admin_key | missing-kb": {
-    "has_more": "<ENUMERATION_CONTENT>",
-    "tag_count": "<ENUMERATION_CONTENT>",
-    "tags": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_tags | admin_key | no-default-role-kb": {
     "has_more": "<ENUMERATION_CONTENT>",
@@ -3364,9 +3476,12 @@
     "has_more": "<ENUMERATION_CONTENT>"
   },
   "kb_update | admin_key | missing-kb": {
-    "error": "KB not found: missing-kb",
-    "error_code": "UPDATE_FAILED",
-    "retryable": true
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_update | admin_key | no-default-role-kb": {
     "entry_id": "characterization-disposable-mutation-target",
@@ -3384,8 +3499,12 @@
     "updated": true
   },
   "list_edge_types | admin_key | missing-kb": {
-    "edge_types": [],
-    "total": 0
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "list_edge_types | admin_key | no-default-role-kb": {
     "edge_types": [],
@@ -3400,8 +3519,12 @@
     "total": 0
   },
   "social_newest | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "newest": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "social_newest | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -3416,8 +3539,12 @@
     "newest": []
   },
   "social_post | admin_key | missing-kb": {
+    "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
-    "error_code": "KB_NOT_FOUND"
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "social_post | admin_key | no-default-role-kb": {
     "created": true,
@@ -3459,8 +3586,12 @@
     "user_id": "characterization-author"
   },
   "social_top | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "top": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "social_top | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -3475,9 +3606,12 @@
     "top": []
   },
   "social_vote | admin_key | missing-kb": {
-    "entry_id": "characterization-missing-entry",
-    "value": "characterization-value",
-    "voted": true
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "social_vote | admin_key | no-default-role-kb": {
     "entry_id": "characterization-disposable-mutation-target",
@@ -3495,12 +3629,12 @@
     "voted": true
   },
   "sw_adrs | admin_key | missing-kb": {
-    "adrs": [],
-    "count": "<ENUMERATION_CONTENT>",
-    "has_more": "<ENUMERATION_CONTENT>",
-    "limit": 50,
-    "offset": 0,
-    "total": "<ENUMERATION_CONTENT>"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_adrs | admin_key | no-default-role-kb": {
     "adrs": [],
@@ -3527,12 +3661,12 @@
     "total": "<ENUMERATION_CONTENT>"
   },
   "sw_backlog | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "has_more": "<ENUMERATION_CONTENT>",
-    "items": [],
-    "limit": 50,
-    "offset": 0,
-    "total": "<ENUMERATION_CONTENT>"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_backlog | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -3559,24 +3693,12 @@
     "total": "<ENUMERATION_CONTENT>"
   },
   "sw_board | admin_key | missing-kb": {
-    "lanes": [
-      {
-        "name": "Backlog"
-      },
-      {
-        "name": "Done"
-      },
-      {
-        "name": "In Progress"
-      },
-      {
-        "name": "Ready"
-      },
-      {
-        "name": "Review"
-      }
-    ],
-    "wip_policy": "warn"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_board | admin_key | no-default-role-kb": {
     "lanes": [
@@ -3639,7 +3761,12 @@
     "wip_policy": "warn"
   },
   "sw_check_ready | admin_key | missing-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_check_ready-admin_key-missing-kb' not found in KB 'missing-kb'"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_check_ready | admin_key | no-default-role-kb": {
     "error": "Backlog item 'characterization-placeholder-id-sw_check_ready-admin_key-no-default-role-kb' not found in KB 'no-default-role-kb'"
@@ -3651,8 +3778,12 @@
     "error": "Backlog item 'characterization-placeholder-id-sw_check_ready-admin_key-readable-kb' not found in KB 'readable-kb'"
   },
   "sw_claim | admin_key | missing-kb": {
-    "claimed": false,
-    "error": "Backlog item 'characterization-placeholder-id-sw_claim-admin_key-missing-kb' not found in KB 'missing-kb'"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_claim | admin_key | no-default-role-kb": {
     "claimed": false,
@@ -3667,12 +3798,12 @@
     "error": "Backlog item 'characterization-placeholder-id-sw_claim-admin_key-readable-kb' not found in KB 'readable-kb'"
   },
   "sw_component | admin_key | missing-kb": {
-    "components": [],
-    "count": "<ENUMERATION_CONTENT>",
-    "has_more": "<ENUMERATION_CONTENT>",
-    "limit": 50,
-    "offset": 0,
-    "total": "<ENUMERATION_CONTENT>"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_component | admin_key | no-default-role-kb": {
     "components": [],
@@ -3699,7 +3830,12 @@
     "total": "<ENUMERATION_CONTENT>"
   },
   "sw_context_for_item | admin_key | missing-kb": {
-    "error": "Entry 'characterization-placeholder-id-sw_context_for_item-admin_key-missing-kb' not found in KB 'missing-kb'"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_context_for_item | admin_key | no-default-role-kb": {
     "error": "Entry 'characterization-placeholder-id-sw_context_for_item-admin_key-no-default-role-kb' not found in KB 'no-default-role-kb'"
@@ -3711,8 +3847,12 @@
     "error": "Entry 'characterization-placeholder-id-sw_context_for_item-admin_key-readable-kb' not found in KB 'readable-kb'"
   },
   "sw_conventions | admin_key | missing-kb": {
-    "conventions": [],
-    "count": 0
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_conventions | admin_key | no-default-role-kb": {
     "conventions": [],
@@ -3727,14 +3867,12 @@
     "count": 0
   },
   "sw_create_adr | admin_key | missing-kb": {
-    "adr_number": 1,
-    "body": "## Context\n\nTODO\n\n## Decision\n\nTODO\n\n## Consequences\n\nTODO",
-    "created": true,
-    "deciders": [],
-    "filename": "adrs/0001-characterization-title-sw-create-adr-admin-key-missing-kb.md",
-    "note": "Create the markdown file with this frontmatter and body to complete.",
-    "status": "proposed",
-    "title": "characterization-title-sw_create_adr-admin_key-missing-kb"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_create_adr | admin_key | no-default-role-kb": {
     "adr_number": 1,
@@ -3767,23 +3905,47 @@
     "title": "characterization-title-sw_create_adr-admin_key-readable-kb"
   },
   "sw_create_backlog_item | admin_key | missing-kb": {
-    "created": false,
-    "error": "KB not found: missing-kb"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_create_backlog_item | admin_key | no-default-role-kb": {
-    "created": false,
-    "error": "KB not found: no-default-role-kb"
+    "created": true,
+    "effort": "",
+    "id": "characterization-title-sw-create-backlog-item-admin-key-no-default-role-kb",
+    "kind": "feature",
+    "priority": "medium",
+    "status": "proposed",
+    "title": "characterization-title-sw_create_backlog_item-admin_key-no-default-role-kb"
   },
   "sw_create_backlog_item | admin_key | private-kb": {
-    "created": false,
-    "error": "KB not found: private-kb"
+    "created": true,
+    "effort": "",
+    "id": "characterization-title-sw-create-backlog-item-admin-key-private-kb",
+    "kind": "feature",
+    "priority": "medium",
+    "status": "proposed",
+    "title": "characterization-title-sw_create_backlog_item-admin_key-private-kb"
   },
   "sw_create_backlog_item | admin_key | readable-kb": {
-    "created": false,
-    "error": "KB not found: readable-kb"
+    "created": true,
+    "effort": "",
+    "id": "characterization-title-sw-create-backlog-item-admin-key-readable-kb",
+    "kind": "feature",
+    "priority": "medium",
+    "status": "proposed",
+    "title": "characterization-title-sw_create_backlog_item-admin_key-readable-kb"
   },
   "sw_epic_detail | admin_key | missing-kb": {
-    "error": "Epic 'characterization-placeholder-id-sw_epic_detail-admin_key-missing-kb' not found in KB 'missing-kb'"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_epic_detail | admin_key | no-default-role-kb": {
     "error": "Epic 'characterization-placeholder-id-sw_epic_detail-admin_key-no-default-role-kb' not found in KB 'no-default-role-kb'"
@@ -3795,8 +3957,12 @@
     "error": "Epic 'characterization-placeholder-id-sw_epic_detail-admin_key-readable-kb' not found in KB 'readable-kb'"
   },
   "sw_epics | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "epics": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_epics | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -3811,8 +3977,12 @@
     "epics": []
   },
   "sw_log | admin_key | missing-kb": {
-    "created": false,
-    "error": "Backlog item 'characterization-placeholder-id-sw_log-admin_key-missing-kb' not found in KB 'missing-kb'"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_log | admin_key | no-default-role-kb": {
     "created": false,
@@ -3827,8 +3997,12 @@
     "error": "Backlog item 'characterization-placeholder-id-sw_log-admin_key-readable-kb' not found in KB 'readable-kb'"
   },
   "sw_milestones | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "milestones": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_milestones | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -3843,7 +4017,12 @@
     "milestones": []
   },
   "sw_prioritize | admin_key | missing-kb": {
-    "error": "Provide either item_ids (batch) or item_id with after/before"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_prioritize | admin_key | no-default-role-kb": {
     "error": "Provide either item_ids (batch) or item_id with after/before"
@@ -3855,9 +4034,12 @@
     "error": "Provide either item_ids (batch) or item_id with after/before"
   },
   "sw_pull_next | admin_key | missing-kb": {
-    "reason": "<ENUMERATION_CONTENT>",
-    "recommendation": "<ENUMERATION_CONTENT>",
-    "wip_status": "<ENUMERATION_CONTENT>"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_pull_next | admin_key | no-default-role-kb": {
     "reason": "<ENUMERATION_CONTENT>",
@@ -3875,8 +4057,12 @@
     "wip_status": "<ENUMERATION_CONTENT>"
   },
   "sw_refine | admin_key | missing-kb": {
-    "items": [],
-    "summary": "<ENUMERATION_CONTENT>"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_refine | admin_key | no-default-role-kb": {
     "items": [],
@@ -3891,8 +4077,12 @@
     "summary": "<ENUMERATION_CONTENT>"
   },
   "sw_review | admin_key | missing-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_review-admin_key-missing-kb' not found in KB 'missing-kb'",
-    "reviewed": false
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_review | admin_key | no-default-role-kb": {
     "error": "Backlog item 'characterization-placeholder-id-sw_review-admin_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
@@ -3907,10 +4097,12 @@
     "reviewed": false
   },
   "sw_review_queue | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "items": [],
-    "over_limit": "<ENUMERATION_CONTENT>",
-    "wip_limit": 3
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_review_queue | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -3931,12 +4123,12 @@
     "wip_limit": 3
   },
   "sw_standards | admin_key | missing-kb": {
-    "count": 0,
-    "has_more": false,
-    "limit": 50,
-    "offset": 0,
-    "standards": [],
-    "total": 0
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_standards | admin_key | no-default-role-kb": {
     "count": 0,
@@ -3963,8 +4155,12 @@
     "total": 0
   },
   "sw_submit | admin_key | missing-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_submit-admin_key-missing-kb' not found in KB 'missing-kb'",
-    "submitted": false
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_submit | admin_key | no-default-role-kb": {
     "error": "Backlog item 'characterization-placeholder-id-sw_submit-admin_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
@@ -3979,8 +4175,12 @@
     "submitted": false
   },
   "sw_transition | admin_key | missing-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_transition-admin_key-missing-kb' not found in KB 'missing-kb'",
-    "transitioned": false
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_transition | admin_key | no-default-role-kb": {
     "error": "Backlog item 'characterization-placeholder-id-sw_transition-admin_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
@@ -3995,8 +4195,12 @@
     "transitioned": false
   },
   "sw_validations | admin_key | missing-kb": {
-    "count": 0,
-    "validations": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_validations | admin_key | no-default-role-kb": {
     "count": 0,
@@ -4011,9 +4215,12 @@
     "validations": []
   },
   "task_ancestors | admin_key | missing-kb": {
-    "error": "Task 'characterization-placeholder-id-task_ancestors-admin_key-missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_ancestors | admin_key | no-default-role-kb": {
     "error": "Task 'characterization-placeholder-id-task_ancestors-admin_key-no-default-role-kb' not found",
@@ -4031,9 +4238,12 @@
     "retryable": false
   },
   "task_blocked_by | admin_key | missing-kb": {
-    "error": "Task 'characterization-placeholder-id-task_blocked_by-admin_key-missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_blocked_by | admin_key | no-default-role-kb": {
     "error": "Task 'characterization-placeholder-id-task_blocked_by-admin_key-no-default-role-kb' not found",
@@ -4051,9 +4261,12 @@
     "retryable": false
   },
   "task_checkpoint | admin_key | missing-kb": {
-    "error": "KB not found: missing-kb",
-    "error_code": "OPERATION_FAILED",
-    "retryable": false
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_checkpoint | admin_key | no-default-role-kb": {
     "error": "Task 'characterization-placeholder-id-task_checkpoint-admin_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
@@ -4071,8 +4284,12 @@
     "retryable": false
   },
   "task_claim | admin_key | missing-kb": {
-    "claimed": false,
-    "error": "Entry 'characterization-placeholder-id-task_claim-admin_key-missing-kb' not found in KB 'missing-kb'"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_claim | admin_key | no-default-role-kb": {
     "claimed": false,
@@ -4087,10 +4304,12 @@
     "error": "Entry 'characterization-placeholder-id-task_claim-admin_key-readable-kb' not found in KB 'readable-kb'"
   },
   "task_create | admin_key | missing-kb": {
-    "error": "KB not found: missing-kb",
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
     "error_code": "KB_NOT_FOUND",
     "legacy_error_code": "NOT_FOUND",
-    "retryable": false
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_create | admin_key | no-default-role-kb": {
     "assignee": "",
@@ -4123,9 +4342,12 @@
     "title": "characterization-title-task_create-admin_key-readable-kb"
   },
   "task_critical_path | admin_key | missing-kb": {
-    "error": "Task 'characterization-placeholder-id-task_critical_path-admin_key-missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_critical_path | admin_key | no-default-role-kb": {
     "error": "Task 'characterization-placeholder-id-task_critical_path-admin_key-no-default-role-kb' not found",
@@ -4143,9 +4365,12 @@
     "retryable": false
   },
   "task_decompose | admin_key | missing-kb": {
-    "error": "Parent task 'characterization-placeholder' not found in KB 'missing-kb'",
-    "error_code": "OPERATION_FAILED",
-    "retryable": false
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_decompose | admin_key | no-default-role-kb": {
     "error": "Parent task 'characterization-placeholder' not found in KB 'no-default-role-kb'",
@@ -4163,8 +4388,12 @@
     "retryable": false
   },
   "task_list | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "tasks": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_list | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -4179,9 +4408,12 @@
     "tasks": []
   },
   "task_status | admin_key | missing-kb": {
-    "error": "Task 'characterization-placeholder-id-task_status-admin_key-missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_status | admin_key | no-default-role-kb": {
     "error": "Task 'characterization-placeholder-id-task_status-admin_key-no-default-role-kb' not found",
@@ -4199,9 +4431,12 @@
     "retryable": false
   },
   "task_subtree | admin_key | missing-kb": {
-    "error": "Task 'characterization-placeholder-id-task_subtree-admin_key-missing-kb' not found",
-    "error_code": "NOT_FOUND",
-    "retryable": false
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_subtree | admin_key | no-default-role-kb": {
     "error": "Task 'characterization-placeholder-id-task_subtree-admin_key-no-default-role-kb' not found",
@@ -4219,9 +4454,12 @@
     "retryable": false
   },
   "task_update | admin_key | missing-kb": {
-    "error": "No updates specified",
-    "error_code": "VALIDATION_ERROR",
-    "retryable": false
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "task_update | admin_key | no-default-role-kb": {
     "error": "No updates specified",
@@ -4239,7 +4477,12 @@
     "retryable": false
   },
   "wiki_assess_quality | admin_key | missing-kb": {
-    "error": "Invalid quality: good"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_assess_quality | admin_key | no-default-role-kb": {
     "error": "Invalid quality: good"
@@ -4251,7 +4494,12 @@
     "error": "Invalid quality: good"
   },
   "wiki_protect | admin_key | missing-kb": {
-    "error": "Invalid protection level: protected"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_protect | admin_key | no-default-role-kb": {
     "error": "Invalid protection level: protected"
@@ -4263,10 +4511,12 @@
     "error": "Invalid protection level: protected"
   },
   "wiki_quality_stats | admin_key | missing-kb": {
-    "quality_distribution": "<ENUMERATION_CONTENT>",
-    "review_queue_size": "<ENUMERATION_CONTENT>",
-    "review_status_distribution": "<ENUMERATION_CONTENT>",
-    "total_articles": "<ENUMERATION_CONTENT>"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_quality_stats | admin_key | no-default-role-kb": {
     "quality_distribution": "<ENUMERATION_CONTENT>",
@@ -4287,8 +4537,12 @@
     "total_articles": "<ENUMERATION_CONTENT>"
   },
   "wiki_review_queue | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "queue": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_review_queue | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -4303,8 +4557,12 @@
     "queue": []
   },
   "wiki_stubs | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "stubs": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_stubs | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -4319,9 +4577,12 @@
     "stubs": []
   },
   "wiki_submit_review | admin_key | missing-kb": {
-    "action": "add",
-    "entry_id": "characterization-missing-entry",
-    "reviewed": true
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_submit_review | admin_key | no-default-role-kb": {
     "action": "add",
@@ -4339,7 +4600,12 @@
     "reviewed": true
   },
   "zettel_graph | admin_key | missing-kb": {
-    "error": "Entry 'characterization-missing-entry' not found"
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "zettel_graph | admin_key | no-default-role-kb": {
     "backlinks": [],
@@ -4366,8 +4632,12 @@
     "outlinks": []
   },
   "zettel_inbox | admin_key | missing-kb": {
-    "count": "<ENUMERATION_CONTENT>",
-    "inbox": []
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "zettel_inbox | admin_key | no-default-role-kb": {
     "count": "<ENUMERATION_CONTENT>",
