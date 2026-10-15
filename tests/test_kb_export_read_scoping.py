@@ -121,10 +121,9 @@ def test_write_user_without_read_cannot_export_private_kb(env):
     # Indistinguishable from a KB that does not exist: same status, same body
     # shape, the name substituted.
     assert missing.status_code == 404
-    assert r.json() == {"detail": {"code": "KB_NOT_FOUND", "message": f"KB '{PRIVATE}' not found"}}
-    assert missing.json() == {
-        "detail": {"code": "KB_NOT_FOUND", "message": "KB 'no-such-kb' not found"}
-    }
+    assert r.json()["detail"]["code"] == "KB_NOT_FOUND"
+    assert r.text.replace(PRIVATE, "<kb>") == missing.text.replace("no-such-kb", "<kb>")
+    assert PRIVATE not in r.text.replace(f"KB '{PRIVATE}' not found", "")
     after = _bare_repo_history(bare)
     assert after == before
     assert SECRET not in after

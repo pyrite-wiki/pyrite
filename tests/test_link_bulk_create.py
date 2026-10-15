@@ -363,9 +363,9 @@ class TestBulkCreate:
                 ["links", "bulk-create", str(yaml_file), "--kb", "no-such-kb", "--format", "rich"],
             )
             assert result.exit_code == 1
-            assert "KB not found" in result.output
-            # The hint this command gave before it moved to the outcome contract.
-            assert "Run `pyrite kb list`" in result.output
+            assert "not found" in result.output and "no-such-kb" in result.output
+            # The one resolver's hint (#952), on every surface.
+            assert "orient" in result.output
 
 
 @pytest.mark.cli

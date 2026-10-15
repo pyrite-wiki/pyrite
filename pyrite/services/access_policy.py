@@ -456,7 +456,7 @@ class AccessPolicy:
         except KBNotFoundError:
             return False
 
-    def resolve_kb(self, principal: Principal, kb_name: object):
+    def resolve_kb_for(self, principal: Principal, kb_name: object):
         """The KB `kb_name` means for `principal`, or the one refusal
         (`kb_resolver.resolve_kb` with the principal's read scope).
 
@@ -543,7 +543,7 @@ class AccessPolicy:
             # The resolver decides existence, readability and the shortname
             # rule in one place (#952); a NOT_FOUND carries its refusal.
             try:
-                kb = self.resolve_kb(principal, kb_name)
+                kb = self.resolve_kb_for(principal, kb_name)
             except KBNotFoundError as refusal:
                 return Decision(NOT_FOUND, refusal=refusal)
             if kb is None:

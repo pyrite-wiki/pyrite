@@ -32,7 +32,6 @@ import functools
 from fastapi import Depends, HTTPException
 from starlette.requests import HTTPConnection, Request
 
-from ..config import PyriteConfig
 from ..services.access_policy import KB, AccessPolicy, Action, AnyKB, Principal, ReadScope
 
 
@@ -94,14 +93,12 @@ def authorize(action: Action, resource: type):
             "decided by REST's policy adapter yet (ADR-0037 themes 3b, 3c)"
         )
     # Lazy: `api` imports this module for `get_principal`.
-    from ..services.kb_resolver import resolve_kb
-    from ..storage.database import PyriteDB
+    from ..services.kb_service import KBService
     from .api import (
         _resolve_kb_names,
         _UnparseableBodyError,
         get_access_policy,
-        get_config,
-        get_db,
+        get_kb_service,
     )
 
     if resource is AnyKB:
@@ -116,8 +113,7 @@ def authorize(action: Action, resource: type):
     async def authorize_kb_read_named(
         request: Request,
         policy: AccessPolicy = Depends(get_access_policy),
-        config: PyriteConfig = Depends(get_config),
-        db: PyriteDB = Depends(get_db),
+        svc: KBService = Depends(get_kb_service),
     ) -> ReadScope:
         if get_principal(request) is None:
             raise not_authenticated()
@@ -137,7 +133,7 @@ def authorize(action: Action, resource: type):
             # scope and a shortname are one KBNotFoundError, which the
             # central handler answers as 404 KB_NOT_FOUND with its
             # suggestion. Every caller, the unscoped one included.
-            resolve_kb(config, name, readable_kbs=readable, db=db)
+            svc.resolve_kb(name, readable_kbs=readable)
         return scope
 
     return authorize_kb_read_named

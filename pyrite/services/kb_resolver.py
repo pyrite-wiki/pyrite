@@ -96,7 +96,7 @@ def resolve_kb(
     kb = _lookup(config, name, db)
     if kb is not None and (readable_kbs is None or kb.name in readable_kbs):
         return kb
-    raise _refusal(config, name, readable_kbs)
+    raise _not_a_kb(config, name, readable_kbs)
 
 
 def kb_set(
@@ -117,7 +117,7 @@ def kb_set(
     return None if readable_kbs is None else set(readable_kbs)
 
 
-def _refusal(config: PyriteConfig, name: str, readable_kbs: set[str] | None) -> KBNotFoundError:
+def _not_a_kb(config: PyriteConfig, name: str, readable_kbs: set[str] | None) -> KBNotFoundError:
     """The refusal for `name`: the same class and message whether the name is
     unknown, unreadable or a shortname; only the suggestion knows which."""
     message = f"KB '{name}' not found"

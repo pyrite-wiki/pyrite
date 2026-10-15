@@ -702,8 +702,12 @@ class TestKBPermissionsForKBAdmins:
             carol.get("/api/kbs/test-kb/permissions"),
             carol.post("/api/kbs/test-kb/permissions", json={"user_id": carol_id, "role": "admin"}),
         ):
-            assert r.status_code == 403
-            assert r.json() == {"detail": "Admin access required for this KB"}
+            # test-kb has no default_role, so carol (no global access, no
+            # grant) cannot read it: the KB is resolved before any role is
+            # looked at and a KB the caller cannot read answers like a
+            # missing one (ADR-0037 §4, the one resolver #952), not 403.
+            assert r.status_code == 404, r.text
+            assert r.json()["detail"]["code"] == "KB_NOT_FOUND"
 
     def test_kb_default_role_admin_counts(self, tmpdir):
         _admin, config, auth, users = self._clients(tmpdir)

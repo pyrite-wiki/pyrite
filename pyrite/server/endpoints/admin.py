@@ -56,7 +56,7 @@ def _resolve_named_kb(request: Request, policy: AccessPolicy, name: str) -> None
     principal = get_principal(request)
     if principal is None:
         raise not_authenticated()
-    policy.resolve_kb(principal, name)
+    policy.resolve_kb_for(principal, name)
 
 
 router = APIRouter(tags=["Admin"])

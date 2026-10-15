@@ -83,7 +83,7 @@ def _resolve_named_kb(request: Request, policy: AccessPolicy, kb: str | None) ->
     principal = get_principal(request)
     if principal is None:
         raise not_authenticated()
-    policy.resolve_kb(principal, kb)
+    policy.resolve_kb_for(principal, kb)
 
 
 # ── User endpoints ──────────────────────────────────────────────────

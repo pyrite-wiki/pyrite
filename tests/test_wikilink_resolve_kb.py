@@ -1,4 +1,5 @@
-"""Wikilink resolution by KB (#912): a shortname names its KB, and no pass
+"""Wikilink resolution by KB (#912, reversed for `kb` by #952: a shortname is
+link syntax only), and no pass
 (id, title, alias) silently picks between twins in two KBs."""
 
 import tempfile
@@ -54,25 +55,33 @@ def _resolve(client, target, **params):
     return client.get("/api/entries/resolve", params={"target": target, **params})
 
 
-def test_a_shortname_in_kb_resolves_like_its_full_name(world):
+def test_a_shortname_kb_is_refused_but_the_link_prefix_maps(world):
+    """A shortname is link syntax only (#952, ADR-0049 Q3): `kb=kbb` is
+    KB_NOT_FOUND with the full name suggested; `kbb:foo` still means kb-b."""
     _, client = world
-    for kb in ("kbb", "kb-b"):
-        r = _resolve(client, "foo", kb=kb)
-        assert r.json()["entry"]["kb_name"] == "kb-b", (kb, r.text)
+    assert _resolve(client, "foo", kb="kb-b").json()["entry"]["kb_name"] == "kb-b"
+    r = _resolve(client, "foo", kb="kbb")
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"]["code"] == "KB_NOT_FOUND"
+    assert r.json()["detail"]["did_you_mean"] == ["kb-b"]
     assert _resolve(client, "kbb:foo").json()["entry"]["kb_name"] == "kb-b"
 
 
-def test_get_entry_accepts_a_shortname_kb(world):
+def test_get_entry_refuses_a_shortname_kb(world):
     _, client = world
     r = client.get("/api/entries/foo", params={"kb": "kbb"})
-    assert r.status_code == 200, r.text
-    assert r.json()["kb_name"] == "kb-b"
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"]["did_you_mean"] == ["kb-b"]
+    assert client.get("/api/entries/foo", params={"kb": "kb-b"}).json()["kb_name"] == "kb-b"
 
 
-def test_an_unknown_kb_is_still_a_miss(world):
+def test_an_unknown_kb_is_refused_not_a_miss(world):
+    """A `kb` that is not a KB is KB_NOT_FOUND (#952); a KB that does not
+    hold the target is a miss."""
     _, client = world
-    assert _resolve(client, "foo", kb="nope").json()["resolved"] is False
-    assert _resolve(client, "foo", kb="ka").json()["resolved"] is False  # foo is not in kb-a
+    r = _resolve(client, "foo", kb="nope")
+    assert r.status_code == 404 and r.json()["detail"]["code"] == "KB_NOT_FOUND", r.text
+    assert _resolve(client, "foo", kb="kb-a").json()["resolved"] is False  # foo is not in kb-a
 
 
 @pytest.mark.parametrize("target", ["Meeting Notes", "Sync"])
@@ -88,8 +97,8 @@ def test_a_title_or_alias_held_by_two_kbs_is_refused(world, target):
 @pytest.mark.parametrize("target", ["Meeting Notes", "Sync"])
 def test_naming_the_kb_picks_the_twin(world, target):
     _, client = world
-    for kb, expect in (("ka", "kb-a"), ("kb-b", "kb-b"), ("kbb", "kb-b")):
-        assert _resolve(client, target, kb=kb).json()["entry"]["kb_name"] == expect
+    for kb in ("kb-a", "kb-b"):
+        assert _resolve(client, target, kb=kb).json()["entry"]["kb_name"] == kb
 
 
 def test_two_matches_in_one_kb_are_that_kbs_own(world):

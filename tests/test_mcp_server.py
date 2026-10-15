@@ -1348,8 +1348,10 @@ class TestPyriteMCPServer:
             },
         )
 
-        assert result["error_code"] == "LINK_FAILED"
-        assert result["error"] == "KB not found: no-such-kb"
+        # The dispatcher resolves every KB the call names first (#952): the
+        # refusal is the one KB_NOT_FOUND, not the handler's LINK_FAILED.
+        assert result["error_code"] == "KB_NOT_FOUND"
+        assert result["error"] == "KB 'no-such-kb' not found"
         assert result["retryable"] is False
 
     def test_kb_link_in_write_tier(self):

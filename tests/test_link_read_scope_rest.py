@@ -263,12 +263,13 @@ def test_n7_graph_keeps_readable_edges_for_scoped_caller(w):
     assert any(e["source_id"] == "readable-a" for e in r.json()["edges"])
 
 
-@pytest.mark.control(reason="unscoped graph unchanged: private nodes, counts and a missing KB")
-def test_graph_unscoped_unchanged(w):
+def test_graph_unscoped_sees_private_nodes_and_a_missing_kb_is_refused(w):
     r = _admin(w, "/api/graph", center=READABLE_ENTRY, center_kb=READABLE)
     assert PRIVATE_SPY in {n["id"] for n in r.json()["nodes"]}
+    # An unknown KB is refused for the unscoped caller too (#952); it used
+    # to answer an empty graph.
     r2 = _admin(w, "/api/graph", center=PRIVATE_SPY, center_kb=MISSING)
-    assert r2.status_code == 200 and r2.json() == {"nodes": [], "edges": []}
+    assert r2.status_code == 404 and r2.json()["detail"]["code"] == "KB_NOT_FOUND"
 
 
 # -- QA (#58, orphans, status) -----------------------------------------------

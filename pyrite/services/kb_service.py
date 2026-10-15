@@ -656,6 +656,16 @@ class KBService:
         """
         return self.config.require_kb(name, db=self.db)
 
+    def resolve_kb(self, name: object, *, readable_kbs: set[str] | None) -> KBConfig | None:
+        """The one resolver (``kb_resolver.resolve_kb``) through this service's
+        database, for a surface with a scope: REST's ``authz`` and the MCP
+        chokepoints ask here, so no surface holds a storage handle for it
+        (``tests/test_layer_boundaries.py``). None when ``name`` names no KB.
+        """
+        from .kb_resolver import resolve_kb
+
+        return resolve_kb(self.config, name, readable_kbs=readable_kbs, db=self.db)
+
     def get_kb_stats(self, name: str) -> dict[str, Any] | None:
         """Get stats for a specific KB."""
         return self.db.get_kb_stats(name)

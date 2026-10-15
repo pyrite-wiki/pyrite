@@ -398,29 +398,25 @@ def _only_readable(rows: list[dict], readable_kbs: set[str] | None) -> list[dict
     return [r for r in rows if r.get("kb_name") in readable_kbs]
 
 
-def _kb_refusal(
-    config: PyriteConfig, db: PyriteDB, kb_name: object, readable_kbs: set[str] | None
-) -> dict | None:
+def _kb_refusal(svc: KBService, kb_name: object, readable_kbs: set[str] | None) -> dict | None:
     """The refusal for a KB name the resolver refuses, or None when it is a
     KB the caller may read (or names no KB).
 
-    The one resolver (`services/kb_resolver.py`, #952), asked for **every**
-    caller and every KB a call names, by the three chokepoints KB content
-    passes through: `_dispatch_tool`, `_get_prompt` and `_read_resource`. An
-    absent name, a KB outside the caller's readable set and a shortname
-    (link syntax only) are one `KBNotFoundError` -- deliberately not a
-    "forbidden": a private KB's existence is itself private, so a caller
-    cannot tell "you may not read this" from "there is no such KB". The
-    envelope is `_refusal`'s: the class code `KB_NOT_FOUND`, the resolver's
-    suggestion, `did_you_mean` (near matches from the readable set only) and
-    the old `NOT_FOUND` in `legacy_error_code` for one release (#66,
-    ADR-0037 theme 2). A handler's own not-found answer is only ever reached
-    for a name the caller may read.
+    The one resolver (`services/kb_resolver.py`, #952), asked through
+    `KBService.resolve_kb` for **every** caller and every KB a call names,
+    by the three chokepoints KB content passes through: `_dispatch_tool`,
+    `_get_prompt` and `_read_resource`. An absent name, a KB outside the
+    caller's readable set and a shortname (link syntax only) are one
+    `KBNotFoundError` -- deliberately not a "forbidden": a private KB's
+    existence is itself private, so a caller cannot tell "you may not read
+    this" from "there is no such KB". The envelope is `_refusal`'s: the class
+    code `KB_NOT_FOUND`, the resolver's suggestion, `did_you_mean` and the
+    old `NOT_FOUND` in `legacy_error_code` for one release (#66, ADR-0037
+    theme 2). A handler's own not-found answer is only ever reached for a
+    name the caller may read.
     """
-    from ..services.kb_resolver import resolve_kb
-
     try:
-        resolve_kb(config, kb_name, readable_kbs=readable_kbs, db=db)
+        svc.resolve_kb(kb_name, readable_kbs=readable_kbs)
     except KBNotFoundError as e:
         return _refusal(e)
     return None
@@ -2097,7 +2093,7 @@ class PyriteMCPServer:
         if not handler:
             return _error("OPERATION_FAILED", f"Unknown prompt: {name}")
         for kb_name in _kbs_named_in(arguments):
-            refusal = _kb_refusal(self.config, self.db, kb_name, readable_kbs)
+            refusal = _kb_refusal(self.svc, kb_name, readable_kbs)
             if refusal is not None:
                 return refusal
         import inspect
@@ -2348,7 +2344,7 @@ class PyriteMCPServer:
             and "/entries/" not in uri
         ):
             kb_name = uri[len(f"{URI_SCHEME}kbs/") : -len("/entries")]
-            refusal = _kb_refusal(self.config, self.db, kb_name, readable_kbs)
+            refusal = _kb_refusal(self.svc, kb_name, readable_kbs)
             if refusal is not None:
                 return refusal
             entries = self.svc.list_entries(kb_name=kb_name, limit=MAX_RESOURCE_LIST_ENTRIES)
@@ -2370,7 +2366,7 @@ class PyriteMCPServer:
             entry_kb, _, entry_id = uri[len(f"{URI_SCHEME}kbs/") :].partition("/entries/")
             # A KB the caller cannot read and a KB that does not exist answer
             # the same KB_NOT_FOUND (scoped or not), never a plain NOT_FOUND.
-            refusal = _kb_refusal(self.config, self.db, entry_kb, readable_kbs)
+            refusal = _kb_refusal(self.svc, entry_kb, readable_kbs)
             if refusal is not None:
                 return refusal
         if entry_id is not None:
@@ -2516,7 +2512,7 @@ class PyriteMCPServer:
         # must buy nothing.
         named_kbs = _kbs_named_in(arguments)
         for kb_name in named_kbs:
-            refusal = _kb_refusal(self.config, self.db, kb_name, readable_kbs)
+            refusal = _kb_refusal(self.svc, kb_name, readable_kbs)
             if refusal is not None:
                 return refusal
 
