@@ -6,11 +6,16 @@ to avoid rechecking unchanged URLs.
 
 import json
 import logging
+import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from sqlalchemy.exc import SQLAlchemyError
+
+from .search_service import storage_error_from
 
 logger = logging.getLogger(__name__)
 
@@ -70,43 +75,42 @@ class URLChecker:
     ) -> dict[str, list[str]]:
         """Collect all source URLs from KB entries.
 
-        Returns {url: [entry_id, ...]} mapping.
+        Returns {url: [entry_id, ...]} mapping. With no type filter, scans
+        every stored entry type. Each type retains the existing 10,000-entry limit.
+        Database failures propagate rather than claiming there are no URLs.
         """
-        if entry_types is None:
-            entry_types = [
-                "timeline_event",
-                "solidarity_event",
-                "scene",
-                "investigation_event",
-                "note",
-            ]
+        try:
+            types_to_scan = (
+                entry_types
+                if entry_types is not None
+                else self.db.get_distinct_types(kb_name=kb_name)
+            )
 
-        url_entries: dict[str, list[str]] = defaultdict(list)
+            url_entries: dict[str, list[str]] = defaultdict(list)
 
-        for etype in entry_types:
-            try:
+            for etype in types_to_scan:
                 results = self.db.list_entries(kb_name=kb_name, entry_type=etype, limit=10000)
-            except Exception:
-                continue
 
-            for r in results:
-                entry_id = r.get("id", "")
-                # list_entries doesn't include sources; fetch full entry
-                full = self.db.get_entry(entry_id, kb_name)
-                if not full:
-                    continue
-                sources = full.get("sources") or []
+                for r in results:
+                    entry_id = r.get("id", "")
+                    # list_entries doesn't include sources; fetch full entry
+                    full = self.db.get_entry(entry_id, kb_name)
+                    if not full:
+                        continue
+                    sources = full.get("sources") or []
 
-                for src in sources:
-                    url = ""
-                    if isinstance(src, dict):
-                        url = src.get("url", "")
-                    elif isinstance(src, str):
-                        url = src
-                    if url and url.startswith("http"):
-                        url_entries[url].append(entry_id)
+                    for src in sources:
+                        url = ""
+                        if isinstance(src, dict):
+                            url = src.get("url", "")
+                        elif isinstance(src, str):
+                            url = src
+                        if url and url.startswith("http"):
+                            url_entries[url].append(entry_id)
 
-        return dict(url_entries)
+            return dict(url_entries)
+        except (SQLAlchemyError, sqlite3.Error) as exc:
+            raise storage_error_from(getattr(exc, "orig", exc), "URL collection failed") from exc
 
     def check_url(self, url: str) -> URLCheckResult:
         """Check a single URL for liveness."""
