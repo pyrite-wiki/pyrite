@@ -234,6 +234,24 @@ as sent, even a value equal to the reading.
 A body marked `body_truncated` is refused at any depth of the request on
 every update surface.
 
+**How an update writes (ADR-0042, #955).** The request is applied as
+operations to the file's own text: each named field changes its own lines
+and nothing else (comments, key order, quoting, line endings and every
+other key keep their bytes). An alias is written under the spelling the
+file uses; a key the file holds under `metadata:` is edited there, any
+other key at the top level. `updated_at` is refreshed only where the file
+already carries it, in its own form. A request that changes nothing writes
+nothing: the result carries `"changed": false` (CLI and MCP say it only
+then; REST `UpdateResponse` always carries `changed`). The file is replaced
+only if it still holds the bytes the edit was computed on, under a lock in
+the KB's git directory; a file that keeps changing is refused with
+`CONFLICT` (`409` on REST, `retryable: true`). A KB outside git is written
+without a lock and the result says `"locked": false`. A templated-folder
+field on a file with no `id:` line does not move the file; the result says
+why in `not_moved`. Frontmatter Pyrite cannot model (a tagged, complex or
+duplicate key; an anchor on the edited key) is refused with
+`VALIDATION_FAILED` and the reason, nothing written.
+
 **Web client.** The web app sends `allow_undeclared: true` on create,
 `POST /api/clip` and import, so its forms, which offer every core and
 plugin type, keep working in a KB that declares types.
@@ -380,10 +398,12 @@ they are **not run** (a server would be needed).
 {"updated": true, "entry_id": "hello", "file_path": "/abs/path/hello.md"}
 ```
 
-`update -f key=value` (CLI) and MCP `kb_update` with an extra key store an
-undeclared field under the entry's `metadata` dict, not as a top-level key.
-Which fields an update may set, and which it refuses or sets aside, is the
-**Update fields** paragraph above.
+`update -f key=value` (CLI) and MCP `kb_update` with an extra key write an
+undeclared field as a top-level key where the request names it (or under
+`metadata:` when the file already holds it there). Which fields an update
+may set, and which it refuses or sets aside, is the **Update fields**
+paragraph above; how it writes, and the `changed`, `locked` and
+`not_moved` fields of the result, is **How an update writes**.
 
 ### `bulk_create` / import
 

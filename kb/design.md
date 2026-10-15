@@ -139,11 +139,15 @@ Working in a guest file: [[pyrite-is-a-guest-in-state-it-does-not-own]].
 The design above is ahead of the code in these places. Do not assume the
 code follows it; check, and treat a mismatch as the work to do.
 
-- An update re-serialises the whole file from the model (principle 3).
+- An update is operations on the file's own bytes since #955 (B6 P3a);
+  `add_link`, create and the other writers still emit whole files (P4, C2),
+  and the surfaces have no `append`/`unset` operation yet (P3b).
   [How Pyrite edits your files](../docs/how-pyrite-edits-your-files.md) holds
-  the examples a fix must pass; `tests/test_doc_write_as_patch.py` runs them
-  and lists each one the code fails today, and how.
-- Save hooks write links and parent status into files (principle 4).
+  the examples; `tests/test_doc_write_as_patch.py` runs them and lists each
+  one the code still fails, and how.
+- Save hooks no longer change an update (principle 4), but what a hook sets
+  in place still reaches that write's index row until the index derives it
+  (P6); a create still takes a hook's changes.
 - An entry with no `id:` takes its identity from its title, and no command
   lists or pins the files missing one (principle 5).
 - A single-entry read returns the type's defaults and normalised values

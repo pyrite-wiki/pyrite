@@ -27,7 +27,10 @@ Marks: **decided** = accepted ADR; **proposed** = ADR-0044 only (all of ADR-0038
 2. A write to an existing entry is an operation on the file's own value (set,
    append, remove, unset, replace body). The model validates the result and never
    supplies bytes. A request that changes nothing writes nothing. **decided**
-   ADR-0042 decisions 1 to 3. Code today re-emits the whole file from the model.
+   ADR-0042 decisions 1 to 3. Built for update (#955, B6 P3a: `KBService._update`
+   applies `Set`/`ReplaceBody` with `file_operations.apply` and publishes through
+   `storage/entry_writer.py`); the surfaces expose no `append`/`unset` yet (P3b),
+   and create, `add_link` and the other writers still emit whole files (C2, P4).
 3. A single-entry read reads the file's current bytes and returns a
    `content_hash`; lists and search stay index reads. **decided** ADR-0042
    decision 9. Built for the read (#753, `KBService._read_entry`); the type's
@@ -48,7 +51,11 @@ Marks: **decided** = accepted ADR; **proposed** = ADR-0044 only (all of ADR-0038
 9. Writes are optimistic: each carries its base, merges per key against the
    file now, and conflicts are reported, never lost; a momentary sidecar
    `flock` covers only compare-and-replace. **decided** ADR-0042 decision 10
-   (measured by spike 3). No `flock` exists in `pyrite/` today.
+   (measured by spike 3). Built for update (#955): the base is the file at
+   request start, a changed file is re-read and re-applied up to five times,
+   then `ConflictError`; the lock is `utils/file_lock.py` in the KB's git dir
+   (§10a A1, A2); a KB outside git is written with no lock and the result says
+   `locked: false` (D1 (b), 2026-10-15).
 10. `auto_embed: true` enqueues the entry and returns; it never loads the model
     in the write. **decided** [[adr-0035]].
 11. A truncated body is never valid input to a write. **decided** [[adr-0034]].
@@ -95,14 +102,26 @@ violation), `tests/test_roundtrip_identity.py`,
 `tests/test_doc_write_as_patch.py` runs ADR-0042's examples from
 `docs/how-pyrite-edits-your-files.md` through `kb_update`; each one today's
 code fails is a strict xfail in its `KNOWN_DIVERGENCES`, with what the code
-does instead (all seven, 2026-10-03). Remove a line when its example passes.
+does instead (three left after #955: the append, the stale replace, the
+id-less file). Remove a line when its example passes.
+`tests/test_update_walks_every_surface.py` walks the hand-made shapes (CRLF,
+BOM, YAML 1.1 bare values, a Hugo map, a legacy link, an alias, a nested
+`metadata:`, both `updated_at` forms, an anchor, a root file, a tagged
+value) through every update surface and in-process caller, with a byte
+oracle; `tests/test_entry_file_writers_are_one_function.py` is the ratchet
+over who may write an entry file's bytes.
 
 ## Known gaps
 
-- Update re-serialises the file; hooks write links and parent status; the id
-  comes from the title; a single read returns defaults among the file's fields. ADR-0042 and
-  ADR-0045 address them; ADR-0042 is accepted (2026-10-03); spike 2 and spike 3 (concurrency, `/` in ids; macOS only) are done, and the checks
-  not run (CRLF, BOM, anchors, Hugo; Linux and Windows locks) are listed in the ADR.
+- Create, `add_link`/`add_links`, rename's link rewrite, `schema migrate`,
+  `ids pin` and software-kb's `migrate-standards` still emit or write whole
+  files (B6 C2 and P4); the surfaces have no `append`/`unset` (P3b); hooks
+  still change a create, and what a hook sets in place reaches an update's
+  index row until the index derives it (P6); the id comes from the title; a
+  single read returns defaults among the file's fields (P5). ADR-0042 and
+  ADR-0045 address them; spike 2 and spike 3 (concurrency, `/` in ids; macOS
+  only) are done. The CRLF, BOM, anchor and Hugo shapes are now pinned by the
+  walking test; Linux locks run in CI; Windows is refused.
 - `previous_ids` (history across a rename) is absent; most I1 to I10 are
   strict expected failures until [[adr-0038]] steps 2 to 5 land. The ADR was
   accepted 2026-10-03.
