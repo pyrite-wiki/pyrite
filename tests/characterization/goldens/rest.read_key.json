@@ -4,7 +4,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -106,7 +106,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -139,7 +139,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -178,7 +178,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -217,7 +217,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -247,7 +247,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -286,7 +286,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -340,7 +340,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -388,7 +388,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -430,7 +430,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -475,7 +475,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -2848,7 +2848,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -2884,7 +2884,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -2917,7 +2917,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -3001,7 +3001,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -3040,7 +3040,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -3079,7 +3079,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -3118,7 +3118,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -3391,7 +3391,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -3454,7 +3454,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -3487,7 +3487,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -3538,7 +3538,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -4546,7 +4546,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -5485,7 +5485,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -5518,7 +5518,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -5557,7 +5557,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -5587,7 +5587,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -5626,7 +5626,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -5704,7 +5704,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -5746,7 +5746,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -5785,7 +5785,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -5824,7 +5824,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -5908,7 +5908,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -5968,7 +5968,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6028,7 +6028,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6088,7 +6088,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6157,7 +6157,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6230,7 +6230,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6263,7 +6263,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6293,7 +6293,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6326,7 +6326,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6365,7 +6365,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6395,7 +6395,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6440,7 +6440,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6566,7 +6566,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6596,7 +6596,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6626,7 +6626,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6710,7 +6710,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6740,7 +6740,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6817,7 +6817,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6847,7 +6847,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6907,7 +6907,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -6946,7 +6946,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -7024,7 +7024,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -7078,7 +7078,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }
@@ -7156,7 +7156,7 @@
       "detail": {
         "code": "KB_NOT_FOUND",
         "did_you_mean": [],
-        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "message": "KB 'missing-kb' not found",
         "retryable": false
       }

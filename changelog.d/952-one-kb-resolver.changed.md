@@ -10,7 +10,16 @@
   included; a KB you cannot read answers exactly like an unknown one; a KB
   registered after a server started is found (#925); the refusal carries
   `did_you_mean` (near matches from the KBs you can read) and one hint on
-  every surface. A blank KB name names no KB (never "not found"); a command
-  that needs one answers `VALIDATION_FAILED`. REST's `KB_NOT_FOUND` body is the
-  central handler's (`retryable`, `hint`, `did_you_mean`), and MCP's
-  `legacy_error_code` for it is `NOT_FOUND` on every tool, `kb_orient` included.
+  every surface, naming `kb_orient` (MCP) and `pyrite orient` (CLI). A blank
+  KB name names no KB (never "not found"); a command that needs one answers
+  `VALIDATION_FAILED`; a blank KB *path segment* is refused. REST's
+  `KB_NOT_FOUND` body is the central handler's (`retryable`, `hint`,
+  `did_you_mean`), and MCP's `legacy_error_code` for it is `NOT_FOUND` on
+  every tool, `kb_orient` included. The admin-only KB routes (`PUT`/`DELETE
+  /api/kbs/{name}`, `reindex`, `default-role`, `publish`, `commit`, `push`)
+  answer the same refusal. A KB resolved from the index registry carries
+  every attribute of its config.yaml entry (`read_only`, `shortname`), and a
+  plugin's MCP handlers resolve through the server's config, so no write
+  surface lands a write in a read-only KB. The web resolves a `[[short:id]]`
+  prefix to the full name before building a link or calling the API, so
+  shortname wikilinks keep working there.
