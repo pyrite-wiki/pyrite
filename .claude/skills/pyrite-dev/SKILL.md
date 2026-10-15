@@ -78,6 +78,16 @@ RED, verify RED (it fails for the right reason), GREEN (the minimal code),
 verify GREEN, REFACTOR, commit with a conventional prefix. Code written before
 its test is deleted and started over. Patterns: [tdd.md](tdd.md).
 
+**A test's expected value comes from the property, never from the code under
+test.** Never build an expected value, model or checker by restating the
+module's own scan, model or check: a copy shares the code's blind spots, so the
+test passes for the wrong reason and verify-red cannot see it. Where the
+property is about bytes ("everything not named is unchanged"), compare bytes
+directly, before against after. Where it is about behaviour, write the
+expected value by hand or take it from a reference tool (YAML, git, the OS).
+(#732: an "independent" oracle copied the module's line scan character for
+character, and three comment-losing edits passed 2,602 cases.)
+
 ## Debugging
 
 Find the root cause before any fix: reproduce, trace the bad value to its
@@ -93,6 +103,12 @@ finding, not a failure.
 
 Run the command that proves the claim, read its output, then claim. "Should
 work" is not evidence.
+
+**CI is the verification gate.** Locally, run the tests of the files you
+changed; then push to your draft PR and read its CI. Don't hold a push for a
+slow local run of the whole affected set: the pre-push run does not have to be
+perfect (CONTRIBUTING, "Branches, hooks and pull requests"), and CI runs the
+full suite on every interpreter.
 
 | Claim | Run | Look for |
 |---|---|---|
