@@ -54,6 +54,7 @@ beforeEach(() => {
 	entryStore.saving = false;
 	entryStore.error = null;
 	entryStore.ambiguousKbs = null;
+	entryStore.recent = [];
 	entryStore.dirty = false;
 });
 
@@ -199,10 +200,33 @@ describe('EntryStore', () => {
 			expect(entryStore.ambiguousKbs).toBeNull();
 		});
 
-		it('remembers the KB a recent entry was opened from', async () => {
+		it('remembers the KB and title a recent entry was opened from', async () => {
 			mockGetEntry.mockResolvedValueOnce(sampleEntry);
 			await entryStore.loadEntry('test-entry');
-			expect(entryStore.recentKbs['test-entry']).toBe('test-kb');
+			expect(entryStore.recent[0]).toEqual({
+				id: 'test-entry',
+				kb: 'test-kb',
+				title: 'Test Note'
+			});
+		});
+
+		it('keeps same-id entries of two KBs as two recents (#912)', async () => {
+			mockGetEntry.mockResolvedValueOnce({ ...sampleEntry, id: 'dup', kb_name: 'kb-a' });
+			await entryStore.loadEntry('dup', 'kb-a');
+			mockGetEntry.mockResolvedValueOnce({ ...sampleEntry, id: 'dup', kb_name: 'kb-b' });
+			await entryStore.loadEntry('dup', 'kb-b');
+			expect(entryStore.recent.map((r) => `${r.kb}:${r.id}`)).toEqual(['kb-b:dup', 'kb-a:dup']);
+		});
+
+		it('ignores a load that a newer one overtook', async () => {
+			const slow = deferred<typeof sampleEntry>();
+			mockGetEntry.mockReturnValueOnce(slow.promise as never);
+			const first = entryStore.loadEntry('dup', 'kb-a');
+			mockGetEntry.mockResolvedValueOnce({ ...sampleEntry, id: 'dup', kb_name: 'kb-b' });
+			await entryStore.loadEntry('dup', 'kb-b');
+			slow.resolve({ ...sampleEntry, id: 'dup', kb_name: 'kb-a' });
+			await first;
+			expect(entryStore.current?.kb_name).toBe('kb-b');
 		});
 
 		it('adds to recent IDs', async () => {

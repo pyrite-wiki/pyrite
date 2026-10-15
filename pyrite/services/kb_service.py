@@ -692,9 +692,13 @@ class KBService:
         # Search all KBs the caller can read. An id the index knows in more
         # than one of them is refused (#528), never answered by config order;
         # only KBs in ``readable`` are counted, so a KB the caller cannot read
-        # never becomes a candidate (concealment, ADR-0037 section 4). The
-        # by-name pass for unindexed files runs only when no readable KB's
-        # index knows the id (#857's cost bound), and counts the same way.
+        # never becomes a candidate (concealment, ADR-0037 section 4).
+        #
+        # KNOWN EXCEPTION to "never resolved silently": the by-name pass for
+        # unindexed files runs only when no readable KB's index knows the id
+        # (#857's cost bound). So an id indexed in one KB, with a
+        # not-yet-indexed <id>.md in another, is answered from the indexed KB
+        # (as #753 reads it); `pyrite index sync` removes the exception.
         readable = [
             kb.name
             for kb in self.config.all_kbs()

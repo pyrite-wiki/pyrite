@@ -122,7 +122,7 @@ export function renderWikilinks(html: string, existingIds?: Set<string>): string
 			const trimmed = target.trim();
 			const headingTrimmed = heading?.trim() || '';
 			const blockIdTrimmed = blockId?.trim() || '';
-			return `<blockquote class="transclusion" data-transclusion-target="${trimmed}" data-transclusion-heading="${headingTrimmed}" data-transclusion-block="${blockIdTrimmed}">
+			return `<blockquote class="transclusion" data-transclusion-target="${trimmed}" data-transclusion-kb="${transclusionKb?.trim() ?? ''}" data-transclusion-heading="${headingTrimmed}" data-transclusion-block="${blockIdTrimmed}">
   <p class="transclusion-loading">Loading transcluded content...</p>
   <cite><a href="${entryHref(trimmed, transclusionKb?.trim())}">${trimmed}</a></cite>
 </blockquote>`;

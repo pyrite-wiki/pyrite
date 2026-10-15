@@ -367,3 +367,10 @@ describe('transclusion cycle detection', () => {
 		expect(CIRCULAR_REF_MESSAGE).toContain('Circular reference');
 	});
 });
+
+it('wikilinks and transclusions rendered from [[kb:id]] carry the KB', () => {
+	const html = renderWikilinks('[[kb-b:dup]] and ![[kb-b:dup]] and [[dup]]');
+	expect(html).toContain('href="/entries/dup?kb=kb-b"');
+	expect(html).toContain('data-transclusion-kb="kb-b"');
+	expect(html).toContain('href="/entries/dup"'); // no KB named: nothing guessed
+});
