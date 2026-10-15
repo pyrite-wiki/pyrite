@@ -286,6 +286,7 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     # A tier's tool list is what an HTTP MCP credential of that tier may call.
     "extensions/software-kb/tests/test_software_kb.py::*read_tier_no_write_tools*": AUTHZ,
     "extensions/software-kb/tests/test_software_kb.py::*read_tier_does_not_have*": AUTHZ,
+    "extensions/software-kb/tests/test_software_kb.py::TestCreateBacklogItemRefusals::*": AUTHZ,
     "extensions/journalism-investigation/tests/test_mcp_tools.py::*read_tier_tools_registered*": AUTHZ,
     # The social extension's author-only edit rule.
     "extensions/social/tests/test_social.py::*blocks_non_author*": AUTHZ,
