@@ -346,8 +346,13 @@ class TestCollectionAPI:
                 )
                 note.save(notes_dir / f"note-{i}.md")
 
+            empty_path = tmpdir / "empty-kb"
+            empty_path.mkdir()
             config = PyriteConfig(
-                knowledge_bases=[kb_config],
+                knowledge_bases=[
+                    kb_config,
+                    KBConfig(name="empty-kb", path=empty_path, kb_type=KBType.GENERIC),
+                ],
                 settings=Settings(index_path=db_path),
             )
             db = PyriteDB(db_path)
@@ -383,11 +388,17 @@ class TestCollectionAPI:
 
     def test_list_collections_empty(self, client):
         """Listing collections for a KB with none should return empty list."""
-        resp = client.get("/api/collections?kb=nonexistent-kb")
+        resp = client.get("/api/collections?kb=empty-kb")
         assert resp.status_code == 200
         data = resp.json()
         assert data["collections"] == []
         assert data["total"] == 0
+
+    def test_list_collections_of_a_kb_that_does_not_exist_is_refused(self, client):
+        """A KB that does not exist is `KB_NOT_FOUND`, not an empty list (#952)."""
+        resp = client.get("/api/collections?kb=nonexistent-kb")
+        assert resp.status_code == 404
+        assert resp.json()["detail"]["code"] == "KB_NOT_FOUND"
 
     def test_get_collection_not_found(self, client):
         """GET /api/collections/{id} for missing collection returns 404."""
