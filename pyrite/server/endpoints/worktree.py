@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from ...exceptions import PyriteError
 from ...services.access_policy import AccessPolicy
 from ..api import get_access_policy, get_worktree_resolver, limiter, requires_tier
-from ..authz import get_principal, not_authenticated
+from ..authz import resolve_named_kb
 
 logger = logging.getLogger(__name__)
 
@@ -80,10 +80,7 @@ def _resolve_named_kb(request: Request, policy: AccessPolicy, kb: str | None) ->
     404 ``KB_NOT_FOUND`` before any worktree is looked up; a blank or
     absent one names no KB.
     """
-    principal = get_principal(request)
-    if principal is None:
-        raise not_authenticated()
-    policy.resolve_kb_for(principal, kb)
+    resolve_named_kb(request, policy, kb)
 
 
 # ── User endpoints ──────────────────────────────────────────────────

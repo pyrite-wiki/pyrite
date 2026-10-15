@@ -30,7 +30,7 @@ class TestExportKBToDirectory:
         kb_cfg = MagicMock()
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {
@@ -55,7 +55,7 @@ class TestExportKBToDirectory:
         assert "Hello world" in content
 
     def test_raises_on_unknown_kb(self, export_svc, mock_config, tmp_path):
-        mock_config.get_kb.return_value = None
+        mock_config.require_kb.side_effect = KBNotFoundError("KB 'nonexistent' not found")
         with pytest.raises(KBNotFoundError):
             export_svc.export_kb_to_directory("nonexistent", tmp_path / "out")
 
@@ -66,7 +66,7 @@ class TestExportKBToDirectory:
         kb_cfg = MagicMock()
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {
@@ -96,7 +96,7 @@ class TestExportKBToDirectory:
         kb_cfg = MagicMock()
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {
@@ -126,7 +126,7 @@ class TestCommitKB:
     def test_delegates_to_git_service(self, mock_git_svc, export_svc, mock_config):
         kb_cfg = MagicMock()
         kb_cfg.path = Path("/fake/kb")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
         mock_git_svc.is_git_repo.return_value = True
         mock_git_svc.commit.return_value = (True, {"commit_hash": "abc123", "files_changed": 2})
 
@@ -140,7 +140,7 @@ class TestCommitKB:
 
     @patch("pyrite.services.git_service.GitService")
     def test_raises_on_unknown_kb(self, mock_git_svc, export_svc, mock_config):
-        mock_config.get_kb.return_value = None
+        mock_config.require_kb.side_effect = KBNotFoundError("KB 'nonexistent' not found")
         with pytest.raises(KBNotFoundError):
             export_svc.commit_kb("nonexistent", "msg")
 
@@ -148,7 +148,7 @@ class TestCommitKB:
     def test_raises_on_non_git_repo(self, mock_git_svc, export_svc, mock_config):
         kb_cfg = MagicMock()
         kb_cfg.path = Path("/fake/kb")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
         mock_git_svc.is_git_repo.return_value = False
 
         with pytest.raises(PyriteError, match="not in a git repository"):
@@ -164,7 +164,7 @@ class TestPathTraversalPrevention:
         kb_cfg = MagicMock()
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {
@@ -198,7 +198,7 @@ class TestPathTraversalPrevention:
         kb_cfg = MagicMock()
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {
@@ -228,7 +228,7 @@ class TestPathTraversalPrevention:
         kb_cfg = MagicMock()
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         outside = tmp_path / "outside"
         mock_db.list_entries.return_value = [
@@ -259,7 +259,7 @@ class TestPathTraversalPrevention:
         kb_cfg = MagicMock()
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {
@@ -286,7 +286,7 @@ class TestPathTraversalPrevention:
         kb_cfg = MagicMock()
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {
@@ -310,7 +310,7 @@ class TestPathTraversalPrevention:
         kb_cfg = MagicMock()
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {"id": "a/b", "entry_type": "note", "title": "One", "body": "one content", "tags": []},
@@ -334,7 +334,7 @@ class TestPathTraversalPrevention:
         kb_cfg = MagicMock()
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {
@@ -371,7 +371,7 @@ class TestPathTraversalPrevention:
         kb_cfg = MagicMock()
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         raw_type = "../../outside"
         mock_db.list_entries.return_value = [
@@ -402,7 +402,7 @@ class TestPushKB:
     def test_delegates_to_git_service(self, mock_git_svc, export_svc, mock_config):
         kb_cfg = MagicMock()
         kb_cfg.path = Path("/fake/kb")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
         mock_git_svc.is_git_repo.return_value = True
         mock_git_svc.push.return_value = (True, "pushed successfully")
 
@@ -414,6 +414,6 @@ class TestPushKB:
 
     @patch("pyrite.services.git_service.GitService")
     def test_raises_on_unknown_kb(self, mock_git_svc, export_svc, mock_config):
-        mock_config.get_kb.return_value = None
+        mock_config.require_kb.side_effect = KBNotFoundError("KB 'nonexistent' not found")
         with pytest.raises(KBNotFoundError):
             export_svc.push_kb("nonexistent")

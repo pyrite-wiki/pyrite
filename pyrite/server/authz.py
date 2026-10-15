@@ -32,7 +32,16 @@ import functools
 from fastapi import Depends, HTTPException
 from starlette.requests import HTTPConnection, Request
 
-from ..services.access_policy import KB, AccessPolicy, Action, AnyKB, Principal, ReadScope
+from ..exceptions import KBNotFoundError
+from ..services.access_policy import (
+    KB,
+    AccessPolicy,
+    Action,
+    AnyKB,
+    Principal,
+    ReadScope,
+    named_kb,
+)
 
 
 def get_principal(request: HTTPConnection) -> Principal | None:
@@ -73,6 +82,50 @@ def read_scope(request: Request, policy: AccessPolicy) -> ReadScope:
     if principal is None:
         raise not_authenticated()
     return policy.read_scope(principal)
+
+
+def blank_path_kb(request: HTTPConnection) -> str | None:
+    """A KB path parameter that is blank, or None.
+
+    A blank query or body value names no KB (`access_policy.named_kb`); a
+    blank *path segment* does not get that reading. The path is the route's
+    identity, so `/api/kbs/%20%20/permissions` names a KB called "  ", which
+    is not one: refused as `KB_NOT_FOUND`, never served as "no KB named".
+    """
+    from .api import KB_PARAM_NAMES, _admin_kb_path_name
+
+    for param in KB_PARAM_NAMES:
+        value = request.path_params.get(param)
+        if isinstance(value, str) and named_kb(value) is None:
+            return value
+    value = _admin_kb_path_name(request)
+    if isinstance(value, str) and named_kb(value) is None:
+        return value
+    return None
+
+
+def _blank_path_refusal(name: str) -> KBNotFoundError:
+    from ..services.kb_resolver import HOW_TO_LIST_KBS
+
+    return KBNotFoundError(f"KB '{name}' not found", suggestion=HOW_TO_LIST_KBS, did_you_mean=[])
+
+
+def resolve_named_kb(request: Request, policy: AccessPolicy, name: object):
+    """The KB a route names, through the one resolver, for a route that
+    decides access inline rather than through `authorize` (#952): the
+    admin-only KB routes, permissions, worktrees. Resolved for the caller's
+    read scope, an unknown, unreadable or shortname KB is 404
+    ``KB_NOT_FOUND`` before the handler runs; a blank or absent name names
+    no KB and is None -- unless it is the path's (`blank_path_kb`). No
+    principal is 401.
+    """
+    principal = get_principal(request)
+    if principal is None:
+        raise not_authenticated()
+    blank = blank_path_kb(request)
+    if blank is not None:
+        raise _blank_path_refusal(blank)
+    return policy.resolve_kb_for(principal, name)
 
 
 # What this theme decides. Everything else is refused at declaration.
@@ -117,6 +170,9 @@ def authorize(action: Action, resource: type):
     ) -> ReadScope:
         if get_principal(request) is None:
             raise not_authenticated()
+        blank = blank_path_kb(request)
+        if blank is not None:
+            raise _blank_path_refusal(blank)
         try:
             names = await _resolve_kb_names(request)
         except _UnparseableBodyError:

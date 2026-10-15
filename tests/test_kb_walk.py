@@ -42,7 +42,14 @@ from tests.characterization.surfaces import (
     kb_bearing_mcp_tool_names,
     kb_bearing_rest_operations,
 )
-from tests.characterization.world import MISSING, PRIVATE, READ_ONLY, READABLE, build_world
+from tests.characterization.world import (
+    MISSING,
+    PRIVATE,
+    READ_ONLY,
+    READABLE,
+    READABLE_ENTRY,
+    build_world,
+)
 
 SHORT = {READABLE: "rdb", PRIVATE: "pvt"}
 UNKNOWN = MISSING
@@ -424,4 +431,220 @@ class TestMcp:
             )
             if isinstance(out, dict) and out.get("error_code") == "KB_NOT_FOUND":
                 wrong.append((tool, out))
+        assert not wrong, wrong
+
+
+# ---------------------------------------------------------------------------
+# MCP prompts and resources: the other two chokepoints (#965 review)
+# ---------------------------------------------------------------------------
+
+
+def _prompt_args(kb: str) -> dict[str, dict]:
+    """Every prompt that takes a KB, with the KB in each argument it reads."""
+    return {
+        "summarize_entry": {"entry_id": READABLE_ENTRY, "kb_name": kb},
+        "find_connections": {
+            "entry_a": READABLE_ENTRY,
+            "entry_b": READABLE_ENTRY,
+            "kb_a": kb,
+            "kb_b": kb,
+        },
+    }
+
+
+def _prompt(world, principal_name: str, name: str, kb: str):
+    return world.mcp_server._get_prompt(
+        name, _prompt_args(kb)[name], readable_kbs=_readable(world, principal_name)
+    )
+
+
+def _resource_uris(kb: str) -> list[str]:
+    return [f"pyrite://kbs/{kb}/entries", f"pyrite://kbs/{kb}/entries/{READABLE_ENTRY}"]
+
+
+def _resource(world, principal_name: str, uri: str):
+    return world.mcp_server._read_resource(uri, readable_kbs=_readable(world, principal_name))
+
+
+def _is_kb_not_found(out) -> bool:
+    return isinstance(out, dict) and out.get("error_code") == "KB_NOT_FOUND"
+
+
+class TestMcpPromptsAndResources:
+    """`prompts/get` and `resources/read` reach KB content without passing
+    `_dispatch_tool`; each asks the resolver itself (`_kb_refusal`)."""
+
+    @pytest.mark.parametrize("principal_name", PRINCIPALS)
+    def test_a_full_name_is_never_kb_not_found(self, world, principal_name):
+        wrong = [
+            (name, out)
+            for name in _prompt_args(READABLE)
+            if _is_kb_not_found(out := _prompt(world, principal_name, name, READABLE))
+        ] + [
+            (uri, out)
+            for uri in _resource_uris(READABLE)
+            if _is_kb_not_found(out := _resource(world, principal_name, uri))
+        ]
+        assert not wrong, wrong
+
+    @pytest.mark.parametrize("principal_name", PRINCIPALS)
+    def test_an_unknown_name_is_kb_not_found(self, world, principal_name):
+        wrong = [
+            (name, out)
+            for name in _prompt_args(UNKNOWN)
+            if not _is_kb_not_found(out := _prompt(world, principal_name, name, UNKNOWN))
+        ] + [
+            (uri, out)
+            for uri in _resource_uris(UNKNOWN)
+            if not _is_kb_not_found(out := _resource(world, principal_name, uri))
+        ]
+        assert not wrong, wrong
+
+    @pytest.mark.parametrize("name", [PRIVATE, SHORT[PRIVATE]], ids=["full", "shortname"])
+    def test_an_unreadable_kb_answers_like_an_unknown_one(self, world, name):
+        diverged = []
+        for prompt in _prompt_args(name):
+            private = _prompt(world, "local_user", prompt, name)
+            unknown = _prompt(world, "local_user", prompt, UNKNOWN)
+            if _swap(private, name, UNKNOWN) != _swap(unknown, name, UNKNOWN):
+                diverged.append((prompt, private, unknown))
+        for uri_p, uri_u in zip(_resource_uris(name), _resource_uris(UNKNOWN), strict=True):
+            private = _resource(world, "local_user", uri_p)
+            unknown = _resource(world, "local_user", uri_u)
+            if _swap(private, name, UNKNOWN) != _swap(unknown, name, UNKNOWN):
+                diverged.append((uri_p, private, unknown))
+        assert not diverged, diverged
+        assert PRIVATE not in json.dumps(diverged)
+
+    @pytest.mark.parametrize("principal_name", PRINCIPALS)
+    def test_a_readable_kbs_shortname_is_refused_with_the_full_name(self, world, principal_name):
+        short = SHORT[READABLE]
+        outs = [(n, _prompt(world, principal_name, n, short)) for n in _prompt_args(short)]
+        outs += [(u, _resource(world, principal_name, u)) for u in _resource_uris(short)]
+        wrong = [
+            (what, out)
+            for what, out in outs
+            if not _is_kb_not_found(out)
+            or out.get("did_you_mean") != [READABLE]
+            or READABLE not in str(out.get("suggestion"))
+        ]
+        assert not wrong, wrong
+
+    @pytest.mark.parametrize("principal_name", PRINCIPALS)
+    def test_a_blank_name_is_never_kb_not_found(self, world, principal_name):
+        wrong = [
+            (name, out)
+            for name in _prompt_args("")
+            if _is_kb_not_found(out := _prompt(world, principal_name, name, ""))
+        ]
+        assert not wrong, wrong
+
+
+# ---------------------------------------------------------------------------
+# REST routes that decide access inline: the admin-only KB routes (#965 review)
+# ---------------------------------------------------------------------------
+
+# `REST_ACCESS_EXCLUSIONS` leaves these out of the matrix because they gate
+# on the admin tier alone; they still name a KB in their path, and that
+# name goes through the resolver before the handler. The operator key
+# only: a scoped caller is refused by the tier floor before any KB.
+ADMIN_KB_ROUTES: dict[tuple[str, str], dict[str, Any]] = {
+    # Both fields: the route hands a missing `kb_type` to the registry as
+    # None, which the `kb` table refuses (a pre-existing fault, noted in
+    # the PR, not this walk's subject).
+    ("PUT", "/api/kbs/{name}"): {"json": {"description": "walked", "kb_type": "generic"}},
+    ("DELETE", "/api/kbs/{name}"): {},
+    ("POST", "/api/kbs/{name}/reindex"): {},
+    ("PUT", "/api/kbs/{name}/default-role"): {"json": {"role": "read"}},
+    ("POST", "/api/kbs/{kb_name}/publish"): {"json": {}},
+    ("POST", "/api/kbs/{kb_name}/commit"): {"json": {"message": "walked"}},
+    ("POST", "/api/kbs/{kb_name}/push"): {"json": {}},
+}
+DESTRUCTIVE = {("DELETE", "/api/kbs/{name}")}
+
+
+def _admin_rest(world, method: str, path: str, kb: str):
+    from tests.characterization.surfaces import REST_ACCESS_EXCLUSIONS
+
+    assert (method, path) in REST_ACCESS_EXCLUSIONS, (method, path)
+    url = path.format(name=kb, kb_name=kb)
+    world.release_idle_connections()
+    resp = world.client.request(
+        method,
+        url,
+        headers=world.principals["admin_key"].rest_headers,
+        **ADMIN_KB_ROUTES[(method, path)],
+    )
+    try:
+        body = resp.json()
+    except ValueError:
+        body = resp.text
+    return resp.status_code, body
+
+
+class TestRestAdminKbRoutes:
+    def test_every_excluded_kb_route_is_walked(self):
+        from tests.characterization.surfaces import REST_ACCESS_EXCLUSIONS
+
+        # `/api/kbs/{...}` routes name a KB. The exclusions' other `{name}`
+        # routes name a plugin, a static file, or an ephemeral KB
+        # (`/api/kbs/ephemeral/{name}`, whose service validates its own
+        # names and is not a config or registry KB).
+        with_kb = {k for k in REST_ACCESS_EXCLUSIONS if k[1].startswith("/api/kbs/{")}
+        assert with_kb == set(ADMIN_KB_ROUTES), "an excluded KB route is not walked here"
+
+    def test_a_full_name_is_never_kb_not_found(self, world):
+        wrong = []
+        for method, path in ADMIN_KB_ROUTES:
+            if (method, path) in DESTRUCTIVE:
+                continue
+            answer = _admin_rest(world, method, path, READABLE)
+            if _rest_code(answer) == "KB_NOT_FOUND":
+                wrong.append((method, path, answer))
+        assert not wrong, wrong
+
+    def test_an_unknown_name_is_kb_not_found(self, world):
+        wrong = []
+        for method, path in ADMIN_KB_ROUTES:
+            answer = _admin_rest(world, method, path, UNKNOWN)
+            if (answer[0], _rest_code(answer)) != (404, "KB_NOT_FOUND"):
+                wrong.append((method, path, answer))
+        assert not wrong, wrong
+
+    def test_a_shortname_is_refused_with_the_full_name(self, world):
+        wrong = []
+        for method, path in ADMIN_KB_ROUTES:
+            status, body = _admin_rest(world, method, path, SHORT[READABLE])
+            detail = body.get("detail") if isinstance(body, dict) else {}
+            if (
+                status != 404
+                or detail.get("code") != "KB_NOT_FOUND"
+                or detail.get("did_you_mean") != [READABLE]
+            ):
+                wrong.append((method, path, status, body))
+        assert not wrong, wrong
+
+    def test_a_blank_path_segment_is_kb_not_found(self, world):
+        """A path segment is the route's identity: `/api/kbs/%20/reindex`
+        names a KB called "  ", which is not one -- never "no KB named"."""
+        wrong = []
+        for method, path in ADMIN_KB_ROUTES:
+            answer = _admin_rest(world, method, path, "  ")
+            if (answer[0], _rest_code(answer)) != (404, "KB_NOT_FOUND"):
+                wrong.append((method, path, answer))
+        assert not wrong, wrong
+
+
+class TestRestBlankPathSegment:
+    @pytest.mark.parametrize("principal_name", PRINCIPALS)
+    def test_a_blank_kb_in_the_path_is_kb_not_found(self, world, principal_name):
+        wrong = []
+        for method, path in _rest_ops(world):
+            if "{kb" not in path and not path.startswith("/api/kbs/{name}"):
+                continue
+            answer = _rest(world, principal_name, method, path, "  ", f"blankpath-{method}{path}")
+            if answer is None or _refused_before_the_kb(*answer, "  "):
+                continue
+            if (answer[0], _rest_code(answer)) != (404, "KB_NOT_FOUND"):
+                wrong.append((method, path, answer))
         assert not wrong, wrong

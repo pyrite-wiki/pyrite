@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import PyriteConfig
-from ..exceptions import EntryNotFoundError, KBNotFoundError
+from ..exceptions import EntryNotFoundError
 from ..storage.database import PyriteDB
 from ..storage.repository import KBRepository
 
@@ -38,9 +38,7 @@ class ReviewService:
         """Create a review, computing content_hash from the file on disk."""
         from ..utils.hashing import git_blob_hash
 
-        kb_config = self.config.get_kb(kb_name)
-        if not kb_config:
-            raise KBNotFoundError(f"KB not found: {kb_name}")
+        kb_config = self.config.require_kb(kb_name, db=self.db)  # the one resolver (#952)
 
         repo = KBRepository(kb_config)
         file_path = repo.find_file(entry_id)
