@@ -3,7 +3,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -18,7 +21,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -117,7 +123,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -133,7 +142,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -149,7 +161,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -167,7 +182,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -185,7 +203,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -203,7 +224,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -221,7 +245,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -236,7 +263,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -251,7 +281,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -269,7 +302,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -287,7 +323,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -310,7 +349,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -333,7 +375,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -354,7 +399,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -375,7 +423,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -394,7 +445,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -413,7 +467,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -433,7 +490,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -453,7 +513,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -1249,7 +1312,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2045,7 +2111,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2062,7 +2131,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2079,7 +2151,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2095,7 +2170,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2111,7 +2189,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2144,7 +2225,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2177,7 +2261,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2195,7 +2282,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2213,7 +2303,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2231,7 +2324,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2249,7 +2345,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2267,7 +2366,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2285,7 +2387,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2301,7 +2406,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2505,7 +2613,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2531,7 +2642,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2557,7 +2671,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2573,7 +2690,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2589,7 +2709,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2611,7 +2734,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2633,7 +2759,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2974,7 +3103,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -3315,7 +3447,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -3633,7 +3768,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -3951,7 +4089,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -3967,7 +4108,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -3983,7 +4127,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4001,7 +4148,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4017,9 +4167,15 @@
   },
   "GET /api/kbs/{name}/permissions | global_user | missing-kb": {
     "body": {
-      "detail": "Admin access required for this KB"
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
+      }
     },
-    "status": 403
+    "status": 404
   },
   "GET /api/kbs/{name}/permissions | global_user | no-default-role-kb": {
     "body": {
@@ -4029,9 +4185,15 @@
   },
   "GET /api/kbs/{name}/permissions | global_user | private-kb": {
     "body": {
-      "detail": "Admin access required for this KB"
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
+      }
     },
-    "status": 403
+    "status": 404
   },
   "GET /api/kbs/{name}/permissions | global_user | readable-kb": {
     "body": {
@@ -4043,7 +4205,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4061,7 +4226,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4079,7 +4247,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4106,7 +4277,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4133,7 +4307,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4152,7 +4329,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4171,7 +4351,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4189,7 +4372,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4207,7 +4393,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4225,7 +4414,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4243,7 +4435,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4260,7 +4455,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4325,7 +4523,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4350,7 +4551,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4375,7 +4579,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4400,7 +4607,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4425,7 +4635,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4450,7 +4663,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4475,7 +4691,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4503,7 +4722,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4531,7 +4753,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4547,7 +4772,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4603,7 +4831,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4619,7 +4850,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4635,7 +4869,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4650,7 +4887,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4665,7 +4905,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4681,7 +4924,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4697,7 +4943,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4715,7 +4964,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4731,10 +4983,15 @@
   },
   "GET /api/worktree/changes | global_user | missing-kb": {
     "body": {
-      "changes": [],
-      "count": 0
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
+      }
     },
-    "status": 200
+    "status": 404
   },
   "GET /api/worktree/changes | global_user | no-default-role-kb": {
     "body": {
@@ -4745,10 +5002,15 @@
   },
   "GET /api/worktree/changes | global_user | private-kb": {
     "body": {
-      "changes": [],
-      "count": 0
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
+      }
     },
-    "status": 200
+    "status": 404
   },
   "GET /api/worktree/changes | global_user | readable-kb": {
     "body": {
@@ -4759,14 +5021,15 @@
   },
   "GET /api/worktree/status | global_user | missing-kb": {
     "body": {
-      "branch": null,
-      "changes_count": 0,
-      "feedback": null,
-      "has_worktree": false,
-      "status": "none",
-      "submitted_at": null
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
+      }
     },
-    "status": 200
+    "status": 404
   },
   "GET /api/worktree/status | global_user | no-default-role-kb": {
     "body": {
@@ -4781,14 +5044,15 @@
   },
   "GET /api/worktree/status | global_user | private-kb": {
     "body": {
-      "branch": null,
-      "changes_count": 0,
-      "feedback": null,
-      "has_worktree": false,
-      "status": "none",
-      "submitted_at": null
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
+      }
     },
-    "status": 200
+    "status": 404
   },
   "GET /api/worktree/status | global_user | readable-kb": {
     "body": {
@@ -4805,7 +5069,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4820,7 +5087,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4931,7 +5201,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4946,7 +5219,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4961,7 +5237,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4976,7 +5255,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4991,7 +5273,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5024,7 +5309,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5057,7 +5345,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5072,7 +5363,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5087,7 +5381,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5102,7 +5399,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5159,7 +5459,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5174,7 +5477,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5189,7 +5495,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5206,7 +5515,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5247,7 +5559,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5265,7 +5580,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5281,9 +5599,15 @@
   },
   "POST /api/kbs/{name}/permissions | global_user | missing-kb": {
     "body": {
-      "detail": "Admin access required for this KB"
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
+      }
     },
-    "status": 403
+    "status": 404
   },
   "POST /api/kbs/{name}/permissions | global_user | no-default-role-kb": {
     "body": {
@@ -5293,9 +5617,15 @@
   },
   "POST /api/kbs/{name}/permissions | global_user | private-kb": {
     "body": {
-      "detail": "Admin access required for this KB"
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
+      }
     },
-    "status": 403
+    "status": 404
   },
   "POST /api/kbs/{name}/permissions | global_user | readable-kb": {
     "body": {
@@ -5355,7 +5685,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5370,7 +5703,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5409,7 +5745,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5424,7 +5763,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5487,7 +5829,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5502,7 +5847,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'private-kb' not found"
+        "did_you_mean": [],
+        "hint": "Call orient with no KB name to list the KBs you can read.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
