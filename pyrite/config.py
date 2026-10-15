@@ -632,6 +632,14 @@ class PyriteConfig:
                 return kb
         return None
 
+    def kb_name_for(self, name: str) -> str:
+        """The KB a name given as ``kb`` means: a shortname maps to its KB's
+        full name; anything else is returned unchanged (a full name, or an
+        unknown name the caller's lookup will miss). The one mapping every
+        ``kb`` parameter and ``kb:`` wikilink prefix shares (#912)."""
+        kb = self.get_kb_by_shortname(name)
+        return kb.name if kb else name
+
     def list_kbs(self, kb_type: str | None = None) -> list[KBConfig]:
         """List all KBs, optionally filtered by type."""
         if kb_type is None:

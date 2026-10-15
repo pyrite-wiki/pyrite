@@ -682,6 +682,7 @@ class KBService:
         """
         kb_name = named_kb(kb_name)
         if kb_name:
+            kb_name = self.config.kb_name_for(kb_name)  # a shortname names its KB
             if readable_kbs is not None and kb_name not in readable_kbs:
                 return None
             result = self._read_entry(entry_id, kb_name)

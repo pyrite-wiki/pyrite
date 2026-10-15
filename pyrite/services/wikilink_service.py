@@ -87,6 +87,18 @@ class WikilinkService:
             return None
         return name
 
+    def _one_or_ambiguous(self, rows: list[dict[str, Any]], target: str) -> dict[str, Any] | None:
+        """The one row a pass found, or None; rows from more than one KB are
+        refused (``AMBIGUOUS``), never picked by order (#528, #912). Several
+        rows in one KB are that KB's own and keep the first, by id."""
+        held = {r["kb_name"] for r in rows}
+        if len(held) > 1:
+            # Candidates in config order, as every other surface lists them.
+            raise AmbiguousEntryError(
+                target, [k.name for k in self.config.all_kbs() if k.name in held]
+            )
+        return rows[0] if rows else None
+
     def resolve_entry(
         self,
         target: str,
@@ -94,7 +106,10 @@ class WikilinkService:
         *,
         readable_kbs: set[str] | None,
     ) -> dict[str, Any] | None:
-        """Resolve a wikilink target to an entry. Supports kb:id format for cross-KB links."""
+        """Resolve a wikilink target to an entry. Supports kb:id format for cross-KB links.
+
+        ``kb_name`` may be a shortname. An id, title or alias held by more
+        than one readable KB (with none named) is refused, in every pass."""
         # Parse cross-KB format
         actual_target = target
         actual_kb = kb_name
@@ -105,6 +120,8 @@ class WikilinkService:
                 actual_target = rest
                 actual_kb = prefixed
         actual_kb = named_kb(actual_kb)  # a blank names no KB
+        if actual_kb:
+            actual_kb = self.config.kb_name_for(actual_kb)  # a shortname names its KB
         scope_sql, scope_params = _scope_clause("kb_name", readable_kbs)
 
         # First pass: exact ID match. Without a KB, an id held by more than
@@ -119,13 +136,9 @@ class WikilinkService:
         sql += scope_sql + " ORDER BY kb_name"
 
         rows = self.db.execute_sql(sql, params)
-        if len({r["kb_name"] for r in rows}) > 1:
-            held = {r["kb_name"] for r in rows}
-            # Candidates in config order, as every other surface lists them.
-            ordered = [k.name for k in self.config.all_kbs() if k.name in held]
-            raise AmbiguousEntryError(actual_target, ordered)
-        if rows:
-            return rows[0]
+        picked = self._one_or_ambiguous(rows, actual_target)
+        if picked:
+            return picked
 
         # Second pass: title match
         sql = "SELECT id, kb_name, entry_type, title FROM entry WHERE title LIKE :target"
@@ -133,11 +146,12 @@ class WikilinkService:
         if actual_kb:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = actual_kb
-        sql += scope_sql + " LIMIT 1"
+        sql += scope_sql + " ORDER BY kb_name, id"
 
         rows = self.db.execute_sql(sql, params)
-        if rows:
-            return rows[0]
+        picked = self._one_or_ambiguous(rows, actual_target)
+        if picked:
+            return picked
 
         # Third pass: search aliases
         sql = """
@@ -148,10 +162,10 @@ class WikilinkService:
         if actual_kb:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = actual_kb
-        sql += scope_sql + " LIMIT 1"
+        sql += scope_sql + " ORDER BY kb_name, id"
 
         rows = self.db.execute_sql(sql, params)
-        return rows[0] if rows else None
+        return self._one_or_ambiguous(rows, actual_target)
 
     def resolve_batch(
         self,
