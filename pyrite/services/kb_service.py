@@ -892,7 +892,10 @@ class KBService:
     # =========================================================================
 
     def _writable_kb(self, kb_name: str) -> KBConfig:
-        kb_config = self.config.get_kb(kb_name)
+        # get_kb, not config.get_kb: the registry-aware lookup reads use, so a
+        # KB registered after this process started is writable wherever it is
+        # readable (#764 review), not KB_NOT_FOUND to create/update alone.
+        kb_config = self.get_kb(kb_name)
         if not kb_config:
             raise KBNotFoundError(f"KB not found: {kb_name}")
         if kb_config.read_only:

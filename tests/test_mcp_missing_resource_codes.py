@@ -131,19 +131,14 @@ def test_id_only_in_another_kb_is_entry_not_found_in_the_named_kb(mcp_server, to
     assert kept["entry"]["title"] == "Private title"
 
 
-@pytest.mark.control(
-    reason="dev's kb_get has no KB check; this guards #764's own check, red against its first version"
-)
-def test_kb_registered_after_startup_is_served_by_kb_get(mcp_server, tmp_path):
-    # `pyrite kb add` from another process while a stdio server runs: the KB
-    # is in the shared index's registry, not in the server's startup config.
-    # kb_list_entries and kb_read_body serve it; kb_get must too, not answer
-    # KB_NOT_FOUND from the startup config alone.
+def _register_late_kb(server, tmp_path):
+    """`pyrite kb add` from another process while a stdio server runs: the KB
+    is in the shared index's registry, not in the server's startup config."""
     from pyrite.services.kb_registry_service import KBRegistryService
     from pyrite.services.kb_service import KBService
     from pyrite.storage.database import PyriteDB
 
-    index_path = mcp_server.config.settings.index_path
+    index_path = server.config.settings.index_path
     other_config = PyriteConfig(knowledge_bases=[], settings=Settings(index_path=index_path))
     other_db = PyriteDB(index_path)
     try:
@@ -151,7 +146,16 @@ def test_kb_registered_after_startup_is_served_by_kb_get(mcp_server, tmp_path):
         KBService(other_config, other_db).create_entry("late", "late-note", "Late", "note", "hi")
     finally:
         other_db.close()
-    assert mcp_server.config.get_kb("late") is None  # the startup config never saw it
+    assert server.config.get_kb("late") is None  # the startup config never saw it
+
+
+@pytest.mark.control(
+    reason="dev's kb_get has no KB check; this guards #764's own check, red against its first version"
+)
+def test_kb_registered_after_startup_is_served_by_kb_get(mcp_server, tmp_path):
+    # kb_list_entries and kb_read_body serve a late-registered KB; kb_get must
+    # too, not answer KB_NOT_FOUND from the startup config alone.
+    _register_late_kb(mcp_server, tmp_path)
 
     listed = _call(mcp_server, "kb_list_entries", {"kb_name": "late"})
     assert [e["id"] for e in listed["entries"]] == ["late-note"], listed
@@ -160,3 +164,21 @@ def test_kb_registered_after_startup_is_served_by_kb_get(mcp_server, tmp_path):
 
     got = _call(mcp_server, "kb_get", {"kb_name": "late", "entry_id": "late-note"})
     assert got.get("entry", {}).get("id") == "late-note", got
+
+
+def test_kb_registered_after_startup_is_updated_by_kb_update(mcp_server, tmp_path):
+    # The KB kb_get serves is one kb_update may write: both decide that it
+    # exists from the same registry-aware lookup, so kb_update never answers
+    # a non-retryable KB_NOT_FOUND for a KB kb_get just served.
+    _register_late_kb(mcp_server, tmp_path)
+
+    result = _call(
+        mcp_server,
+        "kb_update",
+        {"kb_name": "late", "entry_id": "late-note", "title": "Renamed late"},
+    )
+    assert "error_code" not in result, result
+    got = _call(mcp_server, "kb_get", {"kb_name": "late", "entry_id": "late-note"})
+    assert got["entry"]["title"] == "Renamed late", got
+    on_disk = (tmp_path / "late").rglob("late-note.md")
+    assert any("Renamed late" in f.read_text(encoding="utf-8") for f in on_disk)
