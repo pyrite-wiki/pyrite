@@ -397,12 +397,57 @@ class TestReplayAgainstAHandIntTarget:
         assert _json(out)["links"][0]["created"] is False
         assert self._rows(env) == 1
 
-    def test_mcp_kb_link_echoes_the_stored_target(self, env, hand, mcp):
+    def test_mcp_kb_link_replay_is_a_no_op(self, env, hand, mcp):
         with _unchanged(hand):
             out = mcp("kb_link", {"source_id": "fresh", "source_kb": "rs", "target_id": "2024"})
         assert out.get("created") is False, out
-        assert out["target_id"] == 2024, out
+        # The link asked for, as the schema types it (fix round 3).
+        assert out["target_id"] == "2024", out
         assert self._rows(env) == 1
+
+
+class TestMCPKbLinkReplyMatchesItsSchema:
+    """`kb_link`'s reply types its fields as `tool_schemas.py` types the
+    arguments they echo: `target_id` and `relation` are strings, on create and
+    on replay, whatever YAML made of a hand file's target (fix round 3). Round
+    2 echoed the stored value, so a replay against `target: 2024` answered an
+    int, `true` a bool and `2024-01-01` a `datetime.date`."""
+
+    @pytest.mark.parametrize(
+        ("on_disk", "typed"),
+        [("2024", "2024"), ("true", "True"), ("2024-01-01", "2024-01-01")],
+        ids=["int", "bool", "date"],
+    )
+    def test_target_id_and_relation_are_strings(self, env, mcp, on_disk, typed):
+        from pyrite.cli import app
+
+        path = _file(env, "rs", "fresh")
+        path.write_text(
+            path.read_text().replace(
+                "tags:", f"links:\n- target: {on_disk}\n  relation: related_to\ntags:"
+            )
+        )
+        assert CliRunner().invoke(app, ["index", "sync"]).exit_code == 0
+        args = {"source_kb": "rs", "target_id": typed, "allow_dangling": True}
+
+        created = mcp("kb_link", {**args, "source_id": "hello"})
+        assert created.get("created") is True, created
+        with _unchanged(path):
+            replay = mcp("kb_link", {**args, "source_id": "fresh"})
+        assert replay.get("created") is False, replay
+
+        for out in (created, replay):
+            assert out["target_id"] == typed and type(out["target_id"]) is str, out
+            assert type(out["relation"]) is str, out
+            assert type(out["source_id"]) is str, out
+
+    def test_a_null_relation_replies_with_the_relation_written(self, env, mcp):
+        out = mcp(
+            "kb_link",
+            {"source_id": "fresh", "source_kb": "rs", "target_id": "hello", "relation": None},
+        )
+        assert out.get("created") is True, out
+        assert out["relation"] == "related_to", out
 
 
 class TestExplicitNonStringTarget:

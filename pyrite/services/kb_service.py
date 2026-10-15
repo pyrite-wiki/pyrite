@@ -1810,9 +1810,7 @@ class KBService:
             who then greps the file for what they typed). The duplicate key
             is ``(target, kb, relation)``, with targets compared as text: a
             second, different relation between the same two entries is a new
-            link, not a duplicate (#396). ``target`` is the target as stored:
-            on the no-op path, the file's own (a hand file's int stays an
-            int).
+            link, not a duplicate (#396).
         """
         # A malformed request is refused before anything is loaded or written
         # (#846); every link writer passes through this one check.
@@ -1874,8 +1872,6 @@ class KBService:
                     "resolved": _target_exists(),
                     "created": False,
                     "relation": existing.relation,
-                    # What the file holds, which may be a hand file's int.
-                    "target": existing.target,
                 }
 
         resolved = _target_exists()
@@ -1885,7 +1881,7 @@ class KBService:
         entry.add_link(target=target_id, relation=relation, note=note, kb=tkb)
         entry.touch_updated_at()
         self._doc_mgr.save_entry(entry, source_kb, kb_config)
-        return {"resolved": resolved, "created": True, "relation": relation, "target": target_id}
+        return {"resolved": resolved, "created": True, "relation": relation}
 
     def add_links(
         self, kb_name: str, links: list[dict[str, Any]], *, dry_run: bool = False
