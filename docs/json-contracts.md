@@ -60,8 +60,10 @@ task-graph tools (in the tool result); REST `GET /api/entries/{id}/blocks`,
 `kb`, answer `409` with `candidate_kbs` in `detail`. `candidate_kbs` names
 only KBs the caller can read: a private KB holding the same id is neither
 listed nor a cause of the refusal. One readable match still answers; zero is
-still `NOT_FOUND`. Only indexed copies are counted: an id indexed in one KB
-with a not-yet-indexed `<id>.md` in another answers from the indexed KB (the
+still `NOT_FOUND`, except on MCP `kb_get`, which answers `ENTRY_NOT_FOUND`
+(`legacy_error_code: "NOT_FOUND"`, #761). Only indexed copies are counted:
+an id indexed in one KB with a not-yet-indexed `<id>.md` in another answers
+from the indexed KB (the
 by-name read runs only when no readable KB's index holds the id, #753). To
 comply, name one of the KBs: `-k`, `kb`, `kb_name`, `kb_a`/`kb_b`
 (`find_connections`), or `pyrite://kbs/<kb>/entries/<id>`.
@@ -110,6 +112,13 @@ refused by the scoped refusal first, so it sees the static hint, not
 `did_you_mean`). A `kb_name` that is not a string is `VALIDATION_FAILED`; `null`
 is "no name".
 
+Two more in 0.25.8 (#761): MCP `kb_get` and `kb_update` answer a missing
+entry with `ENTRY_NOT_FOUND` and a KB that does not exist with
+`KB_NOT_FOUND`, both `retryable: false`. Their old codes are in
+`legacy_error_code`: `NOT_FOUND` for `kb_get`, and `UPDATE_FAILED` for
+`kb_update`, which used to answer both with `retryable: true`. Any other
+`kb_update` failure is still `UPDATE_FAILED`, `retryable: true`.
+
 **REST** answers a domain refusal as `{"detail": {"code", "message",
 "retryable", "hint"?}}` — the web client already speaks this shape
 (`web/src/lib/api/client.ts`). This is true whether the refusal reached the
@@ -150,7 +159,7 @@ is reproduced by a command in "Reproduce the codes" below, which CI runs.
 | `error_code` | Meaning | What to do |
 |---|---|---|
 | `KB_NOT_FOUND` | the KB name is not registered (or, for a scoped caller, not readable). Every CLI write command (`create`, `update`, `delete`, `link`) reports it. | `pyrite kb list` shows the registered names; `pyrite orient` lists the KBs you can read. |
-| `NOT_FOUND` | the entry id does not exist: CLI `get`, `update`, `delete`, `link`. Also a path you named as input (`--body-file`, `--schema-file`, `--alias-file`, `--file`, `import`'s and `add`'s file) that does not exist; a directory there is `VALIDATION_FAILED` (#923). `pyrite backlinks` and `pyrite-read backlinks` on an id that no entry has and nothing links to answer `ENTRY_NOT_FOUND` (the class's code, today; #610 settles the spelling). An id that is only linked to (`[[ghost-page]]`) is answered with its linking entries. The intended MCP and REST code is `ENTRY_NOT_FOUND` (see "MCP only, for one release" above); today MCP `kb_get` answers `NOT_FOUND` and `kb_update` answers `UPDATE_FAILED` with `retryable: true` (#761: a bug, do not rely on it). | `pyrite search <term> -k <kb>` to find the id. |
+| `NOT_FOUND` | the entry id does not exist: CLI `get`, `update`, `delete`, `link`. Also a path you named as input (`--body-file`, `--schema-file`, `--alias-file`, `--file`, `import`'s and `add`'s file) that does not exist; a directory there is `VALIDATION_FAILED` (#923). `pyrite backlinks` and `pyrite-read backlinks` on an id that no entry has and nothing links to answer `ENTRY_NOT_FOUND` (the class's code, today; #610 settles the spelling). An id that is only linked to (`[[ghost-page]]`) is answered with its linking entries. MCP `kb_get` and `kb_update` answer `ENTRY_NOT_FOUND`, `retryable: false`, with `legacy_error_code` `NOT_FOUND` and `UPDATE_FAILED` respectively (see "MCP only, for one release" above, #761); `ENTRY_NOT_FOUND` is also the REST code for the class. | `pyrite search <term> -k <kb>` to find the id. |
 | `AMBIGUOUS` | the id was given without a KB (or with a blank `-k`) and more than one KB you can read holds it (see "`AMBIGUOUS`" above). The error lists them in `candidate_kbs`; REST answers `409`. | Repeat the command with `-k <kb>` (`kb` on REST, `kb_name` on MCP), one of `candidate_kbs`. |
 | `UNDECLARED_TYPE` | the KB's `kb.yaml` declares types and this is not one of them. Core types (`note`, `person`, …) are **not** exempt. Override with `allow_undeclared` (MCP, REST body or import query) / `--allow-undeclared` (CLI). The error carries `declared_types` on MCP and REST. | Use a declared type (`pyrite kb schema show <kb>`), or pass the override. |
 | `ENTRY_EXISTS` | the id (given, or derived from the title) already exists. Create never replaces; use update. REST answers `409`. | `update` it, or choose another title or id. |
