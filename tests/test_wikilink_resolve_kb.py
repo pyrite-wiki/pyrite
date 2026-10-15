@@ -106,3 +106,32 @@ def test_two_matches_in_one_kb_are_that_kbs_own(world):
     svc.create_entry("kb-b", "meeting-again", "Meeting Notes", "note", "x")
     r = _resolve(client, "Meeting Notes", kb="kb-b")
     assert r.json()["entry"]["id"] == "meeting-again"  # first by id, within the one KB
+
+
+@pytest.mark.parametrize("private_first", [True, False])
+def test_a_shared_shortname_prefix_is_the_readable_kb(private_first):
+    """A link prefix is looked up among the caller's readable KBs only (#952,
+    #965 round 2): with a private `priv` and a readable `pub` sharing the
+    shortname `s`, `s:e1` is pub's entry whichever KB config.yaml lists
+    first. Looked up across all KBs and then checked, priv would be the one
+    found and the answer would be None."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        names = ("priv", "pub") if private_first else ("pub", "priv")
+        kbs = []
+        for name in names:
+            (root / name).mkdir()
+            kbs.append(KBConfig(name=name, path=root / name, kb_type=KBType.GENERIC, shortname="s"))
+        config = PyriteConfig(knowledge_bases=kbs, settings=Settings(index_path=root / "i.db"))
+        db = PyriteDB(root / "i.db")
+        svc = KBService(config, db)
+        for name in names:
+            svc.create_entry(name, "e1", f"E1 in {name}", "note", name)
+        try:
+            found = svc.resolve_entry("s:e1", readable_kbs={"pub"})
+            assert found is not None and found["kb_name"] == "pub"
+            # The scoped caller's other link form, `kb_name`, is the full name
+            # only; a shortname given there is not a readable KB's name.
+            assert svc.resolve_entry("e1", kb_name="pub", readable_kbs={"pub"})["kb_name"] == "pub"
+        finally:
+            db.close()
