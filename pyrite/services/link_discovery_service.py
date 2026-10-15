@@ -12,7 +12,7 @@ from typing import Any
 
 from ..config import PyriteConfig
 from ..storage.database import PyriteDB
-from .access_policy import UNSCOPED
+from .access_policy import UNSCOPED, named_kb
 from .search_service import build_or_query, clip_semantic_text
 
 logger = logging.getLogger(__name__)
@@ -37,9 +37,13 @@ class LinkDiscoveryService:
         "not narrowed" (every KB), never a name. Called once per public
         call; the per-entry ``discover_neighbors`` calls inside
         ``batch_suggest`` and ``find_orphans`` repeat a dict lookup.
+
+        A blank name names no KB (``access_policy.named_kb``): it is not a
+        typo to refuse here but an id left unplaced, which the entry lookup
+        refuses as ``AMBIGUOUS`` when more than one KB holds it (#528).
         """
         for name in names:
-            if name is not None:
+            if named_kb(name):
                 self.config.require_kb(name)
 
     @staticmethod
