@@ -104,3 +104,34 @@ def test_unrelated_update_failure_keeps_safe_message_and_retry_semantics(mcp_ser
     assert result["error_code"] == "UPDATE_FAILED"
     assert result["retryable"] is True
     assert "sensitive/path" not in result["error"]
+
+
+@pytest.mark.control(
+    reason="dev's kb_get has no KB check; this guards #764's own check, red against its first version"
+)
+def test_kb_registered_after_startup_is_served_by_kb_get(mcp_server, tmp_path):
+    # `pyrite kb add` from another process while a stdio server runs: the KB
+    # is in the shared index's registry, not in the server's startup config.
+    # kb_list_entries and kb_read_body serve it; kb_get must too, not answer
+    # KB_NOT_FOUND from the startup config alone.
+    from pyrite.services.kb_registry_service import KBRegistryService
+    from pyrite.services.kb_service import KBService
+    from pyrite.storage.database import PyriteDB
+
+    index_path = mcp_server.config.settings.index_path
+    other_config = PyriteConfig(knowledge_bases=[], settings=Settings(index_path=index_path))
+    other_db = PyriteDB(index_path)
+    try:
+        KBRegistryService(other_config, other_db).add_kb("late", str(tmp_path / "late"))
+        KBService(other_config, other_db).create_entry("late", "late-note", "Late", "note", "hi")
+    finally:
+        other_db.close()
+    assert mcp_server.config.get_kb("late") is None  # the startup config never saw it
+
+    listed = _call(mcp_server, "kb_list_entries", {"kb_name": "late"})
+    assert [e["id"] for e in listed["entries"]] == ["late-note"], listed
+    body = _call(mcp_server, "kb_read_body", {"kb_name": "late", "entry_id": "late-note"})
+    assert body["body"] == "hi", body
+
+    got = _call(mcp_server, "kb_get", {"kb_name": "late", "entry_id": "late-note"})
+    assert got.get("entry", {}).get("id") == "late-note", got

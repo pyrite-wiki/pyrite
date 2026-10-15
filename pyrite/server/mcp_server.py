@@ -734,7 +734,11 @@ class PyriteMCPServer:
         body_offset = args.get("body_offset", 0)
         body_limit = args.get("body_limit")
 
-        if named_kb(kb_name) and self.config.get_kb(kb_name) is None:
+        # The same lookup `get_entry` reads through (shortname mapping, then
+        # config and the index's registry), not the startup config alone: a
+        # KB `pyrite kb add` registered while this server runs is served by
+        # kb_list_entries and kb_read_body, so it must not be KB_NOT_FOUND here.
+        if named_kb(kb_name) and self.svc.get_kb(self.config.kb_name_for(kb_name)) is None:
             return _refusal(KBNotFoundError(f"KB not found: {kb_name}"))
 
         # Scoped lookup: without `kb_name` it walks only readable KBs, so a
