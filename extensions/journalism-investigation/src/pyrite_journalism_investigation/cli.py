@@ -780,8 +780,12 @@ def bulk_edges(
     """Create multiple connection edges from JSON/YAML input."""
     import sys
 
+    from pyrite.cli.context import input_file_or_exit
+
     from .bulk import create_edge_batch
 
+    if file:
+        input_file_or_exit(file, "Edge file", "json" if output_json else "rich")
     config = load_config()
     db = PyriteDB(config.settings.index_path)
     try:
@@ -866,8 +870,11 @@ def ftm_import(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Import FollowTheMoney (FtM) entities from a JSON file."""
+    from pyrite.cli.context import input_file_or_exit
+
     from .ftm import import_ftm
 
+    input_file_or_exit(file, "FtM file", "json" if output_json else "rich")
     config = load_config()
     db = PyriteDB(config.settings.index_path)
     try:

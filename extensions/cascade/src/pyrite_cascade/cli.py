@@ -82,11 +82,14 @@ def extract_actors_cmd(
     ),
 ) -> None:
     """Extract actor names from events and create actor entries."""
+    from pyrite.cli.context import input_file_or_exit
     from pyrite.config import load_config
     from pyrite.storage.database import PyriteDB
 
     from .extract_actors import extract_actors
 
+    if alias_file is not None:
+        input_file_or_exit(alias_file, "Alias file")
     config = load_config()
     db = PyriteDB(config.settings.index_path)
 

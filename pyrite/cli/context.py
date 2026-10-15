@@ -189,6 +189,25 @@ def require_input_file(path: Path | str, what: str = "File") -> Path:
     return p
 
 
+def input_file_or_exit(path: Path | str, what: str = "File", output_format: str = "rich") -> Path:
+    """:func:`require_input_file` for a command that renders its own errors.
+
+    The legacy commands (not yet on the ADR-0046 outcome contract) catch
+    nothing the root would render, so the refusal is printed here in the CLI's
+    error shape and the command exits 1 (#923).
+    """
+    from ..exceptions import PyriteError
+    from ..utils.errors import cli_error_from
+
+    try:
+        return require_input_file(path, what)
+    except PyriteError as exc:
+        # The CLI spells a missing path NOT_FOUND (the class says ENTRY_NOT_FOUND).
+        code = "NOT_FOUND" if exc.error_code == "ENTRY_NOT_FOUND" else None
+        cli_error_from(exc, output_format, error_code=code)
+        raise  # unreachable: cli_error_from always exits
+
+
 def read_input_file(path: Path | str, what: str = "File") -> str:
     """The text of an input file, refused as :func:`require_input_file` says."""
     return require_input_file(path, what).read_text(encoding="utf-8")

@@ -48,9 +48,10 @@ def _compute_importance(count: int, max_count: int) -> int:
 
 def _load_alias_file(alias_file: Path) -> dict[str, list[str]]:
     """Load a canonical → aliases mapping from JSON file."""
-    if not alias_file.exists():
-        return {}
-    with open(alias_file) as f:
+    from pyrite.cli.context import require_input_file
+
+    # A missing alias file used to be skipped without a word (#923).
+    with open(require_input_file(alias_file, "Alias file")) as f:
         return json.load(f)
 
 

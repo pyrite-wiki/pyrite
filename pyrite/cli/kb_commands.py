@@ -780,15 +780,9 @@ def schema_set(
 
     config = get_config_with_registered_kbs(load_config(), name=kb_name)
 
-    if not schema_file.exists():
-        from ..utils.errors import cli_error
+    from .context import input_file_or_exit
 
-        cli_error(
-            f"File not found: {schema_file}",
-            output_format,
-            error_code="NOT_FOUND",
-            suggestion="Pass an existing YAML file with --schema-file.",
-        )
+    input_file_or_exit(schema_file, "Schema file", output_format)
 
     schema = load_yaml(schema_file)
 

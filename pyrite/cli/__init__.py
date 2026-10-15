@@ -850,12 +850,9 @@ def import_entries(
     does not close or parse) is refused whole before any record is written.
     """
     from ..formats.importers import get_importer_registry
+    from .context import input_file_or_exit
 
-    if not file_path.exists():
-        cli_error(
-            f"File not found: {file_path}",
-            error_code="NOT_FOUND",
-        )
+    input_file_or_exit(file_path, "File")  # `--format` here is the file's format
 
     # Auto-detect format from extension
     if fmt is None:

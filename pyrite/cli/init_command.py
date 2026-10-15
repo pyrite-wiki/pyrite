@@ -470,14 +470,9 @@ def init_kb(
     # Resolve preset: try plugin presets first, fall back to built-in
     preset = None
     if schema_file:
-        if not schema_file.exists():
-            from ..utils.errors import cli_error
+        from .context import input_file_or_exit
 
-            cli_error(
-                f"Schema file not found: {schema_file}",
-                error_code="NOT_FOUND",
-                suggestion="check the --schema path",
-            )
+        input_file_or_exit(schema_file, "Schema file", output_format)
         preset = load_yaml_file(schema_file)
     else:
         try:
