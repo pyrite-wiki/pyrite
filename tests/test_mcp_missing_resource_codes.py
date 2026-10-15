@@ -92,14 +92,18 @@ def test_scoped_caller_cannot_distinguish_unreadable_kb_from_absent(mcp_server, 
     reason="unrelated storage failures retain the existing safe UPDATE_FAILED response"
 )
 def test_unrelated_update_failure_keeps_safe_message_and_retry_semantics(mcp_server, monkeypatch):
+    mcp_server.svc.create_entry("notes", "present", "Present", "note", "body")
+
     def fail(*_args, **_kwargs):
         raise StorageError("sensitive/path/index.db is locked")
 
-    monkeypatch.setattr(mcp_server.svc, "update", fail)
+    # The file write's OS edge, so the real update path runs up to it (the
+    # rule in test_tests_drive_the_surface_not_the_mock.py).
+    monkeypatch.setattr("pyrite.utils.atomic_write.os.replace", fail)
     result = _call(
         mcp_server,
         "kb_update",
-        {"kb_name": "notes", "entry_id": "missing", "title": "New title"},
+        {"kb_name": "notes", "entry_id": "present", "title": "New title"},
     )
     assert result["error_code"] == "UPDATE_FAILED"
     assert result["retryable"] is True
