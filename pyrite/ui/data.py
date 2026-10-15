@@ -8,6 +8,7 @@ from typing import Any
 
 import streamlit as st
 
+from ..exceptions import AmbiguousEntryError
 from ..services.access_policy import UNSCOPED
 
 # Try to import from pyrite, fall back to API calls
@@ -166,11 +167,16 @@ def get_entry(entry_id: str, kb_name: str | None = None) -> dict[str, Any] | Non
     # walks them itself rather than using get_entry's all-KB search.
     if kb_name and kb_name != "All KBs":
         return svc.get_entry(entry_id, kb_name, readable_kbs=UNSCOPED)
+    # An id held by more than one KB is refused, never answered by config
+    # order (#528, #912); the page names the KBs and the reader picks one.
+    found = []
     for kb in config.knowledge_bases:
         result = svc.get_entry(entry_id, kb.name, readable_kbs=UNSCOPED)
         if result:
-            return result
-    return None
+            found.append(result)
+    if len(found) > 1:
+        raise AmbiguousEntryError(entry_id, [r["kb_name"] for r in found])
+    return found[0] if found else None
 
 
 @st.cache_data(ttl=60)

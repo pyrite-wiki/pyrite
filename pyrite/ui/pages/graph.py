@@ -4,6 +4,7 @@ Relationship Graph Page - Interactive visualization of entry relationships.
 
 import streamlit as st
 
+from pyrite.exceptions import AmbiguousEntryError
 from pyrite.ui.data import get_entry, get_entry_graph
 
 
@@ -28,7 +29,15 @@ if not entry_id:
         entry_id = quick_id
 
 if entry_id:
-    entry = get_entry(entry_id, entry_kb)
+    try:
+        entry = get_entry(entry_id, entry_kb)
+    except AmbiguousEntryError as exc:
+        st.error(
+            f"Entry '{entry_id}' exists in more than one KB: "
+            f"{', '.join(exc.candidate_kbs)}. Open it from a search result "
+            "or the timeline, which know the KB."
+        )
+        st.stop()
     if not entry:
         st.error(f"Entry '{entry_id}' not found.")
     else:

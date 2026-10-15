@@ -4,6 +4,7 @@ Entry Detail Page - View and edit entry content.
 
 import streamlit as st
 
+from pyrite.exceptions import AmbiguousEntryError
 from pyrite.ui.data import clear_cache, get_entry, save_entry, search
 
 st.header("📄 Entry Detail")
@@ -21,8 +22,16 @@ if not entry_id:
         entry_id = quick_id
 
 if entry_id:
-    with st.spinner("Loading entry..."):
-        entry = get_entry(entry_id, entry_kb)
+    try:
+        with st.spinner("Loading entry..."):
+            entry = get_entry(entry_id, entry_kb)
+    except AmbiguousEntryError as exc:
+        st.error(
+            f"Entry '{entry_id}' exists in more than one KB: "
+            f"{', '.join(exc.candidate_kbs)}. Open it from a search result "
+            "or the timeline, which know the KB."
+        )
+        st.stop()
 
     if not entry:
         st.error(f"Entry '{entry_id}' not found.")
