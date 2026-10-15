@@ -116,14 +116,17 @@
 				const target = (placeholder as HTMLElement).dataset.transclusionTarget;
 				if (!target) continue;
 
-				const targetKb = (placeholder as HTMLElement).dataset.transclusionKb || undefined;
+				// The attribute holds the link's prefix as written (a shortname
+				// or a name); the API takes the full name only, so the call
+				// below resolves it against the KB list, as the editors do.
+				const linkKb = (placeholder as HTMLElement).dataset.transclusionKb || undefined;
 				const heading = (placeholder as HTMLElement).dataset.transclusionHeading || undefined;
 				const blockId = (placeholder as HTMLElement).dataset.transclusionBlock || undefined;
 				const loadingEl = placeholder.querySelector('.transclusion-loading');
 				if (!loadingEl) continue;
 
 				try {
-					const res = await api.resolveEntry(target, targetKb);
+					const res = await api.resolveEntry(target, kbStore.resolveName(linkKb));
 					if (!res.resolved || !res.entry) {
 						loadingEl.textContent = 'Entry not found';
 						(loadingEl as HTMLElement).style.color = '#9ca3af';

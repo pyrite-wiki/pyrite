@@ -48,6 +48,21 @@ for (const heavy of [
 import { api, ApiError } from '$lib/api/client';
 import { page } from '$app/stores';
 import { entryStore } from '$lib/stores/entries.svelte';
+import { kbStore } from '$lib/stores/kbs.svelte';
+
+const kb = (name: string, shortname: string) => ({
+	name,
+	shortname,
+	type: 'generic',
+	path: `/tmp/${name}`,
+	entries: 0,
+	indexed: true,
+	source: 'local',
+	description: '',
+	read_only: false,
+	last_indexed: null,
+	default_role: null
+});
 
 const entry = (kb: string) => ({
 	id: 'dup',
@@ -73,6 +88,7 @@ beforeEach(() => {
 	entryStore.current = null;
 	entryStore.error = null;
 	entryStore.ambiguousKbs = null;
+	kbStore.kbs = [];
 	vi.mocked(api.getEntry).mockImplementation(async (_id, opts) => {
 		if (!opts?.kb) {
 			throw new ApiError(409, 'ambiguous', 'AMBIGUOUS', ['kb-a', 'kb-b']);
@@ -103,7 +119,11 @@ describe('entry page', () => {
 		expect(api.getEntry).toHaveBeenLastCalledWith('dup', { kb: 'kb-b', with_links: true });
 	});
 
-	it('a transclusion ![[kbb:foo]] is resolved in the KB it names', async () => {
+	it('a transclusion ![[kbb:foo]] is resolved in the KB the shortname names', async () => {
+		// The read view's hydration is the third place the web turns a link
+		// prefix into a KB (#952, #965 round 2): the API takes the full name
+		// only, so `kbb` must reach it as `kb-b`, from the KB list.
+		kbStore.kbs = [kb('kb-a', 'ka'), kb('kb-b', 'kbb')];
 		vi.mocked(api.getEntry).mockResolvedValue({
 			...entry('kb-a'),
 			body: 'before\n\n![[kbb:foo]]\n\nafter'
@@ -112,6 +132,8 @@ describe('entry page', () => {
 		go('/entries/dup?kb=kb-a');
 		const { default: Page } = await import('./entries/[id]/+page.svelte');
 		render(Page);
-		await waitFor(() => expect(api.resolveEntry).toHaveBeenCalledWith('foo', 'kbb'));
+		await waitFor(() => expect(api.resolveEntry).toHaveBeenCalled());
+		expect(api.resolveEntry).toHaveBeenCalledWith('foo', 'kb-b');
+		expect(api.resolveEntry).not.toHaveBeenCalledWith('foo', 'kbb');
 	});
 });

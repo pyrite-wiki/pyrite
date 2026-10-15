@@ -13,12 +13,28 @@ vi.mock('$lib/api/client', () => ({
 }));
 
 import { api } from '$lib/api/client';
+import { kbStore } from '$lib/stores/kbs.svelte';
 import { wikilinkExtension } from './wikilinks';
 
 let view: EditorView | undefined;
 afterEach(() => {
 	view?.destroy();
 	view = undefined;
+	kbStore.kbs = [];
+});
+
+const kb = (name: string, shortname: string) => ({
+	name,
+	shortname,
+	type: 'generic',
+	path: `/tmp/${name}`,
+	entries: 0,
+	indexed: true,
+	source: 'local',
+	description: '',
+	read_only: false,
+	last_indexed: null,
+	default_role: null
 });
 
 function mount(doc: string) {
@@ -31,10 +47,20 @@ function mount(doc: string) {
 	return parent;
 }
 
-// A KB's shortname in the text is passed on as written; the server maps it
-// (WikilinkService.resolve_entry, tests/test_wikilink_resolve_kb.py).
+// A KB's shortname in the text is link syntax only (#952): the API takes the
+// full name, so the editor resolves the prefix against the KB list first
+// (kbStore.resolveName); a prefix the list does not know is passed on as
+// written, for the API to refuse by its own rule.
 describe('CodeMirror wikilinks name their KB', () => {
-	it('an embed ![[kbb:foo]] resolves foo in kbb', async () => {
+	it('an embed ![[kbb:foo]] resolves foo in the KB the shortname names', async () => {
+		kbStore.kbs = [kb('kb-a', 'ka'), kb('kb-b', 'kbb')];
+		const parent = mount('![[kbb:foo]]\n\nafter');
+		await vi.waitFor(() => expect(api.resolveEntry).toHaveBeenCalled());
+		expect(api.resolveEntry).toHaveBeenCalledWith('foo', 'kb-b');
+		expect(parent.querySelector('a[href="/entries/foo?kb=kb-b"]')).not.toBeNull();
+	});
+
+	it('an unknown prefix is passed on as written', async () => {
 		const parent = mount('![[kbb:foo]]\n\nafter');
 		await vi.waitFor(() => expect(api.resolveEntry).toHaveBeenCalled());
 		expect(api.resolveEntry).toHaveBeenCalledWith('foo', 'kbb');
