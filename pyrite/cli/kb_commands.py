@@ -777,12 +777,12 @@ def schema_set(
     """Replace schema from a YAML file."""
     from ..services.schema_service import SchemaService
     from ..utils.yaml import load_yaml_file as load_yaml
-
-    config = get_config_with_registered_kbs(load_config(), name=kb_name)
-
     from .context import input_file_or_exit
 
+    # Before the KB lookup: that opens (and may create) the index DB.
     input_file_or_exit(schema_file, "Schema file", output_format)
+
+    config = get_config_with_registered_kbs(load_config(), name=kb_name)
 
     schema = load_yaml(schema_file)
 

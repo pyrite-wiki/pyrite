@@ -273,3 +273,60 @@ def test_import_dry_run_still_refuses_a_directory(env, fmt_args):
     assert _refusal(out)[0] == "VALIDATION_FAILED"
     assert out.exit_code == 1
     assert not isinstance(out.exception, IsADirectoryError)
+
+
+# These already refused first before this change (#846, or the check was the
+# first statement): controls, not red. Only `kb schema set` was out of order.
+_GUARDED_FIRST = {
+    (("add",), "file_path"),
+    (("create",), "body_file"),
+    (("update",), "body_file"),
+    (("db", "restore"), "backup_path"),
+    (("import",), "file_path"),
+    (("links", "bulk-create"), "file"),
+    (("links", "bulk-create"), "file_option"),
+}
+_FIRST_ALREADY = {(k, b) for k in _GUARDED_FIRST for b in ("directory", "missing")} | {
+    ((("init",), "schema_file"), "missing")
+}
+
+
+def _order_params():
+    control = pytest.mark.control(reason="control: this check already came first")
+    return [
+        pytest.param(
+            k,
+            bad,
+            id=f"{' '.join(k[0])} {k[1]}-{bad}",
+            marks=[control] if (k, bad) in _FIRST_ALREADY else [],
+        )
+        for k in INPUT_FILE_PARAMS
+        for bad in ("directory", "missing")
+    ]
+
+
+@pytest.mark.parametrize(("key", "bad"), _order_params())
+def test_a_refusal_comes_before_any_config_lookup_that_opens_the_index(env, key, bad):
+    """The refusal precedes every lookup that can create the index DB (#923, fix round 1).
+
+    A config dir with no ``index.db`` and a KB that is not in ``config.yaml``
+    (so a registry lookup would open ``PyriteDB`` to find it): after the
+    refusal ``index.db`` must still not exist.
+    """
+    (env["cfg"] / "index.db").unlink(missing_ok=True)
+    for sidecar in env["cfg"].glob("index.db-*"):
+        sidecar.unlink()
+    path = env["tmp"] / "bad-input"
+    if bad == "directory":
+        path.mkdir()
+    argv = INPUT_FILE_PARAMS[key](str(path))
+    argv = ["nosuchkb" if a == "k" else a for a in argv]  # `-k k` / `kb schema set k`
+    from pyrite.cli import app
+
+    machine = ["--json"] if key[0][0] == "investigation" else ["--format", "json"]
+    if key[0] in (("db", "restore"), ("cascade", "extract-actors"), ("import",)):
+        machine = []
+    out = CliRunner().invoke(app, [*argv, *machine], env={"COLUMNS": "500"})
+    assert out.exit_code == 1, out.output
+    assert _refusal(out)[0] == ("VALIDATION_FAILED" if bad == "directory" else "NOT_FOUND")
+    assert not (env["cfg"] / "index.db").exists(), "the refusal came after the index was opened"
