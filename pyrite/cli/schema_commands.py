@@ -18,7 +18,7 @@ from ..utils.frontmatter import (
     describe,
     split_frontmatter,
 )
-from .context import cli_context, get_config_with_registered_kbs
+from .context import cli_context, get_config_with_registered_kbs, require_kb
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -287,7 +287,7 @@ def schema_diff(
     entry_type: str = typer.Option(None, "--type", "-t", help="Filter by entry type"),
 ):
     """Show schema types with version and field annotations."""
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format="rich") as (config, db, svc):
         kb_config = config.get_kb(kb_name)
         if not kb_config:
             cli_error(
@@ -349,7 +349,7 @@ def schema_migrate(
     """
     from ..storage.repository import KBRepository
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format="rich") as (config, db, svc):
         kb_config = config.get_kb(kb_name)
         if not kb_config:
             cli_error(
@@ -487,6 +487,7 @@ def schema_validate(
     config = load_config()
     if kb_name:
         config = get_config_with_registered_kbs(config, name=kb_name)
+        require_kb(config, kb_name, output_format="rich")
     schema = None
 
     # Resolve files to validate

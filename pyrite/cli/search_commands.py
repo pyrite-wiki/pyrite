@@ -23,7 +23,7 @@ from ..services.read_shaping import (
     unmatched_search_fields,
 )
 from ..utils.errors import exit_unless_whole
-from .context import get_config_with_registered_kbs
+from .context import get_config_with_registered_kbs, require_kb
 from .output import validate_output_format
 
 logger = logging.getLogger(__name__)
@@ -163,19 +163,9 @@ def register_search_command(app: typer.Typer):
         if kb_name:
             config = get_config_with_registered_kbs(config, name=kb_name)
 
-        # A search scoped to an unregistered KB used to return an empty result
-        # set (exit 0), which looks like a query miss rather than a wrong KB.
-        # Fail loudly with a distinct KB_NOT_FOUND instead.
-        if kb_name and config.get_kb(kb_name) is None:
-            from ..utils.errors import cli_error
-
-            known = ", ".join(sorted(kb.name for kb in config.all_kbs())) or "none"
-            cli_error(
-                f"KB not found: {kb_name}",
-                output_format,
-                error_code="KB_NOT_FOUND",
-                suggestion=f"known KBs: {known} (or run `pyrite kb list`)",
-            )
+        # A search scoped to a name that is not a KB is refused, never an
+        # empty result that looks like a query miss: the one resolver (#952).
+        require_kb(config, kb_name, output_format=output_format)
 
         # Every surface refuses an over-long query the same way, file search
         # included; the index path must not fall back to file search with it.

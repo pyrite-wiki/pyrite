@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from ..utils.errors import PARTIAL_EXIT, cli_error, exit_unless_whole
-from .context import cli_db_context, get_config_and_db
+from .context import cli_db_context, get_config_and_db, load_config_for_kb, require_kb
 from .output import validate_output_format
 
 logger = logging.getLogger(__name__)
@@ -100,6 +100,7 @@ def index_build(
     from ..storage import IndexManager
 
     config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db, output_format="rich")
 
     if background:
         from ..services.index_worker import IndexWorker
@@ -218,6 +219,7 @@ def index_sync(
         raise typer.BadParameter("--verify cannot be combined with --background")
 
     config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db, output_format="rich")
 
     if background:
         from ..services.index_worker import IndexWorker
@@ -350,6 +352,9 @@ def index_embed(
         semantic_unavailable,
     )
 
+    # The KB first (#952): a name that is not a KB is refused before the
+    # dependency check, so the answer names the thing that is wrong.
+    load_config_for_kb(kb_name, output_format="rich")
     if not is_available():
         cli_error(
             "sentence-transformers is not installed.",
@@ -358,6 +363,7 @@ def index_embed(
         )
 
     config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db, output_format="rich")
 
     if unavailable := semantic_unavailable(db.vec_available, getattr(db, "vec_load_error", None)):
         # The same cause and remedy `search` gives (one function), not an
@@ -470,7 +476,7 @@ def index_health(
     """
     from ..storage import IndexManager
 
-    with cli_db_context() as (config, db):
+    with cli_db_context(kbs=(kb_name,), output_format=output_format) as (config, db):
         if kb_name is not None and config.get_kb(kb_name) is None:
             # Reporting a clean bill for a KB that does not exist would be the same
             # bug as exiting 0 while unhealthy: a non-answer that reads as success.
@@ -730,6 +736,7 @@ def index_reconcile(
     from ..services.kb_service import KBService
 
     config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db, output_format="rich")
     kb_config = config.get_kb(kb_name)
     if not kb_config:
         cli_error(

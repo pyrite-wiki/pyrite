@@ -27,17 +27,25 @@ from .output import LEGACY_FORMAT_SHORT, OUTPUT_FORMAT
 task_app = typer.Typer(help="Task management commands")
 
 
-def _get_service() -> tuple[TaskService, PyriteDB]:
+def _get_service(*kbs: object) -> tuple[TaskService, PyriteDB]:
     """Create TaskService and return (service, db) for cleanup.
 
     Goes through the shared loader so KBs registered in the database
     (``kb create``, ``kb add``) are merged into the config first. Reading the
     YAML config directly made those KBs invisible here: ``kb list`` showed
-    them, and ``task create -k <kb>`` answered KB_NOT_FOUND (#245).
+    them, and ``task create -k <kb>`` answered KB_NOT_FOUND (#245). Every KB
+    the command named (``kbs``) is resolved here, before the body runs
+    (#952, #924); None names no KB.
     """
-    from .context import get_config_and_db
+    from .context import get_config_and_db, require_kb
 
     config, db = get_config_and_db()
+    try:
+        for kb in kbs:
+            require_kb(config, kb, db=db)
+    except BaseException:
+        db.close()
+        raise
     return TaskService(config, db), db
 
 
@@ -190,7 +198,7 @@ def task_create(
             "A task title is required: `pyrite task create <title> ...` or `--title <title>`."
         )
 
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         fields = _parse_task_create_fields(field, config=svc.config, kb_name=kb_name)
         result = svc.create_task(
@@ -269,7 +277,7 @@ def task_list(
     priority: int | None = typer.Option(None, "--priority", help="Filter by priority"),
 ) -> Outcome:
     """List tasks with optional filters."""
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         items = svc.list_tasks(
             kb_name=kb_name,
@@ -337,7 +345,7 @@ def _render_task(console, result: dict) -> None:
 
 def _task_get_impl(task_id: str, kb_name: str | None) -> Outcome:
     """Shared implementation for `task get` and the deprecated `task status`."""
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         task = svc.get_task(task_id, kb_name, readable_kbs=UNSCOPED)
         if not task:
@@ -437,7 +445,7 @@ def task_update(
             "--comment or --by."
         )
 
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         result = svc.update_task(task_id, kb_name, **updates)
     finally:
@@ -462,7 +470,7 @@ def task_claim(
     legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Atomically claim an open task."""
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         result = svc.claim_task(task_id, kb_name, assignee)
     finally:
@@ -500,7 +508,7 @@ def task_reset(
     For tasks whose worker crashed or aged out: returns the task to `open` so it
     can be re-dispatched, clears the assignee, and appends a work-log entry.
     """
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         result = svc.reset_task(task_id, kb_name, reason=reason, operator=operator)
     finally:
@@ -532,7 +540,7 @@ def task_decompose(
 ) -> Outcome:
     """Decompose a parent task into child tasks."""
     children = [{"title": t} for t in child]
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         results = svc.decompose_task(parent_id, kb_name, children)
         output = {
@@ -563,7 +571,7 @@ def task_migrate_relaxed_mode(
     Tier A r1175 — provides a migration path so existing tasks don't
     fail validation the next time their status changes. Idempotent.
     """
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         result = svc.migrate_relaxed_mode(kb_name, dry_run=dry_run)
     finally:
@@ -594,7 +602,7 @@ def task_checkpoint(
     legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Log a checkpoint on a task."""
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         result = svc.checkpoint_task(
             task_id=task_id,

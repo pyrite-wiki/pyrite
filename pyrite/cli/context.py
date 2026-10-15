@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy.exc import SQLAlchemyError
 
 from ..config import PyriteConfig, load_config
+from ..exceptions import PyriteError
 from ..services.kb_registry_service import KBRegistryService
 from ..services.kb_service import KBService
 from ..storage.database import PyriteDB
@@ -18,17 +19,98 @@ from ..storage.index import IndexManager
 logger = logging.getLogger(__name__)
 
 
-def _init_base() -> tuple[PyriteConfig, PyriteDB, KBService]:
+def require_kb(
+    config: PyriteConfig,
+    name: object,
+    *,
+    db: PyriteDB | None = None,
+    output_format: str | None = None,
+):
+    """The KB a ``-k``/``--kb`` or positional KB names, or None when it names none.
+
+    The one resolver (``services/kb_resolver.py``, #952) for the CLI, which
+    runs as the local principal and so is unscoped: an unknown name and a
+    shortname (link syntax only) are ``KBNotFoundError`` -- ``KB_NOT_FOUND``,
+    exit 1, with the resolver's suggestion and ``did_you_mean``; a blank
+    name is None. With ``db`` a KB registered after the config was loaded
+    is found. Every command that takes a KB resolves it here before reading
+    or writing anything (#924); ``tests/test_kb_walk_cli.py`` walks the
+    Typer trees to check.
+
+    A command on the ADR-0046 outcome contract passes no ``output_format``
+    and the refusal is raised for the root to render. A legacy command
+    renders its own errors, so it passes its format and the refusal is
+    printed here in the CLI's error shape (``cli_error_from``), exit 1 --
+    the same split ``input_file_or_exit`` makes.
+    """
+    from ..services.access_policy import UNSCOPED
+    from ..services.kb_resolver import resolve_kb
+
+    try:
+        return resolve_kb(config, name, readable_kbs=UNSCOPED, db=db)
+    except PyriteError as exc:
+        if output_format is None:
+            raise
+        from ..utils.errors import cli_error_from
+
+        cli_error_from(exc, output_format)
+        raise  # unreachable: cli_error_from always exits
+
+
+def load_config_for_kb(
+    name: object, *more: object, output_format: str | None = None
+) -> PyriteConfig:
+    """The config, with every KB in ``name``/``more`` resolved (#952, #924).
+
+    For a command that loads the config itself rather than opening a
+    context: the registry is consulted only when a name is not in
+    config.yaml (:func:`get_config_with_registered_kbs`), and each name goes
+    through :func:`require_kb`, so an unknown name or a shortname is refused
+    before the body runs. None and blank names name no KB.
+    """
+    config = load_config()
+    for kb in (name, *more):
+        if isinstance(kb, str) and kb.strip():
+            config = get_config_with_registered_kbs(config, name=kb)
+            require_kb(config, kb, output_format=output_format)
+    return config
+
+
+def _init_base(
+    kbs: tuple[object, ...], output_format: str | None
+) -> tuple[PyriteConfig, PyriteDB, KBService]:
     """Shared construction for all CLI context managers."""
     config, db = get_config_and_db()
+    try:
+        _require_kbs(config, db, kbs, output_format)
+    except BaseException:
+        db.close()
+        raise
     svc = KBService(config, db)
     return config, db, svc
 
 
+def _require_kbs(
+    config: PyriteConfig, db: PyriteDB, kbs: tuple[object, ...], output_format: str | None
+) -> None:
+    """Resolve every KB a command named (``cli_context(kbs=...)``) before its body runs."""
+    for name in kbs:
+        require_kb(config, name, db=db, output_format=output_format)
+
+
 @contextmanager
-def cli_context() -> Generator[tuple[PyriteConfig, PyriteDB, KBService], None, None]:
-    """Provide config, db, and service for CLI commands."""
-    config, db, svc = _init_base()
+def cli_context(
+    *, kbs: tuple[object, ...] = (), output_format: str | None = None
+) -> Generator[tuple[PyriteConfig, PyriteDB, KBService], None, None]:
+    """Provide config, db, and service for CLI commands.
+
+    ``kbs`` are the KB names the command took (``-k``, a positional KB, a
+    ``--target-kb``): each is resolved by :func:`require_kb` once the
+    registry is open, so a name that is not a KB is refused before the body
+    runs. None and blank names name no KB and pass. ``output_format`` is
+    what a legacy command renders in (see :func:`require_kb`).
+    """
+    config, db, svc = _init_base(kbs, output_format)
     try:
         yield config, db, svc
     finally:
@@ -36,11 +118,11 @@ def cli_context() -> Generator[tuple[PyriteConfig, PyriteDB, KBService], None, N
 
 
 @contextmanager
-def cli_registry_context() -> Generator[
-    tuple[PyriteConfig, PyriteDB, KBService, KBRegistryService], None, None
-]:
+def cli_registry_context(
+    *, kbs: tuple[object, ...] = (), output_format: str | None = None
+) -> Generator[tuple[PyriteConfig, PyriteDB, KBService, KBRegistryService], None, None]:
     """Provide config, db, service, and registry for CLI commands that need KB management."""
-    config, db, svc = _init_base()
+    config, db, svc = _init_base(kbs, output_format)
     index_mgr = IndexManager(db, config)
     registry = KBRegistryService(config, db, index_mgr)
     registry.seed_from_config()
@@ -51,10 +133,13 @@ def cli_registry_context() -> Generator[
 
 
 @contextmanager
-def cli_db_context() -> Generator[tuple[PyriteConfig, PyriteDB], None, None]:
+def cli_db_context(
+    *, kbs: tuple[object, ...] = (), output_format: str | None = None
+) -> Generator[tuple[PyriteConfig, PyriteDB], None, None]:
     """Provide config and db for commands that only need db access."""
     config, db = get_config_and_db()
     try:
+        _require_kbs(config, db, kbs, output_format)
         yield config, db
     finally:
         db.close()

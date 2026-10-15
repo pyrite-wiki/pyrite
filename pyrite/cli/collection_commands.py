@@ -25,7 +25,7 @@ def list_collections(
     """List all collections with entry counts."""
     import json as json_mod
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb,), output_format=output_format) as (config, db, svc):
         results = svc.list_collections(kb_name=kb)
 
         if not results:
@@ -86,7 +86,7 @@ def query_entries(
         validate_query,
     )
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb,), output_format=output_format) as (config, db, svc):
         query = parse_query(query_str)
 
         # Override kb and limit from CLI flags

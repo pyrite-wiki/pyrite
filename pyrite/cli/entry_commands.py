@@ -247,7 +247,7 @@ def register_entry_commands(app: typer.Typer) -> None:
         # Not on the outcome contract yet: `--format markdown` and `csv` are taught for
         # this command and the shared option offers json, yaml and rich only. It moves
         # with `pyrite-read get` (ADR-0046, slice 3).
-        with cli_context() as (config, db, svc):
+        with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
             try:
                 result = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
             except AmbiguousEntryError as exc:
@@ -388,7 +388,7 @@ def register_entry_commands(app: typer.Typer) -> None:
         if tags:
             extra["tags"] = [t.strip() for t in tags.split(",")]
 
-        with cli_context() as (config, db, svc):
+        with cli_context(kbs=(kb_name,)) as (config, db, svc):
             # Parse --field key=value pairs with the current KB schema.
             if field:
                 for fv in field:
@@ -491,7 +491,7 @@ def register_entry_commands(app: typer.Typer) -> None:
         """
         require_input_file(file_path)
 
-        with cli_context() as (config, db, svc):
+        with cli_context(kbs=(kb_name,)) as (config, db, svc):
             try:
                 entry, result = svc.add_entry_from_file(
                     kb_name,
@@ -577,7 +577,7 @@ def register_entry_commands(app: typer.Typer) -> None:
         if tags is not None:
             updates["tags"] = [t.strip() for t in tags.split(",")]
 
-        with cli_context() as (config, db, svc):
+        with cli_context(kbs=(kb_name,)) as (config, db, svc):
             current = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
             entry_type = current.get("entry_type") if current is not None else None
 
@@ -626,7 +626,7 @@ def register_entry_commands(app: typer.Typer) -> None:
             if not typer.confirm(f"Delete entry '{entry_id}' from KB '{kb_name}'?"):
                 raise typer.Abort()
 
-        with cli_context() as (config, db, svc):
+        with cli_context(kbs=(kb_name,), output_format="rich") as (config, db, svc):
             try:
                 deleted = svc.delete_entry(entry_id, kb_name)
                 if not deleted:
@@ -661,7 +661,7 @@ def register_entry_commands(app: typer.Typer) -> None:
         Same-KB scope only in this release. Cross-KB wikilink rewrite
         and redirect-stub creation are tracked as r1700 follow-ups.
         """
-        with cli_context() as (config, db, svc):
+        with cli_context(kbs=(kb_name,)) as (config, db, svc):
             result = svc.rename_entry(
                 old_id,
                 new_id,
@@ -701,7 +701,12 @@ def register_entry_commands(app: typer.Typer) -> None:
         links: list[dict] = []
         failed: list[dict] = []
 
-        with cli_context() as (config, db, svc):
+        with cli_context(
+            kbs=(
+                kb_name,
+                target_kb,
+            )
+        ) as (config, db, svc):
             result = svc.add_link(source, kb_name, target, relation, target_kb=target_kb, note=note)
             tkb = target_kb or kb_name
             # `result["relation"]` is what is actually on disk, not the

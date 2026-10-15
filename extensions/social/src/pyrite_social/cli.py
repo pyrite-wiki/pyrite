@@ -6,6 +6,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from pyrite.cli.context import load_config_for_kb
 from pyrite.config import load_config
 from pyrite.storage.database import PyriteDB
 
@@ -26,7 +27,7 @@ def social_vote(
         raise typer.Exit(1)
 
     value = 1 if direction == "up" else -1
-    config = load_config()
+    config = load_config_for_kb(kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -93,7 +94,7 @@ def social_newest(
     limit: int = typer.Option(10, "--limit", "-n", help="Number of results"),
 ):
     """List most recent writeups."""
-    config = load_config()
+    config = load_config_for_kb(kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -147,7 +148,7 @@ def social_top(
     limit: int = typer.Option(10, "--limit", "-n", help="Number of results"),
 ):
     """Show highest-voted writeups."""
-    config = load_config()
+    config = load_config_for_kb(kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:

@@ -20,7 +20,7 @@ from rich.table import Table
 
 from ..exceptions import EntryNotFoundError, KBNotFoundError, ValidationError
 from ..services.access_policy import UNSCOPED
-from .context import cli_context, get_config_and_db, read_input_file
+from .context import cli_context, get_config_and_db, read_input_file, require_kb
 from .outcome import Outcome
 from .output import OUTPUT_FORMAT
 
@@ -46,6 +46,7 @@ def links_check(
     from ..services.wikilink_service import WikilinkService
 
     config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db)
     try:
         targets = WikilinkService(config, db).check_links(kb_name=kb_name, limit=limit)
     finally:
@@ -164,7 +165,7 @@ def links_bulk_create(
     # Each spec is checked by the service (KBService.add_links), the one place
     # a link spec is judged (#846): a malformed one fails alone, before its
     # source is touched, and the others go on.
-    with cli_context() as (_config, _db, svc):
+    with cli_context(kbs=(kb_name,)) as (_config, _db, svc):
         # KBService.add_links saves each source once, in place, through the
         # same path `pyrite link` uses. This command used to `repo.save` the
         # source, which re-derived its path from the type and wrote a second
@@ -290,6 +291,8 @@ def links_suggest(
     candidates = _suggest_links(entry_id, kb_name, target_kb, limit)
 
     config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db)
+    require_kb(config, target_kb, db=db)
     try:
         svc = KBService(config, db)
         entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
@@ -427,6 +430,8 @@ def links_discover(
     )
 
     config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db)
+    require_kb(config, target_kb, db=db)
     try:
         svc = KBService(config, db)
         entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)

@@ -21,7 +21,9 @@ from .context import (
     cli_context,
     cli_registry_context,
     get_config_with_registered_kbs,
+    load_config_for_kb,
     open_index_for_validation,
+    require_kb,
 )
 from .output import validate_output_format
 
@@ -146,7 +148,7 @@ def kb_remove(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ):
     """Remove a knowledge base from the registry."""
-    with cli_registry_context() as (config, db, svc, registry):
+    with cli_registry_context(kbs=(name,), output_format="rich") as (config, db, svc, registry):
         kb = registry.get_kb(name)
         if not kb:
             from ..utils.errors import cli_error
@@ -268,7 +270,7 @@ def kb_validate(
     && deploy` blocks on structural errors; scripts that want to gate on
     drift too can check for exit code 2.
     """
-    config = load_config()
+    config = load_config_for_kb(name, output_format=output_format)
 
     def _select_kbs(current_config) -> list[KBConfig]:
         if name:
@@ -462,7 +464,12 @@ def kb_reindex(
     ),
 ):
     """Reindex a specific knowledge base."""
-    with cli_registry_context() as (config, db, svc, registry):
+    with cli_registry_context(kbs=(kb_name,), output_format=output_format) as (
+        config,
+        db,
+        svc,
+        registry,
+    ):
         from ..exceptions import KBNotFoundError
 
         try:
@@ -511,7 +518,12 @@ def kb_health(
     ),
 ):
     """Check health of a knowledge base."""
-    with cli_registry_context() as (config, db, svc, registry):
+    with cli_registry_context(kbs=(kb_name,), output_format=output_format) as (
+        config,
+        db,
+        svc,
+        registry,
+    ):
         from ..exceptions import KBNotFoundError
 
         try:
@@ -546,7 +558,7 @@ def kb_commit(
     """Commit changes in a KB's git repository."""
     from ..utils.errors import cli_error
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format="rich") as (config, db, svc):
         from ..services.export_service import ExportService
 
         export_svc = ExportService(config, db)
@@ -581,7 +593,7 @@ def kb_push(
     branch: str | None = typer.Option(None, "--branch", "-b", help="Branch to push"),
 ):
     """Push KB commits to a remote repository."""
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format="rich") as (config, db, svc):
         from ..services.export_service import ExportService
 
         export_svc = ExportService(config, db)
@@ -638,6 +650,7 @@ def schema_show(
     from ..services.schema_service import SchemaService
 
     config = get_config_with_registered_kbs(load_config(), name=kb_name)
+    require_kb(config, kb_name, output_format=output_format)
     try:
         svc = SchemaService(config)
         result = svc.show_schema(kb_name)
@@ -698,6 +711,7 @@ def schema_add_type(
     from ..services.schema_service import SchemaService
 
     config = get_config_with_registered_kbs(load_config(), name=kb_name)
+    require_kb(config, kb_name, output_format=output_format)
     type_def: dict[str, Any] = {}
     if description:
         type_def["description"] = description
@@ -743,6 +757,7 @@ def schema_remove_type(
     from ..services.schema_service import SchemaService
 
     config = get_config_with_registered_kbs(load_config(), name=kb_name)
+    require_kb(config, kb_name, output_format=output_format)
     try:
         svc = SchemaService(config)
         result = svc.remove_type(kb_name, type_name)
@@ -783,6 +798,7 @@ def schema_set(
     input_file_or_exit(schema_file, "Schema file", output_format)
 
     config = get_config_with_registered_kbs(load_config(), name=kb_name)
+    require_kb(config, kb_name, output_format=output_format)
 
     schema = load_yaml(schema_file)
 

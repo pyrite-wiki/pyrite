@@ -43,7 +43,7 @@ def qa_validate(
     """
     from ..services.qa_service import QAService
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
         qa = QAService(config, db)
 
         if entry and kb_name:
@@ -151,7 +151,7 @@ def qa_assess(
     from ..services.qa_service import QAService
     from ..utils.errors import cli_error_from
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
         # The model is wired as `ci` and MCP wire it; tier 2 is refused when
         # it is not configured (QAService.require_tier).
         qa = QAService(config, db, llm_service=LLMService(config.settings) if tier >= 2 else None)
@@ -273,7 +273,7 @@ def qa_status(
     """Show QA status dashboard with issue counts and coverage."""
     from ..services.qa_service import QAService
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
         qa = QAService(config, db)
         status = qa.get_status(kb_name=kb_name, readable_kbs=UNSCOPED)
 
@@ -382,7 +382,7 @@ def _show_kb_coverage(kb_name: str, output_format: str) -> None:
     from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata
     from .context import cli_context
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
         kb_config = config.get_kb(kb_name)
         if not kb_config:
             console.print(f"[red]KB '{kb_name}' not found[/red]")
@@ -497,7 +497,7 @@ def qa_gaps(
 
     from ..services.qa_service import QAService
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
         qa = QAService(config, db)
         result = qa.analyze_gaps(kb_name, threshold=threshold)
 
@@ -620,7 +620,7 @@ def qa_fix(
 
     from ..services.qa_service import QAService
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
         qa = QAService(config, db)
         result = qa.fix_kb(
             kb_name, dry_run=dry_run, fix_rules=fix_rule or None, readable_kbs=UNSCOPED
@@ -728,7 +728,7 @@ def qa_stale(
     """
     from ..services.qa_service import QAService
 
-    with cli_context() as (config, db, _svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, _svc):
         svc = QAService(config, db)
         results = svc.find_stale(kb_name, max_age_days=max_age)
 
@@ -783,7 +783,7 @@ def qa_compact(
     """
     from ..services.qa_service import QAService
 
-    with cli_context() as (config, db, _svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, _svc):
         svc = QAService(config, db)
         results = svc.find_archival_candidates(kb_name, min_age_days=min_age)
 
@@ -855,7 +855,7 @@ def qa_check_urls(
     # cli_context() closes the database on exit, so collect_urls (the only
     # step that reads it) must run inside the block. The HTTP checks below
     # use no database and run after it.
-    with cli_context() as (_config, db, _svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (_config, db, _svc):
         checker = URLChecker(db, cache_path=cache_path)
         url_entries = checker.collect_urls(kb_name)
 
@@ -937,7 +937,7 @@ def qa_coverage(
 
     from ..services.qa_analytics_service import QAAnalyticsService
 
-    with cli_context() as (config, db, _svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, _svc):
         if config.get_kb(kb_name) is None:
             if output_format == "json":
                 typer.echo(

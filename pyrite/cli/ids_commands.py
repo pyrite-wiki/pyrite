@@ -30,7 +30,7 @@ import typer
 from ..exceptions import ValidationError
 from ..services import id_pin_service
 from ..utils.errors import cli_error
-from .context import cli_context
+from .context import cli_context, load_config_for_kb
 from .output import output_format_choice
 
 OUTSIDE_CONTRACT = 3
@@ -79,6 +79,7 @@ def ids_missing(
         pyrite ids missing -k notes
         pyrite ids missing -k notes --format text
     """
+    load_config_for_kb(kb_name, output_format=output_format)
     found = _scan(id_pin_service.find_kb_without_writes(kb_name), kb_name, output_format)
     if output_format != "text":
         typer.echo(json.dumps(found.to_dict(), indent=2))
@@ -144,7 +145,7 @@ def ids_pin(
         result["dry_run"] = True
         result["synced"] = False
     else:
-        with cli_context() as (config, _db, svc):
+        with cli_context(kbs=(kb_name,), output_format=output_format) as (config, _db, svc):
             result = _pin(config.get_kb(kb_name), kb_name, rename, output_format, write=True)
             result["dry_run"] = False
             result["synced"] = False

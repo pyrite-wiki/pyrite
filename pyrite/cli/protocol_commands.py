@@ -56,7 +56,7 @@ def protocol_check(
     if kb_name:
         from .context import cli_context
 
-        with cli_context() as (config, db, svc):
+        with cli_context(kbs=(kb_name,), output_format="rich") as (config, db, svc):
             kb_config = config.get_kb(kb_name)
             if not kb_config:
                 from ..utils.errors import cli_error

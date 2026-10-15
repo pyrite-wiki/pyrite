@@ -6,6 +6,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from pyrite.cli.context import load_config_for_kb, require_kb
 from pyrite.config import load_config
 from pyrite.exceptions import QueryTooLongError
 from pyrite.storage.database import PyriteDB
@@ -23,10 +24,19 @@ def _emit_json_result(result: dict) -> None:
         raise typer.Exit(1)
 
 
-def _get_plugin_with_db():
-    """Create a plugin instance with DB context for CLI usage."""
+def _get_plugin_with_db(*kbs: object, output_format: str = "rich"):
+    """Create a plugin instance with DB context for CLI usage.
+
+    Every KB the command named (``kbs``) is resolved first (#952, #924),
+    and a refusal is rendered in ``output_format``."""
     config = load_config()
     db = PyriteDB(config.settings.index_path)
+    try:
+        for kb in kbs:
+            require_kb(config, kb, db=db, output_format=output_format)
+    except BaseException:
+        db.close()
+        raise
     plugin = JournalismInvestigationPlugin()
     # Set minimal context so _get_db() returns the injected DB
     from dataclasses import dataclass
@@ -54,7 +64,7 @@ def timeline(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Query investigation events by date range, actor, and type."""
-    plugin, db = _get_plugin_with_db()
+    plugin, db = _get_plugin_with_db(kb_name, output_format="json" if output_json else "rich")
     try:
         args = {"kb_name": kb_name, "limit": limit}
         if from_date:
@@ -110,7 +120,7 @@ def entities(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Query investigation entities by type, importance, and jurisdiction."""
-    plugin, db = _get_plugin_with_db()
+    plugin, db = _get_plugin_with_db(kb_name, output_format="json" if output_json else "rich")
     try:
         args = {"kb_name": kb_name, "limit": limit}
         if entity_type:
@@ -156,7 +166,7 @@ def sources(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Query source documents by reliability and classification."""
-    plugin, db = _get_plugin_with_db()
+    plugin, db = _get_plugin_with_db(kb_name, output_format="json" if output_json else "rich")
     try:
         args = {"kb_name": kb_name, "limit": limit}
         if reliability:
@@ -212,7 +222,7 @@ def claims(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Query claims by status and confidence level."""
-    plugin, db = _get_plugin_with_db()
+    plugin, db = _get_plugin_with_db(kb_name, output_format="json" if output_json else "rich")
     try:
         args = {"kb_name": kb_name, "limit": limit}
         if status:
@@ -261,7 +271,7 @@ def network(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Get the connection network for an entity."""
-    plugin, db = _get_plugin_with_db()
+    plugin, db = _get_plugin_with_db(kb_name, output_format="json" if output_json else "rich")
     try:
         result = plugin._mcp_network({"entry_id": entry_id, "kb_name": kb_name})
 
@@ -302,7 +312,7 @@ def evidence_chain(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Trace the evidence chain for a claim."""
-    plugin, db = _get_plugin_with_db()
+    plugin, db = _get_plugin_with_db(kb_name, output_format="json" if output_json else "rich")
     try:
         result = plugin._mcp_evidence_chain({"claim_id": claim_id, "kb_name": kb_name})
 
@@ -356,7 +366,7 @@ def qa_report(
     """Show investigation quality metrics and warnings."""
     from .qa import compute_qa_metrics
 
-    config = load_config()
+    config = load_config_for_kb(kb_name, output_format="json" if output_json else "rich")
     db = PyriteDB(config.settings.index_path)
     try:
         result = compute_qa_metrics(db, kb_name, stale_days=stale_days)
@@ -521,7 +531,7 @@ def start_investigation(
     """Create a new investigation with guided setup."""
     from .investigation_setup import create_investigation
 
-    config = load_config()
+    config = load_config_for_kb(kb_name, output_format="json" if output_json else "rich")
     db = PyriteDB(config.settings.index_path)
     try:
         result = create_investigation(
@@ -558,7 +568,7 @@ def investigation_status(
     """Show investigation status — entity/event/claim counts and unverified claims."""
     from .investigation_setup import build_investigation_status
 
-    config = load_config()
+    config = load_config_for_kb(kb_name, output_format="json" if output_json else "rich")
     db = PyriteDB(config.settings.index_path)
     try:
         result = build_investigation_status(db, kb_name)
@@ -601,7 +611,7 @@ def ownership_chain(
     """Trace ownership chains to find beneficial owners and shell companies."""
     from .ownership import trace_ownership_chain
 
-    config = load_config()
+    config = load_config_for_kb(kb_name, output_format="json" if output_json else "rich")
     db = PyriteDB(config.settings.index_path)
     try:
         result = trace_ownership_chain(db, kb_name, entity_id, max_depth=depth)
@@ -656,7 +666,7 @@ def money_flow(
     """Trace money flows for an entity through transaction chains."""
     from .money_flow import aggregate_flows, trace_money_flow
 
-    config = load_config()
+    config = load_config_for_kb(kb_name, output_format="json" if output_json else "rich")
     db = PyriteDB(config.settings.index_path)
     try:
         result = trace_money_flow(
@@ -745,7 +755,7 @@ def export_pack(
     """Export investigation as a self-contained pack."""
     from .export import build_investigation_pack, export_as_json, export_as_markdown
 
-    config = load_config()
+    config = load_config_for_kb(kb_name, output_format=fmt)
     db = PyriteDB(config.settings.index_path)
     try:
         pack = build_investigation_pack(
@@ -786,7 +796,7 @@ def bulk_edges(
 
     if file:
         input_file_or_exit(file, "Edge file", "json" if output_json else "rich")
-    config = load_config()
+    config = load_config_for_kb(kb_name, output_format="json" if output_json else "rich")
     db = PyriteDB(config.settings.index_path)
     try:
         # Load edges from file or stdin
@@ -875,7 +885,7 @@ def ftm_import(
     from .ftm import import_ftm
 
     input_file_or_exit(file, "FtM file", "json" if output_json else "rich")
-    config = load_config()
+    config = load_config_for_kb(kb_name, output_format="json" if output_json else "rich")
     db = PyriteDB(config.settings.index_path)
     try:
         # Read and parse file
@@ -967,7 +977,7 @@ def ftm_export(
 
     from .ftm import export_ftm
 
-    config = load_config()
+    config = load_config_for_kb(kb_name, output_format="json" if output_json else "rich")
     db = PyriteDB(config.settings.index_path)
     try:
         entry_types = types if types else None
@@ -1028,7 +1038,7 @@ def promote_claim(
         if v
     }
 
-    config = load_config()
+    config = load_config_for_kb(kb_name, output_format="json" if output_json else "rich")
     db = PyriteDB(config.settings.index_path)
     kb_service = KBService(config, db)
     try:

@@ -41,7 +41,7 @@ from ..services.kb_service import KBService
 from ..utils.errors import PyriteCLIGroup, cli_error, exit_unless_whole
 from .browse_commands import register_browse_commands
 from .collection_commands import collections_app
-from .context import cli_context, get_config_and_db, open_index_db
+from .context import cli_context, get_config_and_db, load_config_for_kb, open_index_db
 from .db_commands import db_app
 from .entry_commands import register_entry_commands
 from .export_commands import export_app
@@ -260,7 +260,7 @@ def ci_command(
     from ..services.qa_service import QAService
     from ..utils.errors import cli_error_from
 
-    config = load_config()
+    config = load_config_for_kb(kb, output_format=output_format)
 
     # A tier that cannot run is refused before anything else, even with no
     # KB to validate: `ci` never says "pass" for a tier that did not run (#795).
@@ -915,7 +915,7 @@ def import_entries(
         line.append(f": {title}: {r.get('error', 'unknown error')}")
         return line
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format=fmt) as (config, db, svc):
         try:
             results = svc.bulk_create_entries(
                 kb_name, parsed, allow_undeclared=allow_undeclared, validate_only=dry_run
@@ -979,7 +979,7 @@ def generate_readme_cmd(
     write: bool = typer.Option(False, "--write", "-w", help="Write to KB's README.md"),
 ):
     """Generate a README.md for a knowledge base."""
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format="rich") as (config, db, svc):
         try:
             readme = svc.generate_readme(kb_name)
         except PyriteError as e:

@@ -12,7 +12,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .cli.context import open_index_db
+from .cli.context import open_index_db, require_kb
 from .cli.output import validate_output_format
 from .cli.search_commands import register_search_command
 from .config import CONFIG_FILE, load_config
@@ -67,10 +67,21 @@ def _emit_error(
             err_console.print("    [dim]hint:[/dim]", Text(suggestion))
 
 
-def _get_svc():
-    """Create a KBService instance for CLI commands."""
+def _get_svc(*kbs: object, output_format: str = "rich"):
+    """Create a KBService instance for CLI commands.
+
+    Every KB the command named (``kbs``) is resolved first, through the
+    one resolver (#952, #924): an unknown name or a shortname is refused
+    before anything is read, rendered in ``output_format``; None names no KB.
+    """
     config = load_config()
     db = open_index_db(config)
+    try:
+        for kb in kbs:
+            require_kb(config, kb, db=db, output_format=output_format)
+    except BaseException:
+        db.close()
+        raise
     return KBService(config, db), db
 
 
@@ -101,7 +112,7 @@ def get_entry(
     ),
 ):
     """Get a specific entry by ID."""
-    svc, db = _get_svc()
+    svc, db = _get_svc(kb_name, output_format=output_format)
     try:
         result = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
 
@@ -279,7 +290,7 @@ def tags_cmd(
     ),
 ):
     """List tags with counts."""
-    svc, db = _get_svc()
+    svc, db = _get_svc(kb_name, output_format=output_format)
     try:
         tag_list = svc.get_tags(kb_name=kb_name, limit=limit)
 
@@ -328,7 +339,7 @@ def backlinks_cmd(
     ),
 ):
     """Find entries that link to a given entry."""
-    svc, db = _get_svc()
+    svc, db = _get_svc(kb_name, output_format=output_format)
     try:
         from .services.graph_service import GraphService
 

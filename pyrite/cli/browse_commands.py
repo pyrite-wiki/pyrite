@@ -59,7 +59,7 @@ def register_browse_commands(app: typer.Typer) -> None:
     ):
         """Browse entries with filters and pagination."""
         limit = min(limit, 200)
-        with cli_context() as (config, db, svc):
+        with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
             entries = svc.list_entries(
                 kb_name=kb_name,
                 entry_type=entry_type,
@@ -222,7 +222,7 @@ def register_browse_commands(app: typer.Typer) -> None:
         from ..services.access_policy import named_kb
         from ..utils.errors import cli_error, cli_error_from
 
-        with cli_context() as (config, db, svc):
+        with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
             try:
                 if not named_kb(kb_name):
                     result = svc.orient_overview(
@@ -370,7 +370,7 @@ def register_browse_commands(app: typer.Typer) -> None:
         ),
     ):
         """Show recently changed entries."""
-        with cli_context() as (config, db, svc):
+        with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
             entries = svc.list_entries(
                 kb_name=kb_name,
                 entry_type=entry_type,
@@ -438,7 +438,7 @@ def register_browse_commands(app: typer.Typer) -> None:
         ),
     ):
         """Query timeline events."""
-        with cli_context() as (config, db, svc):
+        with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
             results = svc.get_timeline(
                 date_from=date_from,
                 date_to=date_to,
@@ -486,7 +486,7 @@ def register_browse_commands(app: typer.Typer) -> None:
         ),
     ):
         """List tags with counts."""
-        with cli_context() as (config, db, svc):
+        with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
             tag_list = svc.get_tags(kb_name=kb_name, limit=limit)
 
             # Apply prefix filter
@@ -524,7 +524,7 @@ def register_browse_commands(app: typer.Typer) -> None:
         ),
     ):
         """Find entries that link to a given entry."""
-        with cli_context() as (config, db, svc):
+        with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
             from ..exceptions import PyriteError
             from ..services.graph_service import GraphService
             from ..utils.errors import cli_error_from
