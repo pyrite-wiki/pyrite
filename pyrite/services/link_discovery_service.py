@@ -83,6 +83,11 @@ class LinkDiscoveryService:
         entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
         if entry is None:
             return []
+        # The KB the entry was found in, whatever the caller wrote: a blank
+        # `kb_name` placed the id by lookup, and every comparison below
+        # (self, backlinks) must use that KB, not the blank (#912).
+        kb_name = entry.get("kb_name") or kb_name
+        target_kb = named_kb(target_kb)
 
         query = self.build_suggest_query(entry)
         if not query.strip():
@@ -109,7 +114,7 @@ class LinkDiscoveryService:
         candidates = []
         for r in raw_results:
             rid = r.get("id", "")
-            if rid == entry_id:
+            if rid == entry_id and r.get("kb_name", search_kb) == kb_name:
                 continue
             if rid in existing_targets:
                 continue
@@ -170,6 +175,8 @@ class LinkDiscoveryService:
         entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=readable_kbs)
         if entry is None:
             return []
+        kb_name = entry.get("kb_name") or kb_name  # see suggest_links
+        target_kb = named_kb(target_kb)
 
         # Build search query from entry content
         title = entry.get("title", "")

@@ -348,3 +348,93 @@ class TestREST:
         assert _ids(r.json()["pairs"], "target_id") == FULL
         r = client.get("/api/links/batch-suggest", params={**params, "include_empty": True})
         assert EMPTIES <= _ids(r.json()["pairs"], "target_id")
+
+
+class TestBlankKbNeighbours:
+    """A blank or whitespace KB places the source by lookup (#528); discovery
+    then answers what a named KB answers: never the source as its own
+    neighbour, and never its backlinks (#912). Three surfaces, one answer."""
+
+    SOURCE = "palantir-source"
+
+    @staticmethod
+    def _named(rows):
+        return {(r["kb_name"], r["id"]) for r in rows}
+
+    def _expected(self, env):
+        named = LinkDiscoveryService(env["config"], env["db"]).discover_neighbors(
+            self.SOURCE, "kb-a", mode="keyword", readable_kbs=None
+        )
+        assert named, "the fixture must have neighbours"
+        assert ("kb-a", self.SOURCE) not in self._named(named)
+        return self._named(named)
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_service(self, env, blank):
+        svc = LinkDiscoveryService(env["config"], env["db"])
+        got = svc.discover_neighbors(self.SOURCE, blank, mode="keyword", readable_kbs=None)
+        assert self._named(got) == self._expected(env)
+        sug = svc.suggest_links(self.SOURCE, blank)
+        assert ("kb-a", self.SOURCE) not in self._named(sug) and sug
+
+    def test_a_backlink_is_excluded_for_a_blank_kb(self, env):
+        svc = KBService(env["config"], env["db"])
+        svc.create_entry(
+            "kb-a",
+            "back-linker",
+            "Palantir contract analysis notes",
+            "note",
+            body="x",
+            links=[{"target": self.SOURCE, "relation": "related_to"}],
+        )
+        lds = LinkDiscoveryService(env["config"], env["db"])
+        named = lds.discover_neighbors(self.SOURCE, "kb-a", mode="keyword", readable_kbs=None)
+        blank = lds.discover_neighbors(self.SOURCE, "  ", mode="keyword", readable_kbs=None)
+        assert ("kb-a", "back-linker") not in self._named(named)
+        assert ("kb-a", "back-linker") not in self._named(blank)
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_cli(self, env, blank):
+        result = runner.invoke(
+            app,
+            [
+                "links",
+                "discover",
+                self.SOURCE,
+                "-k",
+                blank,
+                "--mode",
+                "keyword",
+                "--format",
+                "json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        got = self._named(json.loads(result.output)["discoveries"])
+        assert got == self._expected(env)
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_rest(self, env, blank):
+        from starlette.testclient import TestClient
+
+        from pyrite.server.api import create_app, get_config, get_db
+
+        api = create_app(env["config"])
+        api.dependency_overrides[get_config] = lambda: env["config"]
+        api.dependency_overrides[get_db] = lambda: env["db"]
+        r = TestClient(api).get(
+            "/api/links/discover-neighbors",
+            params={"entry_id": self.SOURCE, "kb": blank, "mode": "keyword"},
+        )
+        assert r.status_code == 200, r.text
+        assert self._named(r.json()["discoveries"]) == self._expected(env)
+
+    def test_mcp(self, env):
+        # An empty kb_name is a missing argument there; whitespace reaches discovery.
+        call = lambda blank: TestMCP()._call(  # noqa: E731
+            env,
+            "kb_discover_neighbors",
+            {"entry_id": self.SOURCE, "kb_name": blank, "mode": "keyword"},
+        )
+        assert "discoveries" not in call("")
+        assert self._named(call("   ")["discoveries"]) == self._expected(env)
