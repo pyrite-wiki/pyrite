@@ -738,7 +738,8 @@ class PyriteMCPServer:
         # config and the index's registry), not the startup config alone: a
         # KB `pyrite kb add` registered while this server runs is served by
         # kb_list_entries and kb_read_body, so it must not be KB_NOT_FOUND here.
-        if named_kb(kb_name) and self.svc.get_kb(self.config.kb_name_for(kb_name)) is None:
+        named = named_kb(kb_name)
+        if named and self.svc.get_kb(self.config.kb_name_for(named)) is None:
             return _refusal(KBNotFoundError(f"KB not found: {kb_name}"))
 
         # Scoped lookup: without `kb_name` it walks only readable KBs, so a
