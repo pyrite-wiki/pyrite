@@ -242,16 +242,19 @@ def _refusal(exc: PyriteError, *, already_logged: bool = False) -> dict:
     agreed on gets no ``legacy_error_code`` key at all -- there is nothing
     legacy to report.
 
-    Not retryable -- the same call fails the same way -- except a
-    ``StorageError`` that says otherwise: a locked or busy database
-    (``StorageBusyError``) can succeed on a retry; schema drift, a missing
-    table and corruption cannot (#431).
+    Not retryable -- the same call fails the same way -- except a class
+    that says otherwise: a locked or busy database (``StorageBusyError``)
+    and a write that lost the race for its file (``ConflictError``, #955)
+    can succeed on a retry; schema drift, a missing table and corruption
+    cannot (#431).
     """
     code = exc.error_code
     legacy_code = _legacy_mcp_code(exc)
     if legacy_code == code:
         legacy_code = None
-    retryable = isinstance(exc, StorageError) and exc.retryable
+    # A class that says it is retryable (a busy database, a write that lost
+    # the race for its file and asks for a re-read) is reported so.
+    retryable = bool(getattr(exc, "retryable", False))
     # str(exc) is safe for every existing domain error here -- validation
     # messages, "not found", query syntax -- except one that opts out via a
     # `public_message` class attribute because its own str() names a real

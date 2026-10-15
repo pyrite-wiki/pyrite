@@ -3484,16 +3484,19 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "kb_update | read_key | no-default-role-kb": {
+    "changed": false,
     "entry_id": "characterization-disposable-mutation-target",
     "file_path": "<TMPDIR>/no-default-role-kb/notes/characterization-disposable-mutation-target.md",
     "updated": true
   },
   "kb_update | read_key | private-kb": {
+    "changed": false,
     "entry_id": "characterization-disposable-mutation-target",
     "file_path": "<TMPDIR>/private-kb/notes/characterization-disposable-mutation-target.md",
     "updated": true
   },
   "kb_update | read_key | readable-kb": {
+    "changed": false,
     "entry_id": "characterization-disposable-mutation-target",
     "file_path": "<TMPDIR>/readable-kb/notes/characterization-disposable-mutation-target.md",
     "updated": true

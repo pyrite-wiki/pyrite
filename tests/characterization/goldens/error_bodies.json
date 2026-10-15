@@ -204,6 +204,30 @@
       "status": 409
     }
   },
+  "ConflictError": {
+    "cli": {
+      "error": "characterization message for ConflictError",
+      "error_code": "CONFLICT",
+      "outcome": "error",
+      "retryable": true
+    },
+    "mcp": {
+      "error": "characterization message for ConflictError",
+      "error_code": "CONFLICT",
+      "legacy_error_code": "REQUEST_REFUSED",
+      "retryable": true
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "CONFLICT",
+          "message": "characterization message for ConflictError",
+          "retryable": true
+        }
+      },
+      "status": 409
+    }
+  },
   "DroppedHookRefusedError": {
     "cli": {
       "error": "characterization message for DroppedHookRefusedError",
