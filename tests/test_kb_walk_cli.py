@@ -249,3 +249,41 @@ def test_a_shortname_is_refused_with_the_full_name(cli_world, case):
     result = _run(root, _argv(root, command, param, SHORT, cli_world))
     assert result.exit_code == 1, (result.exit_code, result.output)
     assert "KB_NOT_FOUND" in result.output and FULL in result.output, result.output
+
+
+@pytest.mark.control(reason="a pin on the tree: an extension's CLI group that vanished (#900)")
+def test_every_installed_extensions_group_is_mounted():
+    """The walk covers an extension's commands only when its group is on
+    the `pyrite` root; a plugin whose `get_cli_commands` raised vanishes
+    from the tree (#900), and its KB parameters with it. Each of this
+    repo's extensions is installed here, so each group must be mounted."""
+    root = typer.main.get_command(root_app("pyrite"))
+    mounted = set(root.commands)
+    assert EXTENSION_GROUPS <= mounted, sorted(EXTENSION_GROUPS - mounted)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["tags", "-k", "registered-later", "--format", "json"],
+        ["sw", "backlog", "-k", "registered-later", "--format", "json"],
+        ["investigation", "search", "x", "-k", "registered-later", "--json"],
+    ],
+    ids=lambda a: " ".join(a[:2]),
+)
+def test_a_registry_only_kb_is_found_by_a_command_that_loads_its_own_config(cli_world, argv):
+    """A KB `pyrite kb add` registered in the index, absent from config.yaml:
+    a core command and two extension commands that resolve with
+    `require_kb(load_config(), ...)` find it (the registry is merged into the
+    config the command keeps, and a plugin handler resolves again with the
+    index open), so the check passed is not a KB that then goes missing."""
+    path = cli_world["tmp"] / "registered-later"
+    path.mkdir(exist_ok=True)
+    db = PyriteDB(cli_world["tmp"] / "index.db")
+    try:
+        db.register_kb(name="registered-later", kb_type="generic", path=str(path), source="user")
+    finally:
+        db.close()
+    result = _run("pyrite", argv)
+    assert result.exit_code == 0, (result.exit_code, result.output)
+    assert "KB_NOT_FOUND" not in result.output, result.output
