@@ -61,13 +61,13 @@ def repo_with_links():
 
 
 class TestRename:
-    """Core rename: file move + frontmatter id rewrite + wikilink rewrite."""
+    """Core rename: stable path + frontmatter id rewrite + wikilink rewrite."""
 
-    def test_rename_moves_file_to_new_id(self, repo_with_links):
+    def test_rename_preserves_file_path(self, repo_with_links):
         result = repo_with_links.rename("entry-a", "renamed-a")
-        # File moved on disk
-        assert (repo_with_links.path / "notes" / "renamed-a.md").exists()
-        assert not (repo_with_links.path / "notes" / "entry-a.md").exists()
+        # File stays at its original path.
+        assert (repo_with_links.path / "notes" / "entry-a.md").exists()
+        assert not (repo_with_links.path / "notes" / "renamed-a.md").exists()
         # Result reports the rename
         assert result["renamed"] is True
         assert result["old_id"] == "entry-a"
@@ -138,7 +138,9 @@ class TestRenameNoUpdateLinks:
 
     def test_no_update_links_leaves_wikilinks_unchanged(self, repo_with_links):
         result = repo_with_links.rename("entry-a", "renamed-a", update_links=False)
-        assert (repo_with_links.path / "notes" / "renamed-a.md").exists()
+        assert (
+            repo_with_links.find_file("renamed-a") == repo_with_links.path / "notes" / "entry-a.md"
+        )
         b = repo_with_links.load("entry-b")
         # Old link still there — now dangling
         assert "[[entry-a]]" in b.body
