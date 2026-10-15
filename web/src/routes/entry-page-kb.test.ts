@@ -102,4 +102,16 @@ describe('entry page', () => {
 		await waitFor(() => expect(entryStore.current?.kb_name).toBe('kb-b'));
 		expect(api.getEntry).toHaveBeenLastCalledWith('dup', { kb: 'kb-b', with_links: true });
 	});
+
+	it('a transclusion ![[kbb:foo]] is resolved in the KB it names', async () => {
+		vi.mocked(api.getEntry).mockResolvedValue({
+			...entry('kb-a'),
+			body: 'before\n\n![[kbb:foo]]\n\nafter'
+		} as never);
+		vi.mocked(api.resolveEntry).mockResolvedValue({ resolved: false, entry: null });
+		go('/entries/dup?kb=kb-a');
+		const { default: Page } = await import('./entries/[id]/+page.svelte');
+		render(Page);
+		await waitFor(() => expect(api.resolveEntry).toHaveBeenCalledWith('foo', 'kbb'));
+	});
 });
