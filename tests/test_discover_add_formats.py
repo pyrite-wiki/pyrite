@@ -11,8 +11,6 @@ from typer.testing import CliRunner
 
 from pyrite.cli import app
 from pyrite.config import load_config
-from pyrite.exceptions import ConfigError
-from pyrite.services.kb_registry_service import KBRegistryService
 from pyrite.storage.database import PyriteDB
 
 FORMATS = [None, "json", "yaml", "csv", "markdown", "rich"]
@@ -152,20 +150,17 @@ def test_no_discovered_kbs_does_not_register(discovery_env, fmt):
 
 
 @pytest.mark.parametrize("fmt", FORMATS)
-def test_registration_failure_is_not_success(discovery_env, fmt, monkeypatch):
-    make_kb(discovery_env)
-
-    def refuse_add(self, **kwargs):
-        raise ConfigError("Registry write refused")
-
-    monkeypatch.setattr(KBRegistryService, "add_kb", refuse_add)
+def test_registration_failure_is_not_success(discovery_env, fmt):
+    # "gc" is a name the registry's own validation refuses (an API route literal),
+    # so the CLI goes through the real add_kb and hits a real ConfigError.
+    make_kb(discovery_env, name="gc")
     result = discover(discovery_env, fmt)
     assert result.exit_code == 1, result.output
-    assert "Registry write refused" in result.output
+    assert "reserved" in result.output
     assert "Added " not in result.output
     assert registrations() == []
     if fmt != "rich":
-        assert json.loads(result.output)["error"] == "Registry write refused"
+        assert "reserved" in json.loads(result.output)["error"]
 
 
 @pytest.mark.parametrize("has_kb", [False, True])
