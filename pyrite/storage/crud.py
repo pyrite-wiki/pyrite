@@ -12,17 +12,20 @@ from typing import Any
 def temporal_text(value: Any) -> Any:
     """A date or datetime as the one text a column stores; anything else as is.
 
-    ``2025-06-01`` for a date and ``2025-06-01 00:00:00+00:00`` for a
-    datetime: the text sqlite3's own adapter wrote for a plain ``datetime``
-    (``isoformat`` with a space). Spelled out rather than ``str()``, because
-    ruamel's ``TimeStamp`` (a ``datetime`` subclass, what the loader gives a
-    bare YAML timestamp) keeps the file's ``T`` in its ``str()``, and the row
-    holds one form whatever the file's spelling. The read of a file keeps the
-    loader's spelling (``index._as_text``): the row is the index's, the
-    spelling the file's.
+    ``2025-06-01`` for a date and ``2025-06-01T00:00:00+00:00`` for a
+    datetime: ``isoformat()``, the text the index has always stored, since
+    the adapter ``pyrite/storage/connection.py`` registers for a plain
+    ``datetime`` writes exactly that. Rows written before this function
+    existed therefore sort with the rows it writes (a timeline, a date
+    range). Spelled out rather than ``str()``, because ruamel's ``TimeStamp``
+    (a ``datetime`` subclass, what the loader gives a bare YAML timestamp)
+    keeps the file's separator in its ``str()``, and the row holds one form
+    whatever the file's spelling. The read of a file keeps the loader's
+    spelling (``index._as_text``): the row is the index's, the spelling the
+    file's; for a ``T``-spelled file the two are the same text.
     """
     if isinstance(value, datetime):
-        return value.isoformat(sep=" ")
+        return value.isoformat()
     if isinstance(value, date):
         return value.isoformat()
     return value

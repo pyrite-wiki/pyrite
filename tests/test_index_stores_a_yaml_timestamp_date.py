@@ -8,14 +8,20 @@ in ``start_date``/``end_date``/``due_date``/``assigned_at``, in a source's
 holding just that file and the only signal was a log warning.
 
 Required property: every value the loader reads is indexable wherever a YAML
-timestamp appears, and the row stores a date or timestamp as one text form
-(``2025-06-01``, ``2025-06-01 00:00:00+00:00``). A read reports what the file
-holds: the loader's spelling (``2025-06-01T00:00:00+00:00`` for a file spelled
-with ``T``), never the row's one form, so a read-modify-write echoes the file's
-own spelling back.
+timestamp appears, and the row stores a date or timestamp as the one text the
+index has always stored, ``isoformat()`` (``2025-06-01``,
+``2025-06-01T00:00:00+00:00``: what ``pyrite/storage/connection.py``'s own
+sqlite3 adapter writes for a plain ``datetime``), so rows written before and
+after this fix sort together. A read reports what the file holds, for the
+entry's own columns, its tags and its sources: the loader's spelling
+(``2025-06-01T00:00:00+00:00`` for a file spelled with ``T``), so a
+read-modify-write echoes the file's own spelling back, and a tag or value a
+read returned finds the entry again. A value under ``metadata:`` is the
+index's JSON text (``SafeEncoder``), which is ``isoformat()`` too.
 
 The oracle is the row ``PyriteDB.get_entry`` returns, or the read
-``KBService.get_entry`` returns, compared with values written by hand.
+``KBService.get_entry`` returns, compared with values written by hand, and
+for the stored form ``datetime.isoformat()`` of the same instant.
 """
 
 from __future__ import annotations
@@ -115,9 +121,9 @@ def software_kb(tmp_path: Path):
 @pytest.mark.parametrize(
     ("spelled", "stored"),
     [
-        ("2025-06-01T00:00:00+00:00", "2025-06-01 00:00:00+00:00"),
-        ("2025-06-01 09:30:00+00:00", "2025-06-01 09:30:00+00:00"),
-        ("2025-06-01T09:30:00Z", "2025-06-01 09:30:00+00:00"),
+        ("2025-06-01T00:00:00+00:00", "2025-06-01T00:00:00+00:00"),
+        ("2025-06-01 09:30:00+00:00", "2025-06-01T09:30:00+00:00"),
+        ("2025-06-01T09:30:00Z", "2025-06-01T09:30:00+00:00"),
         ("2025-06-01", "2025-06-01"),
         ('"2025-06-01"', "2025-06-01"),
     ],
@@ -150,10 +156,43 @@ def test_every_temporal_column_of_the_row_binds_a_yaml_timestamp(tmp_path: Path,
     finally:
         db.close()
 
-    assert row[key] == "2026-01-02 10:00:00"
+    assert row[key] == datetime(2026, 1, 2, 10).isoformat()
 
 
-def test_a_sources_date_that_is_a_yaml_timestamp_binds(tmp_path: Path):
+def test_a_timestamp_row_keeps_the_form_the_index_always_stored(tmp_path: Path):
+    """A row written for a loaded timestamp sorts with the rows the index
+    already holds: a quoted ``'2026-01-02T10:00:00'`` is stored verbatim, as
+    every row of a plain ``datetime`` was (``connection.py``'s adapter writes
+    ``isoformat()``), and a bare timestamp an hour later must sort after it.
+    A space-separated form would sort before every ``T`` row of the same day."""
+    config = _config(tmp_path, "generic", THING_KB_YAML)
+    things = config.knowledge_bases[0].path / "things"
+    things.mkdir()
+    (things / "later.md").write_text(
+        THING.format(key="date", value="2026-01-02T11:00:00").replace("id: t", "id: later"),
+        encoding="utf-8",
+    )
+    (things / "earlier.md").write_text(
+        THING.format(key="date", value="'2026-01-02T10:00:00'").replace("id: t", "id: earlier"),
+        encoding="utf-8",
+    )
+
+    db = PyriteDB(config.settings.index_path)
+    try:
+        assert IndexManager(db, config).index_all() == {"t": 2}
+        assert db.get_entry("later", "t")["date"] == datetime(2026, 1, 2, 11).isoformat()
+        ordered = [row["id"] for row in db.get_timeline(kb_name="t", min_importance=0)]
+    finally:
+        db.close()
+
+    assert ordered == ["earlier", "later"]
+
+
+def test_a_sources_date_that_is_a_yaml_timestamp_binds_and_reads_as_the_files_text(
+    tmp_path: Path,
+):
+    """The row binds the source's date; a read returns the file's text for
+    it, so the read's source equals the row's and keeps the row's ``id``."""
     config = _config(tmp_path, "task")
     (config.knowledge_bases[0].path / "tasks").mkdir()
     (config.knowledge_bases[0].path / "tasks" / "t.md").write_text(SOURCES, encoding="utf-8")
@@ -161,13 +200,18 @@ def test_a_sources_date_that_is_a_yaml_timestamp_binds(tmp_path: Path):
     db = _indexed(config)
     try:
         row = db.get_entry("t", "t")
+        got = KBService(config, db).get_entry("t", "t", readable_kbs=None)
     finally:
         db.close()
 
-    assert [s["date"] for s in row["sources"]] == ["2026-01-01 10:00:00"]
+    assert [s["date"] for s in row["sources"]] == ["2026-01-01T10:00:00"]
+    assert [s["date"] for s in got["sources"]] == ["2026-01-01T10:00:00"]
+    assert got["sources"][0]["id"] == row["sources"][0]["id"] is not None
 
 
-def test_a_tag_that_is_a_yaml_timestamp_binds(tmp_path: Path):
+def test_a_tag_that_is_a_yaml_timestamp_binds_as_the_name_a_read_returns(tmp_path: Path):
+    """A tag is a name: it is bound as the text a read returns for it, so
+    ``search_by_tag`` with the tag ``get`` returned finds the entry."""
     config = _config(tmp_path, "task")
     (config.knowledge_bases[0].path / "tasks").mkdir()
     (config.knowledge_bases[0].path / "tasks" / "t.md").write_text(TAGS, encoding="utf-8")
@@ -175,24 +219,49 @@ def test_a_tag_that_is_a_yaml_timestamp_binds(tmp_path: Path):
     db = _indexed(config)
     try:
         row = db.get_entry("t", "t")
+        got = KBService(config, db).get_entry("t", "t", readable_kbs=None)
+        found = [r["id"] for r in db.search_by_tag(got["tags"][1], kb_name="t")]
     finally:
         db.close()
 
-    assert row["tags"] == ["alpha", "2026-01-01 10:00:00"]
+    assert row["tags"] == ["alpha", "2026-01-01T10:00:00"]
+    assert got["tags"] == row["tags"]
+    assert found == ["t"]
+
+
+@pytest.mark.control(
+    reason="the JSON column spelled a date this way before #951; the control pins the narrowed claim: a metadata value reads as the index's JSON text, not the file's spelling"
+)
+def test_a_metadata_timestamp_reads_as_the_indexs_json_text(tmp_path: Path):
+    config = _config(tmp_path, "generic")
+    (config.knowledge_bases[0].path / "notes").mkdir()
+    (config.knowledge_bases[0].path / "notes" / "t.md").write_text(
+        THING.format(key="seen", value="2026-01-02 10:00:00").replace("type: thing", "type: note"),
+        encoding="utf-8",
+    )
+
+    db = _indexed(config)
+    try:
+        got = KBService(config, db).get_entry("t", "t", readable_kbs=None)
+    finally:
+        db.close()
+
+    assert got["metadata"]["seen"] == "2026-01-02T10:00:00"
 
 
 @pytest.mark.parametrize(
     ("spelled", "stored", "read"),
     [
-        ("2026-01-02T10:00:00", "2026-01-02 10:00:00", "2026-01-02T10:00:00"),
-        ("2026-01-02 10:00:00", "2026-01-02 10:00:00", "2026-01-02 10:00:00"),
-        ("2026-01-02T10:00:00Z", "2026-01-02 10:00:00+00:00", "2026-01-02T10:00:00+00:00"),
+        ("2026-01-02T10:00:00", "2026-01-02T10:00:00", "2026-01-02T10:00:00"),
+        ("2026-01-02 10:00:00", "2026-01-02T10:00:00", "2026-01-02 10:00:00"),
+        ("2026-01-02T10:00:00Z", "2026-01-02T10:00:00+00:00", "2026-01-02T10:00:00+00:00"),
     ],
 )
 def test_a_read_reports_the_files_own_spelling_not_the_rows(tmp_path: Path, spelled, stored, read):
     """The row holds one form; a read of the file holds the file's, as far as
     the loader keeps it (``Z`` reads back ``+00:00``), so an echo of a read
-    carries the file's spelling, not the index's."""
+    carries the file's spelling, not the index's. For a ``T``-spelled file the
+    two are equal, so a search by the value ``get`` returned finds the row."""
     config = _config(tmp_path, "generic", THING_KB_YAML)
     (config.knowledge_bases[0].path / "things").mkdir()
     (config.knowledge_bases[0].path / "things" / "t.md").write_text(
@@ -223,6 +292,6 @@ def test_a_date_edit_that_writes_a_timestamp_is_indexed_from_the_file(software_k
     assert "date: 2025-06-02 08:00:00+00:00" in path.read_text(encoding="utf-8")
     db2 = _indexed(config)
     try:
-        assert db2.get_entry("a", "t")["date"] == "2025-06-02 08:00:00+00:00"
+        assert db2.get_entry("a", "t")["date"] == "2025-06-02T08:00:00+00:00"
     finally:
         db2.close()

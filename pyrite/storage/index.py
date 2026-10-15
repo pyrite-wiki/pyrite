@@ -124,10 +124,11 @@ def _as_text(value: Any) -> Any:
     """``value`` as a TEXT column returns it once SQLite has stored it: a YAML
     number or date as its text, a bool as ``"1"``/``"0"`` (sqlite3 binds a
     bool as an integer). A date or datetime is its ``str()``: for ruamel's
-    ``TimeStamp`` that keeps the file's ``T`` (``2026-01-01T10:00:00``), so a
-    read reports the file's own spelling, as far as the loader keeps it (a
-    ``Z`` reads back ``+00:00``). The index row holds one form instead
-    (``crud.temporal_text``); the file is the truth for a read (#951)."""
+    ``TimeStamp`` that keeps the file's separator (``2026-01-01T10:00:00``),
+    so a read reports the file's own spelling, as far as the loader keeps it
+    (a ``Z`` reads back ``+00:00``). The index row holds one form instead
+    (``crud.temporal_text``, ``isoformat()``, the same text for a
+    ``T``-spelled file); the file is the truth for a read (#951)."""
     if value is None or isinstance(value, str):
         return value
     if isinstance(value, bool):
@@ -155,6 +156,8 @@ def _read_sources(
     ``id`` is the index's row number for a source; the file has none. It is
     kept from the row where the row's source at the same position says the
     same thing, so an unchanged source reads exactly as before; otherwise None.
+    A source's ``date`` is the file's text (``_as_text``), as the row's TEXT
+    column returns it (#951).
     """
     indexed = row.get("sources") or []
     out = []
@@ -166,7 +169,7 @@ def _read_sources(
             "title": src.get("title", ""),
             "url": src.get("url", ""),
             "outlet": src.get("outlet", ""),
-            "date": src.get("date", ""),
+            "date": _as_text(src.get("date", "")),
             "verified": 1 if src.get("verified") else 0,
         }
         if i < len(indexed) and {**indexed[i], "id": None} == shaped:
@@ -341,7 +344,10 @@ class IndexManager:
             "content_hash": content_hash or _hash_file(file_path),
             "file_mtime_ns": stat.st_mtime_ns if stat else None,
             "file_size": stat.st_size if stat else None,
-            "tags": entry.tags,
+            # A tag is a name: bound as the text a read returns for it
+            # (`_as_text`: a loaded timestamp keeps the file's spelling), so
+            # a search by the tag `get` returned finds the entry (#951).
+            "tags": [_as_text(t) for t in entry.tags],
             "aliases": entry.aliases,
             "sources": [s.to_dict() for s in entry.sources],
             "links": [l.to_dict() for l in entry.links],
