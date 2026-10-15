@@ -89,32 +89,10 @@ UPDATE_FLAGS = frozenset({"echo", "stale"})
 #: test fails outright, so a reason cannot quietly stop being true.
 #: Measured on dev at c097e7f6, 2026-10-03.
 KNOWN_DIVERGENCES: dict[str, tuple[str, str]] = {
-    "one-field-edit-yields-that-field-s-lines": (
-        "principle 3: the whole frontmatter is re-rendered: the header comment, the "
-        "title's comment and the blank line go, `no` becomes `\"no\"`, the body's indent is stripped",
-        r"diff was:\n-# reviewed by hand, do not reorder\n",
-    ),
     "appending-to-a-list-leaves-the-existing-items-alone": (
         "principle 3: kb_update sets `links` aside (`ignored: ['links']`) and writes "
         "nothing; no operation appends to a list",
         r"diff was:\n\(end of diff\)",
-    ),
-    "a-save-does-not-add-what-a-hook-used-to-add": (
-        "principle 4: journalism-investigation's enrich_connection_links writes a "
-        "`links:` block for the person and the organization into the file on an "
-        "unrelated title edit",
-        r"diff was:\n-title: Jane at Acme\n\+title: Jane at Acme, renewed\n"
-        r"\+links:\n\+- target: jane-doe\n",
-    ),
-    "two-writers-on-different-keys-both-survive": (
-        "decision 10: each writer replaces the whole file from its own read; the last "
-        "one to replace drops the other's change",
-        r"diff was:\n(-summary: one\n\+summary: two\n|-importance: 3\n\+importance: 5\n)\(end of diff\)",
-    ),
-    "sending-a-read-back-changes-nothing": (
-        "principle 3: an echo that changes no field still rewrites the file: CRLF "
-        "becomes LF and the header comment is dropped",
-        r"diff was:\n----\r\n-# header comment\r\n",
     ),
     "a-stale-whole-document-replace-is-refused": (
         "decision 11: kb_get returns `content_hash` since #753 (decision 9), but "
@@ -264,8 +242,12 @@ def _entry_path(ex: Example) -> tuple[str, str]:
 
 
 def _build_kb(tmp_path: Path, ex: Example) -> tuple[PyriteConfig, Path, str]:
+    """The example's KB: a git repository, as a KB that asserts concurrency
+    must be (ADR-0042 §10a A1: the momentary lock lives in the git dir; a KB
+    outside git is written with compare-before-replace and no lock, D1 (b))."""
     kb_path = tmp_path / "kb"
     kb_path.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=kb_path, check=True, capture_output=True)
     kb_type = KB_TYPE_FOR_ENTRY_TYPE.get(str(_front(ex.file).get("type")), "generic")
     (kb_path / "kb.yaml").write_text(f"name: {KB}\nkb_type: {kb_type}\n", encoding="utf-8")
     rel, entry_id = _entry_path(ex)
@@ -1012,19 +994,13 @@ def test_diff_rendering_pairs_equal_replacements() -> None:
     assert _render_diff("x\r\n", "x\r\n") == ""
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="principle 3: a one-field edit hands the emitter flag, id, links, tags and type "
-    "(the list is pinned as observed; a narrower leak fails outright)",
-)
 def test_emitter_flag_on_the_one_field_edit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The `emitter` flag is wired. No ADR example carries it yet, so this
-    runs the one-field edit with it: today the whole frontmatter goes to the
-    emitter. When the write path honours principle 3 this XPASSes; then
-    delete the mark, or put `emitter` on the doc's example.
+    runs the one-field edit with it: the YAML emitter is handed no top-level
+    key of the file that the operation did not name (principle 3; the update
+    writes the one value through `apply()`'s own emitter).
     """
     one_field = DOC_EXAMPLES[0]
     ex = Example(
@@ -1034,15 +1010,7 @@ def test_emitter_flag_on_the_one_field_edit(
         update=one_field.update,
         diff=one_field.diff,
     )
-    try:
-        _check(ex, tmp_path, monkeypatch)
-    except AssertionError as e:
-        if (
-            "emitter was handed keys nobody asked to change: ['flag', 'id', 'links', 'tags', 'type']"
-            not in str(e)
-        ):
-            pytest.fail(f"failed, but not by the emitter check:\n{e}")
-        raise
+    _check(ex, tmp_path, monkeypatch)
 
 
 # --------------------------------------------------------------------------
