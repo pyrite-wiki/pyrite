@@ -18,6 +18,11 @@ project is worth their time.
 
 ### Initial Setup
 
+The quickest path is `scripts/setup-checkout.sh` after cloning: it makes the
+venv, installs the extensions and writes the repo-local `.pyrite/config.yaml`
+that makes `pyrite -k pyrite` mean this checkout's `kb/` (the KB lookups in
+`AGENTS.md` need it). The manual steps, if you prefer them:
+
 ```bash
 # Clone the repository
 git clone https://github.com/pyrite-wiki/pyrite.git
@@ -412,13 +417,21 @@ uv pip install --python .venv/bin/python -e ".[all,dev]"
 
 - `dev` is the default branch and where work integrates. `main` is releases
   only and moves by fast-forward to a commit that already passed CI.
-- Branch from `dev`, open the PR against `dev`. Rebase is the default merge
+- Branch from `dev`, open the PR against `dev`. Name the branch for what it
+  holds: `fix/*`, `feature/*`, `docs/*`, `kb/*` (KB entries only) or
+  `process/*` (tooling and workflow). Never push to `dev`. Rebase is the default merge
   method (it keeps your commits and their messages); squash is fine for a
   branch whose history is noise.
 - A PR merges when its checks are green **on top of current `dev`** — one
   required check, `gate`, summarizes the Python suite, the frontend build and
   KB validation (whichever the change needs), and the branch must be up to
-  date. If `dev` is broken, nothing merges until it is fixed.
+  date. If `dev` is broken, nothing merges until it is fixed. A PR goes
+  `BEHIND` the moment another one merges; bring it up to date with
+  `gh pr update-branch <N> --rebase` (auto-merge does not do it for you).
+- **A PR is a unit a reviewer can hold in their head:** complete on one
+  theme, as many commits as the idea needs, never a fragment of a larger
+  thing. A follow-up to work already in review goes onto that PR's branch,
+  not into a new PR.
 
 **Git hooks** — `pre-commit install` installs all three:
 
@@ -452,7 +465,8 @@ build and Playwright, so the pre-push run does not have to be perfect. If it
 fails in a test your change does not touch, re-run that test alone
 (`scripts/test-affected --run -- --lf`); if it passes, push with `--no-verify`
 and say so in the PR, and CI will decide. Name the test in the PR; if CI fails it too, it is a real failure your change caused, even in a test you did not touch. A failure in a test your change
-touches is a real failure: fix it.
+touches is a real failure: fix it. File an issue for a flaky test only if it
+fails that way again.
 
 **Claiming an issue:** before you spend more than an hour on an issue, say so
 on the issue: two or three lines on how you'll fix it and what test proves
@@ -475,7 +489,9 @@ and "it's in a local commit" has cost a round trip more than once.
 
 1. `git checkout -b fix/what-it-fixes dev` (or `feature/...`), ideally in its
    own worktree (`scripts/new-worktree.sh fix/what-it-fixes`): one branch,
-   one worktree, so parallel work never shares a tree.
+   one worktree, so parallel work never shares a tree. A worktree is required
+   when several sessions or agents work in one clone at once; a single
+   session on a plain clone is fine.
 2. Write the failing test, then the fix. Commit each passing step.
 3. Push; the pre-push hook runs the affected tests (CI runs the full suite)
 4. Open the PR against `dev` and fill in the template (`Fixes #N` for bugs).

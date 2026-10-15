@@ -29,13 +29,14 @@ rule exists: [history.md](history.md).
 ## Where you are
 
 ```bash
-git branch --show-current     # feature/*, fix/*, kb/* or process/* -- never dev
-pwd                           # a worktree under ../pyrite-wt/, with its own .venv
+git branch --show-current     # fix/*, feature/*, docs/*, kb/* or process/* -- never dev
+pwd                           # your checkout; a worktree under ../pyrite-wt/ if others share the clone
 .venv/bin/pyrite kb list      # the `pyrite` KB path must be THIS worktree's kb/
 ```
 
-- Any of them wrong: stop, and run `scripts/new-worktree.sh <branch>` from the
-  main checkout (CONTRIBUTING; ADR-0032).
+- On `dev`, or sharing a clone with another session or agent: stop, and run
+  `scripts/new-worktree.sh <branch>` from the main checkout. Wrong `pyrite`
+  KB path: run `scripts/setup-checkout.sh` (CONTRIBUTING, "Initial Setup").
 - Use the worktree's `.venv/bin/...`; the main checkout's venv imports the main
   checkout's code.
 - Sub-agents share your branch and worktree: give them disjoint files, never

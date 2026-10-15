@@ -1,6 +1,6 @@
 ---
-id: contributor-only-agent-instructions-loop-skills-live-in-tcp-skills-244
-title: Contributor-only agent instructions; loop skills live in tcp-skills (#244)
+id: contributor-only-agent-instructions-maintainer-loop-lives-outside-the-repo-244
+title: Contributor-only agent instructions; the maintainer loop lives outside the repo (#244)
 type: backlog_item
 tags:
 - docs

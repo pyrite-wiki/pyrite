@@ -32,9 +32,11 @@ The [documentation index](docs/README.md) groups guides and contracts by reader 
 
 ## The three rules agents break most
 
-- **Your own branch and worktree.** Never push to `dev`; work on `feature/*`,
-  `fix/*` or `kb/*` in a worktree made by `scripts/new-worktree.sh <branch>`,
-  and open the PR against `dev`.
+- **Your own branch.** Never push to `dev`; work on `fix/*`, `feature/*`,
+  `docs/*`, `kb/*` or `process/*` and open the PR against `dev`. Use a
+  worktree (`scripts/new-worktree.sh <branch>`) whenever more than one
+  session or agent works in the clone; see CONTRIBUTING, "Branches, hooks
+  and pull requests".
 - **Stage explicit paths.** `git add <file>`, never `-A`, `-u` or `.`.
 - **One heavy run at a time.** The full suite, `scripts/verify-red.sh` and
   Playwright share one machine-wide lock; run the suite as
