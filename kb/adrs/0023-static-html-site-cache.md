@@ -9,7 +9,7 @@ date: "2026-03-25"
 tags: [architecture, site-cache, seo, deployment]
 ---
 
-> Removed by #953 (2026-10): `/site`, `/viewer`, the sitemap routes and `SiteCacheService` are gone; publishing is an export (`pyrite export site`). Kept as history.
+> Removed by #953 (2026-10): `/site`, `/viewer`, the sitemap routes and `SiteCacheService` are gone, and an instance has no crawlable surface; a KB is made crawlable by a Hugo or Astro site built from its files (the maintainer's decision on #953). Kept as history.
 
 ## Context
 

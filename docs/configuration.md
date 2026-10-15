@@ -269,9 +269,10 @@ is no CLI command for them yet.
 
 **`default_role: read` also opens the KB to anyone, signed in or not.**
 Such a KB is readable by an anonymous visitor over REST and the web app,
-whatever the auth settings are. To publish a KB as a site, export it
-(`pyrite export site`); the built-in `/site` renderer and its sitemap were
-removed in #953.
+whatever the auth settings are. An instance has no crawlable surface: the
+built-in `/site` renderer, its sitemap and `/robots.txt` were removed in
+#953. To make a KB crawlable, build a static site from its files with Hugo
+or Astro and deploy that on its own.
 
 ### The web app's Content-Security-Policy
 
