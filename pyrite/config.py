@@ -521,17 +521,23 @@ class PyriteConfig:
             return kb
         return self._db_kb_cache.get(name)
 
-    def require_kb(self, name: str) -> KBConfig:
+    def require_kb(self, name: str, *, db: Any = None) -> KBConfig:
         """The KB a request names, or ``KBNotFoundError`` (``KB_NOT_FOUND``).
 
         For a service read that would otherwise answer an empty result for a
         name that matches no KB, so the caller is told the KB does not exist
-        instead of that it holds nothing (#846). Same lookup as
-        :meth:`get_kb`: config.yaml first, then DB-registered KBs.
+        instead of that it holds nothing (#846). The one resolver,
+        ``services/kb_resolver.resolve_kb`` (#952), for a caller with no
+        scope to apply: a shortname is refused with the full name suggested,
+        and with ``db`` a KB registered after this config was loaded is
+        found. A blank name is refused here (a service that calls this is
+        reading one KB, not "unplaced").
         """
-        kb = self.get_kb(name)
+        from .services.kb_resolver import resolve_kb
+
+        kb = resolve_kb(self, name, readable_kbs=None, db=db)
         if kb is None:
-            raise KBNotFoundError(f"KB not found: {name}")
+            raise KBNotFoundError(f"KB '{name}' not found")
         return kb
 
     def confined_default_role(self, value: str | None) -> str | None:
