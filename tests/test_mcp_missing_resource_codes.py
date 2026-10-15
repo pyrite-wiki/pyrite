@@ -106,6 +106,27 @@ def test_unrelated_update_failure_keeps_safe_message_and_retry_semantics(mcp_ser
     assert "sensitive/path" not in result["error"]
 
 
+def _note(server, kb_name, entry_id, title="Note", body="body text"):
+    server.svc.create_entry(kb_name, entry_id, title, "note", body)
+
+
+@pytest.mark.parametrize("tool", ["kb_get", "kb_update"])
+def test_id_only_in_another_kb_is_entry_not_found_in_the_named_kb(mcp_server, tool):
+    # The id exists, but in `private`; asked of `notes` it is absent there.
+    # Neither the other KB's entry nor a KB-level code may answer.
+    _note(mcp_server, "private", "elsewhere", title="Private title")
+    args = {"kb_name": "notes", "entry_id": "elsewhere"}
+    if tool == "kb_update":
+        args["title"] = "Overwritten"
+    result = _call(mcp_server, tool, args)
+    assert result["error_code"] == "ENTRY_NOT_FOUND", result
+    assert result["legacy_error_code"] == ("UPDATE_FAILED" if tool == "kb_update" else "NOT_FOUND")
+    assert result["retryable"] is False
+    assert "Private title" not in json.dumps(result)
+    kept = _call(mcp_server, "kb_get", {"kb_name": "private", "entry_id": "elsewhere"})
+    assert kept["entry"]["title"] == "Private title"
+
+
 @pytest.mark.control(
     reason="dev's kb_get has no KB check; this guards #764's own check, red against its first version"
 )
