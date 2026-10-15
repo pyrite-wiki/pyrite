@@ -59,7 +59,7 @@ class TestMergeRegisteredKBs:
 
     def test_merges_default_role_from_db(self, db_with_user_kb):
         """default_role is a real DB column (per-KB public/private access
-        control, e.g. public_kbs.py's "is this KB public" signal) but
+        control: the access policy's anonymous rule reads it) but
         the raw SQL SELECT here never fetched it, so a DB-registered KB's
         default_role was silently dropped on every merge -- a KB added via
         `pyrite kb add` with default_role='read' could never appear in the

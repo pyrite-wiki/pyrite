@@ -21,13 +21,23 @@ from pyrite import config as config_module
 from pyrite.config import AuthConfig, KBConfig, PyriteConfig, Settings
 from pyrite.server.api import create_app
 from pyrite.services.kb_registry_service import KBRegistryService
-from pyrite.services.public_kbs import public_kb_names
 from pyrite.storage.database import PyriteDB
 from tests.auth_seed import app_db
 
 KEY = "operator-key"
 ADMIN = {"X-API-Key": KEY}
 YAML_KB, REPO_KB, EPH_KB = "yaml-kb", "repo-kb", "eph-kb"
+
+
+def _anonymous_reads(config, name: str, anonymous_tier: str = "read") -> bool:
+    """What the access policy gives an anonymous visitor on `name`: the one
+    rule (`kb_role`, step 5) every anonymous surface resolves through."""
+    from pyrite.services.access_policy import kb_role
+
+    kb = config.get_kb(name)
+    if kb is None:
+        return False
+    return kb_role(None, None, lambda: None, kb.default_role, anonymous_tier) is not None
 
 
 def _entry(eid: str, kb: str, title: str = "") -> dict:
@@ -116,7 +126,7 @@ class TestServerManagedKBsAreEditable:
         r = _set_role(world["client"], "typed", "read")
         assert r.status_code == 409, r.text
         assert config_file.read_bytes() == before
-        assert "typed" not in public_kb_names(world["config"])
+        assert world["config"].get_kb("typed").default_role is None
 
     def test_a_hand_written_ephemeral_key_outside_the_root_is_the_operators(self, world, tmp_path):
         (tmp_path / "eph-typed").mkdir()
@@ -133,7 +143,7 @@ class TestServerManagedKBsAreEditable:
         r = _set_role(world["client"], REPO_KB, "none")
         assert r.status_code == 200, r.text
         assert world["config"].get_kb(REPO_KB).default_role == "none"
-        assert REPO_KB not in public_kb_names(world["config"])
+        assert not _anonymous_reads(world["config"], REPO_KB)
         saved = config_module.load_config()
         assert saved.get_kb(REPO_KB).default_role == "none"
 
@@ -143,7 +153,7 @@ class TestServerManagedKBsAreEditable:
         EphemeralKBService(world["config"], app_db(world["app"])).create_ephemeral_kb(EPH_KB)
         r = _set_role(world["client"], EPH_KB, "read")
         assert r.status_code == 200, r.text
-        assert EPH_KB in public_kb_names(world["config"])
+        assert _anonymous_reads(world["config"], EPH_KB)
         assert config_module.load_config().get_kb(EPH_KB).default_role == "read"
 
     def test_a_refused_save_changes_nothing(self, world, monkeypatch):

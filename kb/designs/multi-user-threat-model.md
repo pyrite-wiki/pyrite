@@ -137,8 +137,8 @@ directory. No server or suite was run.
 |---|---|---|
 | REST under `/api` | 111 operations | `pyrite/server/endpoints/*.py` (22 modules) |
 | REST `/auth/*` | 19 | `auth_endpoints.py` |
-| Anonymous-by-design REST | 14 | `static.py` (9: `/site*`, `/viewer*`, `robots.txt`), `seo_endpoints.py` (2), `branding_endpoints.py` (2), `api.py` `/health` (1) |
-| **REST total** (`rest_operations()`) | **144** | |
+| Anonymous-by-design REST | 3 (14 until #953 removed `/site*`, `/viewer*`, `/sitemap.xml` and `/robots.txt`) | `branding_endpoints.py` (2), `api.py` `/health` (1) |
+| **REST total** (`rest_operations()`) | **133** (144 before #953) | |
 | MCP tools (`mcp_tools()`, admin tier) | **112**: read tier 72, write tier +31, admin tier +9 | core `mcp_server.py` 48; extensions 64 (software-kb 23, journalism-investigation 22, encyclopedia 6, cascade 6, social 5, zettelkasten 2) |
 | `NON_ROUTE_ENTRY_POINTS` | 2 | `/mcp` (a Mount: `GET /mcp/sse`, `POST /mcp/messages/`, `GET /mcp/info`), `/ws` |
 | Other app routes, **not in the inventory** | 4 | FastAPI's `/openapi.json`, `/docs`, `/docs/oauth2-redirect`, `/redoc` |
@@ -297,21 +297,22 @@ Attacker goals: G-read, G-exist, G-persist.
   titles in the payload.
 - **P-W3.** Socket lifetime follows ADR-0036.
 
-#### B6. The anonymous render surfaces: `/site*`, `/viewer*`, `/sitemap.xml`, `/robots.txt`, `/branding/*`, `/config/branding`, `/health`; U0
+#### B6. The anonymous render surfaces: `/branding/*`, `/config/branding`, `/health` (and, until #953 removed them, `/site*`, `/viewer*`, `/sitemap.xml`, `/robots.txt`); U0
 
 Attacker goals: G-read, G-exist, G-escape (reading files through a path).
 
-- **P-S1, public only.** Every anonymous render includes only
-  `public_kb_names()` (`services/public_kbs.py`, the one rule). That covers
-  pages, the search index, the sitemap, link targets, backlinks and titles
-  resolved from private KBs. A private KB's name, entry titles or counts
-  never appear, even as a dangling link.
+- **P-S1, public only.** Every anonymous answer includes only what the
+  access policy gives the anonymous principal (`kb_role`, step 5 of
+  `services/access_policy.py`, the one rule; `services/public_kbs.py` was
+  the renderer's copy and went with it in #953). That covers link targets,
+  backlinks and titles resolved from private KBs. A private KB's name,
+  entry titles or counts never appear, even as a dangling link.
 - **P-S2, contained paths.** Every served path resolves inside its root:
-  the site cache, the static dir, or the branding dir. That holds after
-  normalisation, encoding, symlinks and case folding.
-- **P-S3, a cache refreshes on the right events.** A KB that stops being
-  public, or an entry deleted from a public KB, leaves the anonymous
-  surfaces by the next render. Who may trigger a render is P-R7.
+  the static dir or the branding dir. That holds after normalisation,
+  encoding, symlinks and case folding.
+- **P-S3, no stale anonymous copy.** Nothing anonymous is served from a
+  cache rendered under an earlier policy (the `/site` cache this property
+  governed is gone; it stays as the rule for any future one).
 - **P-S4, no configuration leaks.** `/config/branding` and `/health` expose
   nothing a U0 should not know: paths, versions beyond what the operator
   chose, KB names, or whether auth or keys are configured beyond what the
@@ -323,8 +324,8 @@ Attacker goals: G-impersonate, G-cred, G-write (through a victim's
 session).
 
 - **P-B1, stored content never executes.** Content written by one principal
-  cannot run script in another principal's browser, in the web app's
-  origin, or in `/site`. That covers entry bodies (markdown and HTML),
+  cannot run script in another principal's browser or in the web app's
+  origin. That covers entry bodies (markdown and HTML),
   titles, tags, field values, template output, collection names, KB names,
   branding assets and SVG. Pages are served with a CSP (`site_csp_extra`
   only relaxes it by operator choice).
@@ -536,27 +537,27 @@ Every brief shares these rules:
   fetch, or a write outside its root. Also: a network principal that
   obtains `local`.
 
-### A4. `/ws`, `/site` and the anonymous render surfaces (B5, B6, B7's P-B1)
+### A4. `/ws` and the anonymous render surfaces (B5, B6, B7's P-B1)
 
 - **Scope.**
-  - `server/websocket.py`, `server/static.py`, `services/site_cache.py`,
-    `services/public_kbs.py`, `services/sitemap_service.py`,
-    `server/seo_endpoints.py`, `server/branding_endpoints.py` and
-    `services/branding_service.py`.
-  - `server/static_search_page.py` and `server/templates/`.
+  - `server/websocket.py`, `server/static.py`,
+    `server/branding_endpoints.py` and `services/branding_service.py`
+    (`services/site_cache.py`, `services/public_kbs.py`,
+    `services/sitemap_service.py`, `server/seo_endpoints.py`,
+    `server/static_search_page.py` and `server/templates/` were removed
+    by #953).
   - The FastAPI documentation routes, and the inventory note in §4.1.
   - The web UI's rendering of entry content (`web/src/`: the markdown
     renderer, and every `{@html}`).
 - **Properties.** P-W1–P-W3, P-S1–P-S4, P-B1, P-B2.
 - **Questions, in order.**
-  1. Does every anonymous render draw only on `public_kb_names()`,
-     including derived data: backlinks, resolved titles, the search index
-     and the sitemap (P-S1)?
-  2. Path containment in `static.py`, `site_cache.py` and the branding
-     routes (P-S2).
+  1. Does every anonymous answer draw only on what the access policy
+     gives the anonymous principal, including derived data: backlinks and
+     resolved titles (P-S1)?
+  2. Path containment in `static.py` and the branding routes (P-S2).
   3. Can content stored by one principal run script in another's
-     browser, in the app or in `/site` (P-B1)? The web UI's markdown and
-     HTML sanitisation, and the CSP.
+     browser, in the app (P-B1)? The web UI's markdown and HTML
+     sanitisation, and the CSP.
   4. `/ws` payload scoping, handshake authentication and lifetime
      (P-W1–P-W3).
   5. Should the documentation routes be public, and does anything

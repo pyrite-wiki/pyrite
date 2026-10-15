@@ -4,6 +4,8 @@ Static file serving for the Pyrite web application.
 Serves the built SvelteKit app from web/dist/ with SPA fallback:
 - /_app/* → the build's hashed JS, CSS and images
 - /api/*, /mcp, /auth, /ws → the API's; never answered by the SPA shell
+- /robots.txt, /sitemap.xml, /site/*, /viewer/* → 404 (removed in #953) unless
+  the build ships the file
 - Everything else → index.html (SPA client-side routing)
 
 The app's responses carry a Content-Security-Policy built here
@@ -106,12 +108,6 @@ def build_site_csp(extra: str = "") -> str:
     return "; ".join(" ".join([name, *srcs]) for name, srcs in merged.items())
 
 
-SITE_CSP = build_site_csp()
-SITE_SECURITY_HEADERS = {
-    "Content-Security-Policy": SITE_CSP,
-    "X-Content-Type-Options": "nosniff",
-}
-
 # The hash SvelteKit's build emits in its own <meta http-equiv> CSP tag for
 # the inline bootstrap script (`kit.csp.mode: 'hash'` in web/svelte.config.js).
 # A nonce is forbidden for prerendered pages (adapter-static prerenders
@@ -168,6 +164,18 @@ def _spa_csp_headers(index_content: str, site_csp_extra: str = "") -> dict[str, 
 _API_SHAPED_PREFIXES: tuple[str, ...] = ("/api", "/mcp", "/auth", "/ws")
 
 _ALL_METHODS = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+
+#: Paths the server once answered itself and no longer does (#953: the /site
+#: renderer, its sitemap and robots, and the /viewer static dir). A dist may
+#: still ship a file of that name (SvelteKit's `static/robots.txt`), which
+#: the fallback serves as any other file; otherwise these are a 404, never
+#: the SPA shell: a crawler asking for robots.txt must not be handed HTML.
+_REMOVED_PATHS: tuple[str, ...] = ("robots.txt", "sitemap.xml", "site", "viewer")
+
+
+def _is_removed_path(path: str) -> bool:
+    head = path.split("/", 1)[0]
+    return head in _REMOVED_PATHS
 
 
 def _not_found() -> HTTPException:
@@ -285,6 +293,9 @@ def mount_static(app: FastAPI, dist_dir: Path) -> None:
                 str(file_path),
                 headers=_spa_response_headers(request, index_page=is_index),
             )
+
+        if _is_removed_path(path):
+            return HTMLResponse(status_code=404)
 
         # SPA index.html must not be cached — it references hashed JS chunks
         # that change on each build. Stale index.html = mismatched chunk errors.

@@ -401,10 +401,10 @@ class BrandingInvalidError(PyriteError):
 
     ``str()`` names the real branding.yaml path and the parser's own text --
     useful in the server log, not safe to return over HTTP or MCP: every
-    caller of ``BrandingService`` runs on an anonymous, always-public path
-    (``/config/branding``, ``/sitemap.xml``, ``/robots.txt``, the MCP
-    ``research_topic`` prompt), not just the admin-only render endpoint
-    (#445's cold read). ``public_message`` is safe to show; it names neither.
+    caller of ``BrandingService`` runs on an anonymous or always-public
+    path (``/config/branding``, the MCP ``research_topic`` prompt, the KB
+    README footer), with no admin in the loop (#445's cold read).
+    ``public_message`` is safe to show; it names neither.
     """
 
     error_code = "BRANDING_INVALID"

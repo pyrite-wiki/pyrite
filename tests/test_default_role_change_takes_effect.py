@@ -1,7 +1,7 @@
 """A KB's `default_role` has one source of truth, applied on the next request.
 
 `PUT /api/kbs/{name}/default-role` wrote the registry row, but the access
-policy and `public_kb_names` read the in-memory config first, and the
+policy read the in-memory config first, and the
 config's cache of registry KBs (`PyriteConfig._db_kb_cache`) was filled once
 and never refreshed. A KB an admin closed stayed readable by anonymous REST
 (and, until #953 removed it, the public `/site`) until a restart. For a KB
@@ -27,7 +27,6 @@ from fastapi.testclient import TestClient
 from pyrite.config import AuthConfig, KBConfig, PyriteConfig, Settings
 from pyrite.server.api import create_app
 from pyrite.services.kb_registry_service import KBRegistryService
-from pyrite.services.public_kbs import public_kb_names
 from pyrite.storage.database import PyriteDB
 
 USER_KB = "open-kb"  # registered in the index, not in config.yaml
@@ -36,6 +35,17 @@ ENTRY = "doc-1"
 BODY = "OCELOT-BODY-TEXT"
 KEY = "operator-key"
 ADMIN = {"X-API-Key": KEY}
+
+
+def _anonymous_reads(config, name: str, anonymous_tier: str = "read") -> bool:
+    """What the access policy gives an anonymous visitor on `name`: the one
+    rule (`kb_role`, step 5) every anonymous surface resolves through."""
+    from pyrite.services.access_policy import kb_role
+
+    kb = config.get_kb(name)
+    if kb is None:
+        return False
+    return kb_role(None, None, lambda: None, kb.default_role, anonymous_tier) is not None
 
 
 def _entry(eid: str, kb: str) -> dict:
@@ -160,7 +170,7 @@ class TestOpeningARegistryKB:
         assert _anon_rest(c).status_code == 404
         assert _set_role(c, USER_KB, "read").status_code == 200
         assert _anon_rest(c).status_code == 200
-        assert USER_KB in public_kb_names(world["config"])
+        assert _anonymous_reads(world["config"], USER_KB)
 
 
 class TestAConfigYamlKB:
@@ -210,10 +220,10 @@ class TestEveryRegistryWriteRefreshesTheConfigView:
         registry.add_kb("k", str(tmp / "k"))
         registry.update_kb("k", default_role="read")
         assert config.get_kb("k").default_role == "read"
-        assert public_kb_names(config) == ["k"]
+        assert _anonymous_reads(config, "k")
         registry.update_kb("k", default_role="none")
         assert config.get_kb("k").default_role == "none"
-        assert public_kb_names(config) == []
+        assert not _anonymous_reads(config, "k")
 
     def test_metadata_update_is_visible(self, reg):
         registry, config, tmp = reg
@@ -229,7 +239,7 @@ class TestEveryRegistryWriteRefreshesTheConfigView:
         registry.remove_kb("k")
         assert config.get_kb("k") is None
         assert "k" not in [kb.name for kb in config.all_kbs()]
-        assert public_kb_names(config) == []
+        assert not _anonymous_reads(config, "k")
 
     def test_a_row_the_loader_now_refuses_is_not_kept_in_its_old_form(self, reg):
         """The refresh re-reads through the one registry loader; a row it
@@ -241,7 +251,7 @@ class TestEveryRegistryWriteRefreshesTheConfigView:
         (tmp / "k").rmdir()
         (tmp / "k").symlink_to(tmp / "k")  # a loop: unresolvable
         registry.update_kb("k", default_role="none")
-        assert "k" not in public_kb_names(config)
+        assert not _anonymous_reads(config, "k")
         assert config.get_kb("k") is None
 
     @pytest.mark.control(
@@ -254,4 +264,5 @@ class TestEveryRegistryWriteRefreshesTheConfigView:
         registry.update_kb("k", default_role="read")
         registry.remove_kb("k")
         registry.add_kb("k", str(tmp / "k2"))
-        assert public_kb_names(config) == []
+        assert config.get_kb("k").default_role is None
+        assert not _anonymous_reads(config, "k", anonymous_tier=None)

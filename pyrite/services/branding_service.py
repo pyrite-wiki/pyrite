@@ -238,11 +238,11 @@ class BrandingService:
 
         # Every scalar field BrandingConfig exposes must be a string (or
         # absent) -- a list or number reads fine as far as .get() is
-        # concerned, but silently breaks the field's contract: site_url: [x]
-        # reaches SitemapService as a list where f-string interpolation
-        # expects str, and name: [x] serializes through to_public_dict() as
-        # a JSON array where every consumer (the web branding store, the
-        # <title> tag, the MCP prompt) expects text (#445 delta cold read).
+        # concerned, but silently breaks the field's contract: name: [x]
+        # serializes through to_public_dict() as a JSON array where every
+        # consumer (the web branding store, the <title> tag, the MCP prompt)
+        # expects text, and site_url: [x] reaches the web app's canonical
+        # URL the same way (#445 delta cold read).
         string_fields = {
             "name": data.get("name"),
             "tagline": data.get("tagline"),

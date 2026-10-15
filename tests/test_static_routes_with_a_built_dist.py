@@ -290,3 +290,36 @@ def test_with_no_web_build_unknown_paths_answer_exactly_as_on_dev(tmp_path, monk
             assert resp.status_code == 404, (method, path)
             assert resp.headers["content-type"] == "application/json", (method, path)
             assert resp.json() == {"detail": "Not Found"}, (method, path)
+
+
+_REMOVED_SERVER_PATHS = (
+    "/robots.txt",
+    "/sitemap.xml",
+    "/site",
+    "/site/kb/x",
+    "/viewer",
+    "/viewer/x",
+)
+
+
+@pytest.mark.parametrize("path", _REMOVED_SERVER_PATHS)
+def test_removed_server_paths_are_404_not_the_spa_shell(stub_dist, path):
+    """#953 removed the /site renderer, its sitemap and robots, and /viewer.
+    With a dist mounted the SPA fallback must not answer them with the app's
+    HTML: a crawler reading robots.txt or sitemap.xml must get a 404, not a
+    page, and an old /site link is gone, not silently the app."""
+    with TestClient(create_app()) as client:
+        r = client.get(path)
+    assert r.status_code == 404, (path, r.status_code, r.text[:80])
+    assert "stub spa" not in r.text
+
+
+def test_a_robots_txt_the_build_ships_is_still_served(stub_dist):
+    """SvelteKit's `static/robots.txt` lands in the dist as a real file; the
+    404 is for the removed server route, not for a file the build provides."""
+    (stub_dist / "robots.txt").write_text("User-agent: *\nAllow: /\n")
+    with TestClient(create_app()) as client:
+        r = client.get("/robots.txt")
+    assert r.status_code == 200
+    assert r.text.startswith("User-agent: *")
+    assert r.headers["x-content-type-options"] == "nosniff"

@@ -341,6 +341,7 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     # Git acts on the repository it was told to, not one a parent process leaked.
     "tests/test_worktree_service.py::TestGitServiceEnvIsolation::*": CONTAIN,
     "tests/test_branding_endpoints.py::*traversal*": CONTAIN,
+    "tests/test_branding_endpoints.py::TestBrokenBrandingDoesNotLeakOnPublicRoutes::*": ESCAPE,
     "tests/test_branding_service.py::*traversal*": CONTAIN,
     # -- credential handling --
     "tests/test_auth_endpoints.py": CRED,
@@ -428,6 +429,7 @@ REVIEWED_EXPERIMENTAL: dict[str, str] = {
     "tests/test_repo_endpoints.py::TestFork::test_fork_success": "a stub token is set to reach the success path",
     "tests/test_repo_endpoints.py::TestCreatePR::test_pr_success": "a stub token is set to reach the success path",
     "tests/test_static_routes_with_a_built_dist.py::test_a_reserved_prefix_and_everything_under_it_is_404_never_the_spa": "routing: a reserved prefix is a 404, with or without a credential; no access decision",
+    "tests/test_demo_seed_public_kbs.py::test_seeded_kbs_are_public": "the demo seed opens its KBs on purpose; which KBs a deploy opens is the operator's choice, read back through the policy, not the policy itself",
     "tests/test_task_cli_create_fields.py::test_conductor_desk_recipe_creates_a_task_in_one_step": "a tag named 'outside'",
     "tests/test_task_service.py::TestListTasks::test_list_preserves_priority": "'readable' in a docstring; priority round-trip",
 }
