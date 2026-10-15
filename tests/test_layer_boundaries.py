@@ -2,8 +2,7 @@
 
 REST and the other server routes (`pyrite/server`), MCP
 (`pyrite/server/mcp_server.py`), the CLIs (`pyrite/cli`,
-`pyrite/admin_cli.py`, `pyrite/read_cli.py`) and the Streamlit UI
-(`pyrite/ui`) are *surfaces*. ADR-0031 makes the API the product surface;
+`pyrite/admin_cli.py`, `pyrite/read_cli.py`) are *surfaces*. ADR-0031 makes the API the product surface;
 that holds only if behaviour lives in one layer, so a surface asks a service
 and the service asks storage.
 
@@ -140,13 +139,8 @@ COMPOSITION_ROOTS: dict[tuple[str, str], tuple[int, str]] = {
         1,
         "the return annotation of _get_service, the task commands' get_config_and_db wrapper",
     ),
-    ("pyrite/ui/data.py::<module>", "PyriteDB"): (1, "the Streamlit UI's composition root"),
-    ("pyrite/ui/data.py::_get_db", "PyriteDB"): (
-        1,
-        "the UI's cached DB; _get_kb_service is built on it",
-    ),
 }
-COMPOSITION_ROOTS_SIZE = 38  # a new root is a design decision: raise it only with one
+COMPOSITION_ROOTS_SIZE = 36  # a new root is a design decision: raise it only with one
 
 # -- Not yet moved: (function, rule) -> (count, why and where it moves) --------
 
@@ -211,7 +205,6 @@ ALLOWLIST_SIZE = 24  # lower it with every entry removed; never raise it
 SURFACES = (
     "pyrite/server/",
     "pyrite/cli/",
-    "pyrite/ui/",
     "pyrite/admin_cli.py",
     "pyrite/read_cli.py",
 )

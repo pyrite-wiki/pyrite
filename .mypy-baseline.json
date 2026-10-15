@@ -790,20 +790,6 @@
     "no-untyped-def|Function is missing a type annotation for one or more parameters": 2
    }
   },
-  "pyrite/ui/data.py": {
-   "count": 5,
-   "errors": {
-    "no-any-return|Returning Any from function declared to return \"dict[str, Any] | None\"": 2,
-    "no-any-return|Returning Any from function declared to return \"dict[str, Any]\"": 1,
-    "no-any-return|Returning Any from function declared to return \"list[dict[str, Any]]\"": 2
-   }
-  },
-  "pyrite/ui/pages/timeline.py": {
-   "count": 1,
-   "errors": {
-    "var-annotated|Need type annotation for \"events_by_date\" (hint: \"events_by_date: dict[<type>, <type>] = ...\")": 1
-   }
-  },
   "pyrite/utils/atomic_write.py": {
    "count": 1,
    "errors": {
@@ -831,5 +817,5 @@
    }
   }
  },
- "total": 710
+ "total": 704
 }

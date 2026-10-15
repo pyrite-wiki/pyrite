@@ -127,7 +127,7 @@ that process, not authorization.
 | `/site` static HTML cache and the sitemap (the built-in site generator, [[adr-0023]]) | experimental (decided by the maintainer, 2026-10-02: publishing is an export; the built-in site is not part of the supported alpha) | `tests/test_site_*` and the site-cache tests |
 | AI endpoints (`/api/ai/*`, bring your own key) | experimental | `tests/test_ai_endpoints.py` |
 | Live updates (`/ws`) | experimental | `tests/test_websocket_*` |
-| Streamlit (`ui_streamlit.py`, `pyrite/ui`) | unsupported | root-level clutter in the audit |
+| Streamlit (`pyrite/ui`) | removed (#953, 2026-10) | the SvelteKit web app is the UI |
 
 ## 5. Backends, extensions, deployment
 

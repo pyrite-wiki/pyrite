@@ -53,9 +53,6 @@ web/.e2e-auth-data-*/
 # Playwright MCP (browser automation logs/screenshots)
 .playwright-mcp/
 
-# Streamlit
-.streamlit/
-
 # OS
 .DS_Store
 Thumbs.db

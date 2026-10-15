@@ -357,7 +357,7 @@ pyrite/ tests/` and `ruff format --check pyrite/ tests/` — so I fixed formatti
 confirmed CI's exact lint step passes, and committed. Then, separately, ran `pre-commit run
 --all-files` to verify the newly-installed hooks work. That command has **no directory scope**
 — `.pre-commit-config.yaml`'s hooks apply to the whole repo by default (`extensions/`,
-`scripts/`, `benchmarks/`, `deploy/`, `kb/*.md`, `ui_streamlit.py`, ...), not just what CI
+`scripts/`, `benchmarks/`, `deploy/`, `kb/*.md`, ...), not just what CI
 lints or what the current ticket touches. It auto-fixed 76 ruff errors (some behavioral —
 unused-variable removal, not just formatting) and reformatted 66 more files across the repo,
 producing an 85-file, 3000+-line diff far outside the ticket's scope, mixed with real (if

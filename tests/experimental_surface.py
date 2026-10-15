@@ -115,11 +115,6 @@ EXPERIMENTAL: tuple[Surface, ...] = (
         ),
     ),
     Surface(
-        "Streamlit (`ui_streamlit.py`, `pyrite/ui`), unsupported",
-        "4",
-        ("tests/test_ui_data.py",),
-    ),
-    Surface(
         "AI endpoints (`/api/ai/*`) and the LLM service behind them",
         "4",
         (

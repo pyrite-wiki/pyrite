@@ -65,7 +65,7 @@ must say which modes its questions apply to.
 | **M2 Auth, closed** | auth on, `anonymous_tier` unset, registration off or invite-only | sessions, keys | the full policy |
 | **M3 Auth, open** | auth on, `allow_registration: true`, `require_invite_code: false` | anyone can become a registered user | the full policy, with "registered user" as a hostile principal |
 | **M4 Auth, anonymous tier** | `anonymous_tier: read` or `write` | the anonymous visitor holds a rung | the full policy, with the anonymous tier as the floor |
-| **Local process** | CLI, `pyrite mcp` (stdio), `pyrite-admin`, Streamlit `ui/data.py` | `Principal.local()`, the operator | the OS account and the filesystem |
+| **Local process** | CLI, `pyrite mcp` (stdio), `pyrite-admin` | `Principal.local()`, the operator | the OS account and the filesystem |
 
 **P-M1.** A mode is never inferred from partial configuration in the
 permissive direction. For example, "auth on with no keys configured" must
@@ -142,7 +142,7 @@ directory. No server or suite was run.
 | MCP tools (`mcp_tools()`, admin tier) | **112**: read tier 72, write tier +31, admin tier +9 | core `mcp_server.py` 48; extensions 64 (software-kb 23, journalism-investigation 22, encyclopedia 6, cascade 6, social 5, zettelkasten 2) |
 | `NON_ROUTE_ENTRY_POINTS` | 2 | `/mcp` (a Mount: `GET /mcp/sse`, `POST /mcp/messages/`, `GET /mcp/info`), `/ws` |
 | Other app routes, **not in the inventory** | 4 | FastAPI's `/openapi.json`, `/docs`, `/docs/oauth2-redirect`, `/redoc` |
-| Local entry points | 4 console scripts, plus 1 UI | `pyrite`, `pyrite-read`, `pyrite-admin`, `pyrite-server`; `pyrite mcp` (stdio); `pyrite/ui/data.py` |
+| Local entry points | 4 console scripts | `pyrite`, `pyrite-read`, `pyrite-admin`, `pyrite-server`; `pyrite mcp` (stdio) |
 | Outbound request sites | 7 modules | `services/clipper.py`, `services/url_checker.py`, `services/git_service.py`, `services/llm_service.py`, `services/oauth_providers.py`, `github_auth.py`, `server/endpoints/repos.py` |
 | Subprocess sites | 8 modules | `services/{git_service,kb_service,version_service,worktree_service}.py`, `storage/document_manager.py`, `cli/{__init__,extension_commands,schema_commands}.py` |
 | In-process execution of KB-adjacent code | plugin hooks (`hook_runner.py`), validators, templates (`template_service.py`, `endpoints/templates.py`, `site_cache.py`) | |
