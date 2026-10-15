@@ -1016,3 +1016,75 @@ is the error shape above in one line.
   "task_claims": "Task claims are atomic; a lost race means the task is already claimed by someone else. On conflict, do NOT override the claim -- re-run the task list and pick a different item."
 }
 ```
+
+## QA results: only what ran
+
+A QA result says a check passed, or a fix landed, only when that check ran or
+that write returned (#795). This applies to `pyrite qa assess`, `pyrite ci`,
+`pyrite qa fix` and MCP `kb_qa_assess`.
+
+**Tiers.** QA runs tier 1 (structural and deterministic rubric checks) and
+tier 2 (tier 1 plus the judgment-only rubric items, judged by the configured
+model). Any other tier is refused with `INVALID_TIER`. Tier 2 with no model
+configured is refused with `AI_NOT_CONFIGURED`. Both refusals come before
+anything is checked or written, on every surface. `ci` refuses them even when
+no KB is configured.
+
+The codes:
+
+- `INVALID_TIER`: `--tier` / `tier` is not 1 or 2. `pyrite mcp --tier` uses
+  the same code for an unknown server tier. Use 1 or 2.
+- `AI_NOT_CONFIGURED`: tier 2 was asked for and no model is configured. REST's
+  AI routes use the same code. Configure `ai_provider`, `ai_api_key` and
+  `ai_model`, or use tier 1.
+- `EVALUATION_FAILED`: `qa assess --entry`, or `kb_qa_assess` with `entry_id`,
+  and the model did not answer. The call raised, or the reply was empty, not
+  JSON, not a JSON list, or did not judge every rubric item with a boolean
+  `pass`. The message says which. Retry, or check the model's configuration.
+
+**No record for a tier that did not run.** A refused or failed entry writes no
+`qa_assessment` file. `tier: 2` with `qa_status: pass` means the model judged
+every item and found nothing. A model finding (`llm_rubric_violation`) is a
+`warning`, so it makes the record `warn`. Records written before this change
+cannot be told apart: a `tier: 2` record from then may hold tier 1 checks only.
+
+**`qa assess` on a whole KB** keeps going past a failed entry. It adds two
+lists beside `results`:
+
+```json
+{
+  "kb_name": "notes",
+  "assessed": 2,
+  "skipped": 0,
+  "results": [{"assessment_id": "...", "target_entry": "a", "qa_status": "pass", "issues_found": 0}],
+  "failed": [{"entry_id": "b", "error_code": "EVALUATION_FAILED", "reason": "the model's reply was not JSON"}],
+  "tasks_failed": [{"entry_id": "c", "reason": "EntryExistsError: ..."}]
+}
+```
+
+With `--create-tasks`, a single-entry result carries `task_failed: {entry_id,
+reason}` when its task could not be created. On a KB run, these are listed in
+`tasks_failed`. The exit code is still 0 when only some entries failed; ADR-0046
+slice 6 settles partial results.
+
+**`ci --tier 2`** runs the judgment rubric over every entry whose type has
+judgment items (one model call per entry; `qa_assessment` entries are skipped).
+A finding is an `llm_rubric_violation` warning and fails the gate at the
+default `--severity warning`. An entry the model did not answer for is an
+`evaluation_failed` **error**, so `"result"` is never `"pass"` for a tier that
+did not run. `ci --kb <name>` for a KB that is neither configured nor in the
+index is refused with `KB_NOT_FOUND`; it used to validate nothing and pass.
+
+**`qa fix`** adds `failed` and `failed_count` beside `fixed`, `manual` and
+`skipped`. A fix is in `fixed` only once its write returned. Each entry in
+`failed` is the fix with a `reason`:
+
+- `update_failed: <Error>: ...`: the write raised (for example, a read-only
+  folder);
+- `entry_not_found: ...`: the entry's file is gone;
+- `link_not_rewritten: ...`: the broken link is not in the entry's `links`
+  (a `[[wikilink]]` in the body is not rewritten).
+
+`manual` keeps only the issues a person must decide. One failed entry does not
+stop the rest. With `--dry-run`, `fixed` lists what would be attempted and
+`failed` is empty.
