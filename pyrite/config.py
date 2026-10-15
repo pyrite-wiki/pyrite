@@ -660,23 +660,6 @@ class PyriteConfig:
         """The config.yaml entry of KB `name` (not a registry KB), or None."""
         return self._kb_by_name.get(name)
 
-    def get_kb_by_shortname(self, shortname: str) -> KBConfig | None:
-        """Get a KB by its shortname alias."""
-        for kb in self.knowledge_bases:
-            if kb.shortname == shortname:
-                return kb
-        return None
-
-    def kb_name_for(self, name: str) -> str:
-        """The KB a name given as ``kb`` means: a KB's full name is itself; a
-        shortname maps to its KB's full name; anything else is returned
-        unchanged (an unknown name the caller's lookup will miss). The one mapping every
-        ``kb`` parameter and ``kb:`` wikilink prefix shares (#912)."""
-        if self.get_kb(name):
-            return name  # a full name wins over another KB's shortname
-        kb = self.get_kb_by_shortname(name)
-        return kb.name if kb else name
-
     def list_kbs(self, kb_type: str | None = None) -> list[KBConfig]:
         """List all KBs, optionally filtered by type."""
         if kb_type is None:

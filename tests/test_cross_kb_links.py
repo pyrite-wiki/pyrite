@@ -71,14 +71,16 @@ class TestCrossKBResolution:
             settings=Settings(index_path=tmp_path / "index.db"),
         )
 
-    def test_get_kb_by_shortname(self, config_with_shortnames):
-        kb = config_with_shortnames.get_kb_by_shortname("dev")
+    def test_a_shortname_names_its_kb(self, config_with_shortnames):
+        # The one shortname lookup is the resolver's, scoped to the caller's
+        # readable KBs (#952); the config itself maps nothing.
+        from pyrite.services.kb_resolver import readable_kb_with_shortname
+
+        kb = readable_kb_with_shortname(config_with_shortnames, "dev", None)
         assert kb is not None
         assert kb.name == "dev-kb"
-
-    def test_get_kb_by_shortname_not_found(self, config_with_shortnames):
-        kb = config_with_shortnames.get_kb_by_shortname("nonexistent")
-        assert kb is None
+        assert readable_kb_with_shortname(config_with_shortnames, "nonexistent", None) is None
+        assert not hasattr(config_with_shortnames, "get_kb_by_shortname")
 
     def test_resolve_cross_kb_entry(self, config_with_shortnames):
         from pyrite.services.kb_service import KBService

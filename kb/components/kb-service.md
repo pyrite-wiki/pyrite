@@ -62,7 +62,7 @@ Every create/update decision is made here, once, for every surface. REST, MCP an
 
 ## Cross-KB Resolution
 
-- **`resolve_entry(target, kb_name)`** -- Resolves a wikilink target. Supports `shortname:entry-id` and `kb-name:entry-id` syntax by looking up KBs via `config.kb_name_for()` -- the one place a shortname is a name (#952, ADR-0049 Q3); `kb_name` itself is a full name. Falls back to title-based matching.
+- **`resolve_entry(target, kb_name)`** -- Resolves a wikilink target. Supports `shortname:entry-id` and `kb-name:entry-id` syntax by looking the prefix up among the caller's readable KBs, by full name then shortname (`kb_resolver.readable_kb_named`) -- the one place a shortname is a name (#952, ADR-0049 Q3), and a KB the caller cannot read never changes the answer; `kb_name` itself is a full name. Falls back to title-based matching.
 - **`resolve_batch(targets, kb_name)`** -- Batch-resolves a list of wikilink targets. Cross-KB targets are resolved individually; same-KB targets use an `IN` query for efficiency.
 - **`get_wanted_pages(kb_name, limit)`** -- Returns link targets that have no corresponding entry (wanted pages), ordered by reference count.
 

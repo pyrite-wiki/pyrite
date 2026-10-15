@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from pyrite.config import AuthConfig, KBConfig, PyriteConfig, Settings
 from pyrite.server.api import create_app, get_config, get_db
+from pyrite.services.kb_resolver import readable_kb_named
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
 from tests.auth_seed import seed_and_sign_in
@@ -113,8 +114,9 @@ def test_a_full_name_wins_over_another_kbs_shortname(world):
     assert r.status_code == 200 and "beta body" in r.json()["body"], r.text
     r = _get(client, "/api/entries/resolve", target="x", kb="beta")
     assert r.json()["entry"]["kb_name"] == "beta"
-    # In link syntax the full name wins as well.
-    assert config.kb_name_for("beta") == "beta"
+    # In link syntax the full name wins as well (the unscoped caller; a
+    # scoped one is looked up among its readable KBs only).
+    assert readable_kb_named(config, "beta", None).name == "beta"
     r = _get(client, "/api/entries/resolve", target="beta:x")
     assert r.json()["entry"]["kb_name"] == "beta"
 
@@ -123,7 +125,8 @@ def test_link_syntax_still_maps_a_shortname(world):
     """`[[pb:foo]]` means pub's foo (ADR-0049 Q3): the prefix is the one
     place a shortname is a name."""
     config, client = world
-    assert config.kb_name_for("pb") == "pub"
+    assert readable_kb_named(config, "pb", None).name == "pub"
+    assert not hasattr(config, "kb_name_for")  # the config maps nothing itself
     r = _get(client, "/api/entries/resolve", target="pb:foo")
     assert r.status_code == 200, r.text
     assert r.json()["entry"]["kb_name"] == "pub"
@@ -140,7 +143,7 @@ def test_a_colliding_shortname_is_reported_and_warned(world, caplog):
 def test_a_registry_kbs_name_that_is_a_config_shortname_is_reported(world, caplog):
     """#949 item 3: `kb add`-registered KBs live in the registry cache, not
     `knowledge_bases`, and the collision check used to look only at the
-    latter. The full name still wins (`kb_name_for`)."""
+    latter. The full name still wins (`readable_kb_named`)."""
     config, _ = world
     with caplog.at_level(logging.WARNING, logger="pyrite.config"):
         added = config.register_db_kbs(
@@ -149,7 +152,7 @@ def test_a_registry_kbs_name_that_is_a_config_shortname_is_reported(world, caplo
     assert added == 1
     assert any("'pb'" in m and "pub" in m for m in config.validate()["shortnames"])
     assert "'pb's full name" in caplog.text and "the full name wins" in caplog.text
-    assert config.kb_name_for("pb") == "pb"
+    assert readable_kb_named(config, "pb", None).name == "pb"
 
 
 def test_the_overlay_takes_the_full_name_only(tmp_path):
