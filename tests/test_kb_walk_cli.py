@@ -207,7 +207,9 @@ NOT_A_KB: dict[str, str] = {
 def _kb_looking_params():
     """(root, command path, param) for every parameter that could name a KB:
     ``-k``/``--kb`` among its options, or ``kb`` in its name. Found from the
-    tree, not from a list of names, so a new spelling cannot escape."""
+    tree, not from a list of names, so a new spelling of either cannot
+    escape. What would: a KB option spelled with neither (say ``--target``
+    taking a KB name); that is the one gap this pin cannot see."""
     out = []
     for root in ROOTS:
         for path, cmd in leaves(typer.main.get_command(root_app(root))):
