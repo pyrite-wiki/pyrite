@@ -89,6 +89,7 @@ beforeEach(() => {
 	entryStore.error = null;
 	entryStore.ambiguousKbs = null;
 	kbStore.kbs = [];
+	kbStore.initialized = false;
 	vi.mocked(api.getEntry).mockImplementation(async (_id, opts) => {
 		if (!opts?.kb) {
 			throw new ApiError(409, 'ambiguous', 'AMBIGUOUS', ['kb-a', 'kb-b']);
@@ -124,6 +125,7 @@ describe('entry page', () => {
 		// prefix into a KB (#952, #965 round 2): the API takes the full name
 		// only, so `kbb` must reach it as `kb-b`, from the KB list.
 		kbStore.kbs = [kb('kb-a', 'ka'), kb('kb-b', 'kbb')];
+		kbStore.initialized = true;
 		vi.mocked(api.getEntry).mockResolvedValue({
 			...entry('kb-a'),
 			body: 'before\n\n![[kbb:foo]]\n\nafter'
@@ -134,6 +136,28 @@ describe('entry page', () => {
 		render(Page);
 		await waitFor(() => expect(api.resolveEntry).toHaveBeenCalled());
 		expect(api.resolveEntry).toHaveBeenCalledWith('foo', 'kb-b');
+		expect(api.resolveEntry).not.toHaveBeenCalledWith('foo', 'kbb');
+	});
+
+	it('a transclusion on a cold load waits for the KB list before resolving', async () => {
+		// Before kbStore.load() settles the prefix cannot be resolved, so the
+		// hydration must wait rather than send the shortname and show
+		// "Entry not found" (#965 round 3).
+		vi.mocked(api.getEntry).mockResolvedValue({
+			...entry('kb-a'),
+			body: 'before\n\n![[kbb:foo]]\n\nafter'
+		} as never);
+		vi.mocked(api.resolveEntry).mockResolvedValue({ resolved: false, entry: null });
+		go('/entries/dup?kb=kb-a');
+		const { default: Page } = await import('./entries/[id]/+page.svelte');
+		render(Page);
+		await waitFor(() => expect(entryStore.current?.kb_name).toBe('kb-a'));
+		await new Promise((r) => setTimeout(r, 250)); // past the hydration delay
+		expect(api.resolveEntry).not.toHaveBeenCalled();
+
+		kbStore.kbs = [kb('kb-a', 'ka'), kb('kb-b', 'kbb')];
+		kbStore.initialized = true;
+		await waitFor(() => expect(api.resolveEntry).toHaveBeenCalledWith('foo', 'kb-b'));
 		expect(api.resolveEntry).not.toHaveBeenCalledWith('foo', 'kbb');
 	});
 });

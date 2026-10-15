@@ -107,7 +107,10 @@
 
 	// Hydrate transclusion placeholders in the rendered (non-editing) view
 	$effect(() => {
-		if (!entryStore.current || editing) return;
+		// A `[[short:id]]` prefix is resolved against the KB list, so the
+		// list must have arrived: on a cold load this runs again once
+		// kbStore.load() settles (the entry-load effect above does the same).
+		if (!entryStore.current || editing || !kbStore.initialized) return;
 
 		// Wait for DOM to render
 		const timer = setTimeout(async () => {
