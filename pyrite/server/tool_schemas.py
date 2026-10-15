@@ -1053,7 +1053,7 @@ WRITE_TOOLS = {
         },
     },
     "kb_qa_assess": {
-        "description": "Run QA assessment on an entry or entire KB. Creates qa_assessment entries recording results. Optionally creates tasks for failures.",
+        "description": "Run QA assessment on an entry or entire KB. Creates qa_assessment entries recording results; a tier that did not run records nothing (an entry is refused with EVALUATION_FAILED, a KB run lists the entry under `failed`). Optionally creates tasks for failures; tasks it could not create are returned under `task_failed` / `tasks_failed`.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1067,7 +1067,13 @@ WRITE_TOOLS = {
                 },
                 "tier": {
                     "type": "integer",
-                    "description": "Assessment tier: 1=structural (default)",
+                    "minimum": 1,
+                    "maximum": 2,
+                    "description": (
+                        "Assessment tier: 1=structural (default); 2=structural plus the "
+                        "model-judged rubric, refused with AI_NOT_CONFIGURED when no model "
+                        "is configured. Any other value is refused with INVALID_TIER."
+                    ),
                 },
                 "max_age_hours": {
                     "type": "integer",

@@ -1756,6 +1756,11 @@ PRINTS: dict[tuple[str, str], tuple[str, str]] = {
         "exits 1 on structural errors, 2 on drift",
     ),
     ("pyrite/cli/protocol_commands.py", "protocol_check"): ("safe", "exits 1 when a check fails"),
+    ("pyrite/cli/qa_commands.py", "qa_assess"): (
+        "left",
+        "#795: a KB run lists entries not assessed and tasks not created; the exit "
+        "for a partial result is ADR-0046 slice 6",
+    ),
     ("pyrite/cli/qa_commands.py", "qa_check_urls"): (
         "safe",
         "broken URLs are the report the command exists to give, as qa validate's findings are",

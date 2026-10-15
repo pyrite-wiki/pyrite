@@ -261,12 +261,15 @@ class TestCIMultipleKBs:
 
 @pytest.mark.cli
 class TestCITierOption:
-    def test_ci_tier2_with_stub_advisory_no_crash(self, ci_env):
-        """--tier 2 with stub provider prints advisory, doesn't crash."""
+    def test_ci_tier2_with_stub_is_refused(self, ci_env):
+        """--tier 2 with the stub provider is refused, never passed (#795).
+
+        It used to print an advisory and pass on tier 1 alone.
+        """
         with _patch_ci(ci_env):
             result = runner.invoke(app, ["ci", "--tier", "2"])
-            assert result.exit_code == 0
-            assert "LLM not configured" in result.output
+            assert result.exit_code == 1
+            assert "AI_NOT_CONFIGURED" in result.output
 
     def test_ci_default_tier1_no_llm_calls(self, ci_env):
         """Default (no --tier) uses tier=1, no LLM calls."""

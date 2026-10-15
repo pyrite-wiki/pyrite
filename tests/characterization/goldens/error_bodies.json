@@ -1,4 +1,30 @@
 {
+  "AINotConfiguredError": {
+    "cli": {
+      "error": "characterization message for AINotConfiguredError",
+      "error_code": "AI_NOT_CONFIGURED",
+      "outcome": "error",
+      "retryable": false,
+      "suggestion": "Set ai_provider, ai_api_key and ai_model in the config, or use tier 1."
+    },
+    "mcp": {
+      "error": "characterization message for AINotConfiguredError",
+      "error_code": "AI_NOT_CONFIGURED",
+      "retryable": false,
+      "suggestion": "Set ai_provider, ai_api_key and ai_model in the config, or use tier 1."
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "AI_NOT_CONFIGURED",
+          "hint": "Set ai_provider, ai_api_key and ai_model in the config, or use tier 1.",
+          "message": "characterization message for AINotConfiguredError",
+          "retryable": false
+        }
+      },
+      "status": 500
+    }
+  },
   "AccessDenied": {
     "cli": {
       "error": "characterization message for AccessDenied",
@@ -249,6 +275,29 @@
       "status": 404
     }
   },
+  "EvaluationFailedError": {
+    "cli": {
+      "error": "Tier 2 evaluation of 'characterization-entry' did not run: the model's reply was not JSON",
+      "error_code": "EVALUATION_FAILED",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "Tier 2 evaluation of 'characterization-entry' did not run: the model's reply was not JSON",
+      "error_code": "EVALUATION_FAILED",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "EVALUATION_FAILED",
+          "message": "Tier 2 evaluation of 'characterization-entry' did not run: the model's reply was not JSON",
+          "retryable": false
+        }
+      },
+      "status": 500
+    }
+  },
   "Forbidden": {
     "cli": {
       "error": "characterization message for Forbidden",
@@ -337,6 +386,29 @@
         "detail": {
           "code": "INVALID_REF",
           "message": "characterization message for InvalidGitRefError",
+          "retryable": false
+        }
+      },
+      "status": 422
+    }
+  },
+  "InvalidQATierError": {
+    "cli": {
+      "error": "characterization message for InvalidQATierError",
+      "error_code": "INVALID_TIER",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for InvalidQATierError",
+      "error_code": "INVALID_TIER",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "INVALID_TIER",
+          "message": "characterization message for InvalidQATierError",
           "retryable": false
         }
       },

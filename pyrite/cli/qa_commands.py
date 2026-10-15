@@ -116,7 +116,13 @@ def qa_validate(
 def qa_assess(
     kb_name: str = typer.Argument(..., help="KB to assess"),
     entry: str | None = typer.Option(None, "--entry", "-e", help="Assess single entry by ID"),
-    tier: int = typer.Option(1, "--tier", "-t", help="Assessment tier (1=structural)"),
+    tier: int = typer.Option(
+        1,
+        "--tier",
+        "-t",
+        help="Assessment tier: 1=structural; 2=structural plus the model-judged rubric "
+        "(needs a configured model, else refused with AI_NOT_CONFIGURED)",
+    ),
     max_age: int = typer.Option(
         24, "--max-age", help="Skip entries assessed within N hours (0 = reassess all)"
     ),
@@ -134,34 +140,52 @@ def qa_assess(
 
     Assesses entry quality and creates qa_assessment entries in the KB.
     Use --create-tasks to auto-generate tasks for failures.
+
+    A tier that does not run records nothing: an unknown tier, or tier 2 with
+    no model, is refused; a single entry the model did not answer for is
+    refused with EVALUATION_FAILED; a KB run lists such entries under
+    `failed`, and tasks it could not create under `tasks_failed`.
     """
+    from ..exceptions import PyriteError
+    from ..services.llm_service import LLMService
     from ..services.qa_service import QAService
+    from ..utils.errors import cli_error_from
 
     with cli_context() as (config, db, svc):
-        qa = QAService(config, db)
+        # The model is wired as `ci` and MCP wire it; tier 2 is refused when
+        # it is not configured (QAService.require_tier).
+        qa = QAService(config, db, llm_service=LLMService(config.settings) if tier >= 2 else None)
+
+        try:
+            if entry:
+                result = qa.assess_entry(
+                    entry,
+                    kb_name,
+                    tier=tier,
+                    create_task_on_fail=create_tasks,
+                    readable_kbs=UNSCOPED,
+                )
+            else:
+                result = qa.assess_kb(
+                    kb_name,
+                    tier=tier,
+                    max_age_hours=max_age,
+                    create_task_on_fail=create_tasks,
+                    readable_kbs=UNSCOPED,
+                )
+        except PyriteError as exc:
+            cli_error_from(exc, output_format)
 
         if entry:
-            result = qa.assess_entry(
-                entry,
-                kb_name,
-                tier=tier,
-                create_task_on_fail=create_tasks,
-                readable_kbs=UNSCOPED,
-            )
             data = {
                 "assessment_id": result["assessment_id"],
                 "target_entry": result["target_entry"],
                 "qa_status": result["qa_status"],
                 "issues_found": result["issues_found"],
             }
+            if "task_failed" in result:
+                data["task_failed"] = result["task_failed"]
         else:
-            result = qa.assess_kb(
-                kb_name,
-                tier=tier,
-                max_age_hours=max_age,
-                create_task_on_fail=create_tasks,
-                readable_kbs=UNSCOPED,
-            )
             data = {
                 "kb_name": result["kb_name"],
                 "assessed": result["assessed"],
@@ -175,6 +199,8 @@ def qa_assess(
                     }
                     for r in result["results"]
                 ],
+                "failed": result["failed"],
+                "tasks_failed": result["tasks_failed"],
             }
 
         formatted = _format_output(data, output_format)
@@ -214,6 +240,14 @@ def qa_assess(
                         str(r["issues_found"]),
                     )
                 console.print(table)
+            for f in result["failed"]:
+                console.print(
+                    f"  [red]not assessed[/red] {f['entry_id']}: {f['error_code']}: {f['reason']}"
+                )
+        for t in result.get("tasks_failed") or (
+            [result["task_failed"]] if "task_failed" in result else []
+        ):
+            console.print(f"  [red]task not created[/red] for {t['entry_id']}: {t['reason']}")
 
 
 @qa_app.command("status")

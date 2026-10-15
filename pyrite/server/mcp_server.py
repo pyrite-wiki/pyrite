@@ -134,7 +134,17 @@ _LEGACY_OWN_ERROR_CODE: dict[str, str] = {
 #: ``legacy_error_code`` should be reported for them even though they are
 #: not explicitly in the tables above either.
 _NEW_IN_THIS_THEME = frozenset(
-    {"AccessDenied", "NotAuthenticated", "Forbidden", "AmbiguousEntryError"}
+    {
+        "AccessDenied",
+        "NotAuthenticated",
+        "Forbidden",
+        "AmbiguousEntryError",
+        # #795: QA refusals no MCP surface raised before, so there is no old
+        # code to carry either.
+        "InvalidQATierError",
+        "AINotConfiguredError",
+        "EvaluationFailedError",
+    }
 )
 
 

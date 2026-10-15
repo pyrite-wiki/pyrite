@@ -15,6 +15,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ..config import PyriteConfig
+from ..exceptions import (
+    AINotConfiguredError,
+    EntryNotFoundError,
+    InvalidQATierError,
+    PyriteError,
+)
 from ..plugins.registry import get_registry
 from ..schema import validate_date, validate_importance
 from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata
@@ -23,6 +29,13 @@ from ..storage.database import PyriteDB
 from ..utils.metadata import parse_metadata
 
 logger = logging.getLogger(__name__)
+
+#: The tiers QA runs: 1 = structural and deterministic rubric checks, 2 = tier
+#: 1 plus the model-judged rubric. Every surface that takes a tier refuses any
+#: other value (``InvalidQATierError``): a record never names a tier no check
+#: stands behind (#795). `qa_assessment`'s schema mentions a tier 3 that
+#: nothing implements.
+QA_TIERS = (1, 2)
 
 
 class QAService:
@@ -126,13 +139,20 @@ class QAService:
         staleness_days: int = 90,
         *,
         readable_kbs: set[str] | None,
+        tier: int = 1,
     ) -> dict[str, Any]:
         """Validate all entries in a KB. Returns {kb_name, total, checked, issues: [...]}.
 
         ``readable_kbs`` bounds the link checks (P-R4, P-R5): a target the
         caller cannot read is reported as a missing one, and a link from a
         source it cannot read does not stop an entry being an orphan.
+
+        ``tier`` 2 adds the model-judged rubric, one model call per entry
+        whose type has judgment items, through the evaluator `assess_entry`
+        uses (#795). Refused with no model configured; an entry the model did
+        not answer for is an ``evaluation_failed`` error, never a pass.
         """
+        self.require_tier(tier)
         issues: list[dict[str, Any]] = []
 
         # Count entries
@@ -162,6 +182,8 @@ class QAService:
 
         # Rubric evaluation pass
         self._check_rubric_all(issues, kb_name)
+        if tier >= 2:
+            self._check_llm_rubric_all(issues, kb_name)
 
         # Optional staleness check (delegated to analytics service)
         if check_staleness:
@@ -179,6 +201,7 @@ class QAService:
         kb_names: set[str] | list[str] | None = None,
         *,
         readable_kbs: set[str] | None,
+        tier: int = 1,
     ) -> dict[str, Any]:
         """Validate all KBs. Returns {kbs: [{kb_name, total, checked, issues}]}.
 
@@ -186,13 +209,14 @@ class QAService:
         readable set. A KB left out contributes neither issues nor its
         name, so the aggregate totals in ``get_status`` are computed over
         readable rows only. ``readable_kbs`` bounds each KB's link checks
-        (see `validate_kb`).
+        (see `validate_kb`, which also says what ``tier`` does).
         """
+        self.require_tier(tier)
         kbs = []
         for kb in self.config.all_kbs():
             if kb_names is not None and kb.name not in kb_names:
                 continue
-            result = self.validate_kb(kb.name, readable_kbs=readable_kbs)
+            result = self.validate_kb(kb.name, readable_kbs=readable_kbs, tier=tier)
             kbs.append(result)
         return {"kbs": kbs}
 
@@ -232,6 +256,38 @@ class QAService:
             "issues_by_rule": issues_by_rule,
         }
 
+    def require_tier(self, tier: int) -> None:
+        """Refuse a tier QA does not run, or tier 2 with no model to run it.
+
+        Called before anything is checked or written, so a refused tier
+        leaves no record (#795, maintainer decision 2026-10-15).
+        """
+        if isinstance(tier, bool) or tier not in QA_TIERS:
+            raise InvalidQATierError(
+                f"QA tier {tier!r} does not exist; choose one of "
+                f"{', '.join(str(t) for t in QA_TIERS)}"
+            )
+        if tier >= 2 and not self.llm_available:
+            raise AINotConfiguredError(
+                "QA tier 2 runs the model-judged rubric and no model is configured; "
+                "nothing was assessed"
+            )
+
+    def knows_kb(self, kb_name: str) -> bool:
+        """Whether ``kb_name`` is configured or the index holds entries for it.
+
+        `ci --kb` asks before it validates: validating a KB that does not
+        exist checks nothing, and must not pass (#795). The index counts too,
+        because `ci` reads the config without the DB-registered KBs.
+        """
+        if self.config.get_kb(kb_name) is not None:
+            return True
+        return bool(
+            self.db.execute_sql(
+                "SELECT 1 FROM entry WHERE kb_name = :kb_name LIMIT 1", {"kb_name": kb_name}
+            )
+        )
+
     # =========================================================================
     # Assessment API
     # =========================================================================
@@ -263,12 +319,20 @@ class QAService:
         llm_available.
 
         Tier 1: structural validation + deterministic rubric checks.
-        Tier 2+: tier 1 + LLM judgment rubric evaluation.
+        Tier 2: tier 1 + LLM judgment rubric evaluation.
+
+        A tier that does not run writes no record (#795): an unknown tier
+        raises ``InvalidQATierError``, tier 2 with no model
+        ``AINotConfiguredError``, and a model that did not answer
+        ``EvaluationFailedError``, each before anything is written. With
+        ``create_task_on_fail``, a task that could not be created comes back
+        as ``task_failed: {entry_id, reason}``.
         """
+        self.require_tier(tier)
         result = self.validate_entry(entry_id, kb_name, readable_kbs=readable_kbs)
         issues = result["issues"]
 
-        # Tier 2+: LLM rubric evaluation
+        # Tier 2: LLM rubric evaluation, before anything is written
         if tier >= 2:
             llm_issues = self._evaluate_llm_rubric(entry_id, kb_name)
             issues.extend(llm_issues)
@@ -307,10 +371,11 @@ class QAService:
             tags=["qa", f"qa-{qa_status}"],
         )
 
+        task_failed = None
         if create_task_on_fail and qa_status == "fail":
-            self._maybe_create_task(entry_id, kb_name, assessment_id, issues)
+            task_failed = self._maybe_create_task(entry_id, kb_name, assessment_id, issues)
 
-        return {
+        out = {
             "assessment_id": assessment_id,
             "target_entry": entry_id,
             "kb_name": kb_name,
@@ -319,6 +384,9 @@ class QAService:
             "issues": issues,
             "llm_available": self.llm_available,
         }
+        if task_failed is not None:
+            out["task_failed"] = task_failed
+        return out
 
     def assess_kb(
         self,
@@ -333,14 +401,22 @@ class QAService:
 
         ``readable_kbs`` bounds each entry's link checks, as in `validate_entry`.
 
-        Returns dict with kb_name, assessed count, skipped count, and results list.
+        Returns dict with kb_name, assessed count, skipped count, results list,
+        ``failed`` (each entry that was not assessed: ``{entry_id, error_code,
+        reason}``; it has no record) and ``tasks_failed`` (tasks
+        ``create_task_on_fail`` could not create). One failed entry does not
+        stop the rest. A tier refused outright (unknown, or 2 with no model)
+        raises before any entry is touched.
         """
+        self.require_tier(tier)
         rows = self.db.execute_sql(
             "SELECT id, entry_type FROM entry WHERE kb_name = :kb_name",
             {"kb_name": kb_name},
         )
 
         results = []
+        failed: list[dict[str, Any]] = []
+        tasks_failed: list[dict[str, Any]] = []
         skipped = 0
 
         for row in rows:
@@ -357,20 +433,38 @@ class QAService:
                 skipped += 1
                 continue
 
-            result = self.assess_entry(
-                eid,
-                kb_name,
-                tier=tier,
-                create_task_on_fail=create_task_on_fail,
-                readable_kbs=readable_kbs,
-            )
+            try:
+                result = self.assess_entry(
+                    eid,
+                    kb_name,
+                    tier=tier,
+                    create_task_on_fail=create_task_on_fail,
+                    readable_kbs=readable_kbs,
+                )
+            except Exception as exc:
+                # A model that did not answer (EvaluationFailedError, with its
+                # reason) or a record whose write raised: the entry has no
+                # record, so it is listed, never dropped.
+                logger.warning("Assessment of %s failed", eid, exc_info=True)
+                failed.append(
+                    {
+                        "entry_id": eid,
+                        "error_code": getattr(exc, "error_code", "INTERNAL_ERROR"),
+                        "reason": getattr(exc, "reason", None) or f"{type(exc).__name__}: {exc}",
+                    }
+                )
+                continue
             results.append(result)
+            if "task_failed" in result:
+                tasks_failed.append(result["task_failed"])
 
         return {
             "kb_name": kb_name,
             "assessed": len(results),
             "skipped": skipped,
             "results": results,
+            "failed": failed,
+            "tasks_failed": tasks_failed,
         }
 
     def _format_assessment_body(
@@ -415,8 +509,13 @@ class QAService:
 
     def _maybe_create_task(
         self, entry_id: str, kb_name: str, assessment_id: str, issues: list[dict]
-    ) -> None:
-        """Create a task for failed assessment."""
+    ) -> dict[str, Any] | None:
+        """Create a task for failed assessment.
+
+        Returns ``None`` when the task was created, else ``{entry_id,
+        reason}``: a task that was not created is reported, never only
+        logged (#788).
+        """
         try:
             from .task_service import TaskService
 
@@ -431,6 +530,8 @@ class QAService:
             )
         except Exception as e:
             logger.warning("Task creation failed for %s: %s", entry_id, e, exc_info=True)
+            return {"entry_id": entry_id, "reason": f"{type(e).__name__}: {e}"}
+        return None
 
     # =========================================================================
     # Query API
@@ -922,8 +1023,24 @@ class QAService:
                 return sources
             try:
                 entries = [(repo.load_entry_from_file(Path(path)), Path(path))]
-            except Exception:
+            except Exception as exc:
+                # The file-value checks cannot run on a file that will not
+                # load: say so, rather than return as if they found nothing
+                # (#795).
                 logger.debug("file-value checks: cannot load %s", path, exc_info=True)
+                issues.append(
+                    {
+                        "entry_id": entry_id,
+                        "kb_name": kb_name,
+                        "rule": "file_unloadable",
+                        "severity": "error",
+                        "field": "file",
+                        "message": (
+                            f"Entry '{entry_id}': its file could not be loaded, so the "
+                            f"checks that read it did not run: {exc}"
+                        ),
+                    }
+                )
                 return sources
 
         for entry, file_path in entries:
@@ -1266,8 +1383,24 @@ class QAService:
                 issue = fn(enriched, kb_schema, params)
                 if issue is not None:
                     issues.append(issue)
-            except Exception:
+            except Exception as exc:
+                # The item was not checked: report it, like an unknown checker
+                # above, rather than let the entry pass it (#795).
                 logger.warning("Named rubric checker '%s' failed", checker_name, exc_info=True)
+                issues.append(
+                    {
+                        "entry_id": entry_id,
+                        "kb_name": kb_name,
+                        "rule": "checker_failed",
+                        "severity": "warning",
+                        "field": "evaluation_rubric",
+                        "message": (
+                            f"Rubric checker '{checker_name}' failed on this entry, so "
+                            f"'{item.get('text', '')}' was not checked: "
+                            f"{type(exc).__name__}: {exc}"
+                        ),
+                    }
+                )
 
     def _collect_judgment_items(self, entry_type: str, kb_name: str) -> list[str]:
         """Filter rubric items to judgment-only (no deterministic checker, not schema-covered)."""
@@ -1285,10 +1418,17 @@ class QAService:
         return result
 
     def _evaluate_llm_rubric(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
-        """Run LLM rubric evaluation on a single entry. Returns list of issues."""
+        """Run LLM rubric evaluation on a single entry. Returns list of issues.
+
+        ``[]`` only when the model answered every judgment item and passed
+        them, or the type has none. No model raises ``AINotConfiguredError``,
+        an entry not in the index ``EntryNotFoundError``, and a model that did
+        not answer ``EvaluationFailedError`` (#795).
+        """
         if not self.llm_available:
-            logger.info("LLM not configured; skipping LLM rubric evaluation for %s", entry_id)
-            return []
+            raise AINotConfiguredError(
+                "QA tier 2 runs the model-judged rubric and no model is configured"
+            )
 
         # Fetch entry row
         rows = self.db.execute_sql(
@@ -1297,13 +1437,19 @@ class QAService:
             {"entry_id": entry_id, "kb_name": kb_name},
         )
         if not rows:
-            return []
+            raise EntryNotFoundError(
+                f"Entry '{entry_id}' is not in the index of KB '{kb_name}'; "
+                "tier 2 has nothing to evaluate"
+            )
+        return self._evaluate_llm_rubric_row(rows[0])
 
-        entry = rows[0]
+    def _evaluate_llm_rubric_row(self, entry: dict[str, Any]) -> list[dict[str, Any]]:
+        """The model-judged rubric for one index row (see `_evaluate_llm_rubric`)."""
+        kb_name = entry["kb_name"]
         entry_type = entry.get("entry_type", "")
         judgment_items = self._collect_judgment_items(entry_type, kb_name)
         if not judgment_items:
-            return []
+            return []  # nothing for the model to judge: a legitimate empty
 
         # Get guidelines for context
         kb_config = self.config.get_kb(kb_name)
@@ -1330,6 +1476,35 @@ class QAService:
                 )
         except RuntimeError:
             return asyncio.run(self.llm_evaluator.evaluate(dict(entry), judgment_items, guidelines))
+
+    def _check_llm_rubric_all(self, issues: list[dict[str, Any]], kb_name: str) -> None:
+        """Tier 2 of `validate_kb`: the model-judged rubric over every entry.
+
+        Skips ``qa_assessment`` entries, as `assess_kb` does. A model finding
+        is an issue as `assess_entry` records it; an entry the model did not
+        answer for is an ``evaluation_failed`` error naming the reason, so
+        `ci` can never pass a check that did not run (#795).
+        """
+        rows = self.db.execute_sql(
+            "SELECT id, kb_name, entry_type, title, date, importance, body, status, metadata "
+            "FROM entry WHERE kb_name = :kb_name AND entry_type != 'qa_assessment' ORDER BY id",
+            {"kb_name": kb_name},
+        )
+        for row in rows:
+            try:
+                issues.extend(self._evaluate_llm_rubric_row(row))
+            except PyriteError as exc:
+                issues.append(
+                    {
+                        "entry_id": row["id"],
+                        "kb_name": kb_name,
+                        "rule": "evaluation_failed",
+                        "severity": "error",
+                        "field": "evaluation_rubric",
+                        "message": f"Tier 2 did not run for '{row['id']}': "
+                        + getattr(exc, "reason", str(exc)),
+                    }
+                )
 
     def _check_rubric_all(self, issues: list[dict[str, Any]], kb_name: str) -> None:
         """Bulk SQL rubric checks across all entries in a KB."""

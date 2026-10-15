@@ -65,6 +65,9 @@ _BUILDERS: dict[str, Any] = {
     "ConfigFileUnreadableError": lambda: exc_module.ConfigFileUnreadableError(
         "config file unreadable", config_file="/config.yaml"
     ),
+    "EvaluationFailedError": lambda: exc_module.EvaluationFailedError(
+        "characterization-entry", "the model's reply was not JSON"
+    ),
 }
 
 

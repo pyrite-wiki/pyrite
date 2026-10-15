@@ -2299,27 +2299,35 @@
   },
   "kb_qa_assess | admin_key | missing-kb": {
     "assessed": "<ENUMERATION_CONTENT>",
+    "failed": [],
     "kb_name": "missing-kb",
     "results": [],
-    "skipped": "<ENUMERATION_CONTENT>"
+    "skipped": "<ENUMERATION_CONTENT>",
+    "tasks_failed": []
   },
   "kb_qa_assess | admin_key | no-default-role-kb": {
     "assessed": "<ENUMERATION_CONTENT>",
+    "failed": [],
     "kb_name": "no-default-role-kb",
     "results": "<ENUMERATION_CONTENT>",
-    "skipped": "<ENUMERATION_CONTENT>"
+    "skipped": "<ENUMERATION_CONTENT>",
+    "tasks_failed": []
   },
   "kb_qa_assess | admin_key | private-kb": {
     "assessed": "<ENUMERATION_CONTENT>",
+    "failed": [],
     "kb_name": "private-kb",
     "results": "<ENUMERATION_CONTENT>",
-    "skipped": "<ENUMERATION_CONTENT>"
+    "skipped": "<ENUMERATION_CONTENT>",
+    "tasks_failed": []
   },
   "kb_qa_assess | admin_key | readable-kb": {
     "assessed": "<ENUMERATION_CONTENT>",
+    "failed": [],
     "kb_name": "readable-kb",
     "results": "<ENUMERATION_CONTENT>",
-    "skipped": "<ENUMERATION_CONTENT>"
+    "skipped": "<ENUMERATION_CONTENT>",
+    "tasks_failed": []
   },
   "kb_qa_status | admin_key | missing-kb": {
     "coverage": "<ENUMERATION_CONTENT>",

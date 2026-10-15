@@ -236,21 +236,36 @@ def ci_command(
         "warning", "--severity", help="Minimum severity to fail on: error or warning"
     ),
     tier: int = typer.Option(
-        1, "--tier", help="Assessment tier: 1=structural, 2=structural+LLM judgment"
+        1,
+        "--tier",
+        help="Assessment tier: 1=structural, 2=structural plus the model-judged rubric "
+        "(one model call per entry with judgment items; needs a configured model)",
     ),
 ):
     """CI/CD-optimized KB validation. Exits 0 on pass, 1 on failure.
 
     Validates knowledge base integrity and reports results in a format
     suitable for CI pipelines. Use --format json for machine-readable output.
-    Use --tier 2 to include LLM-assisted rubric evaluation (requires AI config).
+    Use --tier 2 to include the model-judged rubric: its findings are warnings
+    that count at the gate, and an entry the model did not answer for is an
+    `evaluation_failed` error. With no model configured, --tier 2 is refused
+    (AI_NOT_CONFIGURED); an unknown tier is refused (INVALID_TIER).
     """
+    from ..services.llm_service import LLMService
     from ..services.qa_service import QAService
+    from ..utils.errors import cli_error_from
 
     config = load_config()
 
-    # Handle no KBs configured
-    if not config.knowledge_bases:
+    # A tier that cannot run is refused before anything else, even with no
+    # KB to validate: `ci` never says "pass" for a tier that did not run (#795).
+    llm_service = LLMService(config.settings) if tier >= 2 else None
+    try:
+        QAService(config, None, llm_service=llm_service).require_tier(tier)
+    except PyriteError as exc:
+        cli_error_from(exc, output_format)
+    # Handle no KBs configured (a named --kb is still looked for below)
+    if not config.knowledge_bases and not kb:
         if output_format == "json":
             typer.echo(
                 _json.dumps(
@@ -269,26 +284,17 @@ def ci_command(
 
     db = open_index_db(config)
     try:
-        # Set up LLM service for tier >= 2
-        llm_service = None
-        if tier >= 2:
-            from ..services.llm_service import LLMService
-
-            llm_service = LLMService(config.settings)
-            if not llm_service.status()["configured"]:
-                if output_format != "json":
-                    typer.echo(
-                        "Note: LLM not configured — tier 2 evaluation will skip "
-                        "judgment rubric items. Configure ai_provider + ai_api_key "
-                        "in pyrite.yaml to enable."
-                    )
-
+        # Nor for a KB it cannot find: validating no entries is not a pass.
+        # `ci` reads the config as written (open_index_db does not merge
+        # DB-registered KBs), so a KB the index alone holds still counts.
         qa = QAService(config, db, llm_service=llm_service)
+        if kb and not qa.knows_kb(kb):
+            cli_error_from(KBNotFoundError(f"KB '{kb}' is not configured"), output_format)
 
         if kb:
-            result = {"kbs": [qa.validate_kb(kb, readable_kbs=UNSCOPED)]}
+            result = {"kbs": [qa.validate_kb(kb, readable_kbs=UNSCOPED, tier=tier)]}
         else:
-            result = qa.validate_all(readable_kbs=UNSCOPED)
+            result = qa.validate_all(readable_kbs=UNSCOPED, tier=tier)
 
         # Aggregate results
         severity_order = {"error": 0, "warning": 1, "info": 2}
