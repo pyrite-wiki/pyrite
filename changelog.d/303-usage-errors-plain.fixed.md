@@ -1,0 +1,1 @@
+A usage error (unknown option, missing argument, bad choice, unknown command, `-f` with `--format`) is now a JSON refusal on stdout, `error_code` `USAGE_ERROR`, exit 2, on every command, in the format asked for; stderr gets one plain line and never a Rich box (#303, ADR-0046 amendment 2026-10-15). `--help` is unchanged.

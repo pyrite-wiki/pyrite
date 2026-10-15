@@ -99,7 +99,8 @@ under a different key.
 
 Source of truth: `pyrite/exceptions.py` (the codes), `pyrite/utils/errors.py`
 (`build_error`, `cli_error`, `cli_error_from`), `pyrite/server/errors.py`
-(REST's central handler), `pyrite/server/mcp_server.py` (`_refusal`).
+(REST's central handler), `pyrite/server/mcp_server.py` (`_refusal`). The CLI
+root's own codes, `USAGE_ERROR` and `ERROR`, are in `pyrite/utils/errors.py`.
 
 ## Write refusals (create, import, update)
 
@@ -756,9 +757,11 @@ commands, in a machine format:
 What the root does not decide: stderr (progress, warnings and deprecation
 notices go there; do not parse it for failures), the words of `--format rich`
 (a renderer writes for a person; the exit code is still the root's), and
-`--help` or a usage error (`2`), which click answers before the command
-starts. `-f` together with `--format` is a usage error (`2`). Ctrl-C exits
-`130`.
+`--help` (exit `0`, human text), which click answers before the command
+starts. A usage error (`2`) is answered by the root too, as `USAGE_ERROR`
+(below). `-f` together with `--format` is a usage error. Ctrl-C exits
+`130`; Ctrl-C or end of input at a prompt is `Aborted!` on stderr and exit
+`1`, with no document.
 
 **Check commands** (a command whose answer is a verdict: `kb validate`, `ids
 missing`, `index health`, `qa validate`, `protocol check`) exit `0` when the
@@ -774,7 +777,26 @@ migrates; until then `kb validate` drift exits `2` and `ids missing` `3`.
   command's own format, never an empty result (`pyrite backlinks nope` answers
   `ENTRY_NOT_FOUND` today, the class's code; the spelling is #610's). Also a
   batch command that did none of its items (below).
-- `2` — usage, click's own.
+- `2` — usage: an unknown option, a missing argument, a bad choice, an
+  unknown command, an unknown `--format`, `-f` together with `--format`. It is
+  a refusal like any other: one document on stdout in the format asked for
+  (`--format` as typed, else `PYRITE_FORMAT`, else json), with `"outcome":
+  "error"` and `error_code` `USAGE_ERROR` (`retryable: false`, a `suggestion`
+  naming `--help`), on every command, on the contract or not. stderr carries
+  one plain `Error: ...` line for a person, never a Rich box or an ANSI
+  escape. Nothing depends on a terminal. The one difference from a refusal in
+  the body is the exit code: `2`, not `1`. A `ClickException` that is not a
+  usage error (one a command raises) is the same document with `error_code`
+  `ERROR` and its own exit code, `1`.
+  Two cases are not documents. A bare `pyrite`, `pyrite-admin` or `pyrite-read`
+  prints its help and exits `2`, as before (it is help, not an error). And a
+  command that is not on the contract and has already printed to stdout when
+  it raises the error keeps stdout to its own text: the error is the one
+  `Error:` line on stderr, with the same exit code. The root sees writes made
+  through `sys.stdout`; descriptor 1 written directly, or a stream a module
+  took at import, it does not see. When the format cannot be read from the
+  arguments (`pyrite export`, where `--format` means `--target`), the document
+  is in `PYRITE_FORMAT`, else JSON.
 - `3` — the command ran and did only part of what was asked, or left items
   for a retry. It prints what happened and what did not, so a script reads the
   output instead of repeating the call. For a command that loops over items
@@ -819,7 +841,7 @@ migrates; until then `kb validate` drift exits `2` and `ids missing` `3`.
 The rule (#303, decided 2026-10-02) is one shared `--format` option
 (`pyrite/cli/output.py`): `json` by default, `PYRITE_FORMAT` sets your own
 default (`PYRITE_FORMAT=rich` in a terminal), an explicit `--format`
-overrides it, and an unknown format is a usage error (`2`). It takes `json`,
+overrides it, and an unknown format is a usage error (`2`, a `USAGE_ERROR` document). It takes `json`,
 `yaml` and `rich`. `markdown` and `csv` are not offered by the shared option:
 they exist for the shapes the REST API serves (entries, search results) and
 print a Python `repr` for anything else. A refusal is printed in the format

@@ -268,3 +268,37 @@ options. The maintainer decided two things.
 - A refusal under `csv` stays the JSON error shape, as today.
 - A `PYRITE_FORMAT` value the command does not offer falls back to `json`
   instead of exit 2.
+
+## Amendment 2026-10-15 (maintainer decision): usage errors are JSON refusals on stdout, exit 2
+
+Decided by the maintainer on 2026-10-15, on #303. This replaces decision 7's
+"click's handling until the body starts" for usage errors, and the spike's
+earlier recommendation (plain text on stderr, stdout empty).
+
+A usage error on any command (unknown option, missing argument, bad choice,
+unknown command, an unknown `--format`, `-f` together with `--format`) prints
+one refusal document on stdout and exits 2. It is the envelope a refusal from
+a command body uses (`"outcome": "error"`, `error`, `error_code`, `retryable`,
+`suggestion`) with `error_code` `USAGE_ERROR`, in the format asked for
+(`--format` as typed, else `PYRITE_FORMAT`, else json). The output never
+depends on a terminal. stderr may carry one plain line for a person, never a
+Rich box or an ANSI escape. `--help` is not an error: exit 0, human text.
+
+`PyriteCLIGroup` enforces it in one place (`make_context` and `invoke`), for
+the three roots and every plugin group under them, on the contract or legacy.
+It answers the error itself, as a `typer.Exit(2)`, before Typer's own handler
+sees it, so the document does not depend on how Typer would have drawn the
+error (a Rich box, click's plain lines under `TYPER_USE_RICH=0`, or rich not
+installed). A run with `standalone_mode=False` still gets the exception.
+`tests/test_cli_usage_error_plain.py` walks the registry in process and enters
+the real entry point per root.
+
+A `ClickException` that is not a usage error (one a command raises) is the same
+document with `error_code` `ERROR` and the exception's own exit code (1).
+`NoArgsIsHelpError` (a bare root, `no_args_is_help`) is help, not an error, and
+prints help as before. `Abort` (Ctrl-C or EOF at a prompt) is not a usage error: exit 1, `Aborted!` on
+stderr, nothing on stdout.
+
+Consequence: a caller that reads stdout gets a JSON document for every exit
+code the CLI has, except `Abort` at a prompt (exit 1, `Aborted!` on stderr, no
+document), and exit 2 means "usage" without parsing stderr.

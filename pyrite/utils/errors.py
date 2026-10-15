@@ -16,6 +16,8 @@ browse_commands.py (cli-error-shape-consistency).
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import functools
 import io
 import json
@@ -23,7 +25,7 @@ import logging
 import os
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -212,6 +214,175 @@ def _default_format() -> str:
 
     asked = os.environ.get("PYRITE_FORMAT") or "json"
     return asked if asked in SHARED_FORMATS else "json"
+
+
+def _format_in(argv: Sequence[str]) -> str:
+    """The format a usage error is printed in: the ``--format`` (or the
+    deprecated ``-f``) the caller typed, if it is a format the root prints (the
+    parse that failed may be what never got to read it), else the default.
+    ``pyrite export`` is skipped: there ``--format`` and ``-f`` mean
+    ``--target``. Where the format cannot be read from the arguments, the
+    document is in ``PYRITE_FORMAT``, else JSON."""
+    from ..cli.output import SHARED_FORMATS
+
+    if next((w for w in argv if not w.startswith("-")), None) == "export":
+        return _default_format()
+    for index, word in enumerate(argv):
+        if word == "--":
+            break
+        if word in ("--format", "-f") and index + 1 < len(argv):
+            value = argv[index + 1]
+        elif word.startswith("--format="):
+            value = word.partition("=")[2]
+        else:
+            continue
+        if value in SHARED_FORMATS:
+            return value
+    return _default_format()
+
+
+_STANDALONE: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "pyrite_standalone", default=False
+)
+
+
+#: The arguments of the running ``main``, for the format a usage error is
+#: printed in (the parse that failed may be what never read ``--format``).
+_ARGV: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar("pyrite_argv", default=())
+
+
+class _CountingStdout:
+    """``sys.stdout`` for the length of a command's body, noting that something
+    was written through it. Everything else is the stream underneath. Writes it
+    cannot see (descriptor 1 directly, a stream a module took at import) are a
+    stated limit: see ``_answered``."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.written = False
+
+    def write(self, text: Any) -> Any:
+        if text:
+            self.written = True
+        return self._inner.write(text)
+
+    def writelines(self, lines: Any) -> None:
+        for line in lines:
+            self.write(line)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def _is_a(error: BaseException, name: str) -> bool:
+    return any(c.__name__ == name for c in type(error).__mro__)
+
+
+@contextlib.contextmanager
+def _answered(*, watch_stdout: bool):
+    """Turn what click would draw itself into the root's answer (#303).
+
+    **Why here and not in Typer's renderer.** Typer draws a click error in
+    ``typer.core._main``, by a route that depends on the environment: a Rich
+    box (rich installed), click's three plain lines (``TYPER_USE_RICH=0`` or
+    rich missing), or an exception to the caller (``standalone_mode=False``).
+    An answer decided there depends on which route ran. Raised as ``Exit``
+    from inside the root's ``make_context`` or ``invoke``, the error never
+    reaches that code, and Typer ends the process with the code in every
+    configuration (``sys.exit`` standalone; the code is returned otherwise).
+
+    What click raises that is not a failure of the caller's, and the answer:
+
+    ==========================  ===========================================
+    ``NoArgsIsHelpError``       help, not an error (``no_args_is_help``):
+                                passed through, Typer prints the help as it
+                                always did (stdout, or stderr without rich)
+    ``UsageError`` (unknown     one refusal document on stdout in the format
+    option, missing argument,   asked for, ``USAGE_ERROR``, exit 2 (the
+    bad choice, unknown         other ``UsageError`` subclasses --
+    command, ``-f`` with        ``BadParameter``, ``MissingParameter``,
+    ``--format``)               ``NoSuchOption``, ``BadOptionUsage``,
+                                ``BadArgumentUsage`` -- all of these)
+    other ``ClickException``    the same document with ``ERROR`` and the
+    (``FileError``, a           exception's own exit code (1)
+    command's own)
+    ``Abort``, ``EOFError``     ``Aborted!`` on stderr, exit 1, no document
+    ``Exit`` (``--help``,       passed through untouched
+    ``--version``, completion)
+    ``KeyboardInterrupt``       passed through (Typer: exit 130)
+    ==========================  ===========================================
+
+    **Text, then an error.** A command that is not on the contract prints for
+    itself and is not watched. If it has already written to ``sys.stdout`` when
+    its body raises a click error, a document after its text would make stdout
+    two things; the error goes to stderr as the one plain line, with the
+    exception's exit code. This sees writes through ``sys.stdout`` (``print``,
+    ``typer.echo``, a ``Console()`` made without a file); it does not see
+    descriptor 1 written directly or a stream a module took at import. A parse
+    error (``make_context``, before any body) is always a document.
+    """
+    if not _STANDALONE.get():
+        yield
+        return
+    counting: _CountingStdout | None = None
+    if watch_stdout and sys.stdout is not None:  # None: stdout is closed
+        counting = sys.stdout = _CountingStdout(sys.stdout)  # type: ignore[assignment]
+    try:
+        yield
+    except _click_exception() as error:
+        if _is_a(error, "NoArgsIsHelpError"):
+            raise
+        if counting is not None and counting.written:
+            _tell_a_person(error)
+        else:
+            _print_click_error(error, _format_in(_ARGV.get()))
+        raise typer.Exit(error.exit_code) from error
+    except EOFError as error:
+        sys.stderr.write("\nAborted!\n")
+        raise typer.Exit(1) from error
+    except typer.Abort:
+        sys.stderr.write("Aborted!\n")
+        raise typer.Exit(1)
+    finally:
+        if counting is not None and sys.stdout is counting:
+            sys.stdout = counting._inner
+
+
+def _click_exception() -> type[Exception]:
+    """Typer 0.27 vendors click; its classes are found from Typer's own public
+    names, never by a private import path."""
+    return next(c for c in typer.BadParameter.__mro__ if c.__name__ == "ClickException")
+
+
+def _tell_a_person(error: Any) -> None:
+    """The one plain line on stderr."""
+    try:
+        sys.stderr.write(f"Error: {error.format_message()}\n")
+        sys.stderr.flush()
+    except (OSError, ValueError):  # no stderr to tell a person on
+        pass
+
+
+def _print_click_error(error: Any, fmt: str) -> None:
+    """Answer a click error raised while parsing: one refusal document on
+    stdout in ``fmt``, one plain line on stderr. The caller exits with the
+    error's own code (2 for a usage error)."""
+    from ..cli.outcome import REFUSED
+
+    is_usage = _is_a(error, "UsageError")
+    message = error.format_message()
+    ctx = getattr(error, "ctx", None)
+    suggestion = f"Try '{ctx.command_path} --help' for help." if ctx is not None else None
+    payload = {
+        "outcome": REFUSED,
+        **build_error(message, "USAGE_ERROR" if is_usage else "ERROR", suggestion=suggestion),
+    }
+    _tell_a_person(error)
+    answer = _error_answer(payload, fmt)
+    if answer.text is not None:
+        typer.echo(answer.text)
+    elif answer.show is not None:
+        answer.show()
 
 
 def _flush(stream: Any) -> None:
@@ -461,8 +632,8 @@ class PyriteCLIGroup(TyperGroup):
     What this does not cover, on purpose or because nothing in the process
     can:
 
-    - **Before the body.** Click is parsing: ``--help`` exits 0, a usage error
-      exits 2, and a parameter callback runs unwatched. (A command on the
+    - **Before the body.** Click is parsing: ``--help`` exits 0, a usage error is a
+      ``USAGE_ERROR`` document and exits 2 (``_answered``), and a parameter callback runs unwatched. (A command on the
       contract declares no callback but the shared option's; the registry
       test checks that.)
     - **Stderr is open**: progress, warnings, the ``-f`` notice. A command that
@@ -491,7 +662,45 @@ class PyriteCLIGroup(TyperGroup):
     (a plugin, decision 5), that is rendered here in the default format.
     """
 
+    def main(
+        self,
+        args: Any = None,
+        prog_name: Any = None,
+        complete_var: Any = None,
+        standalone_mode: bool = True,
+        *rest: Any,
+        **extra: Any,
+    ) -> Any:
+        """Mark the run standalone or not for ``make_context`` and ``invoke``.
+
+        Only a standalone run (the default: the console script, ``CliRunner``)
+        answers a click error with a document. ``standalone_mode=False`` is a
+        caller that wants the exception, and gets it as before.
+        """
+        tokens = (
+            _STANDALONE.set(standalone_mode),
+            _ARGV.set(tuple(sys.argv[1:] if args is None else args)),
+        )
+        try:
+            return super().main(args, prog_name, complete_var, standalone_mode, *rest, **extra)
+        finally:
+            _ARGV.reset(tokens[1])
+            _STANDALONE.reset(tokens[0])
+
+    def make_context(self, info_name: Any, args: Any, parent: Any = None, **extra: Any) -> Any:
+        """A click error while the root parses its own arguments (``pyrite
+        --bogus``) is answered here; see ``_answered``."""
+        with _answered(watch_stdout=False):
+            return super().make_context(info_name, args, parent=parent, **extra)
+
     def invoke(self, ctx):
+        """Run the command, answering any click error or ``Abort`` that leaves
+        it as ``_answered`` says. A usage error is a JSON refusal on stdout,
+        exit 2 (#303; ADR-0046, amendment 2026-10-15)."""
+        with _answered(watch_stdout=True):
+            return self._invoke(ctx)
+
+    def _invoke(self, ctx):
         from ..cli.outcome import Outcome
         from ..cli.output import BODY_GUARD_META_KEY
         from ..exceptions import ConfigSaveRefusedError

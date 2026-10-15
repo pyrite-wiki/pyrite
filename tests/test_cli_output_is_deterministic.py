@@ -25,9 +25,12 @@ def _assert_plain(text: str) -> None:
 
 
 def test_usage_error_and_help_are_plain_in_process():
-    for args in (["get", "--bogus"], ["task", "list", "--help"]):
-        result = CliRunner().invoke(app, args)
-        _assert_plain(result.output)
+    # A usage error is one JSON line (ADR-0046, amendment 2026-10-15): no ANSI,
+    # and its width is the message's, not the terminal's. Help is still wrapped.
+    error = CliRunner().invoke(app, ["get", "--bogus"])
+    assert _ANSI not in error.output, repr(error.output[:200])
+    assert "No such option: --bogus" in error.output
+    _assert_plain(CliRunner().invoke(app, ["task", "list", "--help"]).output)
 
 
 def test_plain_under_hostile_ci_environment(tmp_path):
@@ -39,7 +42,6 @@ def test_plain_under_hostile_ci_environment(tmp_path):
         "def test_it():\n"
         "    out = CliRunner().invoke(app, ['get', '--bogus']).output\n"
         "    assert '\\x1b' not in out, repr(out[:200])\n"
-        "    assert max(map(len, out.splitlines())) <= 80, out\n"
         "    assert 'No such option: --bogus' in out\n",
         encoding="utf-8",
     )

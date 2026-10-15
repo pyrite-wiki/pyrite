@@ -353,8 +353,12 @@ def test_unknown_format_is_a_usage_error(command, invalid_format):
 
     assert result.exit_code == 2, result.output
     assert "Traceback" not in output
-    assert output.count("Invalid value for '--format'") == 1, result.output
-    assert invalid_format in output
+    # A usage error is a JSON refusal (ADR-0046, amendment 2026-10-15); the
+    # runner mixes in the one plain stderr line, so read the document's line.
+    document = json.loads(next(line for line in output.splitlines() if line.startswith("{")))
+    assert document["error_code"] == "USAGE_ERROR"
+    assert "Invalid value for '--format'" in document["error"]
+    assert invalid_format in document["error"]
     assert "error_type" not in output
 
 

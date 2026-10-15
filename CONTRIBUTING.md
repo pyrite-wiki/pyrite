@@ -260,8 +260,9 @@ execute it on import. CI catches the rest.
 rendering environment before any CLI module is imported: ambient `FORCE_COLOR`,
 `PY_COLORS`, `NO_COLOR` and `TTY_COMPATIBLE` are removed, `COLUMNS` and
 `TERMINAL_WIDTH` are 80, `TERM` is `xterm-256color`, and `_TYPER_FORCE_DISABLE_TERMINAL`
-is set. The last matters most: Typer renders help and usage errors as ANSI in
-any process where `GITHUB_ACTIONS` is set, which is why a test could pass on a
+is set. The last matters most: Typer renders help as ANSI in any process where
+`GITHUB_ACTIONS` is set (usage errors no longer are Typer's to render: the root
+answers them as a JSON document, #303), which is why a test could pass on a
 laptop and fail in CI (#884). A test that checks styling on purpose takes the
 `terminal_colour` fixture (in-process Typer), `Console(force_terminal=True)`, or
 `FORCE_COLOR=1` in a subprocess's env. `tests/test_cli_output_is_deterministic.py`
