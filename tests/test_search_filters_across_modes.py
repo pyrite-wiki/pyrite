@@ -23,6 +23,7 @@ import zlib
 from pathlib import Path
 
 import pytest
+from types import SimpleNamespace
 
 from pyrite.config import KBType
 from pyrite.services.search_service import SearchService
@@ -649,6 +650,11 @@ def rest_client(svc_db):
     class _StubKBService:
         def count_entries(self, *a, **kw):
             return len(ENTRIES)
+
+        def resolve_kb(self, name, *, readable_kbs):
+            # authz asks the service to resolve the named KB (#952); this
+            # stub serves one KB and names it.
+            return SimpleNamespace(name=name)
 
     app.dependency_overrides[get_kb_service] = lambda: _StubKBService()
     return TestClient(app)
