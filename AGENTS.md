@@ -84,7 +84,7 @@ Use the right `type` frontmatter so plugin tools find entries: `component`
 - **Core code**: `pyrite/` — CLI, server, storage, services, plugins, models
 - **REST API**: `pyrite/server/api.py` (factory + deps) + `pyrite/server/endpoints/` (per-feature modules)
 - **MCP server**: `pyrite/server/mcp_server.py` (3-tier tools)
-- **Extensions**: `extensions/` — zettelkasten, social, encyclopedia, software-kb, journalism-investigation, cascade
+- **Extensions**: `extensions/` — zettelkasten, social, encyclopedia, software-kb, journalism-investigation
 - **Web frontend**: `web/` — SvelteKit + Svelte 5
 - **Knowledge base**: `kb/` — ADRs, backlog, components, designs, standards, runbooks
 

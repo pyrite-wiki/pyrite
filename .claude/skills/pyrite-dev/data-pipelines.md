@@ -15,9 +15,9 @@ Schema Validation (schema.py)
     ▼
 Type Resolution (_resolve_entry_type)
     │  Maps core types to plugin subtypes:
-    │    note     → article        (software-kb)
-    │    event    → cascade_event  (cascade)
-    │    person   → actor          (cascade)
+    │    note     → article              (software-kb)
+    │    event    → investigation_event  (journalism-investigation)
+    │    person   → user_profile         (social)
     │  SILENT — no error if no plugin subtype exists, falls through to core
     │
     ▼
@@ -51,7 +51,7 @@ Embed (embedding_service.py → EmbeddingWorker)
 
 `_resolve_entry_type()` in `kb_service.py` consults the plugin registry to find if any plugin provides a subtype for a core type. This mapping is implicit — the plugin's `get_entry_types()` returns classes whose parent is a core type.
 
-**Why this matters:** When you call `kb_create(type="event")`, the entry you get back might be a `CascadeEvent`, not an `Event`. The frontmatter will say `type: event`, but the Python class and its validation rules come from the plugin. If your code does `isinstance(entry, Event)`, it works (inheritance). If it does `type(entry).__name__ == "Event"`, it fails.
+**Why this matters:** When you call `kb_create(type="event")`, the entry you get back might be an `InvestigationEventEntry`, not an `Event`. The frontmatter will say `type: event`, but the Python class and its validation rules come from the plugin. If your code does `isinstance(entry, Event)`, it works (inheritance). If it does `type(entry).__name__ == "Event"`, it fails.
 
 ## build_entry Factory
 

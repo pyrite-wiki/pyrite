@@ -600,7 +600,8 @@ def _report_health(
 
     if removed_extensions:
         console.print(
-            f"[yellow]⚠ {len(removed_extensions)} KB(s) typed by a removed extension:[/yellow]"
+            f"[yellow]⚠ {len(removed_extensions)} KB(s) still using a removed extension's "
+            "types:[/yellow]"
         )
         for row in removed_extensions:
             console.print(f"  • {row['message']}")

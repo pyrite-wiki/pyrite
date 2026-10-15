@@ -203,10 +203,10 @@ When defining relationship types in `get_relationship_types()`, always define bo
 
 ## _resolve_entry_type Silently Maps Core Types to Plugin Subtypes
 
-When you call `kb_create(type="event")`, the entry type gets silently resolved to a plugin subtype (e.g., `cascade_event`) if a plugin provides one. This happens in `kb_service.py:_resolve_entry_type()`.
+When you call `kb_create(type="event")`, the entry type gets silently resolved to a plugin subtype (e.g., `investigation_event` in a journalism-investigation KB) if a plugin active for that KB type provides one. This happens in `kb_service.py:_resolve_entry_type()`.
 
 **Consequences:**
-- `type(entry).__name__` won't be `Event` — it'll be `CascadeEvent`
+- `type(entry).__name__` won't be `Event` — it'll be `InvestigationEventEntry`
 - The entry's dataclass fields come from the plugin class, not the core class
 - `isinstance(entry, Event)` still works (inheritance), but exact type checks fail
 

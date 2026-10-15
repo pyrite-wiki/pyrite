@@ -59,12 +59,49 @@ def removed_extension_for_kb_type(kb_type: str | None) -> RemovedExtension | Non
     return None
 
 
-def removed_extension_notice(kb_name: str, kb_type: str | None) -> str | None:
-    """One sentence for a KB whose type belonged to a removed extension, or None."""
+def removed_extension_for_entry_types(entry_types) -> RemovedExtension | None:
+    """The removed extension that declared any of ``entry_types``, or None.
+
+    A type name a KB declares itself in ``kb.yaml`` is its own; this is for
+    the undeclared ones a deleted plugin used to declare.
+    """
+    held = set(entry_types or ())
+    for ext in REMOVED_EXTENSIONS.values():
+        if held & set(ext.entry_types):
+            return ext
+    return None
+
+
+def removed_entry_types_held(ext: RemovedExtension, entry_types) -> list[str]:
+    """Of ``entry_types``, the ones ``ext`` declared, in the order it did."""
+    held = set(entry_types or ())
+    return [t for t in ext.entry_types if t in held]
+
+
+def removed_extension_notice(kb_name: str, kb_type: str | None, entry_types=()) -> str | None:
+    """One sentence for a KB whose type, or whose entries' types, belonged to a
+    removed extension; None when neither did.
+
+    ``entry_types`` is what the KB holds (the index's distinct types): a
+    generic KB that still has ``timeline_event`` files gets the same notice
+    as one registered with ``cascade-timeline``.
+    """
     ext = removed_extension_for_kb_type(kb_type)
-    if ext is None:
-        return None
-    return (
-        f"KB '{kb_name}' has kb_type '{kb_type}', which belonged to the {ext.name} "
-        f"extension, removed in {ext.removed_in}. {ext.replacement}"
+    if ext is not None:
+        head = f"KB '{kb_name}' has kb_type '{kb_type}', which belonged to the {ext.name} extension"
+    else:
+        ext = removed_extension_for_entry_types(entry_types)
+        if ext is None:
+            return None
+        head = (
+            f"KB '{kb_name}' holds entries of type "
+            f"{', '.join(removed_entry_types_held(ext, entry_types))}, which belonged to the "
+            f"{ext.name} extension"
+        )
+    held = removed_entry_types_held(ext, entry_types)
+    held_note = (
+        f" Its {', '.join(held)} entries are undeclared now."
+        if held and ext.kb_types and kb_type in ext.kb_types
+        else ""
     )
+    return f"{head}, removed in {ext.removed_in}.{held_note} {ext.replacement}"

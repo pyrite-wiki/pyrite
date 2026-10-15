@@ -33,14 +33,21 @@ EVENT = (
 ACTOR = "---\nid: jane-doe\ntitle: Jane Doe\ntype: actor\n---\n\nShe testifies.\n"
 
 
-def _env(tmp_path, kb_type: str):
+NOTE = "---\nid: n1\ntitle: A note\ntype: note\n---\n\nText.\n"
+
+
+def _env(tmp_path, kb_type: str, *, plain: bool = False):
+    """A KB of ``kb_type`` holding cascade-typed files, or (``plain``) only a note."""
     kb_path = tmp_path / "kb"
     (kb_path / "events").mkdir(parents=True)
     (kb_path / "actors").mkdir()
     # A kb.yaml with no types, as the cascade KBs had: the plugin declared them.
     (kb_path / "kb.yaml").write_text(f"name: old-timeline\nkb_type: {kb_type}\n", encoding="utf-8")
-    (kb_path / "events" / "e1.md").write_text(EVENT, encoding="utf-8")
-    (kb_path / "actors" / "jane-doe.md").write_text(ACTOR, encoding="utf-8")
+    if plain:
+        (kb_path / "n1.md").write_text(NOTE, encoding="utf-8")
+    else:
+        (kb_path / "events" / "e1.md").write_text(EVENT, encoding="utf-8")
+        (kb_path / "actors" / "jane-doe.md").write_text(ACTOR, encoding="utf-8")
     config = PyriteConfig(
         knowledge_bases=[KBConfig(name="old-timeline", path=kb_path, kb_type=kb_type)],
         settings=Settings(index_path=tmp_path / "index.db"),
@@ -82,6 +89,15 @@ class TestOrientNamesTheRemovedExtension:
         [notice] = body["notices"]
         assert _is_the_notice(notice), notice
         assert "journalism-investigation" in notice
+        # The types the KB holds that the extension declared are named.
+        assert "timeline_event" in notice and "actor" in notice
+
+    def test_a_generic_kb_that_still_holds_cascade_types_is_told_too(self, tmp_path):
+        config = _env(tmp_path, "generic")
+        result = _mcp(config, "kb_orient", {"kb_name": "old-timeline"})
+        [notice] = result["notices"]
+        assert "holds entries of type actor, timeline_event" in notice, notice
+        assert "cascade" in notice and "#953" in notice
 
     def test_mcp_orient_carries_the_same_notice(self, tmp_path):
         config = _env(tmp_path, "cascade-research")
@@ -96,8 +112,8 @@ class TestOrientNamesTheRemovedExtension:
         result = _mcp(config, "kb_orient", {"kb_name": "old-timeline", "detail": "brief"})
         assert result["notices"] and _is_the_notice(result["notices"][0])
 
-    def test_a_generic_kb_has_no_notice(self, tmp_path):
-        config = _env(tmp_path, "generic")
+    def test_a_generic_kb_with_its_own_types_has_no_notice(self, tmp_path):
+        config = _env(tmp_path, "generic", plain=True)
         result = _mcp(config, "kb_orient", {"kb_name": "old-timeline"})
         assert "notices" not in result, result.get("notices")
 
@@ -113,6 +129,7 @@ class TestIndexHealthNamesTheRemovedExtension:
         assert row["kb"] == "old-timeline"
         assert row["kb_type"] == "cascade-timeline"
         assert row["extension"] == "cascade"
+        assert row["entry_types"] == ["actor", "timeline_event"]
         assert _is_the_notice(row["message"]), row
         # The types it declared are still reported as undeclared: nothing hides them.
         assert {r["type"] for r in body["undeclared_types"]} == {"actor", "timeline_event"}
@@ -125,8 +142,17 @@ class TestIndexHealthNamesTheRemovedExtension:
         flat = " ".join(result.output.split())
         assert "cascade" in flat and "#953" in flat and "old-timeline" in flat
 
-    def test_a_generic_kb_reports_none(self, tmp_path):
+    def test_a_generic_kb_holding_cascade_types_is_a_row_too(self, tmp_path):
         config = _env(tmp_path, "generic")
+        result = _cli(config, "index", "health", "--format", "json")
+        body = json.loads(result.output)
+        [row] = body["removed_extensions"]
+        assert (row["kb_type"], row["extension"]) == ("generic", "cascade")
+        assert row["entry_types"] == ["actor", "timeline_event"]
+        assert "holds entries of type actor, timeline_event" in row["message"]
+
+    def test_a_generic_kb_with_its_own_types_reports_none(self, tmp_path):
+        config = _env(tmp_path, "generic", plain=True)
         result = _cli(config, "index", "health", "--format", "json")
         body = json.loads(result.output)
         assert body["removed_extensions"] == []
@@ -136,6 +162,8 @@ class TestIndexHealthNamesTheRemovedExtension:
 def test_the_table_is_the_one_place_and_names_every_cascade_kb_type():
     from pyrite.plugins.removed import REMOVED_EXTENSIONS, removed_extension_for_kb_type
 
+    from pyrite.plugins.removed import removed_extension_for_entry_types
+
     cascade = REMOVED_EXTENSIONS["cascade"]
     assert set(cascade.kb_types) == {"cascade-research", "cascade-timeline", "cascade-solidarity"}
     for kb_type in cascade.kb_types:
@@ -143,3 +171,6 @@ def test_the_table_is_the_one_place_and_names_every_cascade_kb_type():
     assert removed_extension_for_kb_type("generic") is None
     assert removed_extension_for_kb_type("") is None
     assert removed_extension_for_kb_type(None) is None
+    assert removed_extension_for_entry_types(["note", "timeline_event"]) is cascade
+    assert removed_extension_for_entry_types(["note", "person"]) is None
+    assert removed_extension_for_entry_types([]) is None

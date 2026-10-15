@@ -1210,17 +1210,33 @@ class IndexManager:
         # A KB whose type belonged to an extension Pyrite has deleted (#953):
         # its types are undeclared for a reason the user should be told. The
         # rule is `plugins/removed.py`'s; this report only shows it.
-        from ..plugins.removed import removed_extension_for_kb_type, removed_extension_notice
+        from ..plugins.removed import (
+            removed_entry_types_held,
+            removed_extension_for_entry_types,
+            removed_extension_for_kb_type,
+            removed_extension_notice,
+        )
 
         for kb in kbs:
-            ext = removed_extension_for_kb_type(kb.kb_type)
+            held_types = [
+                row["entry_type"]
+                for row in self.db.execute_sql(
+                    "SELECT DISTINCT entry_type FROM entry WHERE kb_name = :kb_name",
+                    {"kb_name": kb.name},
+                )
+                if row["entry_type"]
+            ]
+            ext = removed_extension_for_kb_type(kb.kb_type) or removed_extension_for_entry_types(
+                held_types
+            )
             if ext is not None:
                 health["removed_extensions"].append(
                     {
                         "kb": kb.name,
                         "kb_type": kb.kb_type,
                         "extension": ext.name,
-                        "message": removed_extension_notice(kb.name, kb.kb_type),
+                        "entry_types": removed_entry_types_held(ext, held_types),
+                        "message": removed_extension_notice(kb.name, kb.kb_type, held_types),
                     }
                 )
 
