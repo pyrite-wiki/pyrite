@@ -4,7 +4,9 @@ on:
   push:
     branches: [main, dev]
   pull_request:
-    branches: [main, dev]
+    # arch/**: integration branches of a time-boxed architecture sprint (#952,
+    # #953, #955); their PRs need the same checks before they land on dev.
+    branches: [main, dev, 'arch/**']
   # GitHub's merge queue. Without this trigger the queue cannot be enabled at
   # all: a queued PR waits on the required check (`gate`) and a workflow that
   # does not run on merge_group never produces one (#273). The queue is what

@@ -90,8 +90,10 @@ class TestMergeGroupTrigger:
         assert {"push", "pull_request", "workflow_dispatch"} <= set(map(str, triggers))
 
     def test_push_and_pull_request_still_target_main_and_dev(self, triggers):
-        for event in ("push", "pull_request"):
-            assert set(triggers[event]["branches"]) == {"main", "dev"}, event
+        assert set(triggers["push"]["branches"]) == {"main", "dev"}
+        # Pull requests into an architecture sprint's integration branch
+        # (arch/**, #952) get the same checks before the branch lands on dev.
+        assert set(triggers["pull_request"]["branches"]) == {"main", "dev", "arch/**"}
 
 
 class TestGateIsReachableOnAMergeGroup:
