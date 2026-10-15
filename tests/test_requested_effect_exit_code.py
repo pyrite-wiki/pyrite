@@ -334,7 +334,6 @@ def inproc(tmp_path):
             "pyrite_zettelkasten",
             "pyrite_encyclopedia",
             "pyrite_social",
-            "pyrite_cascade",
         )
         if importlib.util.find_spec(ext) is not None
     ]

@@ -39,7 +39,7 @@ from tests.outcome_walk import leaves, root_app
 ROOTS = ("pyrite", "pyrite-read", "pyrite-admin")
 KB_PARAMS = {"kb", "kb_name", "source_kb", "target_kb", "center_kb", "kb_a", "kb_b"}
 FULL, SHORT, UNKNOWN = "demo", "dm", "no-such-kb"
-EXTENSION_GROUPS = {"zettel", "sw", "investigation", "wiki", "social", "cascade"}
+EXTENSION_GROUPS = {"zettel", "sw", "investigation", "wiki", "social"}
 
 #: KB parameters that name a KB without looking one up, with the reason.
 NOT_A_LOOKUP: dict[tuple[str, str, str], str] = {
