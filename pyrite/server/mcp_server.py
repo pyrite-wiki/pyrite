@@ -398,41 +398,32 @@ def _only_readable(rows: list[dict], readable_kbs: set[str] | None) -> list[dict
     return [r for r in rows if r.get("kb_name") in readable_kbs]
 
 
-#: The way forward in the dispatcher's refusal. One static string for an absent
-#: and an unreadable name alike, naming no KB: a near match here would be drawn
-#: from outside the caller's readable set or confirm what is inside it.
-_KB_NOT_FOUND_HINT = "Call kb_orient with no kb_name to list the KBs you can read."
+def _kb_refusal(
+    config: PyriteConfig, db: PyriteDB, kb_name: object, readable_kbs: set[str] | None
+) -> dict | None:
+    """The refusal for a KB name the resolver refuses, or None when it is a
+    KB the caller may read (or names no KB).
 
-
-def _kb_not_found(kb_name: str) -> dict:
-    """The refusal for a KB the caller may not read.
-
-    Deliberately **not** a "forbidden": a private KB's existence is itself
-    private, so a caller must not be able to tell "you may not read this"
-    from "there is no such KB" and probe for which private KBs exist. This is
-    the MCP spelling of `api.kb_not_found`, whose REST counterpart 404s with
-    the same `KB_NOT_FOUND` for the same reason.
-
-    **Why the two answers cannot diverge for one caller.** Every refusal for
-    a scoped caller comes from this function: `_dispatch_tool`, the prompt
-    dispatcher and the resource reader call it for *any* KB name outside the
-    readable set, absent or private alike, before a handler runs. The
-    readable set holds only KBs that exist (`AccessPolicy.kbs_at_tier` walks
-    `config.all_kbs()`), so a handler's own not-found answer (`_kb_schema`
-    and others still say `NOT_FOUND`; `_kb_orient` adds a suggestion) is only
-    ever given for a name the caller was allowed to read. Those handler
-    answers therefore need not match this one byte for byte, and no longer
-    do. `tests/test_orient_is_true_as_the_first_call.py` walks every tool.
-
-    The code was `NOT_FOUND` until 0.25.7 (#66); it is carried in
-    `legacy_error_code` for one release (ADR-0037 theme 2).
+    The one resolver (`services/kb_resolver.py`, #952), asked for **every**
+    caller and every KB a call names, by the three chokepoints KB content
+    passes through: `_dispatch_tool`, `_get_prompt` and `_read_resource`. An
+    absent name, a KB outside the caller's readable set and a shortname
+    (link syntax only) are one `KBNotFoundError` -- deliberately not a
+    "forbidden": a private KB's existence is itself private, so a caller
+    cannot tell "you may not read this" from "there is no such KB". The
+    envelope is `_refusal`'s: the class code `KB_NOT_FOUND`, the resolver's
+    suggestion, `did_you_mean` (near matches from the readable set only) and
+    the old `NOT_FOUND` in `legacy_error_code` for one release (#66,
+    ADR-0037 theme 2). A handler's own not-found answer is only ever reached
+    for a name the caller may read.
     """
-    return _error(
-        "KB_NOT_FOUND",
-        f"KB '{kb_name}' not found",
-        suggestion=_KB_NOT_FOUND_HINT,
-        legacy_error_code="NOT_FOUND",
-    )
+    from ..services.kb_resolver import resolve_kb
+
+    try:
+        resolve_kb(config, kb_name, readable_kbs=readable_kbs, db=db)
+    except KBNotFoundError as e:
+        return _refusal(e)
+    return None
 
 
 class PyriteMCPServer:
@@ -1104,25 +1095,10 @@ class PyriteMCPServer:
                     offset=args.get("offset", 0),
                 )
             return self.svc.orient(kb_name, recent_limit=args.get("recent_limit", 5), detail=detail)
-        except KBNotFoundError as e:
-            # A scoped caller is refused by the dispatcher before this for any
-            # name outside its readable set, so this is reached with the name
-            # of a KB the caller could have read. The near matches are drawn
-            # from the readable set all the same.
-            names, hint = self.svc.kb_name_suggestions(kb_name, readable_kbs=readable_kbs)
-            # This handler reported OPERATION_FAILED, not the NOT_FOUND
-            # `_refusal` would replay for the class, so the old code is given
-            # here. One release (ADR-0037 theme 2); remove with the rest.
-            return {
-                **_error(
-                    e.error_code,
-                    _safe_message(e),
-                    suggestion=hint,
-                    legacy_error_code="OPERATION_FAILED",
-                ),
-                "did_you_mean": names,
-            }
         except PyriteError as e:
+            # A name the resolver refuses never reaches this handler: the
+            # dispatcher answers it, with `did_you_mean` and the suggestion,
+            # for every caller (#952).
             return _refusal(e)
 
     def _kb_recent(
@@ -2120,10 +2096,10 @@ class PyriteMCPServer:
         handler = handlers.get(name)
         if not handler:
             return _error("OPERATION_FAILED", f"Unknown prompt: {name}")
-        if readable_kbs is not None:
-            for kb_name in _kbs_named_in(arguments):
-                if kb_name not in readable_kbs:
-                    return _kb_not_found(kb_name)
+        for kb_name in _kbs_named_in(arguments):
+            refusal = _kb_refusal(self.config, self.db, kb_name, readable_kbs)
+            if refusal is not None:
+                return refusal
         import inspect
 
         try:
@@ -2372,8 +2348,9 @@ class PyriteMCPServer:
             and "/entries/" not in uri
         ):
             kb_name = uri[len(f"{URI_SCHEME}kbs/") : -len("/entries")]
-            if readable_kbs is not None and kb_name not in readable_kbs:
-                return _kb_not_found(kb_name)
+            refusal = _kb_refusal(self.config, self.db, kb_name, readable_kbs)
+            if refusal is not None:
+                return refusal
             entries = self.svc.list_entries(kb_name=kb_name, limit=MAX_RESOURCE_LIST_ENTRIES)
             return {
                 "contents": [
@@ -2393,10 +2370,9 @@ class PyriteMCPServer:
             entry_kb, _, entry_id = uri[len(f"{URI_SCHEME}kbs/") :].partition("/entries/")
             # A KB the caller cannot read and a KB that does not exist answer
             # the same KB_NOT_FOUND (scoped or not), never a plain NOT_FOUND.
-            if (readable_kbs is not None and entry_kb not in readable_kbs) or self.svc.get_kb(
-                entry_kb
-            ) is None:
-                return _kb_not_found(entry_kb)
+            refusal = _kb_refusal(self.config, self.db, entry_kb, readable_kbs)
+            if refusal is not None:
+                return refusal
         if entry_id is not None:
             # Without a KB the lookup is bounded by the caller's readable set:
             # an entry in a private KB is a plain miss (naming the KB would
@@ -2533,14 +2509,16 @@ class PyriteMCPServer:
                     retryable=True,
                 )
 
-        # Per-KB read scoping. Checked before the handler runs, and for
-        # EVERY KB the call names -- naming a readable KB alongside a
-        # private one must buy nothing.
-        named_kbs = _kbs_named_in(arguments) if readable_kbs is not None else []
-        if readable_kbs is not None:
-            for kb_name in named_kbs:
-                if kb_name not in readable_kbs:
-                    return _kb_not_found(kb_name)
+        # Every KB the call names goes through the one resolver (#952),
+        # for every caller: an unknown name, a KB outside a scoped caller's
+        # readable set and a shortname are refused before the handler runs,
+        # and for EVERY name -- naming a readable KB alongside a private one
+        # must buy nothing.
+        named_kbs = _kbs_named_in(arguments)
+        for kb_name in named_kbs:
+            refusal = _kb_refusal(self.config, self.db, kb_name, readable_kbs)
+            if refusal is not None:
+                return refusal
 
         takes_readable = readable_kbs is not None and self._handler_takes_readable_kbs(name)
 

@@ -10,7 +10,6 @@ from ..config import PyriteConfig
 from ..exceptions import (
     AmbiguousEntryError,
     EntryNotFoundError,
-    KBNotFoundError,
     ValidationError,
 )
 from ..models.task import TASK_RESOLVED_STATUSES, coerce_task_priority
@@ -194,11 +193,7 @@ class TaskService:
         """
         from ..models.task import resolve_workflow_for_type
 
-        kb_config = self.config.get_kb(kb_name)
-        if kb_config is None:
-            from ..exceptions import KBNotFoundError
-
-            raise KBNotFoundError(f"KB not found: {kb_name}")
+        kb_config = self.config.require_kb(kb_name, db=self.db)
 
         kb_schema = getattr(kb_config, "kb_schema", None)
 
@@ -512,9 +507,7 @@ class TaskService:
         """
         from ..storage.repository import KBRepository
 
-        kb_config = self.config.get_kb(kb_name)
-        if not kb_config:
-            raise KBNotFoundError(f"KB not found: {kb_name}")
+        kb_config = self.config.require_kb(kb_name, db=self.db)
 
         repo = KBRepository(kb_config)
         entry = repo.load(task_id)
@@ -589,9 +582,7 @@ class TaskService:
         """Append a timestamped checkpoint to a task."""
         from ..storage.repository import KBRepository
 
-        kb_config = self.config.get_kb(kb_name)
-        if not kb_config:
-            raise KBNotFoundError(f"KB not found: {kb_name}")
+        kb_config = self.config.require_kb(kb_name, db=self.db)
 
         repo = KBRepository(kb_config)
         entry = repo.load(task_id)

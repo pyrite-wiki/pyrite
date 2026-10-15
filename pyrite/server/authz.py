@@ -94,12 +94,14 @@ def authorize(action: Action, resource: type):
             "decided by REST's policy adapter yet (ADR-0037 themes 3b, 3c)"
         )
     # Lazy: `api` imports this module for `get_principal`.
+    from ..services.kb_resolver import resolve_kb
+    from ..storage.database import PyriteDB
     from .api import (
         _resolve_kb_names,
         _UnparseableBodyError,
         get_access_policy,
         get_config,
-        kb_not_found,
+        get_db,
     )
 
     if resource is AnyKB:
@@ -115,6 +117,7 @@ def authorize(action: Action, resource: type):
         request: Request,
         policy: AccessPolicy = Depends(get_access_policy),
         config: PyriteConfig = Depends(get_config),
+        db: PyriteDB = Depends(get_db),
     ) -> ReadScope:
         if get_principal(request) is None:
             raise not_authenticated()
@@ -128,12 +131,13 @@ def authorize(action: Action, resource: type):
                 detail={"code": "INVALID_BODY", "message": "Request body could not be parsed"},
             ) from None
         scope = read_scope(request, policy)
+        readable = scope.as_set()
         for name in names:
-            # Check the KB the services will read: a shortname names its KB
-            # (#912). The refusal repeats the caller's own spelling, so a
-            # private KB's shortname answers as an unknown name does.
-            if not scope.permits(config.kb_name_for(name)):
-                raise kb_not_found(name)
+            # The one resolver (#952): an unknown name, a KB outside the
+            # scope and a shortname are one KBNotFoundError, which the
+            # central handler answers as 404 KB_NOT_FOUND with its
+            # suggestion. Every caller, the unscoped one included.
+            resolve_kb(config, name, readable_kbs=readable, db=db)
         return scope
 
     return authorize_kb_read_named

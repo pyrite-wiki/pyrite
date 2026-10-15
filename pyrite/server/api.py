@@ -25,6 +25,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from ..config import PyriteConfig, Settings, load_config
+from ..exceptions import KBNotFoundError
 from ..services import access_policy
 from ..services.access_policy import (
     FORBIDDEN,
@@ -902,15 +903,17 @@ async def _enforce_kb_tier(
     db: PyriteDB,
     kb_name: str,
     tier: str,
-    not_found: HTTPException,
+    not_found: HTTPException | None,
 ) -> None:
     """The per-KB write rule for one KB.
 
     Passes when the caller's effective role on `kb_name` is at least `tier`.
-    Otherwise: 404 (`not_found`) when the caller may not read the KB or the KB
-    does not exist -- the two must answer alike, or the answer is an oracle
-    for private KB names -- and 403 when the caller can read it but not
-    write it.
+    Otherwise: 404 when the caller may not read the KB or the KB does not
+    exist -- the two must answer alike, or the answer is an oracle for
+    private KB names -- and 403 when the caller can read it but not write
+    it. The 404 is `not_found` (a row's own not-found, for a row resource)
+    or, when None, the resolver's refusal for the KB the request named,
+    with its suggestion (#952).
     """
     # The policy checks existence before role (ADR-0037 §4): a missing KB
     # answers exactly like a private one, for every caller and on every write
@@ -927,6 +930,8 @@ async def _enforce_kb_tier(
         )
     # NOT_FOUND -- and UNAUTHENTICATED, which both callers answer with 401
     # before reaching here, and which this guard always answered as 404.
+    if not_found is None:
+        raise decision.refusal or KBNotFoundError(f"KB '{kb_name}' not found")
     raise not_found
 
 
@@ -1016,9 +1021,9 @@ def requires_kb_tier(tier: str, *, resolve_kb=None):
             )
 
         for kb_name in kb_names:
-            await _enforce_kb_tier(
-                request, config, db, config.kb_name_for(kb_name), tier, kb_not_found(kb_name)
-            )
+            # The name as the caller spelled it: the policy resolves it
+            # (#952), so a shortname is refused with the full name suggested.
+            await _enforce_kb_tier(request, config, db, kb_name, tier, None)
 
     return _check_kb_tier
 

@@ -25,7 +25,7 @@ from pyrite.exceptions import (
     ConfigError,
     ConfigFileUnreadableError,
     ConfigSaveRefusedError,
-    KBNotFoundError,
+    ValidationError,
 )
 from pyrite.utils.yaml import dump_yaml_file, load_yaml_file
 
@@ -530,14 +530,15 @@ class PyriteConfig:
         ``services/kb_resolver.resolve_kb`` (#952), for a caller with no
         scope to apply: a shortname is refused with the full name suggested,
         and with ``db`` a KB registered after this config was loaded is
-        found. A blank name is refused here (a service that calls this is
-        reading one KB, not "unplaced").
+        found. A blank name names no KB (never "unknown", #846/#528); a
+        service that calls this acts on one KB, so a blank is refused as
+        ``ValidationError`` (``VALIDATION_FAILED``): the caller named none.
         """
         from .services.kb_resolver import resolve_kb
 
         kb = resolve_kb(self, name, readable_kbs=None, db=db)
         if kb is None:
-            raise KBNotFoundError(f"KB '{name}' not found")
+            raise ValidationError("A knowledge base must be named")
         return kb
 
     def confined_default_role(self, value: str | None) -> str | None:

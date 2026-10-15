@@ -323,10 +323,18 @@ def _create_app_with_empty_static(config, tmpdir: Path):
             os.environ["PYRITE_STATIC_DIR"] = prior
 
 
-def build_world(tmp_path_factory, *, label: str = "adr0037-characterization") -> World:
+def build_world(
+    tmp_path_factory,
+    *,
+    label: str = "adr0037-characterization",
+    shortnames: dict[str, str] | None = None,
+) -> World:
+    """`shortnames` gives KBs a shortname (`tests/test_kb_walk.py`); the
+    goldens are recorded with none, and `GET /api/kbs` lists them."""
     tmpdir = Path(tmp_path_factory.mktemp(label))
     for name in (READABLE, PRIVATE, READ_ONLY, NO_DEFAULT_ROLE):
         (tmpdir / name).mkdir()
+    short = shortnames or {}
 
     keys = [
         {"key_hash": _hash_key(READ_KEY), "role": "read", "label": "characterization-read"},
@@ -335,16 +343,34 @@ def build_world(tmp_path_factory, *, label: str = "adr0037-characterization") ->
     ]
     config = PyriteConfig(
         knowledge_bases=[
-            KBConfig(name=READABLE, path=tmpdir / READABLE, kb_type="generic", default_role="read"),
-            KBConfig(name=PRIVATE, path=tmpdir / PRIVATE, kb_type="generic", default_role="none"),
+            KBConfig(
+                name=READABLE,
+                path=tmpdir / READABLE,
+                kb_type="generic",
+                default_role="read",
+                shortname=short.get(READABLE),
+            ),
+            KBConfig(
+                name=PRIVATE,
+                path=tmpdir / PRIVATE,
+                kb_type="generic",
+                default_role="none",
+                shortname=short.get(PRIVATE),
+            ),
             KBConfig(
                 name=READ_ONLY,
                 path=tmpdir / READ_ONLY,
                 kb_type="generic",
                 default_role="read",
                 read_only=True,
+                shortname=short.get(READ_ONLY),
             ),
-            KBConfig(name=NO_DEFAULT_ROLE, path=tmpdir / NO_DEFAULT_ROLE, kb_type="generic"),
+            KBConfig(
+                name=NO_DEFAULT_ROLE,
+                path=tmpdir / NO_DEFAULT_ROLE,
+                kb_type="generic",
+                shortname=short.get(NO_DEFAULT_ROLE),
+            ),
         ],
         settings=Settings(
             index_path=tmpdir / "index.db",

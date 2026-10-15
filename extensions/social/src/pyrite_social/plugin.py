@@ -4,7 +4,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, ClassVar
 
-from pyrite.exceptions import public_text
+from pyrite.exceptions import PyriteError, public_text
 from pyrite.plugins.capabilities import Capability
 from pyrite.plugins.scoping import kb_scope_clause
 
@@ -362,7 +362,6 @@ class SocialPlugin:
         `error_code`. Now goes through `KBService.create_entry`, the same
         pipeline `software-kb`'s `_mcp_create_backlog_item` uses.
         """
-        from pyrite.exceptions import PyriteError
         from pyrite.services.kb_service import KBService
 
         db, should_close = self._get_db()
@@ -373,9 +372,10 @@ class SocialPlugin:
             config = load_config()
 
         kb_name = args["kb_name"]
-        kb_config = config.get_kb(kb_name)
-        if not kb_config:
-            return {"error": f"KB '{kb_name}' not found", "error_code": "KB_NOT_FOUND"}
+        try:
+            kb_config = config.require_kb(kb_name)  # the one resolver (#952)
+        except PyriteError as e:
+            return {"error": public_text(e), "error_code": e.error_code}
 
         try:
             svc = KBService(config, db)

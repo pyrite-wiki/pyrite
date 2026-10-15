@@ -643,6 +643,19 @@ class KBService:
             return self._registry.get_kb_config(name)
         return None
 
+    def require_kb(self, name: str) -> KBConfig:
+        """The KB ``name`` names, or the one refusal (#952).
+
+        ``PyriteConfig.require_kb`` through this service's database: an
+        unknown name or a shortname is ``KBNotFoundError`` with the
+        resolver's suggestion, a blank name is ``ValidationError`` (the
+        caller named no KB), and a KB registered after the config was
+        loaded is found. Every service method that acts on one KB looks it
+        up here, so no method answers an empty result for a name that is
+        not a KB.
+        """
+        return self.config.require_kb(name, db=self.db)
+
     def get_kb_stats(self, name: str) -> dict[str, Any] | None:
         """Get stats for a specific KB."""
         return self.db.get_kb_stats(name)
@@ -682,7 +695,8 @@ class KBService:
         """
         kb_name = named_kb(kb_name)
         if kb_name:
-            kb_name = self.config.kb_name_for(kb_name)  # a shortname names its KB
+            # The full name only: a shortname is link syntax, refused by the
+            # surface's resolver before this is reached (#952).
             if readable_kbs is not None and kb_name not in readable_kbs:
                 return None
             result = self._read_entry(entry_id, kb_name)
@@ -892,9 +906,7 @@ class KBService:
     # =========================================================================
 
     def _writable_kb(self, kb_name: str) -> KBConfig:
-        kb_config = self.config.get_kb(kb_name)
-        if not kb_config:
-            raise KBNotFoundError(f"KB not found: {kb_name}")
+        kb_config = self.require_kb(kb_name)
         if kb_config.read_only:
             raise KBReadOnlyError(f"KB is read-only: {kb_name}")
         return kb_config
@@ -1172,9 +1184,7 @@ class KBService:
         reported as {"created": False, "valid": True, "entry_id": "..."}.
         """
         if validate_only:
-            kb_config = self.config.get_kb(kb_name)
-            if not kb_config:
-                raise KBNotFoundError(f"KB not found: {kb_name}")
+            kb_config = self.require_kb(kb_name)
         else:
             kb_config = self._writable_kb(kb_name)
         hook_ctx = self._hook_ctx(kb_name, kb_config, "create")
@@ -1266,9 +1276,7 @@ class KBService:
         from ..schema import generate_entry_id
         from ..utils.yaml import load_yaml
 
-        kb_config = self.config.get_kb(kb_name)
-        if not kb_config:
-            raise KBNotFoundError(f"KB not found: {kb_name}")
+        kb_config = self.require_kb(kb_name)
         if not validate_only and kb_config.read_only:
             raise KBReadOnlyError(f"KB is read-only: {kb_name}")
 
@@ -1657,9 +1665,7 @@ class KBService:
             KBNotFoundError: If KB not found
             KBReadOnlyError: If KB is read-only
         """
-        kb_config = self.config.get_kb(kb_name)
-        if not kb_config:
-            raise KBNotFoundError(f"KB not found: {kb_name}")
+        kb_config = self.require_kb(kb_name)
         if kb_config.read_only:
             raise KBReadOnlyError(f"KB is read-only: {kb_name}")
 
@@ -1729,9 +1735,7 @@ class KBService:
         Returns:
             See KBRepository.rename for the result-dict shape.
         """
-        kb_config = self.config.get_kb(kb_name)
-        if not kb_config:
-            raise KBNotFoundError(f"KB not found: {kb_name}")
+        kb_config = self.require_kb(kb_name)
         if kb_config.read_only and not dry_run:
             raise KBReadOnlyError(f"KB is read-only: {kb_name}")
 
@@ -1834,9 +1838,7 @@ class KBService:
         target_id, relation, note = check_link_spec(
             target_id, relation, note=note, target_kb=target_kb
         )
-        kb_config = self.config.get_kb(source_kb)
-        if not kb_config:
-            raise KBNotFoundError(f"KB not found: {source_kb}")
+        kb_config = self.require_kb(source_kb)
         if kb_config.read_only:
             raise KBReadOnlyError(f"KB is read-only: {source_kb}")
 
@@ -1846,9 +1848,7 @@ class KBService:
             raise EntryNotFoundError(f"Entry not found: {source_id}")
 
         tkb = target_kb or source_kb
-        target_kb_config = self.config.get_kb(tkb)
-        if not target_kb_config:
-            raise KBNotFoundError(f"KB not found: {tkb}")
+        target_kb_config = self.require_kb(tkb)
 
         target_repo = repo if tkb == source_kb else KBRepository(target_kb_config)
 
@@ -1993,8 +1993,7 @@ class KBService:
             target_kb=spec.get("target_kb"),
         )
         tkb = spec.get("target_kb") or kb_name
-        if self.config.get_kb(tkb) is None:
-            raise KBNotFoundError(f"KB not found: {tkb}")
+        self.require_kb(tkb)
         return source_id, target_id, relation, note, tkb
 
     # =========================================================================
@@ -2103,9 +2102,7 @@ class KBService:
         folder_path = metadata.get("folder_path", "") if isinstance(metadata, dict) else ""
         if not folder_path:
             return [], 0
-        kb_config = self.config.get_kb(kb_name)
-        if not kb_config:
-            raise KBNotFoundError(f"KB not found: {kb_name}")
+        kb_config = self.require_kb(kb_name)
         abs_folder = str(kb_config.path / folder_path)
         entries = self.db.list_entries_in_folder(
             kb_name, abs_folder, sort_by, sort_order, limit, offset
@@ -2337,24 +2334,15 @@ class KBService:
         Drawn only from the KBs the caller may read (`readable_kbs`, required;
         `UNSCOPED` is the caller for whom that is every KB) and capped: a name
         offered from outside that set would confirm a private KB exists. The
-        hint names no KB when nothing matches.
+        hint names no KB when nothing matches. The rule is the resolver's
+        (`kb_resolver.near_kb_names`, #952); this is what it says.
         """
-        import difflib
+        from .kb_resolver import HOW_TO_LIST_KBS, near_kb_names
 
-        names = sorted(
-            kb.name
-            for kb in self.config.all_kbs()
-            if readable_kbs is None or kb.name in readable_kbs
-        )
-        matches = (
-            difflib.get_close_matches(kb_name, names, n=self.KB_NAME_SUGGESTION_LIMIT)
-            if isinstance(kb_name, str)
-            else []
-        )
-        how = "Call orient with no KB name to list the KBs you can read."
+        matches = near_kb_names(self.config, kb_name, readable_kbs)
         if matches:
-            return matches, f"Did you mean: {', '.join(matches)}? {how}"
-        return [], how
+            return matches, f"Did you mean: {', '.join(matches)}? {HOW_TO_LIST_KBS}"
+        return [], HOW_TO_LIST_KBS
 
     def orient_overview(
         self,
@@ -2431,9 +2419,7 @@ class KBService:
         existing caller's response is unchanged.
         """
         detail = self._orient_detail(detail)
-        kb_config = self.config.get_kb(kb_name)
-        if not kb_config:
-            raise KBNotFoundError(f"KB '{kb_name}' not found")
+        kb_config = self.require_kb(kb_name)
 
         total = self.count_entries(kb_name=kb_name)
         distinct_types = self.get_distinct_types(kb_name=kb_name)
@@ -2539,9 +2525,7 @@ class KBService:
 
     def generate_readme(self, kb_name: str) -> str:
         """Generate a README.md for a knowledge base."""
-        kb_config = self.config.get_kb(kb_name)
-        if not kb_config:
-            raise KBNotFoundError(f"KB not found: {kb_name}")
+        kb_config = self.require_kb(kb_name)
 
         description = kb_config.description or ""
         total = self.count_entries(kb_name=kb_name)
@@ -2679,9 +2663,7 @@ class KBService:
         ``KBNotFoundError`` for an unknown KB, ``EntryNotFoundError`` for an
         absent entry.
         """
-        kb_config = self.config.get_kb(kb_name)
-        if kb_config is None:
-            raise KBNotFoundError(f"KB not found: {kb_name}")
+        kb_config = self.require_kb(kb_name)
         if self.db.get_entry(entry_id, kb_name) is not None:
             return
         if KBRepository(kb_config).load(entry_id) is not None:
@@ -2877,9 +2859,7 @@ class KBService:
         Static subdirectories preserve deliberate placement, collection YAML files
         describe their containing folders, and filenames remain fixed at creation.
         """
-        kb_config = self.config.get_kb(kb_name)
-        if kb_config is None:
-            raise KBNotFoundError(f"KB not found: {kb_name}")
+        kb_config = self.require_kb(kb_name)
 
         repo = KBRepository(kb_config)
         planned: list[tuple[Entry, Path, Path]] = []
@@ -2993,9 +2973,7 @@ class KBService:
         """
         from ..services.git_service import GitService
 
-        kb_config = self.config.get_kb(kb_name)
-        if not kb_config:
-            raise KBNotFoundError(kb_name)
+        kb_config = self.require_kb(kb_name)
 
         kb_path = kb_config.path
         if not GitService.is_git_repo(kb_path):
@@ -3111,9 +3089,7 @@ class KBService:
         """
         from ..services.git_service import GitService
 
-        kb_config = self.config.get_kb(kb_name)
-        if not kb_config:
-            raise KBNotFoundError(kb_name)
+        kb_config = self.require_kb(kb_name)
 
         kb_path = kb_config.path
         if not GitService.is_git_repo(kb_path):

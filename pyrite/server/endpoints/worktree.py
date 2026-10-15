@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from ...exceptions import PyriteError
-from ..api import get_worktree_resolver, limiter, requires_tier
+from ...services.access_policy import AccessPolicy
+from ..api import get_access_policy, get_worktree_resolver, limiter, requires_tier
+from ..authz import get_principal, not_authenticated
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,22 @@ class RejectRequest(BaseModel):
     feedback: str = ""
 
 
+def _resolve_named_kb(request: Request, policy: AccessPolicy, kb: str | None) -> None:
+    """The KB a worktree route names, through the one resolver (#952).
+
+    These routes sit behind the global tier floor only (ADR-0037 theme 3b
+    has not moved them), so nothing resolved ``kb`` before the handler: an
+    unknown name answered "no worktree" like a real KB with none. Resolved
+    for the caller's read scope, an unknown, unreadable or shortname KB is
+    404 ``KB_NOT_FOUND`` before any worktree is looked up; a blank or
+    absent one names no KB.
+    """
+    principal = get_principal(request)
+    if principal is None:
+        raise not_authenticated()
+    policy.resolve_kb(principal, kb)
+
+
 # ── User endpoints ──────────────────────────────────────────────────
 
 
@@ -81,8 +99,10 @@ def worktree_status(
     request: Request,
     kb: str = Query(..., description="KB name"),
     resolver=Depends(get_worktree_resolver),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Get worktree status for the current user."""
+    _resolve_named_kb(request, policy, kb)
     auth_user = getattr(request.state, "auth_user", None)
     if not auth_user:
         return WorktreeStatusResponse(has_worktree=False, status="none")
@@ -125,8 +145,10 @@ def worktree_submit(
     request: Request,
     req: SubmitRequest,
     resolver=Depends(get_worktree_resolver),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Submit worktree changes for admin review."""
+    _resolve_named_kb(request, policy, req.kb)
     auth_user = getattr(request.state, "auth_user", None)
     if not auth_user:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -154,8 +176,10 @@ def worktree_changes(
     request: Request,
     kb: str = Query(..., description="KB name"),
     resolver=Depends(get_worktree_resolver),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Get pending changes in the user's worktree (diff against main)."""
+    _resolve_named_kb(request, policy, kb)
     auth_user = getattr(request.state, "auth_user", None)
     if not auth_user:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -198,8 +222,10 @@ def worktree_reset(
     request: Request,
     req: ResetRequest,
     resolver=Depends(get_worktree_resolver),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Reset worktree to main (discard all changes)."""
+    _resolve_named_kb(request, policy, req.kb)
     auth_user = getattr(request.state, "auth_user", None)
     if not auth_user:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -226,8 +252,10 @@ def merge_queue(
     request: Request,
     kb: str | None = Query(None, description="Filter by KB name"),
     resolver=Depends(get_worktree_resolver),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """List all submitted worktrees pending admin review."""
+    _resolve_named_kb(request, policy, kb)
     wt_svc = resolver.worktree_service
     submissions = wt_svc.get_submissions(kb)
 
@@ -272,8 +300,10 @@ def merge_queue_diff(
     username: str,
     kb: str = Query(..., description="KB name"),
     resolver=Depends(get_worktree_resolver),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Get diff for a submitted worktree against main."""
+    _resolve_named_kb(request, policy, kb)
     wt_svc = resolver.worktree_service
 
     # Find the submission by username
@@ -322,8 +352,10 @@ def merge_queue_merge(
     username: str,
     req: MergeRequest,
     resolver=Depends(get_worktree_resolver),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Merge a user's submitted changes into main."""
+    _resolve_named_kb(request, policy, req.kb)
     wt_svc = resolver.worktree_service
 
     # Find worktree by username + kb
@@ -354,8 +386,10 @@ def merge_queue_reject(
     username: str,
     req: RejectRequest,
     resolver=Depends(get_worktree_resolver),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Reject a submission with feedback."""
+    _resolve_named_kb(request, policy, req.kb)
     wt_svc = resolver.worktree_service
 
     all_wts = wt_svc.list_worktrees(req.kb)

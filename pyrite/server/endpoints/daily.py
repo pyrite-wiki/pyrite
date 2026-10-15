@@ -50,11 +50,7 @@ def list_daily_dates(
     svc: KBService = Depends(get_kb_service),
 ):
     """List dates that have daily notes for calendar display."""
-    if not svc.get_kb(kb):
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "KB_NOT_FOUND", "message": f"KB '{kb}' not found"},
-        )
+    svc.require_kb(kb)  # the one resolver (#952); a blank name is refused as unnamed
 
     if month is None:
         month = datetime.now(UTC).strftime("%Y-%m")
@@ -194,11 +190,7 @@ async def get_or_create_daily_note(
     """
     _validate_date(date_str)
 
-    if not svc.get_kb(kb):
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "KB_NOT_FOUND", "message": f"KB '{kb}' not found"},
-        )
+    svc.require_kb(kb)  # the one resolver (#952); a blank name is refused as unnamed
 
     entry_id = _daily_entry_id(date_str)
     readable = scope.as_set()
@@ -246,11 +238,7 @@ def create_daily_note(
     readable = read_scope(request, policy).as_set()
     _validate_date(date_str)
 
-    if not svc.get_kb(kb):
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "KB_NOT_FOUND", "message": f"KB '{kb}' not found"},
-        )
+    svc.require_kb(kb)  # the one resolver (#952); a blank name is refused as unnamed
 
     entry_id = _daily_entry_id(date_str)
 

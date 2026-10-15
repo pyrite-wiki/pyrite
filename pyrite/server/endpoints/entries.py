@@ -544,11 +544,7 @@ def export_entries(
     """Export entries as JSON, Markdown, or CSV."""
     from ...formats import get_format_registry
 
-    if not svc.get_kb(kb):
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "KB_NOT_FOUND", "message": f"KB '{kb}' not found"},
-        )
+    svc.require_kb(kb)  # the one resolver (#952); a blank name is refused as unnamed
 
     entries = svc.list_entries(kb_name=kb, entry_type=entry_type, limit=limit, offset=0)
 
@@ -610,11 +606,7 @@ async def import_entries(
     """Import entries from an uploaded file."""
     from ...formats.importers import get_importer_registry
 
-    if not svc.get_kb(kb):
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "KB_NOT_FOUND", "message": f"KB '{kb}' not found"},
-        )
+    svc.require_kb(kb)  # the one resolver (#952); a blank name is refused as unnamed
 
     # Auto-detect format from filename
     fmt = format
