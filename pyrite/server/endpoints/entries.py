@@ -10,7 +10,6 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from ...config import PyriteConfig
 from ...exceptions import (
     EntryNotFoundError,
-    KBNotFoundError,
     KBReadOnlyError,
     PyriteError,
     ValidationError,
@@ -801,7 +800,11 @@ def create_entry(
 
     try:
         written = svc.create(req.kb, spec, allow_undeclared=req.allow_undeclared)
-    except (KBNotFoundError, EntryNotFoundError) as e:
+    except EntryNotFoundError as e:
+        # A KBNotFoundError is never caught here: the write tier resolves the
+        # named KB before the handler runs (#952), and one that still arrives
+        # (a blank name is a ValidationError, below) carries the class code
+        # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
     except KBReadOnlyError as e:
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
@@ -877,7 +880,11 @@ def update_entry(
 
     try:
         written = svc.update(entry_id, req.kb, updates)
-    except (KBNotFoundError, EntryNotFoundError) as e:
+    except EntryNotFoundError as e:
+        # A KBNotFoundError is never caught here: the write tier resolves the
+        # named KB before the handler runs (#952), and one that still arrives
+        # (a blank name is a ValidationError, below) carries the class code
+        # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
     except KBReadOnlyError as e:
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
@@ -924,7 +931,11 @@ def patch_entry_field(
     updates = {body.field: body.value}
     try:
         written = svc.update(entry_id, body.kb, updates)
-    except (KBNotFoundError, EntryNotFoundError) as e:
+    except EntryNotFoundError as e:
+        # A KBNotFoundError is never caught here: the write tier resolves the
+        # named KB before the handler runs (#952), and one that still arrives
+        # (a blank name is a ValidationError, below) carries the class code
+        # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
     except KBReadOnlyError as e:
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
@@ -960,7 +971,11 @@ def delete_entry(
 
     try:
         deleted = svc.delete_entry(entry_id, kb)
-    except (KBNotFoundError, EntryNotFoundError) as e:
+    except EntryNotFoundError as e:
+        # A KBNotFoundError is never caught here: the write tier resolves the
+        # named KB before the handler runs (#952), and one that still arrives
+        # (a blank name is a ValidationError, below) carries the class code
+        # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
     except KBReadOnlyError as e:
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})

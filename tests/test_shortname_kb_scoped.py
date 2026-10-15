@@ -137,6 +137,21 @@ def test_a_colliding_shortname_is_reported_and_warned(world, caplog):
     assert "the full name wins" in caplog.text
 
 
+def test_a_registry_kbs_name_that_is_a_config_shortname_is_reported(world, caplog):
+    """#949 item 3: `kb add`-registered KBs live in the registry cache, not
+    `knowledge_bases`, and the collision check used to look only at the
+    latter. The full name still wins (`kb_name_for`)."""
+    config, _ = world
+    with caplog.at_level(logging.WARNING, logger="pyrite.config"):
+        added = config.register_db_kbs(
+            [{"name": "pb", "path": "/nonexistent/pb", "kb_type": "generic"}]
+        )
+    assert added == 1
+    assert any("'pb'" in m and "pub" in m for m in config.validate()["shortnames"])
+    assert "'pb's full name" in caplog.text and "the full name wins" in caplog.text
+    assert config.kb_name_for("pb") == "pb"
+
+
 def test_the_overlay_takes_the_full_name_only(tmp_path):
     """The worktree resolver no longer maps a shortname: it is handed the
     full name the route resolved, and a shortname reaches no worktree."""

@@ -486,14 +486,19 @@ class PyriteConfig:
             logger.warning("%s; the full name wins", message)
 
     def _shortname_collisions(self) -> list[str]:
-        """Shortnames that equal another KB's full name, or each other (#912)."""
+        """Shortnames that equal another KB's full name, or each other (#912).
+
+        A registry KB's name counts as a full name too (#949): the registry
+        cache is empty when the config is built, so `register_db_kbs` runs
+        this again for the rows it adds, and `validate()` sees both.
+        """
         found: list[str] = []
         seen: dict[str, str] = {}
         for kb in self.knowledge_bases:
             short = kb.shortname
             if not short:
                 continue
-            if short in self._kb_by_name and short != kb.name:
+            if (short in self._kb_by_name or short in self._db_kb_cache) and short != kb.name:
                 found.append(
                     f"KB '{kb.name}' has shortname '{short}', which is KB '{short}'s full name"
                 )
@@ -635,6 +640,10 @@ class PyriteConfig:
             new[name] = kb
             added += 1
         self._db_kb_cache = new
+        if added:
+            for message in self._shortname_collisions():
+                if any(f"KB '{name}'s full name" in message for name in new):
+                    logger.warning("%s; the full name wins", message)
         return added
 
     def forget_db_kb(self, name: str) -> None:
