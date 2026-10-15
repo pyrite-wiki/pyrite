@@ -13,6 +13,12 @@ asserts that `[Unreleased]` stays empty.
 
 ## [Unreleased]
 
+## [0.25.8] - 2026-10-16
+
+Commands say what they did, and refuse what they cannot do before acting. The write commands join the outcome contract (ADR-0046): one JSON result by default and an exit code that means it. A usage error is a JSON refusal with exit 2. A malformed request, an unknown `--format`, a directory or missing input file, or an id held by more than one KB is refused before anything is written. A single-entry read returns what the file holds now, not what the index last saw. Search rows are lean and every search says how strong its match is. Index health follows the KB's declared types and reports type-name drift.
+
+**Upgrade notes.** `pyrite search` and `pyrite-read search` return lean rows by default; `--fields '*'` or `PYRITE_SEARCH_FIELDS='*'` brings back the full row (#54). `pyrite create`, `add`, `update`, `rename`, `link` and the `pyrite links` commands print JSON by default; pass `--format rich` for text. Usage errors are now JSON on stdout with exit 2, not text on stderr. `pyrite export collection|site --format` is deprecated in favour of `--target` and goes in 0.25.9. An id that two KBs both hold is refused without `-k`, where it used to answer from the first KB. The Postgres backend is marked experimental. MCP `kb_get` and `kb_update` answer `ENTRY_NOT_FOUND` / `KB_NOT_FOUND`; the old code stays in `legacy_error_code` for this release.
+
 ## [0.25.7] - 2026-10-13
 
 The first hour works. Following the README and getting-started on a clean machine, then connecting Claude Code or Claude Desktop with `pyrite mcp-setup`, now does what the docs say: `mcp-setup` writes the config each client reads, at the write tier; default output is the command's result, without log lines; `kb_orient` is true as an agent's first call; and the tutorial is run as a test. This is the alpha release for one operator working locally with a terminal agent. Multi-user stays experimental.
