@@ -23,7 +23,11 @@
   surface lands a write in a read-only KB. The web resolves a `[[short:id]]`
   prefix to the full name before building a link or calling the API (the
   read view's embeds included), so shortname wikilinks keep working there,
-  and a link prefix is looked up among your readable KBs only: a private KB
-  that shares the shortname never changes the answer. A refused
+  and a link prefix is looked up among your readable KBs only, by full name
+  and then by shortname: a private KB that shares the shortname, or whose
+  full name is your KB's shortname, never changes the answer.
+  `PyriteConfig.kb_name_for` and `get_kb_by_shortname` are gone (they
+  mapped across every KB); the one lookup is
+  `services/kb_resolver.readable_kb_named`. A refused
   `sw_create_backlog_item` carries `error_code`; a `kb` row with no `source`
   is a user row for the CLI's registry merge, as it is for the resolver.

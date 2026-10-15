@@ -552,7 +552,9 @@ def _registered_kb(config: PyriteConfig, kb_name: str) -> KBConfig | None:
         try:
             rows = conn.execute(
                 "SELECT name, path, kb_type, description, default_role "
-                "FROM kb WHERE source = 'user' AND name = ?",
+                # A row with no source is a user row, as the registry, the
+                # resolver and merge_registered_kbs read it.
+                "FROM kb WHERE (source = 'user' OR source IS NULL) AND name = ?",
                 (kb_name,),
             ).fetchall()
         finally:
