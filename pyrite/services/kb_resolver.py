@@ -45,8 +45,12 @@ if TYPE_CHECKING:
     from ..config import KBConfig, PyriteConfig
     from ..storage.database import PyriteDB
 
-#: The way forward in every unknown-KB refusal, on every surface. Names no KB.
-HOW_TO_LIST_KBS = "Call orient with no KB name to list the KBs you can read."
+#: The way forward in every unknown-KB refusal, on every surface. Names no KB,
+#: and names the tool by the name each surface knows it by (MCP's is
+#: `kb_orient`, the CLI's `pyrite orient`; REST lists them at `/api/kbs`).
+HOW_TO_LIST_KBS = (
+    "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+)
 
 #: Near matches offered at most (the cap `KBService.kb_name_suggestions` had).
 NEAR_MATCH_LIMIT = 3

@@ -96,19 +96,23 @@ itself: its code is `VALIDATION_FAILED` on every transport, unchanged (see
 "Write refusals" below). The CLI has no transition field, and no CLI write
 command has adopted the new class-level codes yet — see "Write refusals".
 
-Two more joined in 0.25.7 (#66), both now `KB_NOT_FOUND`: the refusal a
-caller with per-KB scoping gets from any MCP tool, prompt or resource for a
-KB outside its readable set (`legacy_error_code: "NOT_FOUND"`; the answer is
-the same whether the KB is private or does not exist), and `kb_orient`'s
-answer for a name that is not a KB (`legacy_error_code: "OPERATION_FAILED"`).
-That scoped refusal carries one static `suggestion` ("Call kb_orient with no
-kb_name to list the KBs you can read."), the same string for a private and
-an absent name and naming no KB. `kb_orient` and `pyrite orient` add
-`did_you_mean` beside the contract's keys: a list of at most three near-match
-KB names the caller may read, empty when there are none (a scoped caller is
-refused by the scoped refusal first, so it sees the static hint, not
-`did_you_mean`). A `kb_name` that is not a string is `VALIDATION_FAILED`; `null`
-is "no name".
+Two more joined in 0.25.7 (#66), both `KB_NOT_FOUND` with
+`legacy_error_code: "NOT_FOUND"`: the refusal a caller with per-KB scoping
+gets from any MCP tool, prompt or resource for a KB outside its readable
+set (the answer is the same whether the KB is private or does not exist),
+and `kb_orient`'s answer for a name that is not a KB. Since #952 both are
+one refusal from the one KB resolver (`services/kb_resolver.py`), on every
+surface, and it carries two things beside the contract's keys: a
+`suggestion` and a `did_you_mean` list. For an unknown name the suggestion
+is one static sentence ("To list the KBs you can read, call kb_orient (MCP)
+or `pyrite orient` (CLI) with no KB name."), the same for a private and an
+absent name and naming no KB; `did_you_mean` holds at most three near-match
+KB names for an unscoped caller (an operator key, auth off, the CLI) and is
+empty for a scoped one, whose readable set is one `kb_orient` call away. For
+the **shortname** of a KB the caller may read -- link syntax only
+(`[[short:id]]`), refused everywhere else -- the suggestion says so and
+`did_you_mean` names the full name, for every caller. A `kb_name` that is not
+a string is `VALIDATION_FAILED`; `null` and a blank string are "no name".
 
 **REST** answers a domain refusal as `{"detail": {"code", "message",
 "retryable", "hint"?}}` — the web client already speaks this shape

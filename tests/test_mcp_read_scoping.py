@@ -58,7 +58,7 @@ def _absent_kb_payload(kb_name):
         "error": f"KB '{kb_name}' not found",
         "error_code": "KB_NOT_FOUND",
         "retryable": False,
-        "suggestion": "Call orient with no KB name to list the KBs you can read.",
+        "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "did_you_mean": [],
         "legacy_error_code": "NOT_FOUND",
     }

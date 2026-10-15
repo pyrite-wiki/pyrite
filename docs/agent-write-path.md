@@ -149,7 +149,7 @@ pyrite update hello-agent -k nokb --title x
 
 <!-- output-keys -->
 ```json
-{"outcome": "error", "error": "KB 'nokb' not found", "error_code": "KB_NOT_FOUND", "retryable": false, "suggestion": "Call orient with no KB name to list the KBs you can read.", "did_you_mean": []}
+{"outcome": "error", "error": "KB 'nokb' not found", "error_code": "KB_NOT_FOUND", "retryable": false, "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.", "did_you_mean": []}
 ```
 
 ## Not covered here
