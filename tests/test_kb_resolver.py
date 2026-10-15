@@ -26,7 +26,13 @@ import pytest
 from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.exceptions import KBNotFoundError
 from pyrite.services.access_policy import UNSCOPED
-from pyrite.services.kb_resolver import HOW_TO_LIST_KBS, kb_set, resolve_kb
+from pyrite.services.kb_resolver import (
+    HOW_TO_LIST_KBS,
+    kb_set,
+    readable_kb_named,
+    readable_kb_with_shortname,
+    resolve_kb,
+)
 from pyrite.storage.database import PyriteDB
 
 
@@ -316,3 +322,31 @@ class TestThePolicyAsksTheResolver:
         with pytest.raises(KBNotFoundError) as e:
             policy.require(p, Action.KB_READ, KB("pb"))
         assert e.value.did_you_mean == ["pub"]
+
+
+class TestALinkPrefixIsLookedUpAmongReadableKbs:
+    """`readable_kb_named`, the lookup a `[[prefix:id]]` uses (#965 round 3):
+    the readable KB with that full name, else the readable KB with that
+    shortname. A KB the caller cannot read is never consulted, so it never
+    changes the answer."""
+
+    @staticmethod
+    def _config(tmp_path, private_first):
+        for name in ("notes", "team"):
+            (tmp_path / name).mkdir(exist_ok=True)
+        private = KBConfig(name="notes", path=tmp_path / "notes", default_role="none")
+        readable = KBConfig(name="team", path=tmp_path / "team", shortname="notes")
+        kbs = [private, readable] if private_first else [readable, private]
+        return PyriteConfig(knowledge_bases=kbs, settings=Settings(index_path=tmp_path / "i.db"))
+
+    @pytest.mark.parametrize("private_first", [True, False])
+    def test_a_private_full_name_never_hides_a_readable_shortname(self, tmp_path, private_first):
+        config = self._config(tmp_path, private_first)
+        assert readable_kb_named(config, "notes", {"team"}).name == "team"
+        assert readable_kb_named(config, "team", {"team"}).name == "team"
+        assert readable_kb_named(config, "notes", {"other"}) is None
+
+    def test_the_unscoped_caller_gets_the_full_name_first(self, tmp_path):
+        config = self._config(tmp_path, private_first=False)
+        assert readable_kb_named(config, "notes", None).name == "notes"
+        assert readable_kb_with_shortname(config, "notes", None).name == "team"

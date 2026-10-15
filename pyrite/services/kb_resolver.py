@@ -124,7 +124,7 @@ def kb_set(
     return None if readable_kbs is None else set(readable_kbs)
 
 
-def _readable_kb_with_shortname(
+def readable_kb_with_shortname(
     config: PyriteConfig, name: str, readable_kbs: set[str] | None
 ) -> KBConfig | None:
     """The KB among the caller's readable ones whose shortname is `name`.
@@ -140,11 +140,30 @@ def _readable_kb_with_shortname(
     return None
 
 
+def readable_kb_named(
+    config: PyriteConfig, name: str, readable_kbs: set[str] | None
+) -> KBConfig | None:
+    """The KB a link prefix (`[[name:id]]`) means for a caller who may read
+    `readable_kbs`: the readable KB with that full name, else the readable
+    KB with that shortname, else None.
+
+    Both steps consult the readable set only. Existence is never checked
+    first: a private KB whose full name is a readable KB's shortname would
+    otherwise turn the link into a miss, and the miss would say the private
+    name exists (#965 round 3). For the unscoped caller a full name wins
+    over another KB's shortname, as `config.validate` warns it will.
+    """
+    for kb in config.all_kbs():
+        if kb.name == name and (readable_kbs is None or kb.name in readable_kbs):
+            return kb
+    return readable_kb_with_shortname(config, name, readable_kbs)
+
+
 def _not_a_kb(config: PyriteConfig, name: str, readable_kbs: set[str] | None) -> KBNotFoundError:
     """The refusal for `name`: the same class and message whether the name is
     unknown, unreadable or a shortname; only the suggestion knows which."""
     message = f"KB '{name}' not found"
-    short = _readable_kb_with_shortname(config, name, readable_kbs)
+    short = readable_kb_with_shortname(config, name, readable_kbs)
     if short is not None:
         return KBNotFoundError(
             message,

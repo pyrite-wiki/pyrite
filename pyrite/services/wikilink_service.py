@@ -12,7 +12,7 @@ from ..config import PyriteConfig
 from ..exceptions import AmbiguousEntryError
 from ..storage.database import PyriteDB
 from .access_policy import named_kb
-from .kb_resolver import _readable_kb_with_shortname
+from .kb_resolver import readable_kb_named
 
 logger = logging.getLogger(__name__)
 
@@ -83,13 +83,14 @@ class WikilinkService:
         caller may read it. An unreadable KB is answered as an unknown
         prefix, which is what a KB that does not exist gets.
 
-        The lookup is among the caller's readable KBs only, the same one the
-        refusal path uses: a full name is itself when readable (it wins over
-        another KB's shortname); a shortname is the readable KB that has it,
-        never a private KB that shares it (#952, #965 round 2)."""
-        if self.config.get_kb(prefix):
-            return prefix if readable_kbs is None or prefix in readable_kbs else None
-        kb = _readable_kb_with_shortname(self.config, prefix, readable_kbs)
+        The lookup is among the caller's readable KBs only, by full name and
+        then by shortname (`kb_resolver.readable_kb_named`): a readable full
+        name wins over another KB's shortname; a shortname is the readable
+        KB that has it. A KB the caller cannot read is never consulted, so
+        it never changes the answer -- neither one sharing the shortname nor
+        one whose full name is the readable KB's shortname (#952, #965
+        rounds 2 and 3)."""
+        kb = readable_kb_named(self.config, prefix, readable_kbs)
         return kb.name if kb is not None else None
 
     def _one_or_ambiguous(self, rows: list[dict[str, Any]], target: str) -> dict[str, Any] | None:

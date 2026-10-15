@@ -135,3 +135,35 @@ def test_a_shared_shortname_prefix_is_the_readable_kb(private_first):
             assert svc.resolve_entry("e1", kb_name="pub", readable_kbs={"pub"})["kb_name"] == "pub"
         finally:
             db.close()
+
+
+@pytest.mark.parametrize("private_first", [True, False])
+def test_a_private_kb_named_like_a_readable_shortname_does_not_change_a_link(private_first):
+    """The lookup is among the caller's readable KBs by full name and by
+    shortname (#965 round 3): readable `team` has shortname `notes`;
+    `notes:e1` is team's entry whether or not a private KB named `notes`
+    exists. Looked up across all KBs by name first, the private KB would
+    make the answer None, and tell a scoped caller the name exists."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        kbs = {}
+        for name, short in (("notes", None), ("team", "notes")):
+            (root / name).mkdir()
+            kbs[name] = KBConfig(
+                name=name, path=root / name, kb_type=KBType.GENERIC, shortname=short
+            )
+        order = ["notes", "team"] if private_first else ["team", "notes"]
+        config = PyriteConfig(
+            knowledge_bases=[kbs[n] for n in order], settings=Settings(index_path=root / "i.db")
+        )
+        db = PyriteDB(root / "i.db")
+        svc = KBService(config, db)
+        for name in order:
+            svc.create_entry(name, "e1", f"E1 in {name}", "note", name)
+        try:
+            found = svc.resolve_entry("notes:e1", readable_kbs={"team"})
+            assert found is not None and found["kb_name"] == "team"
+            # The unscoped caller: the full name wins over the shortname.
+            assert svc.resolve_entry("notes:e1", readable_kbs=None)["kb_name"] == "notes"
+        finally:
+            db.close()
