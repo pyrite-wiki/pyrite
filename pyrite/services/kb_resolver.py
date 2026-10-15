@@ -23,7 +23,10 @@ The rule (`kb/design.md` principle 8; ADR-0037 §4; ADR-0049 Q3):
 - Existence is one lookup: config.yaml, then the registry cache
   (`PyriteConfig.get_kb`), then the live `kb` table when a database is given,
   so a KB registered after a long-running server loaded its config is found
-  by every caller that asks (#925).
+  by every caller that asks (#925). Only a row `pyrite kb add` wrote counts
+  there: the row the server seeds for a config.yaml KB carries none of the
+  entry's attributes, and a resolved KB carries every attribute of the
+  configured KB it names.
 
 `readable_kbs` is the caller's `ReadScope.as_set()`: `UNSCOPED` (None) for a
 caller that may read every KB. It is a required keyword, like the services'

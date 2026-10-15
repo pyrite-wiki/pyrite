@@ -222,6 +222,34 @@ class TestTheOneExistenceLookup:
         assert policy.kb_exists("late")
         assert config.require_kb("late", db=db).name == "late"
 
+    def test_a_config_rows_kb_is_the_config_entry_with_every_attribute(self, db, tmp_path):
+        """The server seeds a `kb` row (source "config") for every config.yaml
+        KB. That row never stands in for the entry: resolved through the
+        config that defines it, the KB carries `read_only` and `shortname`;
+        resolved through a config that does not, it is not found -- never a
+        bare KB built from the row, which would let a write into a read-only
+        KB through (review of #965, blocking 1)."""
+        (tmp_path / "ro").mkdir()
+        defines = PyriteConfig(
+            knowledge_bases=[
+                KBConfig(name="ro", path=tmp_path / "ro", read_only=True, shortname="r")
+            ],
+            settings=Settings(index_path=tmp_path / "index.db"),
+        )
+        db.register_kb("ro", "generic", str(tmp_path / "ro"), source="config")
+        kb = resolve_kb(defines, "ro", readable_kbs=UNSCOPED, db=db)
+        assert kb.read_only is True and kb.shortname == "r"
+        does_not = PyriteConfig(settings=Settings(index_path=tmp_path / "index.db"))
+        with pytest.raises(KBNotFoundError):
+            resolve_kb(does_not, "ro", readable_kbs=UNSCOPED, db=db)
+
+    def test_a_user_rows_kb_carries_the_rows_attributes(self, db, tmp_path):
+        (tmp_path / "added").mkdir()
+        db.register_kb("added", "generic", str(tmp_path / "added"), default_role="read")
+        config = PyriteConfig(settings=Settings(index_path=tmp_path / "index.db"))
+        kb = resolve_kb(config, "added", readable_kbs=UNSCOPED, db=db)
+        assert (kb.name, kb.default_role, kb.read_only) == ("added", "read", False)
+
     def test_require_kb_delegates(self, config):
         with pytest.raises(KBNotFoundError) as e:
             config.require_kb("pb")

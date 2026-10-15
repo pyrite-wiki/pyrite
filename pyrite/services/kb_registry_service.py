@@ -530,12 +530,24 @@ class KBRegistryService:
         cfg = self.config.get_kb(name)
         if cfg:
             return cfg
+        return self.user_kb_config(name)
 
-        # Build from DB row
+    def user_kb_config(self, name: str) -> KBConfig | None:
+        """The KB `name` as ``pyrite kb add`` registered it: built from its
+        ``kb`` row, or None.
+
+        Only a row whose ``source`` is not ``config``. The server seeds a
+        ``config`` row for every config.yaml KB (`seed_from_config`), and
+        that row carries none of the entry's attributes -- no ``read_only``,
+        no ``shortname`` -- so it never stands in for the entry: a config
+        that does not define the KB does not find it here either (#952
+        review, blocking 1). The resolver (`services/kb_resolver.py`) asks
+        this after the config it was given.
+        """
         from ..storage.models import KB
 
         kb = self.db.session.get(KB, name)
-        if not kb:
+        if not kb or (kb.source or "user") == "config":
             return None
 
         # The same confinement as loading the registry: a row refused there

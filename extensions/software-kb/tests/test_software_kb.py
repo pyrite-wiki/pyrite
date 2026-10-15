@@ -1526,11 +1526,25 @@ def _make_test_db(tmpdir, entries=None, links=None):
 
 
 def _make_plugin_with_db(db):
-    """Create a plugin with injected DB context."""
+    """Create a plugin with injected DB context.
+
+    The context carries the config too, as the server's does: a handler
+    resolves the KB it is given against ``ctx.config`` (#952), so the
+    config names every KB the test db registered, at the path it registered.
+    """
+    from pyrite.config import KBConfig, PyriteConfig, Settings
 
     class _Ctx:
         def __init__(self, db):
             self.db = db
+            rows = db._raw_conn.execute("SELECT name, path, kb_type FROM kb").fetchall()
+            self.config = PyriteConfig(
+                knowledge_bases=[
+                    KBConfig(name=name, path=Path(path), kb_type=kb_type)
+                    for name, path, kb_type in rows
+                ],
+                settings=Settings(index_path=Path(rows[0][1]) / "test.db"),
+            )
 
     plugin = SoftwareKBPlugin()
     plugin.set_context(_Ctx(db))

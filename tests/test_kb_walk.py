@@ -42,7 +42,7 @@ from tests.characterization.surfaces import (
     kb_bearing_mcp_tool_names,
     kb_bearing_rest_operations,
 )
-from tests.characterization.world import MISSING, PRIVATE, READABLE, build_world
+from tests.characterization.world import MISSING, PRIVATE, READ_ONLY, READABLE, build_world
 
 SHORT = {READABLE: "rdb", PRIVATE: "pvt"}
 UNKNOWN = MISSING
@@ -266,6 +266,74 @@ def _mcp(world, principal_name: str, tool: str, kb: str, tag: str):
         readable_kbs=None if principal.readable_kbs is None else set(principal.readable_kbs),
         writable_kbs=None if principal.writable_kbs is None else set(principal.writable_kbs),
     )
+
+
+# ---------------------------------------------------------------------------
+# A read-only KB refuses every write (review of #965, blocking 1)
+# ---------------------------------------------------------------------------
+
+
+def _kb_state(world, kb: str) -> tuple[frozenset, frozenset]:
+    """Everything a write into `kb` could change: its files on disk and its
+    entry rows. Compared before and after every call that names it."""
+    root = world.config.get_kb(kb).path
+    files = frozenset(
+        (str(f.relative_to(root)), f.stat().st_size, f.stat().st_mtime_ns)
+        for f in root.rglob("*")
+        if f.is_file()
+    )
+    from pyrite.services.kb_service import KBService
+
+    rows = KBService(world.config, world.db).list_entries(kb_name=kb, limit=10_000)
+    entries = frozenset((r["id"], r.get("updated_at")) for r in rows)
+    return files, entries
+
+
+class TestAReadOnlyKbRefusesEveryWrite:
+    """Property: a resolved KB carries every attribute of the configured KB
+    it names, `read_only` included, on every surface -- so no write surface
+    lands a write in a read-only KB, whoever the caller is. Walked for the
+    unscoped operator key, who may write anywhere a write is allowed at all.
+
+    Red before the fix: a plugin handler that built its service on
+    `load_config()` resolved the KB from its registry row, which has no
+    `read_only`, and `sw_create_backlog_item` wrote into READ_ONLY.
+    """
+
+    # Index maintenance changes the index to match the files, never the
+    # files: a stale row it drops is the index catching up, not a write
+    # into the KB. Named, with the reason, rather than inferred.
+    NOT_A_KB_WRITE = {"kb_index_sync"}
+
+    def test_mcp_write_tools(self, world):
+        before = _kb_state(world, READ_ONLY)
+        landed = []
+        for tool in _tools(world):
+            if world.mcp_server._tool_tiers.get(tool, "read") == "read":
+                continue
+            if tool in self.NOT_A_KB_WRITE:
+                continue
+            out = _mcp(world, "admin_key", tool, READ_ONLY, "ro")
+            if out is None:
+                continue
+            after = _kb_state(world, READ_ONLY)
+            if after != before:
+                landed.append((tool, out))
+                before = after
+        assert not landed, landed
+
+    def test_rest_routes(self, world):
+        before = _kb_state(world, READ_ONLY)
+        landed = []
+        for method, path in _rest_ops(world):
+            answer = _rest(world, "admin_key", method, path, READ_ONLY, f"ro-{method}{path}")
+            if answer is None:
+                continue
+            after = _kb_state(world, READ_ONLY)
+            if after != before:
+                landed.append((method, path, answer))
+                before = after
+        assert not landed, landed
 
 
 def _tools(world):
