@@ -511,6 +511,7 @@ def index_health(
         bool(broken_links)
         or bool(undeclared_types)
         or bool(health.get("type_name_drift_total"))
+        or bool(health.get("schema_errors"))
         or bool(missing_required)
         or bool(subdirectory_mismatches)
         or bool(malformed_frontmatter)
@@ -537,6 +538,7 @@ def index_health(
             "type_name_drift": health.get("type_name_drift", []),
             "type_name_drift_total": health.get("type_name_drift_total", 0),
             "type_name_drift_has_more": health.get("type_name_drift_has_more", False),
+            "schema_errors": health.get("schema_errors", []),
             "checks": health,
         },
         output_format,
@@ -595,6 +597,14 @@ def _report_health(
         console.print(
             f"[yellow]⚠ {broken_links} broken link(s) found.[/yellow]"
             " Run 'pyrite links check' for details."
+        )
+
+    for err in health.get("schema_errors", []):
+        console.print(
+            f"kb.yaml failed to load for {err['kb']}: {err['error']}",
+            style="yellow",
+            markup=False,
+            highlight=False,
         )
 
     if health.get("type_name_drift_total"):

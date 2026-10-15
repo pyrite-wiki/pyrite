@@ -208,6 +208,23 @@ and for every plugin row (status `warning`), and `info` for an
 `allow_other` field (does not change the status). Empty for a KB without
 drift.
 
+**`index health` → `type_name_drift`.** One group per KB per entry type
+spelled more than one way once case, `_` and spaces are folded to `-`:
+`{kb, normalized, spellings, spellings_total, spellings_has_more}`, each
+spelling `{type, count, declared}` (`declared`: that exact spelling is a
+`kb.yaml` type). KBs are never combined. Bounded to 100 groups
+(`type_name_drift_total`, `type_name_drift_has_more`) and 50 spellings per
+group. Read-only: nothing is renamed. Any group makes the status
+`warning`. `pyrite kb health`, REST `GET /api/kbs/{kb}/health` and MCP
+`kb_health` carry the same three fields for their one KB.
+
+**`index health` → `schema_errors`.** One row `{kb, error}` per KB whose
+`kb.yaml` failed to load (invalid YAML, `types: null`, `types` a list).
+Health still answers for that KB: it counts as declaring no types, so its
+non-core types appear in `undeclared_types` and no spelling is `declared`.
+Any row makes the status `warning`. The same field is on `kb health`, REST
+and MCP `kb_health`.
+
 **Update fields.** An update applies the fields it names: the entry type's
 own fields (its model's fields and every field its `kb.yaml` names for the
 type) and, on every surface, keys the type does not declare, which are

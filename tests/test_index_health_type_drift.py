@@ -161,25 +161,47 @@ BROKEN_KB_YAML = {
 }
 
 
+HEALTH_SURFACES = {
+    "kb-health": ["kb", "health", "-k", "one"],
+    "index-health-k": ["index", "health", "-k", "one"],
+    "index-health-all": ["index", "health"],
+}
+
+
 @pytest.mark.parametrize("fmt", ["json", "rich"])
+@pytest.mark.parametrize("surface", sorted(HEALTH_SURFACES))
 @pytest.mark.parametrize("shape", sorted(BROKEN_KB_YAML))
-def test_kb_health_answers_for_a_kb_whose_schema_fails_to_load(drift, shape, fmt):
+def test_health_answers_for_a_kb_whose_schema_fails_to_load(drift, shape, surface, fmt):
     """A health check must not fail on the broken KB it is meant to diagnose:
     a kb.yaml that does not load counts as declaring no types, and the report
-    says it failed to load."""
+    says it failed to load. Without -k, one broken kb.yaml must not take down
+    the report for every other KB."""
     _, config = drift
     kb = config.get_kb("one")
     kb.kb_yaml_path.write_text(BROKEN_KB_YAML[shape], encoding="utf-8")
     kb.invalidate_schema_cache()
     with patch("pyrite.cli.context.load_config", return_value=config):
-        result = CliRunner().invoke(app, ["kb", "health", "-k", "one", "--format", fmt])
+        result = CliRunner().invoke(app, [*HEALTH_SURFACES[surface], "--format", fmt])
+    assert result.exception is None or isinstance(result.exception, SystemExit), repr(
+        result.exception
+    )
     assert result.exit_code == 0, result.output
     if fmt == "json":
         data = json.loads(result.stdout)
-        assert data["schema_errors"] == [{"kb": "one", "error": data["schema_errors"][0]["error"]}]
+        assert [e["kb"] for e in data["schema_errors"]] == ["one"]
         assert data["schema_errors"][0]["error"]
-        spellings = data["type_name_drift"][0]["spellings"]
+        group = next(g for g in data["type_name_drift"] if g["kb"] == "one")
+        spellings = group["spellings"]
         assert {s["type"] for s in spellings} == {"research-note", "research_note", "research note"}
         assert not any(s["declared"] for s in spellings)
+        if surface.startswith("index"):
+            assert data["status"] == "warning"
+            assert data["checks"]["schema_errors"] == data["schema_errors"]
+            # No declared types: every non-core spelling is undeclared.
+            assert {r["type"] for r in data["undeclared_types"] if r["kb"] == "one"} == {
+                "research-note",
+                "research_note",
+                "research note",
+            }
     else:
         assert "kb.yaml failed to load" in result.stdout
