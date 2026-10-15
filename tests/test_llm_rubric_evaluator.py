@@ -180,6 +180,26 @@ class TestResponseParsing:
         with pytest.raises(EvaluationFailedError, match="did not answer"):
             evaluator._parse_response(reply, sample_entry, SAMPLE_RUBRIC_ITEMS)
 
+    @pytest.mark.parametrize(
+        "item", [[SAMPLE_RUBRIC_ITEMS[0]], {"text": SAMPLE_RUBRIC_ITEMS[0]}], ids=["list", "object"]
+    )
+    def test_an_item_that_is_not_a_string_is_unanswered(self, evaluator, sample_entry, item):
+        """Not a TypeError from the set lookup: an answer that names no item (#950)."""
+        rows = [{"item": item, "pass": True}, {"item": SAMPLE_RUBRIC_ITEMS[1], "pass": True}]
+        with pytest.raises(EvaluationFailedError, match="did not answer 1 of 2"):
+            evaluator._parse_response(json.dumps(rows), sample_entry, SAMPLE_RUBRIC_ITEMS)
+
+    def test_a_non_string_item_beside_full_answers_is_ignored(self, evaluator, sample_entry):
+        rows = [*json.loads(_reply()), {"item": ["stray"], "pass": False}]
+        assert evaluator._parse_response(json.dumps(rows), sample_entry, SAMPLE_RUBRIC_ITEMS) == []
+
+    @pytest.mark.parametrize("confidence", ["high", None, True, [0.9]])
+    def test_a_failed_item_needs_a_numeric_confidence(self, evaluator, sample_entry, confidence):
+        rows = json.loads(_reply({SAMPLE_RUBRIC_ITEMS[0]: (0.5, "no why")}))
+        rows[0]["confidence"] = confidence
+        with pytest.raises(EvaluationFailedError, match="not a number"):
+            evaluator._parse_response(json.dumps(rows), sample_entry, SAMPLE_RUBRIC_ITEMS)
+
     @complete_reply
     def test_all_pass_no_issues(self, evaluator, sample_entry):
         issues = evaluator._parse_response(_reply(), sample_entry, SAMPLE_RUBRIC_ITEMS)

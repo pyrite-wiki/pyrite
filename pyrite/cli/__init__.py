@@ -41,7 +41,7 @@ from ..services.kb_service import KBService
 from ..utils.errors import PyriteCLIGroup, cli_error, exit_unless_whole
 from .browse_commands import register_browse_commands
 from .collection_commands import collections_app
-from .context import cli_context, open_index_db
+from .context import cli_context, get_config_and_db, open_index_db
 from .db_commands import db_app
 from .entry_commands import register_entry_commands
 from .export_commands import export_app
@@ -264,32 +264,34 @@ def ci_command(
         QAService(config, None, llm_service=llm_service).require_tier(tier)
     except PyriteError as exc:
         cli_error_from(exc, output_format)
-    # Handle no KBs configured (a named --kb is still looked for below)
-    if not config.knowledge_bases and not kb:
-        if output_format == "json":
-            typer.echo(
-                _json.dumps(
-                    {
-                        "kbs": [],
-                        "total_entries": 0,
-                        "total_errors": 0,
-                        "total_warnings": 0,
-                        "result": "pass",
-                    }
-                )
-            )
-        else:
-            typer.echo("pyrite ci — no KBs configured, nothing to validate.")
-        raise typer.Exit(0)
-
-    db = open_index_db(config)
+    # Resolve KBs as the other commands do, DB-registered ones merged, so a
+    # named KB's checks (schema, files, rubric) read its real config. A KB
+    # that resolves to nothing is refused: the index alone cannot run them,
+    # and validating nothing is not a pass (#795).
+    config, db = get_config_and_db(config)
     try:
-        # Nor for a KB it cannot find: validating no entries is not a pass.
-        # `ci` reads the config as written (open_index_db does not merge
-        # DB-registered KBs), so a KB the index alone holds still counts.
-        qa = QAService(config, db, llm_service=llm_service)
-        if kb and not qa.knows_kb(kb):
+        if kb and config.get_kb(kb) is None:
             cli_error_from(KBNotFoundError(f"KB '{kb}' is not configured"), output_format)
+
+        # Handle no KBs configured
+        if not config.knowledge_bases:
+            if output_format == "json":
+                typer.echo(
+                    _json.dumps(
+                        {
+                            "kbs": [],
+                            "total_entries": 0,
+                            "total_errors": 0,
+                            "total_warnings": 0,
+                            "result": "pass",
+                        }
+                    )
+                )
+            else:
+                typer.echo("pyrite ci — no KBs configured, nothing to validate.")
+            raise typer.Exit(0)
+
+        qa = QAService(config, db, llm_service=llm_service)
 
         if kb:
             result = {"kbs": [qa.validate_kb(kb, readable_kbs=UNSCOPED, tier=tier)]}

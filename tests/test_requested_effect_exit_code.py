@@ -1761,6 +1761,11 @@ PRINTS: dict[tuple[str, str], tuple[str, str]] = {
         "#795: a KB run lists entries not assessed and tasks not created; the exit "
         "for a partial result is ADR-0046 slice 6",
     ),
+    ("pyrite/cli/qa_commands.py", "qa_fix"): (
+        "left",
+        "#795/#788: the report lists fixes whose write failed under Failed; the exit "
+        "for a partial result is ADR-0046 slice 6",
+    ),
     ("pyrite/cli/qa_commands.py", "qa_check_urls"): (
         "safe",
         "broken URLs are the report the command exists to give, as qa validate's findings are",

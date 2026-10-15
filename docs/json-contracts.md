@@ -1064,7 +1064,10 @@ lists beside `results`:
 
 With `--create-tasks`, a single-entry result carries `task_failed: {entry_id,
 reason}` when its task could not be created. On a KB run, these are listed in
-`tasks_failed`. The exit code is still 0 when only some entries failed; ADR-0046
+`tasks_failed`. `--format csv` and `--format markdown` render only `results`,
+so each entry not assessed (`not assessed: <id>: <code>: <reason>`) and each
+task not created (`task not created: <id>: <reason>`) is also written to
+stderr. The default (rich) output lists both. The exit code is still 0 when only some entries failed; ADR-0046
 slice 6 settles partial results.
 
 **`ci --tier 2`** runs the judgment rubric over every entry whose type has
@@ -1072,8 +1075,19 @@ judgment items (one model call per entry; `qa_assessment` entries are skipped).
 A finding is an `llm_rubric_violation` warning and fails the gate at the
 default `--severity warning`. An entry the model did not answer for is an
 `evaluation_failed` **error**, so `"result"` is never `"pass"` for a tier that
-did not run. `ci --kb <name>` for a KB that is neither configured nor in the
-index is refused with `KB_NOT_FOUND`; it used to validate nothing and pass.
+did not run. `ci` resolves KBs as the other commands do, with KBs registered
+in the index (`pyrite kb add`, or indexed before they left `config.yaml`)
+merged in, so a named KB's schema, file and rubric checks read its real
+configuration. `ci --kb <name>` for a KB that resolves to nothing is refused
+with `KB_NOT_FOUND`; it used to validate nothing and pass. In `--format text`
+an entry the model did not answer for is printed as an `ERROR` line and the
+result is `FAIL`.
+
+A model reply that is a list but does not answer counts as not run: an `item`
+that is not a string, a row that is not an object, a `pass` that is not a
+boolean, or a `confidence` on a failed item that is not a number. Any other
+error while one entry is evaluated is that entry's `evaluation_failed` (or its
+`failed` row); the run carries on.
 
 **`qa fix`** adds `failed` and `failed_count` beside `fixed`, `manual` and
 `skipped`. A fix is in `fixed` only once its write returned. Each entry in
@@ -1085,6 +1099,9 @@ index is refused with `KB_NOT_FOUND`; it used to validate nothing and pass.
 - `link_not_rewritten: ...`: the broken link is not in the entry's `links`
   (a `[[wikilink]]` in the body is not rewritten).
 
-`manual` keeps only the issues a person must decide. One failed entry does not
+The default (rich) report prints a **Failed** table with each reason, and the
+summary counts `failed`. It no longer says "No fixable issues found." when
+fixes were attempted and failed. `manual` keeps only the issues a person must
+decide. One failed entry does not
 stop the rest. With `--dry-run`, `fixed` lists what would be attempted and
 `failed` is empty.

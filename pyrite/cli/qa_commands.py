@@ -206,6 +206,16 @@ def qa_assess(
         formatted = _format_output(data, output_format)
         if formatted is not None:
             typer.echo(formatted)
+            if output_format in ("csv", "markdown"):
+                # These formats render `results` only; what was not assessed,
+                # and tasks not created, still reach the reader (#795).
+                for f in data.get("failed", []):
+                    typer.echo(
+                        f"not assessed: {f['entry_id']}: {f['error_code']}: {f['reason']}",
+                        err=True,
+                    )
+                for t in data.get("tasks_failed", []):
+                    typer.echo(f"task not created: {t['entry_id']}: {t['reason']}", err=True)
             return
 
         # Rich output
@@ -641,8 +651,25 @@ def qa_fix(
                     f.get("message", ""),
                 )
             console.print(table)
-        else:
+        elif not result["failed"]:
             console.print("\n[green]No fixable issues found.[/green]")
+
+        # Failed: the fix was attempted and its write did not land (#788)
+        if result["failed"]:
+            console.print(f"\n[bold red]Failed ({result['failed_count']}):[/bold red]")
+            table = Table()
+            table.add_column("Entry", style="cyan")
+            table.add_column("Rule", style="dim")
+            table.add_column("Change")
+            table.add_column("Reason", style="red")
+            for f in result["failed"]:
+                table.add_row(
+                    f.get("entry_id", ""),
+                    f.get("rule", ""),
+                    f.get("message", ""),
+                    f.get("reason", ""),
+                )
+            console.print(table)
 
         # Manual
         if result["manual"]:
@@ -673,6 +700,7 @@ def qa_fix(
         # Summary
         console.print(
             f"\n[bold]Summary:[/bold] {result['fixed_count']} fixed, "
+            f"{result['failed_count']} failed, "
             f"{result['manual_count']} manual, {result['skipped_count']} skipped"
         )
 

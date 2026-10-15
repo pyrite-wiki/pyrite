@@ -155,11 +155,14 @@ class LLMRubricEvaluator:
 
         # Only an item the model judged pass or fail counts as answered; an
         # item it left out, or answered without a boolean, was not checked.
+        # The item must be a string before the set lookup: a list or object
+        # there is unhashable and would end the whole run in a TypeError.
         answered = {
-            r.get("item")
+            r["item"]
             for r in results
             if isinstance(r, dict)
-            and r.get("item") in valid_items
+            and isinstance(r.get("item"), str)
+            and r["item"] in valid_items
             and isinstance(r.get("pass"), bool)
         }
         unanswered = [item for item in rubric_items if item not in answered]
@@ -178,14 +181,23 @@ class LLMRubricEvaluator:
             if not isinstance(result, dict):
                 continue
 
-            item_text = result.get("item", "")
+            item_text = result.get("item")
             passed = result.get("pass")
             confidence = result.get("confidence", 0.5)
             reasoning = result.get("reasoning", "")
 
             # Only include items from our rubric list, judged fail
-            if item_text not in valid_items or passed is not False:
+            if (
+                not isinstance(item_text, str)
+                or item_text not in valid_items
+                or passed is not False
+            ):
                 continue
+            if isinstance(confidence, bool) or not isinstance(confidence, int | float):
+                raise EvaluationFailedError(
+                    entry_id,
+                    f"the model's confidence for '{item_text}' is not a number: {confidence!r}",
+                )
 
             issues.append(
                 {
@@ -197,7 +209,7 @@ class LLMRubricEvaluator:
                     # severity (#795). It was `info`, which no status counted.
                     "severity": "warning",
                     "field": "body",
-                    "message": reasoning or f"Failed rubric: {item_text}",
+                    "message": str(reasoning) if reasoning else f"Failed rubric: {item_text}",
                     "rubric_item": item_text,
                     "confidence": float(confidence),
                     "evaluator": evaluator,

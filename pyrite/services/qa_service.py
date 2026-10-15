@@ -18,6 +18,7 @@ from ..config import PyriteConfig
 from ..exceptions import (
     AINotConfiguredError,
     EntryNotFoundError,
+    EvaluationFailedError,
     InvalidQATierError,
     PyriteError,
 )
@@ -272,21 +273,6 @@ class QAService:
                 "QA tier 2 runs the model-judged rubric and no model is configured; "
                 "nothing was assessed"
             )
-
-    def knows_kb(self, kb_name: str) -> bool:
-        """Whether ``kb_name`` is configured or the index holds entries for it.
-
-        `ci --kb` asks before it validates: validating a KB that does not
-        exist checks nothing, and must not pass (#795). The index counts too,
-        because `ci` reads the config without the DB-registered KBs.
-        """
-        if self.config.get_kb(kb_name) is not None:
-            return True
-        return bool(
-            self.db.execute_sql(
-                "SELECT 1 FROM entry WHERE kb_name = :kb_name LIMIT 1", {"kb_name": kb_name}
-            )
-        )
 
     # =========================================================================
     # Assessment API
@@ -1457,6 +1443,20 @@ class QAService:
         type_meta = resolve_type_metadata(entry_type, kb_schema)
         guidelines = type_meta.get("guidelines", "")
 
+        try:
+            return self._run_evaluator(entry, judgment_items, guidelines)
+        except PyriteError:
+            raise
+        except Exception as exc:
+            # Whatever the evaluator did not expect is still a check that did
+            # not run: name it for this entry, never end the caller's run.
+            logger.warning("Tier 2 evaluation of %s failed", entry["id"], exc_info=True)
+            raise EvaluationFailedError(entry["id"], f"{type(exc).__name__}: {exc}") from exc
+
+    def _run_evaluator(
+        self, entry: dict[str, Any], judgment_items: list[str], guidelines: str
+    ) -> list[dict[str, Any]]:
+        """Run the async evaluator from sync code, in or out of an event loop."""
         import asyncio
 
         try:
@@ -1493,7 +1493,10 @@ class QAService:
         for row in rows:
             try:
                 issues.extend(self._evaluate_llm_rubric_row(row))
-            except PyriteError as exc:
+            # Second layer: `_evaluate_llm_rubric_row` already turns any error
+            # into EvaluationFailedError; this catch keeps the run going if a
+            # future path does not.
+            except Exception as exc:  # one entry's failure never ends the run
                 issues.append(
                     {
                         "entry_id": row["id"],

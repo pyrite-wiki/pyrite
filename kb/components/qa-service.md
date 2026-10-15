@@ -79,6 +79,12 @@ passed, or a fix landed, only when that check ran or that write returned.**
 - `QAFixService.fix_kb` puts a fix in `fixed` only once its write returned; a
   write that raised, a missing file, or a link with nothing to rewrite goes in
   `failed` with a `reason`. `FIX_KINDS` lists the kinds it dispatches.
+- Tier 2 evaluation of one entry ends as that entry's failure whatever goes
+  wrong in it (`_evaluate_llm_rubric_row` turns any non-Pyrite exception into
+  `EvaluationFailedError`), so `ci` and `assess_kb` keep every other entry's
+  report. `ci` resolves KBs with the DB registry merged (`get_config_and_db`);
+  the checks that need `config.get_kb()` return early for a KB that resolves
+  to nothing, so `ci` refuses such a KB rather than pass it.
 - Records written before #795 cannot be told apart: a `tier: 2` record from
   then may hold tier 1 checks only.
 

@@ -66,8 +66,31 @@ MODEL_REPLIES = {
     "not_json": lambda: "The entry looks fine to me.",
     "not_list": lambda: json.dumps({"item": RUBRIC, "pass": True}),
     "answers_no_item": lambda: "[]",
+    # Shapes the parser accepts as a list of objects but that do not answer:
+    "item_not_string": lambda: json.dumps([{"item": [RUBRIC], "pass": True}]),
+    "item_is_object": lambda: json.dumps([{"item": {"text": RUBRIC}, "pass": True}]),
+    "item_is_number": lambda: json.dumps([{"item": 5, "pass": True}]),
+    "row_not_object": lambda: json.dumps([RUBRIC, True]),
+    "confidence_not_number": lambda: json.dumps(
+        [{"item": RUBRIC, "pass": False, "confidence": "high", "reasoning": "x"}]
+    ),
+    # JSON the parser cannot even read without an error it does not expect
+    # (RecursionError): whatever goes wrong is still that entry's failure.
+    "deeply_nested": lambda: "[" * 100_000 + "]" * 100_000,
 }
-NOT_RUN = ["raises", "empty", "not_json", "not_list", "answers_no_item"]
+NOT_RUN = [
+    "raises",
+    "empty",
+    "not_json",
+    "not_list",
+    "answers_no_item",
+    "item_not_string",
+    "item_is_object",
+    "item_is_number",
+    "row_not_object",
+    "confidence_not_number",
+    "deeply_nested",
+]
 
 
 class FakeAnthropic:
@@ -185,16 +208,21 @@ def _records(config: PyriteConfig, kb: str, target: str) -> list[dict]:
 
 
 def _cli(config: PyriteConfig, args: list[str]):
-    with (
-        patch("pyrite.cli.context.load_config", return_value=config),
-        patch("pyrite.cli.load_config", return_value=config),
-    ):
-        result = runner.invoke(app, args)
+    result = _invoke(config, args)
     try:
         body = json.loads(result.stdout)
     except ValueError:
         body = {"_raw": result.stdout}
     return result.exit_code, body
+
+
+def _invoke(config: PyriteConfig, args: list[str]):
+    """The raw `CliRunner` result, wide enough that Rich does not wrap a reason."""
+    with (
+        patch("pyrite.cli.context.load_config", return_value=config),
+        patch("pyrite.cli.load_config", return_value=config),
+    ):
+        return runner.invoke(app, args, env={"COLUMNS": "300"})
 
 
 def _mcp(config: PyriteConfig, args: dict):
@@ -678,3 +706,120 @@ def test_ci_on_a_named_kb_with_none_configured_is_not_a_pass(tmp_path):
     code, body = _cli(config, ["ci", "--kb", "no-such-kb", "--format", "json"])
     assert code != 0, body
     assert body.get("error_code") == "KB_NOT_FOUND", body
+
+
+# =========================================================================
+# Fix round 1: every output mode, every KB string, every reply shape
+# =========================================================================
+
+#: Every `--format` `qa assess` takes (`validate_output_format`).
+ASSESS_FORMATS = ["json", "yaml", "rich", "csv", "markdown"]
+
+
+@pytest.mark.parametrize("fmt", ASSESS_FORMATS)
+def test_every_assess_output_mode_shows_the_entries_not_assessed(with_model, fmt):
+    """csv and markdown render only `results`: the failures must still show."""
+    with _model(FakeAnthropic("raises")):
+        result = _invoke(
+            with_model, ["qa", "assess", JUDGED, "--tier", "2", "--max-age", "0", "--format", fmt]
+        )
+    shown = result.stdout + result.stderr
+    for eid in TITLES:
+        assert eid in shown, (fmt, shown)
+    assert "provider unreachable" in shown, (fmt, shown)
+
+
+@pytest.mark.parametrize("fmt", ASSESS_FORMATS)
+def test_every_assess_output_mode_shows_the_task_not_created(no_model, fmt):
+    beta = no_model.get_kb(JUDGED).path / "beta.md"
+    beta.write_text(beta.read_text().replace("type: note", "type: event\ndate: '2006'"))
+    IndexManager(PyriteDB(no_model.settings.index_path), no_model).index_all()
+    args = ["qa", "assess", JUDGED, "--entry", "beta", "--create-tasks", "--format", "json"]
+    _cli(no_model, args)  # creates the task; the next run collides with it
+    for run in (
+        args[:-1] + [fmt],
+        [*args[:3], "--max-age", "0", "--create-tasks", "--format", fmt],
+    ):
+        result = _invoke(no_model, run)
+        shown = result.stdout + result.stderr
+        assert "EntryExistsError" in shown, (fmt, run, shown)
+
+
+@needs_permissions
+def test_qa_fix_default_output_reports_failed(tmp_path):
+    """The human report: no 'No fixable issues', the failure and its reason, the count."""
+    config, path = _fix_world(tmp_path, "tag_case")
+    # Every fix fails: the entry's folder and the bystander's are read-only.
+    folders = [path.parent, path.parent.parent / "bystander"]
+    for folder in folders:
+        folder.chmod(0o555)
+    try:
+        result = _invoke(config, ["qa", "fix", "--kb", JUDGED])
+    finally:
+        for folder in folders:
+            folder.chmod(0o755)
+    out = result.stdout
+    assert "No fixable issues found" not in out, out
+    assert "fixt" in out and "bystand" in out and "update_failed" in out, out
+    assert "0 fixed, 2 failed" in out, out
+
+
+@pytest.mark.parametrize("regime", ["raises", "item_not_string"])
+def test_ci_text_output_fails_a_tier_that_did_not_run(with_model, regime):
+    with _model(FakeAnthropic(regime)):
+        result = _invoke(with_model, ["ci", "--kb", JUDGED, "--tier", "2", "--severity", "error"])
+    assert result.exit_code == 1, result.stdout
+    assert "Tier 2 did not run" in result.stdout
+    assert "Result: FAIL" in result.stdout
+
+
+def _required_world(tmp_path: Path) -> PyriteConfig:
+    """`judged` declares `source` required on notes; no entry has one."""
+    config = _build(tmp_path, model=False)
+    kb = config.get_kb(JUDGED)
+    (kb.path / "kb.yaml").write_text(
+        f"name: {JUDGED}\ntypes:\n  note:\n    required: [title, source]\n"
+    )
+    kb.invalidate_schema_cache()
+    return config
+
+
+def _without(config: PyriteConfig, name: str) -> PyriteConfig:
+    return PyriteConfig(
+        knowledge_bases=[kb for kb in config.knowledge_bases if kb.name != name],
+        settings=config.settings,
+    )
+
+
+@pytest.mark.control(reason="the schema check fails the gate while the KB is configured")
+def test_ci_fails_the_required_field_while_the_kb_is_configured(tmp_path):
+    config = _required_world(tmp_path)
+    code, body = _cli(config, ["ci", "--kb", JUDGED, "--severity", "error", "--format", "json"])
+    assert (code, body["result"]) == (1, "fail"), body
+
+
+def test_ci_runs_the_checks_of_a_kb_removed_from_the_config(tmp_path):
+    """The reviewer's repro: out of config.yaml, not reindexed. Indexing
+    registered the KB (`kb` row, source `user`), so it resolves through the
+    registry and its schema check really runs. Index rows with no `kb` row
+    cannot exist: deleting the row cascades to its entries."""
+    config = _without(_required_world(tmp_path), JUDGED)
+    code, body = _cli(config, ["ci", "--kb", JUDGED, "--severity", "error", "--format", "json"])
+    assert code == 1, body
+    rules = {i["rule"] for kb in body["kbs"] for i in kb["issues"]}
+    assert "schema_violation" in rules, body
+
+
+def test_ci_runs_the_checks_of_a_db_registered_kb(tmp_path):
+    """A KB `pyrite kb add` registered is resolved, and its checks really run."""
+    full = _required_world(tmp_path)
+    path = full.get_kb(JUDGED).path
+    db = PyriteDB(full.settings.index_path)
+    db.register_kb(name=JUDGED, kb_type="generic", path=str(path), description="", source="user")
+    db.close()
+    code, body = _cli(
+        _without(full, JUDGED), ["ci", "--kb", JUDGED, "--severity", "error", "--format", "json"]
+    )
+    assert code == 1, body
+    rules = {i["rule"] for kb in body["kbs"] for i in kb["issues"]}
+    assert "schema_violation" in rules, body
