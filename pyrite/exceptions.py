@@ -391,6 +391,22 @@ class StorageBusyError(StorageError):
     retryable = True
 
 
+class ConflictError(PyriteError):
+    """A write lost the race for its file and nothing was written (ADR-0042
+    decision 10, #955).
+
+    The update re-reads the file and re-applies its operations when the file
+    changed between its read and its replace (``FileChanged``), at most five
+    times; a file that keeps changing is this. Safe to show: the message
+    names the entry and the KB, never a path. REST answers 409 (the
+    ``CONFLICT`` row), MCP ``CONFLICT`` with ``retryable``, the CLI its
+    refusal shape with the same code.
+    """
+
+    error_code = "CONFLICT"
+    retryable = True
+
+
 class KBProtectedError(PyriteError):
     """Raised when attempting to modify/remove a config-protected KB."""
 

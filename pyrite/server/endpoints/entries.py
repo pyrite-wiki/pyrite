@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from ...config import PyriteConfig
 from ...exceptions import (
+    ConflictError,
     EntryNotFoundError,
     KBReadOnlyError,
     PyriteError,
@@ -890,6 +891,8 @@ def update_entry(
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
     except ValidationError as e:
         raise refusal_http(e)
+    except ConflictError as e:
+        raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": str(e)})
     except (PyriteError, ValueError) as e:
         raise HTTPException(status_code=400, detail={"code": "UPDATE_FAILED", "message": str(e)})
 
@@ -904,6 +907,9 @@ def update_entry(
         warnings=written.warnings,
         ignored=ignored,
         unchanged=unchanged,
+        changed=written.changed,
+        locked=written.locked,
+        not_moved=written.not_moved,
     )
 
 
@@ -941,10 +947,19 @@ def patch_entry_field(
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
     except ValidationError as e:
         raise refusal_http(e)
+    except ConflictError as e:
+        raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": str(e)})
     except (PyriteError, ValueError) as e:
         raise HTTPException(status_code=400, detail={"code": "UPDATE_FAILED", "message": str(e)})
 
-    return UpdateResponse(updated=True, id=entry_id, warnings=written.warnings)
+    return UpdateResponse(
+        updated=True,
+        id=entry_id,
+        warnings=written.warnings,
+        changed=written.changed,
+        locked=written.locked,
+        not_moved=written.not_moved,
+    )
 
 
 @router.delete(

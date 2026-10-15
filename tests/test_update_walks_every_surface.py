@@ -36,7 +36,7 @@ from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.exceptions import PyriteError, ValidationError
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
-from pyrite.storage.file_operations import FrontmatterSpan, Set
+from pyrite.storage.file_operations import FrontmatterSpan, ReplaceBody, Set
 from pyrite.storage.index import IndexManager
 from pyrite.utils.frontmatter import Frontmatter, split_frontmatter
 from tests.file_operations_oracle import op_spans, outside_identical
@@ -192,7 +192,8 @@ def assert_only_these_keys_changed(before: str, after: str, keys: tuple[str, ...
     span = _span(before)
     spans: list[tuple[int, int]] = []
     for key in keys:
-        spans += op_spans(before, span, Set(key, "x"))
+        op = ReplaceBody("x") if key == "body" else Set(key, "x")
+        spans += op_spans(before, span, op)
     assert outside_identical(before, after, spans), (
         f"bytes outside {keys} changed:\n--- before\n{before!r}\n--- after\n{after!r}"
     )
@@ -263,7 +264,10 @@ def _rest_client(config):
     app.dependency_overrides[get_config] = lambda: config
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_index_mgr] = lambda: index_mgr
-    return TestClient(app), db
+    # A refusal is a response, whatever raised it: the read a PUT makes
+    # before the write can fail on a file Pyrite cannot model (#760), and the
+    # property here is that nothing was written.
+    return TestClient(app, raise_server_exceptions=False), db
 
 
 def _rest_put(config, updates):
@@ -382,11 +386,12 @@ def test_an_alias_the_file_holds_neither_way_is_written_as_the_declared_target(t
     text = f"---\nid: {ID}\ntitle: Walk\ntype: event\ndate: 2026-01-01\n---\n\nText.\n"
     config, path = _build(tmp_path, text, frozenset({"event"}))
 
-    _service_update(config, {"actors": ["a"]})
+    _service_update(config, {"participants": ["a"]})
 
     after = _text(path)
-    assert "participants:\n- a\n" in after, after
-    assert "actors:" not in after
+    # `participants` is the alias, `actors` the declared target of an event.
+    assert "actors:\n- a\n" in after, after
+    assert "participants:" not in after
 
 
 def test_two_spellings_with_equal_values_make_one_operation(tmp_path: Path):
@@ -474,6 +479,24 @@ def test_a_bare_updated_at_is_restamped_bare_in_the_house_spelling(tmp_path: Pat
     assert line != "updated_at: 2026-01-01 00:00:00+00:00", "the stamp did not move"
 
 
+@pytest.mark.parametrize("spelled", ["2026-01-02T10:00:00", "2026-01-02T10:00:00Z", "2026-01-02"])
+def test_a_timestamp_read_and_written_back_unchanged_leaves_the_bytes_unchanged(
+    tmp_path: Path, spelled: str
+):
+    """#969 review: a read reports the loader's spelling of a bare timestamp
+    (`T` kept, `Z` read as `+00:00`); sending it back is the same instant
+    (ADR-0042 decision 3's equality), so nothing is written."""
+    text = f"---\nid: {ID}\ntitle: Walk\ntype: event\ndate: {spelled}\n---\n\nText.\n"
+    config, path = _build(tmp_path, text, frozenset({"event"}))
+    before = path.read_bytes()
+    read = _with_service(config, lambda svc: svc.get_entry(ID, KB, readable_kbs=None))
+    assert read["date"] is not None
+
+    _service_update(config, {"date": read["date"]})
+
+    assert path.read_bytes() == before
+
+
 def test_a_file_without_updated_at_never_gains_it(tmp_path: Path):
     text, _ = SHAPES["bom"]
     config, path = _build(tmp_path, text)
@@ -508,7 +531,8 @@ def _hook_that_edits_the_file(path: Path, times: int) -> Callable[..., Any]:
             calls["n"] += 1
             text = path.read_text(encoding="utf-8")
             path.write_text(
-                text.replace("\n---\n\n", f"\nhand: {calls['n']}\n---\n\n", 1), encoding="utf-8"
+                text.replace("\n---\n\n", f"\nhand{calls['n']}: {calls['n']}\n---\n\n", 1),
+                encoding="utf-8",
             )
         return None
 
@@ -530,7 +554,7 @@ def test_a_change_made_between_the_read_and_the_replace_is_kept(tmp_path: Path):
 
     after = _text(path)
     assert "title: Walk, second draft" in after
-    assert "\nhand: 1\n" in after, "the other writer's change was lost"
+    assert "\nhand1: 1\n" in after, "the other writer's change was lost"
 
 
 def test_a_file_that_keeps_changing_is_a_conflict_after_five_retries(tmp_path: Path):
@@ -647,12 +671,12 @@ def test_task_service_update_task_changes_only_what_it_names(tmp_path: Path):
     before = _text(path)
     try:
         TaskService(config, db).update_task(
-            "t1", "tasks", status="in_progress", comment="starting", by="me"
+            "t1", "tasks", status="claimed", comment="mine", by="me"
         )
     finally:
         db.close()
     after = _text(path)
-    assert "status: in_progress" in after
+    assert "status: claimed" in after
     assert "status_change_log:" in after
     assert_only_these_keys_changed(before, after, ("status", "status_change_log", "updated_at"))
     _crlf_kept(after)

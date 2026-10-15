@@ -14,6 +14,7 @@ from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.services import KBService, SearchService
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
+from pyrite.utils.yaml import load_yaml
 
 
 @pytest.fixture
@@ -197,7 +198,10 @@ class TestUpdateAndDeleteFlow:
         assert results[0]["id"] == "update-test"
 
     def test_update_entry_merges_metadata(self, integration_env):
-        """Updating metadata should merge shallowly, not clobber other keys."""
+        """A `metadata={...}` update sets the keys it names and leaves the
+        others as the file holds them (ADR-0042 decision 6, #955): a key the
+        file does not nest is written at the top level, a partial update
+        never clobbers another key, and nothing is nested under `metadata:`."""
         env = integration_env
 
         env["kb_service"].create_entry(
@@ -217,22 +221,17 @@ class TestUpdateAndDeleteFlow:
         )
 
         # A partial update with a different key must not drop existing_key.
-        updated = env["kb_service"].update_entry(
+        env["kb_service"].update_entry(
             entry_id="meta-merge-test",
             kb_name="test-timeline",
             metadata={"review_comments": [{"id": "c1", "note": "hi"}]},
         )
 
-        assert updated.metadata["existing_key"] == "keep-me"
-        assert updated.metadata["review_comments"][0]["id"] == "c1"
-
-        # Reload from disk to confirm the merge persisted to frontmatter.
-        from pyrite.storage.repository import KBRepository
-
-        repo = KBRepository(env["config"].get_kb("test-timeline"))
-        reloaded = repo.load("meta-merge-test")
-        assert reloaded.metadata["existing_key"] == "keep-me"
-        assert reloaded.metadata["review_comments"][0]["id"] == "c1"
+        path = env["timeline_path"] / "events" / "meta-merge-test.md"
+        fm = load_yaml(path.read_text(encoding="utf-8").split("---", 2)[1])
+        assert fm["existing_key"] == "keep-me"
+        assert fm["review_comments"][0]["id"] == "c1"
+        assert "metadata" not in fm
 
     def test_delete_entry_removes_from_index(self, integration_env):
         """Deleting an entry should remove it from search."""

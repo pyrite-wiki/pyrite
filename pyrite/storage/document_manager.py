@@ -36,10 +36,14 @@ class DocumentManager:
         kb_name: str,
         kb_config: KBConfig,
         *,
-        touch_updated_at: bool = True,
         is_create: bool = False,
     ) -> Path:
         """Save an entry to disk, register the KB, and index it.
+
+        The whole-file emit of a create, and of ``add_link``/``add_links``
+        until B6 P4 (#955). An update no longer comes here: it is operations
+        applied to the file's own bytes in ``KBService._update``, published by
+        ``storage/entry_writer.py``.
 
         If the entry's resolved path has changed (e.g. due to a templated
         subdirectory like ``backlog/{status}``), the old file is removed.
@@ -48,8 +52,6 @@ class DocumentManager:
             entry: The entry to save.
             kb_name: Name of the knowledge base.
             kb_config: KB configuration (provides path, type, description).
-            touch_updated_at: Passed through to ``KBRepository.save``; ``False``
-                keeps a caller-supplied ``updated_at`` (#151).
             is_create: ``True`` only for a brand-new entry (the sole caller is
                 ``KBService``'s create pipeline). A file's name is fixed at
                 creation (#391 cold read): the default ``False`` keeps the
@@ -90,7 +92,6 @@ class DocumentManager:
         file_path = repo.save(
             entry,
             subdir=subdir,
-            touch_updated_at=touch_updated_at,
             keep_filename=not is_create,
             exclusive=is_create,
         )

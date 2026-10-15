@@ -451,6 +451,20 @@ class KBRepository:
                 )
         return ""
 
+    def read_for_write(self, entry_id: str) -> tuple[Path, bytes] | None:
+        """``(path, bytes)`` of the file holding ``entry_id``, or None.
+
+        The base of an update (ADR-0042 decision 10, #955): the bytes the
+        operations are applied to and the bytes the publish compares the file
+        with, read once. The entry's model is parsed from the same bytes
+        (``load_entry_from_bytes``), so the type's reading and the text it
+        validates are one read of the file.
+        """
+        file_path = self.find_file(entry_id)
+        if not file_path:
+            return None
+        return file_path, file_path.read_bytes()
+
     def load(self, entry_id: str) -> Entry | None:
         """Load an entry by ID."""
         file_path = self.find_file(entry_id)

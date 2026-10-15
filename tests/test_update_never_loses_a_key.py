@@ -262,28 +262,6 @@ def test_a_legacy_alias_key_is_not_written_back_beside_its_canonical_key(tmp_pat
     assert not ("participants" in fm and "actors" in fm), fm
 
 
-@pytest.mark.control(
-    reason="a `body:`/`file_path:` frontmatter key (the #87 fold) was always "
-    "dropped on save (#150's cleanup); this pins that it still is"
-)
-def test_a_folded_body_key_is_still_dropped(tmp_path):
-    """`body` and `file_path` are entry attributes, never frontmatter. A file
-    that carries them as keys is the #87 corruption, which a save cleans up;
-    keeping unrepresented keys must not undo that."""
-    text = (
-        "---\nid: d\ntitle: D\ntype: draft\ndraft_status: brief\n"
-        "body: a stale folded copy\nfile_path: /somewhere/d.md\n---\n\nBody.\n"
-    )
-    config, kb_path = _env(tmp_path, {"d.md": text})
-
-    _with_service(config, lambda svc: svc.update("d", KB, {"draft_status": "ready"}))
-
-    after = (kb_path / "d.md").read_text(encoding="utf-8")
-    assert "draft_status: ready" in after
-    assert "stale folded copy" not in after
-    assert "file_path:" not in after
-
-
 def test_unrepresented_frontmatter_names_only_what_the_model_cannot_write(tmp_path):
     """The kept set is exactly the keys the model reads but cannot write back:
     not an undeclared key (kept through `extra_frontmatter`), not a

@@ -1095,12 +1095,14 @@ def test_plugin_validator_receives_documented_context_for_create_and_update(env,
         assert existing.role == "author"
 
 
-def test_update_validators_see_the_existing_entry_on_both_passes(env, mcp, monkeypatch):
-    """#601: the validation after before_save hooks is still an update.
+def test_update_validators_see_the_existing_entry_once(env, mcp, monkeypatch):
+    """#601: an update's validation sees the stored entry.
 
-    Validators run twice per write. The second pass once dropped
-    `existing_entry`, so a validator that compared against the stored entry
-    saw an update as a create on that pass.
+    Validators run once per update, on the entry parsed from the result
+    (ADR-0042 decision 2, #955; before that they ran before and after the
+    before_save hooks). The pass once dropped `existing_entry`, so a
+    validator that compared against the stored entry saw an update as a
+    create.
     """
     from pyrite.plugins import get_registry
     from pyrite.plugins.capabilities import Capability
@@ -1146,7 +1148,7 @@ def test_update_validators_see_the_existing_entry_on_both_passes(env, mcp, monke
     assert updated.get("updated"), updated
 
     update_calls = [existing for role, existing in calls if role == "editor"]
-    assert len(update_calls) == 2, "validators run before and after before_save hooks"
+    assert len(update_calls) == 1, "validators run once, on the result"
     assert all(existing is not None for existing in update_calls)
 
 
@@ -1187,8 +1189,11 @@ def test_before_save_hook_output_is_validated_on_create(env):
         db.close()
 
 
-def test_before_save_hook_output_is_validated_on_update_and_preserves_file(env):
-    from pyrite.exceptions import SchemaViolationError
+def test_a_before_save_hooks_change_never_reaches_the_file_on_update(env):
+    """ADR-0042 decision 4 (#955): a before_save hook may refuse an update
+    (raise); what it returns or sets on the entry changes no byte. The
+    hook here sets an off-list `role`; the update lands with only the body
+    changed, and `role` in the file is still `author`."""
     from pyrite.services.kb_service import KBService
     from pyrite.storage.database import PyriteDB
 
@@ -1200,12 +1205,15 @@ def test_before_save_hook_output_is_validated_on_update_and_preserves_file(env):
         svc.create_entry(KB, "hook-update", "Hook Update", "person", "before", role="author")
         target = _file(env, "hook-update")
         assert target is not None
-        original = target.read_bytes()
+        original = target.read_text(encoding="utf-8")
 
         registry = _register_invalid_person_role_hook(plugin_name)
-        with pytest.raises(SchemaViolationError, match="reviewer"):
-            svc.update_entry("hook-update", KB, body="after")
-        assert target.read_bytes() == original
+        written = svc.update_entry("hook-update", KB, body="after")
+        assert written is not None
+        after = target.read_text(encoding="utf-8")
+        assert "role: author" in after and "reviewer" not in after
+        assert after.split("---", 2)[1] == original.split("---", 2)[1], "the frontmatter changed"
+        assert after.endswith("\nafter\n")
     finally:
         if registry is not None:
             del registry._plugins[plugin_name]

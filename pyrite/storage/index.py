@@ -114,6 +114,36 @@ _READ_COLUMNS = (
 #: Metadata keys the backend lifts to the top of a row (Tier A 1200, r1175).
 _LIFTED_METADATA_KEYS = ("rank", "effort", "kind", "status_reason", "parked_awaiting")
 
+#: The row's one-value columns, as the backend binds them
+#: (``base_backend._upsert_entry_main``): what ``row_for`` checks holds a
+#: scalar before a write is published (#955).
+_SCALAR_COLUMNS = (
+    "id",
+    "kb_name",
+    "entry_type",
+    "title",
+    "body",
+    "summary",
+    "file_path",
+    "content_hash",
+    "date",
+    "importance",
+    "status",
+    "location",
+    "assignee",
+    "assigned_at",
+    "priority",
+    "due_date",
+    "start_date",
+    "end_date",
+    "coordinates",
+    "fips",
+    "state",
+    "lifecycle",
+    "created_at",
+    "updated_at",
+)
+
 #: What a read keeps from the index row whatever the file says: the index's
 #: own bookkeeping and the derived link list (decision 9: derived values may
 #: lag, like search; outlinks and backlinks come from the index too).
@@ -999,6 +1029,52 @@ class IndexManager:
     def index_entry(self, entry: Entry, kb_name: str, file_path: Path) -> None:
         """Index a single entry."""
         data = self._entry_to_dict(entry, kb_name, file_path)
+        self.db.upsert_entry(data)
+
+    def row_for(
+        self, entry: Entry, kb_name: str, file_path: Path, *, content_hash: str
+    ) -> dict[str, Any]:
+        """The index row of ``entry`` as parsed from the bytes whose hash is
+        ``content_hash``, checked to be storable before anything is published.
+
+        ADR-0042 decision 10: the row is built from the bytes written, never
+        from an in-memory entry; and a write is never reported as failed
+        after it is published (#730 spike, surprise 2), so a result the index
+        cannot store -- a tagged value the row's JSON cannot encode, a
+        ``title:`` that is a list -- raises ``ValueError`` here, with the
+        reason, and the caller refuses the write with nothing written. The
+        file's stat is read by ``index_row`` once the file is on disk.
+        """
+        from ..utils.json_utils import SafeEncoder
+        from .crud import bindable
+
+        data = self._entry_to_dict(entry, kb_name, file_path, content_hash=content_hash)
+        bound = bindable(data)
+        try:
+            json.dumps(bound.get("metadata") or {}, cls=SafeEncoder)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"metadata cannot be stored as JSON: {e}") from e
+        for key in _SCALAR_COLUMNS:
+            value = bound.get(key)
+            if not isinstance(value, str | int | float | bool | type(None)):
+                raise ValueError(
+                    f"{key} is a {type(value).__name__}, not a value the index can store"
+                )
+        for tag in bound.get("tags") or []:
+            if not isinstance(tag, str | int | float | bool):
+                raise ValueError(
+                    f"a tag is a {type(tag).__name__}, not a value the index can store"
+                )
+        return data
+
+    def index_row(self, data: dict[str, Any], file_path: Path) -> None:
+        """Store a row ``row_for`` built, with the stat of the file as it is now."""
+        try:
+            stat = file_path.stat()
+        except OSError:
+            stat = None
+        data["file_mtime_ns"] = stat.st_mtime_ns if stat else None
+        data["file_size"] = stat.st_size if stat else None
         self.db.upsert_entry(data)
 
     def remove_entry(self, entry_id: str, kb_name: str) -> bool:

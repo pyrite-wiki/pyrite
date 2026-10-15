@@ -10,6 +10,7 @@ import copy
 import dataclasses
 import logging
 import os
+import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 from ..config import KBConfig, PyriteConfig
 from ..exceptions import (
     AmbiguousEntryError,
+    ConflictError,
     EntryExistsError,
     EntryNotFoundError,
     IndexSyncRecoveryHintError,
@@ -35,7 +37,7 @@ from ..exceptions import (
     public_text,
 )
 from ..models import Entry
-from ..models.base import parse_datetime
+from ..models.base import _timestamp_instant, parse_datetime
 from ..models.core_types import id_text
 from ..models.factory import build_entry
 from ..plugins.context import PluginContext
@@ -43,10 +45,19 @@ from ..schema import Link, Source
 from ..schema.enum_check import is_off_list, is_per_element
 from ..storage.database import PyriteDB
 from ..storage.document_manager import DocumentManager
+from ..storage.entry_writer import FileChanged, create_entry_text, publish_entry_text
+from ..storage.file_operations import (
+    FrontmatterSpan,
+    OperationRefusedError,
+    ReplaceBody,
+    Set,
+    apply,
+)
 from ..storage.index import IndexManager, content_hash
 from ..storage.repository import KBRepository
 from ..utils.frontmatter import Frontmatter, NoFrontmatter, describe, split_frontmatter
 from ..utils.metadata import parse_metadata
+from ..utils.yaml import load_yaml
 from .access_policy import named_kb
 from .body_bounds import MARKER_KEYS, ensure_not_truncated
 from .export_service import ExportService
@@ -254,6 +265,15 @@ class WriteResult:
 
     entry: Entry
     warnings: list[dict[str, Any]] = field(default_factory=list)
+    #: False when the request changed nothing: nothing was written and the
+    #: file's mtime is as it was (ADR-0042 decision 3). Always True for a create.
+    changed: bool = True
+    #: False when the file was replaced with compare-before-replace and no
+    #: lock, because its KB is not in a git repository (D1 (b), #955).
+    locked: bool = True
+    #: Why an update of a templated-folder field did not move the file
+    #: (ADR-0042 decision 5: "not moved: no id pin"), else None.
+    not_moved: str | None = None
 
 
 @dataclass
@@ -1477,45 +1497,156 @@ class KBService:
     def _update(
         self, entry_id: str, kb_name: str, updates: dict[str, Any], *, restrict: bool
     ) -> WriteResult:
+        """The one update: the request as operations applied to the file's own
+        bytes (ADR-0042; #955, B6 P3a).
+
+        Read the file once (``read_for_write``: the bytes are the base, the
+        model is parsed from the same bytes); refuse what today refuses (type,
+        managed fields, conflicting spellings); map the request to operations
+        (``_operations_for``); ``apply()`` them to the decoded bytes; stamp
+        ``updated_at`` in the file's own form where the file carries it and
+        something changed; parse the result, validate it once, run the
+        ``before_save`` hooks on it with their return value ignored (decision
+        4); build the index row from the result before anything is published
+        (a result the index cannot store is refused with nothing written);
+        publish with compare-and-replace under the momentary lock
+        (``publish_entry_text``: no lock outside git, and the result says so).
+        If the file changed between the read and the replace the whole thing
+        runs again from a fresh read, at most ``_UPDATE_ATTEMPTS`` times, then
+        ``ConflictError`` (Q2: last writer wins on the same key). No ``Entry``
+        is serialised: a key the request does not name keeps its bytes.
+        """
         # ADR-0034 marker keys are refused here (a truthy `body_truncated`)
-        # and otherwise never stored. Before #407 this fell out for free: an
-        # undeclared key was always dropped by the loop below, and a marker
-        # key is never a model attribute. Now that an undeclared key is
-        # stored instead of dropped, the markers have to be stripped
-        # explicitly -- the same way `_prepare` does at its own write path --
-        # or an allowed `body_truncated: false` would be persisted as
-        # frontmatter.
+        # and otherwise never stored; `_prepare` does the same at the create
+        # path.
         ensure_not_truncated(updates)
         updates = {k: v for k, v in updates.items() if k not in MARKER_KEYS}
 
         kb_config = self._writable_kb(kb_name)
-
         repo = KBRepository(kb_config)
-        entry = repo.load(entry_id)
-        if not entry:
-            raise EntryNotFoundError(f"Entry not found: {entry_id}{repo.not_found_hint(entry_id)}")
 
-        existing_entry = copy.deepcopy(entry)
+        for _attempt in range(_UPDATE_ATTEMPTS):
+            found = repo.read_for_write(entry_id)
+            if found is None:
+                raise EntryNotFoundError(
+                    f"Entry not found: {entry_id}{repo.not_found_hint(entry_id)}"
+                )
+            path, raw = found
+            try:
+                entry = repo.load_entry_from_bytes(path, raw)
+            except Exception as e:
+                logger.warning("Could not load %s: %s", path, e)
+                raise EntryNotFoundError(
+                    f"Entry not found: {entry_id}{repo.not_found_hint(entry_id)}"
+                ) from None
+            self._refuse_update_keys(entry, entry_id, updates, restrict, kb_config)
+
+            text = raw.decode("utf-8")
+            split = split_frontmatter(text)
+            if not isinstance(split, Frontmatter):
+                raise ValidationError(f"Cannot update '{entry_id}': {describe(split)}")
+            span = FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
+            file_values = load_yaml(split.text) or {}
+            if not isinstance(file_values, dict):
+                raise ValidationError(
+                    f"Cannot update '{entry_id}': the frontmatter is not a mapping"
+                )
+            ops = self._operations_for(entry, file_values, updates)
+            try:
+                new_text, _report = apply(text, ops, span)
+                changed = new_text != text
+                if changed and "updated_at" in file_values and "updated_at" not in updates:
+                    stamp = _updated_at_stamp(file_values["updated_at"])
+                    if stamp is not None:
+                        new_text, _report = apply(
+                            new_text, [Set("updated_at", stamp)], _frontmatter_span(new_text)
+                        )
+            except OperationRefusedError as e:
+                raise ValidationError(f"Cannot update '{entry_id}': {e.reason}") from e
+
+            # The field set as loaded, for the exception that keeps an off-list
+            # enum value the update does not change (#47, #555).
+            before = copy.deepcopy(self._validated_fields(entry))
+            old_status = getattr(entry, "status", None)
+            if not changed:
+                # A request that changes nothing writes nothing (decision 3);
+                # its warnings are still the file's.
+                warnings = self._validate_write(
+                    entry, kb_name, kb_config, before=before, existing_entry=entry
+                )
+                return WriteResult(entry=entry, warnings=warnings, changed=False)
+
+            new_bytes = new_text.encode("utf-8")
+            try:
+                new_entry = repo.load_entry_from_bytes(path, new_bytes)
+            except Exception as e:
+                raise ValidationError(
+                    f"Cannot update '{entry_id}': the result would not load ({e})"
+                ) from e
+            # Once, on the entry parsed from the result (decision 2): the
+            # type, managed-field and enum refusals happen before anything is
+            # written.
+            warnings = self._validate_write(
+                new_entry, kb_name, kb_config, before=before, existing_entry=entry
+            )
+            extra = {"old_status": old_status} if old_status else {}
+            hook_ctx = self._hook_ctx(kb_name, kb_config, "update", extra)
+            # A before_save hook may refuse (raise); its return value is
+            # ignored and nothing it does reaches the file (decision 4). What
+            # it changes in place is this write's index row, until the next
+            # sync (P6 replaces that with an index-time derivation).
+            self._run_hooks("before_save", new_entry, hook_ctx)
+            try:
+                row = self._index_mgr.row_for(
+                    new_entry, kb_name, path, content_hash=content_hash(new_bytes)
+                )
+            except ValueError as e:
+                raise ValidationError(
+                    f"Cannot update '{entry_id}': the result cannot be indexed ({e})"
+                ) from e
+            try:
+                locked = publish_entry_text(path, new_text, expect=raw)
+            except FileChanged:
+                continue  # re-read and re-apply (decision 10; Q2)
+            break
+        else:
+            raise ConflictError(
+                f"'{entry_id}' in KB '{kb_name}' kept changing while this update ran "
+                f"({_UPDATE_ATTEMPTS} attempts); nothing was written. Read it again and retry."
+            )
+
+        path, not_moved = self._templated_move(
+            repo, kb_config, new_entry, path, new_text, file_values
+        )
+        row["file_path"] = str(path)
+        self.db.register_kb(
+            name=kb_name,
+            kb_type=kb_config.kb_type,
+            path=str(kb_config.path),
+            description=kb_config.description,
+        )
+        self._index_mgr.index_row(row, path)
+        self._auto_embed(new_entry.id, kb_name)
+        self._run_hooks("after_save", new_entry, hook_ctx)
+        return WriteResult(
+            entry=new_entry, warnings=warnings, changed=True, locked=locked, not_moved=not_moved
+        )
+
+    def _refuse_update_keys(
+        self,
+        entry: Entry,
+        entry_id: str,
+        updates: dict[str, Any],
+        restrict: bool,
+        kb_config: KBConfig,
+    ) -> None:
+        """Today's refusals, before anything is read further or written."""
         # `type`/`entry_type` and the empty key are never model attributes on
         # any entry (`type` is frontmatter-only; `entry_type` is a read-only
-        # `@property` with no setter, so setting it raised a raw
-        # AttributeError instead of a clean refusal -- almost certainly a 500
-        # through REST PATCH, round-2 cold read), so #407's undeclared-key
-        # branch below would route `type` into `metadata` instead of refusing
-        # it: `-f type=hacked` reported `updated: true` and left the real
-        # `type:` frontmatter line untouched -- the #407 symptom recurring
-        # for a reserved key #407's own fix did not cover (round-1 cold
-        # read). Refused unconditionally, not gated by `restrict`: unlike a
-        # managed field an in-process caller might legitimately own (links,
-        # status), no caller -- internal or external -- means anything
-        # sensible by setting `type`, `entry_type` or `""` through an update.
-        #
-        # Checked AFTER the KB and entry lookups above (round-2 cold read):
-        # a missing KB or entry, or a read-only KB, must still answer its own
-        # 404/403 (KBNotFoundError/EntryNotFoundError/KBReadOnlyError), not a
-        # ValidationError that tells the caller their *request* was invalid
-        # when the real problem is that the KB or entry they named doesn't
-        # exist.
+        # property), and no caller means anything sensible by setting them
+        # through an update. Refused unconditionally, not gated by `restrict`.
+        # Checked AFTER the KB and entry lookups: a missing KB or entry, or a
+        # read-only KB, must still answer its own 404/403.
         bad_keys = sorted(k for k in updates if k in ("type", "entry_type") or k == "")
         if bad_keys:
             raise ValidationError(
@@ -1523,7 +1654,6 @@ class KBService:
                 f"{entry_id!r} with an update: an entry's type is fixed once "
                 "created, and a --field key must be non-empty."
             )
-
         _, _, managed = self._field_sets(entry.entry_type, kb_config)
         if restrict:
             refused = sorted(k for k in updates if k in managed)
@@ -1538,30 +1668,9 @@ class KBService:
                     f"the file (for example `{entry.entry_type}_{refused[0]}`) "
                     "and update the new name."
                 )
-
-        # Capture old_status before applying updates (for workflow hooks)
-        old_status = getattr(entry, "status", None)
-        # The field set as loaded, for the exception that keeps an off-list
-        # enum value the update does not change (#47, #555). Deep-copied: the
-        # updates below must not reach into it.
-        before = copy.deepcopy(self._validated_fields(entry))
-
-        # A timestamp may arrive as a string: REST `PATCH /entries/{id}` sends
-        # `value: str` and the CLI passes `--field updated_at=…`. Coerce it
-        # before it is assigned -- the file, the model and the index all expect
-        # a `datetime`, and a string used to reach
-        # `IndexManager._entry_to_dict` (`entry.<ts>.isoformat()`) *after* the
-        # file had been written: an `AttributeError` that left the file written
-        # and the index stale, so the two diverged (#173 review). A naive
-        # string is read as UTC by `parse_datetime`, like ingestion.
-        for ts_key in ("created_at", "updated_at"):
-            if ts_key in updates and not isinstance(updates[ts_key], datetime):
-                updates[ts_key] = parse_datetime(updates[ts_key])
-
-        # One name per field (#697): an alias or target key (`actors`,
-        # `participants`, `source`) sets the attribute the class reads, whether
-        # it arrives at the top level or inside `metadata`, never the bag.
-        from ..schema.field_aliases import attribute_for, refuse_conflicting_spellings
+        # One name per field (#697, #720): both spellings of one field with
+        # different values are refused; equal values name one value.
+        from ..schema.field_aliases import refuse_conflicting_spellings
 
         refuse_conflicting_spellings(
             type(entry),
@@ -1569,82 +1678,113 @@ class KBService:
             {k: v for k, v in updates.items() if k != "metadata"},
             updates["metadata"] if isinstance(updates.get("metadata"), dict) else {},
         )
-        routed: dict[str, Any] = {}
+
+    def _operations_for(
+        self, entry: Entry, file_values: dict[str, Any], updates: dict[str, Any]
+    ) -> list[Any]:
+        """The request as operations on the file's own keys (#955, acceptance 1).
+
+        Each key becomes a ``Set``; ``body`` a ``ReplaceBody``. ``metadata:
+        {k: v}`` is ``Set(("metadata", k))`` only where the file holds
+        ``metadata.k``, otherwise a top-level ``Set(k)`` (decision 6: update
+        never nests a key under ``metadata:``). An alias resolves to the
+        spelling the file uses, or to the declared target when the file has
+        neither; two spellings with equal values make one operation. A key the
+        file holds only under ``metadata:`` (where create puts an undeclared
+        key, #178, and where a read lifts ``rank`` or ``kind`` from) resolves
+        there, so the file never holds two values for one name (the #730
+        spike's surprise 4, applied to every key the file nests). Values are validated as the field's type
+        (``_as_field_type``: enums, link and source items) and written as the
+        caller sent them, never as the model's reading of them.
+        """
+        from ..schema.field_aliases import class_field_aliases
+
+        aliases = class_field_aliases(type(entry), entry.entry_type)
+        targets = set(aliases.values())
+        nested = file_values.get("metadata")
+        nested = nested if isinstance(nested, dict) else {}
+
+        def spelling(key: str) -> str:
+            if key not in aliases and key not in targets:
+                return key
+            target = aliases.get(key, key)
+            for candidate in (key, target, *(a for a, t in aliases.items() if t == target)):
+                if candidate in file_values:
+                    return candidate
+            return target
+
+        ops: list[Any] = []
+        placed: dict[Any, Any] = {}
+
+        def put(path: Any, key: str, value: Any) -> None:
+            value = self._value_for_file(entry, key, value)
+            if path in placed:
+                if placed[path] == value:
+                    return  # the same field named twice with one value
+            placed[path] = value
+            ops.append(Set(path, value))
+
         for key, value in updates.items():
+            if key == "body":
+                ops.append(ReplaceBody(value if isinstance(value, str) else str(value)))
+                continue
             if key == "metadata" and isinstance(value, dict):
-                rest = {}
                 for mk, mv in value.items():
-                    attr = attribute_for(entry, mk)
-                    if attr is None:
-                        rest[mk] = mv
+                    k = spelling(mk)
+                    if k in nested and k not in file_values:
+                        put(("metadata", k), k, mv)
                     else:
-                        routed[attr] = mv
-                if rest or not value:
-                    routed["metadata"] = rest
+                        put(k, k, mv)
                 continue
-            routed[attribute_for(entry, key) or key] = value
-        updates = routed
-
-        # Apply updates
-        for key, value in updates.items():
-            if not hasattr(entry, key):
-                # A key with no model attribute: kb.yaml-declared or not,
-                # `create` stores it rather than dropping it (`build_entry`
-                # puts unknown kwargs in metadata), so `update` follows the
-                # same rule -- this is what generalises the old
-                # `schema_fields`-only branch. A key already recorded under
-                # `extra_frontmatter` (an undeclared key on a typed entry,
-                # loaded from the file) stays there; everything else merges
-                # into `metadata`, where `GenericEntry`/`TaskEntry` promote it
-                # back to a top-level frontmatter key on save, same as create.
-                if key in entry.extra_frontmatter:
-                    entry.extra_frontmatter[key] = value
-                else:
-                    entry.metadata = {**(entry.metadata or {}), key: value}
-                continue
-            value = _as_field_type(entry, key, value)
-            # Metadata is a bag of keys — merge shallowly so a partial update
-            # (e.g. just review_comments) does not clobber other metadata.
-            if key == "metadata" and isinstance(value, dict):
-                merged = dict(getattr(entry, "metadata", None) or {})
-                merged.update(value)
-                setattr(entry, key, merged)
+            k = spelling(key)
+            if k in nested and k not in file_values:
+                # The file holds the key only under `metadata:` -- where
+                # Pyrite's own create puts an undeclared key (#178), and where
+                # a read lifts it from (`_LIFTED_METADATA_KEYS`): that is the
+                # file's spelling of the key, so the edit goes there and the
+                # file never ends up with two values for one name.
+                put(("metadata", k), k, value)
             else:
-                setattr(entry, key, value)
+                put(k, k, value)
+        return ops
 
-        # An explicit `updated_at` in the update is the caller's value; only
-        # stamp the bookkeeping time when they did not supply one, and tell the
-        # repository below not to stamp over a supplied one either (#151).
-        explicit_updated_at = "updated_at" in updates
-        if not explicit_updated_at:
-            entry.touch_updated_at()
+    @staticmethod
+    def _value_for_file(entry: Entry, key: str, value: Any) -> Any:
+        """``value`` validated as ``key``'s type, as plain data for ``apply``."""
+        if key in _TIMESTAMP_FIELDS and not isinstance(value, datetime):
+            value = parse_datetime(value)
+        if hasattr(entry, key):
+            _as_field_type(entry, key, value)  # validation only: refuses before any write
+        return _plain_value(value)
 
-        # Refuse before anything is written: the file must stay exactly as it was.
-        warnings = self._validate_write(
-            entry, kb_name, kb_config, before=before, existing_entry=existing_entry
+    def _templated_move(
+        self,
+        repo: KBRepository,
+        kb_config: KBConfig,
+        entry: Entry,
+        path: Path,
+        text: str,
+        file_values: dict[str, Any],
+    ) -> tuple[Path, str | None]:
+        """The one move an update makes (decision 5): a type whose subdirectory
+        is templated by a field (``backlog/{status}``) moves a *pinned* file
+        when that field changes; an unpinned file stays, and the result says
+        why. Returns ``(path, not_moved)``."""
+        if not self._doc_mgr._uses_templated_subdir(repo, entry):
+            return path, None
+        subdir = repo._infer_subdir(entry)
+        target = repo._contained(
+            kb_config.path / subdir / path.name if subdir else kb_config.path / path.name
         )
-
-        # Run before_save hooks
-        extra = {"old_status": old_status} if old_status else {}
-        hook_ctx = self._hook_ctx(kb_name, kb_config, "update", extra)
-        entry = self._run_hooks("before_save", entry, hook_ctx)
-        # Preserve the update exception for unchanged on-disk enum values.
-        warnings = self._validate_write(
-            entry, kb_name, kb_config, before=before, existing_entry=existing_entry
-        )
-
-        # Save to file, register KB, and re-index
-        self._doc_mgr.save_entry(
-            entry, kb_name, kb_config, touch_updated_at=not explicit_updated_at
-        )
-
-        # Auto-embed for semantic search
-        self._auto_embed(entry.id, kb_name)
-
-        # Run after_save hooks
-        self._run_hooks("after_save", entry, hook_ctx)
-
-        return WriteResult(entry=entry, warnings=warnings)
+        if target.resolve() == path.resolve():
+            return path, None
+        if "id" not in file_values:
+            return path, "no id pin: the file keeps its place; add an `id:` line to let it move"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        create_entry_text(target, text)
+        self._doc_mgr._remove_old_file(path, kb_config.path)
+        entry.file_path = target
+        return target, None
 
     def update_entry(self, entry_id: str, kb_name: str, **updates) -> Entry:
         """
@@ -3156,6 +3296,65 @@ class KBService:
 # _CORE_HOOKS dict that used to live here is gone — runner.core_hooks(name) is
 # the inspection surface now.
 # =============================================================================
+
+
+#: One read-and-apply, then five more from a fresh read (ADR-0042 decision 10).
+_UPDATE_ATTEMPTS = 6
+
+
+def _frontmatter_span(text: str) -> FrontmatterSpan:
+    split = split_frontmatter(text)
+    assert isinstance(split, Frontmatter), split  # apply() just produced it
+    return FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
+
+
+def _plain_value(value: Any) -> Any:
+    """``value`` as plain data the file can hold: an Enum its value, a Link or
+    Source its mapping, containers recursively; everything else as sent."""
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, Link | Source):
+        return value.to_dict()
+    if isinstance(value, dict):
+        return {k: _plain_value(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_plain_value(v) for v in value]
+    return value
+
+
+_STAMP_TZ = re.compile(r"[+-]\d\d:\d\d$")
+
+
+def _updated_at_stamp(old: Any) -> Any:
+    """The new ``updated_at`` in the file's own form (#955, acceptance 4), or
+    None when the file's value is not an instant Pyrite can read.
+
+    A quoted string stays a quoted string in the same layout: the ``T`` or
+    space separator, a ``Z`` or an offset or none, and the fraction's digits
+    are those of the old value. A bare timestamp is a ``datetime``, which
+    ``apply`` writes ``YYYY-MM-DD HH:MM:SS+00:00``.
+    """
+    if _timestamp_instant(old) is None:
+        return None
+    now = datetime.now(UTC).replace(microsecond=0)
+    if not isinstance(old, str):
+        return now
+    sep = "T" if "T" in old else " "
+    tz = (
+        "Z"
+        if old.endswith("Z")
+        else (_STAMP_TZ.search(old).group(0) if _STAMP_TZ.search(old) else "")
+    )
+    core = old[: -len(tz)] if tz else old
+    digits = len(core.rsplit(".", 1)[1]) if "." in core else 0
+    text = now.strftime(f"%Y-%m-%d{sep}%H:%M:%S")
+    if digits:
+        text += "." + "0" * digits
+    if tz == "Z":
+        return text + "Z"
+    if tz:
+        return text + "+00:00"
+    return text
 
 
 def _as_field_type(entry: Entry, key: str, value: Any) -> Any:

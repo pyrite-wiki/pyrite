@@ -603,6 +603,15 @@ def register_entry_commands(app: typer.Typer) -> None:
         # disk that the update kept (#47, #555) -- the way REST and MCP
         # already return them.
         data: dict[str, Any] = {"updated": True, "entry_id": entry.id}
+        # ADR-0042 (#955), said only when not the usual: nothing changed so
+        # nothing was written; a KB outside git was written with no lock; a
+        # templated-folder field did not move an unpinned file.
+        if not written.changed:
+            data["changed"] = False
+        if not written.locked:
+            data["locked"] = False
+        if written.not_moved:
+            data["not_moved"] = written.not_moved
         if written.warnings:
             data["warnings"] = written.warnings
 

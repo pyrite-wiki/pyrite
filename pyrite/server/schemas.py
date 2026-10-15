@@ -386,6 +386,15 @@ class UpdateResponse(BaseModel):
     #: the response by field name sees no shape change.
     ignored: list[str] = []
     unchanged: list[str] = []
+    #: ADR-0042 (#955). `changed` is false when the request changed nothing
+    #: and nothing was written; `locked` is false when the KB is outside git
+    #: and the file was replaced with compare-before-replace and no lock;
+    #: `not_moved` says why a templated-folder field left an unpinned file in
+    #: place. Defaults are the usual case, so an existing caller sees no
+    #: shape change.
+    changed: bool = True
+    locked: bool = True
+    not_moved: str | None = None
 
 
 class DeleteResponse(BaseModel):

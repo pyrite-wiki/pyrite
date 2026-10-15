@@ -2210,6 +2210,11 @@ def _emit_scalar(value: Any, style: str | None, tag: str | None, flow: bool) -> 
         return str(int(value))
     if isinstance(value, float):
         return _emit_float(value)
+    if isinstance(value, datetime):
+        # The house spelling of a timestamp, and sqlite3's: a space before
+        # the time (``updated_at: 2026-10-15 07:41:12+00:00``), as ruamel's
+        # dumper wrote it. Both forms read as one YAML timestamp.
+        return value.isoformat(sep=" ")
     if isinstance(value, date):
         return value.isoformat()
     if style == "'" and _single_ok(value):

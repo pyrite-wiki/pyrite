@@ -20,6 +20,7 @@ from ..config import PyriteConfig, load_config
 from ..exceptions import (
     BrandingInvalidError,
     ConfigError,
+    ConflictError,
     EntryNotFoundError,
     InvalidGitRefError,
     KBNotFoundError,
@@ -1416,7 +1417,7 @@ class PyriteMCPServer:
 
         try:
             written = self.svc.update(entry_id, kb_name, updates)
-        except ValidationError as e:
+        except (ValidationError, ConflictError) as e:
             return _refusal(e)
         except PyriteError as e:
             return _error("UPDATE_FAILED", _safe_message(e), retryable=True)
@@ -1427,6 +1428,15 @@ class PyriteMCPServer:
             "entry_id": entry.id,
             "file_path": str(entry.file_path) if entry.file_path else "",
         }
+        # ADR-0042 (#955): said only when not the usual: a request that
+        # changed nothing wrote nothing; a KB outside git was written with
+        # no lock; a templated-folder field did not move an unpinned file.
+        if not written.changed:
+            result["changed"] = False
+        if not written.locked:
+            result["locked"] = False
+        if written.not_moved:
+            result["not_moved"] = written.not_moved
         if ignored:
             result["ignored"] = ignored
         if unchanged:
