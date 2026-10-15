@@ -75,6 +75,10 @@ def _frontmatter(kb_path: Path) -> dict:
     return load_yaml(text.split("---", 2)[1])
 
 
+@pytest.mark.control(
+    reason="the create-then-update round trip of an undeclared key already landed under "
+    "metadata: before #955; the control pins that the update edits it there and nowhere else"
+)
 def test_update_field_writes_an_undeclared_metadata_key(tmp_path):
     """`foo` on a note, set at create time, is still writable through update."""
     config, kb_path = _make_env(tmp_path, "notes", NOTE_KB_YAML)

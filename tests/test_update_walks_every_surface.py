@@ -382,6 +382,9 @@ def test_an_alias_is_written_under_the_spelling_the_file_uses(tmp_path: Path):
     assert_only_these_keys_changed(before, after, ("participants", "updated_at"))
 
 
+@pytest.mark.control(
+    reason="today's path also writes the declared target when the file has neither spelling; the control pins the rule beside the file's-spelling case"
+)
 def test_an_alias_the_file_holds_neither_way_is_written_as_the_declared_target(tmp_path: Path):
     text = f"---\nid: {ID}\ntitle: Walk\ntype: event\ndate: 2026-01-01\n---\n\nText.\n"
     config, path = _build(tmp_path, text, frozenset({"event"}))
@@ -437,6 +440,9 @@ def test_an_undeclared_key_is_a_top_level_key_never_nested_under_metadata(tmp_pa
     assert_only_these_keys_changed(before, after, ("decision",))
 
 
+@pytest.mark.control(
+    reason="today's path merges an undeclared key into metadata too; the control pins where the key goes now that the top level is the default"
+)
 def test_a_lifted_metadata_key_the_file_holds_under_metadata_resolves_there(tmp_path: Path):
     """Spike surprise 4: a read lifts ``rank`` out of ``metadata:``, so a caller
     that sets ``rank`` means the key it read; it goes where the file holds it."""
@@ -468,6 +474,9 @@ def test_a_quoted_updated_at_is_restamped_as_a_quoted_string_in_the_same_layout(
     assert line != "updated_at: '2026-01-01T00:00:00Z'", "the stamp did not move"
 
 
+@pytest.mark.control(
+    reason="today's dump already wrote a bare timestamp in this form; the control pins the house spelling the new emitter must keep"
+)
 def test_a_bare_updated_at_is_restamped_bare_in_the_house_spelling(tmp_path: Path):
     text, _ = SHAPES["bare-updated-at"]
     config, path = _build(tmp_path, text)
@@ -497,6 +506,9 @@ def test_a_timestamp_read_and_written_back_unchanged_leaves_the_bytes_unchanged(
     assert path.read_bytes() == before
 
 
+@pytest.mark.control(
+    reason="#46 already keeps a file from growing updated_at; the control guards decision 7 against a stamp written as a new key"
+)
 def test_a_file_without_updated_at_never_gains_it(tmp_path: Path):
     text, _ = SHAPES["bom"]
     config, path = _build(tmp_path, text)
@@ -582,27 +594,31 @@ def test_a_kb_outside_git_is_written_without_a_lock_and_the_result_says_so(tmp_p
 
     written = _service_update(config, {"title": "Walk, second draft"})
 
-    assert written.locked is False
-    assert written.changed is True
     after = _text(path)
     assert_only_these_keys_changed(before, after, TITLE_EDIT_KEYS)
+    assert written.locked is False
+    assert written.changed is True
 
 
 def test_a_kb_inside_git_reports_the_write_as_locked(tmp_path: Path):
     text, _ = SHAPES["bom"]
-    config, _path = _build(tmp_path, text)
+    config, path = _build(tmp_path, text)
+    before = _text(path)
 
     written = _service_update(config, {"title": "Walk, second draft"})
 
+    assert_only_these_keys_changed(before, _text(path), TITLE_EDIT_KEYS)
     assert written.locked is True
 
 
 def test_a_no_op_result_says_unchanged(tmp_path: Path):
     text, _ = SHAPES["bom"]
-    config, _path = _build(tmp_path, text)
+    config, path = _build(tmp_path, text)
+    before, stat = path.read_bytes(), path.stat()
 
     written = _service_update(config, {"title": "Walk"})
 
+    assert path.read_bytes() == before and path.stat().st_mtime_ns == stat.st_mtime_ns
     assert written.changed is False
 
 

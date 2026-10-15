@@ -25,6 +25,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 ROOTS = [REPO / "pyrite", *sorted((REPO / "extensions").glob("*/src"))]
 
@@ -138,6 +140,9 @@ def _is_out_of_scope(module: str) -> bool:
     )
 
 
+@pytest.mark.control(
+    reason="a ratchet over what this PR does not change: it guards the next writer"
+)
 def test_every_writer_of_bytes_is_classified() -> None:
     sites = _writers()
     assert sites, "the walk found no writer at all; the scan is broken"
@@ -154,6 +159,9 @@ def test_every_writer_of_bytes_is_classified() -> None:
     )
 
 
+@pytest.mark.control(
+    reason="a ratchet over what this PR does not change: it guards the next writer"
+)
 def test_the_list_holds_only_what_is_still_owed() -> None:
     sites = _writers()
     gone = sorted(site for site in ENTRY_FILE_WRITERS_NOT_YET_CONVERTED if site not in sites)
