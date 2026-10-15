@@ -395,7 +395,7 @@ they are **not run** (a server would be needed).
 
 <!-- mcp-output: kb_update -->
 ```json
-{"updated": true, "entry_id": "hello", "file_path": "/abs/path/hello.md"}
+{"updated": true, "entry_id": "hello", "file_path": "/abs/path/hello.md", "locked": false}
 ```
 
 `update -f key=value` (CLI) and MCP `kb_update` with an extra key write an

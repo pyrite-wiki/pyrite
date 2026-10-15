@@ -143,7 +143,7 @@ TITLE_EDIT_KEYS = ("title", "updated_at")
 
 
 def _git_init(path: Path) -> None:
-    subprocess.run(["git", "init", "-q"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True, capture_output=True, timeout=30)
 
 
 def _write(path: Path, text: str, flags: frozenset[str]) -> None:

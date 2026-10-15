@@ -247,7 +247,7 @@ def _build_kb(tmp_path: Path, ex: Example) -> tuple[PyriteConfig, Path, str]:
     outside git is written with compare-before-replace and no lock, D1 (b))."""
     kb_path = tmp_path / "kb"
     kb_path.mkdir()
-    subprocess.run(["git", "init", "-q"], cwd=kb_path, check=True, capture_output=True)
+    subprocess.run(["git", "init", "-q"], cwd=kb_path, check=True, capture_output=True, timeout=30)
     kb_type = KB_TYPE_FOR_ENTRY_TYPE.get(str(_front(ex.file).get("type")), "generic")
     (kb_path / "kb.yaml").write_text(f"name: {KB}\nkb_type: {kb_type}\n", encoding="utf-8")
     rel, entry_id = _entry_path(ex)
