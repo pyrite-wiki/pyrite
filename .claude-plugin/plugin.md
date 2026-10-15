@@ -17,7 +17,7 @@ Multi-KB research infrastructure for citizen journalists and AI agents. Git-nati
 - `pyrite get <id>` -- Retrieve entry by ID
 - `pyrite kb list` -- List configured knowledge bases
 - `pyrite index build` -- Rebuild search index
-- `.venv/bin/pytest tests/ -v` -- Run backend tests
+- `scripts/test-affected --run` -- Run the affected backend tests (the whole suite: `scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/*/tests/ -n 4 -q`)
 - `cd web && npm run test:unit` -- Run frontend tests
 
 ## Skills Available
@@ -26,8 +26,6 @@ Multi-KB research infrastructure for citizen journalists and AI agents. Git-nati
 - **software-kb** (`.claude/skills/software-kb/`) -- Kanban development workflow: pull, claim, submit, review via sw_* tools
 - **pyrite-dev** (`.claude/skills/pyrite-dev/`) -- Development workflow for Pyrite core, extensions, web frontend, and API
 - **extension-builder** (`.claude/skills/extension-builder/`) -- Scaffold new Pyrite extensions from a description
-- **investigation** (`.claude/skills/investigation/`) -- Entity investigation across KBs with source chain tracking
-- **research-flow** (`.claude/skills/research-flow/`) -- Structured topic research with Gather-Connect-Analyze-Synthesize
 
 ## Project Knowledge
 

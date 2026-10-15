@@ -11,7 +11,7 @@ from tests.test_test_affected import ta, _write, _git, SCRIPT
 @pytest.fixture
 def repo(tmp_path):
     _write(tmp_path, "pyrite/__init__.py", "")
-    _write(tmp_path, "tests/test_words.py", "WORDS = 'agents'\n")
+    _write(tmp_path, "tests/test_words.py", "WORDS = 'skills'\n")
     _write(tmp_path, "tests/test_pointer.py", "PATH = 'worker.md'\n")
     _git(tmp_path, "init", "-q", "-b", "dev")
     _git(tmp_path, "add", ".")
@@ -20,9 +20,9 @@ def repo(tmp_path):
 
 
 def test_skill_content_does_not_select_tests_for_generic_directory_word(repo):
-    selection = ta.select(repo, [".claude/agents/unreferenced.md"])
+    selection = ta.select(repo, [".claude/skills/unreferenced.md"])
     assert "tests/test_words.py" not in selection.files
-    assert "tests/test_pointer.py" in ta.select(repo, [".claude/agents/worker.md"]).files
+    assert "tests/test_pointer.py" in ta.select(repo, [".claude/skills/worker.md"]).files
 
 
 @pytest.mark.parametrize("bad", ["PRE_COMMIT_FROM_REF", "PRE_COMMIT_TO_REF"])

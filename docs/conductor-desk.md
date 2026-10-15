@@ -1,6 +1,6 @@
 # The maintainer's desk
 
-A conductor loop (see `.claude/skills/pyrite-conductor/`) turns work into
+A conductor loop (the maintainer's orchestration loop, which lives outside this repository) turns work into
 pull requests, but some things only a human can do: merge an outside
 contribution, accept an ADR, approve a release, agree a reply to a
 contributor, answer a design question. Those used to live in three wrong

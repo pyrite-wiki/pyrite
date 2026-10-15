@@ -18,11 +18,6 @@ QUERIES = [
     "test driven development red green",
     "claim scope before building",
     "finished worker report testing limits",
-    "Andon cord pause resume",
-    "cold review finding fixes",
-    "blocked split risk spike small theme",
-    "release deployment tagged build",
-    "stop conditions autonomy",
     "bookkeeping feedback",
 ]
 

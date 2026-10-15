@@ -1127,7 +1127,7 @@ class TestDiffCoverage:
 
 
 # ---------------------------------------------------------------------------
-# Who runs it: the worker once, CI always; the conductor reads CI.
+# Who runs it: the contributor once, CI always; the reviewer reads CI.
 # ---------------------------------------------------------------------------
 
 
@@ -1135,16 +1135,16 @@ def _words(path: Path) -> str:
     return " ".join(path.read_text().split())
 
 
-def test_the_conductor_reads_the_ci_result_and_does_not_rerun_it():
-    review = _words(REPO / ".claude" / "skills" / "pyrite-conductor" / "review.md")
-    assert "read the `verify-red` job's summary line" in review
-    assert "do not re-run it locally" in review
-    # The job runs the PR's own copy: a PR that changes it cannot vouch for itself.
-    assert "the PR itself touches `scripts/verify*red*` or the `verify-red` job" in review
-    # ...and the manual check runs dev's copy from the PR's worktree, never the PR's own copy.
-    assert "git show origin/dev:scripts/$f" in review
-    assert "The manual check runs **dev's** copy, never the PR's" in review
-    assert "0 red, or only import-only reds, goes back" in review
+def test_contributing_says_ci_runs_it_and_what_the_summary_line_means():
+    # The maintainer's review guidance left the repo with the loop skills; what
+    # a contributor can follow is CONTRIBUTING: CI's job runs the same check as
+    # the script, and the summary line's categories are defined there.
+    text = _words(REPO / "CONTRIBUTING.md")
+    assert "**`verify-red`** job" in text
+    assert "`scripts/verify-red.sh` runs the same check locally" in text
+    assert "verify-red: 3 red · 0 import-only · 1 unexpected pass · 0 n/a" in text
+    for category in ("*red*", "*import-only*", "*unexpected pass*", "*n/a*"):
+        assert category in text, category
 
 
 def test_the_worker_runs_it_once_and_pastes_the_line():
