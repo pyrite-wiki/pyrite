@@ -117,14 +117,22 @@ def cli_world(cli_files, monkeypatch):
     return cli_files
 
 
+def _is_kb_param(p, path: tuple[str, ...]) -> bool:
+    """A parameter that names a KB: by its option string (``-k``/``--kb``,
+    whatever the parameter is called, a list included), by one of the names
+    the positional and paired forms use, or the `kb` group's route name."""
+    by_option = any(o in ("-k", "--kb") for o in getattr(p, "opts", ()))
+    is_kb_route_name = p.name == "name" and path[:1] == ("kb",)
+    return by_option or p.name in KB_PARAMS or is_kb_route_name
+
+
 def _kb_params():
     """(root, command path, param) for every KB-bearing parameter."""
     out = []
     for root in ROOTS:
         for path, cmd in leaves(typer.main.get_command(root_app(root))):
             for p in cmd.params:
-                is_kb_route_name = p.name == "name" and path[:1] == ("kb",)
-                if p.name in KB_PARAMS or is_kb_route_name:
+                if _is_kb_param(p, path):
                     out.append((root, " ".join(path), p.name))
     return out
 
@@ -143,7 +151,7 @@ def _argv(root: str, command: str, kb_param: str, probe: str, files: dict) -> li
     given = {a for a in EXTRA_ARGS.get(key, []) if a.startswith("--")}
     paired = PAIRED.get(key, ())
     for p in cmd.params:
-        name_is_kb = p.name in KB_PARAMS or (p.name == "name" and path[:1] == ("kb",))
+        name_is_kb = _is_kb_param(p, path)
         if p.opts[0] in given:
             continue
         if p.name == kb_param:
@@ -188,12 +196,42 @@ def _case_id(case):
     return f"{case[0]} {case[1]} [{case[2]}]"
 
 
+#: Parameters that look like a KB (``kb`` in the name) and are not one, with
+#: the reason. Anything else that looks like a KB and is neither walked nor in
+#: NOT_A_LOOKUP fails the pin below.
+NOT_A_KB: dict[str, str] = {
+    "kb_type": "a KB type (generic, software, ...), not a KB",
+}
+
+
+def _kb_looking_params():
+    """(root, command path, param) for every parameter that could name a KB:
+    ``-k``/``--kb`` among its options, or ``kb`` in its name. Found from the
+    tree, not from a list of names, so a new spelling cannot escape."""
+    out = []
+    for root in ROOTS:
+        for path, cmd in leaves(typer.main.get_command(root_app(root))):
+            for p in cmd.params:
+                by_option = any(o in ("-k", "--kb") for o in getattr(p, "opts", ()))
+                if by_option or "kb" in (p.name or ""):
+                    out.append((root, " ".join(path), p.name))
+    return out
+
+
 @pytest.mark.control(reason="a pin on the tree: fails when a command is added unclassified")
 def test_every_kb_parameter_is_walked_or_classified():
     found = set(_kb_params())
     stale = {k for k in NOT_A_LOOKUP if k not in found and k[1].split()[0] not in EXTENSION_GROUPS}
     assert not stale, f"classified but no longer in the tree: {sorted(stale)}"
     assert ("pyrite", "tags", "kb_name") in found and ("pyrite", "qa validate", "kb_name") in found
+    # The two list-valued KB options (#966 review): found by their option
+    # string, not by a name the fixed set happened to hold.
+    assert ("pyrite", "investigation search", "kb_names") in found
+    assert ("pyrite", "investigation dedup", "kb_names") in found
+    # Nothing that looks like a KB escapes: it is walked, or it is named
+    # here with the reason it is not a lookup.
+    escaped = {c for c in _kb_looking_params() if c not in found and c[2] not in NOT_A_KB}
+    assert not escaped, f"looks like a KB, neither walked nor classified: {sorted(escaped)}"
 
 
 @pytest.mark.parametrize("case", _cases(), ids=_case_id)

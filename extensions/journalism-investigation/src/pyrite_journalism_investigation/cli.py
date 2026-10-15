@@ -445,6 +445,10 @@ def search_all(
     config = load_config()
     db = PyriteDB(config.settings.index_path)
     try:
+        # Every KB named is resolved before the search runs (#952, #924): an
+        # unknown KB or a shortname is refused, never an empty result.
+        for kb in kb_names:
+            require_kb(config, kb, db=db, output_format="json" if output_json else "rich")
         try:
             result = cross_kb_search(
                 db,
@@ -1113,6 +1117,9 @@ def dedup(
     config = load_config()
     db = PyriteDB(config.settings.index_path)
     try:
+        # Every KB named is resolved before the scan runs (#952, #924).
+        for kb in kb_names:
+            require_kb(config, kb, db=db, output_format="json" if output_json else "rich")
         groups = find_duplicates(
             db,
             kb_names=kb_names if kb_names else None,
