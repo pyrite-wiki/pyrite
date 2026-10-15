@@ -35,8 +35,8 @@ cd "$wt_dir"
 # torch. So do not collapse this into a shared venv on the strength of a `du`
 # number: the saving is not there, and the isolation is the whole point (#189).
 #
-# The cost that IS real is worktree *count*. The conductor's health step reaps
-# a worktree once its PR merges.
+# The cost that IS real is worktree *count*. Remove a worktree
+# once its PR merges (`git worktree remove`).
 # What an install is made from. cksum is POSIX, so it exists on a laptop and a VM.
 stamp="$( { cat pyproject.toml extensions/*/pyproject.toml uv.lock 2>/dev/null; echo "$extras"; } | cksum)"
 if [ "$if_changed" = 1 ] && [ -x .venv/bin/python ] \

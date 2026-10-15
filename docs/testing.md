@@ -80,8 +80,8 @@ verify-red: 3 red · 1 import-only · 0 unexpected pass · 0 n/a (12 pre-existin
   it, was not collected, or its run timed out.
 
 Tests the PR did not add or edit are counted, not listed. Workers run
-`scripts/verify-red.sh` once before reporting and paste the summary line. The
-conductor reads the CI job's line instead of running it again.
+`scripts/verify-red.sh` once before reporting and paste the summary line. A
+reviewer reads the CI job's line instead of running it again.
 
 ### Known limits
 

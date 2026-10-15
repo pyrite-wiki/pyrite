@@ -153,5 +153,5 @@ suite needs), `tests/test_readme_install_tag.py`, `tests/test_readme.py`.
   is not marked superseded (verified by reading it; not edited here).
 - Not decided: whether `main` moves untagged between releases, and who bumps
   the snapshot version ([[adr-0032]] open questions on 3b).
-- No ADR covers the conductor, worker and reviewer roles; they are skills under
-  `.claude/`.
+- No ADR covers the worker and reviewer roles; the worker method is the
+  `pyrite-dev` skill, and the maintainer's loop is outside this repository.

@@ -10,8 +10,8 @@ description: "This skill should be used by an agent developing Pyrite code — f
 You develop Pyrite on **one branch, in one worktree, on one theme**, and you
 never push to `dev`. Review and merge are the maintainer's. Every process
 fact (setup, hooks, branches, the PR, the heavy-run lock) has one home,
-[CONTRIBUTING.md](../../../CONTRIBUTING.md), "Branches, hooks and pull
-requests"; this skill gives the method and links there rather than repeating
+[CONTRIBUTING.md](../../../CONTRIBUTING.md#branches-hooks-and-pull-requests),
+"Branches, hooks and pull requests"; this skill gives the method and links there rather than repeating
 it.
 
 A theme produces code and what was learned building it; record both. Why each
@@ -34,9 +34,9 @@ pwd                           # your checkout; a worktree under ../pyrite-wt/ if
 .venv/bin/pyrite kb list      # the `pyrite` KB path must be THIS worktree's kb/
 ```
 
-- On `dev`, or sharing a clone with another session or agent: stop, and run
-  `scripts/new-worktree.sh <branch>` from the main checkout. Wrong `pyrite`
-  KB path: run `scripts/setup-checkout.sh` (CONTRIBUTING, "Initial Setup").
+- On `dev`, or sharing a clone with another session or agent, or a wrong
+  `pyrite` KB path: stop and set up a worktree (CONTRIBUTING,
+  [Initial Setup](../../../CONTRIBUTING.md#initial-setup)).
 - Use the worktree's `.venv/bin/...`; the main checkout's venv imports the main
   checkout's code.
 - Sub-agents share your branch and worktree: give them disjoint files, never
@@ -106,9 +106,9 @@ work" is not evidence.
 
 **CI is the verification gate.** Locally, run the tests of the files you
 changed; then push to your draft PR and read its CI. Don't hold a push for a
-slow local run of the whole affected set: the pre-push run does not have to be
-perfect (CONTRIBUTING, "Branches, hooks and pull requests"), and CI runs the
-full suite on every interpreter.
+slow local run of the whole affected set (how the hooks, the heavy-run lock
+and a verified commit work: CONTRIBUTING, [Running the
+tests](../../../CONTRIBUTING.md#running-the-tests)).
 
 | Claim | Run | Look for |
 |---|---|---|
@@ -141,18 +141,17 @@ full suite on every interpreter.
 - Commit each passing step as you reach it, with the reason in the message.
   Uncommitted work and the thinking behind it are lost when a session stops
   (2026-10-02: a worker died with eight files edited and no note of why).
-- Open a draft PR right after your first push (`gh pr create --draft --base dev
-  --fill`, `Fixes #N` in the body; from a fork add `--repo pyrite-wiki/pyrite`).
-  Its CI is the authority. Leave it a draft until your report is done; review
-  and merge are the maintainer's (CONTRIBUTING, "Pull requests").
-- Test each tree once: run `scripts/test-affected --run` in the foreground on a
-  committed tree, and the pre-push hook reuses the pass.
-- After a failure that looks load-caused, re-run only the failures
-  (`scripts/test-affected --run -- --lf`); never start a second suite while
-  one is running. `test-affected --run`, `verify-red.sh` and `scripts/e2e.sh`
-  (Playwright) share one machine-wide lock, and anything else heavy goes
-  through `scripts/heavy_lock.py -- <command>` (CONTRIBUTING, "One heavy run
-  at a time per machine").
+- Open a draft PR right after your first push, with `Fixes #N` in the body;
+  its CI is the authority. Leave it a draft until your report is done (steps
+  and fork flags: CONTRIBUTING, [Branches, hooks and pull
+  requests](../../../CONTRIBUTING.md#branches-hooks-and-pull-requests)).
+- Commit each passing step as you reach it, with the reason in the message.
+  Uncommitted work and the thinking behind it are lost when a session stops
+  (2026-10-02: a worker died with eight files edited and no note of why).
+- Test each tree once, and after a load-caused failure re-run only the
+  failures (`scripts/test-affected --run -- --lf`). Never start a second heavy
+  run while one is running; the lock and its wrapper are in CONTRIBUTING,
+  "Running the tests".
 - A test that passes alone and fails in parallel is a bug in that test.
 
 ## Capture what you learned
@@ -195,10 +194,9 @@ Done means the whole theme, with evidence for every claim. Then, in order:
    origin/dev`). `git diff <noted-head> HEAD` must be empty: the rewrite
    changes history, never content. Then `git push --force-with-lease`. Only your own branch, and only before the PR
    is marked ready.
-3. **Push**: `git push -u origin <branch>`. A red pre-push in a test your change
-   touches: fix it. In a test it does not touch: re-run that test alone, and if
-   it passes, push with `--no-verify` and name the test in the report. If CI
-   then fails the same test, it is yours to fix.
+3. **Push** (CONTRIBUTING, "Branches, hooks and pull requests"). A red
+   pre-push in a test your change touches is yours to fix. If you push past an
+   unrelated flake as that section allows, name the test in the report.
 4. **Report with the pushed SHA.** The PR stays a draft.
 
 ```

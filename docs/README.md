@@ -32,5 +32,3 @@ guides solve a task; references describe contracts; explanations describe why.
 - [Testing](testing.md) — reference: which tests should I run for a change?
 - [Design principles](../kb/design.md) — explanation: which principles should guide a contribution?
 - [Changelog](../CHANGELOG.md) — reference: what changed between releases?
-
-The conductor desk is being retired by #244 and is not part of this reader index.

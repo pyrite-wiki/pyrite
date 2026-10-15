@@ -31,13 +31,13 @@ Data point for the retro's "cold-read findings that changed a PR / cold reads di
 
 **State: partly addressed — leave open for one specific, one-line change.** (`process` issue; verified, not rewritten.)
 
-Checked against `.claude/skills/pyrite-conductor/review.md:115-118`:
+Checked against the maintainer's review procedure (outside this repo; it was `review.md:115-118` at the time):
 
 > "Dispatch `pyrite-reviewer` when the diff touches `pyrite/server/`, `pyrite/storage/`, `pyrite/schema/`, the auth code, or a public shape, when it deletes or weakens a test, **when the worker's 'Unsure' is non-empty**, or whenever your own reading felt too familiar to be critical."
 
 So "Unsure non-empty" is a listed trigger — but it is listed *among* five discretionary ones ("Dispatch … when"), which is exactly the framing this issue says is too easy to wave through on an otherwise clean branch. **Change 1 of this issue (make it mandatory when the Unsure names a design decision, not merely discretionary) is not in the text.**
 
-**Change 2 is also not in the text.** The reviewer prompt at `review.md:124-131` gives the reviewer "the diff and nothing else — no ticket, no report, no conversation". That is right for the cold read's independence and is deliberately not what this issue asked for; this issue asked for the worker's Unsure to be quoted **verbatim as the reviewer's first question** rather than paraphrased by the conductor. Those two are in tension and the tension is real: quoting the Unsure gives the reviewer context the cold read is designed to withhold.
+**Change 2 is also not in the text.** The reviewer prompt in the same procedure (`review.md:124-131`) gives the reviewer "the diff and nothing else — no ticket, no report, no conversation". That is right for the cold read's independence and is deliberately not what this issue asked for; this issue asked for the worker's Unsure to be quoted **verbatim as the reviewer's first question** rather than paraphrased by the conductor. Those two are in tension and the tension is real: quoting the Unsure gives the reviewer context the cold read is designed to withhold.
 
 **That tension is the only open question on this issue**, and it is a one-paragraph decision, not a theme: *when a worker's Unsure names a design decision, does the cold reader receive that sentence verbatim (losing some independence, gaining the highest-signal pointer), or does the conductor keep the cold read blind and instead refuse to discharge the Unsure itself?* #133 answers the neighbouring case in the second direction ("a cold-read finding that says 'I could not confirm X' is not dischargeable as a trade-off"), which suggests the second option here too.
 

@@ -259,10 +259,8 @@ times out at 1-2 workers (#906); bound it once that is fixed.
 
 ## Pre-Commit Hooks
 
-The commit stage runs **no pytest** (seconds only: ruff, ruff-format, file
-hygiene, the import-cycle check, KB schema validation); the affected tests run
-at **pre-push** (`scripts/test-affected --run`). The table of stages and the
-reasons are in CONTRIBUTING, "Branches, hooks and pull requests".
+What each hook stage runs, and why: [CONTRIBUTING, "Branches, hooks and pull
+requests"](../../../CONTRIBUTING.md#branches-hooks-and-pull-requests).
 
 **Double-failure pattern:** If ruff-format reformats files, the first commit attempt fails. The reformatted files are unstaged. Re-stage those paths and commit again:
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One heavy test run at a time on this machine (#168).
 
-On 2026-09-18 the conductor loop ran a 16 GB laptop out of memory: up to
+On 2026-09-18 the maintainer's orchestration loop ran a 16 GB laptop out of memory: up to
 eight `pytest -n auto` suites from different worktrees, plus Playwright,
 each unaware of the others. Every heavy runner now takes this lock first:
 

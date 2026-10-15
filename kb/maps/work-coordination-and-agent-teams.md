@@ -89,7 +89,7 @@ Components [[task-service]], [[software-kb-extension]], [[rubric-checkers]],
 
 - Leases, `retention`, the link rule and the state-table registry are
   [[adr-0029]] work for 0.26 and absent; stale-claim handling still relies on
-  conductor procedure.
+  the maintainer's orchestration loop (outside this repo).
 - Hooks write parent status and `unblock_dependents` and evidence aggregation
   have no callers outside tests; ADR-0045 makes them derived (accepted).
 - The `status:` word names three things across [[adr-0028]], [[adr-0020]] and a

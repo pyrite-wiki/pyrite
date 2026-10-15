@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Is this machine free enough to start something heavy? (#168)
 
-The conductor's health step runs this before it starts a worker, a review
-suite or a Playwright run, and starts nothing heavy when it exits 1. On
+The maintainer's orchestration loop (outside this repo) runs this before it
+starts a worker, a review suite or a Playwright run, and starts nothing heavy
+when it exits 1. On
 2026-09-18 a tick recorded a load average of 14 and started anyway; the
 machine then ran out of memory. The rule is a command, not a judgement.
 
@@ -12,7 +13,7 @@ Prints the two numbers and the limits on one line. Exit 0: ok. Exit 1: busy
 (1-minute load above the limit, or available memory below it). A number it
 cannot read is not a reason to stop a tick: it says so and exits 0.
 
-Limits (defaults match the conductor skill's worked example: load 8 and 30%
+Limits (defaults match the maintainer's loop: load 8 and 30%
 free on the maintainer's 10-core / 16 GB laptop):
   PYRITE_MACHINE_MAX_LOAD       1-minute load average (default 0.8 x cores)
   PYRITE_MACHINE_MIN_FREE_PCT   available memory, % of total (default 30)

@@ -7,7 +7,7 @@ from urllib.parse import unquote, urlsplit
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-EXCLUDED = {"docs/conductor-desk.md"}  # #244 owns the retired desk.
+EXCLUDED: set[str] = set()
 
 
 def relative_links(path):
