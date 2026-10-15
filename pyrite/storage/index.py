@@ -333,7 +333,7 @@ class IndexManager:
                 stat = file_path.stat()
             except OSError:
                 stat = None
-        data = {
+        data: dict[str, Any] = {
             "id": id_text(entry.id),
             "kb_name": kb_name,
             "entry_type": entry.entry_type,
