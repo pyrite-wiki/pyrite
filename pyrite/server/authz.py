@@ -84,7 +84,7 @@ def read_scope(request: Request, policy: AccessPolicy) -> ReadScope:
     return policy.read_scope(principal)
 
 
-def blank_path_kb(request: HTTPConnection) -> str | None:
+def blank_path_kb(request: Request) -> str | None:
     """A KB path parameter that is blank, or None.
 
     A blank query or body value names no KB (`access_policy.named_kb`); a
