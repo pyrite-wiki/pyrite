@@ -458,10 +458,6 @@ class ApiClient {
 		return this.request('/api/index/jobs');
 	}
 
-	async renderSiteCache(): Promise<{ rendered: boolean; kbs: number; entries: number; errors: number }> {
-		return this.request('/api/site/render', { method: 'POST' });
-	}
-
 	// Starred Entries
 	async getStarredEntries(kb?: string): Promise<StarredEntryListResponse> {
 		const params = kb ? `?kb=${encodeURIComponent(kb)}` : '';

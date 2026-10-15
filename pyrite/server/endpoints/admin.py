@@ -14,7 +14,6 @@ from ...services.index_worker import IndexWorker
 from ...services.kb_registry_service import KBRegistryService
 from ...services.llm_service import LLMService
 from ...services.llm_usage_service import LLMUsageService
-from ...services.site_cache import SiteCacheService
 from ...storage.index import IndexManager
 from ..api import (
     get_auth_service,
@@ -26,7 +25,6 @@ from ..api import (
     get_kb_registry,
     get_llm_service,
     get_llm_usage_service,
-    get_site_cache_factory,
     limiter,
     requires_tier,
 )
@@ -34,7 +32,6 @@ from ..authz import authorize
 from ..schemas import (
     AIStatusResponse,
     KBReindexResponse,
-    SiteCacheSyncStatus,
     StatsResponse,
     SyncResponse,
 )
@@ -89,55 +86,12 @@ def sync_index(
 
         broadcast_event("kb_synced", entry_id="", kb_name="")
 
-        # Re-render the site cache if entries changed, *after* the sync has
-        # already committed and the drain/broadcast above have run. `wait=true`
-        # means the caller is already blocked on this request, so the render
-        # happens synchronously here rather than being handed to the loop
-        # captured at startup (#326's `bind_loop`/`_loop`) -- that hand-off
-        # exists for code with no way to make the caller wait; this code has
-        # exactly that. `index_mgr.config` (not `request.app.state.config`,
-        # which nothing in the server ever sets) is the same config already
-        # used to build `index_mgr` via `get_index_mgr`.
-        #
-        # A render failure does NOT fail the sync (#349 cold-read round): the
-        # sync already committed its counts, drained the embed queue and
-        # broadcast `kb_synced` by this point, and a 500 here would also make
-        # a retry see `added=0` (nothing changed), so the cache would never
-        # get another chance to render. The failure is instead reported on
-        # `site_cache.error` and logged with its traceback -- narrow because
-        # only building the service and `render_all` are wrapped, not the
-        # sync, drain or broadcast above.
-        site_cache_status = None
-        if result.get("added", 0) + result.get("updated", 0) + result.get("removed", 0) > 0:
-            from ...services.site_cache import SiteCacheService
-
-            try:
-                # Inside the try: the constructor reads branding.yaml, which
-                # an operator may have left half-edited. On this path (#408)
-                # a broken branding file is reported the same generic way as
-                # any other render failure -- the sync already committed, so
-                # there is no "nothing committed yet, fix and retry" framing
-                # to offer; that framing is only true of the explicit
-                # POST /api/site/render call below.
-                stats = SiteCacheService(config=index_mgr.config, db=index_mgr.db).render_all()
-            except Exception:
-                logger.exception("Site cache render failed after sync")
-                site_cache_status = SiteCacheSyncStatus(
-                    rendered=False, error="site cache render failed; see server log"
-                )
-            else:
-                logger.info("Site cache re-rendered after sync")
-                site_cache_status = SiteCacheSyncStatus(
-                    rendered=True, errors=stats.get("errors", 0)
-                )
-
         return SyncResponse(
             synced=True,
             added=result.get("added", 0),
             updated=result.get("updated", 0),
             removed=result.get("removed", 0),
             skipped=result.get("skipped", []),
-            site_cache=site_cache_status,
         )
 
     job_id = worker.submit_sync()
@@ -201,45 +155,6 @@ def get_all_usage(
 ):
     """Per-user LLM usage totals across all users (admin only)."""
     return {"users": usage_svc.get_all_usage()}
-
-
-@router.post("/site/render", dependencies=[Depends(requires_tier("admin"))])
-@limiter.limit("10/minute")
-async def render_site_cache(
-    request: Request,
-    build_site_cache: Callable[[], SiteCacheService] = Depends(get_site_cache_factory),
-):
-    """Render all /site pages to the filesystem cache for fast serving.
-
-    ``rendered`` means the same thing here as on the sync path's
-    ``site_cache`` status (#408): the render ran to completion, independent
-    of per-entry page failures, which ``errors`` counts. This is an
-    explicit, nothing-already-committed operator call, so an unreadable
-    ``branding.yaml`` (``SiteCacheService.__init__`` reads it) is reported
-    as a 409 rather than folded into `rendered: false` -- unlike the sync
-    path, there is nothing that already committed, so surfacing the mistake
-    plainly is more useful than a generic 200/500.
-    """
-    import asyncio
-
-    from ...exceptions import BrandingInvalidError, public_text
-
-    try:
-        svc = await asyncio.to_thread(build_site_cache)
-    except BrandingInvalidError as e:
-        # Logged detail names the real path; the response body carries only
-        # the exception's public_message (#377 pattern; #445 cold read --
-        # str(e) here previously leaked the branding.yaml path over HTTP).
-        logger.warning("Site cache render refused: invalid branding.yaml: %s", e)
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "BRANDING_INVALID",
-                "message": public_text(e, already_logged=True, log=logger),
-            },
-        ) from None
-    stats = await asyncio.to_thread(svc.render_all)
-    return {"rendered": True, **stats}
 
 
 @router.get("/index/embed-status")

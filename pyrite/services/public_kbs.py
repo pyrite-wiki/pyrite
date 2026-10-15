@@ -1,13 +1,12 @@
 """Which KBs are public: the one rule every anonymous surface uses.
 
-The pre-rendered `/site`, `/site/sitemap.xml` and the live `/sitemap.xml`
-are served with no authentication, so they may only show KBs anyone may
-read. Until `kb.yaml: published: true` ships, the signal is
-``default_role == "read"``. A KB with ``default_role`` unset or ``"none"``
-is private for these surfaces, whatever the global auth settings are.
+An anonymous visitor may only be shown KBs anyone may read. Until
+`kb.yaml: published: true` ships, the signal is ``default_role == "read"``.
+A KB with ``default_role`` unset or ``"none"`` is private for anonymous
+surfaces, whatever the global auth settings are.
 
 Keep this the only place the rule is written: two copies drifted once
-(the /site renderer used every KB while the sitemap used this rule).
+(the former /site renderer used every KB while the sitemap used this rule).
 """
 
 from __future__ import annotations

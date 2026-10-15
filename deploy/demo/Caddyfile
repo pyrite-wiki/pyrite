@@ -11,11 +11,8 @@ www.capturecascade.org {
 }
 
 capturecascade.org {
-	# Root redirects to the timeline
-	redir / /site/cascade-timeline/ permanent
-
 	# Inject Plausible analytics into HTML responses.
-	# /site pages send a Content-Security-Policy that blocks injected scripts
+	# The app's pages send a Content-Security-Policy that blocks injected scripts
 	# unless the Pyrite instance behind this block allows them. Set on it:
 	#   PYRITE_SITE_CSP_EXTRA="script-src https://plausible.io 'sha256-Ebt84R/xi8miDnxS/0/bkTjVgDRKQpWS1eI09TLbNkg='; connect-src https://plausible.io"
 	# The hash is of the inline <script> below; recompute it if that changes.

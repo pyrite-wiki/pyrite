@@ -216,9 +216,10 @@ def test_real_routes_under_the_reserved_prefixes_still_win(tmp_path, monkeypatch
 
 
 # Paths that only START with a name the SPA fallback used to refuse. On `dev` the
-# fallback answered 404 for any path beginning "docs", "redoc", "openapi.json",
-# "health", "site" or "viewer" (a string prefix, not a path segment), so a
-# sibling like /docs-old or /healthz never reached the SPA shell. Kept as-is.
+# fallback answered 404 for any path beginning "docs", "redoc", "openapi.json"
+# or "health" (a string prefix, not a path segment), so a sibling like
+# /docs-old or /healthz never reached the SPA shell. Kept as-is. ("site" and
+# "viewer" left the list with the /site renderer, #953.)
 _OLD_FALLBACK_REFUSALS = (
     "/docs-old",
     "/docs/nope",
@@ -226,11 +227,6 @@ _OLD_FALLBACK_REFUSALS = (
     "/openapi.json.bak",
     "/healthz",
     "/health/nope",
-    "/sitemap-old",
-    "/siteX",
-    "/site/unknown",
-    "/viewerX",
-    "/viewer/x",
 )
 
 

@@ -22,7 +22,7 @@ Your AI agents have no memory. Your knowledge is trapped in platform silos. Ever
 - **Plugin system with 19 extension points** — custom entry types, MCP tools, CLI commands, validators, lifecycle hooks, relationship semantics, schema migrations.
 - **Zero running cost locally** — markdown files + SQLite index on your disk. No cloud dependency, no subscription, no vendor lock-in. Your data is plain text files you can read in any editor.
 
-> **Multi-user is experimental. Here be dragons.** Pyrite is solid for one person, their agents, and a team that trusts each other. Accounts, per-KB permissions and the public `/site` work, and each release closes more gaps, but they have not had the review a system holding other people's private data needs. Don't put knowledge on a shared or internet-facing instance that you couldn't live with every user of that instance reading. See [SECURITY.md](SECURITY.md#multi-user-is-experimental).
+> **Multi-user is experimental. Here be dragons.** Pyrite is solid for one person, their agents, and a team that trusts each other. Accounts and per-KB permissions work, and each release closes more gaps, but they have not had the review a system holding other people's private data needs. Don't put knowledge on a shared or internet-facing instance that you couldn't live with every user of that instance reading. See [SECURITY.md](SECURITY.md#multi-user-is-experimental).
 
 ## Quick Start
 

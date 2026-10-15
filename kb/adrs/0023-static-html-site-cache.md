@@ -9,6 +9,8 @@ date: "2026-03-25"
 tags: [architecture, site-cache, seo, deployment]
 ---
 
+> Removed by #953 (2026-10): `/site`, `/viewer`, the sitemap routes and `SiteCacheService` are gone; publishing is an export (`pyrite export site`). Kept as history.
+
 ## Context
 
 Pyrite KBs with 5,000+ entries need to be crawlable by search engines. The SvelteKit SPA renders client-side only — invisible to crawlers. We need server-rendered HTML at `/site/` URLs with proper SEO metadata (sitemap, JSON-LD, canonical URLs, Open Graph).

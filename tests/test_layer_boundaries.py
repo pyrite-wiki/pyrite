@@ -165,8 +165,8 @@ ALLOWLIST: dict[tuple[str, str], tuple[int, str]] = {
     ("pyrite/server/endpoints/admin.py::get_stats", "storage"): (1, _INDEX),
     ("pyrite/server/endpoints/admin.py::sync_index", "storage"): (1, _INDEX),
     ("pyrite/server/endpoints/admin.py::sync_index", ".db"): (
-        2,
-        "hands index_mgr.db to _drain_embed_queue and SiteCacheService; " + _FOLLOW,
+        1,
+        "hands index_mgr.db to _drain_embed_queue; " + _FOLLOW,
     ),
     ("pyrite/server/worktree_resolver.py::<module>", "PyriteDB"): (
         1,

@@ -566,27 +566,6 @@
   "POST /api/kbs/gc | write_key": {
     "status": 403
   },
-  "POST /api/site/render | admin_key": {
-    "status": 200
-  },
-  "POST /api/site/render | anonymous": {
-    "status": 403
-  },
-  "POST /api/site/render | global_user": {
-    "status": 403
-  },
-  "POST /api/site/render | granted_user": {
-    "status": 403
-  },
-  "POST /api/site/render | local_user": {
-    "status": 403
-  },
-  "POST /api/site/render | read_key": {
-    "status": 403
-  },
-  "POST /api/site/render | write_key": {
-    "status": 403
-  },
   "POST /auth/api-keys | admin_key": {
     "status": 422
   },

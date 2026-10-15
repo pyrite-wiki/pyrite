@@ -55,7 +55,6 @@ server = [
     # Used directly by pyrite/server/auth_rate_limit.py (slowapi depends on it too).
     "limits>=3.1",
     "httpx>=0.27.0",
-    "jinja2>=3.1.4",
     "watchdog>=4.0.1",
     "alembic>=1.13.0",
     "markdownify>=0.14.1",

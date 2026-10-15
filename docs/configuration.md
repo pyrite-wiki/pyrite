@@ -165,7 +165,7 @@ the browser less:
   the CLI, `curl` and agents, are not affected, unless a browser's
   `Sec-Fetch-Site` header says the request came from another site.
 
-These rules cover the whole app, including `/mcp`, `/ws` and `/site`. If you serve a
+These rules cover the whole app, including `/mcp` and `/ws`. If you serve a
 credential-free instance under another name, such as a LAN hostname or a reverse
 proxy's public name, add that name to `allowed_hosts`. If the web UI is served
 from another origin, add the origin to `cors_origins`:
@@ -258,7 +258,7 @@ grants it. Migration v26 marks every user that existed before it with global
 access; its rollback is a no-op, so rolling back and migrating up again grants
 global access to every user present at that time, self-registered ones
 included. To share a KB with every signed-in user,
-set its `default_role` to `read` (which also puts it on the public site, below),
+set its `default_role` to `read` (which also opens it to anonymous readers, below),
 or grant it per user.
 
 Per-KB access: each KB in `config.yaml` may carry `default_role: read` (public
@@ -267,23 +267,22 @@ Grants are managed over the REST API by an admin
 (`GET`/`POST /api/kbs/{name}/permissions`) or in the web UI's KB settings; there
 is no CLI command for them yet.
 
-**`default_role: read` also publishes the KB to anyone, signed in or not.**
-Such a KB is on the pre-rendered public site (`/site`, rendered with
-`POST /api/site/render`), in `/site/sitemap.xml` and in `/sitemap.xml`,
-whatever the auth settings are. A KB with `default_role` unset, `write` or
-`none` is never rendered to `/site`, and `/site` refuses its pages even if an
-older cache still holds them. To take a KB off the public site, change its
-`default_role` and re-render; purge any CDN in front of `/site`.
+**`default_role: read` also opens the KB to anyone, signed in or not.**
+Such a KB is readable by an anonymous visitor over REST and the web app,
+whatever the auth settings are. To publish a KB as a site, export it
+(`pyrite export site`); the built-in `/site` renderer and its sitemap were
+removed in #953.
 
-### The public site's Content-Security-Policy
+### The web app's Content-Security-Policy
 
-`/site` pages are served with a strict policy (`script-src 'self'`, no inline
-scripts). If a reverse proxy injects a script into those pages, such as an
-analytics snippet, the browser blocks it until you allow it:
+The web app's pages are served with a strict policy (`script-src 'self'` plus
+the build's own bootstrap hash, no other inline scripts). If a reverse proxy
+injects a script into those pages, such as an analytics snippet, the browser
+blocks it until you allow it:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PYRITE_SITE_CSP_EXTRA` | unset | Extra sources in CSP syntax, appended to the built-in `/site` policy. Sources go on the directive with the same name; a directive the policy lacks is added. A malformed directive is ignored and logged. |
+| `PYRITE_SITE_CSP_EXTRA` | unset | Extra sources in CSP syntax, appended to the built-in policy. Sources go on the directive with the same name; a directive the policy lacks is added. A malformed directive is ignored and logged. |
 
 ```yaml
 settings:
@@ -301,8 +300,8 @@ Limits on what the setting can do:
 - `object-src` and `base-uri` cannot be extended. A directive that tries is
   ignored, and a warning is logged.
 - Adding `'unsafe-inline'`, `'unsafe-eval'` or `*` to `script-src` or
-  `default-src` is applied, but logs a warning (on the first `/site` request), because it lets
-  script in KB content run on `/site`.
+  `default-src` is applied, but logs a warning (on the first request), because it lets
+  script in KB content run in the app.
 - A directive with no value, such as `upgrade-insecure-requests`, is added
   as is.
 - A malformed directive is ignored and logged. That includes a bad name and

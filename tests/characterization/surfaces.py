@@ -184,15 +184,6 @@ REST_ACCESS_EXCLUSIONS: dict[tuple[str, str], str] = {
         "POST",
         "/api/admin/merge-queue/{username}/reject",
     ): "requires_tier('admin') only, same as above.",
-    (
-        "GET",
-        "/site",
-    ): "static, pre-rendered cache; no auth dependency at all (anonymous, always-public).",
-    ("GET", "/site/{path:path}"): "static, pre-rendered cache; no auth dependency at all.",
-    ("GET", "/site/search"): "static, pre-rendered cache; no auth dependency at all.",
-    ("GET", "/site/sitemap.xml"): "static, pre-rendered cache; no auth dependency at all.",
-    ("GET", "/site/robots.txt"): "static, pre-rendered cache; no auth dependency at all.",
-    ("GET", "/site/_static/{name}"): "static asset serving; no auth dependency at all.",
     # ---- #476 round-2 issue 2: the remaining 41 of the 49 routes a full
     # create_app() sweep found neither characterized nor excluded. Each was
     # read (its handler body, not just its path), not assumed -- see the
@@ -257,10 +248,7 @@ REST_ACCESS_EXCLUSIONS: dict[tuple[str, str], str] = {
         "lists the caller's OWN GitHub account's repos via their stored token; "
         "no KB param, no dependency on the route."
     ),
-    # Site cache / index: instance-wide, admin, or fully public.
-    ("POST", "/api/site/render"): (
-        "requires_tier('admin') only; renders every /site page, no single-KB branch."
-    ),
+    # Index: instance-wide.
     ("GET", "/api/index/embed-status"): (
         "instance-wide embedding queue status, no KB param, no auth dependency."
     ),
@@ -289,18 +277,8 @@ REST_ACCESS_EXCLUSIONS: dict[tuple[str, str], str] = {
     ("POST", "/auth/invite-codes"): "no KB param anywhere; admin-issued invite codes.",
     ("GET", "/auth/invite-codes"): "no KB param anywhere; lists invite codes.",
     ("DELETE", "/auth/invite-codes/{code}"): "no KB param anywhere; code is an invite code.",
-    # Public/static/no-auth: same class as the already-excluded /site/* entries.
+    # Public/static/no-auth.
     ("GET", "/health"): "infra probe; no auth dependency, no KB param.",
-    ("GET", "/robots.txt"): (
-        "public SEO route mounted outside /api (no auth), per seo_endpoints.py's own docstring."
-    ),
-    ("GET", "/sitemap.xml"): (
-        "public SEO route mounted outside /api (no auth), per seo_endpoints.py's own docstring."
-    ),
-    ("GET", "/viewer"): "static SPA file serving, include_in_schema=False, no auth dependency.",
-    ("GET", "/viewer/{path:path}"): (
-        "static SPA file serving, include_in_schema=False, no auth dependency."
-    ),
     ("GET", "/branding/{filename}"): (
         "mounted outside /api (no auth) so the login page can fetch branding "
         "before the caller is authenticated, per branding_endpoints.py's own "

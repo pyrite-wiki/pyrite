@@ -60,8 +60,6 @@ if TYPE_CHECKING:
     from ..services.auth_service import AuthService
     from ..services.embedding_worker import EmbeddingWorker
     from ..services.qa_service import QAService
-    from ..services.site_cache import SiteCacheService
-    from ..services.sitemap_service import SitemapService
 
 logger = logging.getLogger(__name__)
 
@@ -393,16 +391,6 @@ def get_qa_service(
     return QAService(config, db, llm_service=llm_service)
 
 
-def get_sitemap_service(
-    config: PyriteConfig = Depends(get_config),
-    db: PyriteDB = Depends(get_db),
-) -> "SitemapService":
-    """Get SitemapService instance via DI."""
-    from ..services.sitemap_service import SitemapService
-
-    return SitemapService(config, db)
-
-
 def get_embedding_worker(
     config: PyriteConfig = Depends(get_config),
     db: PyriteDB = Depends(get_db),
@@ -411,25 +399,6 @@ def get_embedding_worker(
     from ..services.embedding_worker import EmbeddingWorker
 
     return EmbeddingWorker(db, model_name=config.settings.embedding_model)
-
-
-def get_site_cache_factory(
-    config: PyriteConfig = Depends(get_config),
-    db: PyriteDB = Depends(get_db),
-) -> "Callable[[], SiteCacheService]":
-    """A zero-argument builder for SiteCacheService.
-
-    A factory, not the service: the constructor reads ``branding.yaml`` and
-    may raise ``BrandingInvalidError``, which ``POST /site/render`` answers
-    with a 409 -- so the handler must be the one that calls it.
-    """
-
-    def build() -> "SiteCacheService":
-        from ..services.site_cache import SiteCacheService
-
-        return SiteCacheService(config, db)
-
-    return build
 
 
 def get_kb_default_role_resolver(
@@ -1373,11 +1342,6 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
 
     application.include_router(branding_router)
 
-    # SEO endpoints: sitemap.xml + robots.txt (public — crawlers don't auth)
-    from .seo_endpoints import seo_router
-
-    application.include_router(seo_router)
-
     # MCP SSE transport (mounted outside /api — handles its own Bearer auth)
     from .mcp_routes import mount_mcp_routes
 
@@ -1472,15 +1436,6 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
     )
     if dist_dir is None:
         dist_dir = Path(__file__).parent.parent.parent / "web" / "dist"
-    # Always mount /site and /viewer routes (independent of SPA dist)
-
-    from .static import SiteRefresher, mount_site_routes
-
-    application.state.site_refresh = SiteRefresher(
-        get_config=lambda: application.state.pyrite_config, open_db=_app_db
-    )
-    mount_site_routes(application)
-
     # Mount SPA static files if dist directory exists
     if dist_dir.is_dir():
         from .static import mount_static

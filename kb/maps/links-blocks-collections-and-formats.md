@@ -55,7 +55,7 @@ relationship an entry?", "what formats does Pyrite emit?". Layer 2 under
     their locks. **decided** ADR-0042 decision 12.
 11. Publishing to a static-site generator is an export; what that generator
     reserves is the exporter's concern. **decided** ADR-0041 decision 1. The
-    accepted `/site/` cache is [[adr-0023]].
+    `/site/` cache of [[adr-0023]] was removed in #953.
 
 ## Invariants a test could check
 

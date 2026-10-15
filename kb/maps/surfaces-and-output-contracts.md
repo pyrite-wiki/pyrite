@@ -43,9 +43,9 @@ under [[design]] (P8, P9).
    "message", ...}}`; MCP and CLI answer a canonical shape; for one release MCP
    also sends `legacy_error_code`. **decided, partly built** [[adr-0037]].
 7. A live-update socket closes with its credential. **decided** [[adr-0036]].
-8. `/site/` serves rendered static HTML, rebuilt on index sync. **decided**
-   [[adr-0023]]; anonymous surfaces show only what the policy lets the
-   anonymous principal read. **decided** ADR-0043 decision 8.
+8. Anonymous surfaces show only what the policy lets the anonymous
+   principal read. **decided** ADR-0043 decision 8. (The `/site/` static
+   HTML cache of [[adr-0023]] was removed in #953; publishing is an export.)
 9. The API is the only security boundary; frontends are scoped clients that
    enforce nothing. **withdrawn** [[adr-0031]] (replaced by ADR-0043).
 10. A small surface is supported (files, index, search, CLI, a core of MCP
@@ -76,7 +76,7 @@ under [[design]] (P8, P9).
 ## Where the code starts
 
 Components [[rest-api]], [[mcp-server]], [[mcp-tool-schemas]], [[cli-system]],
-[[web-frontend]], [[websocket-server]], [[sitecacheservice]],
+[[web-frontend]], [[websocket-server]],
 [[static-file-server]], [[format-system]], [[llm-service]]. Paths:
 `pyrite/server/mcp_server.py`, `pyrite/server/tool_schemas.py`,
 `pyrite/server/errors.py`, `pyrite/services/body_bounds.py`, `pyrite/cli/`,
@@ -102,8 +102,8 @@ Components [[rest-api]], [[mcp-server]], [[mcp-tool-schemas]], [[cli-system]],
   `/expand-query` were not built). The CLI starts the server at the write tier
   while the class defaults to read.
 - Plugins cannot contribute to the frontend ([[adr-0031]], withdrawn); a public
-  reader surface beyond `/site/` is open there.
-- The alpha entry marks REST, the web UI, `/site/`, `/ws` and AI endpoints
+  reader surface is open there.
+- The alpha entry marks REST, the web UI, `/ws` and AI endpoints
   experimental; the web UI needs a build step and has open defects.
 - Not decided: where `--force` applies in commands that already prompt
   (ADR-0041 question 1); whether the web UI should request bounded bodies for

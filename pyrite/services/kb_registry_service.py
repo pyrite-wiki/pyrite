@@ -20,7 +20,6 @@ from ..exceptions import (
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
 from .credential_events import announce_kb_policy_change
-from .site_cache import drop_kb_site_pages
 
 logger = logging.getLogger(__name__)
 
@@ -372,7 +371,6 @@ class KBRegistryService:
         self.db.unregister_kb(name)
         self.config.forget_db_kb(name)
         announce_kb_policy_change(name)
-        drop_kb_site_pages(self.config, self.db, name)
         return True
 
     def update_kb(self, name: str, **updates: Any) -> dict[str, Any]:
@@ -434,7 +432,6 @@ class KBRegistryService:
         self._refresh_config_view()
         if "default_role" in updates and updates["default_role"] != role_before:
             announce_kb_policy_change(name)
-            drop_kb_site_pages(self.config, self.db, name)
         return self.get_kb(name)  # type: ignore[return-value]
 
     def _yaml_origin(self, name: str, repo_id: int | None) -> str:

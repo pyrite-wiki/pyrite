@@ -395,28 +395,6 @@ class DeleteResponse(BaseModel):
     id: str
 
 
-class SiteCacheSyncStatus(BaseModel):
-    """Outcome of the site-cache render `wait=true` triggers alongside a sync.
-
-    Independent of the sync's own success (#349's cold-read round): a sync
-    that added, updated or removed entries has already committed by the time
-    the render runs, so a render failure is reported here rather than
-    failing the whole request. ``error`` is a generic message for callers;
-    the real exception and its traceback go to the server log only.
-
-    ``rendered`` means the render ran to completion (#408); it says nothing
-    about whether every page came out clean. ``errors`` is always present --
-    it is 0 when the render didn't get far enough to produce per-entry stats
-    (e.g. the service failed to construct) and the count of per-entry
-    failures otherwise -- so a caller reads ``rendered and errors == 0`` as
-    "all pages are fresh."
-    """
-
-    rendered: bool
-    errors: int = 0
-    error: str | None = None
-
-
 class SyncResponse(BaseModel):
     """Response for index sync."""
 
@@ -425,7 +403,6 @@ class SyncResponse(BaseModel):
     updated: int
     removed: int
     skipped: list[dict[str, str]] = Field(default_factory=list)
-    site_cache: SiteCacheSyncStatus | None = None
 
 
 class ErrorResponse(BaseModel):
