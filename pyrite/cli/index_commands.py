@@ -10,7 +10,6 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from ..config import load_config
 from ..utils.errors import PARTIAL_EXIT, cli_error, exit_unless_whole
 from .context import cli_db_context, get_config_and_db, require_kb
 from .output import validate_output_format
@@ -355,16 +354,14 @@ def index_embed(
 
     # The KB first (#952): a name that is not a KB is refused before the
     # dependency check, so the answer names the thing that is wrong.
-    require_kb(load_config(), kb_name, output_format="rich")
+    config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db, output_format="rich")
     if not is_available():
         cli_error(
             "sentence-transformers is not installed.",
             error_code="DEPENDENCY_MISSING",
             suggestion="install with: pip install pyrite[semantic]",
         )
-
-    config, db = get_config_and_db()
-    require_kb(config, kb_name, db=db, output_format="rich")
 
     if unavailable := semantic_unavailable(db.vec_available, getattr(db, "vec_load_error", None)):
         # The same cause and remedy `search` gives (one function), not an

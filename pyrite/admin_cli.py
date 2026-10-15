@@ -260,7 +260,8 @@ def index_embed(kb_name: str = typer.Argument(..., help="KB to generate embeddin
 
     # The KB first (#952): a name that is not a KB is refused before the
     # dependency check, so the answer names the thing that is wrong.
-    require_kb(load_config(), kb_name, output_format="rich")
+    config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db, output_format="rich")
     if not is_available():
         # Nothing was embedded: refused, exit 1 (#526). `cli_error` keeps the
         # brackets of `pyrite[semantic]` literal; a markup string would not.
@@ -270,15 +271,7 @@ def index_embed(kb_name: str = typer.Argument(..., help="KB to generate embeddin
             suggestion="Install semantic extras: pip install pyrite[semantic]",
         )
 
-    config, db = get_config_and_db()
-    require_kb(config, kb_name, db=db, output_format="rich")
     try:
-        if config.get_kb(kb_name) is None:
-            cli_error(
-                f"KB '{kb_name}' not found",
-                error_code="KB_NOT_FOUND",
-                suggestion="run `pyrite-admin kb list` to see registered KBs",
-            )
         if unavailable := semantic_unavailable_for(db):
             # The same cause and remedy `pyrite index embed` gives.
             _, cause, remedy = unavailable

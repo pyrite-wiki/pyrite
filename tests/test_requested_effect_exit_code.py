@@ -27,11 +27,13 @@ Three kinds of test live here, each entering at the command line:
 from __future__ import annotations
 
 import ast
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 import textwrap
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
@@ -322,10 +324,23 @@ def inproc(tmp_path):
     db = PyriteDB(tmp_path / "index.db")
     IndexManager(db, config).index_all()
     db.close()
-    with (
-        patch("pyrite.cli.load_config", return_value=config),
-        patch("pyrite.cli.context.load_config", return_value=config),
-    ):
+    # Every CLI module loads the config under its own name and resolves the
+    # KB it was given against it (#952); an extension's commands included.
+    modules = ["pyrite.cli", "pyrite.cli.context"] + [
+        f"{ext}.cli"
+        for ext in (
+            "pyrite_journalism_investigation",
+            "pyrite_software_kb",
+            "pyrite_zettelkasten",
+            "pyrite_encyclopedia",
+            "pyrite_social",
+            "pyrite_cascade",
+        )
+        if importlib.util.find_spec(ext) is not None
+    ]
+    with ExitStack() as stack:
+        for module in modules:
+            stack.enter_context(patch(f"{module}.load_config", return_value=config))
         yield {"config": config, "tmp": tmp_path, "kb": kb_path}
 
 
