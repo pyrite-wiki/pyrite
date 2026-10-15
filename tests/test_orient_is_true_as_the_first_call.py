@@ -357,11 +357,19 @@ class TestUnreadableAndAbsentAreOneAnswer:
         diverged = []
         for tool in sorted(server.tools):
             for key in ("kb_name", "kb"):
+                # One rate-limit bucket per probe pair. Under the default
+                # client the loop's several hundred read-tier calls spend
+                # the 100/minute budget partway through, and every pair
+                # after that compared two RATE_LIMITED answers instead of
+                # the refusals -- equal only while both rounded to the same
+                # retry-after tenth, which a slow run (CI's coverage job)
+                # broke on `sw_epics`.
+                caller = {"client_kind": "user", "client_id": f"probe-{tool}-{key}"}
                 a = server._dispatch_tool(
-                    tool, {key: PRIVATE}, readable_kbs=scoped.peer, writable_kbs=set()
+                    tool, {key: PRIVATE}, readable_kbs=scoped.peer, writable_kbs=set(), **caller
                 )
                 b = server._dispatch_tool(
-                    tool, {key: ABSENT}, readable_kbs=scoped.peer, writable_kbs=set()
+                    tool, {key: ABSENT}, readable_kbs=scoped.peer, writable_kbs=set(), **caller
                 )
                 if not self._same(a, b, PRIVATE, ABSENT):
                     diverged.append((tool, key, a, b))
