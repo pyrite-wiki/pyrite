@@ -571,7 +571,7 @@ def _of(items: list[dict], kind: str, eid: str) -> list[dict]:
 
 
 needs_permissions = pytest.mark.skipif(
-    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores directory permissions"
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores file permissions"
 )
 
 
@@ -592,11 +592,14 @@ def test_a_fix_that_landed_is_fixed(tmp_path, kind):
 def test_a_write_that_raised_is_failed_and_the_rest_still_run(tmp_path, kind):
     config, path = _fix_world(tmp_path, kind)
     before = path.read_text()
-    path.parent.chmod(0o555)
+    # The file itself is read-only: the one write path refuses a file the
+    # process may not write (atomic_write_text, as open(path, "w") would),
+    # where a read-only folder only made it write in place (#955 P3a).
+    path.chmod(0o444)
     try:
         report = _run_fix(config, kind)
     finally:
-        path.parent.chmod(0o755)
+        path.chmod(0o644)
     eid = FIX_SCENARIOS[kind][0]
     assert _of(report["fixed"], kind, eid) == [], report
     (failure,) = _of(report["failed"], kind, eid)
@@ -625,11 +628,11 @@ def test_a_fix_for_an_entry_whose_file_is_gone_is_failed(tmp_path, kind):
 @pytest.mark.parametrize("kind", sorted(FIX_SCENARIOS))
 def test_dry_run_fails_nothing(tmp_path, kind):
     config, path = _fix_world(tmp_path, kind)
-    path.parent.chmod(0o555)
+    path.chmod(0o444)
     try:
         report = _run_fix(config, kind, dry_run=True)
     finally:
-        path.parent.chmod(0o755)
+        path.chmod(0o644)
     assert report.get("failed", []) == []
     assert _of(report["fixed"], kind, FIX_SCENARIOS[kind][0])
 
@@ -658,11 +661,11 @@ def test_a_link_fix_with_nothing_to_rewrite_is_not_fixed(tmp_path):
 def test_qa_fix_cli_reports_failed(tmp_path):
     """The `failed` bucket reaches `pyrite qa fix --format json`."""
     config, path = _fix_world(tmp_path, "tag_case")
-    path.parent.chmod(0o555)
+    path.chmod(0o444)
     try:
         code, body = _cli(config, ["qa", "fix", "--kb", JUDGED, "--format", "json"])
     finally:
-        path.parent.chmod(0o755)
+        path.chmod(0o644)
     assert [f["entry_id"] for f in body["failed"]] == ["fixt"], body
     assert body["failed_count"] == 1
 
@@ -749,15 +752,15 @@ def test_every_assess_output_mode_shows_the_task_not_created(no_model, fmt):
 def test_qa_fix_default_output_reports_failed(tmp_path):
     """The human report: no 'No fixable issues', the failure and its reason, the count."""
     config, path = _fix_world(tmp_path, "tag_case")
-    # Every fix fails: the entry's folder and the bystander's are read-only.
-    folders = [path.parent, path.parent.parent / "bystander"]
-    for folder in folders:
-        folder.chmod(0o555)
+    # Every fix fails: the entry's file and the bystander's are read-only.
+    files = [path, path.parent.parent / "bystander" / "bystand.md"]
+    for file in files:
+        file.chmod(0o444)
     try:
         result = _invoke(config, ["qa", "fix", "--kb", JUDGED])
     finally:
-        for folder in folders:
-            folder.chmod(0o755)
+        for file in files:
+            file.chmod(0o644)
     out = result.stdout
     assert "No fixable issues found" not in out, out
     assert "fixt" in out and "bystand" in out and "update_failed" in out, out
