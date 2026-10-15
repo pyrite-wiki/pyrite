@@ -21,5 +21,9 @@
   every attribute of its config.yaml entry (`read_only`, `shortname`), and a
   plugin's MCP handlers resolve through the server's config, so no write
   surface lands a write in a read-only KB. The web resolves a `[[short:id]]`
-  prefix to the full name before building a link or calling the API, so
-  shortname wikilinks keep working there.
+  prefix to the full name before building a link or calling the API (the
+  read view's embeds included), so shortname wikilinks keep working there,
+  and a link prefix is looked up among your readable KBs only: a private KB
+  that shares the shortname never changes the answer. A refused
+  `sw_create_backlog_item` carries `error_code`; a `kb` row with no `source`
+  is a user row for the CLI's registry merge, as it is for the resolver.

@@ -48,6 +48,24 @@ def db_with_user_kb():
 
 
 class TestMergeRegisteredKBs:
+    def test_a_row_with_no_source_is_a_user_row(self, db_with_user_kb):
+        """A `kb` row whose `source` is NULL (written before the column had a
+        default, or by hand) is a user row everywhere: the registry reads it
+        as `source or "user"` and the resolver finds it, so the merge that
+        gives a CLI its registry-only KBs must take it too (#965 round 2)."""
+        db = db_with_user_kb["db"]
+        config = db_with_user_kb["config"]
+        kb_path = db_with_user_kb["kb_path"].parent / "unsourced-kb"
+        kb_path.mkdir()
+        db._raw_conn.execute(
+            "INSERT INTO kb (name, kb_type, path, source) VALUES (?, ?, ?, NULL)",
+            ("unsourced-kb", "generic", str(kb_path)),
+        )
+        db._raw_conn.commit()
+
+        assert db.merge_registered_kbs(config) == 2
+        assert config.get_kb("unsourced-kb") is not None
+
     def test_merges_db_registered_kb_into_config(self, db_with_user_kb):
         db = db_with_user_kb["db"]
         config = db_with_user_kb["config"]

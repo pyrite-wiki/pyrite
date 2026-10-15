@@ -1551,6 +1551,30 @@ def _make_plugin_with_db(db):
     return plugin
 
 
+class TestCreateBacklogItemRefusals:
+    """A refused create carries the refusal's `error_code`, as every other
+    MCP refusal does, so a caller can tell a read-only KB from an unknown
+    one without parsing the message (#965 round 2)."""
+
+    @pytest.mark.parametrize(
+        ("kb_name", "code", "read_only"),
+        [("test", "KB_READ_ONLY", True), ("no-such-kb", "KB_NOT_FOUND", False)],
+    )
+    def test_a_refusal_names_its_code(self, kb_name, code, read_only):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_test_db(tmpdir, entries=[{"id": "seed", "title": "Seed"}])
+            try:
+                plugin = _make_plugin_with_db(db)
+                plugin._get_config().get_kb("test").read_only = read_only
+                out = plugin._mcp_create_backlog_item(
+                    {"kb_name": kb_name, "title": "A refused item", "kind": "bug"}
+                )
+                assert out["created"] is False
+                assert out["error_code"] == code, out
+            finally:
+                db.close()
+
+
 # =========================================================================
 # TestReviewQueue
 # =========================================================================

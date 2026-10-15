@@ -5,7 +5,7 @@ from collections.abc import Callable
 from datetime import UTC
 from typing import Any, ClassVar
 
-from pyrite.exceptions import public_text
+from pyrite.exceptions import PyriteError, public_text
 from pyrite.plugins.capabilities import Capability
 from pyrite.plugins.scoping import kb_scope_clause
 from pyrite.schema import generate_entry_id
@@ -3068,7 +3068,10 @@ class SoftwareKBPlugin:
                 "effort": effort,
             }
         except Exception as e:
-            return {"created": False, "error": _safe_error(e)}
+            refused: dict[str, Any] = {"created": False, "error": _safe_error(e)}
+            if isinstance(e, PyriteError):
+                refused["error_code"] = e.error_code  # KB_NOT_FOUND, KB_READ_ONLY, ...
+            return refused
         finally:
             if should_close:
                 db.close()
