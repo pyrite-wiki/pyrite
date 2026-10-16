@@ -1,1 +1,0 @@
-- Missing or empty rubric parameters and invalid regular expressions now produce `checker_failed` warnings during per-entry QA validation (#957).

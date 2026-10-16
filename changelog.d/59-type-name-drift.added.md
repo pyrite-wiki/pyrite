@@ -1,1 +1,0 @@
-Index and KB health report exact case, underscore and space variants of entry type names per KB, with counts and declared spellings. Drift is a warning only and never rewrites content. Reports are bounded to 100 groups and 50 spellings per group and include totals and truncation flags; type aliases and rewriting are not implemented.

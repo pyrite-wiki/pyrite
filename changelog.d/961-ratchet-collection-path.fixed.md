@@ -1,1 +1,0 @@
-- The experimental test ratchet reports a new collection failure even when an open issue mentions the test file; explicitly named test node IDs remain filed (#961).
