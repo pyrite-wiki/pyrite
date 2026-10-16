@@ -1,0 +1,1 @@
+MCP setup names the actual reason a removed Claude Code entry cannot be restored: a non-object entry or a NUL in its command line. Existing env/extra-key hints and recovery command choices are preserved.

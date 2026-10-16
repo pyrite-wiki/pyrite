@@ -1639,7 +1639,10 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
     ),
     ("pyrite/cli/init_command.py", "init_kb"): ("fixed", "TestInitIndexing"),
     ("pyrite/cli/kb_commands.py", "kb_discover"): ("safe", "already registered is not a failure"),
-    ("pyrite/cli/mcp_setup_command.py", "_add_reproduces"): ("safe", "a probe"),
+    ("pyrite/cli/mcp_setup_command.py", "_restore_unavailable_reason"): (
+        "safe",
+        "a probe: malformed entries become a restoration reason, not a successful effect",
+    ),
     ("pyrite/cli/mcp_setup_command.py", "_check_replaceable"): (
         "safe",
         "absent file: nothing to replace",
