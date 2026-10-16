@@ -1,0 +1,1 @@
+The release dry run (`scripts/release.py <version>`) names and counts each distinct precondition failure once: a missing CHANGELOG section was reported by both the changelog check and the release notes that are read out of it, so the summary said 3 check(s) for 2 problems and the notes check now says nothing when it cannot run (#889).

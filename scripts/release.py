@@ -962,7 +962,12 @@ def step_preconditions(ctx: Context) -> None:
         ctx.runner.note(
             f"CHANGELOG has `## [{ctx.version}] - {date.today().isoformat()}` with content"
         )
-    ctx.attempt(lambda: _print_notes(ctx))
+        # The notes are read out of the section the check just passed. Asked
+        # for when that check failed, a missing section would be named a
+        # second time -- once by the check, once by the notes -- and the
+        # summary would count one problem twice (#889). A check that cannot
+        # run says nothing.
+        ctx.attempt(lambda: _print_notes(ctx))
 
     # Resolve the repository here, inside the step, so a bad `origin` reads as
     # `FAIL at preconditions` with the header above it rather than as a raw
