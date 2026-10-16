@@ -1,0 +1,1 @@
+`PUT /api/kbs/{name}` preserves metadata fields omitted from the request. Explicit null clears the description or resets the type to `generic` (the registry's type cannot be SQL NULL); an empty update leaves both fields unchanged.

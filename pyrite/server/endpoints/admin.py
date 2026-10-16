@@ -33,6 +33,7 @@ from ..api import (
 from ..authz import authorize
 from ..schemas import (
     AIStatusResponse,
+    KBMetadataUpdateRequest,
     KBReindexResponse,
     SiteCacheSyncStatus,
     StatsResponse,
@@ -289,13 +290,17 @@ def create_kb(
 def update_kb(
     request: Request,
     name: str,
-    description: str | None = Body(None),
-    kb_type: str | None = Body(None),
+    body: KBMetadataUpdateRequest | None = None,
     registry: KBRegistryService = Depends(get_kb_registry),
 ):
     """Update a knowledge base's metadata."""
     try:
-        result = registry.update_kb(name, description=description, kb_type=kb_type)
+        updates = body.model_dump(exclude_unset=True) if body is not None else {}
+        # The registry column is NOT NULL. Clearing a type removes the
+        # specialized type by restoring the same generic default as creation.
+        if "kb_type" in updates and updates["kb_type"] is None:
+            updates["kb_type"] = "generic"
+        result = registry.update_kb(name, **updates)
     except KBNotFoundError:
         raise HTTPException(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{name}' not found"}
