@@ -356,7 +356,22 @@ def test_a_title_edit_changes_only_the_titles_span(tmp_path: Path, shape: str, s
     assert path.stat().st_mtime_ns == stat.st_mtime_ns, "a no-op touched the file"
 
 
-@pytest.mark.parametrize("surface", sorted(SURFACES))
+@pytest.mark.parametrize(
+    "surface",
+    [
+        pytest.param(
+            name,
+            marks=[
+                pytest.mark.control(
+                    reason="today's path already refused a tagged value on this surface, by a 500 rather than apply()'s reason; the property is the same on all six and the service and PATCH are red"
+                )
+            ]
+            if name in ("cli.update", "mcp.kb_update", "rest.put")
+            else [],
+        )
+        for name in sorted(SURFACES)
+    ],
+)
 def test_a_tagged_value_is_refused_with_nothing_written(tmp_path: Path, surface: str):
     """Frontmatter Pyrite cannot model is refused with apply()'s reason
     (#760 (b)), before anything is written; the file is byte-identical."""
@@ -756,7 +771,14 @@ def test_a_refreshed_updated_at_keeps_the_files_spelling(
 #: where it was quoted.
 SENT_TIMESTAMPS = [
     ("2026-01-01 00:00:00+00:00", "2026-10-02T12:00:00Z", "2026-10-02T12:00:00Z"),
-    ("2026-01-01T00:00:00Z", "2026-10-02 12:00:00+00:00", "2026-10-02 12:00:00+00:00"),
+    pytest.param(
+        "2026-01-01T00:00:00Z",
+        "2026-10-02 12:00:00+00:00",
+        "2026-10-02 12:00:00+00:00",
+        marks=pytest.mark.control(
+            reason="the value sent is spelled the way the old emitter respelled every timestamp, so the base writes it by coincidence; the control pins that the house spelling is written as sent too"
+        ),
+    ),
     ("2026-01-01T00:00:00Z", "2026-10-02T12:00:00.500+01:00", "2026-10-02T12:00:00.500+01:00"),
     ("'2026-01-01T00:00:00Z'", "2026-10-02T12:00:00Z", "'2026-10-02T12:00:00Z'"),
 ]
@@ -849,7 +871,9 @@ def test_a_lock_held_too_long_is_a_busy_refusal(tmp_path: Path, monkeypatch):
     text, _ = SHAPES["bom"]
     config, path = _build(tmp_path, text)
     before = path.read_bytes()
-    monkeypatch.setattr(kb_service, "_LOCK_TIMEOUT", 0.2)
+    # `raising=False`: without the bound (the base) the update takes no lock
+    # at all and the test is red for that, not for a missing name.
+    monkeypatch.setattr(kb_service, "_LOCK_TIMEOUT", 0.2, raising=False)
     held = threading.Event()
     release = threading.Event()
 
