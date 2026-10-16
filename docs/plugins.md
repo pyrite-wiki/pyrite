@@ -4,6 +4,14 @@ Curated list of Pyrite plugins. Plugins add custom entry types, MCP tools, CLI c
 
 ## Official Plugins
 
+To install a local plugin and check that its declared entry points load in a fresh
+interpreter, run `pyrite extension install ./my-plugin --verify`. Verification uses
+the same loader as runtime discovery: each `pyrite.plugins` entry point must load,
+instantiate, and expose a `name` attribute. Exit code **3** means installation
+succeeded but verification failed, including when the distribution declares no
+`pyrite.plugins` entry points. JSON output reports `verified: false` and
+`verify_errors`; diagnostic warnings go to stderr.
+
 These plugins ship in-tree in the [`extensions/`](https://github.com/pyrite-wiki/pyrite/tree/main/extensions) directory and are installable as separate packages.
 
 ---
