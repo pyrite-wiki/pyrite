@@ -256,7 +256,6 @@ class QAService:
         Names no path: the message can reach an MCP or REST caller.
         """
         import os
-        from pathlib import Path
 
         kb_config = self.config.get_kb(kb_name)
         if kb_config is None:
@@ -1075,12 +1074,19 @@ class QAService:
         kb_config = self.config.get_kb(kb_name)
         if kb_config is None:
             return
-        only: Path | None = None
-        if entry_id is not None:
+        if entry_id is None:
+            rows = unmodellable_files(kb_config)
+        else:
             only = KBRepository(kb_config).find_file(entry_id)
-            if only is None:
-                return
-        for row in unmodellable_files(kb_config, only):
+            # A file no lookup can read (a duplicate key) is found by no id;
+            # the KB walk lists it under its stem, so the one-entry report
+            # takes the KB walk's own rows for that id and the two agree.
+            rows = (
+                unmodellable_files(kb_config, only)
+                if only is not None
+                else [row for row in unmodellable_files(kb_config) if row["id"] == entry_id]
+            )
+        for row in rows:
             issues.append(
                 {
                     "entry_id": row["id"],
@@ -1107,7 +1113,6 @@ class QAService:
         Returns each loaded entry's own frontmatter by id, for the schema
         pass to read typed attributes as the file wrote them.
         """
-        from pathlib import Path
 
         from ..storage.repository import KBRepository
         from ..utils.frontmatter import leaked_frontmatter_line

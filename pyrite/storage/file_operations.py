@@ -119,25 +119,30 @@ tests in ``tests/test_file_operations.py``):
   frontmatter refuses every operation, ``ReplaceBody`` included, with the
   reason "tagged key ... Pyrite cannot model, so it edits nothing in this
   file". ruamel loads it as a ``TaggedScalar`` (or as a different type than
-  the key reads plain), which no path names. One guard, asked of each key's
-  own node (``_tagged_key_node``): the node's explicit tag against its plain
-  reading (``!!float 1``), then what ruamel constructs from the node
-  (``!!str x``, a ``TaggedScalar``). Every container a key can be written in
-  is walked and has a case in ``_KEY_CONTAINERS``: a mapping (``CommentedMap``,
-  ``!!omap``), a set (``CommentedSet``, an ``abc.Set`` not a ``set``; its
-  members are the keys), the ``(key, value)`` tuples of ``!!pairs``, a tagged
-  collection, and any of them nested in lists or each other (each case is
-  checked against ruamel's loader by
+  the key reads plain), which no path names. Two checks, each per key node
+  and judged by the document, never by the key alone (#972 round 2): the
+  node's written tag against its plain reading (``_retyped_key_node``:
+  ``!!float 1``), and what the document's own construction made of the node
+  (``_tagged_scalar_key_node``: ``!!str x``, a ``TaggedScalar``; a plain
+  ``=`` is the string ``'='`` to the document though it constructs alone as
+  a ``TaggedScalar``; a plain ``2024-02-30`` key fails the whole document,
+  which is "does not parse", not "tagged"). Every container a key can be
+  written in is walked and has a case in ``_KEY_CONTAINERS``: a mapping
+  (``CommentedMap``, ``!!omap``), a set (``CommentedSet``, an ``abc.Set``
+  not a ``set``; its members are the keys), the ``(key, value)`` tuples of
+  ``!!pairs``, a tagged collection, and any of them nested in lists or each
+  other (each case is checked against ruamel's loader by
   ``test_every_key_container_case_loads_a_tagged_scalar_key``). The tagged
   check runs before the duplicate-key refusal, so ``!!str a: 1`` beside
   ``a: 2`` is refused as tagged. A tag inside the *value* of a ``!!set``
-  member (``s: !!set {? a: {!!str k: 1}}``), which ruamel discards from the
-  loaded document, is seen at its node and refused too (it was a stated
-  limit of the loaded-document walk until #972 round 1). Body-only writes on
-  a file whose frontmatter Pyrite cannot model are refused too; allowing them
-  is a separate change. ``frontmatter_refusal`` is the one rule for these
-  whole-file refusals; ``unmodellable_reason`` reports the same reason at the
-  same line for ``index health`` and ``qa validate`` (#760 (b)).
+  member (``s: !!set {? a: {!!str k: 1}}``) is constructed (then discarded
+  from the set) by ruamel, so the document's map shows it and it is refused
+  too (a stated limit of the loaded-document walk until #972 round 1).
+  Body-only writes on a file whose frontmatter Pyrite cannot model are
+  refused too; allowing them is a separate change. ``frontmatter_refusal``
+  is the one rule for these whole-file refusals; ``unmodellable_reason``
+  reports the same reason at the same line for ``index health`` and
+  ``qa validate`` (#760 (b)).
 - Unicode normalisation (#749): no normalisation. A path segment or new
   sub-key that differs from an existing *key* only by NFC canonical
   equivalence (NFD against NFC) is refused (``_lookup``): ruamel keeps the
@@ -171,7 +176,7 @@ import functools
 import math
 import threading
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, cast
@@ -480,7 +485,7 @@ def _scalar_of(text: str) -> Any:
     """What ``text`` reads as when written bare as a YAML 1.2 scalar key."""
     try:
         value = YAML().load(f"{text}: 0") if text else None
-    except YAMLError:
+    except Exception:  # YAMLError; ValueError for ``2024-02-30``, a date that is none
         return text
     if isinstance(value, Mapping) and len(value) == 1:
         return _plain(next(iter(value)))
@@ -613,7 +618,6 @@ def unmodellable_reason(text: str, span: FrontmatterSpan) -> tuple[str, int] | N
 
 
 _DOES_NOT_PARSE = "the frontmatter does not parse: "
-_MERGE = "tag:yaml.org,2002:merge"
 
 
 def frontmatter_refusal(root: Node | None, y: YAML) -> tuple[tuple[str, Node | None] | None, Any]:
@@ -627,12 +631,22 @@ def frontmatter_refusal(root: Node | None, y: YAML) -> tuple[tuple[str, Node | N
     surfaces cannot disagree on what is refused, why, or where (#972 round 1).
 
     The order, each a reason of its own: not a mapping; one flow-style
-    mapping; a complex key; a tagged key (``_tagged_key_node``, which asks
-    ruamel per key, so ``!!str a: 1`` beside ``a: 2`` is tagged before it is
-    a duplicate, #769); the document does not construct (a duplicate key,
-    which ruamel refuses, is named as one; anything else -- ``!!float abc``,
-    nesting past the recursion limit -- as "does not parse"); a duplicate
-    key ruamel accepted.
+    mapping; a complex key; a key whose written tag changes its reading
+    (``_retyped_key_node``: ``!!float 1``, ``!foo a``); the document does not
+    construct (a duplicate key, which ruamel refuses, is named as one;
+    anything else -- ``!!float abc``, a plain ``2024-02-30`` key that is no
+    date, nesting past the recursion limit -- as "does not parse"); a key
+    the document holds as a ``TaggedScalar`` (``_tagged_scalar_key_node``:
+    ``!!str a``, found before its plain twin makes it a duplicate, #769); a
+    duplicate key ruamel accepted.
+
+    Every key is judged by the document, never alone (#972 round 2): a plain
+    ``=`` resolves to the value tag and constructs alone as a
+    ``TaggedScalar``, but the document reads it as the string ``'='``; a
+    plain ``2024-02-30`` fails to construct alone and would be called
+    "tagged", but the document fails, which is "does not parse". So the
+    tagged-scalar check reads what the document's own construction made of
+    each key node (``_construct`` keeps that map).
     """
     if root is None:
         return None, {}
@@ -643,33 +657,55 @@ def frontmatter_refusal(root: Node | None, y: YAML) -> tuple[tuple[str, Node | N
             f"the frontmatter is one flow-style mapping ({{...}}); not edited{_BODY_TOO}",
             root,
         ), None
-    complex_key = _complex_key_node(root, set())
+    complex_key = _complex_key_node(root)
     if complex_key is not None:
         return (
             f"the frontmatter has a complex key (? [a, b] or ? {{a: 1}}); not edited{_BODY_TOO}",
             complex_key,
         ), None
+    retyped = _retyped_key_node(root, y)
+    if retyped is not None:
+        return (_TAGGED_KEY, retyped), None
+    # Before the construction: constructing a merge (``<<: *b``) removes that
+    # pair from its node, and a duplicate is what ruamel refuses next.
+    duplicate = _duplicate_key_node(root, set())
     try:
-        tagged = _tagged_key_node(root, set(), y)
-        if tagged is not None:
-            return (_TAGGED_KEY, tagged), None
-        duplicate = _duplicate_key_node(root, set())
-        try:
-            loaded = y.constructor.construct_document(root)
-        except Exception as e:  # DuplicateKeyError, ValueError, RecursionError
-            if duplicate is not None:
-                return (_DUPLICATE.format(duplicate.value), duplicate), None
-            return (f"{_DOES_NOT_PARSE}{e}{_BODY_TOO}", None), None
-    finally:
-        # The per-key constructions above and a construction that raised
-        # leave their bookkeeping in the thread's reused constructor;
-        # ``construct_document`` clears it only when it returns.
-        y.constructor.constructed_objects = {}
-        y.constructor.recursive_objects = {}
-        y.constructor.deep_construct = False
+        loaded, made = _construct(root, y)
+    except Exception as e:  # DuplicateKeyError, ValueError, RecursionError
+        if duplicate is not None:
+            return (_DUPLICATE.format(duplicate.value), duplicate), None
+        return (f"{_DOES_NOT_PARSE}{e}{_BODY_TOO}", None), None
+    tagged = _tagged_scalar_key_node(root, made)
+    if tagged is not None:
+        return (_TAGGED_KEY, tagged), None
     if duplicate is not None:
         return (_DUPLICATE.format(duplicate.value), duplicate), None
     return None, loaded
+
+
+def _construct(root: Node, y: YAML) -> tuple[Any, dict[Node, Any]]:
+    """ruamel's ``construct_document`` (its four steps, in its order), also
+    returning the constructor's node → object map, which ``construct_document``
+    clears before it returns: the one record of what the document made of
+    each key node (a ``TaggedScalar`` for ``!!str a``; the string ``'='``
+    for a plain ``=``; nothing for a merge key, which the construction
+    consumed). The constructor is the thread's reused one, so its state is
+    cleared whether the construction returned or raised."""
+    c = y.constructor
+    try:
+        data = c.construct_object(root)
+        while c.state_generators:
+            generators = c.state_generators
+            c.state_generators = []
+            for generator in generators:
+                for _ in generator:
+                    pass
+        made = dict(c.constructed_objects)
+    finally:
+        c.constructed_objects = {}
+        c.recursive_objects = {}
+        c.deep_construct = False
+    return data, made
 
 
 def _parse(text: str, span: FrontmatterSpan) -> _Doc:
@@ -696,25 +732,37 @@ def _parse(text: str, span: FrontmatterSpan) -> _Doc:
     return _Doc(text, span, cast(MappingNode | None, root), _plain(loaded or {}), eol, anchored)
 
 
-def _complex_key_node(node: Node, seen: set[int]) -> Node | None:
-    """The first mapping key that is itself a list or a mapping (Python
-    cannot hold it as a dict key, and no path can name it), or None."""
+def _first_key(
+    node: Node, pred: Callable[[Node], bool], seen: set[int] | None = None
+) -> Node | None:
+    """The first mapping key anywhere in the document, in document order,
+    for which ``pred`` holds, or None. Walks every container a key can be
+    written in: a mapping, a ``!!set`` (its members are keys), an ``!!omap``
+    or ``!!pairs`` item, a tagged collection, nested in lists or each other,
+    and the value of a set member (``_KEY_CONTAINERS`` has a case for each)."""
+    seen = set() if seen is None else seen
     if id(node) in seen:
         return None
     seen.add(id(node))
     if isinstance(node, MappingNode):
         for k, v in node.value:
-            if not isinstance(k, ScalarNode):
+            if pred(k):
                 return cast(Node, k)
-            found = _complex_key_node(v, seen)
+            found = _first_key(v, pred, seen)
             if found is not None:
                 return found
     elif isinstance(node, SequenceNode):
         for item in node.value:
-            found = _complex_key_node(item, seen)
+            found = _first_key(item, pred, seen)
             if found is not None:
                 return found
     return None
+
+
+def _complex_key_node(node: Node) -> Node | None:
+    """The first mapping key that is itself a list or a mapping (Python
+    cannot hold it as a dict key, and no path can name it), or None."""
+    return _first_key(node, lambda k: not isinstance(k, ScalarNode))
 
 
 # Every frontmatter-shape refusal also refuses ``ReplaceBody``: a body-only
@@ -729,51 +777,32 @@ _TAGGED_KEY = (
 )
 
 
-def _tagged_key_node(node: Node, seen: set[int], y: YAML) -> Node | None:
-    """The first mapping key written with a tag, anywhere in the document,
-    or None: a key whose tag differs from the one the same text reads as
-    plain (or quoted) -- ``!!float 1: a`` (float 1.0; plain: int 1),
-    ``!!int "1"``, ``!foo a``, ``!!binary aGk=`` -- or one ruamel constructs
-    as a ``TaggedScalar`` (``!!str x``, whose tag is the one ``x`` resolves
-    to anyway, so only the construction shows it was written). Neither
-    ``_plain`` nor a path can handle either (#749).
+def _retyped_key_node(node: Node, y: YAML) -> Node | None:
+    """The first key whose written tag differs from the one its text would
+    resolve to plain (or quoted), or None: ``!!float 1: a`` (float 1.0;
+    plain: int 1), ``!!int "1"``, ``!foo a``, ``!!binary aGk=``. The
+    document reads such a key as something no path names (``_key_matches``
+    goes by the plain reading), or as a ``TaggedScalar`` (#749). A node-level
+    comparison of tags: nothing is constructed here."""
 
-    Asked of the key's own node, so the key is found where it is written:
-    in a mapping, a ``!!set`` (its members are keys), an ``!!omap`` or
-    ``!!pairs`` item, a tagged collection, nested in lists or each other,
-    and inside the value of a set member, which ruamel discards from the
-    loaded document (a limit of the loaded-document walk this replaces)."""
-    if id(node) in seen:
-        return None
-    seen.add(id(node))
-    if isinstance(node, MappingNode):
-        for k, v in node.value:
-            if isinstance(k, ScalarNode) and _is_tagged_key(k, y):
-                return k
-            found = _tagged_key_node(v, seen, y)
-            if found is not None:
-                return found
-    elif isinstance(node, SequenceNode):
-        for item in node.value:
-            found = _tagged_key_node(item, seen, y)
-            if found is not None:
-                return found
-    return None
+    def retyped(k: Node) -> bool:
+        if not isinstance(k, ScalarNode):
+            return False
+        implicit = (True, False) if k.style is None else (False, True)
+        return k.tag != y.resolver.resolve(ScalarNode, k.value, implicit)
+
+    return _first_key(node, retyped)
 
 
-def _is_tagged_key(k: ScalarNode, y: YAML) -> bool:
-    implicit = (True, False) if k.style is None else (False, True)
-    if k.tag != y.resolver.resolve(ScalarNode, k.value, implicit):
-        return True
-    if k.tag == _MERGE:
-        # ``<<: *b`` constructs as a TaggedScalar too; it is the anchor
-        # refusal's (decision 6), not a key a person wrote with a tag
-        return False
-    try:
-        key = y.constructor.construct_object(k, deep=True)
-    except Exception:  # a key ruamel cannot construct is one Pyrite cannot name
-        return True
-    return type(key).__name__ == "TaggedScalar"
+def _tagged_scalar_key_node(node: Node, made: Mapping[Node, Any]) -> Node | None:
+    """The first key the document's own construction made a ``TaggedScalar``
+    of (``!!str a``, whose written tag is the one ``a`` resolves to anyway,
+    so only the construction shows it was written), or None. ``made`` is
+    ``_construct``'s node → object map, so a key is judged as the document
+    read it: a plain ``=`` is the string ``'='`` there (alone it would be a
+    ``TaggedScalar``), a consumed merge key is absent. Neither ``_plain``
+    nor a path can handle a ``TaggedScalar`` key (#749)."""
+    return _first_key(node, lambda k: type(made.get(k)).__name__ == "TaggedScalar")
 
 
 def _duplicate_key_node(node: Node, seen: set[int]) -> ScalarNode | None:

@@ -227,6 +227,10 @@ REFUSALS: dict[str, tuple[str, int | None]] = {
     "duplicate key": ("---\nid: d\nyear: 2025\nyear: 2026\n---\n\nText.\n", 4),
     "duplicate key by value": ("---\nid: d\n1: a\n1.0: b\n---\n\nText.\n", 4),
     "does not parse: compose": ("---\nid: m\ntitle: 'unterminated\n---\n\nText.\n", None),
+    # a plain key ruamel resolves to a timestamp but cannot construct: the
+    # document fails, so this is "does not parse" and the reader's row, not
+    # a "tagged key" judged on its own (fix round 2)
+    "does not parse: a plain key that is no date": ("---\nid: m\n2024-02-30: x\n---\n", None),
     "does not parse: construct": ("---\nid: m\nx: !!float abc\n---\n\nText.\n", None),
     # 800 levels overflow Python's default recursion limit in ruamel's
     # composer (400 do); deeper costs seconds per read, and the reader reads
@@ -277,6 +281,39 @@ def test_the_listing_agrees_with_apply_on_every_refusal_reason_and_line(name: st
     else:
         assert not reason.startswith(_DOES_NOT_PARSE), reason
         assert listed == (reason, line), (listed, reason)
+
+
+#: Plain keys ruamel resolves to a tag of its own, and what the document
+#: makes of each (fix round 2: a key is judged by the document, never alone).
+#: bool, int, float, null and timestamp keys read as those values (a path
+#: names them, ``_key_matches``); a timestamp that is no date fails the whole
+#: document (``REFUSALS``, above). The merge key ``<<`` is consumed by the
+#: construction (its anchor is decision 6's refusal, per key). The value key
+#: ``=`` is the string ``'='`` in the document, though alone it constructs as a
+#: ``TaggedScalar``. The yaml tag's ``!``, ``&`` and ``*`` are never plain
+#: keys: ``!: 1`` is a non-mapping document, the other two are syntax.
+SPECIAL_PLAIN_KEYS = {
+    "value key at the top": "---\nid: v\ntitle: V\n=: 1\n---\n\nText.\n",
+    "value key nested": "---\nid: v\ntitle: V\nx: {=: 1}\n---\n\nText.\n",
+    # no `true` beside `1`: the loader compares keys by value, so those two
+    # collide (a duplicate), which is a refusal of its own
+    "typed keys": "---\nid: v\ntitle: V\n1: a\n1.5: b\nnull: d\n2024-02-28: e\n---\n",
+}
+
+
+@pytest.mark.control(
+    reason="read as the document reads them before round 1 and on the PR's base; "
+    "red on dff0ce0d alone, where a key was judged in isolation"
+)
+@pytest.mark.parametrize("name", list(SPECIAL_PLAIN_KEYS))
+def test_a_plain_key_with_a_special_tag_is_read_as_the_document_reads_it(name: str):
+    from pyrite.storage.file_operations import Set
+
+    text = SPECIAL_PLAIN_KEYS[name]
+    assert unmodellable_reason(text, _span(text)) is None
+    after, report = apply(text, [Set("title", "V2")], _span(text))
+    assert after == text.replace("title: V", "title: V2"), after
+    assert report.changed
 
 
 def _env_with(tmp_path: Path, files: dict[str, str]) -> PyriteConfig:
@@ -398,6 +435,24 @@ def test_validate_entry_explains_an_unindexed_entry_whose_file_it_finds(tmp_path
     assert [i["rule"] for i in one["issues"]] == ["entry_not_found", "frontmatter_unmodellable"]
     assert one["issues"][1]["entry_id"] == "real-id" and one["issues"][1]["line"] == 5
     assert [i["rule"] for i in none["issues"]] == ["entry_not_found"]
+
+
+def test_validate_entry_on_a_duplicate_key_file_agrees_with_the_kb_report(tmp_path: Path):
+    """A duplicate-key file cannot be read, so no lookup finds it by id;
+    ``qa validate <kb>`` lists it under the file's stem (the id the listing
+    falls back to), and ``qa validate <entry>`` for that id must say the
+    same, not only ``entry_not_found`` (fix round 2, before dev)."""
+    config = _env_with(tmp_path, {"dup.md": SHAPES["duplicate-key"][0]})
+    db = PyriteDB(config.settings.index_path)
+    try:
+        one = QAService(config, db).validate_entry("dup", KB, readable_kbs=UNSCOPED)
+    finally:
+        db.close()
+    kb_issues = [
+        i for i in _validate_kb(config)["issues"] if i.get("rule") == "frontmatter_unmodellable"
+    ]
+    assert [i["rule"] for i in one["issues"]] == ["entry_not_found", "frontmatter_unmodellable"]
+    assert one["issues"][1] == kb_issues[0], (one["issues"][1], kb_issues)
 
 
 def test_the_listing_names_the_entry_by_its_id_not_its_file_name(tmp_path: Path):
