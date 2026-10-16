@@ -1061,13 +1061,23 @@ def _task_validate_transition(entry: Entry, context: dict) -> Entry:
             allowed_msg = (
                 err.split("Allowed next:", 1)[-1].strip() if "Allowed next:" in err else ""
             )
-            raise ValidationError(
+            refusal = ValidationError(
                 f"Cannot move task from '{old_status}' to '{new_status}'. "
                 f"Allowed next: {allowed_msg} "
                 f"Tasks follow open → claimed → in_progress → done/failed/blocked/review; "
                 f"walk through the intermediate states rather than skipping "
                 f"(or use 'cancelled' to retire an obsolete task from any state)."
             )
+            if (
+                entry.entry_type == "task"
+                and new_status == "open"
+                and old_status in {"claimed", "in_progress", "blocked"}
+            ):
+                refusal.suggestion = (
+                    "Use `pyrite task reset` to release a stale claim with an audit trail."
+                )
+                refusal.args = (str(refusal) + " " + refusal.suggestion,)
+            raise refusal
         raise ValidationError(err)
 
     return entry
