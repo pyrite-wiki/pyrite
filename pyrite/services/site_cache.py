@@ -3,14 +3,46 @@
 import json
 import logging
 import shutil
+from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from filelock import FileLock
 
 from ..config import PyriteConfig
 from ..storage.database import PyriteDB
 from ..utils.metadata import parse_metadata
 from ..utils.sanitize import sanitize_filename
 from .public_kbs import public_kb_names
+
+
+def site_cache_path(config: PyriteConfig) -> Path:
+    """The single cache home used by both renderers and HTTP routes."""
+    return Path(config.settings.index_path).parent / "site-cache"
+
+
+def _serialized_render(method):
+    """Serialize a cache generation across threads, instances and processes."""
+
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        self.cache_dir.parent.mkdir(parents=True, exist_ok=True)
+        # Outside the pruned cache tree; independent instances share the OS lock.
+        with self._render_lock:
+            return method(self, *args, **kwargs)
+
+    return locked
+
+
+def render_after_sync(config: PyriteConfig, db: PyriteDB) -> dict:
+    """Report rendering separately: an index commit is never undone by it."""
+    try:
+        stats = SiteCacheService(config, db).render_all()
+    except Exception:
+        logger.exception("Site cache render failed after sync")
+        return {"rendered": False, "errors": 0, "error": "site cache render failed; see server log"}
+    return {"rendered": True, "errors": stats.get("errors", 0), "error": None}
+
 
 if TYPE_CHECKING:
     from jinja2 import Environment
@@ -145,9 +177,13 @@ class SiteCacheService:
 
         self.config = config
         self.db = db
-        self.cache_dir = Path(config.settings.index_path).parent / "site-cache"
+        self.cache_dir = site_cache_path(config)
+        self._render_lock = FileLock(
+            str(self.cache_dir.parent / ".site-cache-render.lock"), timeout=60
+        )
         self._branding = BrandingService(config.settings.branding_dir).get()
 
+    @_serialized_render
     def render_all(self) -> dict:
         """Render the public KBs' index pages and entry pages. Returns stats.
 
@@ -328,6 +364,7 @@ class SiteCacheService:
             if kb.name in public
         ]
 
+    @_serialized_render
     def render_entry_by_id(self, entry_id: str, kb_name: str) -> bool:
         """Render a single entry page. Returns True if successful.
 
@@ -359,6 +396,7 @@ class SiteCacheService:
             return None
         return self.cache_dir / kb_name
 
+    @_serialized_render
     def invalidate_entry(self, entry_id: str, kb_name: str) -> None:
         """Take a deleted entry off the site: its page goes now; the pages
         that list it are marked stale.
@@ -377,6 +415,7 @@ class SiteCacheService:
         (kb_dir / f"{sanitize_filename(entry_id)}.html").unlink(missing_ok=True)
         (kb_dir / INDEX_STALE).touch()
 
+    @_serialized_render
     def refresh_kb_index(self, kb_name: str) -> None:
         """Render a KB's index and browse pages again from the index, and the
         landing's counts, and clear the KB's stale mark. A KB that is not
@@ -401,11 +440,13 @@ class SiteCacheService:
         if (self.cache_dir / "index.html").is_file():
             self.render_landing()
 
+    @_serialized_render
     def render_landing(self) -> None:
         """Render the landing page (and its manifest) from the KBs public now."""
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._render_landing(self._public_kb_cards())
 
+    @_serialized_render
     def invalidate_kb(self, kb_name: str) -> None:
         """Remove every cached page of a KB that stopped being public (or is
         gone), and re-render the landing without it (P-S3, P-F6)."""

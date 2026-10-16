@@ -23,6 +23,7 @@ classifiers = [
 keywords = ["knowledge-base", "knowledge-management", "mcp", "ai", "knowledge-graph", "agent-memory", "zettelkasten"]
 
 dependencies = [
+    "filelock>=3.12.0",
     "pydantic>=2.11.0",
     "python-dotenv>=1.0.1",
     "PyYAML>=6.0.1",

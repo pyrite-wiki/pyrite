@@ -1,5 +1,19 @@
 # JSON Contracts
 
+## Index sync and the public site cache
+
+`POST /api/index/sync?wait=true` returns the committed index counts together
+with `site_cache: {rendered, errors, error}`. The background form returns a
+job id; `GET /api/index/jobs/{job_id}` exposes those counts and the same
+persisted `site_cache` outcome once completed. Older jobs have `site_cache: null`
+because their render outcome was not recorded.
+
+A render failure leaves a successful index job completed and reports
+`rendered: false` with a generic error, rather than undoing or misreporting
+the index commit. A zero-change sync retries rendering. `rendered: true` and
+`errors: 0` means all pages rendered successfully; the configured index's
+parent directory contains the shared `site-cache/` used by rendering and serving.
+
 Canonical shapes returned by the pyrite CLI (`--format json`), MCP tools,
 and REST API. Written down here so agents and extension authors can rely
 on a stable contract instead of re-deriving it from source or an

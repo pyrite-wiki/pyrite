@@ -89,47 +89,11 @@ def sync_index(
 
         broadcast_event("kb_synced", entry_id="", kb_name="")
 
-        # Re-render the site cache if entries changed, *after* the sync has
-        # already committed and the drain/broadcast above have run. `wait=true`
-        # means the caller is already blocked on this request, so the render
-        # happens synchronously here rather than being handed to the loop
-        # captured at startup (#326's `bind_loop`/`_loop`) -- that hand-off
-        # exists for code with no way to make the caller wait; this code has
-        # exactly that. `index_mgr.config` (not `request.app.state.config`,
-        # which nothing in the server ever sets) is the same config already
-        # used to build `index_mgr` via `get_index_mgr`.
-        #
-        # A render failure does NOT fail the sync (#349 cold-read round): the
-        # sync already committed its counts, drained the embed queue and
-        # broadcast `kb_synced` by this point, and a 500 here would also make
-        # a retry see `added=0` (nothing changed), so the cache would never
-        # get another chance to render. The failure is instead reported on
-        # `site_cache.error` and logged with its traceback -- narrow because
-        # only building the service and `render_all` are wrapped, not the
-        # sync, drain or broadcast above.
-        site_cache_status = None
-        if result.get("added", 0) + result.get("updated", 0) + result.get("removed", 0) > 0:
-            from ...services.site_cache import SiteCacheService
+        # Even a zero-change retry pays a prior render failure back. The index
+        # commit, embed drain and broadcast are independent of this outcome.
+        from ...services.site_cache import render_after_sync
 
-            try:
-                # Inside the try: the constructor reads branding.yaml, which
-                # an operator may have left half-edited. On this path (#408)
-                # a broken branding file is reported the same generic way as
-                # any other render failure -- the sync already committed, so
-                # there is no "nothing committed yet, fix and retry" framing
-                # to offer; that framing is only true of the explicit
-                # POST /api/site/render call below.
-                stats = SiteCacheService(config=index_mgr.config, db=index_mgr.db).render_all()
-            except Exception:
-                logger.exception("Site cache render failed after sync")
-                site_cache_status = SiteCacheSyncStatus(
-                    rendered=False, error="site cache render failed; see server log"
-                )
-            else:
-                logger.info("Site cache re-rendered after sync")
-                site_cache_status = SiteCacheSyncStatus(
-                    rendered=True, errors=stats.get("errors", 0)
-                )
+        site_cache_status = SiteCacheSyncStatus(**render_after_sync(index_mgr.config, index_mgr.db))
 
         return SyncResponse(
             synced=True,

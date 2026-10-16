@@ -255,7 +255,14 @@ class SiteRefresher:
 def mount_site_routes(app: FastAPI) -> None:
     """Mount /site and /viewer routes. These work independent of the SPA dist."""
     data_dir = Path(os.environ.get("PYRITE_DATA_DIR", "."))
-    site_cache_dir = data_dir / "site-cache"
+    from ..config import load_config
+    from ..services.site_cache import site_cache_path
+
+    def _cache_dir(request: Request) -> Path:
+        # Resolve at request time: create_app() and module imports stay lazy.
+        config = getattr(request.app.state, "pyrite_config", None) or load_config()
+        return site_cache_path(config)
+
     viewer_dir = data_dir / "viewer"
 
     def _public(request: Request) -> set[str]:
@@ -276,7 +283,7 @@ def mount_site_routes(app: FastAPI) -> None:
         refresher = getattr(request.app.state, "site_refresh", None)
         if refresher is None or not refresher.may_try(what, kb_name):
             return
-        await run_in_threadpool(refresher.refresh, site_cache_dir, what, kb_name)
+        await run_in_threadpool(refresher.refresh, _cache_dir(request), what, kb_name)
 
     def _csp(request: Request, response: Response) -> Response:
         # The built-in policy is already on the response; apply the
@@ -294,7 +301,7 @@ def mount_site_routes(app: FastAPI) -> None:
         proto = request.headers.get("x-forwarded-proto", "")
         if proto == "https" and base.startswith("http://"):
             base = "https://" + base[7:]
-        return _generate_sitemap(site_cache_dir, base, _public(request))
+        return _generate_sitemap(_cache_dir(request), base, _public(request))
 
     # Robots.txt
     @app.get("/site/robots.txt", include_in_schema=False)
@@ -330,7 +337,7 @@ def mount_site_routes(app: FastAPI) -> None:
     # Search page
     @app.get("/site/search", include_in_schema=False)
     async def site_search(request: Request):
-        return _csp(request, _serve_search_page(site_cache_dir))
+        return _csp(request, _serve_search_page(_cache_dir(request)))
 
     # Serve /site/* from pre-rendered cache
     @app.get("/site/{path:path}", include_in_schema=False)
@@ -340,12 +347,12 @@ def mount_site_routes(app: FastAPI) -> None:
         if parts[0] in public and (len(parts) == 1 or parts[1] == "page"):
             from ..services.site_cache import kb_index_is_current
 
-            if not kb_index_is_current(site_cache_dir, parts[0]):
+            if not kb_index_is_current(_cache_dir(request), parts[0]):
                 await _refresh(request, "kb_index", parts[0])
         return _csp(
             request,
             _serve_site_cached(
-                site_cache_dir,
+                _cache_dir(request),
                 path,
                 "<html><body>Page not yet rendered. Run site cache render.</body></html>",
                 public=_public(request),
@@ -356,8 +363,8 @@ def mount_site_routes(app: FastAPI) -> None:
     async def site_index(request: Request):
         from ..services.site_cache import landing_is_current
 
-        if (site_cache_dir / "index.html").is_file() and not landing_is_current(
-            site_cache_dir, _public(request)
+        if (_cache_dir(request) / "index.html").is_file() and not landing_is_current(
+            _cache_dir(request), _public(request)
         ):
             # A landing rendered under an older policy, or by a version that
             # wrote no manifest (an upgrade): render it now rather than go
@@ -366,7 +373,7 @@ def mount_site_routes(app: FastAPI) -> None:
         return _csp(
             request,
             _serve_site_cached(
-                site_cache_dir,
+                _cache_dir(request),
                 "",
                 "<html><body>Site not yet rendered. Run site cache render.</body></html>",
                 public=_public(request),

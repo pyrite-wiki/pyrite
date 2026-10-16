@@ -282,8 +282,8 @@ class TestSyncWaitRerendersSiteCache:
             assert body["site_cache"]["rendered"] is False, body
             assert body["site_cache"]["errors"] == 0, body
 
-    def test_a_sync_that_changes_nothing_reports_no_site_cache(self, tmp_path):
-        """``site_cache`` is null when nothing changed: no render was attempted."""
+    def test_a_sync_that_changes_nothing_still_refreshes_site_cache(self, tmp_path):
+        """A zero-change retry still gets a chance to repair a stale cache."""
         config = _config(tmp_path)
         app = create_app(config=config)
         _write_entry(config.get_kb("public-kb").path)
@@ -295,4 +295,4 @@ class TestSyncWaitRerendersSiteCache:
             assert second.status_code == 200, second.text
             body = second.json()
             assert body["added"] + body["updated"] + body["removed"] == 0, body
-            assert "site_cache" in body and body["site_cache"] is None, body
+            assert body["site_cache"]["rendered"] is True, body

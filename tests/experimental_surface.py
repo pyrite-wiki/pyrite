@@ -316,6 +316,7 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     "tests/test_read_scope_queries.py": SCOPE,
     "tests/test_read_scoping_is_structural.py": SCOPE,
     "tests/test_site_cache_follows_deletes.py": SCOPE,  # P-S3: only the public set
+    "tests/test_background_site_cache.py": SCOPE,  # publish/serve the current public set
     "tests/test_site_public_only.py": SCOPE,
     "tests/test_sitemap.py::TestSitemapXml::*": SCOPE,  # public KBs only
     "tests/test_stats_read_scoping.py": SCOPE,

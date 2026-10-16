@@ -11,6 +11,7 @@ Usage:
     status = worker.get_job(job_id)
 """
 
+import json
 import logging
 import threading
 import uuid
@@ -21,6 +22,7 @@ from ..config import PyriteConfig
 from ..exceptions import public_text
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
+from .site_cache import render_after_sync
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +62,9 @@ class IndexWorker:
     def _ensure_table(self):
         """Create the index_job table if it doesn't exist."""
         with self.db._raw_cursor() as cur:
+            # This worker owns index_job, including upgrade of pre-existing jobs.
+            # Serialize schema inspection/ALTER across concurrent app processes.
+            cur.execute("BEGIN IMMEDIATE")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS index_job (
                     job_id TEXT PRIMARY KEY,
@@ -73,9 +78,12 @@ class IndexWorker:
                     removed INTEGER DEFAULT 0,
                     error TEXT,
                     created_at TEXT NOT NULL,
-                    completed_at TEXT
+                    completed_at TEXT,
+                    site_cache TEXT
                 )
             """)
+            if "site_cache" not in {row[1] for row in cur.execute("PRAGMA table_info(index_job)")}:
+                cur.execute("ALTER TABLE index_job ADD COLUMN site_cache TEXT")
             self.db._raw_conn.commit()
 
     def submit_sync(self, kb_name: str | None = None) -> str:
@@ -192,16 +200,24 @@ class IndexWorker:
                 self._update_progress(db, job_id, current, total, kb_name)
 
             results = index_mgr.sync_incremental(kb_name, progress_callback=progress_cb)
+            site_cache = render_after_sync(self.config, db)
 
             now = datetime.now(UTC).isoformat()
             db._raw_conn.execute(
                 """
                 UPDATE index_job
                 SET status = 'completed', added = ?, updated = ?, removed = ?,
-                    completed_at = ?
+                    completed_at = ?, site_cache = ?
                 WHERE job_id = ?
                 """,
-                (results["added"], results["updated"], results["removed"], now, job_id),
+                (
+                    results["added"],
+                    results["updated"],
+                    results["removed"],
+                    now,
+                    json.dumps(site_cache),
+                    job_id,
+                ),
             )
             db._raw_conn.commit()
         except Exception as e:
@@ -236,15 +252,16 @@ class IndexWorker:
                 self._update_progress(db, job_id, current, total, kb_name)
 
             count = index_mgr.index_kb(kb_name, progress_cb)
+            site_cache = render_after_sync(self.config, db)
 
             now = datetime.now(UTC).isoformat()
             db._raw_conn.execute(
                 """
                 UPDATE index_job
-                SET status = 'completed', added = ?, completed_at = ?
+                SET status = 'completed', added = ?, completed_at = ?, site_cache = ?
                 WHERE job_id = ?
                 """,
-                (count, now, job_id),
+                (count, now, json.dumps(site_cache), job_id),
             )
             db._raw_conn.commit()
         except Exception as e:
@@ -293,7 +310,7 @@ class IndexWorker:
     def _row_to_dict(row) -> dict:
         """Convert a sqlite3.Row or tuple to a dict."""
         if hasattr(row, "keys"):
-            return dict(row)
+            result = dict(row)
         # Fallback for tuple rows
         cols = [
             "job_id",
@@ -308,5 +325,10 @@ class IndexWorker:
             "error",
             "created_at",
             "completed_at",
+            "site_cache",
         ]
-        return dict(zip(cols, row, strict=False))
+        if not hasattr(row, "keys"):
+            result = dict(zip(cols, row, strict=False))
+        raw = result.get("site_cache")
+        result["site_cache"] = json.loads(raw) if raw else None
+        return result

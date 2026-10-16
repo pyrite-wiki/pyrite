@@ -400,7 +400,7 @@ class DeleteResponse(BaseModel):
 
 
 class SiteCacheSyncStatus(BaseModel):
-    """Outcome of the site-cache render `wait=true` triggers alongside a sync.
+    """Outcome of the site-cache render alongside a sync (waiting or background).
 
     Independent of the sync's own success (#349's cold-read round): a sync
     that added, updated or removed entries has already committed by the time
