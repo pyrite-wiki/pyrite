@@ -25,7 +25,7 @@ import os
 from pathlib import Path
 
 from ..utils.atomic_write import ABSENT, FileChanged, atomic_write_text
-from ..utils.file_lock import NotInGitRepository
+from ..utils.file_lock import LOCK_TIMEOUT, NotInGitRepository
 
 __all__ = ["FileChanged", "create_entry_text", "publish_entry_text"]
 
@@ -48,17 +48,24 @@ def create_entry_text(path: str | os.PathLike[str], text: str) -> bool:
         raise FileExistsError(str(e.path)) from e
 
 
-def publish_entry_text(path: str | os.PathLike[str], text: str, *, expect: bytes) -> bool:
+def publish_entry_text(
+    path: str | os.PathLike[str],
+    text: str,
+    *,
+    expect: bytes,
+    lock_timeout: float = LOCK_TIMEOUT,
+) -> bool:
     """Replace ``path`` with ``text`` if it still holds ``expect``; return whether
     the replace ran under the momentary lock.
 
     Raises ``FileChanged`` (nothing written) when the file no longer holds
     ``expect``: the caller re-reads and re-applies. In a git work tree the
-    compare and the replace run under the lock; outside one they run without
-    it (D1 (b)) and the result is ``False``.
+    compare and the replace run under the lock, waited for at most
+    ``lock_timeout`` seconds (``LockTimeout`` after that); outside one they
+    run without it (D1 (b)) and the result is ``False``.
     """
     try:
-        atomic_write_text(path, text, expect=expect)
+        atomic_write_text(path, text, expect=expect, lock_timeout=lock_timeout)
         return True
     except NotInGitRepository:
         target = Path(path)

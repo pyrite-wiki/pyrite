@@ -239,8 +239,14 @@ operations to the file's own text: each named field changes its own lines
 and nothing else (comments, key order, quoting, line endings and every
 other key keep their bytes). An alias is written under the spelling the
 file uses; a key the file holds under `metadata:` is edited there, any
-other key at the top level. `updated_at` is refreshed only where the file
-already carries it, in its own form. A request that changes nothing writes
+other key at the top level, so a key refused at the top level (`type`,
+`id`, `links`, `body`) is refused under `metadata` too. `updated_at` is
+refreshed only where the file already carries it, in its own spelling (the
+separator, a `Z` or an offset, the fraction's digits); a timestamp the
+request sets is written as sent, and one that is no instant is refused. A
+storage fault on the write (a hard-linked file, a lock held too long) is
+`STORAGE_ERROR` (`500` on REST; `retryable: true` only for the lock). A
+request that changes nothing writes
 nothing: the result carries `"changed": false` (CLI and MCP say it only
 then; REST `UpdateResponse` always carries `changed`). The file is replaced
 only if it still holds the bytes the edit was computed on, under a lock in

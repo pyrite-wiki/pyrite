@@ -207,6 +207,17 @@ class FrontmatterSpan:
     body: int
 
 
+class TimestampText(str):
+    """A YAML timestamp spelled as given (``2026-10-02T12:00:00Z``), to be
+    written bare where it reads back as a timestamp, in the caller's or the
+    file's own separator, zone form and fraction digits (#955, the review of
+    P3a: a ``datetime`` value is written in the house spelling, which respelled
+    a value the request did not ask to change). Where the scalar it replaces
+    was quoted it stays quoted, as any string does."""
+
+    __slots__ = ()
+
+
 @dataclass(frozen=True)
 class Set:
     """Set a key to a value. ``path`` names a top-level key (``"title"``) or a
@@ -2211,13 +2222,21 @@ def _emit_scalar(value: Any, style: str | None, tag: str | None, flow: bool) -> 
     if isinstance(value, float):
         return _emit_float(value)
     if isinstance(value, datetime):
-        # The house spelling of a timestamp in a file: a space before the
-        # time (``updated_at: 2026-10-15 07:41:12+00:00``), as ruamel's
-        # dumper wrote it. Both forms read as one YAML timestamp; the index
-        # row holds ``isoformat()`` whatever the file says (``crud.temporal_text``).
+        # The house spelling of a timestamp the model made (a create's
+        # ``created_at``): a space before the time, as ruamel's dumper wrote
+        # it. A timestamp that replaces one, or that a caller spelled, comes
+        # as ``TimestampText`` and keeps that spelling. Both forms read as one
+        # YAML timestamp; the index row holds ``isoformat()`` whatever the
+        # file says (``crud.temporal_text``).
         return value.isoformat(sep=" ")
     if isinstance(value, date):
         return value.isoformat()
+    if isinstance(value, TimestampText):
+        if style in ("'", '"'):
+            return _emit_scalar(str(value), style, tag, flow)
+        if _plain_ok(value, flow, timestamp=True):
+            return str(value)
+        return _double(value)
     if style == "'" and _single_ok(value):
         return "'" + value.replace("'", "''") + "'"
     if style == '"' or style == "'":

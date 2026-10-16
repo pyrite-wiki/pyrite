@@ -11,9 +11,9 @@ import dataclasses
 import logging
 import os
 import re
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -32,12 +32,14 @@ from ..exceptions import (
     KBReadOnlyError,
     PyriteError,
     SchemaViolationError,
+    StorageBusyError,
+    StorageError,
     UndeclaredTypeError,
     ValidationError,
     public_text,
 )
 from ..models import Entry
-from ..models.base import _timestamp_instant, parse_datetime
+from ..models.base import _timestamp_instant
 from ..models.core_types import id_text
 from ..models.factory import build_entry
 from ..plugins.context import PluginContext
@@ -51,10 +53,12 @@ from ..storage.file_operations import (
     OperationRefusedError,
     ReplaceBody,
     Set,
+    TimestampText,
     apply,
 )
 from ..storage.index import IndexManager, content_hash
 from ..storage.repository import KBRepository
+from ..utils.file_lock import LOCK_TIMEOUT, LockTimeout
 from ..utils.frontmatter import Frontmatter, NoFrontmatter, describe, split_frontmatter
 from ..utils.metadata import parse_metadata
 from ..utils.yaml import load_yaml
@@ -85,6 +89,10 @@ _MANAGED_FIELDS = frozenset(
 #: REST PATCH, #151). They are left out of ``updatable_fields``, because a read
 #: result carries them and an agent echoing it back would freeze them.
 _TIMESTAMP_FIELDS = frozenset({"created_at", "updated_at"})
+
+#: How long an update waits for the entry's momentary lock before it is a
+#: ``StorageBusyError`` (the lock's own default; a test shortens it).
+_LOCK_TIMEOUT = LOCK_TIMEOUT
 
 #: Keys a read result (`kb_get`, `GET /api/entries/{id}`) carries that are the
 #: index's, not the entry's: an update never writes them. With the managed
@@ -1552,11 +1560,19 @@ class KBService:
                     f"Cannot update '{entry_id}': the frontmatter is not a mapping"
                 )
             ops = self._operations_for(entry, file_values, updates)
+            # Decided again on the keys the update will actually write: a key
+            # the request nests under `metadata` is a top-level key of the
+            # file after the mapping (decision 6), so `metadata.type`,
+            # `metadata.id`, `metadata.links` and `metadata.body` are the same
+            # refusals as their top-level spellings (#971 fix round 1).
+            self._refuse_update_keys(entry, entry_id, {}, restrict, kb_config, ops)
             try:
                 new_text, _report = apply(text, ops, span)
                 changed = new_text != text
                 if changed and "updated_at" in file_values and "updated_at" not in updates:
-                    stamp = _updated_at_stamp(file_values["updated_at"])
+                    stamp = _updated_at_stamp(
+                        file_values["updated_at"], _raw_scalar(split.text, "updated_at")
+                    )
                     if stamp is not None:
                         new_text, _report = apply(
                             new_text, [Set("updated_at", stamp)], _frontmatter_span(new_text)
@@ -1605,9 +1621,19 @@ class KBService:
                     f"Cannot update '{entry_id}': the result cannot be indexed ({e})"
                 ) from e
             try:
-                locked = publish_entry_text(path, new_text, expect=raw)
+                locked = publish_entry_text(path, new_text, expect=raw, lock_timeout=_LOCK_TIMEOUT)
             except FileChanged:
                 continue  # re-read and re-apply (decision 10; Q2)
+            except LockTimeout as e:
+                # Another writer held the momentary lock for too long: the
+                # same call can succeed once it is released.
+                raise StorageBusyError(f"Cannot write '{entry_id}': {e}") from e
+            except OSError as e:
+                # The lock directory (`LockDirError`), a hard link
+                # (`HardLinked`), the filesystem: a storage fault whose detail
+                # (a real path) belongs in the log, not in a client-facing
+                # body (ADR-0037 §3; `public_text` logs it).
+                raise StorageError(f"Cannot write '{entry_id}': {e}") from e
             break
         else:
             raise ConflictError(
@@ -1639,24 +1665,39 @@ class KBService:
         updates: dict[str, Any],
         restrict: bool,
         kb_config: KBConfig,
+        ops: Sequence[Any] = (),
     ) -> None:
-        """Today's refusals, before anything is read further or written."""
+        """Today's refusals, before anything is read further or written.
+
+        Called on the request's keys as sent, and again on the operations the
+        request maps to (``ops``), whose top-level keys are the ones the file
+        will hold: a key the request nests under ``metadata`` lands at the top
+        level (decision 6) and is refused as its top-level spelling would be.
+        """
         # `type`/`entry_type` and the empty key are never model attributes on
         # any entry (`type` is frontmatter-only; `entry_type` is a read-only
         # property), and no caller means anything sensible by setting them
         # through an update. Refused unconditionally, not gated by `restrict`.
         # Checked AFTER the KB and entry lookups: a missing KB or entry, or a
         # read-only KB, must still answer its own 404/403.
-        bad_keys = sorted(k for k in updates if k in ("type", "entry_type") or k == "")
+        op_keys = [str(_top_key_of(op)) for op in ops if not isinstance(op, ReplaceBody)]
+        bad_keys = sorted(k for k in [*updates, *op_keys] if k in ("type", "entry_type") or k == "")
         if bad_keys:
             raise ValidationError(
                 f"Cannot set {', '.join(k or '(empty key)' for k in bad_keys)} on "
                 f"{entry_id!r} with an update: an entry's type is fixed once "
                 "created, and a --field key must be non-empty."
             )
+        if "body" in op_keys:
+            # The request named `body` where only a frontmatter key can land
+            # (under `metadata`): the body is the entry's text, never a key.
+            raise ValidationError(
+                f"Cannot set body on {entry_id!r} as a frontmatter key: the body is "
+                "the entry's text; send it as `body` at the top level."
+            )
         _, _, managed = self._field_sets(entry.entry_type, kb_config)
         if restrict:
-            refused = sorted(k for k in updates if k in managed)
+            refused = sorted({k for k in [*updates, *op_keys] if k in managed})
             if refused:
                 # #557: the usual way to arrive here is a KB using one of these
                 # names for a field of its own (`provenance:` on a draft), so
@@ -1750,9 +1791,27 @@ class KBService:
 
     @staticmethod
     def _value_for_file(entry: Entry, key: str, value: Any) -> Any:
-        """``value`` validated as ``key``'s type, as plain data for ``apply``."""
+        """``value`` validated as ``key``'s type, as plain data for ``apply``.
+
+        A timestamp the caller spelled is written as sent (``TimestampText``:
+        its own separator, zone form and fraction digits, bare where the
+        file's value was bare), never as the model's reading of it; one that
+        is no instant is refused. A ``datetime`` (an in-process caller's) is
+        written in the house spelling.
+        """
         if key in _TIMESTAMP_FIELDS and not isinstance(value, datetime):
-            value = parse_datetime(value)
+            if isinstance(value, date):
+                value = datetime(value.year, value.month, value.day, tzinfo=UTC)
+            else:
+                spelled = str(value).strip()
+                try:
+                    datetime.fromisoformat(spelled.replace("Z", "+00:00"))
+                except ValueError:
+                    raise ValidationError(
+                        f"Cannot set {key} on {entry.entry_type} '{entry.id}': "
+                        f"{spelled!r} is not a timestamp (ISO 8601, e.g. 2026-01-15T09:00:00Z)."
+                    ) from None
+                value = TimestampText(spelled)
         if hasattr(entry, key):
             _as_field_type(entry, key, value)  # validation only: refuses before any write
         return _plain_value(value)
@@ -3302,6 +3361,15 @@ class KBService:
 _UPDATE_ATTEMPTS = 6
 
 
+def _top_key_of(op: Any) -> Any:
+    """The top-level frontmatter key an operation writes: the first segment
+    of its path (``"links"`` for ``("links", 0, "target")`` or ``"links[0].target"``)."""
+    path = op.path
+    if isinstance(path, tuple | list):
+        return path[0] if path else ""
+    return str(path).split(".", 1)[0].split("[", 1)[0]
+
+
 def _frontmatter_span(text: str) -> FrontmatterSpan:
     split = split_frontmatter(text)
     assert isinstance(split, Frontmatter), split  # apply() just produced it
@@ -3325,36 +3393,63 @@ def _plain_value(value: Any) -> Any:
 _STAMP_TZ = re.compile(r"[+-]\d\d:\d\d$")
 
 
-def _updated_at_stamp(old: Any) -> Any:
+def _raw_scalar(yaml_text: str, key: str) -> str | None:
+    """The spelling of top-level ``key``'s scalar in ``yaml_text`` as written
+    (a trailing comment stripped), or None when the key is not a plain
+    ``key: value`` line (quoted key, flow mapping, block scalar)."""
+    found = re.search(
+        rf"^{re.escape(key)}:[ \t]*([^\s#][^#\r\n]*?)[ \t]*(?:#.*)?$", yaml_text, re.M
+    )
+    return found.group(1) if found else None
+
+
+def _updated_at_stamp(old: Any, raw: str | None = None) -> Any:
     """The new ``updated_at`` in the file's own form (#955, acceptance 4), or
     None when the file's value is not an instant Pyrite can read.
 
-    A quoted string stays a quoted string in the same layout: the ``T`` or
-    space separator, a ``Z`` or an offset or none, and the fraction's digits
-    are those of the old value. A bare timestamp is a ``datetime``, which
-    ``apply`` writes ``YYYY-MM-DD HH:MM:SS+00:00``.
+    The stamp keeps the spelling of the value it replaces: the ``T`` or space
+    separator, a ``Z``, an offset (the time is converted to it) or none, the
+    fraction's digits, a date-only value. ``old`` is the loaded value (a
+    ``str`` when the file quotes it, else ruamel's timestamp or a ``date``);
+    ``raw`` is the scalar as the file spells it, for a bare value. A quoted
+    value stays a quoted string; a bare one is ``TimestampText``, which
+    ``apply`` writes bare in that spelling.
     """
     if _timestamp_instant(old) is None:
         return None
     now = datetime.now(UTC).replace(microsecond=0)
-    if not isinstance(old, str):
-        return now
-    sep = "T" if "T" in old else " "
+    if isinstance(old, str):
+        spelled = old
+    elif raw:
+        spelled = raw
+    elif isinstance(old, datetime):
+        # No source text: the loader's record of the spelling (ruamel keeps
+        # the separator and the zone form on its TimeStamp).
+        info = getattr(old, "_yaml", None) or {}
+        tz = info.get("tz") or ""
+        spelled = old.replace(tzinfo=None).isoformat(sep="T" if info.get("t") else " ") + tz
+    else:
+        spelled = old.isoformat()
+    if ":" not in spelled:
+        return now.date() if not isinstance(old, str) else now.strftime("%Y-%m-%d")
+    sep = "T" if "T" in spelled else " "
     tz = (
         "Z"
-        if old.endswith("Z")
-        else (_STAMP_TZ.search(old).group(0) if _STAMP_TZ.search(old) else "")
+        if spelled.endswith("Z")
+        else (_STAMP_TZ.search(spelled).group(0) if _STAMP_TZ.search(spelled) else "")
     )
-    core = old[: -len(tz)] if tz else old
+    core = spelled[: -len(tz)] if tz else spelled
     digits = len(core.rsplit(".", 1)[1]) if "." in core else 0
-    text = now.strftime(f"%Y-%m-%d{sep}%H:%M:%S")
+    shown = now
+    if tz and tz != "Z":
+        sign = 1 if tz[0] == "+" else -1
+        hours, minutes = int(tz[1:3]), int(tz[4:6])
+        shown = now.astimezone(timezone(sign * timedelta(hours=hours, minutes=minutes)))
+    text = shown.strftime(f"%Y-%m-%d{sep}%H:%M:%S")
     if digits:
         text += "." + "0" * digits
-    if tz == "Z":
-        return text + "Z"
-    if tz:
-        return text + "+00:00"
-    return text
+    text += tz
+    return text if isinstance(old, str) else TimestampText(text)
 
 
 def _as_field_type(entry: Entry, key: str, value: Any) -> Any:

@@ -13,6 +13,7 @@ from ...exceptions import (
     EntryNotFoundError,
     KBReadOnlyError,
     PyriteError,
+    StorageError,
     ValidationError,
 )
 from ...services.access_policy import KB, Action, AnyKB, ReadScope
@@ -893,6 +894,12 @@ def update_entry(
         raise refusal_http(e)
     except ConflictError as e:
         raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": str(e)})
+    except StorageError:
+        # A storage fault on the write (a hard-linked file, the lock
+        # directory, a lock held too long) is the central handler's
+        # `STORAGE_ERROR` 500 with the class's public text, not a 400 that
+        # would show the path.
+        raise
     except (PyriteError, ValueError) as e:
         raise HTTPException(status_code=400, detail={"code": "UPDATE_FAILED", "message": str(e)})
 
@@ -949,6 +956,8 @@ def patch_entry_field(
         raise refusal_http(e)
     except ConflictError as e:
         raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": str(e)})
+    except StorageError:
+        raise  # the central handler's STORAGE_ERROR 500, as on PUT
     except (PyriteError, ValueError) as e:
         raise HTTPException(status_code=400, detail={"code": "UPDATE_FAILED", "message": str(e)})
 

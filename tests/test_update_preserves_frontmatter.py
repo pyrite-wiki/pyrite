@@ -909,10 +909,10 @@ def test_a_string_created_at_is_coerced_like_updated_at(swkb_env):
 def test_a_refreshed_updated_at_is_written_unquoted_without_microseconds(swkb_env):
     """#173 review: pin the file shape of the refreshed stamp.
 
-    The value has to reach ruamel as a `datetime` so it is written as a plain
-    YAML timestamp -- `updated_at: 2026-… 05:06:07+00:00` -- rather than a
-    quoted `isoformat()` string carrying microseconds. Nothing pinned that
-    shape before this test.
+    A refreshed stamp is a plain YAML timestamp, never a quoted string
+    carrying microseconds. #971 fix round 1: in the file's own spelling, so a
+    bare `2020-01-02T00:00:00+00:00` is refreshed with its `T` and its offset
+    (the house `YYYY-MM-DD HH:MM:SS+00:00` was written over it before).
     """
     path = swkb_env["note_file"]
     path.write_text(
@@ -927,9 +927,10 @@ def test_a_refreshed_updated_at_is_written_unquoted_without_microseconds(swkb_en
 
     text = path.read_text(encoding="utf-8")
     line = next(l for l in text.splitlines() if l.startswith("updated_at:"))
-    assert re.fullmatch(r"updated_at: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\+00:00", line), (
+    assert re.fullmatch(r"updated_at: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00", line), (
         f"refreshed updated_at has the wrong shape: {line!r}"
     )
+    assert line != "updated_at: 2020-01-02T00:00:00+00:00", "the stamp did not move"
 
 
 ADR_WITH_BARE_DATE = """---

@@ -1422,6 +1422,12 @@ class PyriteMCPServer:
             written = self.svc.update(entry_id, kb_name, updates)
         except (ValidationError, ConflictError) as e:
             return _refusal(e)
+        except StorageError as e:
+            # A storage fault on the write (a hard-linked file, the lock
+            # directory, a lock held too long): the class's own code and
+            # `retryable`, its public text, the detail logged once (#431).
+            logger.error("Tool kb_update failed: %s", e, exc_info=e)
+            return _refusal(e, already_logged=True)
         except PyriteError as e:
             return _error("UPDATE_FAILED", _safe_message(e), retryable=True)
 

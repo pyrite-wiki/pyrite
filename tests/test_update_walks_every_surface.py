@@ -20,9 +20,11 @@ path and the KB's file list.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -33,7 +35,7 @@ from typer.testing import CliRunner
 
 from pyrite.cli import app as cli_app
 from pyrite.config import KBConfig, PyriteConfig, Settings
-from pyrite.exceptions import PyriteError, ValidationError
+from pyrite.exceptions import PyriteError, ValidationError, public_text
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.file_operations import FrontmatterSpan, ReplaceBody, Set
@@ -241,7 +243,10 @@ def _cli(config, updates):
         elif key == "body":
             args += ["--body", value]
         else:
-            args += ["-f", f"{key}={value}"]
+            # `-f k=v` parses a JSON object or array (`_parse_field_value`), the
+            # one way the CLI sends a mapping such as `metadata`.
+            spelled = json.dumps(value) if isinstance(value, dict | list) else value
+            args += ["-f", f"{key}={spelled}"]
     with (
         patch("pyrite.cli.load_config", return_value=config),
         patch("pyrite.cli.context.load_config", return_value=config),
@@ -632,6 +637,236 @@ def test_a_result_the_index_cannot_store_is_refused_with_nothing_written(tmp_pat
     with pytest.raises(PyriteError):
         _update_entry(config, {"title": ["a", "list", "is", "no", "title"]})
 
+    assert path.read_bytes() == before
+
+
+# --------------------------------------------------------------------------
+# A refusal is decided on the keys the update will write (#971 fix round 1)
+# --------------------------------------------------------------------------
+
+#: A key refused at the top level is refused under `metadata` too: the mapping
+#: (decision 6) would write it at the top level, where the base kept it nested
+#: and harmless. value, and the surfaces whose rule it is: `type` and `body`
+#: are refused for every caller; `links` and `id` are managed fields, refused
+#: for a surface (`restrict`) and open to the in-process `update_entry`, as at
+#: the top level.
+NESTED_REFUSALS: dict[str, tuple[Any, frozenset[str]]] = {
+    "type": ("hacked", frozenset(SURFACES)),
+    "body": ("a stray body key", frozenset(SURFACES)),
+    "links": (
+        [{"target": "foo", "relation": "related_to"}],
+        frozenset(SURFACES) - {"service.update_entry"},
+    ),
+    "id": ("other", frozenset(SURFACES) - {"service.update_entry"}),
+}
+
+
+@pytest.mark.parametrize("surface", sorted(SURFACES))
+@pytest.mark.parametrize("key", sorted(NESTED_REFUSALS))
+def test_a_refused_key_under_metadata_is_refused_with_nothing_written(
+    tmp_path: Path, key: str, surface: str
+):
+    """The review of #971: `metadata.links`, `metadata.type`, `metadata.id`
+    and `metadata.body` escaped the refusals and were written at the top
+    level (the id case left a stale index row). The refusal is decided on
+    the operations the request maps to, after the `metadata` mapping."""
+    value, where = NESTED_REFUSALS[key]
+    if surface == "rest.patch":
+        pytest.skip("PATCH's value is a string: it cannot carry a mapping")
+    if surface not in where:
+        pytest.skip(f"{key} is open to the in-process update_entry, as at the top level")
+    text, _ = SHAPES["yaml11"]
+    config, path = _build(tmp_path, text)
+    before = path.read_bytes()
+
+    with pytest.raises(PyriteError):
+        SURFACES[surface](config, {"metadata": {key: value}})
+
+    assert path.read_bytes() == before
+    db = PyriteDB(config.settings.index_path)
+    try:
+        assert db.get_entry(ID, KB) is not None, "the index row moved"
+    finally:
+        db.close()
+
+
+# --------------------------------------------------------------------------
+# A timestamp keeps its spelling (#971 fix round 1)
+# --------------------------------------------------------------------------
+
+#: `updated_at` spellings a file may carry, each with the pattern a refreshed
+#: stamp must match: the separator, the zone form and the fraction's digits are
+#: the file's, bare or quoted. The review of #971: a bare `2026-10-01T12:00:00Z`
+#: became `2026-10-16 00:32:06+00:00` on any edit.
+UPDATED_AT_SPELLINGS: dict[str, tuple[str, str]] = {
+    "bare-T-Z": ("2026-01-01T00:00:00Z", r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ"),
+    "bare-space-offset": ("2026-01-01 00:00:00+00:00", r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\+00:00"),
+    "bare-T-fraction-offset": (
+        "2026-01-01T00:00:00.123+02:00",
+        r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+02:00",
+    ),
+    "bare-T-naive": ("2026-01-01T00:00:00", r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d"),
+    "bare-date": ("2026-01-01", r"\d{4}-\d\d-\d\d"),
+    "quoted-T-Z": ("'2026-01-01T00:00:00Z'", r"'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ'"),
+    "quoted-space": ('"2026-01-01 00:00:00"', r'"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d"'),
+}
+
+#: The spellings the round's base already kept: the house form (the bare
+#: fixture the review named) and the quoted ones, which `_updated_at_stamp`
+#: handled from the start.
+_SPELLINGS_ALREADY_KEPT = frozenset({"bare-space-offset", "quoted-T-Z", "quoted-space"})
+
+
+@pytest.mark.parametrize("surface", sorted(SURFACES))
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        pytest.param(
+            name,
+            marks=[
+                pytest.mark.control(
+                    reason="the house spelling and a quoted value were already kept; the control pins them beside the forms the round fixes"
+                )
+            ]
+            if name in _SPELLINGS_ALREADY_KEPT
+            else [],
+        )
+        for name in sorted(UPDATED_AT_SPELLINGS)
+    ],
+)
+def test_a_refreshed_updated_at_keeps_the_files_spelling(
+    tmp_path: Path, spelling: str, surface: str
+):
+    old, pattern = UPDATED_AT_SPELLINGS[spelling]
+    text = f"---\nid: {ID}\ntitle: Walk\ntype: note\nupdated_at: {old}\n---\n\nText.\n"
+    config, path = _build(tmp_path, text)
+
+    SURFACES[surface](config, {"title": "Walk, second draft"})
+
+    after = _text(path)
+    line = next(l for l in after.splitlines() if l.startswith("updated_at:"))
+    assert re.fullmatch("updated_at: " + pattern, line), line
+    assert line != f"updated_at: {old}", "the stamp did not move"
+    assert_only_these_keys_changed(text, after, TITLE_EDIT_KEYS)
+
+
+#: (the file's `created_at`, what the caller sends, the line the file holds
+#: after). A timestamp the caller sends is written as sent: its own separator,
+#: zone form and fraction digits; bare where the file's value was bare, quoted
+#: where it was quoted.
+SENT_TIMESTAMPS = [
+    ("2026-01-01 00:00:00+00:00", "2026-10-02T12:00:00Z", "2026-10-02T12:00:00Z"),
+    ("2026-01-01T00:00:00Z", "2026-10-02 12:00:00+00:00", "2026-10-02 12:00:00+00:00"),
+    ("2026-01-01T00:00:00Z", "2026-10-02T12:00:00.500+01:00", "2026-10-02T12:00:00.500+01:00"),
+    ("'2026-01-01T00:00:00Z'", "2026-10-02T12:00:00Z", "'2026-10-02T12:00:00Z'"),
+]
+
+
+@pytest.mark.parametrize("surface", sorted(SURFACES))
+@pytest.mark.parametrize(("old", "sent", "expected"), SENT_TIMESTAMPS)
+def test_a_timestamp_the_caller_sends_is_written_as_sent(
+    tmp_path: Path, surface: str, old: str, sent: str, expected: str
+):
+    if surface == "mcp.kb_update":
+        pytest.skip("kb_update sets a timestamp aside as `ignored` (#455): it never writes one")
+    text = f"---\nid: {ID}\ntitle: Walk\ntype: note\ncreated_at: {old}\n---\n\nText.\n"
+    config, path = _build(tmp_path, text)
+    request: dict[str, Any] = {"created_at": sent}
+    if surface == "rest.put":
+        # PUT's model has no timestamp field; a key under `metadata` is a
+        # top-level key of the file (decision 6).
+        request = {"metadata": request}
+
+    SURFACES[surface](config, request)
+
+    after = _text(path)
+    assert f"created_at: {expected}\n" in after, after
+    assert_only_these_keys_changed(text, after, ("created_at",))
+
+
+@pytest.mark.parametrize("surface", sorted(SURFACES))
+def test_a_timestamp_the_caller_sends_that_is_no_instant_is_refused(tmp_path: Path, surface: str):
+    """Written as sent means refused when what was sent is not a timestamp:
+    `parse_datetime` used to read `yesterday` as now and write that."""
+    if surface == "mcp.kb_update":
+        pytest.skip("kb_update sets a timestamp aside as `ignored` (#455): it never writes one")
+    text = (
+        f"---\nid: {ID}\ntitle: Walk\ntype: note\ncreated_at: 2026-01-01T00:00:00Z\n---\n\nText.\n"
+    )
+    config, path = _build(tmp_path, text)
+    before = path.read_bytes()
+    request: dict[str, Any] = {"created_at": "yesterday"}
+    if surface == "rest.put":
+        request = {"metadata": request}
+
+    with pytest.raises(PyriteError):
+        SURFACES[surface](config, request)
+
+    assert path.read_bytes() == before
+
+
+# --------------------------------------------------------------------------
+# A storage fault is a typed refusal (#971 fix round 1, before dev)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("surface", sorted(SURFACES))
+def test_a_hard_linked_file_is_refused_as_a_storage_error(tmp_path: Path, surface: str):
+    """`atomic_write_text` refuses an `expect=` write to a file with two names
+    (`HardLinked`, ADR-0042 §10a A2). The update reports it as a
+    `StorageError` (`STORAGE_ERROR`), whose public text names no path
+    (ADR-0037 §3), and writes nothing. The base wrote the file."""
+    from pyrite.exceptions import StorageError
+
+    text, flags = SHAPES["root-file"]
+    config, path = _build(tmp_path, text, flags)
+    os.link(path, path.with_name("another-name.bak"))
+    before = path.read_bytes()
+
+    with pytest.raises(PyriteError) as info:
+        SURFACES[surface](config, {"title": "Walk, second draft"})
+
+    if surface.startswith("service."):
+        # The service's own exception carries the detail for the log; what
+        # a transport may show is `public_text`.
+        assert isinstance(info.value, StorageError)
+        assert info.value.retryable is False
+        assert str(tmp_path) not in public_text(info.value)
+    else:
+        assert str(tmp_path) not in str(info.value), str(info.value)
+        assert "STORAGE_ERROR" in str(info.value), str(info.value)
+    assert path.read_bytes() == before
+
+
+def test_a_lock_held_too_long_is_a_busy_refusal(tmp_path: Path, monkeypatch):
+    """`LockTimeout` is `StorageBusyError` (`retryable`): the same call can
+    succeed once the other writer lets go. The lock is real, held by another
+    thread; the wait is the service's own bound, shortened for the test."""
+    from pyrite.exceptions import StorageBusyError
+    from pyrite.services import kb_service
+    from pyrite.utils.file_lock import file_lock
+
+    text, _ = SHAPES["bom"]
+    config, path = _build(tmp_path, text)
+    before = path.read_bytes()
+    monkeypatch.setattr(kb_service, "_LOCK_TIMEOUT", 0.2)
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold():
+        with file_lock(path):
+            held.set()
+            release.wait(5)
+
+    other = threading.Thread(target=hold)
+    other.start()
+    try:
+        assert held.wait(5)
+        with pytest.raises(StorageBusyError):
+            _service_update(config, {"title": "Walk, second draft"})
+    finally:
+        release.set()
+        other.join(5)
     assert path.read_bytes() == before
 
 
