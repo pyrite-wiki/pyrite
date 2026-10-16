@@ -110,11 +110,6 @@ KNOWN_DIVERGENCES: dict[str, tuple[str, str]] = {
         "one to replace drops the other's change",
         r"diff was:\n(-summary: one\n\+summary: two\n|-importance: 3\n\+importance: 5\n)\(end of diff\)",
     ),
-    "sending-a-read-back-changes-nothing": (
-        "principle 3: an echo that changes no field still rewrites the file: CRLF "
-        "becomes LF and the header comment is dropped",
-        r"diff was:\n----\r\n-# header comment\r\n",
-    ),
     "a-stale-whole-document-replace-is-refused": (
         "decision 11: kb_get returns `content_hash` since #753 (decision 9), but "
         "kb_update sets it aside as `ignored` and writes over the hand edit",
