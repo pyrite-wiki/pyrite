@@ -128,7 +128,7 @@
 				<img src="/pyrite-mark-light.svg" alt="" class="h-7 w-7 dark:hidden" />
 				<img src="/pyrite-mark.svg" alt="" class="hidden h-7 w-7 dark:block" />
 			{/if}
-			<span class="font-display text-lg tracking-tight text-zinc-100">{brandStore.name}</span>
+			<span class="font-display text-lg tracking-tight text-zinc-900 dark:text-zinc-100">{brandStore.name}</span>
 			<span class="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-400">Alpha</span>
 		</a>
 		<ThemeToggle />
@@ -150,7 +150,7 @@
 				bind:value={searchQuery}
 				onkeydown={handleSearch}
 				placeholder="Search..."
-				class="w-full rounded-md border border-zinc-200 bg-zinc-100 py-1.5 pl-8 pr-3 text-xs text-zinc-300 placeholder-zinc-500 outline-none transition-colors focus:border-amber-500/50 focus:bg-zinc-100 focus:ring-1 focus:ring-amber-500/30 dark:border-zinc-700 dark:bg-zinc-800/80 dark:focus:bg-zinc-800"
+				class="w-full rounded-md border border-zinc-200 bg-zinc-100 py-1.5 pl-8 pr-3 text-xs text-zinc-700 dark:text-zinc-300 placeholder-zinc-500 outline-none transition-colors focus:border-amber-500/50 focus:bg-zinc-100 focus:ring-1 focus:ring-amber-500/30 dark:border-zinc-700 dark:bg-zinc-800/80 dark:focus:bg-zinc-800"
 			/>
 		</div>
 	</div>
@@ -203,7 +203,7 @@
 				href="https://github.com/pyrite-wiki/pyrite/issues/new"
 				target="_blank"
 				rel="noopener noreferrer"
-				class="text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors"
+				class="text-[11px] text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
 			>
 				Report a Bug
 			</a>
@@ -212,7 +212,7 @@
 				href="https://github.com/pyrite-wiki/pyrite/releases"
 				target="_blank"
 				rel="noopener noreferrer"
-				class="text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors"
+				class="text-[11px] text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
 			>
 				Changelog
 			</a>

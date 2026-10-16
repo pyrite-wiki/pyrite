@@ -16,7 +16,7 @@
 			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={icon} />
 		</svg>
 	{/if}
-	<p class="mb-1 text-lg font-medium text-zinc-300">{title}</p>
+	<p class="mb-1 text-lg font-medium text-zinc-700 dark:text-zinc-300">{title}</p>
 	{#if description}
 		<p class="mb-4 max-w-md text-sm text-zinc-500">{description}</p>
 	{/if}
