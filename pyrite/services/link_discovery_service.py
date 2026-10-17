@@ -11,11 +11,26 @@ import logging
 from typing import Any
 
 from ..config import PyriteConfig
+from ..exceptions import ValidationError
 from ..storage.database import PyriteDB
 from .access_policy import UNSCOPED, named_kb
 from .search_service import build_or_query, clip_semantic_text
 
 logger = logging.getLogger(__name__)
+
+
+#: Modes the link discovery service understands. An unknown mode is refused
+#: with a ValidationError naming these (#867) instead of silently running
+#: as keyword.
+LINK_DISCOVERY_MODES = ("keyword", "semantic", "hybrid")
+
+
+def _validate_mode(mode: str) -> None:
+    if mode not in LINK_DISCOVERY_MODES:
+        raise ValidationError(
+            f"Unknown link discovery mode: {mode!r}. "
+            f"Valid modes: {', '.join(LINK_DISCOVERY_MODES)}."
+        )
 
 
 class LinkDiscoveryService:
@@ -168,6 +183,8 @@ class LinkDiscoveryService:
         suggestions.
         """
         self._require_kbs(kb_name, target_kb)
+        _validate_mode(mode)
+
         from .kb_service import KBService
         from .search_service import SearchService
 
@@ -296,8 +313,13 @@ class LinkDiscoveryService:
         For each entry in source_kb, runs discover_neighbors against target_kb,
         then deduplicates bidirectional matches and sorts by score. Targets
         with no body and no summary are left out unless `include_empty` (#200).
+
+        The mode is validated up front so an empty source KB refuses a bad
+        mode instead of silently returning [] (#867).
         """
         self._require_kbs(source_kb, target_kb)
+        _validate_mode(mode)
+
         from .kb_service import KBService
 
         svc = KBService(self.config, self.db)
