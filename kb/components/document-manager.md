@@ -30,7 +30,7 @@ KBRepository.save() → PyriteDB.register_kb() → IndexManager.index_entry()
 
 ## Consumers
 
-- `KBService.create_entry()` (the whole-file emit of a create), `add_link()`/`add_links()` (until B6 P4), `delete_entry()`.
+- `KBService.create_entry()` (a create: `KBRepository.save(exclusive=True)` writes the type's values onto a skeleton with `apply()` and publishes with `expect=ABSENT`, #955 C2), `add_link()`/`add_links()` (still the model's whole-file save, until B6 P4), `delete_entry()`.
 - Not an update: since #955 (B6 P3a) `KBService._update` applies operations to the file's own bytes and publishes through `pyrite/storage/entry_writer.py`; `save_entry` is never called for an update, so its subdirectory preservation and `keep_filename` only serve the link writers until P4.
 
 ## Related

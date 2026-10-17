@@ -32,8 +32,9 @@ Marks: **decided** = accepted ADR; **proposed** = ADR-0044 only (all of ADR-0038
    `storage/entry_writer.py`), and the surfaces take `append`, `remove` and
    `unset` (P3b: CLI `--append/--remove/--unset`, MCP `kb_update`, REST PATCH
    `op`; the in-process callers send one operation through
-   `KBService.apply_operations`); create, `add_link` and the other writers
-   still emit whole files (C2, P4).
+   `KBService.apply_operations`); a create writes its values onto a skeleton
+   the same way (C2); `add_link` and the other writers still emit whole files
+   (P4).
 3. A single-entry read reads the file's current bytes and returns a
    `content_hash`; lists and search stay index reads. **decided** ADR-0042
    decision 9. Built for the read (#753, `KBService._read_entry`); the type's
@@ -50,7 +51,11 @@ Marks: **decided** = accepted ADR; **proposed** = ADR-0044 only (all of ADR-0038
 7. A rename changes only the id and never moves the file; a wrong path is delete
    plus create. **decided** [[adr-0038]] question 1 (decided 2026-09-25).
 8. Create is the one place Pyrite chooses spelling, and it never overwrites.
-   **decided** ADR-0042 decision 13; [[adr-0038]] I5 holds today.
+   **decided** ADR-0042 decision 13; [[adr-0038]] I5 holds today. Built (#955,
+   B6 C2): `KBRepository.new_entry_text` writes the type's values onto
+   `---\nid: <id>\n---` with `apply()`, published with `expect=ABSENT`
+   (`storage/entry_writer.create_entry_text`); `to_frontmatter` decides the
+   values, no emitter the bytes.
 9. Writes are optimistic: each carries its base, merges per key against the
    file now, and conflicts are reported, never lost; a momentary sidecar
    `flock` covers only compare-and-replace. **decided** ADR-0042 decision 10
@@ -116,9 +121,10 @@ over who may write an entry file's bytes.
 
 ## Known gaps
 
-- Create, `add_link`/`add_links`, rename's link rewrite, `schema migrate`,
-  `ids pin` and software-kb's `migrate-standards` still emit or write whole
-  files (B6 C2 and P4); hooks
+- `add_link`/`add_links`, rename's link rewrite, `schema migrate`, `ids pin`
+  and software-kb's `migrate-standards` still emit or write whole files (B6
+  P4); `Entry.save`, `to_markdown` and `_publish_exclusive` stay until the
+  last of them is converted; hooks
   still change a create, and what a hook sets in place reaches an update's
   index row until the index derives it (P6); the id comes from the title; a
   single read returns defaults among the file's fields (P5). ADR-0042 and

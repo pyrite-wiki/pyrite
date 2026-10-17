@@ -1161,6 +1161,7 @@ WRITERS = {
         "re-adds an opening fence to a stream segment",
     ),
     "pyrite/models/base.py": (1, "Entry.to_markdown writes the fences"),
+    "pyrite/storage/repository.py": (1, "new_entry_text's skeleton: the fences a create writes"),
     "pyrite/cli/entry_commands.py": (1, "prints a template's fences"),
     "pyrite/renderers/notebooklm.py": (2, "writes a fence"),
     "pyrite/renderers/quartz.py": (5, "writes fences"),
