@@ -1,0 +1,1 @@
+- Re-indexing hand-written YAML links with numeric, boolean or date targets no longer creates duplicate link rows or replaces unchanged rows. SQLite link sync also removes existing duplicates when it next indexes the entry (#927).
