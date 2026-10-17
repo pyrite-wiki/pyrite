@@ -862,14 +862,16 @@ def _check(
         with pytest.MonkeyPatch.context() as spy_patch:
             watched = _watch_emitter(spy_patch, spy_watch) if "emitter" in ex.file_flags else None
             if watched is not None:
-                # Control 1: a create has to emit frontmatter (ADR-0042 decision
-                # 13), so the watch must see it.
-                _call(
-                    config, "kb_create", {"kb_name": KB, "entry_type": "note", "title": "Spy probe"}
-                )
+                # Control 1: the watch must see a document Pyrite's own YAML
+                # dumper emits (a create used to be that document, until B6 C2
+                # made a create write through apply() too; `dump_yaml` is what
+                # config and schema files still go through).
+                from pyrite.utils.yaml import dump_yaml
+
+                dump_yaml({"spy": "probe"})
                 _require(
                     watched.docs,
-                    "the emitter watch saw no document during a create; it is not watching "
+                    "the emitter watch saw no document during the probe; it is not watching "
                     "the emitter Pyrite uses, so an empty record would prove nothing",
                 )
                 watched.clear()
@@ -1460,13 +1462,16 @@ def test_emitter_control_fails_when_the_update_uses_a_door_the_watch_cannot_see(
         _check(_one_field_with_emitter(), tmp_path, monkeypatch)
 
 
-def test_emitter_watch_pointed_at_pyyaml_alone_does_not_see_the_create(
+@pytest.mark.control(
+    reason="the narrowing of the watch holds on either side; the probe changed from a create to a dump"
+)
+def test_emitter_watch_pointed_at_pyyaml_alone_does_not_see_the_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The narrowing is real: PyYAML alone sees nothing of Pyrite's writes.
+    """The narrowing is real: PyYAML alone sees nothing of Pyrite's dumper.
 
-    What it rules out: a watch on the wrong library passing the create
+    What it rules out: a watch on the wrong library passing the probe
     control by accident.
     """
-    with pytest.raises(CaseNotEnteredError, match="saw no document during a create"):
+    with pytest.raises(CaseNotEnteredError, match="saw no document during the probe"):
         _check(_one_field_with_emitter(), tmp_path, monkeypatch, spy_watch=("pyyaml",))

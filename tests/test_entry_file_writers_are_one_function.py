@@ -45,9 +45,18 @@ THE_WRITE_FUNCTION: dict[tuple[str, str], str] = {
 
 #: Shrinks with each B6 phase (the spike on #730, §4 and §5).
 ENTRY_FILE_WRITERS_NOT_YET_CONVERTED: dict[tuple[str, str], str] = {
-    ("pyrite/models/base.py", "Entry._publish_exclusive"): "create's exclusive publish (C2)",
-    ("pyrite/models/base.py", "Entry.save"): "the whole-file emit of a create (C2)",
-    ("pyrite/storage/repository.py", "KBRepository.save"): "create and the link writers (C2, P4)",
+    (
+        "pyrite/models/base.py",
+        "Entry._publish_exclusive",
+    ): "the model's exclusive publish; no create uses it since C2, pinned by test_entry_save_atomic.py until the last caller of Entry.save goes (P4)",
+    (
+        "pyrite/models/base.py",
+        "Entry.save",
+    ): "the whole-file emit: rename, schema migrate, ids pin and sw migrate-standards still call it (P4)",
+    (
+        "pyrite/storage/repository.py",
+        "KBRepository.save",
+    ): "the non-exclusive branch is Entry.save for rename's re-save (P4); a create publishes with create_entry_text",
     (
         "pyrite/storage/repository.py",
         "KBRepository.rename",
@@ -55,7 +64,7 @@ ENTRY_FILE_WRITERS_NOT_YET_CONVERTED: dict[tuple[str, str], str] = {
     (
         "pyrite/storage/document_manager.py",
         "DocumentManager.save_entry",
-    ): "create, add_link/add_links (C2, P4)",
+    ): "a create's call of KBRepository.save; add_link/add_links append an item through apply() since P4",
     ("pyrite/services/id_pin_service.py", "_rename"): "ids pin, under the lock (P4)",
     ("pyrite/cli/schema_commands.py", "schema_migrate"): "schema migrate (P4)",
     (

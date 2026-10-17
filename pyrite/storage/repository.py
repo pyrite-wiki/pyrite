@@ -27,6 +27,7 @@ from ..models.core_types import entry_from_frontmatter, explicit_entry_id, read_
 from ..schema import CORE_TYPES
 from ..utils.frontmatter import Frontmatter, split_frontmatter
 from ..utils.yaml import load_yaml, load_yaml_file
+from .entry_writer import create_entry_text
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,56 @@ def _is_regular_file(path: Path) -> bool:
         return stat.S_ISREG(path.stat().st_mode)
     except OSError:
         return False
+def new_entry_text(entry: Entry) -> str:
+    """The text of a new entry file: ``---\nid: <id>\n---\n`` and the body, then
+    one ``Set`` per key of the type's file frontmatter, in order, through
+    ``file_operations.apply`` (#955, B6 C2). ``id`` is the first key; the
+    rest follow ``_frontmatter_for_file`` (``to_frontmatter`` less the
+    default-valued keys a loaded source lacked, #46). No YAML emitter sees
+    the document: apply's own emitter spells each value.
+    """
+    from .file_operations import FrontmatterSpan, Set, apply
+
+    meta = entry._frontmatter_for_file()
+    entry_id = meta.get("id", entry.id)
+    body = (entry.body or "").rstrip("\n")
+    skeleton = f"---\nid: {_id_text(entry_id)}\n---\n" + (f"\n{body}\n" if body else "")
+    split = split_frontmatter(skeleton)
+    assert isinstance(split, Frontmatter), skeleton
+    span = FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
+    ops = [Set(key, _plain_for_file(value)) for key, value in meta.items() if key != "id"]
+    if _plain_for_file(entry_id) != entry_id:
+        ops.insert(0, Set("id", _plain_for_file(entry_id)))
+    text, _report = apply(skeleton, ops, span)
+    return text
+
+
+def _id_text(entry_id: object) -> str:
+    """``id`` on the skeleton as a plain scalar; a value a YAML 1.1 reader
+    would misread, or that is not a plain string, is set through apply."""
+    from .file_operations import _plain_ok  # the one spelling rule for scalars
+
+    text = str(entry_id)
+    if isinstance(entry_id, str) and _plain_ok(text, False, False) and text == text.strip():
+        return text
+    return "placeholder"
+
+
+def _plain_for_file(value: object) -> object:
+    """A type's value as plain data: an Enum its value, a Link or Source its
+    mapping, containers recursively (what ``to_frontmatter`` already does for
+    most, kept here for a class that emits objects)."""
+    from enum import Enum
+
+    if isinstance(value, Enum):
+        return value.value
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        return _plain_for_file(value.to_dict())
+    if isinstance(value, dict):
+        return {k: _plain_for_file(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_plain_for_file(v) for v in value]
+    return value
 
 
 def _event_fallback(file_path: Path, text: str | None) -> Entry:
@@ -559,7 +610,14 @@ class KBRepository:
 
         if touch_updated_at:
             entry.touch_updated_at()
-        entry.save(file_path, exclusive=exclusive)
+        if exclusive:
+            # A create (ADR-0042 decision 13; #955, B6 C2): the type's values
+            # written onto a skeleton by apply(), published only if nothing is
+            # there (expect=ABSENT, no lock outside git). to_frontmatter()
+            # decides which values the new file gets, never its bytes.
+            create_entry_text(file_path, new_entry_text(entry))
+        else:
+            entry.save(file_path)
         entry.kb_name = self.name
         entry.file_path = file_path
 

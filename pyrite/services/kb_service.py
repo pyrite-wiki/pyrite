@@ -2238,9 +2238,13 @@ class KBService:
         if not resolved and not allow_dangling:
             raise EntryNotFoundError(f"Entry not found: {target_id}")
 
-        entry.add_link(target=target_id, relation=relation, note=note, kb=tkb)
-        entry.touch_updated_at()
-        self._doc_mgr.save_entry(entry, source_kb, kb_config)
+        # One appended item through the one write path (#955, B6 P4): the
+        # file's other keys keep their bytes, `updated_at` is stamped where
+        # the file carries it, and the publish is compare-and-replace under
+        # the momentary lock. The item is spelled as it always was (`kb:` is
+        # the target KB, the source's own included).
+        item = Link(target=target_id, relation=relation, note=note, kb=tkb).to_dict()
+        self.apply_operations(source_id, source_kb, [Append("links", item)])
         return {"resolved": resolved, "created": True, "relation": relation}
 
     def add_links(
@@ -2255,11 +2259,12 @@ class KBService:
         Targets are not required to exist: a bulk link set is often loaded
         before, or alongside, the entries it points at.
 
-        Each source is loaded once, gets all of its new links, and is saved
-        once through the same DocumentManager path :meth:`add_link` uses --
-        in place, wherever the file lives, and re-indexed. The CLI used to
-        ``repo.save`` it, which re-derived the path from the type and wrote a
-        second copy of any entry kept elsewhere (#375).
+        Each source is loaded once, gets all of its new links, and is written
+        once: one ``Append`` per new link through the same operation write
+        :meth:`add_link` uses (#955, B6 P4) -- in place, wherever the file
+        lives, the other keys' bytes untouched, and re-indexed. The CLI used
+        to ``repo.save`` it, which re-derived the path from the type and
+        wrote a second copy of any entry kept elsewhere (#375).
 
         Returns one result per spec, in input order:
         ``{"status": "created" | "skipped" | "failed", "error"?: str,
@@ -2275,6 +2280,7 @@ class KBService:
         results: list[dict[str, Any]] = [{} for _ in links]
         loaded: dict[str, Entry | None] = {}
         dirty: dict[str, list[int]] = {}
+        new_items: dict[str, list[dict[str, Any]]] = {}
 
         for i, spec in enumerate(links):
             try:
@@ -2299,7 +2305,11 @@ class KBService:
             ):
                 results[i] = {"status": "skipped"}
                 continue
-            entry.add_link(target=target_id, relation=relation, note=note, kb=tkb)
+            # The model's list is what the duplicate check above reads, so a
+            # second spec for the same link in this batch is skipped too.
+            link = Link(target=target_id, relation=relation, note=note, kb=tkb)
+            entry.links.append(link)
+            new_items.setdefault(source_id, []).append(link.to_dict())
             results[i] = {"status": "created"}
             dirty.setdefault(source_id, []).append(i)
 
@@ -2307,10 +2317,10 @@ class KBService:
             return results
 
         for source_id, positions in dirty.items():
-            entry = loaded[source_id]
             try:
-                entry.touch_updated_at()
-                self._doc_mgr.save_entry(entry, kb_name, kb_config)
+                self.apply_operations(
+                    source_id, kb_name, [Append("links", item) for item in new_items[source_id]]
+                )
             except Exception as e:
                 # Once per failed save, not once per position: one cause, one line.
                 message = _safe_message(e)
