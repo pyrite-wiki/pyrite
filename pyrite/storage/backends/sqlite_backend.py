@@ -189,6 +189,10 @@ class SQLiteBackend(BaseBackend):
             relation = link.get("relation", "related_to")
             target_kb = link.get("kb", kb_name)
             target_id = link.get("target", "")
+            if not isinstance(target_id, (str, bytes)):
+                # Use SQLite's spelling, including bools and REAL rounding,
+                # so a YAML scalar and its stored text have the same key.
+                target_id = self._exec_scalar("SELECT CAST(:target AS TEXT)", {"target": target_id})
             key = (target_id, target_kb, relation)
             desired[key] = {
                 "note": link.get("note", ""),
@@ -201,12 +205,12 @@ class SQLiteBackend(BaseBackend):
         existing_keys: dict[tuple[str, str, str], Link] = {}
         for row in existing:
             key = (row.target_id, row.target_kb, row.relation)
-            existing_keys[key] = row
-
-        # Delete links no longer in desired set
-        for key, row in existing_keys.items():
-            if key not in desired:
+            # Visit every row: collapsing duplicates into a dict first leaves
+            # old copies behind when a link changes or is removed.
+            if key not in desired or key in existing_keys:
                 self._session.delete(row)
+            else:
+                existing_keys[key] = row
 
         # Add new links and update changed ones
         for key, attrs in desired.items():

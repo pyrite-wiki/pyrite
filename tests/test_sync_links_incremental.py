@@ -5,6 +5,9 @@ import pytest
 from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.storage.database import PyriteDB
 from pyrite.services.access_policy import UNSCOPED
+from pyrite.services.kb_service import KBService
+from pyrite.storage.models import Link
+from pyrite.storage.repository import KBRepository
 
 
 @pytest.fixture
@@ -41,6 +44,107 @@ def db_with_entry(tmp_path):
 
     yield db
     db.close()
+
+
+@pytest.fixture
+def hand_link_env(tmp_path):
+    kb_path = tmp_path / "notes"
+    kb_path.mkdir()
+    kb = KBConfig(name="hand-links", path=kb_path, kb_type="standard")
+    config = PyriteConfig(knowledge_bases=[kb], settings=Settings(index_path=tmp_path / "index.db"))
+    db = PyriteDB(config.settings.index_path)
+    yield db, kb, KBService(config, db)
+    db.close()
+
+
+def _write_hand_links(kb, targets, body="Original body", relation="related_to"):
+    links = "".join(f"  - target: {target}\n    relation: {relation}\n" for target in targets)
+    path = kb.path / "source.md"
+    path.write_text(
+        f"---\nid: source\ntitle: Source\ntype: note\nlinks:\n{links}---\n{body}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _stored_links(db, kb):
+    return db.session.query(Link).filter_by(source_id="source", source_kb=kb.name).all()
+
+
+@pytest.mark.parametrize(
+    ("target", "stored"),
+    [
+        ("true", "1"),
+        ("2024", "2024"),
+        ("2024-01-01", "2024-01-01"),
+        ("1.5", "1.5"),
+        ("1.2345678901234567", "1.23456789012346"),
+    ],
+)
+@pytest.mark.parametrize("with_string_twin", [False, True])
+def test_hand_link_sync_is_idempotent(hand_link_env, target, stored, with_string_twin):
+    db, kb, service = hand_link_env
+    targets = [target, f"'{stored}'"] if with_string_twin else [target]
+    path = _write_hand_links(kb, targets)
+
+    service.sync_index(kb.name)
+    first = _stored_links(db, kb)
+    assert [(row.target_id, row.relation) for row in first] == [(stored, "related_to")]
+    row_id = first[0].id
+
+    _write_hand_links(kb, targets, body="Hand-edited body")
+    service.sync_index(kb.name)
+    frontmatter = path.read_text(encoding="utf-8").split("---", 2)[1]
+    service.update_entry("source", kb.name, body="Updated through the service")
+
+    rows = _stored_links(db, kb)
+    assert [(row.id, row.target_id, row.relation) for row in rows] == [
+        (row_id, stored, "related_to")
+    ]
+    updated_path = KBRepository(kb).find_file("source")
+    assert updated_path is not None
+    assert updated_path.read_text(encoding="utf-8").split("---", 2)[1] == frontmatter
+
+
+def test_non_string_link_relation_change_and_removal(hand_link_env):
+    db, kb, service = hand_link_env
+    path = _write_hand_links(kb, ["2024", "'2024'"])
+    service.sync_index(kb.name)
+
+    _write_hand_links(kb, ["2024"], relation="depends_on")
+    service.sync_index(kb.name)
+    assert [(row.target_id, row.relation) for row in _stored_links(db, kb)] == [
+        ("2024", "depends_on")
+    ]
+
+    path.write_text(
+        "---\nid: source\ntitle: Source\ntype: note\nlinks: []\n---\nBody\n", encoding="utf-8"
+    )
+    service.sync_index(kb.name)
+    assert _stored_links(db, kb) == []
+
+
+def test_sync_removes_preexisting_duplicate_link_rows(hand_link_env):
+    db, kb, service = hand_link_env
+    _write_hand_links(kb, ["2024"])
+    service.sync_index(kb.name)
+    row = _stored_links(db, kb)[0]
+    db.session.add(
+        Link(
+            source_id="source",
+            source_kb=kb.name,
+            target_id=row.target_id,
+            target_kb=kb.name,
+            relation=row.relation,
+            inverse_relation=row.inverse_relation,
+        )
+    )
+    db.session.commit()
+    assert len(_stored_links(db, kb)) == 2
+
+    service.update_entry("source", kb.name, body="Reindex the existing links")
+    rows = _stored_links(db, kb)
+    assert [(link.id, link.target_id) for link in rows] == [(row.id, "2024")]
 
 
 class TestIncrementalLinkSync:
