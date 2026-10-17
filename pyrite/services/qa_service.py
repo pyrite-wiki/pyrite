@@ -1129,6 +1129,11 @@ class QAService:
                         }
                     )
                 sources[entry.id] = entry._source_frontmatter
+        if entry_id is None:
+            # The single-entry path looks up the file through the index, which
+            # never holds a row for a file that cannot load; only the KB-wide
+            # pass reads every file and can see it.
+            self._check_non_string_titles(issues, kb_name, repo, kb_config)
         return sources
 
     def _check_schema_retypes_core_fields(self, issues: list[dict[str, Any]], kb_name: str) -> None:
@@ -1201,6 +1206,66 @@ class QAService:
                 ),
             }
         )
+
+    @staticmethod
+    def _check_non_string_titles(
+        issues: list[dict[str, Any]], kb_name: str, repo: Any, kb_config: Any
+    ) -> None:
+        """Report a file whose ``title`` is a list, a mapping or NaN (#711).
+
+        The loader refuses such a title before an id can be derived, so the
+        entry pass above never sees these files: this reads each file's own
+        frontmatter directly. A scalar title (``title: 2024``) is stringified
+        at load (#704) and is not reported here. The path in the message is the
+        handle to use: no index row exists for such a file.
+        """
+        from ..exceptions import FrontmatterError
+        from ..utils.frontmatter import Frontmatter, split_frontmatter
+        from ..utils.yaml import load_yaml
+
+        for file_path in repo.list_files():
+            try:
+                text = file_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            split = split_frontmatter(text)
+            if not isinstance(split, Frontmatter):
+                continue
+            try:
+                fm = load_yaml(split.text)
+            except FrontmatterError:
+                # Frontmatter that will not parse (`title: [a, b`) has no title
+                # to judge, and the malformed-file rule already reports it. Left
+                # unhandled it aborts the whole KB-wide pass over one bad file,
+                # so the rest of the KB goes unreported.
+                logger.debug("non-string title check: skipping %s", file_path, exc_info=True)
+                continue
+            if not isinstance(fm, dict) or "title" not in fm:
+                continue
+            title = fm["title"]
+            if isinstance(title, (list, tuple, dict)):
+                kind = "a mapping" if isinstance(title, dict) else "a list"
+            elif isinstance(title, float) and title != title:
+                kind = "NaN"
+            else:
+                continue
+            try:
+                shown = file_path.relative_to(kb_config.path)
+            except ValueError:
+                shown = file_path
+            issues.append(
+                {
+                    "entry_id": "",
+                    "kb_name": kb_name,
+                    "rule": "non_string_title",
+                    "severity": "error",
+                    "field": "title",
+                    "message": (
+                        f"{shown}: title is {kind}, not a string; pyrite "
+                        f"cannot index it. Quote it as a single line (#711)."
+                    ),
+                }
+            )
 
     @staticmethod
     def _check_reserved_key_collisions(

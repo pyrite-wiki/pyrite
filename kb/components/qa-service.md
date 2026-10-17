@@ -31,6 +31,7 @@ Structural validation and assessment service for knowledge bases. Validates KB i
 | Rule | Severity | Description |
 |------|----------|-------------|
 | `missing_title` | error | Entry has empty or missing title |
+| `non_string_title` | error | File's `title:` is a list, a mapping or NaN; pyrite cannot index it (#711) |
 | `empty_body` | warning | Entry has no body content |
 | `missing_event_date` | error | Event type without a date |
 | `invalid_date` | error | Date field not in YYYY-MM-DD format |

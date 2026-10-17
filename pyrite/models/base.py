@@ -947,6 +947,19 @@ class Entry(ABC):
             errors.append("Entry must have an ID")
         if not self.title:
             errors.append("Entry must have a title")
+        elif isinstance(self.title, (list, tuple, dict)) or (
+            isinstance(self.title, float) and self.title != self.title
+        ):
+            # A scalar title is stringified when the file is loaded (#704);
+            # a collection or NaN title cannot be indexed at all and is
+            # reported by `pyrite qa` (#711). Both checks say the same thing.
+            if isinstance(self.title, dict):
+                kind = "a mapping"
+            elif not isinstance(self.title, (list, tuple)):
+                kind = "NaN"
+            else:
+                kind = "a list"
+            errors.append(f"Entry title must be a string, got {kind} (#711)")
         return errors
 
     def __repr__(self) -> str:
