@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
+from pyrite.exceptions import ValidationError
 from pyrite.services import KBService, SearchService
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
@@ -542,8 +543,8 @@ class TestFTS5EdgeCases:
         )
         assert results == []
 
-    def test_search_invalid_mode_falls_back(self, integration_env):
-        """Invalid mode string falls back to keyword search."""
+    def test_search_invalid_mode_is_refused(self, integration_env):
+        """Invalid mode string is refused, not silently run as keyword (#917)."""
         env = integration_env
 
         env["kb_service"].create_entry(
@@ -551,11 +552,11 @@ class TestFTS5EdgeCases:
             entry_id="mode-test",
             title="Mode Test Entry",
             entry_type="theme",
-            body="Testing mode fallback.",
+            body="Testing mode validation.",
         )
 
-        results = env["search_service"].search("Mode", mode="nonexistent")
-        assert len(results) == 1
+        with pytest.raises(ValidationError):
+            env["search_service"].search("Mode", mode="nonexistent")
 
 
 class TestMigrationIntegration:

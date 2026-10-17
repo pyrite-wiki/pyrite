@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
-from pyrite.exceptions import KBReadOnlyError, QuerySyntaxError
+from pyrite.exceptions import KBReadOnlyError, QuerySyntaxError, ValidationError
 from pyrite.services import KBService, QueryExpansionService, SearchMode, SearchService
 from pyrite.services.query_expansion_service import is_available
 from pyrite.storage.database import PyriteDB
@@ -247,6 +247,22 @@ class TestSearchService:
         service.search("orange county absentterm", mode="keyword", trace=trace)
         assert trace.get("relaxed") is True
 
+    def test_search_refuses_unknown_mode(self, test_db):
+        """An unknown mode is refused, never silently answered as keyword (#917)."""
+        service = SearchService(test_db)
+        with pytest.raises(ValidationError) as exc_info:
+            service.search("hello", mode="zzz")
+        for valid in ("keyword", "semantic", "hybrid"):
+            assert valid in str(exc_info.value)
+        assert "zzz" in str(exc_info.value)
+
+    def test_search_accepts_valid_modes(self, test_db):
+        service = SearchService(test_db)
+        for mode in ("keyword", SearchMode.KEYWORD):
+            trace: dict = {}
+            service.search("hello", mode=mode, trace=trace)
+            assert trace["requested_mode"] == "keyword"
+
     @pytest.mark.parametrize(
         "query",
         [
@@ -409,11 +425,11 @@ class TestSearchService:
         results = service.search("test", mode=SearchMode.SEMANTIC)
         assert isinstance(results, list)
 
-    def test_search_invalid_mode_falls_back(self, test_db, test_config):
-        """Invalid mode string falls back to keyword."""
+    def test_search_invalid_mode_is_refused(self, test_db, test_config):
+        """An invalid mode string is refused, not silently run as keyword (#917)."""
         service = SearchService(test_db)
-        results = service.search("test", mode="invalid_mode")
-        assert isinstance(results, list)
+        with pytest.raises(ValidationError):
+            service.search("test", mode="invalid_mode")
 
     def test_hybrid_search_offset_returns_correct_page(self, test_db, test_config):
         """Hybrid search with offset returns the correct page of fused results."""
