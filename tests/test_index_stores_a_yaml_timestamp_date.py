@@ -12,12 +12,15 @@ timestamp appears, and the row stores a date or timestamp as the one text the
 index has always stored, ``isoformat()`` (``2025-06-01``,
 ``2025-06-01T00:00:00+00:00``: what ``pyrite/storage/connection.py``'s own
 sqlite3 adapter writes for a plain ``datetime``), so rows written before and
-after this fix sort together. A read reports what the file holds, for the
-entry's own columns, its tags and its sources: the loader's spelling
-(``2025-06-01T00:00:00+00:00`` for a file spelled with ``T``), so a
-read-modify-write echoes the file's own spelling back, and a tag or value a
-read returned finds the entry again. A value under ``metadata:`` is the
-index's JSON text (``SafeEncoder``), which is ``isoformat()`` too.
+after this fix sort together. A read reports what the file holds for the
+entry's own columns, as the loader keeps it (``2025-06-01T00:00:00+00:00``
+for a file spelled with ``T``; a ``Z`` reads back ``+00:00``), so a
+read-modify-write echoes the file's own value back. A tag and a source's
+date are stored and read as the index's one text (#987: a tag is a name
+the index matches by text, so one spelling whatever release built the
+row), and a tag a read returned finds the entry again. A value under
+``metadata:`` is the index's JSON text (``SafeEncoder``), which is
+``isoformat()`` too.
 
 The oracle is the row ``PyriteDB.get_entry`` returns, or the read
 ``KBService.get_entry`` returns, compared with values written by hand, and
@@ -71,16 +74,20 @@ type: task
 sources:
 - title: A source
   date: 2026-01-01T10:00:00
+- title: Spelled with a space
+  date: 2026-01-02 10:00:00
 ---
 
 Body.
 """
 
+#: One tag spelled with a `T`, one with a space: the same kind of value in
+#: the two spellings a file may use (#987).
 TAGS = """---
 id: t
 title: T
 type: task
-tags: [alpha, 2026-01-01T10:00:00]
+tags: [alpha, 2026-01-01T10:00:00, 2026-01-02 10:00:00]
 ---
 
 Body.
@@ -188,11 +195,13 @@ def test_a_timestamp_row_keeps_the_form_the_index_always_stored(tmp_path: Path):
     assert ordered == ["earlier", "later"]
 
 
-def test_a_sources_date_that_is_a_yaml_timestamp_binds_and_reads_as_the_files_text(
+def test_a_sources_date_that_is_a_yaml_timestamp_binds_and_reads_as_the_rows_text(
     tmp_path: Path,
 ):
-    """The row binds the source's date; a read returns the file's text for
-    it, so the read's source equals the row's and keeps the row's ``id``."""
+    """The row binds a source's date as the index's one text (``isoformat()``,
+    #987), whatever the file's spelling; a read returns that same text for
+    it, so the read's source equals the row's and keeps the row's ``id``
+    for the space-spelled source too (it read back ``id: None`` before)."""
     config = _config(tmp_path, "task")
     (config.knowledge_bases[0].path / "tasks").mkdir()
     (config.knowledge_bases[0].path / "tasks" / "t.md").write_text(SOURCES, encoding="utf-8")
@@ -204,13 +213,18 @@ def test_a_sources_date_that_is_a_yaml_timestamp_binds_and_reads_as_the_files_te
     finally:
         db.close()
 
-    assert [s["date"] for s in row["sources"]] == ["2026-01-01T10:00:00"]
-    assert [s["date"] for s in got["sources"]] == ["2026-01-01T10:00:00"]
-    assert got["sources"][0]["id"] == row["sources"][0]["id"] is not None
+    stored = ["2026-01-01T10:00:00", "2026-01-02T10:00:00"]
+    assert [s["date"] for s in row["sources"]] == stored
+    assert [s["date"] for s in got["sources"]] == stored
+    for mine, theirs in zip(got["sources"], row["sources"], strict=True):
+        assert mine["id"] == theirs["id"] is not None
 
 
-def test_a_tag_that_is_a_yaml_timestamp_binds_as_the_name_a_read_returns(tmp_path: Path):
-    """A tag is a name: it is bound as the text a read returns for it, so
+def test_a_tag_that_is_a_yaml_timestamp_is_stored_in_one_spelling(tmp_path: Path):
+    """A tag spelled like a timestamp is stored as the index's one text
+    (``isoformat()``, the form every row ever held, #987), whether the file
+    writes it with a ``T`` or a space: an index built before the upgrade and
+    one after hold one tag, not two. A read returns that text, so
     ``search_by_tag`` with the tag ``get`` returned finds the entry."""
     config = _config(tmp_path, "task")
     (config.knowledge_bases[0].path / "tasks").mkdir()
@@ -220,13 +234,15 @@ def test_a_tag_that_is_a_yaml_timestamp_binds_as_the_name_a_read_returns(tmp_pat
     try:
         row = db.get_entry("t", "t")
         got = KBService(config, db).get_entry("t", "t", readable_kbs=None)
-        found = [r["id"] for r in db.search_by_tag(got["tags"][1], kb_name="t")]
+        found = {tag: [r["id"] for r in db.search_by_tag(tag, kb_name="t")] for tag in got["tags"]}
+        by_t = [r["id"] for r in db.search_by_tag("2026-01-02T10:00:00", kb_name="t")]
     finally:
         db.close()
 
-    assert row["tags"] == ["alpha", "2026-01-01T10:00:00"]
+    assert row["tags"] == ["alpha", "2026-01-01T10:00:00", "2026-01-02T10:00:00"]
     assert got["tags"] == row["tags"]
-    assert found == ["t"]
+    assert found == {tag: ["t"] for tag in row["tags"]}
+    assert by_t == ["t"], "the space-spelled tag is found by the one stored spelling"
 
 
 @pytest.mark.control(

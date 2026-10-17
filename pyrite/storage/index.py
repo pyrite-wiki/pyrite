@@ -155,15 +155,29 @@ def _as_text(value: Any) -> Any:
     number or date as its text, a bool as ``"1"``/``"0"`` (sqlite3 binds a
     bool as an integer). A date or datetime is its ``str()``: for ruamel's
     ``TimeStamp`` that keeps the file's separator (``2026-01-01T10:00:00``),
-    so a read reports the file's own spelling, as far as the loader keeps it
-    (a ``Z`` reads back ``+00:00``). The index row holds one form instead
-    (``crud.temporal_text``, ``isoformat()``, the same text for a
-    ``T``-spelled file); the file is the truth for a read (#951)."""
+    so a read of the entry's own columns reports the file's spelling as far
+    as the loader keeps it (a ``Z`` reads back ``+00:00``). The index row
+    holds one form instead (``crud.temporal_text``, ``isoformat()``, the
+    same text for a ``T``-spelled file); the file is the truth for a read
+    (#951). A tag and a source's date are ``_one_text`` instead."""
     if value is None or isinstance(value, str):
         return value
     if isinstance(value, bool):
         return str(int(value))
     return str(value)
+
+
+def _one_text(value: Any) -> Any:
+    """A tag or a source's date as the index stores and returns it: a date or
+    timestamp as ``isoformat()`` (``crud.temporal_text``), the one text every
+    row ever held, whatever the file's spelling; any other value as
+    ``_as_text``. A tag is a name the index matches by text, so one spelling
+    whatever release built the row: a tag spelled ``2026-01-01 10:00:00``
+    and one spelled ``2026-01-01T10:00:00`` are one tag, and an index built
+    before this fix and one built after agree (#987)."""
+    from .crud import temporal_text
+
+    return _as_text(temporal_text(value))
 
 
 def _as_column(key: str, value: Any) -> Any:
@@ -186,8 +200,10 @@ def _read_sources(
     ``id`` is the index's row number for a source; the file has none. It is
     kept from the row where the row's source at the same position says the
     same thing, so an unchanged source reads exactly as before; otherwise None.
-    A source's ``date`` is the file's text (``_as_text``), as the row's TEXT
-    column returns it (#951).
+    A source's ``date`` is the index's one text for it (``_one_text``,
+    ``isoformat()`` for a timestamp whatever the file's spelling, #987), as
+    the row's TEXT column holds it, so the comparison with the row holds for
+    a space-spelled date too.
     """
     indexed = row.get("sources") or []
     out = []
@@ -199,7 +215,7 @@ def _read_sources(
             "title": src.get("title", ""),
             "url": src.get("url", ""),
             "outlet": src.get("outlet", ""),
-            "date": _as_text(src.get("date", "")),
+            "date": _one_text(src.get("date", "")),
             "verified": 1 if src.get("verified") else 0,
         }
         if i < len(indexed) and {**indexed[i], "id": None} == shaped:
@@ -446,10 +462,11 @@ class IndexManager:
             "content_hash": content_hash or _hash_file(file_path),
             "file_mtime_ns": stat.st_mtime_ns if stat else None,
             "file_size": stat.st_size if stat else None,
-            # A tag is a name: bound as the text a read returns for it
-            # (`_as_text`: a loaded timestamp keeps the file's spelling), so
-            # a search by the tag `get` returned finds the entry (#951).
-            "tags": [_as_text(t) for t in entry.tags],
+            # A tag is a name: bound as the index's one text for it
+            # (`_one_text`: a loaded timestamp as `isoformat()`, #987), the
+            # text a read returns, so a search by the tag `get` returned
+            # finds the entry (#951).
+            "tags": [_one_text(t) for t in entry.tags],
             "aliases": entry.aliases,
             "sources": [s.to_dict() for s in entry.sources],
             "links": [self._frontmatter_link(l.to_dict(), kb_name) for l in entry.links],
@@ -832,7 +849,7 @@ class IndexManager:
                 result[key] = metadata[key]
         # As _sync_tags stores them: falsy skipped, duplicates (by ==, so
         # ``1`` and ``true`` are one) dropped first-wins, names as TEXT.
-        result["tags"] = [_as_text(t) for t in dict.fromkeys(t for t in data["tags"] if t)]
+        result["tags"] = [_one_text(t) for t in dict.fromkeys(t for t in data["tags"] if t)]
         result["sources"] = _read_sources(data["sources"], entry.id, kb_name, row)
         result["links"] = row.get("links", [])
         result["content_hash"] = content_hash

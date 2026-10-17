@@ -23,6 +23,7 @@ from pyrite_zettelkasten.plugin import ZettelkastenPlugin
 
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models.base import Entry
+from pyrite.storage.repository import new_entry_text
 from pyrite.models.core_types import (
     ENTRY_TYPE_REGISTRY,
     EventEntry,
@@ -766,6 +767,9 @@ class TestKBPresets:
 
 
 class TestEndToEnd:
+    @pytest.mark.control(
+        reason="a rewritten test of a property that already held; its old form used the model's emitter (Entry.save/to_markdown), gone since #955 P4"
+    )
     def test_zettel_roundtrip(self, patched_registry):
         """Create a zettel via frontmatter, serialize, and reparse."""
         entry = entry_from_frontmatter(
@@ -780,13 +784,16 @@ class TestEndToEnd:
         )
         assert isinstance(entry, ZettelEntry)
 
-        md = entry.to_markdown()
+        md = new_entry_text(entry)
         reparsed = Entry.from_markdown(md)
         # from_markdown returns (meta, body) — we need to reconstruct
         assert "zettel_type: permanent" in md
         assert "maturity: sapling" in md
         assert "An interesting thought" in md
 
+    @pytest.mark.control(
+        reason="a rewritten test of a property that already held; its old form used the model's emitter (Entry.save/to_markdown), gone since #955 P4"
+    )
     def test_writeup_roundtrip(self, patched_registry):
         entry = entry_from_frontmatter(
             {
@@ -798,10 +805,13 @@ class TestEndToEnd:
             "This is my opinion.",
         )
         assert isinstance(entry, WriteupEntry)
-        md = entry.to_markdown()
+        md = new_entry_text(entry)
         assert "author_id: alice" in md
         assert "writeup_type: opinion" in md
 
+    @pytest.mark.control(
+        reason="a rewritten test of a property that already held; its old form used the model's emitter (Entry.save/to_markdown), gone since #955 P4"
+    )
     def test_article_roundtrip(self, patched_registry):
         entry = entry_from_frontmatter(
             {
@@ -814,7 +824,7 @@ class TestEndToEnd:
             "A" * 600,
         )
         assert isinstance(entry, ArticleEntry)
-        md = entry.to_markdown()
+        md = new_entry_text(entry)
         assert "quality: GA" in md
         assert "review_status: published" in md
         assert "physics" in md

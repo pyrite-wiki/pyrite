@@ -526,6 +526,41 @@ def test_a_timestamp_read_and_written_back_unchanged_leaves_the_bytes_unchanged(
     assert path.read_bytes() == before
 
 
+@pytest.mark.parametrize(
+    "spelled",
+    [
+        "2026-01-15",
+        "2026-01-15T10:00:00",
+        pytest.param(
+            "2026-01-15 10:00:00Z",
+            marks=pytest.mark.control(
+                reason="a timestamp with a zone already compared equal through apply's own rule; the control keeps the shape beside the two that were written"
+            ),
+        ),
+    ],
+)
+def test_a_created_at_read_and_written_back_is_the_same_instant_and_writes_nothing(
+    tmp_path: Path, spelled: str
+):
+    """The round-trip gate's `created_as_date.md` (#955 P4): `created_at` and
+    `updated_at` are parsed as instants on the way in (`_value_for_file`), so
+    an echo of a bare date arrived as the datetime at its midnight and was
+    written as `2026-01-15 00:00:00+00:00`, with `updated_at` stamped for
+    it. The same instant in another spelling is the file's value (decision
+    3): nothing is written."""
+    text = (
+        f"---\nid: {ID}\ntitle: Walk\ntype: note\ncreated_at: {spelled}\n"
+        f"updated_at: {spelled}\n---\n\nText.\n"
+    )
+    config, path = _build(tmp_path, text)
+    before = path.read_bytes()
+    read = _with_service(config, lambda svc: svc.get_entry(ID, KB, readable_kbs=None))
+
+    _service_update(config, {"created_at": read["created_at"], "updated_at": read["updated_at"]})
+
+    assert path.read_bytes() == before
+
+
 @pytest.mark.control(
     reason="#46 already keeps a file from growing updated_at; the control guards decision 7 against a stamp written as a new key"
 )

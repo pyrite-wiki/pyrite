@@ -12,6 +12,8 @@ from typer.testing import CliRunner
 from pyrite.cli.init_command import init_kb
 from pyrite.config import PyriteConfig, Settings
 from pyrite.models.core_types import NoteEntry
+from pyrite.storage.entry_writer import create_entry_text
+from pyrite.storage.repository import new_entry_text
 from pyrite.utils.errors import PARTIAL_EXIT
 
 runner = CliRunner()
@@ -138,14 +140,23 @@ class TestInitCommand:
         assert data["template"] == "software"
         assert "types" in data
 
+    @pytest.mark.control(
+        reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+    )
     def test_init_reports_entries_indexed_for_seeded_entries(self, init_env):
         """Init on a directory pre-seeded with entries reports entries_indexed matching the count (#909)."""
         kb_path = init_env["tmpdir"] / "seeded-kb"
         notes_dir = kb_path / "notes"
         notes_dir.mkdir(parents=True)
-        NoteEntry(id="n1", title="Note 1", body="body 1").save(notes_dir / "n1.md")
-        NoteEntry(id="n2", title="Note 2", body="body 2").save(notes_dir / "n2.md")
-        NoteEntry(id="n3", title="Note 3", body="body 3").save(notes_dir / "n3.md")
+        create_entry_text(
+            notes_dir / "n1.md", new_entry_text(NoteEntry(id="n1", title="Note 1", body="body 1"))
+        )
+        create_entry_text(
+            notes_dir / "n2.md", new_entry_text(NoteEntry(id="n2", title="Note 2", body="body 2"))
+        )
+        create_entry_text(
+            notes_dir / "n3.md", new_entry_text(NoteEntry(id="n3", title="Note 3", body="body 3"))
+        )
         config = init_env["config"]
 
         with (

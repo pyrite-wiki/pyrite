@@ -134,6 +134,8 @@ class TestCollectionRepository:
         """Create a temp KB with a __collection.yaml file."""
         from pyrite.config import KBConfig, KBType
         from pyrite.models.core_types import NoteEntry
+        from pyrite.storage.entry_writer import create_entry_text
+        from pyrite.storage.repository import new_entry_text
         from pyrite.storage.repository import KBRepository
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -149,7 +151,7 @@ class TestCollectionRepository:
             # Create a sample note in the folder
             note = NoteEntry(id="test-note", title="Test Note", body="Hello")
             note_path = notes_dir / "test-note.md"
-            note.save(note_path)
+            create_entry_text(note_path, new_entry_text(note))
 
             kb_config = KBConfig(name="test-kb", path=kb_path, kb_type=KBType.GENERIC)
             repo = KBRepository(kb_config)
@@ -213,6 +215,8 @@ class TestCollectionService:
         """Create test environment with indexed collection data."""
         from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
         from pyrite.models.core_types import NoteEntry
+        from pyrite.storage.entry_writer import create_entry_text
+        from pyrite.storage.repository import new_entry_text
         from pyrite.storage.database import PyriteDB
         from pyrite.storage.index import IndexManager
         from pyrite.storage.repository import KBRepository
@@ -249,7 +253,7 @@ class TestCollectionService:
                     body=f"Content of note {i}",
                     tags=["test"],
                 )
-                note.save(notes_dir / f"note-{i}.md")
+                create_entry_text(notes_dir / f"note-{i}.md", new_entry_text(note))
 
             config = PyriteConfig(
                 knowledge_bases=[kb_config],
@@ -317,6 +321,8 @@ class TestCollectionAPI:
 
         from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
         from pyrite.models.core_types import NoteEntry
+        from pyrite.storage.entry_writer import create_entry_text
+        from pyrite.storage.repository import new_entry_text
         from pyrite.server.api import create_app
         from pyrite.storage.database import PyriteDB
         from pyrite.storage.index import IndexManager
@@ -344,7 +350,7 @@ class TestCollectionAPI:
                     title=f"Note {i}",
                     body=f"Content {i}",
                 )
-                note.save(notes_dir / f"note-{i}.md")
+                create_entry_text(notes_dir / f"note-{i}.md", new_entry_text(note))
 
             empty_path = tmpdir / "empty-kb"
             empty_path.mkdir()

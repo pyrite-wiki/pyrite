@@ -15,6 +15,7 @@ from pathlib import Path
 
 from ..config import KBConfig
 from ..exceptions import (
+    ConflictError,
     EntryNotFoundError,
     FrontmatterError,
     KBReadOnlyError,
@@ -27,8 +28,75 @@ from ..models.core_types import entry_from_frontmatter, explicit_entry_id, read_
 from ..schema import CORE_TYPES
 from ..utils.frontmatter import Frontmatter, split_frontmatter
 from ..utils.yaml import load_yaml, load_yaml_file
+from .entry_writer import (
+    FileChanged,
+    create_entry_text,
+    publish_entry_text,
+    raw_scalar,
+    updated_at_stamp,
+)
 
 logger = logging.getLogger(__name__)
+
+#: How many times a rename re-reads a linking file whose bytes changed under
+#: it before giving up (the same bound as an update's, ADR-0042 decision 10).
+_REWRITE_ATTEMPTS = 6
+
+
+def _rewrite_wikilinks(text: str, old_id: str, new_id: str) -> tuple[str, int]:
+    """``text`` with every ``[[old_id]]`` and ``[[old_id|alias]]`` naming
+    ``new_id``, and how many were rewritten, as operations on the file's own
+    bytes (#955, B6 P4): a ``ReplaceBody`` where the body holds one, a ``Set``
+    of each frontmatter value that holds one; every other byte, a comment
+    included, stays. A file with no frontmatter is rewritten as text."""
+    import re
+
+    from .file_operations import FrontmatterSpan, ReplaceBody, Set, apply
+
+    bare = re.compile(rf"\[\[{re.escape(old_id)}\]\]")
+    aliased = re.compile(rf"\[\[{re.escape(old_id)}\|([^\]]*)\]\]")
+
+    def substitute(value: str) -> tuple[str, int]:
+        count = len(bare.findall(value)) + len(aliased.findall(value))
+        if not count:
+            return value, 0
+        value = bare.sub(f"[[{new_id}]]", value)
+        value = aliased.sub(lambda m: f"[[{new_id}|{m.group(1)}]]", value)
+        return value, count
+
+    split = split_frontmatter(text)
+    if not isinstance(split, Frontmatter):
+        return substitute(text)
+    ops: list[object] = []
+    total = 0
+    new_body, count = substitute(split.body)
+    if count:
+        ops.append(ReplaceBody(new_body))
+        total += count
+
+    def walk(value: object, path: tuple[object, ...]) -> None:
+        nonlocal total
+        if isinstance(value, str):
+            new_value, n = substitute(value)
+            if n:
+                ops.append(Set(path, new_value))
+                total += n
+        elif isinstance(value, dict):
+            for k, v in value.items():
+                walk(v, (*path, k))
+        elif isinstance(value, list):
+            for i, v in enumerate(value):
+                walk(v, (*path, i))
+
+    values = load_yaml(split.text)
+    if isinstance(values, dict):
+        for key, value in values.items():
+            walk(value, (key,))
+    if not ops:
+        return text, 0
+    span = FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
+    new_text, _report = apply(text, ops, span)
+    return new_text, total
 
 
 def _is_regular_file(path: Path) -> bool:
@@ -39,6 +107,73 @@ def _is_regular_file(path: Path) -> bool:
         return stat.S_ISREG(path.stat().st_mode)
     except OSError:
         return False
+def new_entry_text(entry: Entry) -> str:
+    """The text of a new entry file: ``---\nid: <id>\n---\n`` and the body, then
+    one ``Set`` per key of the type's file frontmatter, in order, through
+    ``file_operations.apply`` (#955, B6 C2). ``id`` is the first key; the
+    rest follow ``_frontmatter_for_file`` (``to_frontmatter`` less the
+    default-valued keys a loaded source lacked, #46). No YAML emitter sees
+    the document: apply's own emitter spells each value.
+    """
+    from .file_operations import FrontmatterSpan, Set, apply
+
+    meta = entry._frontmatter_for_file()
+    entry_id = meta.get("id", entry.id)
+    body = (entry.body or "").rstrip("\n")
+    skeleton = f"---\nid: {_id_text(entry_id)}\n---\n" + (f"\n{body}\n" if body else "")
+    split = split_frontmatter(skeleton)
+    assert isinstance(split, Frontmatter), skeleton
+    span = FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
+    ops = [Set(key, _plain_for_file(value)) for key, value in meta.items() if key != "id"]
+    if _plain_for_file(entry_id) != entry_id:
+        ops.insert(0, Set("id", _plain_for_file(entry_id)))
+    text, _report = apply(skeleton, ops, span)
+    return text
+
+
+def _renamed_text(text: str, split: Frontmatter, new_id: str) -> str:
+    """``text`` with ``id: <new_id>`` set (added as the last frontmatter line
+    where the file had none) and ``updated_at`` stamped where the file
+    carries it, through ``apply`` (#955, B6 P4)."""
+    from .file_operations import FrontmatterSpan, Set, apply
+
+    span = FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
+    ops: list[object] = [Set("id", _plain_for_file(new_id))]
+    values = load_yaml(split.text)
+    if isinstance(values, dict) and "updated_at" in values:
+        stamp = updated_at_stamp(values["updated_at"], raw_scalar(split.text, "updated_at"))
+        if stamp is not None:
+            ops.append(Set("updated_at", stamp))
+    new_text, _report = apply(text, ops, span)
+    return new_text
+
+
+def _id_text(entry_id: object) -> str:
+    """``id`` on the skeleton as a plain scalar; a value a YAML 1.1 reader
+    would misread, or that is not a plain string, is set through apply."""
+    from .file_operations import _plain_ok  # the one spelling rule for scalars
+
+    text = str(entry_id)
+    if isinstance(entry_id, str) and _plain_ok(text, False, False) and text == text.strip():
+        return text
+    return "placeholder"
+
+
+def _plain_for_file(value: object) -> object:
+    """A type's value as plain data: an Enum its value, a Link or Source its
+    mapping, containers recursively (what ``to_frontmatter`` already does for
+    most, kept here for a class that emits objects)."""
+    from enum import Enum
+
+    if isinstance(value, Enum):
+        return value.value
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        return _plain_for_file(value.to_dict())
+    if isinstance(value, dict):
+        return {k: _plain_for_file(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_plain_for_file(v) for v in value]
+    return value
 
 
 def _event_fallback(file_path: Path, text: str | None) -> Entry:
@@ -537,18 +672,7 @@ class KBRepository:
         if self.config.read_only:
             raise KBReadOnlyError(f"KB '{self.name}' is read-only")
 
-        if subdir is None:
-            subdir = self._infer_subdir(entry)
-
-        if keep_filename and entry.file_path is not None:
-            filename = entry.file_path.name
-            if subdir:
-                file_path = self._contained(self.path / subdir / filename)
-            else:
-                file_path = self._contained(self.path / filename)
-        else:
-            # Check for custom file_pattern in the type schema
-            file_path = self._resolve_file_path(entry, subdir)
+        file_path = self._target_path(entry, subdir, keep_filename)
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Stamp current schema version on save
@@ -559,11 +683,48 @@ class KBRepository:
 
         if touch_updated_at:
             entry.touch_updated_at()
-        entry.save(file_path, exclusive=exclusive)
+        # The type's values written onto a skeleton by apply() (ADR-0042
+        # decision 13; #955, B6 C2): to_frontmatter() decides which values the
+        # new file gets, never its bytes. A create publishes only if nothing
+        # is there (expect=ABSENT). The non-exclusive form is the whole-file
+        # overwrite `repo.save(entry)` callers and fixtures keep (no service
+        # path writes an existing entry this way since P4): published against
+        # the bytes read, so a file changed meanwhile is a ConflictError.
+        text = new_entry_text(entry)
+        if exclusive:
+            create_entry_text(file_path, text)
+        else:
+            try:
+                raw = file_path.read_bytes()
+            except FileNotFoundError:
+                create_entry_text(file_path, text)
+            else:
+                try:
+                    publish_entry_text(file_path, text, expect=raw)
+                except FileChanged as e:
+                    raise ConflictError(
+                        f"'{entry.id}' in KB '{self.name}' changed while it was being "
+                        "saved; nothing was written. Read it again and retry."
+                    ) from e
         entry.kb_name = self.name
         entry.file_path = file_path
 
         return file_path
+
+    def _target_path(self, entry: Entry, subdir: str | None, keep_filename: bool) -> Path:
+        """Where ``entry`` lives: ``subdir`` (inferred from the type when
+        None) and either its existing filename (``keep_filename``, an update
+        or a rename: a file's name is fixed at creation, #391) or a fresh one
+        from the type's ``file_pattern`` or its id."""
+        if subdir is None:
+            subdir = self._infer_subdir(entry)
+        if keep_filename and entry.file_path is not None:
+            filename = entry.file_path.name
+            if subdir:
+                return self._contained(self.path / subdir / filename)
+            return self._contained(self.path / filename)
+        # Check for custom file_pattern in the type schema
+        return self._resolve_file_path(entry, subdir)
 
     def delete(
         self,
@@ -649,34 +810,25 @@ class KBRepository:
         # wikilink-id match only).
         files_rewritten = 0
         links_rewritten = 0
-        body_rewrites: list[tuple[Path, str]] = []  # (path, new_text)
+        body_rewrites: list[tuple[Path, bytes, str]] = []  # (path, bytes read, new_text)
 
         if update_links:
-            import re
-
-            # Build the two patterns so we can both COUNT and REPLACE.
-            # Group 1 of `aliased` is the alias text we preserve.
-            bare = re.compile(rf"\[\[{re.escape(old_id)}\]\]")
-            aliased = re.compile(rf"\[\[{re.escape(old_id)}\|([^\]]*)\]\]")
-            new_bare = f"[[{new_id}]]"
-
             for md_file in self.list_files():
                 # The source file itself will get a fresh write below;
                 # don't pre-count its body or double-write.
                 if md_file.resolve() == src.resolve():
                     continue
                 try:
-                    text = md_file.read_text(encoding="utf-8")
-                except OSError:
+                    raw = md_file.read_bytes()
+                    text = raw.decode("utf-8")
+                except (OSError, UnicodeDecodeError):
                     continue
-                count = len(bare.findall(text)) + len(aliased.findall(text))
+                new_text, count = _rewrite_wikilinks(text, old_id, new_id)
                 if count == 0:
                     continue
-                new_text = bare.sub(new_bare, text)
-                new_text = aliased.sub(lambda m, _n=new_id: f"[[{_n}|{m.group(1)}]]", new_text)
                 files_rewritten += 1
                 links_rewritten += count
-                body_rewrites.append((md_file, new_text))
+                body_rewrites.append((md_file, raw, new_text))
 
         if dry_run:
             return {
@@ -690,15 +842,23 @@ class KBRepository:
 
         # Execute. Rewrite-other-files first so a failure leaves the
         # rename incomplete rather than orphaned wikilinks against a
-        # missing source.
-        for path, new_text in body_rewrites:
-            path.write_text(new_text, encoding="utf-8")
+        # missing source. Each is published against the bytes it was
+        # computed on; a file that changed meanwhile is re-read and
+        # re-rewritten (#955, B6 P4).
+        for path, raw, new_text in body_rewrites:
+            self._publish_rewrite(path, raw, new_text, old_id, new_id)
 
-        # Load the source entry, rewrite its id, save under new id,
-        # delete old file. Using load+save preserves frontmatter shape
-        # via the model layer instead of doing a regex on the source's
-        # own YAML.
-        entry = self._load_entry(src)
+        # The source: one `Set("id", new_id)` on its own bytes (and the
+        # `updated_at` bookkeeping where the file carries it), published at
+        # the new path with expect=ABSENT, then the old file removed. The
+        # model is loaded only to resolve the new path; it supplies no bytes.
+        raw = src.read_bytes()
+        text = raw.decode("utf-8")
+        split = split_frontmatter(text)
+        if not isinstance(split, Frontmatter):
+            raise ValidationError(f"Cannot rename '{old_id}': the file has no frontmatter")
+        new_text = _renamed_text(text, split, new_id)
+        entry = self._load_entry(src, text)
         entry.id = new_id
         # File pattern in some plugin schemas can pull subdir from id;
         # keep the entry in the same subdir it lived in by saving with
@@ -717,20 +877,32 @@ class KBRepository:
         schema = self.config.kb_schema
         type_schema = schema.get_type_schema(entry.entry_type)
         has_file_pattern = bool(type_schema and type_schema.file_pattern)
-        if has_file_pattern:
-            entry.file_path = src
-            file_path = self.save(entry, subdir=subdir, keep_filename=True)
-        else:
-            file_path = self.save(entry, subdir=subdir)
+        entry.file_path = src
+        file_path = self._target_path(entry, subdir, keep_filename=has_file_pattern)
 
-        # Delete the old file only AFTER the new one is on disk, and only if
-        # the rename actually produced a DIFFERENT file -- never unlink a
-        # path that IS the file just written (defense in depth: the
-        # file_pattern branch above already keeps them equal by construction,
-        # but this also covers any other case where resolution happens to
-        # collide, e.g. a template that ignores id entirely).
-        if src.exists() and src.resolve() != file_path.resolve():
-            src.unlink()
+        if file_path.resolve() == src.resolve():
+            try:
+                publish_entry_text(src, new_text, expect=raw)
+            except FileChanged as e:
+                raise ConflictError(
+                    f"'{old_id}' in KB '{self.name}' changed while the rename ran; "
+                    "nothing was written. Read it again and retry."
+                ) from e
+        else:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                create_entry_text(file_path, new_text)
+            except FileExistsError:
+                raise ValidationError(
+                    f"Cannot rename '{old_id}' to '{new_id}': target already exists "
+                    f"in KB '{self.name}'"
+                ) from None
+            # Delete the old file only AFTER the new one is on disk, and
+            # only if the rename actually produced a DIFFERENT file (defense
+            # in depth: the file_pattern branch above already keeps them
+            # equal by construction).
+            if src.exists():
+                src.unlink()
 
         return {
             "renamed": True,
@@ -740,6 +912,24 @@ class KBRepository:
             "links_rewritten": links_rewritten,
             "dry_run": False,
         }
+
+    def _publish_rewrite(self, path: Path, raw: bytes, new_text: str, old_id: str, new_id: str):
+        """Publish a linking file's rewrite against the bytes it was computed
+        on; if the file changed meanwhile, re-read and rewrite again, up to
+        ``_REWRITE_ATTEMPTS`` times."""
+        for _attempt in range(_REWRITE_ATTEMPTS):
+            try:
+                publish_entry_text(path, new_text, expect=raw)
+                return
+            except FileChanged:
+                raw = path.read_bytes()
+                new_text, count = _rewrite_wikilinks(raw.decode("utf-8"), old_id, new_id)
+                if count == 0:
+                    return
+        raise ConflictError(
+            f"{path.name} in KB '{self.name}' kept changing while the rename of "
+            f"'{old_id}' rewrote its links; nothing more was written. Retry."
+        )
 
     def list_files(self) -> Iterator[Path]:
         """Iterate over all markdown files in the KB."""

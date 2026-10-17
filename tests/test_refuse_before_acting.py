@@ -287,7 +287,10 @@ INGEST_SHAPES = [
     ("float-target", "- target: 3.5\n", True),
     ("bool-target", "- target: true\n", True),
     ("date-target", "- target: 2024-01-01\n", True),
-    ("blank-target", "- target: ''\n", True),
+    # Spelled "" rather than '': a create writes a new empty string
+    # double-quoted (the emitter's rule for a value that cannot be bare,
+    # #955 C2), and this test reads the first link line back verbatim.
+    ("blank-target", '- target: ""\n', True),
     ("no-target-key", "- relation: informs\n", True),
     ("blank-relation", "- target: fresh\n  relation: ''\n", True),
     ("int-relation", "- target: fresh\n  relation: 5\n", True),

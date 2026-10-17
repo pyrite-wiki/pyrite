@@ -43,27 +43,27 @@ THE_WRITE_FUNCTION: dict[tuple[str, str], str] = {
     ("pyrite/storage/entry_writer.py", "create_entry_text"): "the one publish of a templated move",
 }
 
-#: Shrinks with each B6 phase (the spike on #730, §4 and §5).
-ENTRY_FILE_WRITERS_NOT_YET_CONVERTED: dict[tuple[str, str], str] = {
-    ("pyrite/models/base.py", "Entry._publish_exclusive"): "create's exclusive publish (C2)",
-    ("pyrite/models/base.py", "Entry.save"): "the whole-file emit of a create (C2)",
-    ("pyrite/storage/repository.py", "KBRepository.save"): "create and the link writers (C2, P4)",
-    (
-        "pyrite/storage/repository.py",
-        "KBRepository.rename",
-    ): "rename's link rewrite and re-save (P4)",
+#: Callers of ``KBRepository.save``, whose bytes go through the write function
+#: (``create_entry_text`` for a create; ``publish_entry_text`` against the
+#: bytes read for the model's whole-file overwrite that test fixtures and
+#: ``repo.save(entry)`` callers keep, #955 P4).
+DELEGATES_TO_THE_WRITE_FUNCTION: dict[tuple[str, str], str] = {
     (
         "pyrite/storage/document_manager.py",
         "DocumentManager.save_entry",
-    ): "create, add_link/add_links (C2, P4)",
-    ("pyrite/services/id_pin_service.py", "_rename"): "ids pin, under the lock (P4)",
-    ("pyrite/cli/schema_commands.py", "schema_migrate"): "schema migrate (P4)",
-    (
-        "extensions/software-kb/src/pyrite_software_kb/cli.py",
-        "sw_migrate_standards",
-    ): "sw migrate-standards (P4)",
+    ): "a create's call of KBRepository.save",
 }
-ENTRY_FILE_WRITERS_NOT_YET_CONVERTED_SIZE = 8
+
+#: Shrinks with each B6 phase (the spike on #730, §4 and §5).
+ENTRY_FILE_WRITERS_NOT_YET_CONVERTED: dict[tuple[str, str], str] = {
+    (
+        "pyrite/services/id_pin_service.py",
+        "_rename",
+    ): "ids pin: its own no-follow write (a link swapped in must not be followed), "
+    "under the momentary lock since P4; folds into entry_writer when atomic_write_text "
+    "stops following links",
+}
+ENTRY_FILE_WRITERS_NOT_YET_CONVERTED_SIZE = 1
 
 NOT_AN_ENTRY_FILE: dict[tuple[str, str], str] = {
     (
@@ -147,7 +147,10 @@ def test_every_writer_of_bytes_is_classified() -> None:
     sites = _writers()
     assert sites, "the walk found no writer at all; the scan is broken"
     classified = (
-        set(THE_WRITE_FUNCTION) | set(ENTRY_FILE_WRITERS_NOT_YET_CONVERTED) | set(NOT_AN_ENTRY_FILE)
+        set(THE_WRITE_FUNCTION)
+        | set(DELEGATES_TO_THE_WRITE_FUNCTION)
+        | set(ENTRY_FILE_WRITERS_NOT_YET_CONVERTED)
+        | set(NOT_AN_ENTRY_FILE)
     )
     unclassified = sorted(
         site for site in sites if site not in classified and not _is_out_of_scope(site[0])

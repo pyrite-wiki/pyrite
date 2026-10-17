@@ -40,10 +40,11 @@ class DocumentManager:
     ) -> Path:
         """Save an entry to disk, register the KB, and index it.
 
-        The whole-file emit of a create, and of ``add_link``/``add_links``
-        until B6 P4 (#955). An update no longer comes here: it is operations
-        applied to the file's own bytes in ``KBService._update``, published by
-        ``storage/entry_writer.py``.
+        The whole-file emit of a create (``is_create=True`` is its only
+        caller). An update, ``add_link`` and ``add_links`` no longer come
+        here: they are operations applied to the file's own bytes in
+        ``KBService._update``, published by ``storage/entry_writer.py``
+        (#955, B6 P3a and P4).
 
         If the entry's resolved path has changed (e.g. due to a templated
         subdirectory like ``backlog/{status}``), the old file is removed.
