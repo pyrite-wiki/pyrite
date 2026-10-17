@@ -8,12 +8,6 @@ tags:
 - openclaw
 - mcp
 - knowledge-infrastructure
-metadata:
-  kind: feature
-  status: retired
-  priority: medium
-  effort: xl
-  milestone: post-launch
 kind: feature
 status: retired
 priority: medium

@@ -7,10 +7,7 @@ tags:
 - qa
 - search
 metadata:
-  kind: feature
   priority: medium
-  effort: M
-  status: proposed
 kind: feature
 status: done
 assignee: claude

@@ -5,11 +5,6 @@ type: backlog_item
 tags:
 - enhancement
 - search
-metadata:
-  kind: feature
-  priority: low
-  effort: M
-  status: proposed
 kind: feature
 priority: low
 effort: M
