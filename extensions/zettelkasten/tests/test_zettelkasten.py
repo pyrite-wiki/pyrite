@@ -7,6 +7,7 @@ from pyrite_zettelkasten.preset import ZETTELKASTEN_PRESET
 from pyrite_zettelkasten.validators import validate_zettel
 
 from pyrite.plugins.registry import PluginRegistry
+from pyrite.storage.repository import new_entry_text
 
 # =========================================================================
 # Plugin registration
@@ -142,6 +143,9 @@ class TestZettelEntry:
         entry = ZettelEntry.from_frontmatter(meta, "")
         assert entry.id == "my-great-note"
 
+    @pytest.mark.control(
+        reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+    )
     def test_roundtrip_markdown(self):
         entry = ZettelEntry(
             id="test-note",
@@ -151,7 +155,7 @@ class TestZettelEntry:
             maturity="sapling",
             tags=["knowledge", "test"],
         )
-        md = entry.to_markdown()
+        md = new_entry_text(entry)
         assert "zettel_type: permanent" in md
         assert "maturity: sapling" in md
         assert "Some content" in md

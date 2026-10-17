@@ -15,6 +15,8 @@ import pytest
 from tests.cli_help import plain
 
 from pyrite.models import EventEntry
+from pyrite.storage.entry_writer import create_entry_text
+from pyrite.storage.repository import new_entry_text
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.repository import KBRepository
 
@@ -115,6 +117,9 @@ class TestLifecycleField:
         assert active.id in result_ids
         assert archived.id in result_ids
 
+    @pytest.mark.control(
+        reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+    )
     def test_lifecycle_field_in_frontmatter(self, tmp_path):
         """lifecycle field round-trips through frontmatter."""
         event = EventEntry.create(
@@ -127,12 +132,15 @@ class TestLifecycleField:
 
         # Save to file
         path = tmp_path / "test.md"
-        event.save(path)
+        create_entry_text(path, new_entry_text(event))
 
         # Reload and verify
         loaded = EventEntry.load(path)
         assert loaded.lifecycle == "archived"
 
+    @pytest.mark.control(
+        reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+    )
     def test_lifecycle_default_in_frontmatter(self, tmp_path):
         """Entries without lifecycle set don't include it in frontmatter (default)."""
         event = EventEntry.create(
@@ -146,7 +154,7 @@ class TestLifecycleField:
 
         # Save and reload
         path = tmp_path / "test_default.md"
-        event.save(path)
+        create_entry_text(path, new_entry_text(event))
         loaded = EventEntry.load(path)
         assert loaded.lifecycle == "active"
 

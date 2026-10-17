@@ -21,6 +21,7 @@ import pytest
 
 from pyrite.models.base import Entry
 from pyrite.models.core_types import ENTRY_TYPE_REGISTRY, EventEntry, RelationshipEntry
+from pyrite.storage.repository import new_entry_text
 from pyrite.plugins import get_registry
 from pyrite.plugins.registry import PluginRegistry
 from pyrite.schema.field_aliases import (
@@ -278,6 +279,9 @@ class TestLoadPathIsUnchanged:
 
         assert class_field_aliases(cls, entry_type) == aliases
 
+    @pytest.mark.control(
+        reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+    )
     @pytest.mark.parametrize(("cls", "entry_type", "aliases"), _load_path_cases())
     def test_alias_key_is_consumed_and_the_file_respelled_once(self, cls, entry_type, aliases):
         assert aliases, f"{entry_type} has no aliases: the case does not belong here"
@@ -290,37 +294,48 @@ class TestLoadPathIsUnchanged:
             assert alias not in (entry.extra_frontmatter or {}), alias
             assert alias not in (entry._unrepresented_keys or {}), alias
             assert (entry.extra_frontmatter or {}).get("other") == 1
-            written = entry.to_markdown()
+            written = new_entry_text(entry)
             keys = [line.split(":")[0] for line in written.splitlines() if ":" in line]
             assert alias not in keys, written
             assert keys.count(target) == 1, written
             assert "&id" not in written and "*id" not in written, written
 
     @pytest.mark.parametrize(
-        ("entry_type", "front", "written"),
+        ("entry_type", "front"),
         [
-            (
-                "event",
-                "participants: [a, b]\nevent_date: 2024-01-02\n",
-                "event_date: 2024-01-02\nother: 1\nactors: [a, b]\n",
-            ),
-            (
-                "meeting",
-                "participants: [a, b]\nevent_date: 2024-01-02\n",
-                "event_date: 2024-01-02\nother: 1\nactors: [a, b]\n",
-            ),
-            (
-                "relationship",
-                "source: a\ntarget: b\n",
-                "other: 1\nsource_entity: a\ntarget_entity: b\n",
-            ),
+            ("event", "participants: [a, b]\nevent_date: 2024-01-02\n"),
+            ("relationship", "source: a\ntarget: b\n"),
         ],
     )
-    def test_files_match_what_dev_wrote(self, entry_type, front, written):
-        cls = _class_for(entry_type)
+    @pytest.mark.control(
+        reason="an update already wrote through apply on the base (#955 P3a); this replaces the deleted emitter's respelling test with the write that exists"
+    )
+    def test_an_update_keeps_the_files_own_alias_spelling(self, tmp_path, entry_type, front):
+        """dev's emitter respelled an alias to its target on every write. The one
+        write path (#955, B6) changes what was asked and nothing else: an update
+        of another key leaves the alias, its position and its flow style as the
+        file holds them, and the update names the file's own spelling."""
+        from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
+        from pyrite.services.kb_service import KBService
+        from pyrite.storage.database import PyriteDB
+        from pyrite.storage.index import IndexManager
+
+        kb = tmp_path / "kb"
+        kb.mkdir()
+        path = kb / "x.md"
         source = f"---\nid: x\ntitle: T\ntype: {entry_type}\n{front}other: 1\n---\nbody\n"
-        expected = f"---\nid: x\ntitle: T\ntype: {entry_type}\n{written}---\n\nbody\n"
-        assert cls.from_markdown(source).to_markdown() == expected
+        path.write_text(source, encoding="utf-8")
+        config = PyriteConfig(
+            knowledge_bases=[KBConfig(name="k", path=kb, kb_type=KBType.GENERIC)],
+            settings=Settings(index_path=tmp_path / "index.db"),
+        )
+        db = PyriteDB(config.settings.index_path)
+        try:
+            IndexManager(db, config).index_all()
+            KBService(config, db).update("x", "k", {"other": 2})
+        finally:
+            db.close()
+        assert path.read_text(encoding="utf-8") == source.replace("other: 1", "other: 2")
 
     def test_event_date_stays_an_extra_where_it_was_never_an_alias(self):
         # dev: only the deleted cascade_event aliased event_date; on `event` it is an unknown key.
@@ -329,12 +344,15 @@ class TestLoadPathIsUnchanged:
         )
         assert "event_date" in entry.extra_frontmatter
 
+    @pytest.mark.control(
+        reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+    )
     def test_a_subclass_with_its_own_entry_type_inherits_its_base_types_aliases(self):
         entry = Meeting.from_markdown(
             "---\nid: m\ntitle: M\ntype: meeting\nparticipants: [a, b]\n---\n"
         )
         assert not entry.extra_frontmatter
-        assert "participants" not in entry.to_markdown()
+        assert "participants" not in new_entry_text(entry)
         assert entry.participants == ["a", "b"]
 
 

@@ -10,10 +10,9 @@ import copy
 import dataclasses
 import logging
 import os
-import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -47,7 +46,13 @@ from ..schema import Link, Source
 from ..schema.enum_check import is_off_list, is_per_element
 from ..storage.database import PyriteDB
 from ..storage.document_manager import DocumentManager
-from ..storage.entry_writer import FileChanged, create_entry_text, publish_entry_text
+from ..storage.entry_writer import (
+    FileChanged,
+    create_entry_text,
+    publish_entry_text,
+    raw_scalar,
+    updated_at_stamp,
+)
 from ..storage.file_operations import (
     AddSubkey,
     Append,
@@ -1635,6 +1640,8 @@ class KBService:
                     entry, entry_id, kb_config, file_values, op, restrict, merge_spellings
                 )
                 if isinstance(resolved, Set):
+                    if _same_instant_as_file(file_values, resolved.path, resolved.value):
+                        continue  # the instant the file holds, in another spelling (decision 3)
                     if resolved.path in placed and placed[resolved.path] == resolved.value:
                         continue  # the same field named twice with one value
                     placed[resolved.path] = resolved.value
@@ -1927,6 +1934,9 @@ class KBService:
             value = (
                 self._value_for_file(entry, field, op.value) if not rest else _plain_value(op.value)
             )
+            spelled = path[0] if isinstance(path, tuple) and len(path) == 1 else path
+            if _same_instant_as_file(file_values, spelled, value):
+                return Set(path, file_values[spelled])  # the same instant: no change
             return Set(path, value)
         if isinstance(op, Append | Remove):
             value = _plain_value(op.value)
@@ -2238,9 +2248,13 @@ class KBService:
         if not resolved and not allow_dangling:
             raise EntryNotFoundError(f"Entry not found: {target_id}")
 
-        entry.add_link(target=target_id, relation=relation, note=note, kb=tkb)
-        entry.touch_updated_at()
-        self._doc_mgr.save_entry(entry, source_kb, kb_config)
+        # One appended item through the one write path (#955, B6 P4): the
+        # file's other keys keep their bytes, `updated_at` is stamped where
+        # the file carries it, and the publish is compare-and-replace under
+        # the momentary lock. The item is spelled as it always was (`kb:` is
+        # the target KB, the source's own included).
+        item = Link(target=target_id, relation=relation, note=note, kb=tkb).to_dict()
+        self.apply_operations(source_id, source_kb, [Append("links", item)])
         return {"resolved": resolved, "created": True, "relation": relation}
 
     def add_links(
@@ -2255,11 +2269,12 @@ class KBService:
         Targets are not required to exist: a bulk link set is often loaded
         before, or alongside, the entries it points at.
 
-        Each source is loaded once, gets all of its new links, and is saved
-        once through the same DocumentManager path :meth:`add_link` uses --
-        in place, wherever the file lives, and re-indexed. The CLI used to
-        ``repo.save`` it, which re-derived the path from the type and wrote a
-        second copy of any entry kept elsewhere (#375).
+        Each source is loaded once, gets all of its new links, and is written
+        once: one ``Append`` per new link through the same operation write
+        :meth:`add_link` uses (#955, B6 P4) -- in place, wherever the file
+        lives, the other keys' bytes untouched, and re-indexed. The CLI used
+        to ``repo.save`` it, which re-derived the path from the type and
+        wrote a second copy of any entry kept elsewhere (#375).
 
         Returns one result per spec, in input order:
         ``{"status": "created" | "skipped" | "failed", "error"?: str,
@@ -2275,6 +2290,7 @@ class KBService:
         results: list[dict[str, Any]] = [{} for _ in links]
         loaded: dict[str, Entry | None] = {}
         dirty: dict[str, list[int]] = {}
+        new_items: dict[str, list[dict[str, Any]]] = {}
 
         for i, spec in enumerate(links):
             try:
@@ -2299,7 +2315,11 @@ class KBService:
             ):
                 results[i] = {"status": "skipped"}
                 continue
-            entry.add_link(target=target_id, relation=relation, note=note, kb=tkb)
+            # The model's list is what the duplicate check above reads, so a
+            # second spec for the same link in this batch is skipped too.
+            link = Link(target=target_id, relation=relation, note=note, kb=tkb)
+            entry.links.append(link)
+            new_items.setdefault(source_id, []).append(link.to_dict())
             results[i] = {"status": "created"}
             dirty.setdefault(source_id, []).append(i)
 
@@ -2307,10 +2327,10 @@ class KBService:
             return results
 
         for source_id, positions in dirty.items():
-            entry = loaded[source_id]
             try:
-                entry.touch_updated_at()
-                self._doc_mgr.save_entry(entry, kb_name, kb_config)
+                self.apply_operations(
+                    source_id, kb_name, [Append("links", item) for item in new_items[source_id]]
+                )
             except Exception as e:
                 # Once per failed save, not once per position: one cause, one line.
                 message = _safe_message(e)
@@ -3668,66 +3688,26 @@ def _plain_value(value: Any) -> Any:
     return value
 
 
-_STAMP_TZ = re.compile(r"[+-]\d\d:\d\d$")
+#: The ``updated_at`` bookkeeping lives with the write path (rename stamps it
+#: too, #955 P4); kept under its old name for this module's callers.
+_updated_at_stamp = updated_at_stamp
+_raw_scalar = raw_scalar
 
 
-def _raw_scalar(yaml_text: str, key: str) -> str | None:
-    """The spelling of top-level ``key``'s scalar in ``yaml_text`` as written
-    (a trailing comment stripped), or None when the key is not a plain
-    ``key: value`` line (quoted key, flow mapping, block scalar)."""
-    found = re.search(
-        rf"^{re.escape(key)}:[ \t]*([^\s#][^#\r\n]*?)[ \t]*(?:#.*)?$", yaml_text, re.M
-    )
-    return found.group(1) if found else None
-
-
-def _updated_at_stamp(old: Any, raw: str | None = None) -> Any:
-    """The new ``updated_at`` in the file's own form (#955, acceptance 4), or
-    None when the file's value is not an instant Pyrite can read.
-
-    The stamp keeps the spelling of the value it replaces: the ``T`` or space
-    separator, a ``Z``, an offset (the time is converted to it) or none, the
-    fraction's digits, a date-only value. ``old`` is the loaded value (a
-    ``str`` when the file quotes it, else ruamel's timestamp or a ``date``);
-    ``raw`` is the scalar as the file spells it, for a bare value. A quoted
-    value stays a quoted string; a bare one is ``TimestampText``, which
-    ``apply`` writes bare in that spelling.
-    """
-    if _timestamp_instant(old) is None:
-        return None
-    now = datetime.now(UTC).replace(microsecond=0)
-    if isinstance(old, str):
-        spelled = old
-    elif raw:
-        spelled = raw
-    elif isinstance(old, datetime):
-        # No source text: the loader's record of the spelling (ruamel keeps
-        # the separator and the zone form on its TimeStamp).
-        info = getattr(old, "_yaml", None) or {}
-        tz = info.get("tz") or ""
-        spelled = old.replace(tzinfo=None).isoformat(sep="T" if info.get("t") else " ") + tz
-    else:
-        spelled = old.isoformat()
-    if ":" not in spelled:
-        return now.date() if not isinstance(old, str) else now.strftime("%Y-%m-%d")
-    sep = "T" if "T" in spelled else " "
-    tz = (
-        "Z"
-        if spelled.endswith("Z")
-        else (_STAMP_TZ.search(spelled).group(0) if _STAMP_TZ.search(spelled) else "")
-    )
-    core = spelled[: -len(tz)] if tz else spelled
-    digits = len(core.rsplit(".", 1)[1]) if "." in core else 0
-    shown = now
-    if tz and tz != "Z":
-        sign = 1 if tz[0] == "+" else -1
-        hours, minutes = int(tz[1:3]), int(tz[4:6])
-        shown = now.astimezone(timezone(sign * timedelta(hours=hours, minutes=minutes)))
-    text = shown.strftime(f"%Y-%m-%d{sep}%H:%M:%S")
-    if digits:
-        text += "." + "0" * digits
-    text += tz
-    return text if isinstance(old, str) else TimestampText(text)
+def _same_instant_as_file(file_values: dict[str, Any], path: Any, value: Any) -> bool:
+    """Is ``value`` the instant the file already holds at the timestamp key
+    ``path``, in another spelling? ``created_at: 2026-01-15`` loads as a
+    date; a read reports it and an echo sends it back as the datetime
+    ``parse_datetime`` makes of it. Equal instants are one value (ADR-0042
+    decision 3), so the key keeps its bytes and ``updated_at`` is not
+    stamped for it. Only the timestamp keys take this path: a title edited
+    from ``"2026-01-15"`` to ``"2026-01-15T00:00:00Z"`` is a change."""
+    key = path[0] if isinstance(path, tuple) and len(path) == 1 else path
+    if not isinstance(key, str) or key not in _TIMESTAMP_FIELDS or key not in file_values:
+        return False
+    old = _timestamp_instant(file_values[key])
+    new = _timestamp_instant(value)
+    return old is not None and new is not None and old == new
 
 
 def _as_field_type(entry: Entry, key: str, value: Any) -> Any:

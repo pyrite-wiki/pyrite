@@ -8,6 +8,8 @@ import pytest
 
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models.core_types import NoteEntry
+from pyrite.storage.entry_writer import create_entry_text
+from pyrite.storage.repository import new_entry_text
 from pyrite.services.block_service import BlockService
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
@@ -17,11 +19,12 @@ from pyrite.storage.index import IndexManager
 def blocks(tmp_path):
     kb_path = tmp_path / "kb"
     kb_path.mkdir()
-    NoteEntry(
+    note = NoteEntry(
         id="n",
         title="N",
         body="# Intro\nHello world\n\n## Details\nSome details here",
-    ).save(kb_path / "n.md")
+    )
+    create_entry_text(kb_path / "n.md", new_entry_text(note))
     config = PyriteConfig(
         knowledge_bases=[KBConfig(name="kb", path=kb_path, kb_type=KBType.GENERIC)],
         settings=Settings(index_path=tmp_path / "index.db"),

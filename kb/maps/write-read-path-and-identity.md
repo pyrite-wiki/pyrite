@@ -32,8 +32,10 @@ Marks: **decided** = accepted ADR; **proposed** = ADR-0044 only (all of ADR-0038
    `storage/entry_writer.py`), and the surfaces take `append`, `remove` and
    `unset` (P3b: CLI `--append/--remove/--unset`, MCP `kb_update`, REST PATCH
    `op`; the in-process callers send one operation through
-   `KBService.apply_operations`); create, `add_link` and the other writers
-   still emit whole files (C2, P4).
+   `KBService.apply_operations`); a create writes its values onto a skeleton
+   the same way (C2); `add_link`/`add_links` append one `links:` item through
+   `apply_operations` (P4); rename's link rewrite, `schema migrate`, `ids
+   pin` and `migrate-standards` still emit whole files (P4, the rest).
 3. A single-entry read reads the file's current bytes and returns a
    `content_hash`; lists and search stay index reads. **decided** ADR-0042
    decision 9. Built for the read (#753, `KBService._read_entry`); the type's
@@ -50,7 +52,11 @@ Marks: **decided** = accepted ADR; **proposed** = ADR-0044 only (all of ADR-0038
 7. A rename changes only the id and never moves the file; a wrong path is delete
    plus create. **decided** [[adr-0038]] question 1 (decided 2026-09-25).
 8. Create is the one place Pyrite chooses spelling, and it never overwrites.
-   **decided** ADR-0042 decision 13; [[adr-0038]] I5 holds today.
+   **decided** ADR-0042 decision 13; [[adr-0038]] I5 holds today. Built (#955,
+   B6 C2): `KBRepository.new_entry_text` writes the type's values onto
+   `---\nid: <id>\n---` with `apply()`, published with `expect=ABSENT`
+   (`storage/entry_writer.create_entry_text`); `to_frontmatter` decides the
+   values, no emitter the bytes.
 9. Writes are optimistic: each carries its base, merges per key against the
    file now, and conflicts are reported, never lost; a momentary sidecar
    `flock` covers only compare-and-replace. **decided** ADR-0042 decision 10
@@ -92,8 +98,10 @@ decision 7 makes migration an explicit command), [[adr-0003]] (superseded).
 Components [[kb-service]], [[kb-repository]], [[document-manager]],
 [[index-manager]], [[entry-model]]. Paths: `pyrite/services/kb_service.py`
 (`_prepare`, `_update`, `rename_entry`), `pyrite/storage/repository.py`
-(`find_file`, `_load_entry`, `rename`), `pyrite/storage/document_manager.py`,
-`pyrite/models/base.py` (`Entry.save` and its load-time records).
+(`find_file`, `_load_entry`, `rename`, `new_entry_text`),
+`pyrite/storage/entry_writer.py` (the one publish), `pyrite/storage/document_manager.py`,
+`pyrite/models/base.py` (the load-time records; the model has no `save` since
+#955 P4).
 
 ## Tests that pin it
 
@@ -116,9 +124,13 @@ over who may write an entry file's bytes.
 
 ## Known gaps
 
-- Create, `add_link`/`add_links`, rename's link rewrite, `schema migrate`,
-  `ids pin` and software-kb's `migrate-standards` still emit or write whole
-  files (B6 C2 and P4); hooks
+- Every writer of an entry file sends operations and publishes through
+  `entry_writer` (B6 P4 done: `add_link`/`add_links`, rename, `schema
+  migrate`, software-kb's `migrate-standards`; `ids pin` keeps its own
+  no-follow write, under the momentary lock); `Entry.save`, `to_markdown`
+  and `_publish_exclusive` are gone. `repo.save(entry)` over an existing
+  file is still the model's whole-file overwrite (a create's text, for
+  fixtures), published against the bytes read; no service path uses it. Hooks
   still change a create, and what a hook sets in place reaches an update's
   index row until the index derives it (P6); the id comes from the title; a
   single read returns defaults among the file's fields (P5). ADR-0042 and

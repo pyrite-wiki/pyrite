@@ -591,16 +591,23 @@ def test_a_file_changed_at_the_last_moment_is_not_overwritten(kb, monkeypatch):
     assert _json(result)["skipped"][0]["path"] == "a.md"
 
 
+@pytest.mark.control(
+    reason="the pin never emitted a model; the patched emit moved from the deleted to_markdown to new_entry_text, which the base has (#955 P4)"
+)
 def test_pin_never_goes_through_update_or_to_frontmatter(kb, monkeypatch):
+    """A pin is a textual insertion: never an update, never the model's
+    frontmatter, never the create's whole-file text (`new_entry_text`, the
+    one emit of a model left after #955 B6 P4)."""
     from pyrite.models.base import Entry
     from pyrite.services.kb_service import KBService
+    from pyrite.storage import repository
 
     def boom(*a, **k):
         raise AssertionError("pin must be a textual insertion")
 
     monkeypatch.setattr(KBService, "update", boom)
     monkeypatch.setattr(KBService, "update_entry", boom)
-    monkeypatch.setattr(Entry, "to_markdown", boom)
+    monkeypatch.setattr(repository, "new_entry_text", boom)
     monkeypatch.setattr(Entry, "to_frontmatter", boom)
     root, config = kb
     _write(root, {"a.md": "---\ntitle: A\n---\n"})

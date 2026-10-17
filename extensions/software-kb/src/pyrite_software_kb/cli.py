@@ -716,8 +716,12 @@ def sw_migrate_standards(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name to scope migration"),
 ):
     """Migrate type:standard entries to programmatic_validation or development_convention."""
-    import re
     from pathlib import Path
+
+    from pyrite.storage.entry_writer import FileChanged, create_entry_text, publish_entry_text
+    from pyrite.storage.file_operations import FrontmatterSpan, Set, Unset, apply
+    from pyrite.utils.frontmatter import Frontmatter, describe, split_frontmatter
+    from pyrite.utils.yaml import load_yaml
 
     config = load_config()
 
@@ -765,7 +769,6 @@ def sw_migrate_standards(
                 skipped += 1
                 continue
 
-            content = path.read_text()
             meta = row["_meta"]
             enforced = bool(meta.get("enforced", False))
 
@@ -776,27 +779,46 @@ def sw_migrate_standards(
                 new_type = "development_convention"
                 new_dir_name = "conventions"
 
-            # Replace type field in frontmatter
-            content = re.sub(
-                r"^type:\s*standard\s*$", f"type: {new_type}", content, flags=re.MULTILINE
-            )
+            # Two operations on the file's own bytes (#955, B6 P4): the type
+            # set, `enforced` unset; a comment beside either, the other keys
+            # and the file's line endings stay as written.
+            raw = path.read_bytes()
+            text = raw.decode("utf-8")
+            split = split_frontmatter(text)
+            if not isinstance(split, Frontmatter):
+                console.print(f"  [red]Skip[/red] {row['title']}: {describe(split)}")
+                skipped += 1
+                continue
+            values = load_yaml(split.text)
+            ops: list[Any] = [Set("type", new_type)]
+            if isinstance(values, dict) and "enforced" in values:
+                ops.append(Unset("enforced"))
+            span = FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
+            new_text, _report = apply(text, ops, span)
 
-            # Remove enforced field
-            content = re.sub(
-                r"^enforced:\s*(true|false)\s*\n", "", content, flags=re.MULTILINE | re.IGNORECASE
-            )
-
-            # Write back
-            path.write_text(content)
-
-            # Move file to new subdirectory if parent is standards/
+            # Move file to new subdirectory if parent is standards/: published
+            # at the new path (never over something already there), then the
+            # old file removed; otherwise replaced in place, against the bytes
+            # read above.
             if path.parent.name == "standards":
                 new_dir = path.parent.parent / new_dir_name
                 new_dir.mkdir(parents=True, exist_ok=True)
                 new_path = new_dir / path.name
-                path.rename(new_path)
+                try:
+                    create_entry_text(new_path, new_text)
+                except FileExistsError:
+                    console.print(f"  [red]Skip[/red] {row['title']}: {new_path} already exists")
+                    skipped += 1
+                    continue
+                path.unlink()
                 console.print(f"  [green]Migrated[/green] {row['title']} -> {new_path}")
             else:
+                try:
+                    publish_entry_text(path, new_text, expect=raw)
+                except FileChanged:
+                    console.print(f"  [red]Skip[/red] {row['title']}: {path} changed; run again")
+                    skipped += 1
+                    continue
                 console.print(f"  [green]Migrated[/green] {row['title']} (type updated in place)")
 
             migrated += 1

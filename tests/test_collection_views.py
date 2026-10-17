@@ -17,6 +17,8 @@ class TestPatchEntryEndpoint:
 
         from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
         from pyrite.models.core_types import NoteEntry
+        from pyrite.storage.entry_writer import create_entry_text
+        from pyrite.storage.repository import new_entry_text
         from pyrite.server.api import create_app
         from pyrite.storage.database import PyriteDB
         from pyrite.storage.index import IndexManager
@@ -41,7 +43,7 @@ class TestPatchEntryEndpoint:
                     body=f"Content {i}",
                     tags=["test"],
                 )
-                note.save(notes_dir / f"note-{i}.md")
+                create_entry_text(notes_dir / f"note-{i}.md", new_entry_text(note))
 
             config = PyriteConfig(
                 knowledge_bases=[kb_config],

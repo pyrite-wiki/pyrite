@@ -38,6 +38,7 @@ from ..config import KBConfig, PyriteConfig
 from ..exceptions import ValidationError
 from ..models.core_types import explicit_entry_id, id_text, read_entry_id
 from ..storage.repository import KBRepository
+from ..utils.file_lock import NotInGitRepository, file_lock
 from ..utils.frontmatter import Frontmatter, describe, load_frontmatter, split_frontmatter
 
 logger = logging.getLogger(__name__)
@@ -238,6 +239,19 @@ def _write_pin(root: Path, path: Path, planned_original: bytes, new_text: str) -
             pass
     finally:
         os.close(dir_fd)
+
+
+def _write_pin_locked(root: Path, path: Path, planned_original: bytes, new_text: str) -> None:
+    """``_write_pin`` under the entry's momentary lock (ADR-0042 decision 10;
+    #955, B6 P4), so a pin and an update of one file cannot interleave: the
+    pin's own compare-before-replace then decides, as before. A KB outside
+    git has no lock directory and is written without one (D1 (b)); any other
+    lock-directory fault is a refusal the caller reports."""
+    try:
+        with file_lock(path):
+            _write_pin(root, path, planned_original, new_text)
+    except NotInGitRepository:
+        _write_pin(root, path, planned_original, new_text)
 
 
 def _check_unchanged(dir_fd: int, name: str, planned_original: bytes) -> None:
@@ -489,7 +503,7 @@ def apply(found: IdScan, the_plan: dict[str, Any]) -> dict[str, Any]:
     for item in the_plan["pinned"]:
         try:
             path, original, new_text = _prepared(found, item)
-            _write_pin(found.root, path, original, new_text)
+            _write_pin_locked(found.root, path, original, new_text)
         except (PinRefusedError, OSError, UnicodeDecodeError) as e:
             the_plan["skipped"].append({"path": item["path"], "reason": str(e)})
             continue
