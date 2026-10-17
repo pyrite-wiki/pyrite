@@ -137,6 +137,7 @@ class TaskService:
 
         # Capture the prior status so we can record the transition.
         old_status = ""
+        audit: dict[str, Any] | None = None
         if comment and "status" in updates:
             from ..storage.repository import KBRepository
 
@@ -146,19 +147,26 @@ class TaskService:
                 old_status = getattr(existing, "status", "") if existing else ""
                 new_status = updates["status"]
                 if old_status != new_status:
-                    log = list(getattr(existing, "status_change_log", []) or [])
-                    log.append(
-                        {
-                            "date": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                            "from": old_status,
-                            "to": new_status,
-                            "by": by or "operator",
-                            "comment": comment,
-                        }
-                    )
-                    updates["status_change_log"] = log
+                    audit = {
+                        "date": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "from": old_status,
+                        "to": new_status,
+                        "by": by or "operator",
+                        "comment": comment,
+                    }
 
-        entry = self.kb_svc.update_entry(task_id, kb_name, **updates)
+        if audit is not None:
+            # The audit entry is appended as one item; the earlier entries and
+            # every other key keep their bytes (ADR-0042 decision 1; #955 P3b).
+            from ..storage.file_operations import Append, ReplaceBody, Set
+
+            ops: list[Any] = [Set(k, v) for k, v in updates.items() if k != "body"]
+            if "body" in updates:
+                ops.append(ReplaceBody(updates["body"]))
+            ops.append(Append("status_change_log", audit))
+            entry = self.kb_svc.apply_operations(task_id, kb_name, ops).entry
+        else:
+            entry = self.kb_svc.update_entry(task_id, kb_name, **updates)
         return {
             "updated": True,
             "task_id": entry.id,
@@ -695,17 +703,19 @@ class TaskService:
         parent_meta = _parse_metadata(parent.get("metadata") or {})
         parent_evidence = parent_meta.get("evidence", []) or parent.get("evidence", []) or []
 
-        # Merge without duplicates
-        new_evidence = list(set(parent_evidence) | set(child_evidence))
-        if len(new_evidence) == len(parent_evidence):
+        # Only what the parent lacks, each appended as one item in the
+        # child's order; the parent's own items keep their bytes (#955 P3b).
+        from ..storage.file_operations import Append
+
+        missing = [e for e in dict.fromkeys(child_evidence) if e not in parent_evidence]
+        if not missing:
             return None  # Nothing new to add
 
-        self.kb_svc.update_entry(parent_id, kb_name, evidence=new_evidence)
-        added = len(new_evidence) - len(parent_evidence)
+        self.kb_svc.apply_operations(parent_id, kb_name, [Append("evidence", e) for e in missing])
         return {
             "parent_id": parent_id,
-            "evidence_added": added,
-            "total_evidence": len(new_evidence),
+            "evidence_added": len(missing),
+            "total_evidence": len(parent_evidence) + len(missing),
         }
 
     def list_entries_needing_qa(self, kb_name: str | None = None) -> list[dict[str, Any]]:
@@ -748,8 +758,11 @@ class TaskService:
         evidence = meta.get("evidence", []) or task.get("evidence", []) or []
 
         if assessment_id not in evidence:
+            from ..storage.file_operations import Append
+
             evidence.append(assessment_id)
-            self.kb_svc.update_entry(task_id, kb_name, evidence=evidence)
+            # One appended item; the other items keep their bytes (#955 P3b).
+            self.kb_svc.apply_operations(task_id, kb_name, [Append("evidence", assessment_id)])
 
         return {
             "linked": True,

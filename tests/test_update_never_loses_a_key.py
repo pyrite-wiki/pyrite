@@ -222,14 +222,11 @@ def test_an_explicit_update_of_a_kept_key_still_lands(tmp_path, value):
     )
 
 
-@pytest.mark.control(
-    reason="an in-place change always reached the file; this pins that the "
-    "kept-source rule notices a field changed without an assignment"
-)
-def test_an_in_place_change_of_a_kept_key_still_lands(tmp_path):
-    """`links: [alpha]` is kept as written until something changes the list;
-    `add_link` appends to it in place, without assigning the attribute, and
-    that change must still reach the file."""
+def test_a_link_added_to_a_kept_shorthand_list_leaves_the_shorthand_as_written(tmp_path):
+    """`links: [alpha]` is a shorthand the model reads lossily (`- alpha` is
+    a target with the default relation). `add_link` used to re-emit the whole
+    list in the model's shape; since #955 (B6 P4) it appends one item and the
+    shorthand keeps its bytes, and the model still reads both links."""
     text = "---\nid: d\ntitle: D\ntype: note\nlinks:\n- alpha\n---\n\nBody.\n"
     other = "---\nid: beta\ntitle: Beta\ntype: note\n---\n\nBody.\n"
     config, kb_path = _env(tmp_path, {"notes/d.md": text, "notes/beta.md": other})
@@ -238,7 +235,8 @@ def test_an_in_place_change_of_a_kept_key_still_lands(tmp_path):
 
     saved = KBRepository(config.get_kb(KB)).load("d")
     assert [link.target for link in saved.links] == ["alpha", "beta"]
-    assert "- alpha" not in (kb_path / "notes" / "d.md").read_text(encoding="utf-8")
+    after = (kb_path / "notes" / "d.md").read_text(encoding="utf-8")
+    assert "links:\n- alpha\n- target: beta\n" in after, after
 
 
 @pytest.mark.control(

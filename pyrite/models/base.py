@@ -16,7 +16,7 @@ from typing import Any, ClassVar
 
 from ..schema import Link, Provenance, Source
 from ..utils.frontmatter import require_frontmatter
-from ..utils.yaml import dump_yaml, load_yaml
+from ..utils.yaml import load_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -158,11 +158,12 @@ def capture_extra_frontmatter(entry: "Entry", meta: dict[str, Any]) -> None:
     entry._unparsed_timestamp_keys = frozenset(
         k for k in _TIMESTAMP_KEYS if k in meta and _timestamp_instant(meta[k]) is None
     )
-    # Keep the mapping as ruamel parsed it, for style on the way back out.
-    # Stored by reference, not copied: copying is what mangled anchors and
-    # merge keys, and the write path only ever READS this. Two entries loaded
-    # from one `meta` dict therefore share it -- safe while it stays read-only,
-    # so do not mutate it here or in _restyle_like_source.
+    # Keep the mapping as ruamel parsed it: the write path reads it to know
+    # which keys the file carried (`_frontmatter_for_file`, the timestamp
+    # bookkeeping). Stored by reference, not copied: copying is what mangled
+    # anchors and merge keys, and nothing ever writes to it. Two entries
+    # loaded from one `meta` dict therefore share it -- safe while it stays
+    # read-only, so do not mutate it here.
     entry._source_frontmatter = meta
     try:
         emitted = entry.to_frontmatter()
@@ -219,36 +220,15 @@ def _plain(value: Any) -> Any:
     return value
 
 
-def _keep_sequence_style(old: Any, new: Any) -> Any:
-    """Return ``new``, rendered in ``old``'s sequence style where that applies.
-
-    A list whose contents changed still wants the brackets it had:
-    `tags: [a, b]` edited to three tags should stay on one line rather than
-    becoming a four-line block list.
-    """
-    if not isinstance(new, list) or isinstance(new, str):
-        return new
-    try:
-        from ruamel.yaml.comments import CommentedSeq
-
-        if isinstance(old, CommentedSeq) and old.fa.flow_style():
-            seq = CommentedSeq(new)
-            seq.fa.set_flow_style()
-            return seq
-    except Exception:  # style is a nicety; never fail a save for it
-        logger.debug("could not carry sequence style", exc_info=True)
-    return new
-
-
 def _timestamp_instant(value: Any) -> datetime | None:
     """``value`` as a UTC instant, or ``None`` when it is not one.
 
     Two callers ask different questions of the same answer: whether a source
-    node parses at all (``capture_extra_frontmatter``) and whether a freshly
-    built value still means the same instant as the source node
-    (``_timestamp_same_instant``). ``None``, ``''`` and ``Jan 15 2026`` are not
-    instants. A bare ``date`` is midnight UTC and a naive ``datetime`` is read
-    as UTC, both matching ``parse_datetime``.
+    node parses at all (``capture_extra_frontmatter``) and whether a file's
+    ``updated_at`` is an instant the write path may stamp
+    (``storage.entry_writer.updated_at_stamp``). ``None``, ``''`` and
+    ``Jan 15 2026`` are not instants. A bare ``date`` is midnight UTC and a
+    naive ``datetime`` is read as UTC, both matching ``parse_datetime``.
     """
     value = _plain(value)
     if isinstance(value, datetime):
@@ -262,81 +242,6 @@ def _timestamp_instant(value: Any) -> datetime | None:
             return None
         return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
     return None
-
-
-def _timestamp_same_instant(old: Any, new: Any) -> bool:
-    """True when ``new`` re-serialises the same instant as the raw ``old``
-    source node, so the source node (and its style) can be kept.
-
-    ``#151`` normalises a bare YAML date to a ``datetime`` on load, and the
-    write path hands ruamel a ``datetime`` back, so the plain equality check
-    in ``_restyle_like_source`` no longer sees them as "unchanged" and would
-    replace `created_at: 2026-01-15` with a full timestamp. Comparing the
-    parsed instants instead keeps the original node whenever the value still
-    means what the file said; a genuinely changed timestamp (a refreshed
-    `updated_at`, say) still falls through and is written in the new form.
-    Naive values are read as UTC, matching ``parse_datetime``.
-
-    Only timestamps take this path -- see the ``key in _TIMESTAMP_KEYS``
-    guard in ``_restyle_like_source``. Applying it to every key would let an
-    edit of a title from `"2026-01-15"` to `"2026-01-15T00:00:00Z"` keep the
-    old node: the CLI would report success and the file would never change.
-    """
-    parsed_old = _timestamp_instant(old)
-    parsed_new = _timestamp_instant(new)
-    return parsed_old is not None and parsed_new is not None and parsed_old == parsed_new
-
-
-def _restyle_like_source(meta: dict[str, Any], source: Any) -> dict[str, Any]:
-    """Re-emit ``meta`` in ``source``'s key order and YAML style.
-
-    ``meta`` is a freshly built plain dict: correct in content, but it has lost
-    the key order, quoting and flow/block style that ruamel preserved when the
-    file was read. Writing it as-is turns a one-field update into a diff that
-    touches every line, which is how the #46 frontmatter corruption stayed
-    invisible in review.
-
-    For each key ``source`` had and ``meta`` still has, the source node is
-    reused *by reference* when the value is unchanged (keeping `tags: [a, b]`
-    inline, `"2026-07-03"` quoted, and any anchor or merge key intact) and
-    replaced when it is not. Keys dropped from ``meta`` are dropped here too,
-    and keys ``meta`` added are appended in its own order. With no source -- a
-    newly created entry -- ``meta`` is returned untouched.
-    """
-    if not isinstance(source, Mapping):
-        return meta
-
-    try:
-        from ruamel.yaml.comments import CommentedMap
-
-        restyled: Any = CommentedMap()
-    except Exception:  # no ruamel: order still helps, style is a nicety
-        logger.debug("restyle: ruamel CommentedMap unavailable", exc_info=True)
-        restyled = {}
-
-    # Source order first, then whatever `meta` added, in its own order.
-    #
-    # Unchanged values are carried over BY REFERENCE, never copied. An earlier
-    # version deep-copied the whole source mapping to inherit its style, which
-    # also resolved YAML anchors and merge keys: `<<: *anch` came back as a
-    # literal `<<:` key whose value was the merged mapping, and the merged keys
-    # were then emitted a second time as siblings -- a duplicate key in a file
-    # that had none. Referencing the original node keeps its anchor, alias,
-    # merge and comment attachments exactly as ruamel parsed them.
-    for key, old in source.items():
-        if key not in meta:
-            continue
-        new = meta[key]
-        unchanged = _plain(old) == _plain(new) or (
-            key in _TIMESTAMP_KEYS and _timestamp_same_instant(old, new)
-        )
-        restyled[key] = old if unchanged else _keep_sequence_style(old, new)
-
-    for key, value in meta.items():
-        if key not in restyled:
-            restyled[key] = value
-
-    return restyled
 
 
 @dataclass
@@ -598,12 +503,10 @@ class Entry(ABC):
         # them, and neither must a newly created entry (#46).
         #
         # Emitted as a datetime (second precision), not as an isoformat()
-        # string: ruamel writes a str *quoted* and keeps the microseconds,
-        # while a datetime becomes a plain YAML timestamp -- the shape such
-        # files already use. A value the source file already had is restored
-        # to its original node (and therefore its original style) by
-        # _restyle_like_source, so this only decides the shape of a *changed*
-        # value.
+        # string: `apply` writes a datetime as a plain YAML timestamp -- the
+        # shape such files already use -- and a str quoted. A key the file
+        # already holds keeps its own bytes (an update names only what it
+        # changes), so this only decides the shape of a *new* value.
         if self._source_frontmatter is not None:
             for ts_key in _TIMESTAMP_KEYS:
                 if ts_key not in self._absent_default_keys:
@@ -709,16 +612,6 @@ class Entry(ABC):
             return {}
         return {k: source[k] for k in (self._unrepresented_keys or {}) if k in source}
 
-    def to_markdown(self) -> str:
-        """Convert to markdown string with YAML frontmatter."""
-        meta = _restyle_like_source(self._frontmatter_for_file(), self._source_frontmatter)
-        yaml_front = dump_yaml(meta)
-        # Exactly one trailing newline: the loader strips the body anyway, and a
-        # body that already ended in newlines produced a blank last line that
-        # failed the end-of-file hook on every freshly created entry.
-        body = self.body.rstrip("\n")
-        return f"---\n{yaml_front}\n---\n" + (f"\n{body}\n" if body else "")
-
     @classmethod
     def from_markdown(cls, text: str) -> "Entry":
         """Parse from markdown string with YAML frontmatter.
@@ -752,185 +645,6 @@ class Entry(ABC):
         entry = cls.from_markdown(text)
         entry.file_path = path
         return entry
-
-    @staticmethod
-    def _publish_exclusive(tmp: str, path: Path) -> None:
-        """Publish ``tmp`` to ``path``, refusing if ``path`` already exists.
-
-        The contract: publish exactly the new file at ``path`` and leave
-        nothing behind that the caller cannot name, or raise and leave
-        ``path`` as it was. Mechanisms, in order:
-
-        1. ``os.link(tmp, path)`` -- atomic, never exposes a partial file.
-           ``FileExistsError`` stops here. Any other error (no hard links on
-           FAT/exFAT, EACCES on some network shares, FUSE-specific errnos)
-           goes on to step 2, which is still exclusive (#391 round 3; #643
-           review: an errno allow-list here failed every create on those).
-        2. ``os.open(path, O_CREAT | O_EXCL)`` claims the name, then
-           ``os.replace(tmp, path)`` fills it: the replace only targets a
-           path this call just created. If anything after the claim fails,
-           the placeholder is removed while it is still ours (#477).
-           ``FileExistsError`` stops here; so does any error other than
-           "unsupported" (ENOSPC, EDQUOT, EIO...), with ``path`` untouched.
-        3. Only if O_EXCL itself is unsupported (ENOTSUP, ENOSYS,
-           EOPNOTSUPP): a plain ``os.replace``, guarded only by the write
-           pipeline's own ``exists()`` check, as before this method existed.
-
-        ``FileExistsError`` is raised whenever step 1 or 2 finds ``path``
-        taken; this never knowingly overwrites it. ``tmp`` belongs to the
-        caller until a mechanism consumes it: on success it is gone (moved by
-        ``os.replace``, or unlinked after step 1 -- if that unlink fails twice
-        the save still succeeds and a warning names the leftover); on a raise
-        it is still there, and ``save()`` removes it.
-        """
-        import errno
-        import os
-
-        unsupported_errnos = {errno.ENOTSUP, errno.ENOSYS}
-        unsupported_errnos.add(getattr(errno, "EOPNOTSUPP", errno.ENOTSUP))
-
-        try:
-            os.link(tmp, path)
-        except FileExistsError:
-            raise
-        except OSError:
-            pass  # step 2 is still exclusive, and re-raises real I/O errors
-        else:
-            # The target is already published. Keep cleanup outside the try
-            # above so an unlink error can never be mistaken for a link failure.
-            # Retry once for transient filesystem/antivirus sharing errors;
-            # publication already succeeded, so persistent cleanup failure
-            # must not turn the save into a reported failure.
-            try:
-                os.unlink(tmp)
-            except OSError:
-                try:
-                    os.unlink(tmp)
-                except OSError:
-                    # Not harmless since #752: a second hard link to the entry
-                    # blocks `ids pin` (nlink > 1) and keeps today's content
-                    # after the next update gives the entry a new inode.
-                    logger.warning(
-                        "saved %s, but could not remove its temp name %s, a second "
-                        "hard link to the same file; delete it by hand",
-                        path,
-                        tmp,
-                        exc_info=True,
-                    )
-            return
-
-        try:
-            claim_fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            raise
-        except OSError as exc:
-            if exc.errno not in unsupported_errnos:
-                raise
-            # This filesystem supports neither atomic mechanism. Preserve the
-            # historical best-effort behavior only for that explicit case.
-            os.replace(tmp, path)
-            return
-
-        # From here the placeholder at `path` is ours: everything up to a
-        # successful replace runs inside one cleanup scope (#643 review item 3).
-        claim_stat = None
-        try:
-            try:
-                claim_stat = os.fstat(claim_fd)
-            finally:
-                os.close(claim_fd)
-            os.replace(tmp, path)
-        except BaseException:
-            Entry._remove_claim(path, claim_stat)
-            raise
-
-    @staticmethod
-    def _remove_claim(path: Path, claim_stat: Any) -> None:
-        """Remove the O_EXCL placeholder at ``path`` if it is still ours.
-
-        With the claim's identity (``claim_stat``), remove ``path`` only while
-        it names that same file: a writer that replaced it in the meantime
-        owns the new target. Without it (``fstat`` failed), remove ``path``
-        only while it is empty: the placeholder is 0 bytes and no entry file
-        ever is. Best effort either way; the caller is already raising.
-
-        There is a narrow gap between the ``os.stat`` and the ``os.unlink``:
-        a concurrent non-exclusive replace landing inside it would be removed.
-        POSIX has no unlink-if-inode; the window is a few syscalls wide and
-        needs a second writer that bypassed the exclusive path. The identity
-        test shares that window in one more way: if the placeholder is unlinked
-        and a new file reuses its inode number, ``samestat`` matches the new
-        file. That needs the same outside writer inside the same window.
-        """
-        import os
-
-        try:
-            current = os.stat(path)
-            if claim_stat is not None:
-                ours = os.path.samestat(claim_stat, current)
-            else:
-                ours = current.st_size == 0
-            if ours:
-                os.unlink(path)
-        except OSError:
-            pass
-
-    def save(self, path: Path | None = None, *, exclusive: bool = False) -> Path:
-        """Save entry to file.
-
-        Args:
-            path: Target path; defaults to ``self.file_path``.
-            exclusive: ``True`` publishes exclusively (see
-                :meth:`_publish_exclusive`) instead of with ``os.replace`` --
-                it raises ``FileExistsError`` if ``path`` already exists,
-                instead of silently overwriting it. For the create path only
-                (#391 cold read round 2): the write-pipeline's own
-                `resolved_path.exists()` check and this publish step are two
-                different moments, so two truly concurrent creates can both
-                pass the check before either publishes. This closes that
-                window at the one place a filesystem call can enforce it
-                atomically; it does not replace the check (which gives the
-                friendlier error message and DB-index-consistency path in
-                the common, non-racing case).
-        """
-        if path is None:
-            path = self.file_path
-        if path is None:
-            raise ValueError("No path specified and no file_path set")
-
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Atomic replace: agents race on the same file (claim vs reset, claim
-        # vs claim) and a plain write_text lets a concurrent load() read a
-        # truncated file. Temp file in the same directory so the rename is
-        # atomic on POSIX and Windows; a failed write leaves the old file intact.
-        import os
-        import tempfile
-
-        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(self.to_markdown())
-            # mkstemp gives 0600; keep the existing file's mode, or what a
-            # plain write would have produced under the current umask.
-            try:
-                mode = os.stat(path).st_mode & 0o777
-            except FileNotFoundError:
-                umask = os.umask(0)
-                os.umask(umask)
-                mode = 0o666 & ~umask
-            os.chmod(tmp, mode)
-            if exclusive:
-                self._publish_exclusive(tmp, path)
-            else:
-                os.replace(tmp, path)
-        except BaseException:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
-        self.file_path = path
-        return path
 
     def add_link(self, target: str, relation: str, note: str = "", kb: str = "") -> None:
         """Add a link to another entry."""

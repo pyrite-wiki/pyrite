@@ -12,6 +12,7 @@ from pyrite.models.task import (
     requires_reason,
 )
 from pyrite.models.task_validators import validate_task
+from pyrite.storage.repository import new_entry_text
 from pyrite.server.tool_schemas import READ_TOOLS, WRITE_TOOLS
 
 
@@ -157,6 +158,9 @@ class TestTaskEntry:
         entry = TaskEntry.from_frontmatter(meta, "")
         assert entry.parent == "old-parent"
 
+    @pytest.mark.control(
+        reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+    )
     def test_roundtrip_markdown(self):
         entry = TaskEntry(
             id="task-001",
@@ -166,7 +170,7 @@ class TestTaskEntry:
             priority=3,
             tags=["api"],
         )
-        md = entry.to_markdown()
+        md = new_entry_text(entry)
         assert "status: in_progress" in md
         assert "priority: 3" in md
         assert "Build the API." in md

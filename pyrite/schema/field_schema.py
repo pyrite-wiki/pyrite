@@ -235,7 +235,7 @@ class TypeSchema:
         (returns ``None``), the recorded #391 acceptance: a placeholder is a
         convenience, not a requirement the caller must satisfy field by
         field. A placeholder using anything but a plain field name (`{0}`,
-        `{title.upper}`, a non-data attribute like `{save}`), a format spec
+        `{title.upper}`, a non-data attribute like `{load}`), a format spec
         the value cannot satisfy (e.g. ``:04d`` on a string), a NUL byte, or
         a resolved filename longer than ~200 bytes all raise
         :class:`~pyrite.exceptions.ValidationError` instead -- these are
@@ -298,7 +298,7 @@ class TypeSchema:
                 value = meta[field_name]
             elif hasattr(entry, field_name):
                 # A plain identifier that resolves to something on the
-                # entry that is NOT a data field -- a method (`{save}`), a
+                # entry that is NOT a data field -- a method (`{load}`), a
                 # property, whatever -- puts that object's repr in the
                 # filename if we let `.format()` touch it. That is a
                 # pattern bug, refused, not an ordinarily-missing field.

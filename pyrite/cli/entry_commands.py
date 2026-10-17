@@ -540,6 +540,17 @@ def register_entry_commands(app: typer.Typer) -> None:
         field: list[str] | None = typer.Option(
             None, "--field", "-f", help="Extra field as key=value"
         ),
+        append: list[str] | None = typer.Option(
+            None,
+            "--append",
+            help="Add one item to a list field, as key=value (a JSON list adds each)",
+        ),
+        remove: list[str] | None = typer.Option(
+            None, "--remove", help="Remove one item from a list field, as key=value"
+        ),
+        unset: list[str] | None = typer.Option(
+            None, "--unset", help="Remove a key with its own lines (null is a value, not a removal)"
+        ),
         output_format: str = OUTPUT_FORMAT,
     ) -> Outcome:
         """Update an existing entry."""
@@ -559,10 +570,14 @@ def register_entry_commands(app: typer.Typer) -> None:
             and importance is None
             and lifecycle is None
             and not field
+            and not append
+            and not remove
+            and not unset
         ):
             raise ValidationError(
                 "Nothing to update: name at least one of --title, --body, --body-file, "
-                "--stdin, --tags, --importance, --lifecycle or --field."
+                "--stdin, --tags, --importance, --lifecycle, --field, --append, --remove "
+                "or --unset."
             )
 
         updates: dict[str, Any] = {}
@@ -591,10 +606,26 @@ def register_entry_commands(app: typer.Typer) -> None:
                         v, _field_type_for(config, kb_name, entry_type, k)
                     )
 
+            def items(pairs: list[str] | None) -> dict[str, Any]:
+                out: dict[str, Any] = {}
+                for fv in pairs or []:
+                    if "=" not in fv:
+                        raise ValidationError(f"expected key=value, got '{fv}'")
+                    k, v = fv.split("=", 1)
+                    out[k] = _parse_field_value(v, _field_type_for(config, kb_name, entry_type, k))
+                return out
+
             # ADR-0034 rule 2 and schema validation are the service's (#378):
             # `updates` goes through as given, marker keys included.
             try:
-                written = svc.update(entry_id, kb_name, updates)
+                written = svc.update(
+                    entry_id,
+                    kb_name,
+                    updates,
+                    append=items(append) or None,
+                    remove=items(remove) or None,
+                    unset=list(unset) if unset else None,
+                )
             except ValidationError as e:
                 raise _with_cli_hint(e) from None
         entry = written.entry

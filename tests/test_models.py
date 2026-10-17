@@ -19,6 +19,8 @@ from pyrite.models.core_types import (
     RelationshipEntry,
 )
 from pyrite.models.generic import GenericEntry
+from pyrite.storage.entry_writer import create_entry_text
+from pyrite.storage.repository import new_entry_text
 from pyrite.schema import EventStatus, ResearchStatus
 
 
@@ -39,6 +41,9 @@ class TestEventEntry:
         assert event.id == "2025-01-20--executive-orders-blitz"
         assert event.importance == 9
 
+    @pytest.mark.control(
+        reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+    )
     def test_event_to_markdown(self):
         """Test converting event to markdown."""
         event = EventEntry(
@@ -48,9 +53,11 @@ class TestEventEntry:
             importance=8,
             body="Federal agents conducted sweeping raids.",
         )
-        md = event.to_markdown()
+        md = new_entry_text(event)
         assert "---" in md
-        assert "date: '2025-01-06'" in md or "date: 2025-01-06" in md
+        # A create's text quotes a string YAML would otherwise read as a date
+        # (apply's emitter, ADR-0042 decision 13).
+        assert 'date: "2025-01-06"' in md
         assert "importance: 8" in md
         assert "Federal agents" in md
 
@@ -273,6 +280,9 @@ class TestPersonEntry:
         assert actor.title == "Stephen Miller"
         assert actor.role == "architect"
 
+    @pytest.mark.control(
+        reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+    )
     def test_person_to_markdown(self):
         """Test converting person entry to markdown."""
         entry = PersonEntry(
@@ -282,7 +292,7 @@ class TestPersonEntry:
             importance=10,
             body="## Quick Facts\n- Primary immigration architect",
         )
-        md = entry.to_markdown()
+        md = new_entry_text(entry)
         assert "---" in md
         assert "type: person" in md
         assert "role: architect" in md
@@ -523,6 +533,9 @@ class TestQAAssessmentEntry:
 class TestEntryRoundtrip:
     """Test roundtrip serialization."""
 
+    @pytest.mark.control(
+        reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+    )
     def test_event_roundtrip(self):
         """Test event save and load."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -538,7 +551,7 @@ class TestEntryRoundtrip:
             )
             original.add_source(title="Source", url="https://example.com")
 
-            original.save(path)
+            create_entry_text(path, new_entry_text(original))
             loaded = EventEntry.load(path)
 
             assert loaded.id == original.id
@@ -546,6 +559,9 @@ class TestEntryRoundtrip:
             assert loaded.importance == original.importance
             assert len(loaded.sources) == 1
 
+    @pytest.mark.control(
+        reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+    )
     def test_person_roundtrip(self):
         """Test person entry save and load."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -556,7 +572,7 @@ class TestEntryRoundtrip:
             original.tags = ["test", "actor"]
             original.research_status = ResearchStatus.DRAFT
 
-            original.save(path)
+            create_entry_text(path, new_entry_text(original))
             loaded = PersonEntry.load(path)
 
             assert loaded.id == original.id

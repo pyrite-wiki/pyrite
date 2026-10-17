@@ -13,7 +13,7 @@ Entry type hierarchy built on abstract `Entry` dataclass with composable protoco
 
 ## Architecture
 
-- `base.py` — abstract `Entry` dataclass with `to_frontmatter()`, `from_frontmatter()`, `to_markdown()`, `from_markdown()`
+- `base.py` — abstract `Entry` dataclass with `to_frontmatter()`, `from_frontmatter()`, `from_markdown()` and the load-time records (`capture_extra_frontmatter`, `_frontmatter_for_file`). The model has no `save` and no markdown emitter since #955 (B6 P4): a create's text is `repository.new_entry_text` (its values set onto a skeleton with `apply()`), and every write is published by `pyrite/storage/entry_writer.py`.
 - `protocols.py` — 6 composable mixin dataclasses: Assignable, Temporal, Locatable, Statusable, Prioritizable, Parentable
 - `core_types.py` — 8 concrete types: Note, Person, Organization, Event, Document, Topic, Relationship, Timeline
 - `factory.py` — `build_entry()` canonical creation with type resolution and metadata overflow
@@ -56,4 +56,4 @@ Protocol mixins promote fields to DB columns (Assignable → assignee, Temporal 
 
 - [[entry-factory]] — build_entry() creation path
 - [[entry-protocol-mixins]] — composable field groups
-- [[kb-repository]] — file I/O using Entry.save()/load()
+- [[kb-repository]] — file I/O: `load` / `_load_entry`, `save` (a create, through `new_entry_text` and `create_entry_text`), `rename` (operations on the file's own bytes)

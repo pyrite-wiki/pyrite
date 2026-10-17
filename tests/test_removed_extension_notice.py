@@ -4,12 +4,14 @@ The cascade extension was deleted. A user's KB registered with
 ``kb_type: cascade-timeline`` (or ``cascade-research``,
 ``cascade-solidarity``) is still a KB: its files read and write as generic
 entries. What changes is that nothing declares its types any more, and the
-user deserves one sentence saying why, instead of silently undeclared types.
+user deserves one sentence saying why, instead of a type nothing explains
+(not "undeclared": a kb.yaml that declares no types is unrestricted, #809,
+so health lists nothing for them).
 
 The rule lives in one place, ``pyrite/plugins/removed.py``; two surfaces
 show it: ``orient`` (the first call an agent makes in a KB, CLI and MCP
-share the service) and ``index health`` (where undeclared types are already
-reported). A generic KB sees nothing.
+share the service) and ``index health`` (beside its type reports). A
+generic KB sees nothing.
 """
 
 from __future__ import annotations
@@ -131,6 +133,12 @@ class TestIndexHealthNamesTheRemovedExtension:
         assert row["extension"] == "cascade"
         assert row["entry_types"] == ["actor", "timeline_event"]
         assert _is_the_notice(row["message"]), row
+        # The notice must not call those entries undeclared: a kb.yaml that
+        # declares no types is unrestricted (#809), so they are not, and
+        # `undeclared_types` below says so. They are entries of a type no
+        # extension declares any more, and read and write as generic ones.
+        assert "undeclared" not in row["message"], row["message"]
+        assert "timeline_event" in row["message"] and "generic" in row["message"]
         # The removed extension's types are named by this row, not by
         # `undeclared_types`: a kb.yaml that declares no types is unrestricted
         # (#809, "the schema owns the type vocabulary"), so nothing is

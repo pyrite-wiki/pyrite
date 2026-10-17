@@ -437,6 +437,60 @@ def test_validate_entry_explains_an_unindexed_entry_whose_file_it_finds(tmp_path
     assert [i["rule"] for i in none["issues"]] == ["entry_not_found"]
 
 
+# --- #990: check_health decides from the reconcile's own read which files to parse again ---
+
+#: Every file shape this module knows, with whether the listing names it.
+_EVERY_SHAPE: dict[str, tuple[str, bool]] = {
+    **{name: (text, True) for name, (text, _line, _word) in SHAPES.items()},
+    **{name: (text, line is not None) for name, (text, line) in REFUSALS.items()},
+    **{name: (text, False) for name, text in SPECIAL_PLAIN_KEYS.items()},
+    "good": (GOOD, False),
+    "good with flow values": ("---\nid: g\ntags: [a, b]\nm: {k: 1}\n---\n", False),
+}
+
+
+@pytest.mark.parametrize("name", list(_EVERY_SHAPE))
+def test_the_reconciles_reading_says_whether_a_file_may_be_listed(name: str):
+    """``may_be_unmodellable`` reads the frontmatter the reconcile already
+    loaded (``_source_frontmatter``) and answers False only for a file the
+    listing could not name: all keys plain strings, no set, a block root.
+    A file it answers True for is parsed again by the listing; one that
+    does not load at all is parsed again too (the caller's rule)."""
+    from pyrite.storage.file_operations import may_be_unmodellable
+    from pyrite.utils.yaml import load_yaml
+
+    text, listed = _EVERY_SHAPE[name]
+    split = split_frontmatter(text)
+    assert isinstance(split, Frontmatter)
+    try:
+        loaded = load_yaml(split.text)
+    except Exception:
+        pytest.skip("does not load: the caller parses it again without asking")
+    if listed:
+        assert may_be_unmodellable(loaded), name
+    elif name in ("good", "good with flow values", "value key at the top", "value key nested"):
+        assert not may_be_unmodellable(loaded), name
+    # the typed-keys shape is a True the listing then clears: allowed
+
+
+@pytest.mark.control(
+    reason="the listing agreed with the rule before #990; this pins that skipping the "
+    "second parse of unsuspicious files changes nothing listed"
+)
+def test_index_health_lists_exactly_what_the_rule_says_for_every_shape(tmp_path: Path):
+    files = {f"{i:02d}.md": text for i, (text, _listed) in enumerate(_EVERY_SHAPE.values())}
+    config = _env_with(tmp_path, files)
+    notes = config.knowledge_bases[0].path / "notes"
+    expected = []
+    for file_name in sorted(files):
+        text = (notes / file_name).read_bytes().decode("utf-8")
+        got = unmodellable_reason(text, _span(text))
+        if got is not None:
+            expected.append((file_name, got[1], got[0]))
+    rows = _health(config)["unmodellable_frontmatter"]
+    assert [(Path(r["path"]).name, r["line"], r["reason"]) for r in rows] == expected
+
+
 def test_validate_entry_on_a_duplicate_key_file_agrees_with_the_kb_report(tmp_path: Path):
     """A duplicate-key file cannot be read, so no lookup finds it by id;
     ``qa validate <kb>`` lists it under the file's stem (the id the listing

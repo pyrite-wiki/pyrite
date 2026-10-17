@@ -56,7 +56,7 @@ MAX_BATCH_READ_ENTRIES = 50
 #: Arguments of kb_create / kb_update that steer the tool, never entry fields.
 _CREATE_CONTROL_KEYS = frozenset({"kb_name", "validate", "allow_undeclared"})
 #: Arguments of kb_update that name the entry or steer the tool.
-_UPDATE_CONTROL_KEYS = frozenset({"entry_id", "kb_name", "validate"})
+_UPDATE_CONTROL_KEYS = frozenset({"entry_id", "kb_name", "validate", "append", "remove", "unset"})
 
 
 # Identity fields every `fields` projection keeps. Agents key on these to
@@ -221,6 +221,16 @@ def _error(
     if legacy_error_code is not None:
         r["legacy_error_code"] = legacy_error_code
     return r
+
+
+def _with_old_kb_update_code(refusal: dict) -> dict:
+    """``kb_update``'s ``legacy_error_code`` for a class its old handler never
+    named: ``UPDATE_FAILED``, the one code it answered every such failure
+    with (its ``except PyriteError`` catch-all), kept one release (ADR-0037
+    theme 2). ``_refusal`` alone would carry the module-wide fallback
+    ``REQUEST_REFUSED``, a code ``kb_update`` never gave (#990)."""
+    refusal["legacy_error_code"] = "UPDATE_FAILED"
+    return refusal
 
 
 def _refusal(exc: PyriteError, *, already_logged: bool = False) -> dict:
@@ -1424,15 +1434,27 @@ class PyriteMCPServer:
         )
 
         try:
-            written = self.svc.update(entry_id, kb_name, updates)
-        except (ValidationError, ConflictError) as e:
+            written = self.svc.update(
+                entry_id,
+                kb_name,
+                updates,
+                append=args.get("append"),
+                remove=args.get("remove"),
+                unset=args.get("unset"),
+            )
+        except ValidationError as e:
             return _refusal(e)
+        except ConflictError as e:
+            # A write that lost the race for its file (#955): the class's
+            # own code, with the old code this handler gave everything it
+            # did not name (ADR-0037, one release).
+            return _with_old_kb_update_code(_refusal(e))
         except StorageError as e:
             # A storage fault on the write (a hard-linked file, the lock
             # directory, a lock held too long): the class's own code and
             # `retryable`, its public text, the detail logged once (#431).
             logger.error("Tool kb_update failed: %s", e, exc_info=e)
-            return _refusal(e, already_logged=True)
+            return _with_old_kb_update_code(_refusal(e, already_logged=True))
         except (EntryNotFoundError, KBNotFoundError) as e:
             # Keep the old handler-level spelling for one release while the
             # class code becomes the primary contract (ADR-0037).

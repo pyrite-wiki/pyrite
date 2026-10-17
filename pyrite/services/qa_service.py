@@ -1082,7 +1082,7 @@ class QAService:
             # the KB walk lists it under its stem, so the one-entry report
             # takes the KB walk's own rows for that id and the two agree.
             rows = (
-                unmodellable_files(kb_config, only)
+                unmodellable_files(kb_config, [only])
                 if only is not None
                 else [row for row in unmodellable_files(kb_config) if row["id"] == entry_id]
             )

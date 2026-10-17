@@ -868,6 +868,19 @@ WRITE_TOOLS = {
                 "date": {"type": "string", "description": "Date (YYYY-MM-DD)"},
                 "location": {"type": "string", "description": "Location/venue"},
                 "summary": {"type": "string", "description": "Short summary or subtitle"},
+                "append": {
+                    "type": "object",
+                    "description": 'Add one item to a list field without sending the list: {field: item}; a list value appends each item. Links: {"links": {"target": "id", "relation": "related_to"}}. The other items keep their bytes.',
+                },
+                "remove": {
+                    "type": "object",
+                    "description": "Remove one item equal to the value from a list field: {field: item}; a list value removes each item.",
+                },
+                "unset": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Remove these keys from the frontmatter, with their own lines. Sending null as a field's value sets it to null; it does not remove the key.",
+                },
                 "validate": {
                     "type": "boolean",
                     "description": "Run QA validation after save and return issues. Also runs automatically if KB has qa_on_write: true in kb.yaml.",

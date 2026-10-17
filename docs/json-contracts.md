@@ -120,8 +120,19 @@ Two more in 0.25.8 (#761): MCP `kb_get` and `kb_update` answer a missing
 entry with `ENTRY_NOT_FOUND` and a KB that does not exist with
 `KB_NOT_FOUND`, both `retryable: false`. Their old codes are in
 `legacy_error_code`: `NOT_FOUND` for `kb_get`, and `UPDATE_FAILED` for
-`kb_update`, which used to answer both with `retryable: true`. Any other
-`kb_update` failure is still `UPDATE_FAILED`, `retryable: true`.
+`kb_update`, which used to answer both with `retryable: true`. The
+`UPDATE_FAILED` legacy code for a missing KB holds for an unscoped caller
+only (an operator key, auth off), the one whose call reached the old
+handler; a scoped caller is refused by the resolver before the handler,
+with `legacy_error_code: NOT_FOUND`, as on every other tool (#952). The
+other `kb_update` refusals answer their class's own code, each with
+`legacy_error_code: UPDATE_FAILED`, the one code the old handler gave
+everything it did not name: `CONFLICT` (a write that lost the race for its
+file, `retryable: true`) and `STORAGE_ERROR` (a storage fault on the write;
+`retryable: true` only for a lock held too long) -- see "Update fields"
+below; a `VALIDATION_FAILED` refusal carries no legacy code (the code did
+not change). Any other `kb_update` failure is still `UPDATE_FAILED`,
+`retryable: true`.
 
 **REST** answers a domain refusal as `{"detail": {"code", "message",
 "retryable", "hint"?}}` — the web client already speaks this shape
@@ -298,7 +309,26 @@ then; REST `UpdateResponse` always carries `changed`). The file is replaced
 only if it still holds the bytes the edit was computed on, under a lock in
 the KB's git directory; a file that keeps changing is refused with
 `CONFLICT` (`409` on REST, `retryable: true`). A KB outside git is written
-without a lock and the result says `"locked": false`. A templated-folder
+without a lock and the result says `"locked": false`. An item operation
+(`append`, `remove`) touches the one item it names: the other items keep
+their bytes, and `links`/`sources` take item operations on every surface
+though a set of the whole list is still refused; an appended link is
+checked as a link. Every operation (`set`, `append`, `remove`, `unset`)
+is first resolved onto the file's own key -- an alias to the spelling the
+file uses, `metadata.k` to the top-level `k` (decision 6; the file's own
+`metadata.k` only where it holds one) -- and every refusal is decided on
+that key, in one place, whatever the path form (`k`, `metadata.k`,
+`k[0].x`) or surface: a managed field, `type`, `id` and `body` as a key are
+refused for every operation; `links` and `sources` take an item appended or
+removed as a whole item only (`links[0].x` is refused), and an appended
+item must be a mapping the item type reads (a link: `target` and
+`relation`), checked before anything is written. MCP's `append` and
+`remove` are objects (`{field: item}`), `unset` a list of keys; another
+shape is `VALIDATION_FAILED`. `unset` removes a key with its own lines; a `null`
+value is written as `null` (MCP `kb_update` sets a `null` for an undeclared
+key aside, as before). In-process callers (`qa fix`'s link and tag
+repairs, a task's evidence and audit trail) send one operation each
+(`KBService.apply_operations`), never a list read through the model. A templated-folder
 field on a file with no `id:` line does not move the file; the result says
 why in `not_moved`. Frontmatter Pyrite cannot model (a tagged, complex or
 duplicate key; an anchor on the edited key) is refused with
@@ -441,9 +471,9 @@ they are **not run** (a server would be needed).
 
 | Surface | Call | Success shape |
 |---|---|---|
-| CLI | `pyrite update <id> -k <kb> --title <t>` | **`--format` defaults to `json`:** `{"updated": true, "entry_id": "<id>", "outcome": "done"}`. With `--format rich`: `Updated: <id>`. |
-| MCP | `kb_update` | the block below, plus `"warnings"` when any, `"ignored"` listing keys no update writes, and `"unchanged"` listing fields an echoed read result carried at the value the read returned (not written). |
-| REST (not run) | `PUT /api/entries/{id}` (body carries `kb`) or `PATCH /api/entries/{id}` (body: `kb`, `field`, `value`; one field, `value` a string) | Both return `{"updated": true, "id": "<id>", "warnings": []}`. |
+| CLI | `pyrite update <id> -k <kb> --title <t>`; one item: `--append tags=gamma`, `--remove tags=alpha`, a key: `--unset extra` | **`--format` defaults to `json`:** `{"updated": true, "entry_id": "<id>", "outcome": "done"}`. With `--format rich`: `Updated: <id>`. |
+| MCP | `kb_update`; one item: `"append": {"tags": "gamma"}` or `{"links": {"target": "b", "relation": "related_to"}}`, `"remove": {"tags": "alpha"}`; keys: `"unset": ["extra"]` (a list value under `append`/`remove` means each of its items) | the block below, plus `"warnings"` when any, `"ignored"` listing keys no update writes, and `"unchanged"` listing fields an echoed read result carried at the value the read returned (not written). |
+| REST (not run) | `PUT /api/entries/{id}` (body carries `kb`) or `PATCH /api/entries/{id}` (body: `kb`, `field`, `value`, and `op`: `set` (default), `append`, `remove` or `unset`; one field per call; `value` is the field's value, or the item for `append`/`remove`) | Both return `{"updated": true, "id": "<id>", "warnings": [], "changed": true, "locked": true, "not_moved": null}`. |
 
 <!-- mcp-output: kb_update -->
 ```json

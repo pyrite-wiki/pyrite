@@ -345,9 +345,13 @@ def schema_migrate(
 ):
     """Migrate entries to current schema version.
 
-    Loads and re-saves all entries, applying any pending migrations.
+    ``SchemaService.migrate_entries`` does the work: each entry whose
+    ``_schema_version`` is behind its type's gets the registered migration
+    chain's difference written onto the file's own bytes (#955, B6 P4).
+    A file that could not be read, judged or written is an error, logged
+    here, and counts as neither checked nor migrated.
     """
-    from ..storage.repository import KBRepository
+    from ..services.schema_service import SchemaService
 
     with cli_context(kbs=(kb_name,), output_format="rich") as (config, db, svc):
         kb_config = config.get_kb(kb_name)
@@ -358,38 +362,14 @@ def schema_migrate(
                 suggestion="run `pyrite kb list` to see available knowledge bases",
             )
 
-        repo = KBRepository(kb_config)
-        checked = 0
-        migrated = 0
-        errors = 0
-
-        for file_path in repo.list_files():
-            try:
-                entry = repo._load_entry(file_path)
-                if entry_type and entry.entry_type != entry_type:
-                    continue
-
-                # Check if version changed (migration happened on load)
-                type_schema = kb_config.kb_schema.get_type_schema(entry.entry_type)
-                needs_save = (
-                    type_schema
-                    and type_schema.version > 0
-                    and entry._schema_version != type_schema.version
-                )
-
-                if needs_save and not dry_run:
-                    entry._schema_version = type_schema.version
-                    entry.kb_name = kb_name
-                    entry.file_path = file_path
-                    entry.save(file_path)
-                # Counted after the save: a file that failed to save was neither
-                # checked nor migrated, whatever the summary used to say.
-                checked += 1
-                if needs_save:
-                    migrated += 1
-            except Exception as e:
-                errors += 1
-                logger.warning("Migration error for %s: %s", file_path, e)
+        result = SchemaService(config).migrate_entries(
+            kb_name, entry_type=entry_type, dry_run=dry_run
+        )
+        for failure in result["errors"]:
+            logger.warning("Migration error for %s: %s", failure["path"], failure["error"])
+        checked = result["checked"]
+        migrated = result["migrated"]
+        errors = len(result["errors"])
 
         label = "[dim](dry run)[/dim] " if dry_run else ""
         console.print(f"\n{label}[bold]Migration results for '{kb_name}':[/bold]")

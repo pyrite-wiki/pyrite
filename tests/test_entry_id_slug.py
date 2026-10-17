@@ -12,6 +12,7 @@ import re
 import pytest
 
 from pyrite.models.core_types import NoteEntry
+from pyrite.storage.repository import new_entry_text
 from pyrite.schema import generate_entry_id
 
 SAFE = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
@@ -89,9 +90,12 @@ def test_long_titles_are_capped_at_a_word_boundary():
     assert entry_id.startswith("long-title-word-")
 
 
+@pytest.mark.control(
+    reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+)
 def test_markdown_ends_with_exactly_one_newline():
     # `pyrite create` wrote a trailing blank line, so every new entry failed the
     # end-of-file hook once (#17, second half).
     for body in ("body", "body\n", "body\n\n\n", ""):
-        text = NoteEntry(id="n", title="N", body=body).to_markdown()
+        text = new_entry_text(NoteEntry(id="n", title="N", body=body))
         assert text.endswith("\n") and not text.endswith("\n\n"), repr(text[-6:])

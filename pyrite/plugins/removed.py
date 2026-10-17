@@ -4,7 +4,7 @@ A KB is its files (principle 1): deleting an extension loses no content, it
 only stops declaring the KB's types. A user whose config still says
 ``kb_type: cascade-timeline`` is told so once, in plain words, by the
 surfaces that describe a KB (``orient``) and its health (``index health``),
-instead of meeting silently undeclared types. This module is the one place
+instead of meeting a type nothing explains. This module is the one place
 that rule lives; the surfaces only read it.
 """
 
@@ -99,8 +99,11 @@ def removed_extension_notice(kb_name: str, kb_type: str | None, entry_types=()) 
             f"{ext.name} extension"
         )
     held = removed_entry_types_held(ext, entry_types)
+    # Not "undeclared": a kb.yaml that declares no types is unrestricted
+    # (#809), so health lists nothing for these; they are entries of a type
+    # no extension declares any more.
     held_note = (
-        f" Its {', '.join(held)} entries are undeclared now."
+        f" Nothing declares its {', '.join(held)} entries any more."
         if held and ext.kb_types and kb_type in ext.kb_types
         else ""
     )

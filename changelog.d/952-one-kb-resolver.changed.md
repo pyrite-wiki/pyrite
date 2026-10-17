@@ -15,8 +15,10 @@
   `VALIDATION_FAILED`; a blank KB *path segment* is refused. REST's
   `KB_NOT_FOUND` body is the central handler's (`retryable`, `hint`,
   `did_you_mean`), and MCP's `legacy_error_code` for it is `NOT_FOUND` on
-  every tool, `kb_orient` included, except `kb_update`, whose own old code
-  was `UPDATE_FAILED` (#761). The admin-only KB routes (`PUT`/`DELETE
+  every tool, `kb_orient` included, except `kb_update` for an unscoped
+  caller (an operator key, auth off), whose call reached the old handler and
+  its own old code, `UPDATE_FAILED` (#761); a scoped caller was refused
+  before the handler, with `NOT_FOUND`, and still is. The admin-only KB routes (`PUT`/`DELETE
   /api/kbs/{name}`, `reindex`, `default-role`, `publish`, `commit`, `push`)
   answer the same refusal. A KB resolved from the index registry carries
   every attribute of its config.yaml entry (`read_only`, `shortname`), and a

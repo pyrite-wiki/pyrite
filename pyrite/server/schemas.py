@@ -4,7 +4,7 @@ Pydantic models for the pyrite REST API.
 Extracted from api.py to reduce file size and improve organization.
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -460,11 +460,18 @@ class UpdateEntryRequest(BaseModel):
 
 
 class PatchEntryRequest(BaseModel):
-    """Request to update a single field on an entry."""
+    """Request to update a single field on an entry.
+
+    ``op`` is ``set`` (the default: ``value`` replaces the field; ``null`` is a
+    value), ``append`` or ``remove`` (``value`` is one item of the list
+    ``field``, or a list of items), or ``unset`` (the key is removed with its
+    own lines; ``value`` is ignored). ADR-0042 decision 1; #955, B6 P3b.
+    """
 
     kb: str
     field: str
-    value: str
+    value: Any = None
+    op: Literal["set", "append", "remove", "unset"] = "set"
 
 
 class EntryListResponse(BaseModel):

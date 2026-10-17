@@ -941,9 +941,16 @@ def patch_entry_field(
         except (ValueError, Exception):
             logger.warning("Worktree routing failed for PATCH, falling back to main")
 
-    updates = {body.field: body.value}
+    updates = {body.field: body.value} if body.op == "set" else {}
     try:
-        written = svc.update(entry_id, body.kb, updates)
+        written = svc.update(
+            entry_id,
+            body.kb,
+            updates,
+            append={body.field: body.value} if body.op == "append" else None,
+            remove={body.field: body.value} if body.op == "remove" else None,
+            unset=[body.field] if body.op == "unset" else None,
+        )
     except EntryNotFoundError as e:
         # A KBNotFoundError is never caught here: the write tier resolves the
         # named KB before the handler runs (#952), and one that still arrives

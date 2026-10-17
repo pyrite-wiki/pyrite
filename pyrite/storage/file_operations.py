@@ -177,6 +177,7 @@ import math
 import threading
 import unicodedata
 from collections.abc import Callable, Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, cast
@@ -681,6 +682,37 @@ def frontmatter_refusal(root: Node | None, y: YAML) -> tuple[tuple[str, Node | N
     if duplicate is not None:
         return (_DUPLICATE.format(duplicate.value), duplicate), None
     return None, loaded
+
+
+def may_be_unmodellable(loaded: Any) -> bool:
+    """Whether a frontmatter the reader loaded could be one ``frontmatter_refusal``
+    refuses, from the loaded mapping alone: the cheap gate ``check_health``
+    puts before parsing a file a second time (#990). False only when no
+    refusal can apply: a block-style root (``fa.flow_style()``), every key
+    anywhere a plain string (a ``TaggedScalar``, a tuple, an int or float
+    key is not), and no set (ruamel discards a set member's value, so a key
+    inside it shows only in the document's own construction). A mapping
+    that is not ruamel's (``fa`` missing: a migration rebuilt it) is True. A
+    file that does not load at all never reaches this: the caller parses it
+    again (a duplicate key is refused; the rest is "does not parse").
+    """
+    fa = getattr(loaded, "fa", None)
+    if not isinstance(loaded, Mapping) or fa is None or fa.flow_style():
+        return True
+    return _holds_odd_key(loaded, set())
+
+
+def _holds_odd_key(value: Any, seen: set[int]) -> bool:
+    if id(value) in seen:
+        return False
+    seen.add(id(value))
+    if isinstance(value, Mapping):
+        return any(not isinstance(k, str) or _holds_odd_key(v, seen) for k, v in value.items())
+    if isinstance(value, AbstractSet):
+        return True
+    if isinstance(value, list | tuple):
+        return any(_holds_odd_key(v, seen) for v in value)
+    return False
 
 
 def _construct(root: Node, y: YAML) -> tuple[Any, dict[Node, Any]]:
