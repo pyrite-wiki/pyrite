@@ -13,7 +13,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from ..config import load_config
-from ..exceptions import QuerySyntaxError, QueryTooLongError, ValidationError
+from ..exceptions import QuerySyntaxError, QueryTooLongError, StorageError, ValidationError
 from ..services.read_shaping import (
     IDENTITY_FIELDS,
     SEARCH_FIELDS_ENV,
@@ -360,6 +360,10 @@ def register_search_command(app: typer.Typer):
             # messages below are not enough to troubleshoot from.
             logger.debug("Index search failed for query %r", query, exc_info=True)
             if output_format != "rich":
+                if isinstance(e, StorageError):
+                    from ..utils.errors import cli_error_from
+
+                    cli_error_from(e, output_format)
                 import json
 
                 typer.echo(

@@ -15,8 +15,10 @@ from datetime import date, datetime
 from pathlib import Path
 
 from sqlalchemy import create_engine, event, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
+from ..exceptions import StorageError
 from .backends.sqlite_backend import SQLiteBackend
 from .models import Base
 from .virtual_tables import create_fts_tables, create_vec_table
@@ -61,77 +63,118 @@ sqlite3.register_adapter(datetime, lambda dt: dt.isoformat())
 sqlite3.register_adapter(date, lambda d: d.isoformat())
 sqlite3.register_converter("timestamp", lambda b: datetime.fromisoformat(b.decode()))
 
+_CORRUPT_INDEX_SUGGESTION = (
+    "Remove or move the unreadable index file and run `pyrite index build` "
+    "to rebuild the index from markdown files."
+)
+
 
 class ConnectionMixin:
     """Database connection, extensions, migrations, and plugin table creation."""
 
     def _init_connection(self, db_path: Path):
         self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.engine = None
+        self._sa_conn = None
+        try:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            if self.db_path.is_dir():
+                raise IsADirectoryError(f"Index path is a directory: {self.db_path}")
+            if self.db_path.exists():
+                size = self.db_path.stat().st_size
+                if size > 0:
+                    with self.db_path.open("rb") as fh:
+                        header = fh.read(100)
+                    if len(header) < 100 or not header.startswith(b"SQLite format 3\x00"):
+                        raise sqlite3.DatabaseError("file is not a database")
+                    raw_page_size = int.from_bytes(header[16:18], "big")
+                    page_size = 65536 if raw_page_size == 1 else raw_page_size
+                    in_header_pages = int.from_bytes(header[28:32], "big")
+                    if (
+                        page_size < 512
+                        or size % page_size != 0
+                        or (in_header_pages > 0 and size < page_size * in_header_pages)
+                    ):
+                        raise sqlite3.DatabaseError("database disk image is malformed")
 
-        # Create SQLAlchemy engine.
-        #
-        # `check_same_thread: False` stays: the pool hands a connection to
-        # whichever thread checks it out, and with a session per scope no two
-        # threads share one. It is safe here precisely *because* the session
-        # is no longer shared — it was the flag that made the shared-session
-        # bug silent rather than a clean sqlite3 ProgrammingError (#131).
-        self.engine = create_engine(
-            f"sqlite:///{self.db_path}",
-            echo=False,
-            connect_args={"check_same_thread": False},
-            pool_size=_POOL_SIZE,
-            max_overflow=_MAX_OVERFLOW,
-            pool_pre_ping=True,
-        )
+            # Create SQLAlchemy engine.
+            #
+            # `check_same_thread: False` stays: the pool hands a connection to
+            # whichever thread checks it out, and with a session per scope no two
+            # threads share one. It is safe here precisely *because* the session
+            # is no longer shared — it was the flag that made the shared-session
+            # bug silent rather than a clean sqlite3 ProgrammingError (#131).
+            self.engine = create_engine(
+                f"sqlite:///{self.db_path}",
+                echo=False,
+                connect_args={"check_same_thread": False},
+                pool_size=_POOL_SIZE,
+                max_overflow=_MAX_OVERFLOW,
+                pool_pre_ping=True,
+            )
 
-        # Set SQLite pragmas on every connection
-        @event.listens_for(self.engine, "connect")
-        def set_sqlite_pragma(dbapi_connection, connection_record):
-            cursor = dbapi_connection.cursor()
-            cursor.execute("PRAGMA foreign_keys = ON")
-            cursor.execute("PRAGMA journal_mode = WAL")
-            cursor.execute("PRAGMA synchronous = NORMAL")
-            cursor.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
-            cursor.close()
+            # Set SQLite pragmas on every connection
+            @event.listens_for(self.engine, "connect")
+            def set_sqlite_pragma(dbapi_connection, connection_record):
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA foreign_keys = ON")
+                cursor.execute("PRAGMA journal_mode = WAL")
+                cursor.execute("PRAGMA synchronous = NORMAL")
+                cursor.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+                cursor.close()
 
-        # Create ORM tables
-        Base.metadata.create_all(self.engine)
+            # Create ORM tables
+            Base.metadata.create_all(self.engine)
 
-        # Session factory. There is deliberately no long-lived *shared*
-        # Session: one Session used by concurrent threads corrupts SQLAlchemy's
-        # result state (#131). `self.session` below resolves per thread — the
-        # innermost `session_scope()` on this thread, or a per-thread fallback
-        # for callers that never open a scope.
-        #
-        # `_local` holds both: `.scopes` is the stack of active scopes and
-        # `.fallback` the scope-free session. Single-threaded callers (the CLI,
-        # `pyrite index build`, most tests) see exactly the previous behaviour
-        # — one long-lived Session, so an uncommitted ORM change is still
-        # visible to the next call on that thread. See `session` for why this
-        # is thread-local rather than a ContextVar.
-        self._session_factory = sessionmaker(bind=self.engine, expire_on_commit=False)
-        self._local = threading.local()
-        self._fallback_sessions: list[Session] = []
-        self._fallback_lock = threading.Lock()
+            # Session factory. There is deliberately no long-lived *shared*
+            # Session: one Session used by concurrent threads corrupts SQLAlchemy's
+            # result state (#131). `self.session` below resolves per thread — the
+            # innermost `session_scope()` on this thread, or a per-thread fallback
+            # for callers that never open a scope.
+            #
+            # `_local` holds both: `.scopes` is the stack of active scopes and
+            # `.fallback` the scope-free session. Single-threaded callers (the CLI,
+            # `pyrite index build`, most tests) see exactly the previous behaviour
+            # — one long-lived Session, so an uncommitted ORM change is still
+            # visible to the next call on that thread. See `session` for why this
+            # is thread-local rather than a ContextVar.
+            self._session_factory = sessionmaker(bind=self.engine, expire_on_commit=False)
+            self._local = threading.local()
+            self._fallback_sessions: list[Session] = []
+            self._fallback_lock = threading.Lock()
 
-        # Raw sqlite3 connection for the FTS5 / sqlite-vec virtual tables and
-        # migrations. sqlite3 serialises internally, but see `_raw_cursor()`
-        # below: a shared *cursor* is what is unsafe, so raw reads take their
-        # own cursor under a lock rather than sharing one (#131 criterion 7).
-        self._sa_conn = self.engine.connect()
-        self._raw_conn = self._sa_conn.connection.dbapi_connection
-        self._raw_conn.row_factory = sqlite3.Row
-        self._raw_lock = threading.RLock()
+            # Raw sqlite3 connection for the FTS5 / sqlite-vec virtual tables and
+            # migrations. sqlite3 serialises internally, but see `_raw_cursor()`
+            # below: a shared *cursor* is what is unsafe, so raw reads take their
+            # own cursor under a lock rather than sharing one (#131 criterion 7).
+            self._sa_conn = self.engine.connect()
+            self._raw_conn = self._sa_conn.connection.dbapi_connection
+            self._raw_conn.row_factory = sqlite3.Row
+            self._raw_lock = threading.RLock()
 
-        # Load extensions and create virtual tables
-        self._load_extensions()
-        create_fts_tables(self._raw_conn)
-        if self.vec_available:
-            create_vec_table(self._raw_conn)
+            # Load extensions and create virtual tables
+            self._load_extensions()
+            create_fts_tables(self._raw_conn)
+            if self.vec_available:
+                create_vec_table(self._raw_conn)
 
-        self._run_migrations()
-        self._create_plugin_tables()
+            self._run_migrations()
+            self._create_plugin_tables()
+        except (OSError, sqlite3.Error, SQLAlchemyError) as exc:
+            if self._sa_conn is not None:
+                try:
+                    self._sa_conn.close()
+                except Exception:
+                    pass
+                self._sa_conn = None
+            if self.engine is not None:
+                try:
+                    self.engine.dispose()
+                except Exception:
+                    pass
+            err = StorageError(f"Cannot open index database at {self.db_path}: {exc}")
+            err.suggestion = _CORRUPT_INDEX_SUGGESTION
+            raise err from exc
 
         # Instantiate the search backend.
         #

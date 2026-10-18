@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy.exc import SQLAlchemyError
 
 from ..config import PyriteConfig, load_config
-from ..exceptions import PyriteError
+from ..exceptions import PyriteError, StorageError
 from ..services.kb_registry_service import KBRegistryService
 from ..services.kb_service import KBService
 from ..storage.database import PyriteDB
@@ -182,7 +182,7 @@ def open_index_for_validation(
     """
     try:
         config, db = get_config_and_db(config)
-    except (OSError, sqlite3.Error, SQLAlchemyError) as exc:
+    except (OSError, sqlite3.Error, SQLAlchemyError, StorageError) as exc:
         logger.warning(
             "Could not read index database %s while validating KBs; "
             "using YAML config without content-drift checks: %s",
@@ -193,7 +193,7 @@ def open_index_for_validation(
 
     try:
         health = IndexManager(db, config).check_health()
-    except (sqlite3.Error, SQLAlchemyError) as exc:
+    except (sqlite3.Error, SQLAlchemyError, StorageError) as exc:
         logger.warning(
             "Could not read index database %s while validating KBs; "
             "using YAML config without content-drift checks: %s",
@@ -228,7 +228,7 @@ def get_config_with_registered_kbs(
             db.merge_registered_kbs(config)
         finally:
             db.close()
-    except (OSError, sqlite3.Error, SQLAlchemyError) as exc:
+    except (OSError, sqlite3.Error, SQLAlchemyError, StorageError) as exc:
         logger.warning(
             "Could not read KB registry from index database %s while resolving %r; "
             "using YAML config: %s",
