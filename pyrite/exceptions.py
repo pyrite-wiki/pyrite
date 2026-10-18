@@ -357,6 +357,7 @@ class StorageError(PyriteError):
         "log for the underlying error."
     )
     retryable: bool = False
+    suggestion: str | None = None
 
 
 class IndexSyncRecoveryHintError(StorageError):

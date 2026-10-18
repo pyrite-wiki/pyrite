@@ -154,6 +154,18 @@ class TestZeroByteIndexKeepsWorking:
 
 
 class TestSearchCatchAllDoesNotSwallowStorageError:
+    def test_search_rich_format_does_not_fall_back_to_file_search_on_corrupt_index(
+        self, scratch_home: dict[str, Path]
+    ):
+        scratch_home["index_db"].write_bytes(b"garbage")
+
+        result = runner.invoke(app, ["search", "Body", "--format", "rich"])
+
+        assert result.exit_code == 1
+        assert "STORAGE_ERROR" in result.stdout
+        assert "pyrite index build" in result.stdout
+        assert "Falling back to file search" not in result.stdout
+
     @pytest.mark.parametrize("fmt", ["json", "yaml", "csv", "markdown"])
     def test_search_machine_formats_emit_storage_error_instead_of_catchall_payload(
         self, scratch_home: dict[str, Path], fmt: str

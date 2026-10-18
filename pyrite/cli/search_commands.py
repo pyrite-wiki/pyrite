@@ -354,16 +354,16 @@ def register_search_command(app: typer.Typer):
                 ),
                 retryable=False,
             )
+        except StorageError as e:
+            from ..utils.errors import cli_error_from
+
+            cli_error_from(e, output_format)
         except Exception as e:
             # Log the full exception (with traceback) so operators can tell a
             # corrupt index from a bad query from a locked DB — the one-line
             # messages below are not enough to troubleshoot from.
             logger.debug("Index search failed for query %r", query, exc_info=True)
             if output_format != "rich":
-                if isinstance(e, StorageError):
-                    from ..utils.errors import cli_error_from
-
-                    cli_error_from(e, output_format)
                 import json
 
                 typer.echo(
