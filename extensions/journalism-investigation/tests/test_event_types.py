@@ -1,5 +1,6 @@
 """Round-trip tests for journalism-investigation event entry types."""
 
+import pytest
 from pyrite_journalism_investigation.entry_types import (
     InvestigationEventEntry,
     LegalActionEntry,
@@ -8,6 +9,37 @@ from pyrite_journalism_investigation.entry_types import (
 
 
 class TestInvestigationEventEntry:
+    def test_participants_alias_populates_actors(self):
+        entry = InvestigationEventEntry.from_frontmatter(
+            {"id": "event-alias", "title": "Event", "participants": ["alice"]}, ""
+        )
+        assert entry.actors == ["alice"]
+        assert entry.participants == ["alice"]
+        frontmatter = entry.to_frontmatter()
+        assert frontmatter["actors"] == ["alice"]
+        assert "participants" not in frontmatter
+        reloaded = InvestigationEventEntry.from_frontmatter(frontmatter, "")
+        assert reloaded.actors == reloaded.participants == ["alice"]
+
+    @pytest.mark.control(reason="Preserve canonical precedence and empty-value handling")
+    @pytest.mark.parametrize(
+        ("fields", "expected"),
+        [
+            ({"actors": ["alice"]}, ["alice"]),
+            ({"actors": ["alice"], "participants": ["bob"]}, ["alice"]),
+            ({"actors": [], "participants": ["bob"]}, []),
+            ({"actors": None, "participants": ["bob"]}, []),
+            ({"actors": [], "participants": []}, []),
+            ({"participants": None}, []),
+        ],
+    )
+    def test_actor_alias_precedence(self, fields, expected):
+        entry = InvestigationEventEntry.from_frontmatter({"title": "Event", **fields}, "")
+        assert entry.actors == entry.participants == expected
+        frontmatter = entry.to_frontmatter()
+        assert frontmatter.get("actors", []) == expected
+        assert "participants" not in frontmatter
+
     def test_entry_type(self):
         e = InvestigationEventEntry(id="event-panama-papers-leak", title="Panama Papers Leak")
         assert e.entry_type == "investigation_event"
