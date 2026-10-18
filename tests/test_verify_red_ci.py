@@ -658,7 +658,66 @@ def test_a_test_only_pr_with_a_fragment_kb_and_docs_is_nothing_to_verify(
     commit_all(repo, "test: add(0, 0)")
     result, summary = run_vr(repo, tmp_path)
     assert result.returncode == 0, (result.stdout, result.stderr)
-    assert "verify-red: nothing to verify (no code change)" in summary, summary
+    assert (
+        "verify-red: nothing to verify (tests and inert files only: "
+        "1 test-side file, 4 inert files, no fix to grade against)."
+    ) in summary, summary
+    assert summary.strip() in result.stdout
+    assert "::warning" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("paths", "reason"),
+    [
+        (
+            ("tests/helpers.py", "tests/test_guard.py"),
+            "tests-only change: 2 test-side files, 0 inert files, no fix to grade against",
+        ),
+        (
+            ("conftest.py",),
+            "tests-only change: 1 test-side file, 0 inert files, no fix to grade against",
+        ),
+        (
+            ("README.md",),
+            "inert-only change: 0 test-side files, 1 inert file, no fix to grade against",
+        ),
+        ((), "empty diff: no changed files"),
+    ],
+)
+def test_nothing_to_verify_names_the_change(repo: Path, tmp_path: Path, paths, reason) -> None:
+    for path in paths:
+        target = repo / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "def test_guard():\n    assert True\n"
+            if target.name.startswith("test_")
+            else "HELPER_VALUE = 1\n"
+            if target.suffix == ".py"
+            else "text\n"
+        )
+    if paths:
+        commit_all(repo, "test: change test infrastructure or docs")
+    evidence = tmp_path / "evidence.json"
+    result, summary = run_vr(repo, tmp_path, "--json", str(evidence))
+    assert result.returncode == 0, result.stderr
+    expected = f"verify-red: nothing to verify ({reason})."
+    assert expected in summary
+    assert expected in result.stdout
+    assert "::warning" not in result.stdout
+    assert json.loads(evidence.read_text())["verify_red"] is None
+
+
+def test_a_deleted_test_is_reported_as_tests_only(repo: Path, tmp_path: Path) -> None:
+    (repo / "tests" / "test_add.py").unlink()
+    commit_all(repo, "test: remove a test")
+    result, summary = run_vr(repo, tmp_path)
+    assert result.returncode == 0, result.stderr
+    expected = (
+        "verify-red: nothing to verify (tests-only change: "
+        "1 test-side file, 0 inert files, no fix to grade against)."
+    )
+    assert expected in summary
+    assert expected in result.stdout
     assert "::warning" not in result.stdout
 
 

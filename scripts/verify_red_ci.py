@@ -506,7 +506,20 @@ def report(args: argparse.Namespace) -> tuple[dict, str]:
     ci = os.environ.get("GITHUB_ACTIONS") == "true"
     code = [p for p in change.code if not is_inert(p)]
     if not code or not change.selected:
-        why = "no code change" if not code else "no new or edited test"
+        if code:
+            why = "no new or edited test"
+        elif not change.test_side and not change.code:
+            why = "empty diff: no changed files"
+        else:
+            test_files, inert_files = len(change.test_side), len(change.code)
+            if test_files and inert_files:
+                kind = "tests and inert files only"
+            else:
+                kind = "tests-only change" if test_files else "inert-only change"
+            why = (
+                f"{kind}: {test_files} test-side file{'s' * (test_files != 1)}, "
+                f"{inert_files} inert file{'s' * (inert_files != 1)}, no fix to grade against"
+            )
         out.append(f"verify-red: nothing to verify ({why}).")
         if code and ci:
             print(f"::warning title=verify-red::this PR changes code but has {why}", flush=True)

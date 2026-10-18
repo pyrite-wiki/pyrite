@@ -150,7 +150,9 @@ The `verify-red` job waits for `test`, whatever its result, and writes
 ```
 
 `verify_red` is `null` when there was nothing to verify. That happens when the
-PR has no code change, or no new or edited test. `diff_coverage` is `null`
+PR changes only test-side or inert files, has an empty diff, or has code but
+no new or edited test. The summary names the kind of change and the file counts.
+`diff_coverage` is `null`
 when the test job produced no report. To collect the file:
 `gh run download <run-id> -n test-evidence`.
 
