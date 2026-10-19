@@ -607,12 +607,16 @@ def register_entry_commands(app: typer.Typer) -> None:
                     )
 
             def items(pairs: list[str] | None) -> dict[str, Any]:
+                # Every pair is kept, in the order given: a field named twice
+                # collects its items (a JSON list means each item), as the
+                # service's `{field: [items]}` form does (#1035).
                 out: dict[str, Any] = {}
                 for fv in pairs or []:
                     if "=" not in fv:
                         raise ValidationError(f"expected key=value, got '{fv}'")
                     k, v = fv.split("=", 1)
-                    out[k] = _parse_field_value(v, _field_type_for(config, kb_name, entry_type, k))
+                    value = _parse_field_value(v, _field_type_for(config, kb_name, entry_type, k))
+                    out.setdefault(k, []).extend(value if isinstance(value, list) else [value])
                 return out
 
             # ADR-0034 rule 2 and schema validation are the service's (#378):
