@@ -422,7 +422,10 @@ class TaskService:
                 except Exception:
                     continue
                 if entry:
-                    t["parked_awaiting"] = (entry.get("parked_awaiting") or "").strip()
+                    # No field of a task: the read keeps it in `metadata`
+                    # (#1025; the hand lift to the top is gone).
+                    bag = entry.get("metadata") or {}
+                    t["parked_awaiting"] = (bag.get("parked_awaiting") or "").strip()
 
         return tasks
 

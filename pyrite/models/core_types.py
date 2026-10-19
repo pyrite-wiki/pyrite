@@ -438,9 +438,15 @@ def entry_from_frontmatter(meta: dict[str, Any], body: str) -> Entry:
     else:
         entry_type = meta["type"]
     cls = get_entry_class(entry_type)
-    entry = cls.from_frontmatter(meta, body)
+    # The one lift (#1025, ADR-0051): a field the file spells only under
+    # `metadata:` is read as if spelled at the top level. The class reads the
+    # view; the bookkeeping below keeps the raw mapping, as the file has it.
+    from ..schema.field_aliases import read_view
+
+    view = read_view(meta, cls, entry_type)
+    entry = cls.from_frontmatter(view, body)
     # Restore lifecycle from frontmatter (base field, not in subclass constructors)
-    entry.lifecycle = meta.get("lifecycle", "active")
+    entry.lifecycle = view.get("lifecycle", "active")
     capture_extra_frontmatter(entry, meta)
     return entry
 

@@ -640,12 +640,14 @@ class TestKBService:
         assert entry is not None
         assert entry["title"] == "Get Test"
 
-    def test_get_entry_projects_well_known_metadata_fields_to_top_level(self, test_db, test_config):
-        """The read projection lifts well-known software-kb metadata fields
-        (rank, effort, kind) to the top level. Regression for Tier A 1200:
-        `pyrite get` silently omitted `rank` from JSON even though it was in
-        the index's metadata column. The conductor's rank-aware grooming
-        scripts and the cascade-cluster sequencing depend on this.
+    def test_get_entry_keeps_an_undeclared_key_in_metadata(self, test_db, test_config):
+        """A read spells a declared field at its own name and keeps a key the
+        type does not declare in `metadata` (#1025: one rule,
+        `lift_declared_fields`, in place of a hand-written list of five keys).
+        `rank`, `effort` and `kind` are fields of a software-kb backlog item,
+        where `pyrite get` reads them at the top level (Tier A 1200;
+        tests/test_reader_reads_where_the_writer_writes.py); on an `actor`
+        they are undeclared keys, and the bag is where they are read.
         """
         service = KBService(test_config, test_db)
 
@@ -654,8 +656,6 @@ class TestKBService:
             entry_id="rank-projection-test",
             title="Rank Projection Test",
             entry_type="actor",
-            # These three are software-kb fields stored in metadata; they
-            # used to silently disappear from the read projection.
             rank=1200,
             effort="S",
             kind="bug",
@@ -664,14 +664,10 @@ class TestKBService:
         entry = service.get_entry("rank-projection-test", "test-research", readable_kbs=UNSCOPED)
 
         assert entry is not None
-        # Lifted fields — primary regression assertions.
-        assert entry.get("rank") == 1200, (
-            f"rank missing from get_entry projection (Tier A 1200); got keys {sorted(entry.keys())}"
-        )
-        assert entry.get("effort") == "S", "effort missing from projection"
-        assert entry.get("kind") == "bug", "kind missing from projection"
-        # The full metadata bag is still nested for callers that need it.
-        assert isinstance(entry.get("metadata"), dict)
+        assert (entry["metadata"]["rank"], entry["metadata"]["effort"]) == (1200, "S")
+        assert entry["metadata"]["kind"] == "bug"
+        for key in ("rank", "effort", "kind"):
+            assert key not in entry, f"{key}: an undeclared key was lifted out of metadata"
 
     def test_get_entry_searches_all_kbs(self, test_db, test_config):
         """get_entry without kb_name searches all KBs."""

@@ -28,6 +28,7 @@ from ..models.protocols import (
     Statusable,
     Temporal,
 )
+from ..schema.field_aliases import lift_declared_fields, read_view
 from ..utils.metadata import parse_metadata
 from .database import PyriteDB
 from .repository import KBRepository
@@ -110,9 +111,6 @@ _READ_COLUMNS = (
     "end_date",
     "coordinates",
 )
-
-#: Metadata keys the backend lifts to the top of a row (Tier A 1200, r1175).
-_LIFTED_METADATA_KEYS = ("rank", "effort", "kind", "status_reason", "parked_awaiting")
 
 #: The row's one-value columns, as the backend binds them
 #: (``base_backend._upsert_entry_main``): what ``row_for`` checks holds a
@@ -551,7 +549,11 @@ class IndexManager:
         # Use to_frontmatter() to capture all fields, then strip keys
         # already stored in their own DB columns
 
-        # Keys that map to actual DB columns (always excluded from metadata)
+        # Keys that map to actual DB columns (always excluded from metadata).
+        # `provenance` has no column: it rides in the bag like every other
+        # declared field without one, and a read lifts it to its own name
+        # (`lift_declared_fields`, #1025); it used to be dropped here, so no
+        # read carried it.
         db_column_keys = {
             "id",
             "type",
@@ -561,7 +563,6 @@ class IndexManager:
             "tags",
             "sources",
             "links",
-            "provenance",
             "metadata",
             "created_at",
             "updated_at",
@@ -831,14 +832,16 @@ class IndexManager:
         # file's: the model fills it with "now", which would change on every
         # read. The row's value stands, as before (#670).
         source = entry._source_frontmatter or {}
+        # "Carried" at any spelling (#1025): the view the model read.
+        view = read_view(source, type(entry), entry.entry_type) if source else {}
         for key in ("created_at", "updated_at"):
-            from_file = key in source and key not in entry._unparsed_timestamp_keys
+            from_file = key in view and key not in entry._unparsed_timestamp_keys
             result[key] = data.get(key) if from_file else row.get(key)
         for key in _ROW_ONLY_KEYS:
             result[key] = row.get(key)
-        for key in _LIFTED_METADATA_KEYS:
-            if key in metadata and key not in result:
-                result[key] = metadata[key]
+        # A declared field the row keeps in its bag is read at its own name
+        # (#1025): the one rule the backend's row shaping applies too.
+        lift_declared_fields(result, metadata, type(entry), entry.entry_type)
         # As _sync_tags stores them: falsy skipped, duplicates (by ==, so
         # ``1`` and ``true`` are one) dropped first-wins, names as TEXT.
         result["tags"] = [_one_text(t) for t in dict.fromkeys(t for t in data["tags"] if t)]

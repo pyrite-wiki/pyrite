@@ -365,6 +365,102 @@ def double_spellings(
     return out
 
 
+#: Dataclass fields of an entry class that are not frontmatter fields: the
+#: identity line (``id:``, design principle 5) and ``type:`` (which picks the
+#: class before any spelling is read) are read at the top level only; the
+#: rest are not file keys at all.
+_NOT_FIELDS = frozenset(
+    {"id", "type", "body", "metadata", "file_path", "kb_name", "extra_frontmatter"}
+)
+
+
+def declared_fields(cls: type, entry_type: str) -> frozenset[str]:
+    """The fields a type declares: the class's public dataclass fields that are
+    file keys, and every alias target. What the reader lifts (``read_view``,
+    ``lift_declared_fields``): a key that is no field of the type is the
+    ``metadata`` bag's, at every spelling."""
+    import dataclasses
+
+    if not dataclasses.is_dataclass(cls):
+        return frozenset()
+    aliases = class_field_aliases(cls, entry_type)
+    names = {
+        f.name
+        for f in dataclasses.fields(cls)
+        if not f.name.startswith("_") and f.name not in _NOT_FIELDS
+    }
+    # A dataclass field named like an alias (`participants`, the attribute
+    # `actors` is read into) is a spelling of its target, not a field.
+    names -= set(aliases)
+    names |= set(aliases.values())
+    return frozenset(names)
+
+
+def read_view(file_values: dict[str, Any], cls: type, entry_type: str) -> dict[str, Any]:
+    """The file's frontmatter as a class reads it: a declared field the file
+    spells only under ``metadata:`` is spelled at that name at the top level
+    too (#1025; ADR-0051, the reader half). The one place the reader reads a
+    spelling: every ``from_frontmatter`` reads top-level keys of this view,
+    and takes each field's value from ``spelling_in(file, field)``, the path
+    the writer writes (ADR-0042 decision 12).
+
+    Both spellings stay: ``metadata`` is the mapping the file has, so a
+    read's shape carries the field at its own key and under ``metadata`` (an
+    echo of either back is unchanged), and ``capture_extra_frontmatter``
+    keeps the raw mapping as ``_source_frontmatter``. A field spelled twice
+    is left as it is: the model reads the top-level spelling (decision 3) and
+    ``double_spellings`` reports the file. A key the type does not declare is
+    the bag's and is not lifted. Returns ``file_values`` itself when there is
+    nothing to lift."""
+    nested = file_values.get(METADATA)
+    if not isinstance(nested, Mapping) or not nested:
+        return file_values
+    declared = declared_fields(cls, entry_type)
+    view: dict[str, Any] | None = None
+    for key in nested:
+        if not isinstance(key, str) or key == METADATA:
+            continue
+        try:
+            field, _rest = field_at(cls, entry_type, (METADATA, key))
+        except ValueError:
+            continue
+        if field not in declared:
+            continue
+        try:
+            path = spelling_in(file_values, cls, entry_type, field)
+        except SpelledTwiceError:
+            continue
+        if path != (METADATA, key):
+            continue
+        if view is None:
+            view = dict(file_values)
+        view[key] = nested[key]
+    return view if view is not None else file_values
+
+
+def lift_declared_fields(
+    result: dict[str, Any], bag: Mapping[str, Any] | None, cls: type, entry_type: str
+) -> None:
+    """The row's read shape: a declared field the row keeps in its ``metadata``
+    bag (a field with no column of its own: a backlog item's ``rank``, a
+    task's ``status_reason``) is read at its own name too; the bag keeps it,
+    and a key the type does not declare stays the bag's (#1025). One rule for
+    ``IndexManager.read_fields`` and the backend's row, in place of a
+    hand-written list of five keys."""
+    if not isinstance(bag, Mapping) or not bag:
+        return
+    aliases = class_field_aliases(cls, entry_type)
+    for field in sorted(declared_fields(cls, entry_type)):
+        if field in result:
+            continue
+        # The field's own name first (the model's reading, decision 3), then
+        # an alias the bag spells it by; read at the field's name either way.
+        for key in (field, *(a for a, t in aliases.items() if t == field)):
+            if key in bag:
+                result[field] = bag[key]
+                break
+
+
 def _spellings_present(
     file_values: Mapping[str, Any], cls: type, entry_type: str, field: str
 ) -> list[tuple[str, ...]]:

@@ -631,10 +631,17 @@ class Entry(ABC):
         meta = load_yaml(split.text)
         body = split.body
 
-        entry = cls.from_frontmatter(meta, body)
+        # The same lift `entry_from_frontmatter` makes (#1025): a field the
+        # file spells only under `metadata:` is read as if spelled at the
+        # top level; the class reads the view, the bookkeeping keeps the raw
+        # mapping. The type name is the file's; the class decides the fields.
+        from ..schema.field_aliases import read_view
+
+        view = read_view(meta, cls, str(meta.get("type") or ""))
+        entry = cls.from_frontmatter(view, body)
         # Restore lifecycle from frontmatter (base field, not in subclass constructors)
         if entry is not None:
-            entry.lifecycle = meta.get("lifecycle", "active")
+            entry.lifecycle = view.get("lifecycle", "active")
             capture_extra_frontmatter(entry, meta)
         return entry
 

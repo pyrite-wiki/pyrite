@@ -422,33 +422,17 @@ class BaseBackend(ABC):
             "created_by": entry.created_by,
             "modified_by": entry.modified_by,
         }
-        # Lift well-known top-level fields that live in metadata for legacy
-        # reasons (the software-kb plugin stores rank/effort/kind in the
-        # `metadata` JSON bag rather than as Prioritizable protocol fields).
-        # Consumers expect them at the top level — `pyrite sw backlog` already
-        # does this lift in its own projection. Surface them here so
-        # `pyrite get`, REST `/entries/{id}`, and the MCP `kb_get` tool all
-        # see the same shape. Regression for Tier A 1200
-        # (bug-pyrite-get-omits-rank-field-in-json-output).
-        for key in ("rank", "effort", "kind"):
-            if key in metadata and key not in result:
-                result[key] = metadata[key]
-        # status_reason is the per-transition audit field for the
-        # relaxed-mode state machine (Tier A r1175). Plugins and the
-        # task migration script read it directly off the entry dict;
-        # lift here so consumers don't have to special-case
-        # entry["metadata"]["status_reason"].
-        if "status_reason" in metadata and "status_reason" not in result:
-            result["status_reason"] = metadata["status_reason"]
-        # parked_awaiting is the conductor/dispatch-classifier convention for
-        # marking a task legitimately waiting rather than stalled (not a
-        # schema field on TaskEntry — it now round-trips into metadata via
-        # TaskEntry's unknown-frontmatter-key preservation). Lift here so
-        # TaskService.list_tasks()'s hydration path (which reads
-        # entry.get("parked_awaiting") directly) sees it.
-        # See: issue-pyrite-task-update-strips-non-schema-frontmatter-fields-silently-unparks-monitors
-        if "parked_awaiting" in metadata and "parked_awaiting" not in result:
-            result["parked_awaiting"] = metadata["parked_awaiting"]
+        # A field the type declares but the row has no column for (a backlog
+        # item's `rank`/`effort`/`kind`, a task's `status_reason`) lives in the
+        # `metadata` bag; a read spells it at its own name too, so `pyrite
+        # get`, REST `/entries/{id}` and MCP `kb_get` see the file's shape
+        # (Tier A 1200, r1175). The rule is `lift_declared_fields` (#1025),
+        # shared with `IndexManager.read_fields`; a key the type does not
+        # declare (a task's `parked_awaiting`) stays the bag's.
+        from ...models.core_types import get_entry_class
+        from ...schema.field_aliases import lift_declared_fields
+
+        lift_declared_fields(result, metadata, get_entry_class(entry.entry_type), entry.entry_type)
         return result
 
     def _get_entry_tags(self, entry_id: str, kb_name: str) -> list[str]:

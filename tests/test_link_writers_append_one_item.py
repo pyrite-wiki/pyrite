@@ -336,8 +336,8 @@ def test_a_link_refused_by_the_file_writes_nothing_and_names_the_reason(tmp_path
 # --------------------------------------------------------------------------
 
 #: `links` spelled under `metadata:` and nowhere else: ADR-0051 makes it a
-#: spelling of `links`, but the model and the index read the top level only
-#: (#1025), so nothing reads this list.
+#: spelling of `links`; the model and the index read it there (#1025), so
+#: the writer appends there.
 NESTED_NOTE = (
     "---\n"
     f"id: {ID}\n"
@@ -422,13 +422,14 @@ def test_the_writer_the_dedupe_and_the_reader_agree_on_where_links_is_spelled(
     tmp_path: Path, spelling: tuple[str, ...], entry_point: str
 ):
     """The property (ADR-0051: `metadata.links` is a spelling of `links`): a
-    link is appended where the reader indexes it and the duplicate check sees
-    it. At the top level, the item lands on the list, is an outgoing link in
-    the index, and a repeat is a no-op. A file that spells `links` only under
-    `metadata:` is refused with the reason and left as it was: the model and
-    the index read the top level alone, so an item written there was indexed
-    by nothing and every retry appended another copy (the cold read's
-    reproduction)."""
+    link is appended where the file spells `links`, which is where the reader
+    indexes it and the duplicate check sees it. At either spelling, the item
+    lands on that list and nowhere else, is an outgoing link in the index,
+    and a repeat is a no-op. Until #1025 the model and the index read the top
+    level alone, so the writer refused the nested spelling (an item written
+    there was indexed by nothing and every retry appended another copy, the
+    #975 cold read's reproduction); the reader reads it now, and the refusal
+    is gone."""
     nested = spelling[0] == "metadata"
     if entry_point == "create --link":
         if nested:
@@ -440,29 +441,15 @@ def test_the_writer_the_dedupe_and_the_reader_agree_on_where_links_is_spelled(
     else:
         config, path = _build(tmp_path, NESTED_NOTE if nested else NOTE, crlf=False)
         source = ID
-        before = path.read_bytes()
-        if nested:
-            # The refusal cites #1025, the reader's gap (ADR-0051 says the
-            # spelling is the field's; the reader does not read it yet).
-            if entry_point == "add_link":
-                with pytest.raises(ValidationError, match="metadata") as exc:
-                    _with_service(config, lambda svc: _link_once(svc, entry_point, source))
-                assert "#1025" in str(exc.value), exc.value
-            else:
-                results = _with_service(config, lambda svc: _link_once(svc, entry_point, source))
-                assert results[0]["status"] == "failed", results
-                assert "metadata" in results[0]["error"], results
-                assert "#1025" in results[0]["error"], results
-            assert path.read_bytes() == before, "refused, yet the file changed"
-            assert _outlinks(config, source) == set()
-            return
         _with_service(config, lambda svc: _link_once(svc, entry_point, source))
 
     split = split_frontmatter(path.read_text(encoding="utf-8"))
     assert isinstance(split, Frontmatter), split
     fm = load_yaml(split.text)
-    assert any(item.get("target") == TARGET for item in fm["links"]), fm
-    assert "links" not in (fm.get("metadata") or {}), fm
+    holder = (fm.get("metadata") or {}) if nested else fm
+    other = fm if nested else (fm.get("metadata") or {})
+    assert any(item.get("target") == TARGET for item in holder["links"]), fm
+    assert "links" not in other, f"a second spelling of links was added: {fm}"
     assert (TARGET, "related_to") in _outlinks(config, source)
 
     before = path.read_bytes()

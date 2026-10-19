@@ -1027,10 +1027,11 @@ def test_a_save_through_the_model_keeps_both_values_of_a_doubly_spelled_key(text
 
 
 def test_a_read_spells_aliases_where_the_file_does(tmp_path: Path):
-    """Decision 5: a file with a top-level `aliases:` reads it at the top
-    level and nothing under `metadata`; a file that nests it reads it under
-    `metadata` and an empty top-level list. The row and the single-entry
-    read agree."""
+    """Decision 5, as #1025 reads it: a file with a top-level `aliases:`
+    reads it at the top level and nothing under `metadata`; a file that nests
+    it reads it at the top level too (the reader reads where the writer
+    writes) and still under `metadata`, as the file has it, so an echo of
+    either is unchanged. The row and the single-entry read agree."""
     kb_path = tmp_path / "kb"
     (kb_path / "notes").mkdir(parents=True)
     (kb_path / "notes" / "a1.md").write_text(
@@ -1059,7 +1060,8 @@ def test_a_read_spells_aliases_where_the_file_does(tmp_path: Path):
     for shape in (top_row, top_read):
         assert shape["aliases"] == ["Top"] and "aliases" not in shape["metadata"], shape
     for shape in (nested_row, nested_read):
-        assert shape["aliases"] == [] and shape["metadata"].get("aliases") == ["Nested"], shape
+        assert shape["aliases"] == ["Nested"], shape
+        assert shape["metadata"].get("aliases") == ["Nested"], shape
 
 
 def _create_cells() -> list[Any]:
