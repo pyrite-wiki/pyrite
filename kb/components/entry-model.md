@@ -48,9 +48,12 @@ Each is pinned by a row in `ORACLE` in `tests/test_frontmatter_splitter.py`, nex
 
 ```
 YAML frontmatter → entry_from_frontmatter() → ENTRY_TYPE_REGISTRY lookup → concrete class
+                                            → read_view() → cls.from_frontmatter(view, body)
 ```
 
-Protocol mixins promote fields to DB columns (Assignable → assignee, Temporal → date, etc.) enabling indexed queries on protocol fields.
+`read_view` (`pyrite/schema/field_aliases.py`) is the one lift (#1025, ADR-0051's reader half): a declared field the file spells only under `metadata:` is spelled at that name in the view the class reads, so every `from_frontmatter` keeps reading top-level keys and still takes each field's value from `spelling_in(file, field)`, the path the writer writes. The raw mapping stays `_source_frontmatter`. `Entry.from_markdown` (the class-addressed loader behind `Entry.load`) makes the same lift; `tests/test_reader_reads_where_the_writer_writes.py` pins that no other production code calls `from_frontmatter`.
+
+Protocol mixins promote fields to DB columns (Assignable → assignee, Temporal → date, etc.) enabling indexed queries on protocol fields. A declared field with no column (a backlog item's `rank`, a task's `evidence`, `provenance`) rides in the row's `metadata` bag and is read at its own name by `lift_declared_fields`; an undeclared key stays in the bag.
 
 ## Related
 

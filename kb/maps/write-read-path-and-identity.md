@@ -101,7 +101,10 @@ Components [[kb-service]], [[kb-repository]], [[document-manager]],
 (`find_file`, `_load_entry`, `rename`, `new_entry_text`),
 `pyrite/storage/entry_writer.py` (the one publish), `pyrite/storage/document_manager.py`,
 `pyrite/models/base.py` (the load-time records; the model has no `save` since
-#955 P4).
+#955 P4), `pyrite/schema/field_aliases.py` (`spelling_in`, where a write
+lands; `read_view`, the one lift in front of every `from_frontmatter`, so a
+field spelled only under `metadata:` reads as the top-level spelling does;
+`lift_declared_fields`, the row's read shape, #1025).
 
 ## Tests that pin it
 
@@ -133,7 +136,9 @@ over who may write an entry file's bytes.
   fixtures), published against the bytes read; no service path uses it. Hooks
   still change a create, and what a hook sets in place reaches an update's
   index row until the index derives it (P6); the id comes from the title; a
-  single read returns defaults among the file's fields (P5). ADR-0042 and
+  single read returns defaults among the file's fields (P5; the reader now
+  reads every field where the writer writes it, #1025, so a field spelled
+  only under `metadata:` is no longer one of those defaults). ADR-0042 and
   ADR-0045 address them; spike 2 and spike 3 (concurrency, `/` in ids; macOS
   only) are done. The CRLF, BOM, anchor and Hugo shapes are now pinned by the
   walking test; Linux locks run in CI; Windows is refused.
