@@ -28,10 +28,12 @@ from .protocol import DEFAULT_MIN_SIMILARITY, similarity_from
 
 logger = logging.getLogger(__name__)
 
-# The Postgres backend is experimental in 0.25.x (#718): the alembic chain stops
-# at revision 006, so an existing Postgres database cannot take a column added
-# since. Said once per process, from the one place the backend is built, so the
-# CLI, the REST server and the MCP server all get it without a per-command change.
+# The Postgres backend is experimental in 0.25.x (#718): the alembic chain was
+# broken (forked at 004, stopped at 006) and 007 now covers the entry columns
+# the ORM has added since; other post-006 table changes still rely on create_all,
+# so an existing Postgres database may still not upgrade between releases. Said
+# once per process, from the one place the backend is built, so the CLI, the
+# REST server and the MCP server all get it without a per-command change.
 EXPERIMENTAL_ACK_ENV = "PYRITE_POSTGRES_EXPERIMENTAL_ACK"
 _EXPERIMENTAL_NOTICE = (
     "The Postgres backend is experimental in Pyrite 0.25.x: an existing Postgres "
