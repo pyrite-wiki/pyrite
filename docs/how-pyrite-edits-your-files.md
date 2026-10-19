@@ -20,13 +20,25 @@ The design behind this is [ADR-0042](../kb/adrs/0042-a-write-changes-what-was-as
 Each example below is three blocks:
 
 - `file`: a file as it sits in your KB before the edit;
-- `update`: the edit sent to Pyrite. The spelling of the operations (`set`,
-  `append`, `replace`) is illustrative: Pyrite's write interfaces are alpha,
-  and each surface (the CLI, the MCP server's `kb_update`, the REST API)
-  spells them its own way;
+- `update`: the edit sent to Pyrite, written as operations (`set`, `append`,
+  `replace`). Each surface spells them its own way; the table below gives the
+  spelling for `set`, `append`, `remove` and `unset`. `replace` is not an
+  operation Pyrite has: it stands for sending back a whole document, which the
+  stale example below shows Pyrite does not yet refuse;
 - `diff`: every line the edit changes in the file, `-` for a line removed and
   `+` for a line added. An empty `diff` means the file is byte for byte as it
   was.
+
+| Operation | CLI (`pyrite update <id> -k <kb>`) | MCP `kb_update` | REST `PATCH /api/entries/{id}` |
+|---|---|---|---|
+| `set` a field | `--title "New"`, or `-f key=value` | `"title": "New"` | `op: set` (the default), `field`, `value` |
+| `append` one item | `--append tags=gamma`, or `--append 'tags=["a","b"]'` for several | `"append": {"tags": "gamma"}` | `op: append`, `field`, `value` |
+| `remove` one item | `--remove tags=alpha` | `"remove": {"tags": "alpha"}` | `op: remove`, `field`, `value` |
+| `unset` a key | `--unset extra` | `"unset": ["extra"]` | `op: unset`, `field` |
+
+The result of each call is in [Write success shapes](json-contracts.md#update);
+this page does not repeat it. The steps, run end to end, are in
+[Write an entry as an agent](agent-write-path.md).
 
 A word after `file` sets up the situation: `crlf` means the file uses Windows
 line endings; `concurrent` means two writers start from the same file at the
@@ -58,16 +70,49 @@ carry controls the page does not show:
   refused even after the entry was read again, so the hash carried, not the
   last read, is what decides.
 
+## A new file
+
+A create writes the file in the same way: `id:` first, then the type's keys
+in order, then the body. A value YAML would misread is double-quoted. Nothing
+renders the whole document from a model, so a new file holds only what you
+sent and what the type puts there.
+
+```create
+{"entry_type": "note", "title": "Notes: week 1", "body": "First note.", "tags": ["a", "b"]}
+```
+```written
+---
+id: notes-week-1
+title: "Notes: week 1"
+type: note
+tags:
+- a
+- b
+importance: 5
+---
+
+First note.
+```
+
 ## Where Pyrite does not keep this promise yet
 
-Today an update re-renders the whole frontmatter from Pyrite's model of the
-entry, two writers can overwrite each other, and a file with no `id:` is known
-by its title, so the examples below fail. Until that is fixed, keep your KB in
-git and read `git diff` after Pyrite writes. The test module lists every
-example that fails, in `KNOWN_DIVERGENCES`, with what Pyrite does instead, and
-marks it as an expected failure. When the write path is fixed and an example
-starts to pass, the test suite fails until its mark is removed, so the list
-only shrinks.
+An update changes only the fields it names, and two writers on different keys
+both land. Two examples below still fail, and the test module lists them in
+`KNOWN_DIVERGENCES`, marked as expected failures:
+
+- [A stale whole-document replace is refused](#a-stale-whole-document-replace-is-refused):
+  a whole document sent back with the hash of an older read is written over a
+  hand edit, not refused. Send the fields you mean to change, not the whole
+  document.
+- [An id-less file keeps its identity when its title changes](#an-id-less-file-keeps-its-identity-when-its-title-changes):
+  a file with no `id:` line is known by the slug of its title, not by its
+  path, and an update by that id adds an `id:` line. Pin the ids first:
+  [Pin your entry ids before upgrading](pinning-entry-ids.md).
+
+Until both are fixed, keep your KB in git and read `git diff` after Pyrite
+writes. When the write path is fixed and an example starts to pass, the test
+suite fails until its mark is removed, so the list only shrinks; another test
+fails if this section stops naming exactly that list.
 
 ## One field edit yields that field's lines
 

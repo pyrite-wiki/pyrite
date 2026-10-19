@@ -98,7 +98,10 @@ Entries are saved to the correct subdirectory automatically and indexed.
 ```bash
 pyrite sw new-adr "Add Rate Limiting"           # Auto-numbered ADR (title is positional)
 pyrite update <entry-id> --kb=pyrite --title="New Title"
-pyrite update <entry-id> --kb=pyrite --body="Updated body" --tags="new,tags" --importance=8
+pyrite update <entry-id> --kb=pyrite --body="Updated body" --tags="new,tags" --importance=8   # --tags replaces the whole list
+pyrite update <entry-id> --kb=pyrite --append tags=new      # add one item (JSON list for several: --append 'tags=["a","b"]')
+pyrite update <entry-id> --kb=pyrite --remove tags=old      # drop one item
+pyrite update <entry-id> --kb=pyrite --unset extra          # remove a key with its lines
 pyrite delete <entry-id> --kb=pyrite             # With confirmation
 pyrite delete <entry-id> --kb=pyrite --force     # Skip confirmation
 ```

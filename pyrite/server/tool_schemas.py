@@ -850,7 +850,7 @@ WRITE_TOOLS = {
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Replacement tags (overwrites existing)",
+                    "description": "Replaces the whole tag list; to add or drop one tag use `append`/`remove`",
                 },
                 "participants": {
                     "type": "array",
@@ -859,7 +859,7 @@ WRITE_TOOLS = {
                 },
                 "metadata": {
                     "type": "object",
-                    "description": "Additional/extension fields to update",
+                    "description": "Fields by name (a key here is the field of that name, ADR-0051); a managed field is refused",
                 },
                 "status": {
                     "type": "string",

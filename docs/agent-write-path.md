@@ -76,17 +76,88 @@ pyrite update hello-agent -k notes --body "Second note."
 file with what it read and replaced it, with no lock (two writers can both
 pass that compare). Inside git the key is absent, which means `true`.
 
-A field the type does not declare is stored under `metadata`, not at the top
-level of the entry:
+A field the type does not declare is written at the top level of the file;
+`get` returns it under `metadata`. Read the file to see where it landed:
 
-<!-- expect-text: "foo": "bar" -->
+<!-- expect-text: foo: bar -->
 ```bash
 pyrite update hello-agent -k notes -f foo=bar
-pyrite get hello-agent -k notes
+cat notes/notes/hello-agent.md
+```
+
+```text
+---
+id: hello-agent
+title: Hello agent
+type: note
+importance: 5
+foo: bar
+---
+
+Second note.
 ```
 
 Which fields an update may set, and which it refuses, is the **Update
-fields** paragraph of the contracts page.
+fields** paragraph of the contracts page. An update writes only the fields it
+names, so the lines you did not name keep their bytes; see
+[How Pyrite edits your files](how-pyrite-edits-your-files.md).
+
+### Add or remove one item
+
+`--tags` (MCP `tags`) replaces the whole list. To add or drop one item
+without resending the list, use an item operation. `--append` takes
+`field=item`, or a JSON list (`'tags=["x","y"]'`) for several items:
+
+<!-- expect-text: - x -->
+<!-- expect-text: - y -->
+```bash
+pyrite update hello-agent -k notes --append 'tags=["x","y"]'
+cat notes/notes/hello-agent.md
+```
+
+```text
+---
+id: hello-agent
+title: Hello agent
+type: note
+importance: 5
+foo: bar
+tags:
+- x
+- y
+---
+
+Second note.
+```
+
+`--remove` drops one item and `--unset` removes a key with its lines. The
+last line of the block fails the step if either is still in the file:
+
+<!-- expect-text: - y -->
+```bash
+pyrite update hello-agent -k notes --remove tags=x
+pyrite update hello-agent -k notes --unset foo
+cat notes/notes/hello-agent.md
+test "$(grep -c -e '^foo:' -e '^- x$' notes/notes/hello-agent.md)" = 0
+```
+
+```text
+---
+id: hello-agent
+title: Hello agent
+type: note
+importance: 5
+tags:
+- y
+---
+
+Second note.
+```
+
+MCP `kb_update` spells these `"append": {"tags": "x"}`, `"remove": {"tags":
+"x"}` and `"unset": ["foo"]`; REST `PATCH` takes `op`. The table is in
+[How Pyrite edits your files](how-pyrite-edits-your-files.md), the result
+shapes in [Write success shapes](json-contracts.md#update).
 
 ## 3. Read it back
 

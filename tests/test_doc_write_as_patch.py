@@ -1475,3 +1475,83 @@ def test_emitter_watch_pointed_at_pyyaml_alone_does_not_see_the_probe(
     """
     with pytest.raises(CaseNotEnteredError, match="saw no document during the probe"):
         _check(_one_field_with_emitter(), tmp_path, monkeypatch, spy_watch=("pyyaml",))
+
+
+# --------------------------------------------------------------------------
+# What the prose says about the list, and what a create writes (#1031)
+# --------------------------------------------------------------------------
+
+_DIVERGENCE_HEADING = "## Where Pyrite does not keep this promise yet"
+
+
+def _divergence_section(text: str) -> str:
+    assert _DIVERGENCE_HEADING in text, f"the doc lost its {_DIVERGENCE_HEADING!r} section"
+    return text.split(_DIVERGENCE_HEADING, 1)[1].split("\n## ", 1)[0]
+
+
+def test_the_prose_names_exactly_the_known_divergences() -> None:
+    """The section links each failing example by its heading's slug, and no other."""
+    section = _divergence_section(DOC.read_text(encoding="utf-8"))
+    named = set(re.findall(r"\]\(#([a-z0-9-]+)\)", section))
+    assert named == set(KNOWN_DIVERGENCES), (
+        f"the section names {sorted(named)}, KNOWN_DIVERGENCES has {sorted(KNOWN_DIVERGENCES)}"
+    )
+
+
+_CREATE_FENCE = re.compile(
+    r"^```create\n(?P<args>.*?)^```\n+```written\n(?P<written>.*?)^```", re.S | re.M
+)
+
+
+def _create_examples() -> list[tuple[str, dict[str, Any], str]]:
+    text = DOC.read_text(encoding="utf-8")
+    return [
+        (text[: m.start()].count("\n") + 1, json.loads(m["args"]), m["written"])
+        for m in _CREATE_FENCE.finditer(text)
+    ]
+
+
+def test_the_doc_shows_what_a_create_writes() -> None:
+    assert _create_examples(), "docs/how-pyrite-edits-your-files.md has no create/written example"
+
+
+@pytest.mark.parametrize(("line", "args", "written"), _create_examples())
+def test_a_create_writes_the_bytes_the_doc_shows(
+    line: int, args: dict[str, Any], written: str, tmp_path: Path
+) -> None:
+    kb_path = tmp_path / "kb"
+    kb_path.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=kb_path, check=True, capture_output=True, timeout=30)
+    (kb_path / "kb.yaml").write_text(f"name: {KB}\nkb_type: generic\n", encoding="utf-8")
+    config = PyriteConfig(
+        knowledge_bases=[KBConfig(name=KB, path=kb_path, kb_type="generic")],
+        settings=Settings(index_path=tmp_path / "index.db"),
+    )
+    result = _call(config, "kb_create", {"kb_name": KB, **args})
+    assert not _is_error(result), result
+    got = Path(result["file_path"]).read_text(encoding="utf-8")
+    assert got == written, (
+        f"doc line {line}:\nthe file is:\n{got}(end)\nthe doc says:\n{written}(end)"
+    )
+
+
+def test_no_user_page_says_an_undeclared_field_is_stored_under_metadata() -> None:
+    """ADR-0051: an undeclared field is written at the top level of the file."""
+    pages = [*(REPO / "docs").rglob("*.md"), *(REPO / ".claude" / "skills").rglob("*.md")]
+    bad = [
+        f"{p.relative_to(REPO)}:{n}"
+        for p in pages
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if re.search(r"stored under\s+`?metadata", line)
+    ]
+    assert not bad, f"a page says a field is stored under metadata: {bad}"
+
+
+def test_kb_update_descriptions_teach_item_operations_and_the_metadata_rule() -> None:
+    """An agent reads these strings and nothing else (#1031)."""
+    from pyrite.server.tool_schemas import WRITE_TOOLS
+
+    props = WRITE_TOOLS["kb_update"]["inputSchema"]["properties"]
+    assert "append" in props["tags"]["description"] and "remove" in props["tags"]["description"]
+    assert "ADR-0051" in props["metadata"]["description"]
+    assert "refused" in props["metadata"]["description"]
