@@ -314,6 +314,20 @@ is not counted: it is a broken link (`broken_links`), and a rebuild writes the
 same row. Any count makes the status `warning`; `pyrite index build` re-reads
 every file and clears it.
 
+**`orient` → `notices`; `index health` → `removed_extensions`.** A KB
+registered with a `kb_type` that a deleted extension owned (`cascade-research`,
+`cascade-timeline`, `cascade-solidarity`), or holding entries of one of that
+extension's types (`actor`, `timeline_event`, ...), is still a KB: its files
+read and write as generic entries. Instead of leaving its types silently
+undeclared, `pyrite orient -k <kb>` (MCP `kb_orient`) carries one sentence
+for such a KB under `notices`, and `index health` lists it under
+`removed_extensions`: `{kb, kb_type, extension, entry_types, message}`, where
+`message` is the same sentence and `entry_types` are the removed extension's
+types the KB holds. The status is `warning`. `pyrite extension list` keeps
+naming the plugin until `pip uninstall pyrite-cascade` is run in the
+environment that had it. The removed extensions are listed in
+`pyrite/plugins/removed.py`.
+
 **Update fields.** An update applies the fields it names: the entry type's
 own fields (its model's fields and every field its `kb.yaml` names for the
 type) and, on every surface, keys the type does not declare, which are
@@ -398,6 +412,24 @@ field on a file with no `id:` line does not move the file; the result says
 why in `not_moved`. Frontmatter Pyrite cannot model (a tagged, complex or
 duplicate key; an anchor on the edited key) is refused with
 `VALIDATION_FAILED` and the reason, nothing written.
+
+**Timestamp input: `created_at`, `updated_at`.** These two keys, and only
+these two (`date` and every other key are written as sent, #1027), are
+written as sent and accepted only when YAML reads them back as a date or
+timestamp: `2026-10-02`, `2026-10-02T12:00:00Z`, `2026-10-02 12:00:00
++05:00`, `2026-10-02T12:00:00+5:30`, a fraction (`2026-10-02T12:00:00.123456Z`).
+The one exception is what an HTML `datetime-local` field sends,
+`2026-10-02T12:00`: it is accepted and written as `2026-10-02T12:00:00`.
+Every other form is `VALIDATION_FAILED`, nothing written, with the accepted
+forms in the message: `2026-10-02T12:00Z` and `2026-10-02 12:00` (no
+seconds), a week date (`2026-W40-1`), a compact date (`20261002`), an
+hour-only time (`2026-10-02T12`), a one-digit month (`2026-1-5`), a compact
+offset (`+0530`) and `yesterday`. 0.25.8 accepted some of these and wrote
+something else. The rule holds for `pyrite update --field` and for the
+service every REST write goes through (`kb_service._TIMESTAMP_FIELDS`). MCP
+`kb_update` sets a top-level `created_at` or `updated_at` argument aside and
+lists it in `ignored`; the same key inside the `metadata` envelope is set, and
+checked by this rule.
 
 **Web client.** The web app sends `allow_undeclared: true` on create,
 `POST /api/clip` and import, so its forms, which offer every core and
@@ -937,6 +969,16 @@ It is not dropped from `entries` and never appears in `not_found` —
 and fetch it with `kb_read_body`. A loop that advances by
 `body_chunk_size` must treat `0` as "this call returned nothing, ask
 again for this entry alone" rather than incrementing by zero forever.
+
+### `batch-read` and a KB it cannot resolve
+
+The surfaces differ, on purpose. The CLI `pyrite batch-read my-kb:source
+nokb:x` refuses the whole call with `KB_NOT_FOUND` (exit `1`) and returns no
+entry. MCP `kb_batch_read` and REST `POST /api/entries/batch` name the KB
+inside each `entries` item, so they return the entries that exist and list a
+pair whose KB the caller cannot read, or that does not exist, under
+`not_found` with the entries that are simply missing: an error would reveal
+that the KB exists (`pyrite/server/mcp_server.py`, `_kb_batch_read`).
 
 ### Writing a body back
 

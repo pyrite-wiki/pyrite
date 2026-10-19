@@ -11,6 +11,7 @@ guides solve a task; references describe contracts; explanations describe why.
 ## Operators
 
 - [Configuration](configuration.md) — reference: which config keys and environment variables control my installation?
+- [Upgrading](upgrading.md) — how-to: how do I upgrade Pyrite, and what stops working when I do?
 - [Pinning entry IDs](pinning-entry-ids.md) — how-to: how do I pin the identity of files before upgrading?
 - [White labeling](deployment/white-labeling.md) — how-to: how do I configure branding for a deployment?
 

@@ -36,7 +36,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 DOCS = REPO / "docs"
-PAGES = ["agent-write-path.md", "json-contracts.md"]
+PAGES = ["agent-write-path.md", "json-contracts.md", "upgrading.md"]
 
 ITEM = re.compile(
     r"<!--\s*(?P<directive>expect-exit|expect-text|output-keys|mcp-output|"

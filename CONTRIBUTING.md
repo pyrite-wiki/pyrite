@@ -270,7 +270,7 @@ runs the CLI under the CI variables to catch a regression.
 
 **Experimental tests** (#657). A red required check means the core broke.
 Tests of the surfaces `kb/designs/alpha-supported-surface.md` calls
-experimental (the extensions, tasks, REST and the web UI, `/site`, `/ws`, the
+experimental (the extensions, tasks, REST and the web UI, `/ws`, the
 AI endpoints, MCP prompts and resources and the non-core tools, Postgres, the
 overlay backend and worktrees, the `repo`/`auth`/`extension`/`export`/
 `collections` CLI groups) carry the `experimental` marker. Nobody writes it

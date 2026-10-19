@@ -358,6 +358,8 @@ and `npm run build` above if you want it). Semantic search needs the
 `semantic` extra too (`pyrite[server,cli,semantic] @ git+...`, a large
 download); without it, keyword search works and a semantic search says so.
 
+Already running Pyrite? [Upgrading](docs/upgrading.md) lists what changes between releases.
+
 Narrower extras: `pip install -e ".[server]"` (REST API + web UI),
 `pip install -e ".[ai]"` (OpenAI + Anthropic SDKs),
 `pip install -e ".[semantic]"` (sentence-transformers + sqlite-vec).
