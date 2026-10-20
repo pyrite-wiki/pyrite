@@ -307,24 +307,18 @@ parses properly. Assume the same for any other list-typed field reachable throug
 `pyrite get <id> -k pyrite --format json` shows what the index will actually serve, which
 is not always what the file looks like at a glance.
 
-## `pyrite sw new-adr` Takes a Positional TITLE and Misfiles Without `-k`
+## `pyrite sw new-adr` Takes a Positional TITLE
 
-Two traps in one command:
+`TITLE` is a positional argument, not `--title`:
+`pyrite sw new-adr --title "X"` fails with `No such option: --title`. Correct:
+`pyrite sw new-adr "X" -k pyrite --status proposed`. `pyrite create` does take
+`--title`; the inconsistency is real.
 
-1. **`TITLE` is a positional argument, not `--title`.** `pyrite sw new-adr --title "X"`
-   fails. Correct: `pyrite sw new-adr "X" -k pyrite --status accepted`. (Note this differs
-   from `pyrite create`, which *does* take `--title` — the inconsistency is real.)
-2. **Without `-k`, the file is written to `./adrs/` relative to your current directory**,
-   not the KB's `kb/adrs/`. The command resolves the KB path only when `--kb` is passed;
-   otherwise it falls back to `Path(".")` (`cli.py:135-141` in the software-kb extension).
-   It reports `Created ADR-NNNN` and exits 0, so the misplacement is silent — the file is
-   never indexed and `pyrite sw adrs` never shows it. The next-number lookup *does* default
-   the KB, so you get a correctly-numbered ADR in the wrong place.
-
-**Always pass `-k pyrite`.** If you forget, `mv ./adrs/<file> kb/adrs/`, remove the stray
-`./adrs/`, then `pyrite index sync`.
-
-**Status:** ticketed — backlog item `new-adr-writes-to-cwd-without-kb-flag`.
+Fixed in #391: without `-k` the command no longer writes to `./adrs/` under the
+current directory. It creates the ADR through `KBService.create_entry` in the
+only configured KB, else in the one KB whose schema declares `adr`, else it
+refuses with `KB_NOT_FOUND`. Pass `-k pyrite` anyway when you have more than
+one KB. Backlog item `new-adr-writes-to-cwd-without-kb-flag` is done.
 
 ## A `from ... import X` Anywhere Inside a Function Makes `X` Local for the Whole Function
 
@@ -429,7 +423,10 @@ Two related rules the fix established:
   — but a load records which always-written defaults the source lacked, so a
   round trip does not invent them.
 - **That suppression lives in exactly one place: `Entry._frontmatter_for_file`,
-  called only from `to_markdown`. Do not guard it per call site.** The first
+  called only from `repository.new_entry_text`, which builds a create's file.
+  Do not guard it per call site.** An update never reaches it: under
+  [ADR-0042](../../../kb/adrs/0042-a-write-changes-what-was-asked-and-nothing-else.md)
+  an update writes only the keys it changes. The first
   attempt guarded `importance` and `rank` by hand and missed `priority` three
   lines above `rank` in the same method — and 31 other types besides, every one
   of which emits some field unconditionally at its default. A per-site guard
@@ -442,8 +439,9 @@ Two related rules the fix established:
   the **file**, not of the entry, so it happens at the file boundary and nowhere
   else. If you ever feel like moving the filter "up" into `to_frontmatter` for
   tidiness, that is the bug you would be creating.
-- A write re-emits unchanged keys from the ruamel mapping the file was parsed
-  from, so key order, quoting and `tags: [a, b]` flow style survive. Diff noise
+- An update applies operations to the file's own text
+  (`file_operations.apply`), so every key it does not name keeps its bytes:
+  key order, quoting, comments and `tags: [a, b]` flow style. Diff noise
   is not cosmetic: the real corruption above stayed invisible in review because
   it was buried in a 20-line reformat of a one-word change.
 
@@ -556,8 +554,8 @@ in-flight job rather than a synthetic one.
 
 ## A surface reaching the DB fails `test_layer_boundaries.py` (#380)
 
-REST endpoints, MCP handlers, the CLIs and `ui/data.py` reach storage only
-through a service. `tests/test_layer_boundaries.py` counts, per function and
+REST endpoints, MCP handlers and the CLIs reach storage only through a
+service. `tests/test_layer_boundaries.py` counts, per function and
 rule, every place a DB handle *enters* a surface: `_raw_conn`, any `.db` read
 (so `d = svc.db` and `getattr(svc, "db")` count), `db.<anything>` but
 `close`, `get_db` under any name and `AuthService(` outside `api.py`,

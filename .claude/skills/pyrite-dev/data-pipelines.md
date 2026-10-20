@@ -31,11 +31,13 @@ build_entry (factory.py)
     │     - Direct construction, metadata passed as-is
     │
     ▼
-Save (repository.py)
-    │  _infer_subdir() determines file location:
-    │    - Checks CORE_TYPES dict first
-    │    - For plugin subtypes, walks MRO to find parent core type's subdirectory
-    │  Writes frontmatter + body to markdown file
+before_save hooks, validation
+    │
+    ▼
+KBRepository.save (storage/repository.py), a create only
+    │  _infer_subdir() picks the folder: CORE_TYPES first, else the MRO's core type
+    │  new_entry_text(entry): Set operations applied to an `id:` skeleton
+    │  entry_writer.create_entry_text(): publishes only if nothing is at the path
     │
     ▼
 Index (database.py → PyriteDB.upsert_entry)
@@ -46,6 +48,41 @@ Embed (embedding_service.py → EmbeddingWorker)
     Background process: generates vector embedding, stores in sqlite-vec
     Triggered by post-save hook or batch reindex
 ```
+
+## Update Path
+
+An update never serialises the entry. It patches the file's own bytes
+([ADR-0042](../../../kb/adrs/0042-a-write-changes-what-was-asked-and-nothing-else.md);
+examples in [How Pyrite edits your files](../../../docs/how-pyrite-edits-your-files.md)).
+
+```
+update_entry / update (field updates)  or  apply_operations (Set, Append, Remove, Unset, ...)
+    │
+    ▼
+KBService._update (services/kb_service.py)
+    │  read_for_write(): the file's bytes are the base
+    │  _resolve_operation(): field_aliases.field_at() names the field,
+    │    spelling_in() the key the file already uses (an alias, or metadata.k: ADR-0051)
+    │
+    ▼
+file_operations.apply(text, ops, span) (storage/file_operations.py)
+    │  Changes only the named values' bytes; comments, order, quoting stay
+    │
+    ▼
+before_save hooks (may refuse; their return value is ignored), index row built
+    │
+    ▼
+entry_writer.publish_entry_text(path, text, expect=raw) (storage/entry_writer.py)
+    Compare-and-replace under the momentary lock; FileChanged → re-read, retry
+```
+
+`entry_writer` is the only module that writes an entry file's bytes.
+`tests/test_entry_file_writers_are_one_function.py` enforces it. Its list of
+exceptions only shrinks; today it holds one, `ids pin`'s own no-follow write.
+Rename, `schema migrate` and the extensions' migrations publish through
+`entry_writer`. `metadata.k` is a second
+spelling of field `k`, not a separate field:
+[ADR-0051](../../../kb/adrs/0051-metadata-is-not-a-field-metadata-k-is-a-second-spelling-of-field-k-one-level.md).
 
 ## Type Resolution Details
 
