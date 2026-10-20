@@ -50,7 +50,9 @@ Implement the `PyritePlugin` Protocol. All methods are optional — implement on
 """My Extension plugin."""
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
+
+from pyrite.plugins.capabilities import Capability
 
 from .entry_types import MyEntry
 from .preset import MY_PRESET
@@ -59,6 +61,15 @@ from .validators import validate_my_type
 
 class MyExtensionPlugin:
     name = "my_extension"
+    # Declare a capability for every method group you implement; the registry
+    # skips methods whose capability is missing (map: _METHOD_CAPABILITIES in
+    # pyrite/plugins/registry.py).
+    capabilities: ClassVar[set[Capability]] = {
+        Capability.SCHEMA,    # get_entry_types
+        Capability.STORAGE,   # get_validators, get_hooks
+        Capability.SURFACE,   # get_kb_presets, get_cli_commands, get_mcp_tools, get_kb_types
+        Capability.DOMAIN,    # get_relationship_types, get_workflows
+    }
 
     def get_entry_types(self) -> dict[str, type]:
         return {"my_type": MyEntry}
@@ -325,7 +336,8 @@ def before_save_check(entry: Entry, context: dict[str, Any]) -> Entry:
         return entry  # Don't interfere with other types
 
     # context keys: kb_name, user, kb_schema, operation ("create"|"update"|"delete")
-    # Can modify entry or raise to abort
+    # A before_save hook may refuse by raising. On update its changes are
+    # ignored; only create keeps them (ADR-0042 decision 4).
     if context.get("operation") == "create":
         # Set defaults, validate state, etc.
         pass
@@ -347,6 +359,7 @@ def after_save_update(entry: Entry, context: dict[str, Any]) -> None:
 ```python
 class MyExtensionPlugin:
     name = "my_extension"
+    capabilities = {Capability.STORAGE, Capability.CONTEXT}  # get_hooks, set_context
 
     def set_context(self, ctx):
         """Receive DI context — store for use in hooks and MCP handlers."""
@@ -383,13 +396,10 @@ MY_WORKFLOW = {
 ## Installation and Development
 
 ```bash
-# Install in development mode (required for plugin discovery)
-cd extensions/my-extension
-pip install -e . --target ../../.venv/lib/python3.*/site-packages/
-
-# Or simpler:
+# Install in development mode (required for plugin discovery).
+# Worktree venvs have no pip, so use uv (or re-run scripts/setup-checkout.sh):
 cd /path/to/repo
-.venv/bin/pip install -e extensions/my-extension
+uv pip install --python .venv/bin/python -e extensions/my-extension
 
 # Verify plugin loads
 .venv/bin/python -c "from pyrite.plugins.registry import get_registry; print(get_registry().list_plugins())"

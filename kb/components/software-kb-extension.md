@@ -28,9 +28,9 @@ Pyrite extension for software project knowledge management. Provides entry types
 
 ## MCP Tools (sw_*)
 
-Read tier: sw_adrs, sw_component, sw_backlog, sw_board, sw_pull_next, sw_review_queue, sw_context_for_item, sw_milestones, sw_validations, sw_conventions, sw_standards
+Read tier (also in write and admin): sw_adrs, sw_component, sw_standards, sw_validations, sw_conventions, sw_milestones, sw_backlog, sw_board, sw_pull_next, sw_review_queue, sw_context_for_item, sw_epics, sw_epic_detail, sw_check_ready, sw_refine
 
-Write tier: sw_claim, sw_submit, sw_review, sw_create_adr, sw_create_backlog_item, sw_log
+Write tier (also in admin): sw_claim, sw_submit, sw_review, sw_transition, sw_prioritize, sw_log, sw_create_adr, sw_create_backlog_item
 
 ## Workflows
 

@@ -16,8 +16,12 @@ Structured knowledge management for software teams -- ADRs, design docs, coding 
 
 **Adds:**
 
-- **Entry types:** `adr`, `design_doc`, `standard`, `component`, `backlog_item`, `runbook`
-- **MCP tools:** `sw_adrs`, `sw_component`, `sw_standards`, `sw_backlog`, `sw_create_adr`, `sw_create_backlog_item`
+- **Entry types:** `adr`, `design_doc`, `standard`, `programmatic_validation`, `development_convention`, `component`, `backlog_item`, `runbook`, `milestone`, `work_log`
+- **MCP tools (23):** read tier (also in write and admin):
+  - Reference: `sw_adrs`, `sw_component`, `sw_standards`, `sw_validations`, `sw_conventions`, `sw_milestones`
+  - Backlog and kanban: `sw_backlog`, `sw_board`, `sw_pull_next`, `sw_review_queue`, `sw_context_for_item`, `sw_epics`, `sw_epic_detail`, `sw_check_ready`, `sw_refine`
+
+  Write tier (also in admin): `sw_claim`, `sw_submit`, `sw_review`, `sw_transition`, `sw_prioritize`, `sw_log`, `sw_create_adr`, `sw_create_backlog_item`
 - **CLI commands:** `pyrite sw`
 - **Preset:** `software`
 - **Workflows:** ADR lifecycle, backlog workflow
@@ -25,7 +29,7 @@ Structured knowledge management for software teams -- ADRs, design docs, coding 
 
 **Use case:** Engineering teams that want to keep architecture decisions, coding standards, component docs, and backlogs in version-controlled markdown alongside their code.
 
-[Full docs](https://github.com/pyrite-wiki/pyrite/tree/main/extensions/software-kb)
+[Full docs](https://github.com/pyrite-wiki/pyrite/blob/main/kb/components/software-kb-extension.md)
 
 ---
 
