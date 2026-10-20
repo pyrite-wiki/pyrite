@@ -8,7 +8,7 @@ to tell you are done. The reasons and the full detail are in the
 [JSON contracts](json-contracts.md), which this page links and does not
 repeat.
 
-## Upgrading from 0.25.8 to 0.25.9
+## Upgrading from 0.25.8 to 0.26.0
 
 Three things you do every day change, and every user rebuilds the index once.
 The commands below that run Pyrite are run by CI

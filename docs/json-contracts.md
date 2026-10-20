@@ -392,7 +392,10 @@ then; REST `UpdateResponse` always carries `changed`). The file is replaced
 only if it still holds the bytes the edit was computed on, under a lock in
 the KB's git directory; a file that keeps changing is refused with
 `CONFLICT` (`409` on REST, `retryable: true`). A KB outside git is written
-without a lock and the result says `"locked": false`. An item operation
+without a lock and the result says `"locked": false`. On a server that gives
+each user a worktree (auth on), a non-admin user's write to a KB outside
+git is refused: there is no worktree to isolate it in (ADR-0042 A1;
+today `VALIDATION_FAILED`, its own code is #1043). An item operation
 (`append`, `remove`) touches the one item it names: the other items keep
 their bytes, and `links`/`sources` take item operations on every surface
 though a set of the whole list is still refused; an appended link is
