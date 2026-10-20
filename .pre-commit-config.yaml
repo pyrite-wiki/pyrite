@@ -21,7 +21,7 @@
 #
 # The commit stage must stay fast because pre-commit stashes EVERY unstaged edit
 # in the working tree while commit hooks run. Several sessions share this tree
-# (see CLAUDE.md, "Multi-Session Git Hazard"); a multi-minute commit hook makes
+# (see CONTRIBUTING.md, "Branches, hooks and pull requests"); a multi-minute commit hook makes
 # other sessions' edits disappear for minutes, and one session's untracked RED
 # test blocks everyone's commits. tests/test_dev_process_config.py pins this
 # layout -- change both together.

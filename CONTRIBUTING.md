@@ -21,7 +21,8 @@ project is worth their time.
 The quickest path is `scripts/setup-checkout.sh` after cloning: it makes the
 venv, installs the extensions and writes the repo-local `.pyrite/config.yaml`
 that makes `pyrite -k pyrite` mean this checkout's `kb/` (the KB lookups in
-`AGENTS.md` need it). The manual steps, if you prefer them:
+`AGENTS.md` need it). It installs no git hooks: after it, run
+`.venv/bin/pre-commit install`. The manual steps, if you prefer them:
 
 ```bash
 # Clone the repository
@@ -40,6 +41,12 @@ for ext in extensions/*/; do uv pip install -e "$ext"; done
 
 # Install the git hooks (commit, commit-msg and pre-push in one go)
 pre-commit install
+
+# Register this checkout's kb/ as the `pyrite` KB (idempotent; also writes the
+# repo-local .pyrite/config.yaml). Without it, `pyrite sw backlog -k pyrite`
+# returns KB_NOT_FOUND.
+scripts/setup-checkout.sh
+pyrite kb list   # the `pyrite` KB path must be this checkout's kb/
 
 # Verify installation
 scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/*/tests/ -n 4 -q
@@ -462,7 +469,7 @@ push one branch at a time when relying on the local hook. CI remains the gate.
 
 
 CI runs the same checks plus the full Python matrix, Postgres, the frontend
-build and Playwright, so the pre-push run does not have to be perfect. If it
+build (Playwright runs only by hand, via workflow_dispatch; run `scripts/e2e.sh` locally for a `web/` change), so the pre-push run does not have to be perfect. If it
 fails in a test your change does not touch, re-run that test alone
 (`scripts/test-affected --run -- --lf`); if it passes, push with `--no-verify`
 and say so in the PR, and CI will decide. Name the test in the PR; if CI fails it too, it is a real failure your change caused, even in a test you did not touch. A failure in a test your change
@@ -499,10 +506,24 @@ and "it's in a local commit" has cost a round trip more than once.
    Open it as a **draft** right after your first push so CI starts; mark it
    ready when you think it is done. From a fork, name the upstream:
    `gh pr create --repo pyrite-wiki/pyrite --base dev --draft`. Review and
-   merge are the maintainer's; you do not arm auto-merge.
+   merge are the maintainer's; you do not arm auto-merge. See "From a fork"
+   below.
 5. Expect a first response **within 72 hours**. If you have heard nothing
    after that, comment on the PR — it is a lapse, not a verdict, and saying
    so is doing us a favour.
+
+**From a fork:** `scripts/new-worktree.sh`, `scripts/test-affected` and
+`scripts/verify-red.sh` all read `origin/dev`, so `origin` must be the upstream
+repo, not your fork (after `gh repo fork --remote`, `origin/dev` is your fork's
+stale `dev`). Clone upstream and add the fork as a second remote:
+
+```bash
+git clone https://github.com/pyrite-wiki/pyrite.git && cd pyrite
+git remote add fork https://github.com/<you>/pyrite.git
+# ... work on a branch ...
+git push -u fork <branch>
+gh pr create --repo pyrite-wiki/pyrite --base dev --draft
+```
 
 Stage explicit paths (`git add <file>`), never `git add -A`, `git add -u` or
 `git add .`: they sweep in edits you did not mean to commit, including a

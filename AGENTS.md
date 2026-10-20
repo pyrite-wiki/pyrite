@@ -68,9 +68,11 @@ After work that changes architecture, adds a component or completes a backlog
 item, update the KB with the CLI (never by hand-editing frontmatter):
 
 ```bash
-.venv/bin/pyrite create -k pyrite -t component --title "..." -b "..." --tags core
-.venv/bin/pyrite create -k pyrite -t backlog_item --title "..." -b "..." --tags enhancement
-.venv/bin/pyrite sw new-adr "..." --status proposed
+.venv/bin/pyrite create -k pyrite -t component --title "..." -b "..." --tags core \
+  -f kind=module -f path=pyrite/x.py -f owner=core
+.venv/bin/pyrite create -k pyrite -t backlog_item --title "..." -b "..." --tags enhancement \
+  -f kind=bug -f priority=medium -f effort=S
+.venv/bin/pyrite sw new-adr "..." -k pyrite --status proposed
 .venv/bin/pyrite index sync
 .venv/bin/pyrite index health
 ```
