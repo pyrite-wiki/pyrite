@@ -1236,7 +1236,7 @@ class IndexManager:
             }
         return indexed
 
-    def check_staleness(self) -> list[dict[str, Any]]:
+    def check_staleness(self, kb_names: list[str] | None = None) -> list[dict[str, Any]]:
         """Cheap per-KB staleness probe for the search path.
 
         Unlike ``check_health()``, this does NOT parse every entry. For each
@@ -1256,10 +1256,16 @@ class IndexManager:
         ``{"kb", "reason", "newest_file_mtime", "newest_indexed_at"}``. Empty
         list means the index is fresh — safe to search without a warning.
         Cheap enough to run on every search invocation.
+
+        ``kb_names`` restricts the probe to those KBs: a KB left out is not
+        walked or stat'ed at all (``search -k X`` must not pay for the others).
+        ``None`` probes every KB.
         """
         stale: list[dict[str, Any]] = []
 
         for kb in self.config.all_kbs():
+            if kb_names is not None and kb.name not in kb_names:
+                continue
             if not kb.path.exists():
                 continue
 

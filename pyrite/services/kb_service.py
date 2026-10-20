@@ -3426,9 +3426,7 @@ class KBService:
 
         Scoped to ``kb_name`` when given.
         """
-        stale = self._index_mgr.check_staleness()
-        if kb_name:
-            stale = [s for s in stale if s["kb"] == kb_name]
+        stale = self._index_mgr.check_staleness([kb_name] if kb_name else None)
         return [s["kb"] for s in stale]
 
     def get_index_stats(self) -> dict[str, Any]:
