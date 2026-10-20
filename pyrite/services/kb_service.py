@@ -1367,6 +1367,7 @@ class KBService:
         *,
         allow_undeclared: bool = True,
         validate_only: bool = False,
+        drop_managed: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Create multiple entries in a single batch, through the same pipeline as
@@ -1386,6 +1387,12 @@ class KBService:
 
         ``validate_only`` runs every check without writing; a passing item is
         reported as {"created": False, "valid": True, "entry_id": "..."}.
+
+        ``drop_managed`` is for an import (a file an export wrote): the keys an
+        export adds about the index and location, and the type's managed
+        fields, are dropped from each record and named in its ``ignored``.
+        Without it (a direct create such as MCP ``kb_bulk_create``) they are
+        refused.
         """
         if validate_only:
             kb_config = self.require_kb(kb_name)
@@ -1402,7 +1409,10 @@ class KBService:
         would_create_paths: set[Path] = set()
 
         for spec in entries:
+            ignored: list[str] = []
             try:
+                if drop_managed:
+                    spec, ignored = self._drop_managed_for_import(kb_config, spec)
                 if validate_only:
                     entry, warnings = self._prepare(
                         kb_name,
@@ -1432,6 +1442,8 @@ class KBService:
                     item = {"created": True, "entry_id": entry.id}
                 if warnings:
                     item["warnings"] = warnings
+                if ignored:
+                    item["ignored"] = ignored
                 results.append(item)
             except Exception as e:
                 result = _refusal_result(e)
@@ -1935,25 +1947,22 @@ class KBService:
             fields["metadata"] if isinstance(fields.get("metadata"), dict) else {},
         )
 
-    def _refuse_managed_on_create(
+    def _managed_spellings(
         self,
         entry_type: str,
         kb_config: KBConfig,
         fields: dict[str, Any],
         owns: frozenset[str] = frozenset(),
-    ) -> None:
-        """A create refuses a field Pyrite or the type manages, at every
-        spelling ADR-0051 treats as the same field (#1010; #1001 decision 6):
-        the top-level key, a dotted top-level key (``metadata.evidence``), an
-        alias, and the ``metadata`` envelope's second spelling (Andon #994,
-        decision A) are one field, resolved by ``field_at``. One message
-        naming the field, on every surface. ``links`` and ``sources`` are a
-        new entry's own content and stay creatable. A key the build would
-        drop (``file_path``, ``provenance``, ``extra_frontmatter``) is
-        managed, so it is refused here and never silently dropped (ADR-0042
-        decision 3). ``owns`` exempts the managed fields an in-process owner
-        sets itself, and only those. The top-level ``id`` and title are
-        popped before this runs; ``id`` in the envelope is refused."""
+    ) -> list[tuple[str, str, bool]]:
+        """``(key, field, in_envelope)`` for every key of a create's ``fields``
+        that spells a field Pyrite or the type manages, at every spelling
+        ADR-0051 treats as the same field: the top-level key, a dotted
+        top-level key (``metadata.evidence``), an alias, and the key under the
+        ``metadata`` envelope -- all resolved by ``field_at``. ``links`` and
+        ``sources`` are a new entry's own content and are not listed;
+        ``owns`` names the managed fields an in-process owner sets itself.
+        Raises ``ValidationError`` for an envelope key no parser reads (not a
+        key a new file gets, decision A)."""
         from ..models.core_types import get_entry_class
         from ..schema.field_aliases import NotAFieldError, field_at, path_segments
 
@@ -1972,22 +1981,82 @@ class KBService:
             for k in envelope:
                 if isinstance(k, str):
                     keyed.append((k, ("metadata", *path_segments(k)), True))
+        found: list[tuple[str, str, bool]] = []
         for key, path, in_envelope in keyed:
             try:
                 field, _rest = field_at(cls, entry_type, path)
             except (NotAFieldError, ValueError) as e:
                 if in_envelope:
-                    # `metadata.k` inside the envelope, an unreadable path:
-                    # not a field, so not a key a new file gets (decision A).
                     raise ValidationError(f"Cannot create a {entry_type}: {e}") from None
                 continue  # a custom top-level key: written as sent
             if field in managed:
-                spelled = f" (sent as `{key}`)" if key != field else ""
-                raise ValidationError(
-                    f"Cannot set {field} on a new {entry_type}{spelled}: Pyrite maintains "
-                    "this field. To keep a field of your own under that name, "
-                    f"name it differently (for example `{entry_type}_{field}`)."
-                )
+                found.append((key, field, in_envelope))
+        return found
+
+    def _refuse_managed_on_create(
+        self,
+        entry_type: str,
+        kb_config: KBConfig,
+        fields: dict[str, Any],
+        owns: frozenset[str] = frozenset(),
+    ) -> None:
+        """A create refuses a field Pyrite or the type manages, at every
+        spelling (:meth:`_managed_spellings`; #1010, #1001 decision 6). One
+        message naming the field, on every surface. A key the build would
+        drop (``file_path``, ``provenance``, ``extra_frontmatter``) is
+        managed, so it is refused here and never silently dropped (ADR-0042
+        decision 3). The top-level ``id`` and title are popped before this
+        runs; ``id`` in the envelope is refused."""
+        found = self._managed_spellings(entry_type, kb_config, fields, owns)
+        if found:
+            key, name, _in_envelope = found[0]
+            spelled = f" (sent as `{key}`)" if key != name else ""
+            raise ValidationError(
+                f"Cannot set {name} on a new {entry_type}{spelled}: Pyrite maintains "
+                "this field. To keep a field of your own under that name, "
+                f"name it differently (for example `{entry_type}_{name}`)."
+            )
+
+    def _drop_managed_for_import(
+        self, kb_config: KBConfig, spec: dict[str, Any]
+    ) -> tuple[dict[str, Any], list[str]]:
+        """``(spec, ignored)`` for an import record: an export carries keys
+        about the index and the location (``kb_name``, ``file_path``,
+        ``indexed_at``, ``content_hash``, ``outlinks``, ``backlinks``, ...) and
+        a type's managed fields (a task's ``assigned_at``,
+        ``status_change_log``). None of them is a request, so an import
+        drops them and names each in ``ignored`` -- never silently (the
+        maintainer's decision, 2026-10-20). A direct create refuses them
+        instead. The entry's ``id`` and ``entry_type`` are kept."""
+        if not isinstance(spec, dict):
+            return spec, []
+        named = spec.get("entry_type") or spec.get("type") or "note"
+        try:
+            entry_type = self._resolve_entry_type(named, kb_config.kb_type)
+            managed = self._managed_spellings(entry_type, kb_config, spec)
+        except Exception:  # an unknown type or bad envelope key: the create says why
+            return spec, []
+        index_only = (_INDEX_ONLY_KEYS - {"entry_type", "type"}) | {"file_path", "kb_name"}
+        out = dict(spec)
+        ignored: list[str] = []
+        for key in list(out):
+            if key in index_only or any(key == k and not env for k, _f, env in managed):
+                if key == "id":
+                    continue
+                ignored.append(key)
+                del out[key]
+        envelope = out.get("metadata")
+        if isinstance(envelope, dict):
+            kept = dict(envelope)
+            for key, _field, in_env in managed:
+                if in_env and key in kept:
+                    ignored.append(f"metadata.{key}")
+                    del kept[key]
+            if kept:
+                out["metadata"] = kept
+            else:
+                out.pop("metadata")
+        return out, sorted(ignored)
 
     def _resolve_operation(
         self,

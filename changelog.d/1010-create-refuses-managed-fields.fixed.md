@@ -7,7 +7,10 @@
   `create_entry` (an owner such as `sw new-adr` names the field it sets with
   `owns=`), instead of writing or silently dropping it (#1010). `pyrite add
   FILE` is the one exception: it adopts a hand-written file's own values.
-  Export output is not importable as-is: it carries read-only fields
+  An import (`pyrite import`, `POST /api/entries/import`) is the other
+  half: a file an export wrote carries keys about the index and location
   (`kb_name`, `file_path`, `indexed_at`, `content_hash`, `outlinks`,
-  `backlinks`, a task's `assigned_at`) that an import now refuses; a decision
-  on the round trip is pending.
+  `backlinks`) and a type's managed fields (a task's `assigned_at`,
+  `status_change_log`); an import drops them and names each one under
+  `ignored` for its entry, so an export imports into another KB and nothing
+  is dropped silently. The direct create surfaces still refuse them.

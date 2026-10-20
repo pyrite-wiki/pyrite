@@ -651,14 +651,22 @@ async def import_entries(
     # Every per-record decision (the ADR-0034 truncated-body refusal, the
     # declared type, an existing id, schema and plugin validation) is the
     # service's write pipeline, the same one POST /entries uses (#378).
-    results = svc.bulk_create_entries(kb, parsed, allow_undeclared=allow_undeclared)
+    results = svc.bulk_create_entries(
+        kb, parsed, allow_undeclared=allow_undeclared, drop_managed=True
+    )
 
     created = []
     errors = []
     for entry_data, r in zip(parsed, results, strict=True):
         title = entry_data.get("title", "?") if isinstance(entry_data, dict) else "?"
         if r.get("created"):
-            created.append({"id": r["entry_id"], "title": title})
+            created.append(
+                {
+                    "id": r["entry_id"],
+                    "title": title,
+                    **({"ignored": r["ignored"]} if r.get("ignored") else {}),
+                }
+            )
         else:
             errors.append({"title": title, "error": r["error"], "error_code": r["error_code"]})
 

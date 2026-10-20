@@ -200,7 +200,20 @@ results keep the input order. Each failed item carries `error_code`:
 ```
 
 REST import reports the same pair per item in `error_details`
-(`{"title", "error", "error_code"}`). `pyrite import` prints
+(`{"title", "error", "error_code"}`).
+
+**Import drops what a create refuses, and says so.** A file an export wrote
+carries keys about the index and the location (`kb_name`, `file_path`,
+`indexed_at`, `content_hash`, `outlinks`, `backlinks`, ...) and a type's
+managed fields (a task's `assigned_at`, `status_change_log`, `evidence`,
+`agent_context`; an ADR's `adr_number`), at any spelling. `pyrite import` and
+`POST /api/entries/import` (not the direct creates `kb_create`,
+`kb_bulk_create`, REST `POST`, `create -f`, which refuse them) drop those
+keys from each record and list every one in that record's `ignored`:
+REST `entries[].ignored`, `pyrite import`'s `Ignored:` line. A key whose
+value is `null` is "not given" and is not listed. The entry's `id` and
+`entry_type` are kept, so an export from one KB imports into another with
+`imported` equal to the count. `pyrite import` prints
 `Failed [CODE]: <title>: <message>` per refused record and exits `3` when some
 records were written and some refused, `1` when none was written
 (re-importing a file whose entries all exist writes nothing, so it exits `1`);

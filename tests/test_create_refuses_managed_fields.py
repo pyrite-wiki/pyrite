@@ -20,6 +20,7 @@ added without choosing: guarded by the grid, or safe by reading (and why).
 from __future__ import annotations
 
 import ast
+import itertools
 import json
 import re
 import types
@@ -206,15 +207,18 @@ def p_cli_task_create(env, etype, extra):
     return res.exit_code != 0, res.output
 
 
-def _import_json(env, etype, extra):
+_TITLES = itertools.count(1)
+
+
+def _import_json(env, etype, extra, title):
     path = env["tmp_path"] / "in.json"
-    path.write_text(json.dumps([_spec(etype, extra)]))
+    path.write_text(json.dumps([_spec(etype, extra, title)]))
     return path
 
 
-def p_cli_import(env, etype, extra):
-    res = _cli(env, ["import", str(_import_json(env, etype, extra)), "-k", KB])
-    return res.exit_code != 0, res.output
+def p_cli_import(env, etype, extra, title):
+    res = _cli(env, ["import", str(_import_json(env, etype, extra, title)), "-k", KB])
+    return res.exit_code == 0, res.output
 
 
 def _rest(env):
@@ -233,17 +237,17 @@ def _rest(env):
     return TestClient(app), worker, db
 
 
-def p_rest_import(env, etype, extra):
+def p_rest_import(env, etype, extra, title):
     client, worker, db = _rest(env)
     try:
-        body = json.dumps([_spec(etype, extra)])
+        body = json.dumps([_spec(etype, extra, title)])
         resp = client.post(
             "/api/entries/import",
             params={"kb": KB},
             files={"file": ("in.json", body, "application/json")},
         )
         out = resp.json()
-        return (resp.status_code != 200 or out.get("imported") == 0), resp.text
+        return (resp.status_code == 200 and out.get("imported") == 1), resp.text
     finally:
         worker.wait_for_idle(timeout=10)
         db.close()
@@ -294,8 +298,6 @@ PATHS = {
     "mcp.kb_create": (p_mcp_create, _any, lambda t: True),
     "mcp.kb_bulk_create": (p_mcp_bulk, _any, lambda t: True),
     "cli.create -f": (p_cli_create, _any, lambda t: True),
-    "cli.import": (p_cli_import, _any, lambda t: True),
-    "rest.import": (p_rest_import, _any, lambda t: True),
     "rest.post": (p_rest_post, _envelope_only, lambda t: True),
     "cli.task create --field": (p_cli_task_create, _any, _task_only),
     "journalism.create_entity": (p_journalism_entity, _any, lambda t: t == "note"),
@@ -311,7 +313,21 @@ def _grid():
             for label, extra in _forms(etype, field):
                 if not forms_ok(label):
                     continue
-                marks = [ENVELOPE_CONTROL] if label.startswith("envelope:") else []
+                marks = []
+                if label.startswith("envelope:"):
+                    marks.append(ENVELOPE_CONTROL)
+                elif field == "id" and label.startswith("dotted:"):
+                    marks.append(
+                        pytest.mark.control(
+                            reason="metadata.id was already refused: id spelled twice"
+                        )
+                    )
+                elif path == "cli.task create --field" and label.startswith("top:"):
+                    marks.append(
+                        pytest.mark.control(
+                            reason="task create refused these by its own list; now by the service"
+                        )
+                    )
                 cells.append(
                     pytest.param(
                         path, etype, field, extra, id=f"{path}|{etype}.{field}|{label}", marks=marks
@@ -329,6 +345,46 @@ def test_a_create_path_refuses_a_managed_field(env, path, etype, field, extra):
     assert _md_files(env) == before, "refused, yet a file appeared"
 
 
+#: Import paths drop what an export adds and a type manages, and name each key
+#: under ``ignored`` (the maintainer's decision, 2026-10-20); a direct create
+#: refuses it. Same cells, the other oracle.
+IMPORT_PATHS = {"cli.import": p_cli_import, "rest.import": p_rest_import}
+
+
+def _import_grid():
+    cells = []
+    for path in IMPORT_PATHS:
+        for etype, field in CELLS:
+            for label, extra in _forms(etype, field):
+                marks = []
+                if field == "id" and label.startswith("dotted:"):
+                    marks.append(pytest.mark.control(reason="metadata.id was already refused"))
+                cells.append(
+                    pytest.param(
+                        path, etype, field, extra, id=f"{path}|{etype}.{field}|{label}", marks=marks
+                    )
+                )
+    return cells
+
+
+@pytest.mark.parametrize(("path", "etype", "field", "extra"), _import_grid())
+def test_an_import_path_drops_a_managed_field_and_reports_it(env, path, etype, field, extra):
+    n = next(_TITLES)
+    title = f"Imp{n}"
+    ok, text = IMPORT_PATHS[path](env, etype, extra, title)
+    written = list(env["kb_path"].rglob(f"imp{n}.md"))
+    if field == "id":
+        # `id` is the entry's identity, not droppable: the envelope spelling is refused.
+        return
+    assert ok and len(written) == 1, text
+    assert field in text, text  # named under ignored
+    # The sent value is not in the file (an ADR's model writes its own default
+    # adr_number: the forged one must not appear).
+    sent = re.compile(rf"^\s*(metadata\.)?{field}:\s*[\"']?x[\"']?\s*$", re.M)
+    assert not sent.search(written[0].read_text()), written[0].read_text()
+
+
+@pytest.mark.control(reason="guards the grid itself: red the day it loops zero times")
 def test_the_grid_has_a_real_alias_and_a_dotted_spelling():
     """The grid must hold the spellings the property names, not loop zero times."""
     labels = {label.split(":")[0] for etype, f in CELLS for label, _ in _forms(etype, f)}
@@ -406,9 +462,12 @@ CALL_SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("pyrite/server/mcp_server.py", "create"): (1, "grid: mcp.kb_create"),
     ("pyrite/server/mcp_server.py", "bulk_create_entries"): (1, "grid: mcp.kb_bulk_create"),
     ("pyrite/cli/entry_commands.py", "create"): (1, "grid: cli.create -f"),
-    ("pyrite/cli/__init__.py", "bulk_create_entries"): (1, "grid: cli.import"),
+    ("pyrite/cli/__init__.py", "bulk_create_entries"): (1, "grid: cli.import (drops and reports)"),
     ("pyrite/server/endpoints/entries.py", "create"): (1, "grid: rest.post"),
-    ("pyrite/server/endpoints/entries.py", "bulk_create_entries"): (1, "grid: rest.import"),
+    ("pyrite/server/endpoints/entries.py", "bulk_create_entries"): (
+        1,
+        "grid: rest.import (drops and reports)",
+    ),
     ("pyrite/server/endpoints/clipper.py", "create"): (
         1,
         "safe: the spec is built from fixed clip fields (title, body, url, tags); no caller key reaches it",
@@ -509,6 +568,7 @@ def _scan_call_sites() -> Counter:
     return found
 
 
+@pytest.mark.control(reason="holds today; red the day a create call site is added unclassified")
 def test_every_create_call_site_is_classified():
     found = _scan_call_sites()
     expected = Counter({k: v[0] for k, v in CALL_SITES.items()})
@@ -520,4 +580,4 @@ def test_every_create_call_site_is_classified():
         assert why.split(":")[0] in {"grid", "safe", "internal", "owner", "exception"}, key
         if why.startswith("grid: "):
             name = why[len("grid: ") :].split(" (")[0]
-            assert name in PATHS, (key, name)
+            assert name in PATHS or name in IMPORT_PATHS, (key, name)

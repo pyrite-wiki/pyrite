@@ -1388,6 +1388,9 @@ def test_a_declared_field_named_entry_is_still_written(env, mcp):
     assert _file(env, eid).read_bytes() == before
 
 
+@pytest.mark.control(
+    reason="documents the exception: add FILE adopted these values before and still does"
+)
 def test_add_file_adopts_a_hand_written_files_managed_values(env):
     """The documented exception: `pyrite add FILE` takes a file's own values
     (here a provenance block); it is not a request that sets them."""

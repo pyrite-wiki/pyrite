@@ -914,7 +914,11 @@ def import_entries(
     with cli_context(kbs=(kb_name,), output_format=fmt) as (config, db, svc):
         try:
             results = svc.bulk_create_entries(
-                kb_name, parsed, allow_undeclared=allow_undeclared, validate_only=dry_run
+                kb_name,
+                parsed,
+                allow_undeclared=allow_undeclared,
+                validate_only=dry_run,
+                drop_managed=True,
             )
         except PyriteError as e:
             _cli_err(e)
@@ -944,6 +948,10 @@ def import_entries(
                 for warning in r.get("warnings", []):
                     console.print(
                         "    [yellow]Warning:[/yellow]", _json.dumps(warning, default=str)
+                    )
+                if r.get("ignored"):
+                    console.print(
+                        "    [yellow]Ignored:[/yellow]", ", ".join(r["ignored"]), markup=False
                     )
             else:
                 failed += 1
