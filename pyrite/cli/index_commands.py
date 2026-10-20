@@ -391,23 +391,10 @@ def index_embed(
     # anything that already has a vector, stale or not.
     from ..services.embedding_worker import EmbeddingWorker, settle_embed_queue_by_kb
 
-    queue_worker = EmbeddingWorker(db)
-    if queue_worker.has_pending():
-        queue_svc = queue_worker._get_embedding_svc()
-        if queue_svc is None:
-            typer.echo(
-                "Embedding service is unavailable. Check the semantic dependencies and "
-                "vector backend; queued entries remain pending without spending attempts."
-            )
-            return
-        if not queue_svc.prewarm(log_failure=False):
-            typer.echo(
-                f"Could not load the embedding model {queue_svc.model_name!r}. "
-                "Check the configured model and Hugging Face cache/network access. "
-                "Queued entries remain pending and no attempts were spent; rerun "
-                "pyrite index embed after restoring access."
-            )
-            return
+    queue_worker = EmbeddingWorker(db, model_name=config.settings.embedding_model)
+    if queue_worker.has_pending() and (unavailable := queue_worker.model_unavailable()):
+        typer.echo(unavailable)
+        return
 
     by_kb = settle_embed_queue_by_kb(db, model_name=config.settings.embedding_model)
     from_queue = sum(by_kb.values()) if kb_name is None else by_kb.get(kb_name, 0)

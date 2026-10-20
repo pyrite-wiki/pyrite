@@ -186,20 +186,10 @@ class EmbeddingWorker:
         if not rows:
             return 0
 
-        svc = self._get_embedding_svc()
-        if svc is None:
-            logger.debug("Embedding service not available, skipping batch")
+        if unavailable := self.model_unavailable():
+            logger.warning("%s Leaving %d queued entries pending.", unavailable, len(rows))
             return 0
-
-        if not svc.prewarm(log_failure=False):
-            logger.warning(
-                "Could not load the embedding model %r; leaving %d queued entries pending "
-                "without spending attempts. Check the configured model and Hugging Face "
-                "cache/network access, then rerun pyrite index embed.",
-                svc.model_name,
-                len(rows),
-            )
-            return 0
+        svc = self._get_embedding_svc()  # cached by model_unavailable()
 
         success_count = 0
         retired_count = 0
@@ -316,6 +306,31 @@ class EmbeddingWorker:
                 exc_info=True,
             )
             return False
+
+    def model_unavailable(self) -> str | None:
+        """Why queued entries cannot be embedded right now, or None if they can.
+
+        **The one "can the model load" rule.** `process_batch` and `pyrite
+        index embed` both ask this and print what it returns, so the two cannot
+        disagree. An unavailable model is not the entry's fault: the caller
+        must leave the rows pending without spending an attempt, or three
+        offline runs would mark every queued entry failed (#594). The message
+        names the model this worker embeds with (the configured one).
+        """
+        svc = self._get_embedding_svc()
+        if svc is None:
+            return (
+                "The embedding service is unavailable. Check the semantic dependencies "
+                "and vector backend; queued entries remain pending without spending attempts."
+            )
+        if not svc.prewarm(log_failure=False):
+            return (
+                f"Could not load the embedding model {svc.model_name!r}. "
+                "Check the configured model and Hugging Face cache/network access. "
+                "Queued entries remain pending and no attempts were spent; rerun "
+                "pyrite index embed after restoring access."
+            )
+        return None
 
     def has_pending(self) -> bool:
         """Is there any debt at all? One indexed COUNT, no embedding stack.

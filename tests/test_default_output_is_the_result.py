@@ -871,7 +871,11 @@ class TestIndexEmbedUnavailableModel:
         kb_path.mkdir()
         config = PyriteConfig(
             knowledge_bases=[KBConfig(name="t", path=kb_path, kb_type=KBType.GENERIC)],
-            settings=Settings(index_path=tmp_path / "i.db", auto_embed=True),
+            settings=Settings(
+                index_path=tmp_path / "i.db",
+                auto_embed=True,
+                embedding_model="configured-offline-model",
+            ),
         )
         db = PyriteDB(config.settings.index_path)
         db.vec_available = True
@@ -894,6 +898,7 @@ class TestIndexEmbedUnavailableModel:
 
             assert result.exit_code == 0, result.output
             assert result.output.count("Could not load the embedding model") == 1
+            assert "'configured-offline-model'" in result.output
             assert "cache" in result.output.lower()
             assert "pending" in result.output.lower()
             assert load_model.call_count == 1
