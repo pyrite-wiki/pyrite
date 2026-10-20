@@ -165,6 +165,29 @@ def _as_text(value: Any) -> Any:
     return str(value)
 
 
+def _read_value_is_the_bags(key: str, read_value: Any, bag_value: Any) -> bool:
+    """Whether a read's value for ``key`` is the bag's value, spelled as the
+    read spells it: a TEXT column holds the bag's ``2`` as ``"2"`` and its
+    ``true`` as ``"1"`` (``_as_column``); a timestamp the model parsed is the
+    bag's instant whatever the file's separator or zone spelling; anything
+    else (a value lifted from the bag itself) compares as JSON text. What
+    ``read_metadata`` asks to decide whether a bag key leaves the read's
+    ``metadata`` (#1025): a value the read does not carry stays."""
+    if key in _READ_COLUMNS:
+        return bool(_as_column(key, bag_value) == read_value)
+    if key in ("created_at", "updated_at"):
+        from ..models.base import _timestamp_instant
+
+        a, b = _timestamp_instant(read_value), _timestamp_instant(bag_value)
+        if a is not None and b is not None:
+            return a == b
+    from ..utils.json_utils import SafeEncoder
+
+    return json.dumps(read_value, sort_keys=True, cls=SafeEncoder) == json.dumps(
+        bag_value, sort_keys=True, cls=SafeEncoder
+    )
+
+
 def _one_text(value: Any) -> Any:
     """A tag or a source's date as the index stores and returns it: a date or
     timestamp as ``isoformat()`` (``crud.temporal_text``), the one text every
@@ -846,7 +869,9 @@ class IndexManager:
         # declare (#1025, option B of the maintainer's decision of 2026-10-20).
         # The row keeps the whole bag: the storage dict the plugins read
         # declared fields from.
-        result["metadata"] = read_metadata(metadata, result, type(entry), entry.entry_type)
+        result["metadata"] = read_metadata(
+            metadata, result, type(entry), entry.entry_type, agrees=_read_value_is_the_bags
+        )
         # As _sync_tags stores them: falsy skipped, duplicates (by ==, so
         # ``1`` and ``true`` are one) dropped first-wins, names as TEXT.
         result["tags"] = [_one_text(t) for t in dict.fromkeys(t for t in data["tags"] if t)]

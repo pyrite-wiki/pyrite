@@ -26,7 +26,7 @@ by ``field_aliases_findings`` (``pyrite schema validate``), never a crash.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import date, datetime
 from typing import Any
 
@@ -483,18 +483,33 @@ def lift_declared_fields(
 
 
 def read_metadata(
-    bag: Mapping[str, Any] | None, result: Mapping[str, Any], cls: type, entry_type: str
+    bag: Mapping[str, Any] | None,
+    result: Mapping[str, Any],
+    cls: type,
+    entry_type: str,
+    *,
+    agrees: Callable[[str, Any, Any], bool] | None = None,
 ) -> dict[str, Any]:
     """The single-entry read's ``metadata``: the bag, less every key that spells
-    a declared field the read carries at its own name (``field_at`` folded, so
-    an alias of a declared field is a spelling of it). A read spells each field once, at its own name, and ``metadata``
+    a declared field the read carries at its own name with the same value
+    (``field_at`` folded, so an alias of a declared field is a spelling of
+    it). A read spells each field once, at its own name, and ``metadata``
     holds only keys the type does not declare (option B of the maintainer's
-    decision of 2026-10-20 on #1025). A declared field the read does not carry
-    (a class that never reads it from its frontmatter) keeps its bag spelling,
-    so the read loses nothing. The index row keeps the whole bag: the storage
-    shape the plugins read."""
+    decision of 2026-10-20 on #1025); the index row keeps the whole bag, the
+    storage shape the plugins read.
+
+    A read never loses a value the file holds: a bag value the read does
+    not carry at the field's name stays. That is a file spelling the field
+    twice (``importance: 7`` and ``metadata: {importance: 8}``: the read
+    says 7 at its own name and keeps 8 under ``metadata``, where ``index
+    health`` reports it), and a declared field a class never reads from its
+    frontmatter, whose column is empty. ``agrees(field, read_value,
+    bag_value)`` says whether the read's value is the bag's; the caller
+    knows how its columns spell a value (a TEXT column holds ``2`` as
+    ``"2"``), the default compares the two as JSON text."""
     if not isinstance(bag, Mapping) or not bag:
         return {}
+    same = agrees or _same_json_text
     declared = declared_fields(cls, entry_type)
     out: dict[str, Any] = {}
     for key, value in bag.items():
@@ -503,19 +518,17 @@ def read_metadata(
                 field, _rest = field_at(cls, entry_type, (key,))
             except ValueError:
                 field = key
-            if field in declared and _carried(result.get(field)):
+            if field in declared and field in result and same(field, result[field], value):
                 continue
         out[key] = value
     return out
 
 
-def _carried(read_value: Any) -> bool:
-    """Whether a read carries a field at its own name: a column the model
-    never filled reads ``None`` or ``""`` (a class that does not read the
-    field from its frontmatter, or a model default the index stores as
-    empty), and the bag then stays the one place the file's value shows.
-    A TEXT column spells ``2`` as ``"2"``, so values are not compared."""
-    return read_value is not None and read_value != ""
+def _same_json_text(_field: str, a: Any, b: Any) -> bool:
+    """Equal once both are spelled as JSON (a read is JSON on every surface)."""
+    import json
+
+    return json.dumps(a, sort_keys=True, default=str) == json.dumps(b, sort_keys=True, default=str)
 
 
 def _spellings_present(

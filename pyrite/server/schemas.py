@@ -161,7 +161,19 @@ class PersonCreate(EntryBase):
 
 
 class EntryResponse(BaseModel):
-    """Full entry response."""
+    """Full entry response.
+
+    The fields below are the stable core every entry has. A single-entry
+    read spells each field the type declares at its own name (#1025; a
+    task's ``status_reason`` and ``evidence``, a backlog item's ``rank``,
+    every type's ``provenance``), and those keys have no slot here, so the
+    model passes every other key of the read through unchanged: what the
+    read returns reaches REST as it reaches MCP ``kb_get`` and the CLI's
+    JSON (``docs/json-contracts.md``, the read shape). A fixed list dropped
+    them silently once they left ``metadata``.
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     id: str
     kb_name: str

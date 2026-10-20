@@ -880,7 +880,11 @@ def test_rest_put_of_a_reads_metadata_with_a_key_added_writes_it(tmp_path: Path)
     after = _get(config, "n3")
     assert after["metadata"]["reviewed_by"] == "me", after["metadata"]
     assert after["provenance"] == {"created_by": "me"} or after["provenance"]["created_by"] == "me"
-    assert "provenance:\n  created_by: me\n" in path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
+    assert "provenance:\n  created_by: me\n" in text
+    # The file's spelling: a key the file did not hold lands at the top level
+    # (decision 6, as on dev), not under `metadata:`.
+    assert "\nreviewed_by: me\n" in text and "  reviewed_by:" not in text, text
 
 
 @pytest.mark.control(
@@ -888,13 +892,15 @@ def test_rest_put_of_a_reads_metadata_with_a_key_added_writes_it(tmp_path: Path)
     "(the read shape 'both'), pinned so option B keeps the echo writable"
 )
 def test_mcp_echo_of_a_whole_read_with_a_metadata_key_added_writes_it(tmp_path: Path):
-    config, _path = _kb_with(tmp_path, PROVENANCE_NOTE, "n3")
+    config, path = _kb_with(tmp_path, PROVENANCE_NOTE, "n3")
     read = _mcp_get(config, "n3")
     read["metadata"] = {**read["metadata"], "reviewed_by": "me"}
 
     _mcp_update(config, {"kb_name": KB, "entry_id": "n3", **read})
 
     assert _get(config, "n3")["metadata"]["reviewed_by"] == "me"
+    text = path.read_text(encoding="utf-8")
+    assert "\nreviewed_by: me\n" in text and "  reviewed_by:" not in text, text
 
 
 def test_mcp_echo_of_a_whole_read_with_importance_changed_on_a_nested_note(tmp_path: Path):
@@ -923,7 +929,66 @@ def test_mcp_echo_editing_a_top_level_field_and_a_metadata_key_on_a_task(tmp_pat
 
     after = _get(config, "t2")
     assert after["title"] == "T2 edited" and after["metadata"]["reviewed_by"] == "me", after
-    assert "evidence:\n- e1\n" in path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
+    assert "evidence:\n- e1\n" in text
+    assert "\nreviewed_by: me\n" in text and "  reviewed_by:" not in text, text
+
+
+# --------------------------------------------------------------------------
+# Every field a single-entry read returns reaches every surface
+# --------------------------------------------------------------------------
+
+
+def _surface_reads(config: PyriteConfig, entry_id: str) -> dict[str, dict[str, Any]]:
+    """The entry as the service reads it and as REST `GET`, MCP `kb_get` and
+    the CLI's JSON return it, each as JSON values."""
+    read = json.loads(json.dumps(_get(config, entry_id), default=str))
+    return {
+        "read": read,
+        "rest": _rest_get(config, entry_id),
+        "mcp": json.loads(json.dumps(_mcp_get(config, entry_id), default=str)),
+        "cli": _cli(config, "get", entry_id, "-k", KB),
+    }
+
+
+@pytest.mark.parametrize("type_name", sorted(_classes()))
+def test_every_field_a_read_returns_reaches_every_surface(
+    type_name: str, tmp_path_factory: pytest.TempPathFactory
+):
+    """The property (conductor's delta review, round 2): every field the
+    single-entry read returns reaches REST `GET /api/entries/{id}`, MCP
+    `kb_get` and `pyrite get --format json`, with the same key and value. A
+    read spells a declared field at its own name (option B), so a surface
+    with a fixed field list (`EntryResponse`) dropped a task's
+    `status_reason`, `evidence` and `parked_awaiting`, a backlog item's
+    `rank`, `effort` and `kind`, and every type's `provenance`. One entry per
+    registered type, every declared field set."""
+    config = _kb_for(type_name, tmp_path_factory)
+    cls = _classes()[type_name]
+    # The entry spelling every declared field at its own name is the grid's
+    # KB itself: one file per field. The cross-surface check wants one entry
+    # with them all, so build it from the samples.
+    root = tmp_path_factory.mktemp(f"surfaces-{type_name}")
+    kb_path = root / "kb"
+    (kb_path / "entries").mkdir(parents=True)
+    fields = {f: _sample(type_name, f) for f in _read_fields(cls, type_name) if f != "title"}
+    fields["title"] = "All fields"
+    (kb_path / "entries" / "all.md").write_text(
+        _file("all", type_name, fields, "title"), encoding="utf-8"
+    )
+    (kb_path / "entries" / "bare.md").write_text(
+        _file("bare", type_name, {}, None), encoding="utf-8"
+    )
+    config = _config(root, kb_path, type_name)
+    _index(config)
+
+    shapes = _surface_reads(config, "all")
+    read = shapes.pop("read")
+    for name, shape in shapes.items():
+        missing = [k for k in read if k not in shape]
+        assert not missing, f"{name} drops {missing} of the read"
+        differing = {k: (read[k], shape[k]) for k in read if shape[k] != read[k]}
+        assert not differing, f"{name} differs from the read on {differing}"
 
 
 # --------------------------------------------------------------------------
@@ -1110,6 +1175,23 @@ def test_a_double_spelling_still_reads_the_top_level_and_is_reported(tmp_path: P
     finally:
         db.close()
     assert [d["field"] for d in health["double_spellings"]] == ["importance"], health
+
+
+def test_a_double_spelling_read_keeps_the_second_value_under_metadata(tmp_path: Path):
+    """The amendment: a read never loses a value the file holds. A file
+    spelling `importance` twice reads the top-level value at its own name
+    (decision 3) and the nested value stays under `metadata`, where `index
+    health` reports the double spelling; only a nested spelling the read
+    already carries at its own name, with the same value, leaves `metadata`."""
+    config, _path = _note_kb(
+        tmp_path,
+        "---\nid: n1\ntitle: N1\ntype: note\nimportance: 7\nmetadata:\n  importance: 8\n"
+        "---\n\nText.\n",
+    )
+    read = _get(config, "n1")
+    assert read["importance"] == 7, read
+    assert read["metadata"] == {"importance": 8}, read["metadata"]
+    assert _row(config, "n1")["metadata"] == {"importance": 8}
 
 
 REPO_FILES = {
