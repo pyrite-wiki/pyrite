@@ -901,13 +901,21 @@ class KBService:
 
         The index row only says where to look. Its file is read if it still
         holds the id (ADR-0038 I8); otherwise, and when there is no row, the
-        files named ``<id>.md`` in the KB are tried, each verified, and then
-        the KB is scanned as ``find_file`` scans it, so a file renamed by hand
-        answers before the next sync, as create's exists check already saw
-        it. No file holding the id is a miss (``None``) even when a row
-        remains: the file decides (principle 5). The scan reads every file's
-        raw text but parses only those it cannot rule out (#135; under
-        ~100 ms on 2,000 files, the maintainer's bound for adding it here).
+        files named ``<id>.md`` in the KB are tried, each verified. With the
+        KB named (``unindexed`` None), the KB is then scanned as ``find_file``
+        scans it, so a file renamed by hand answers before the next sync, as
+        create's exists check already saw it. Without a KB (``get_entry``'s
+        two passes over every readable KB) a miss stops at the names: a scan
+        per KB would grow with the number of KBs (maintainer, 2026-10-20), so
+        a renamed, unindexed file answers ``-k`` only. No file holding the id
+        is a miss (``None``) even when a row remains: the file decides
+        (principle 5).
+
+        The scan reads every file's raw text but parses only those it cannot
+        rule out (#135): about 100 ms on 2,000 files. That bound does not hold
+        in a KB with schema migrations to apply, where every file is parsed
+        (about 1 ms each), nor for files with no ``id:`` line (a derived id),
+        each parsed on every miss.
 
         A row whose path lies outside the KB root is a user's worktree file
         (the overlay read service, ``WorktreeResolver.get_read_service``): it
@@ -930,7 +938,7 @@ class KBService:
             return row
         if kb_config is None:
             return None
-        found = self._entry_file(kb_config, entry_id, row)
+        found = self._entry_file(kb_config, entry_id, row, scan=unindexed is None)
         if found is None:
             return None
         path, digest, entry = found
@@ -945,9 +953,12 @@ class KBService:
             raise
 
     def _entry_file(
-        self, kb_config: KBConfig, entry_id: str, row: dict[str, Any] | None
+        self, kb_config: KBConfig, entry_id: str, row: dict[str, Any] | None, *, scan: bool
     ) -> tuple[Path, str, Entry] | None:
-        """``(path, content_hash, entry)`` of the file holding ``entry_id``, or None."""
+        """``(path, content_hash, entry)`` of the file holding ``entry_id``, or None.
+
+        ``scan``: after the indexed file and the files named like the id, scan
+        the KB (``_files_holding``); False stops at the names."""
         repo = KBRepository(kb_config)
         indexed = Path(row["file_path"]) if row else None
 
@@ -959,9 +970,9 @@ class KBService:
                 yield indexed
             if indexed is not None and not repo._lexically_inside(indexed):
                 return  # an overlay row: never main's file in its place
-            # find_file's steps: the files named like the id, then the
-            # prefiltered scan of the KB (#135), so a read and a create agree
-            # on which file holds the id.
+            # find_file's steps: the files named like the id, then (one KB
+            # named) the prefiltered scan of the KB (#135), so a read and a
+            # create agree on which file holds the id.
             try:
                 repo._validate_entry_id(entry_id)
             except ValidationError:
@@ -970,7 +981,8 @@ class KBService:
                 for c in repo._filename_candidates(entry_id):
                     if c != indexed and repo._lexically_inside(c):
                         yield c
-            yield from repo._files_holding(entry_id, skip=tried)
+            if scan:
+                yield from repo._files_holding(entry_id, skip=tried)
 
         unreadable: tuple[Path, Exception] | None = None
         tried: set[Path] = set()
@@ -1282,7 +1294,17 @@ class KBService:
             owns=owns,
         )
         ctx = hook_ctx or self._hook_ctx(kb_name, kb_config, "create")
+        prepared_id = entry.id
         entry = self._run_hooks("before_save", entry, ctx)
+        # _prepare looked the id up once, and save_entry trusts that answer
+        # (#135). A hook that changed the id is looked up again, or a create
+        # would write a second file holding an id another file holds.
+        if entry.id != prepared_id and KBRepository(kb_config).exists(entry.id):
+            raise EntryExistsError(
+                f"Entry with ID '{entry.id}' already exists in KB '{kb_name}' "
+                f"(a before_save hook changed the id from '{prepared_id}'). "
+                "Use update to change it, or choose a different title/id."
+            )
         # Hooks return the entry that will be persisted, so validate their
         # changes before the file is written.
         warnings = self._validate_write(entry, kb_name, kb_config)

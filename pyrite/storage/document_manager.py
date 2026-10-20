@@ -76,9 +76,12 @@ class DocumentManager:
         repo = KBRepository(kb_config)
 
         # Find current on-disk location before saving to new path. A create
-        # has none: its exists() check just walked the KB for the id, and a
-        # second walk here doubled a create's cost (#135). A file that
-        # appears in between is refused by the exclusive publish.
+        # has none: KBService looked the id up (exists(), again after a
+        # before_save hook that changed it), and a second walk here doubled a
+        # create's cost (#135). The exclusive publish refuses only a file at
+        # this same path: a concurrent create of the same id at another path
+        # between the lookup and the write is not guarded, as it was not
+        # when this lookup ran here.
         old_path = None if is_create else repo.find_file(entry.id)
 
         # Preserve deliberate placement on update. By default repo.save()

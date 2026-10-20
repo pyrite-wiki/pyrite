@@ -224,10 +224,17 @@ def _regular_file_text(path: Path) -> str | None:
     finally:
         os.close(fd)
     try:
-        text = raw.decode("utf-8")
+        return _text_of(raw)
     except UnicodeDecodeError:
         return None
-    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _text_of(raw: bytes) -> str:
+    """``raw`` decoded as ``Path.read_text(encoding="utf-8")`` decodes a file:
+    strict UTF-8, universal newlines. The one decoding for a reader that has
+    the bytes (``_regular_file_text``, ``load_entry_from_bytes``), so what it
+    parses is what a read of the file would give."""
+    return io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8").read()
 
 
 def new_entry_text(entry: Entry) -> str:
@@ -1238,7 +1245,7 @@ class KBRepository:
         ``read_text`` decodes it -- UTF-8, universal newlines -- so the entry
         is the one a read of the file would give. Raises on parse failure.
         """
-        text = io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8").read()
+        text = _text_of(raw)
         if file_path.name == "__collection.yaml":
             data = load_yaml(text)
             folder_path = str(file_path.parent.relative_to(self.path))

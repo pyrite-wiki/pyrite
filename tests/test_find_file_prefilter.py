@@ -212,6 +212,18 @@ _LINES = [
     "tags:",
     "? id",
     ": alpha",
+    # The cases the line patterns' comments name: Unicode line breaks, NBSP,
+    # tabs inside a line, a directive, a BOM after the first line.
+    "title: x\x85id: alpha",
+    "title: x\u2028id: alpha",
+    "title: x\u2029id: alpha",
+    "id: alpha\u00a0",
+    "title:\u00a0alpha",
+    "title: a\tb",
+    "id:\talpha",
+    "id: alpha\t# c",
+    "%YAML 1.1",
+    "\ufeffid: alpha",
 ]
 
 
@@ -469,5 +481,92 @@ def test_an_update_of_an_id_named_file_reads_no_other_file(tmp_path, parses, mon
     try:
         svc.update_entry("n-1", KB, body="changed")
         assert reads == [] and len(parses) <= 1, (reads, parses)
+    finally:
+        db.close()
+
+
+# -- fix round 1 (conductor review of 6dbdb3d) ------------------------------
+
+
+def _kbs(tmp_path: Path, count: int, n: int = 5):
+    """``count`` KBs of ``n`` files each; the first holds a file renamed by
+    hand (``moved.md`` holds ``hand-moved``) and nothing is indexed."""
+    kbcs = []
+    for k in range(count):
+        kb_path = tmp_path / f"kb{k}"
+        kb_path.mkdir()
+        for i in range(n):
+            (kb_path / f"k{k}-{i}.md").write_text(
+                f"---\nid: k{k}-{i}\ntitle: T\ntype: note\n---\n\nx\n"
+            )
+        (kb_path / "untitled.md").write_text(f"---\ntitle: Derived {k}\ntype: note\n---\n\nx\n")
+        kbcs.append(KBConfig(name=f"kb{k}", path=kb_path, kb_type="generic"))
+    (tmp_path / "kb0" / "moved.md").write_text(
+        "---\nid: hand-moved\ntitle: M\ntype: note\n---\n\nx\n"
+    )
+    config = PyriteConfig(
+        knowledge_bases=kbcs, settings=Settings(index_path=tmp_path / "m.db", auto_embed=False)
+    )
+    db = PyriteDB(tmp_path / "m.db")
+    return KBService(config, db), db
+
+
+def test_a_get_miss_with_a_kb_named_scans_that_kb(tmp_path):
+    """Maintainer, 2026-10-20: with ``-k`` the miss scans the one KB named."""
+    svc, db = _kbs(tmp_path, 2)
+    try:
+        got = svc.get_entry("hand-moved", "kb0", readable_kbs=None)
+        assert got is not None and got["title"] == "M"
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("count", [1, 3])
+def test_a_get_with_no_kb_named_looks_by_filename_only(tmp_path, parses, count):
+    """Maintainer, 2026-10-20: with no KB named, a miss tries the files named
+    like the id in every readable KB and scans none of them, so its cost does
+    not grow with the number of KBs. A renamed, unindexed file is not found
+    that way; ``-k`` finds it."""
+    svc, db = _kbs(tmp_path, count)
+    try:
+        assert svc.get_entry("hand-moved", None, readable_kbs=None) is None
+        assert svc.get_entry("no-such-id", None, readable_kbs=None) is None
+        assert parses == []
+        assert svc.get_entry("k0-1", None, readable_kbs=None)["id"] == "k0-1"  # by name
+    finally:
+        db.close()
+
+
+def test_a_before_save_hook_that_renames_into_an_existing_id_is_refused(tmp_path):
+    """create's one lookup ran for the id it was given; a ``before_save``
+    hook that changes the id is looked up again, so a create never leaves two
+    files holding one id (on dev the second lookup deleted the other file)."""
+    from pyrite.exceptions import EntryExistsError
+
+    kb_path, svc, repo, db = _kb(tmp_path, 3)
+    moved = kb_path / "moved.md"
+    before = moved.read_bytes()
+
+    def rename_to_existing(entry, context):
+        entry.id = "hand-moved"
+        return entry
+
+    svc.hook_runner.register_core_hook("before_save", rename_to_existing)
+    try:
+        with pytest.raises(EntryExistsError):
+            svc.create_entry(KB, "fresh-id", "Fresh", "note", body="x")
+        assert moved.read_bytes() == before
+        assert [p for p in kb_path.rglob("*.md") if repo.id_of_file(p) == "hand-moved"] == [moved]
+    finally:
+        db.close()
+
+
+@pytest.mark.control(reason="a hook that keeps the id costs no second lookup; pins the cheap path")
+def test_a_before_save_hook_that_keeps_the_id_costs_no_second_walk(tmp_path, walks):
+    kb_path, svc, _repo, db = _kb(tmp_path, 3)
+    svc.hook_runner.register_core_hook("before_save", lambda entry, context: entry)
+    try:
+        svc.create_entry(KB, "fresh-id", "Fresh", "note", body="x")
+        assert len(walks) <= 1, walks
     finally:
         db.close()
