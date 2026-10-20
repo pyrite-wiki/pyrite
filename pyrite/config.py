@@ -695,6 +695,20 @@ class PyriteConfig:
                 return kb
         return self.readable_kb_with_shortname(name, readable_kbs=readable_kbs)
 
+    def link_kb(self, prefix: Any, kb_name: str) -> Any:
+        """The KB a link's prefix (``[[prefix:id]]``, a ``links:`` item's
+        ``kb:``) resolves to, as the index stores it: the full name of the KB
+        the prefix names (by full name, then shortname; unscoped), the owning
+        ``kb_name`` when there is no prefix, or the prefix as written when it
+        names no KB, so the link counts as broken, which it is (#979). The
+        index's row and the write path's duplicate check both ask here, so a
+        file's ``kb: ops`` and a request for ``ops-kb`` are one link (#1053
+        review)."""
+        if not prefix:
+            return kb_name
+        kb = self.readable_kb_named(prefix, readable_kbs=None)
+        return kb.name if kb is not None else prefix
+
     def list_kbs(self, kb_type: str | None = None) -> list[KBConfig]:
         """List all KBs, optionally filtered by type."""
         if kb_type is None:

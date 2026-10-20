@@ -2340,7 +2340,7 @@ class KBService:
         for existing in entry.links:
             if (
                 _same_target(existing.target, target_id)
-                and (existing.kb or source_kb) == tkb
+                and self._same_link_kb(existing.kb, source_kb, tkb)
                 and _norm_relation(existing.relation) == _norm_relation(relation)
             ):
                 # The write is a no-op, but `resolved` is a claim about the
@@ -2368,6 +2368,16 @@ class KBService:
         item = Link(target=target_id, relation=relation, note=note, kb=tkb).to_dict()
         self.apply_operations(source_id, source_kb, [Append("links", item)])
         return {"resolved": resolved, "created": True, "relation": relation}
+
+    def _same_link_kb(self, written: Any, source_kb: str, target_kb: str) -> bool:
+        """The duplicate key's KB comparison: the KB the file's ``kb:``
+        resolves to, by the rule the index stores a row's KB with
+        (``PyriteConfig.link_kb``), against the requested KB (a full name:
+        ``require_kb`` refuses a shortname). So ``kb: ops``, the shortname of
+        ``ops-kb``, and ``--target-kb ops-kb`` are one link, whatever prefix
+        the file wrote (#1053 review). The written prefix still keys the
+        index's row (#1009); it does not make a second link to write."""
+        return bool(self.config.link_kb(as_stored_text(written), source_kb) == target_kb)
 
     def add_links(
         self, kb_name: str, links: list[dict[str, Any]], *, dry_run: bool = False
@@ -2421,7 +2431,7 @@ class KBService:
             # loaded as "related") matches this method's "related_to" default.
             if any(
                 _same_target(existing.target, target_id)
-                and (existing.kb or kb_name) == tkb
+                and self._same_link_kb(existing.kb, kb_name, tkb)
                 and _norm_relation(existing.relation) == _norm_relation(relation)
                 for existing in entry.links
             ):

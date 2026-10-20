@@ -404,17 +404,12 @@ class IndexManager:
         self.config = config or load_config()
 
     def _link_kb(self, prefix: str | None, kb_name: str) -> str:
-        """The KB a link's ``prefix:`` names, as the index stores it: the
-        full name of the KB the prefix names (by full name, then shortname;
-        the indexer is unscoped), the owning KB when there is no prefix, or
-        the prefix as written when it names no KB, so the link counts as
-        broken, which it is. ADR-0049 / #952: the index stores the full
-        name, so backlinks, the graph and the broken-link count agree with
+        """The KB a link's ``prefix:`` names, as the index stores it
+        (``PyriteConfig.link_kb``, the rule the write path's duplicate check
+        uses too). ADR-0049 / #952: the index stores the full name, so
+        backlinks, the graph and the broken-link count agree with
         `resolve_entry` (#979)."""
-        if not prefix:
-            return kb_name
-        kb = self.config.readable_kb_named(prefix, readable_kbs=None)
-        return kb.name if kb is not None else prefix
+        return self.config.link_kb(prefix, kb_name)
 
     def _frontmatter_link(self, link: dict[str, Any], kb_name: str) -> dict[str, Any]:
         """A frontmatter ``links:`` item as the index stores it: its ``kb`` is
