@@ -1177,6 +1177,10 @@ def test_a_double_spelling_still_reads_the_top_level_and_is_reported(tmp_path: P
     assert [d["field"] for d in health["double_spellings"]] == ["importance"], health
 
 
+@pytest.mark.control(
+    reason="passes on dev, whose read's metadata is the whole bag; the first option-B head "
+    "dropped the second value (the delta review's finding 2), pinned so a read never loses it"
+)
 def test_a_double_spelling_read_keeps_the_second_value_under_metadata(tmp_path: Path):
     """The amendment: a read never loses a value the file holds. A file
     spelling `importance` twice reads the top-level value at its own name
