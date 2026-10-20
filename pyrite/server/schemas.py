@@ -437,7 +437,17 @@ class ErrorResponse(BaseModel):
 
 
 class CreateEntryRequest(BaseModel):
-    """JSON body for creating an entry."""
+    """JSON body for creating an entry.
+
+    ``extra="forbid"``: the model has no free top-level fields, so a key it
+    does not declare is never silently dropped. The create route also reads
+    the raw body (`refuses_unknown_create_keys`) to answer such a key with
+    the service's own refusal -- 400 ``VALIDATION_FAILED`` naming it -- while
+    the ``metadata`` envelope spelling reaches the service and is refused
+    there (#1010, #1090).
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     kb: str
     entry_type: str = "note"

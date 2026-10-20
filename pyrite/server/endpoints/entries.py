@@ -48,7 +48,7 @@ from ..schemas import (
     WantedPage,
     WantedPagesResponse,
 )
-from .write_refusal import refusal_http, refuses_truncated_body
+from .write_refusal import refusal_http, refuses_truncated_body, refuses_unknown_create_keys
 
 logger = logging.getLogger(__name__)
 
@@ -762,7 +762,11 @@ _CREATE_DEFAULTED = frozenset({"participants", "tags", "metadata"})
 @router.post(
     "/entries",
     response_model=CreateResponse,
-    dependencies=[Depends(requires_kb_tier("write")), Depends(refuses_truncated_body)],
+    dependencies=[
+        Depends(requires_kb_tier("write")),
+        Depends(refuses_truncated_body),
+        Depends(refuses_unknown_create_keys),
+    ],
 )
 @limiter.limit("30/minute")
 def create_entry(
