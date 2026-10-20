@@ -38,6 +38,31 @@ def _live_apps():
     return [o for o in gc.get_objects() if isinstance(o, FastAPI)]
 
 
+def _who_holds(target, depth=8):
+    """A shortest chain of referrers from `target` to a module or class namespace.
+
+    Only read when the canary fails, so CI says what kept an app alive instead
+    of only that one was.
+    """
+    seen = {id(target)}
+    level = [(target, [type(target).__name__])]
+    skip = {id(seen)}
+    for _hop in range(depth):
+        nxt = []
+        skip.add(id(level))
+        for obj, path in level:
+            for ref in gc.get_referrers(obj):
+                if id(ref) in seen or id(ref) in skip or type(ref).__name__ == "frame":
+                    continue
+                seen.add(id(ref))
+                if isinstance(ref, dict) and "__name__" in ref:
+                    return " <- ".join([*path, f"namespace {ref['__name__']}"])
+                step = [*path, str(getattr(ref, "__name__", None) or type(ref).__name__)[:60]]
+                nxt.append((ref, step))
+        level = nxt[:300]
+    return f"no module or class namespace within {depth} hops"
+
+
 def test_fastapi_caches_are_found(clear_fastapi_caches):
     """If a FastAPI release renames or moves the caches, the hook would clear
     nothing and the leak would return quietly; this fails instead."""
@@ -62,7 +87,8 @@ def test_apps_a_test_builds_are_freed_after_its_teardown(request, make_client):
                 assert len(strays) <= 1, (
                     f"{len(strays)} FastAPI apps are still alive after the test "
                     f"built {APPS_BUILT}: something caches their closures "
-                    "(#1098; the root conftest should clear it)"
+                    "(#1098; the root conftest should clear it). "
+                    f"One is held by: {_who_holds(strays[0]) if strays else ''}"
                 )
             return result
 
