@@ -870,7 +870,12 @@ class IndexManager:
         # The row keeps the whole bag: the storage dict the plugins read
         # declared fields from.
         result["metadata"] = read_metadata(
-            metadata, result, type(entry), entry.entry_type, agrees=_read_value_is_the_bags
+            metadata,
+            result,
+            type(entry),
+            entry.entry_type,
+            file_values=source,
+            agrees=_read_value_is_the_bags,
         )
         # As _sync_tags stores them: falsy skipped, duplicates (by ==, so
         # ``1`` and ``true`` are one) dropped first-wins, names as TEXT.

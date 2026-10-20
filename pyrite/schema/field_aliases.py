@@ -488,29 +488,37 @@ def read_metadata(
     cls: type,
     entry_type: str,
     *,
+    file_values: Mapping[str, Any] | None = None,
     agrees: Callable[[str, Any, Any], bool] | None = None,
 ) -> dict[str, Any]:
     """The single-entry read's ``metadata``: the bag, less every key that spells
-    a declared field the read carries at its own name with the same value
-    (``field_at`` folded, so an alias of a declared field is a spelling of
-    it). A read spells each field once, at its own name, and ``metadata``
-    holds only keys the type does not declare (option B of the maintainer's
-    decision of 2026-10-20 on #1025); the index row keeps the whole bag, the
-    storage shape the plugins read.
+    a declared field the read carries at its own name (``field_at`` folded,
+    so an alias of a declared field is a spelling of it). A read spells each
+    field once, at its own name, and ``metadata`` holds only keys the type
+    does not declare (option B of the maintainer's decision of 2026-10-20 on
+    #1025); the index row keeps the whole bag, the storage shape the plugins
+    read.
 
-    A read never loses a value the file holds: a bag value the read does
-    not carry at the field's name stays. That is a file spelling the field
-    twice (``importance: 7`` and ``metadata: {importance: 8}``: the read
-    says 7 at its own name and keeps 8 under ``metadata``, where ``index
-    health`` reports it), and a declared field a class never reads from its
-    frontmatter, whose column is empty. ``agrees(field, read_value,
-    bag_value)`` says whether the read's value is the bag's; the caller
-    knows how its columns spell a value (a TEXT column holds ``2`` as
-    ``"2"``), the default compares the two as JSON text."""
+    Which bag keys leave is decided by the file's spellings (``file_values``,
+    the raw frontmatter): a field the file does not spell at the top level
+    has one value, the one the lift carried to its own name, so its bag key
+    is removed whatever a column made of the value (``metadata: {importance:
+    '8'}`` reads ``importance: 8`` and nothing under ``metadata``; round-2
+    delta review). A field the file spells at the top level too is a double
+    spelling, or a declared field the class never reads from its frontmatter
+    (whose column is empty): there the value comparison decides, and a read
+    never loses a value the file holds (``importance: 7`` with ``metadata:
+    {importance: 8}`` reads 7 at its own name and keeps 8 under ``metadata``,
+    where ``index health`` reports it). ``agrees(field, read_value,
+    bag_value)`` says whether the read's value is the bag's; the caller knows
+    how its columns spell a value (a TEXT column holds ``2`` as ``"2"``), the
+    default compares the two as JSON text. Without ``file_values`` every key
+    is treated as a double spelling (the comparison alone decides)."""
     if not isinstance(bag, Mapping) or not bag:
         return {}
     same = agrees or _same_json_text
     declared = declared_fields(cls, entry_type)
+    source = file_values if isinstance(file_values, Mapping) else None
     out: dict[str, Any] = {}
     for key, value in bag.items():
         if isinstance(key, str) and key != METADATA:
@@ -518,10 +526,21 @@ def read_metadata(
                 field, _rest = field_at(cls, entry_type, (key,))
             except ValueError:
                 field = key
-            if field in declared and field in result and same(field, result[field], value):
-                continue
+            if field in declared and field in result:
+                if source is not None and not _spelled_at_top(source, cls, entry_type, field):
+                    continue
+                if same(field, result[field], value):
+                    continue
         out[key] = value
     return out
+
+
+def _spelled_at_top(file_values: Mapping[str, Any], cls: type, entry_type: str, field: str) -> bool:
+    """Whether the file spells ``field`` at the top level, by its own name or
+    an alias (a spelling under ``metadata:`` does not count)."""
+    return any(
+        path[0] != METADATA for path in _spellings_present(file_values, cls, entry_type, field)
+    )
 
 
 def _same_json_text(_field: str, a: Any, b: Any) -> bool:

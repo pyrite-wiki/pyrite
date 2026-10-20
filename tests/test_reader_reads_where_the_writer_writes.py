@@ -42,7 +42,7 @@ import pytest
 from typer.testing import CliRunner
 
 from pyrite.cli import app as cli_app
-from pyrite.config import KBConfig, PyriteConfig, Settings
+from pyrite.config import AuthConfig, KBConfig, PyriteConfig, Settings
 from pyrite.exceptions import PyriteError, ValidationError
 from pyrite.models.core_types import ENTRY_TYPE_REGISTRY
 from pyrite.schema.field_aliases import class_field_aliases, spellings_of
@@ -979,16 +979,114 @@ def test_every_field_a_read_returns_reaches_every_surface(
     (kb_path / "entries" / "bare.md").write_text(
         _file("bare", type_name, {}, None), encoding="utf-8"
     )
+    # A field spelled only under `metadata:` with a value the column
+    # normalises (`importance: '8'`, a string the model reads as 8): the
+    # read spells it once, at its own name, and `metadata` is empty of it
+    # (round-2 delta review: the value comparison let it show twice).
+    (kb_path / "entries" / "nested.md").write_text(
+        _file("nested", type_name, {"metadata": {"importance": "8"}}, None), encoding="utf-8"
+    )
     config = _config(root, kb_path, type_name)
     _index(config)
 
-    shapes = _surface_reads(config, "all")
-    read = shapes.pop("read")
-    for name, shape in shapes.items():
-        missing = [k for k in read if k not in shape]
-        assert not missing, f"{name} drops {missing} of the read"
-        differing = {k: (read[k], shape[k]) for k in read if shape[k] != read[k]}
-        assert not differing, f"{name} differs from the read on {differing}"
+    for entry_id in ("all", "nested"):
+        shapes = _surface_reads(config, entry_id)
+        read = shapes.pop("read")
+        if entry_id == "nested":
+            assert read["importance"] == 8, read
+            assert "importance" not in read["metadata"], read["metadata"]
+        for name, shape in shapes.items():
+            missing = [k for k in read if k not in shape]
+            assert not missing, f"{name} drops {missing} of the read of {entry_id}"
+            differing = {k: (read[k], shape[k]) for k in read if shape[k] != read[k]}
+            assert not differing, f"{name} differs from the read of {entry_id} on {differing}"
+
+
+BOOKKEEPING = ("created_by", "modified_by", "indexed_at", "assignee")
+
+# The one key REST `GET /api/entries/{id}` has that the read does not produce
+# for an entry whose type has no such field: `EntryResponse` defaults
+# `participants` to `[]`, and the web client reads `entry.participants.length`
+# unguarded (web/src/lib/components/entry/EntryMeta.svelte), so dropping it is
+# a web change, with the maintainer (round 3). Every other REST key is the
+# read's; a new REST-only key fails here.
+REST_ONLY = frozenset({"participants"})
+
+A_TASK = (
+    "---\nid: t1\ntitle: T1\ntype: task\nstatus: in_progress\nassignee: ada\n"
+    "metadata:\n  status_reason: waiting on review\n  parked_awaiting: '#1'\n---\n\nText.\n"
+)
+
+
+def _anonymous_rest_get(config: PyriteConfig, entry_id: str) -> dict[str, Any]:
+    """REST `GET /api/entries/{id}` as an anonymous visitor of a public KB:
+    auth on, `anonymous_tier: read`, the KB's `default_role: read`, and a
+    client with no credential."""
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    from fastapi.testclient import TestClient
+
+    from pyrite.server.api import create_app, get_config, get_db
+
+    db = PyriteDB(config.settings.index_path)
+    rest = create_app(config)
+    rest.dependency_overrides[get_config] = lambda: config
+    rest.dependency_overrides[get_db] = lambda: db
+    client = TestClient(rest, raise_server_exceptions=False)
+    try:
+        res = client.get(f"/api/entries/{entry_id}", params={"kb": KB})
+    finally:
+        client.close()
+        db.close()
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def test_rest_get_and_mcp_kb_get_return_the_same_key_set(tmp_path: Path):
+    """The maintainer's decision (round 3, option A): a single-entry read
+    returns every key the read produces, the same set on REST `GET
+    /api/entries/{id}` and MCP `kb_get`, the bookkeeping fields included
+    (`created_by`, `modified_by`, `indexed_at`, `assignee`), and an
+    anonymous REST reader of a public KB sees the same keys. One committed
+    task, so git attribution fills `created_by` and `modified_by`. The one
+    REST-only key today is `REST_ONLY` (above)."""
+    kb_path = tmp_path / "kb"
+    (kb_path / "tasks").mkdir(parents=True)
+    (kb_path / "tasks" / "t1.md").write_text(A_TASK, encoding="utf-8")
+    env = {"GIT_AUTHOR_NAME": "Ada", "GIT_AUTHOR_EMAIL": "ada@example.org"}
+    env |= {"GIT_COMMITTER_NAME": "Ada", "GIT_COMMITTER_EMAIL": "ada@example.org"}
+    for cmd in (
+        ["git", "init", "-q"],
+        ["git", "add", "tasks/t1.md"],
+        ["git", "commit", "-qm", "t1"],
+    ):
+        subprocess.run(cmd, cwd=kb_path, check=True, capture_output=True, timeout=30, env=env)
+    config = PyriteConfig(
+        knowledge_bases=[KBConfig(name=KB, path=kb_path, kb_type="generic", default_role="read")],
+        settings=Settings(
+            index_path=tmp_path / "index.db",
+            auto_embed=False,
+            auth=AuthConfig(enabled=True, allow_registration=True, anonymous_tier="read"),
+        ),
+    )
+    from pyrite.services.git_service import GitService
+
+    db = PyriteDB(config.settings.index_path)
+    try:
+        IndexManager(db, config).index_with_attribution(KB, GitService())
+    finally:
+        db.close()
+
+    rest = _anonymous_rest_get(config, "t1")
+    mcp = json.loads(json.dumps(_mcp_get(config, "t1"), default=str))
+
+    assert set(rest) - set(mcp) <= REST_ONLY, sorted(set(rest) - set(mcp) - REST_ONLY)
+    assert set(mcp) <= set(rest), sorted(set(mcp) - set(rest))
+    assert set(BOOKKEEPING) <= set(mcp), sorted(set(BOOKKEEPING) - set(mcp))
+    assert rest["created_by"] == rest["modified_by"] == "Ada"
+    assert rest["assignee"] == mcp["assignee"] == "ada"
+    assert rest["status_reason"] == mcp["status_reason"] == "waiting on review"
+    assert rest["parked_awaiting"] == mcp["parked_awaiting"] == "#1"
+    assert "status_reason" not in rest["metadata"] and "parked_awaiting" not in rest["metadata"]
 
 
 # --------------------------------------------------------------------------
