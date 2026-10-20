@@ -458,6 +458,14 @@ class TestThisRepositoryGuards:
         sel = ta.select(root, ["tests/test_llm_rubric_evaluator.py"])
         assert {g.split("::")[0] for g in sel.guards} >= self.GUARDS_IN
 
+    def test_every_guard_file_is_in_the_contributing_table(self):
+        root = SCRIPT.parent.parent
+        table = (root / "CONTRIBUTING.md").read_text()
+        guard_files = {g.split("::")[0] for g in ta.Graph(root).guards}
+        assert guard_files == self.GUARDS_IN | {"tests/test_changelog_fragments.py"}
+        missing = sorted(f for f in guard_files if f not in table)
+        assert not missing, f"add a row to the Guards table in CONTRIBUTING.md: {missing}"
+
     def test_a_source_change_lists_none(self):
         root = SCRIPT.parent.parent
         assert ta.select(root, ["pyrite/storage/database.py"]).guards == []

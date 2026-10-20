@@ -419,6 +419,27 @@ uv pip install --python .venv/bin/python -e ".[all,dev]"
   close any `PyriteDB` you open
 - Use `in` not `len` for registry assertions (see [testing standards](kb/standards/testing-standards.md))
 
+### Guards
+
+A guard is a test that reads the *test sources* and fails on a pattern. It is
+marked `@pytest.mark.guard` (on the function, not the module), and
+`scripts/test-affected` selects it whenever a changed path is under `tests/` or
+`extensions/*/tests/`, a deleted test file included, so the pre-push run tells
+you before CI does. A source-only change selects none of them. See why with
+`scripts/test-affected --explain`.
+
+| Guard | Fails when a test | What to change |
+|---|---|---|
+| `test_no_test_mocks_the_service_behind_the_entry_point_it_drives` and `test_the_allowlist_matches_the_tree_exactly` (`tests/test_tests_drive_the_surface_not_the_mock.py`) | patches a service behind the entry point it drives; or `ALLOWLIST` (path -> patch count, why) differs from the tree in any file or in size, in either direction | seed the world instead of patching; after removing patches, lower that file's count and `ALLOWLIST_SIZE`; never raise either |
+| `test_no_test_call_can_wait_forever` and `test_cheap_bcrypt_patch_lives_only_in_the_root_conftest` (`tests/test_test_rules.py`) | makes a blocking call with no deadline; or sets the test bcrypt cost outside the root conftest | give the call a `timeout=`; keep the cost switch in `conftest.py` |
+| `TestSecurityVocabularyNeedsAReason` (`tests/test_experimental_surface.py`) | is mapped experimental yet touches the security vocabulary, or a reviewed entry no longer matches | list it in `NEVER_EXPERIMENTAL`, or in `REVIEWED_EXPERIMENTAL` with the reason it is not a security test; delete a stale entry |
+| `test_cli_help_assertions_are_plain` (`tests/test_cli_help_assertions_are_plain.py`) | checks a CLI flag against raw help output | wrap it in `tests.cli_help.plain()` |
+| `TestNoTestReadsAFragmentByName` (`tests/test_changelog_fragments.py`) | reads a `changelog.d/` fragment by name | fragments are deleted at release; build the text in the test |
+
+Adding a guard: mark each scanning function `@pytest.mark.guard`, add its row
+here, and keep it cheap (these run on every push that touches a test).
+
+
 ## Branches, hooks and pull requests
 
 **Branches** (ADR-0025 and ADR-0032):
