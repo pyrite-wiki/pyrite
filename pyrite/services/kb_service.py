@@ -511,6 +511,70 @@ class KBService:
             kept.append(err)
         return kept, excepted
 
+    def _schema_result(
+        self,
+        entry: Entry,
+        fields: dict[str, Any],
+        kb_name: str,
+        kb_config: KBConfig,
+        existing_entry: Entry | None,
+    ) -> dict[str, Any] | None:
+        """The KB schema's and plugin validators' verdict on ``fields``, or
+        ``None`` when a validator itself raised (validation is then skipped,
+        with a log line, as it always was)."""
+        try:
+            kb_schema = kb_config.kb_schema
+            return kb_schema.validate_entry(
+                entry.entry_type,
+                fields,
+                context={
+                    "kb_name": kb_name,
+                    "kb_schema": kb_schema,
+                    "kb_type": kb_config.kb_type,
+                    "_schema_version": getattr(entry, "_schema_version", 0),
+                    "existing_entry": copy.deepcopy(existing_entry),
+                },
+            )
+        except Exception:
+            logger.warning("Schema validation skipped for %s/%s", kb_name, entry.id, exc_info=True)
+            return None
+
+    @staticmethod
+    def _keep_on_disk_violations(
+        errors: list[dict[str, Any]],
+        prior: list[dict[str, Any]],
+        before: dict[str, Any],
+        after: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """``(errors, warnings)`` after excepting violations the file already had.
+
+        ADR-0042 decision 8, #676: a write is refused only for a violation it
+        causes. A finding is the file's, not the write's, when the loaded
+        entry has the same finding (field and rule) and the field's value is
+        the same after the write -- the request did not change it. It comes
+        back as a warning. A finding the write introduces (a cross-field rule
+        its change triggers, a field set to another bad value) stays an error.
+        A finding with no ``field`` cannot be matched to a request key, so it
+        always stays an error.
+        """
+        had = {(e.get("field"), e.get("rule")) for e in prior if e.get("field")}
+        kept: list[dict[str, Any]] = []
+        excepted: list[dict[str, Any]] = []
+        for err in errors:
+            name = err.get("field")
+            if name and (name, err.get("rule")) in had and before.get(name) == after.get(name):
+                excepted.append(
+                    {
+                        **err,
+                        "severity": "warning",
+                        "note": "violation already on disk, in a field this write did not "
+                        "change; kept, not re-validated",
+                    }
+                )
+            else:
+                kept.append(err)
+        return kept, excepted
+
     def _validate_write(
         self,
         entry: Entry,
@@ -535,26 +599,19 @@ class KBService:
         is always strict.
         """
         fields = self._validated_fields(entry)
-        try:
-            kb_schema = kb_config.kb_schema
-            result = kb_schema.validate_entry(
-                entry.entry_type,
-                fields,
-                context={
-                    "kb_name": kb_name,
-                    "kb_schema": kb_schema,
-                    "kb_type": kb_config.kb_type,
-                    "_schema_version": getattr(entry, "_schema_version", 0),
-                    "existing_entry": copy.deepcopy(existing_entry),
-                },
-            )
-        except Exception:  # a broken validator must not make every write fail
-            logger.warning("Schema validation skipped for %s/%s", kb_name, entry.id, exc_info=True)
+        result = self._schema_result(entry, fields, kb_name, kb_config, existing_entry)
+        if result is None:  # a broken validator must not make every write fail
             return []
         errors = result.get("errors") or []
         warnings = list(result.get("warnings") or [])
         if before is not None and errors:
             errors, excepted = self._keep_on_disk_enum_values(errors, before, fields)
+            warnings.extend(excepted)
+        if before is not None and errors and existing_entry is not None:
+            prior = self._schema_result(existing_entry, before, kb_name, kb_config, None)
+            errors, excepted = self._keep_on_disk_violations(
+                errors, (prior or {}).get("errors") or [], before, fields
+            )
             warnings.extend(excepted)
         if not errors:
             return warnings

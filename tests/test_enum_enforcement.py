@@ -302,20 +302,19 @@ class TestValidateEntrySwitch:
 
 
 class TestWritePath:
-    @pytest.mark.control(
-        reason="passes on dev (no exception existed); red on a3ac865f, whose exception took type errors"
-    )
-    def test_a_type_error_on_disk_is_not_excepted(self, svc_factory):
-        """Round 1, should-fix 1: a multi-select holding a scalar is a type
-        error under `enforce`, not an off-list value. It keeps its rule id
-        `field_multi_select`, but the on-disk exception must not apply to it:
-        like an out-of-range number, it still refuses an unrelated update."""
+    def test_a_type_error_on_disk_is_a_warning_on_an_unrelated_update(self, svc_factory):
+        """A multi-select holding a scalar is a type error under `enforce`.
+        ADR-0042 decision 8 (#676): a violation already on disk, in a field the
+        request does not name, comes back as a warning; it no longer refuses
+        an unrelated update. (Round 1 of #570 pinned the refusal; the decision
+        overrides it.) Setting the field to another bad value still refuses."""
         svc, kb, _ = svc_factory(enforce_enums=True, enforce=True)
         path = _write_org(kb, "acme", labels="a")
-        before = path.read_text()
+        written = svc.update("acme", "t", {"tags": ["x"]})
+        assert any(w["field"] == "labels" for w in written.warnings)
+        assert 'labels: "a"' in path.read_text()
         with pytest.raises(SchemaViolationError, match="labels"):
-            svc.update("acme", "t", {"tags": ["x"]})
-        assert path.read_text() == before
+            svc.update("acme", "t", {"labels": "b"})
 
     def test_a_select_cannot_become_a_list_through_the_exception(self, svc_factory):
         """Round 1, should-fix 2: the per-element exception is for list-valued
@@ -457,16 +456,16 @@ class TestWritePath:
         kept, excepted = KBService._keep_on_disk_enum_values([err], {}, {})
         assert kept == [err] and excepted == []
 
-    @pytest.mark.control(
-        reason="invariant: non-enum findings on untouched fields still refuse, as before"
-    )
-    def test_untouched_non_enum_errors_are_not_excepted(self, svc_factory):
-        """The exception covers enum findings only: an out-of-range number on
-        disk still refuses an unrelated update when `enforce` is on."""
+    def test_untouched_non_enum_errors_are_warnings(self, svc_factory):
+        """ADR-0042 decision 8 (#676): an out-of-range number on disk is a
+        warning on an update that does not name it; the request that sets it
+        out of range still refuses."""
         svc, kb, _ = svc_factory(enforce_enums=True, enforce=True)
         _write_org(kb, "acme", score=99)
+        written = svc.update("acme", "t", {"tags": ["x"]})
+        assert any(w["field"] == "score" for w in written.warnings)
         with pytest.raises(SchemaViolationError, match="score"):
-            svc.update("acme", "t", {"tags": ["x"]})
+            svc.update("acme", "t", {"score": 98})
 
 
 # ==========================================================================

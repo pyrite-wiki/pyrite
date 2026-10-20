@@ -227,6 +227,12 @@ pyrite update hello-agent -k nokb --title x
 {"outcome": "error", "error": "KB 'nokb' not found", "error_code": "KB_NOT_FOUND", "retryable": false, "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.", "did_you_mean": []}
 ```
 
+An update is refused only for a violation it causes. A schema violation
+already in the file, in a field your request does not name, comes back as a
+warning in the result (`note`: "already on disk"), and the file's value is
+left as it was. Setting that field to another bad value, or a change that
+triggers a new finding, is still refused (ADR-0042 decision 8).
+
 ## Not covered here
 
 - Bulk writes (`kb_bulk_create`, `pyrite import`): per-item results are in
