@@ -4,24 +4,25 @@ Pyrite is a Knowledge-as-Code platform. You keep structured knowledge in markdow
 
 ## Install Pyrite
 
-No PyPI wheel yet — install from source:
+No PyPI wheel yet — install from source. Needs Python 3.11+:
 
 ```bash
 git clone https://github.com/pyrite-wiki/pyrite.git && cd pyrite
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[all]"   # Core + AI + semantic search + dev tools
 ```
 
 Or run the bundled Docker image instead (`docker compose up -d`, serves
 on `http://localhost:8088`, reachable only from your own machine: the compose
-file publishes the port on `127.0.0.1` and runs with no credential) — see the [README](../README.md#install)
-for details, or [pyrite.wiki](https://pyrite.wiki) for a public demo and the
-one-click cloud options.
+file publishes the port on `127.0.0.1` and runs with no credential) — see the
+[README](../README.md#local-docker) for compose, or [pyrite.wiki](https://pyrite.wiki)
+for a public demo and the [one-click cloud options](../README.md#deploy).
 
 ## Create Your First Knowledge Base
 
 ```bash
-pyrite init --template research --path my-research
-cd my-research
+pyrite init --template research --path ~/my-kb
+cd ~/my-kb
 ```
 
 This creates:
@@ -50,7 +51,7 @@ Let's add a few entries to build up some content.
 **A person:**
 
 ```bash
-pyrite create -k my-research --type person --title "Ada Lovelace" \
+pyrite create -k my-kb --type person --title "Ada Lovelace" \
   --body "Mathematician and writer. Wrote the first algorithm intended for a machine." \
   --tags "mathematics,computing"
 ```
@@ -58,14 +59,14 @@ pyrite create -k my-research --type person --title "Ada Lovelace" \
 **A note:**
 
 ```bash
-pyrite create -k my-research --type note --title "Knowledge management principles" \
+pyrite create -k my-kb --type note --title "Knowledge management principles" \
   --body "Atomic notes. Link liberally. Let structure emerge from connections, not folders."
 ```
 
 **An event:**
 
 ```bash
-pyrite create -k my-research --type event --title "Analytical Engine demonstration" \
+pyrite create -k my-kb --type event --title "Analytical Engine demonstration" \
   --body "Charles Babbage presented the design of the Analytical Engine." \
   --date "1837-01-01"
 ```
@@ -73,7 +74,7 @@ pyrite create -k my-research --type event --title "Analytical Engine demonstrati
 **A note with tags:**
 
 ```bash
-pyrite create -k my-research --type note --title "Use markdown for all entries" \
+pyrite create -k my-kb --type note --title "Use markdown for all entries" \
   --body "Plain text is portable, diffable, and future-proof. Markdown adds just enough structure." \
   --tags "process"
 ```
@@ -108,7 +109,7 @@ The `id` is auto-generated from the title. Pyrite validates fields against the t
 A write leaves a file in your working tree; it does not make a git commit. Commit when you want the change in history:
 
 ```bash
-pyrite kb commit -k my-research -m "Add first entries"
+pyrite kb commit -k my-kb -m "Add first entries"
 ```
 
 (`git add` and `git commit` in the KB directory do the same.)
@@ -118,14 +119,14 @@ pyrite kb commit -k my-research -m "Add first entries"
 **Keyword search** works out of the box:
 
 ```bash
-pyrite search "algorithm" -k my-research
+pyrite search "algorithm" -k my-kb
 ```
 <!-- runner: expect-ids ada-lovelace -->
 
 Narrow it to one entry type. Search matches an entry's title and body, not its tags, so this finds Ada by the word "Mathematician" in her body:
 
 ```bash
-pyrite search "mathematician" -k my-research --type person
+pyrite search "mathematician" -k my-kb --type person
 ```
 <!-- runner: expect-ids ada-lovelace -->
 
@@ -147,7 +148,7 @@ pyrite index sync                  # incremental index update, then embed
 `pyrite-server` also drains what is owed on every startup and at the end of `POST /api/index/sync`. `GET /api/index/embed-status` reports how much is outstanding, and a semantic search against a KB with no embeddings yet says so in its `warnings` instead of returning a bare empty list. Set `PYRITE_AUTO_EMBED=0` to opt out of embedding entirely and keep keyword search only. Now search by meaning:
 
 ```bash
-pyrite search "early computer science pioneers" -k my-research --mode semantic
+pyrite search "early computer science pioneers" -k my-kb --mode semantic
 ```
 <!-- runner: expect-text pyrite index embed -->
 
@@ -156,7 +157,7 @@ With the embeddings built, that finds Ada Lovelace. Until they are, the search p
 **Hybrid mode** combines both, and still answers from the keyword leg while the embeddings are missing:
 
 ```bash
-pyrite search "algorithm machine" -k my-research --mode hybrid
+pyrite search "algorithm machine" -k my-kb --mode hybrid
 ```
 <!-- runner: expect-ids ada-lovelace -->
 

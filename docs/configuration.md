@@ -119,7 +119,7 @@ a copy of `config.yaml` to restore from.
 | Variable | Default | Meaning |
 |---|---|---|
 | `PYRITE_HOST` | `127.0.0.1` | Bind address. Containers need `0.0.0.0`. |
-| `PYRITE_PORT` | `8088` | Port |
+| `PYRITE_PORT` | `8088` | Port. When unset, `PORT` is used (platforms such as Railway and Heroku set it). |
 | `PYRITE_CORS_ORIGINS` | localhost dev ports | Comma-separated allowed origins |
 | `PYRITE_PUBLISHED_ON_LOOPBACK` | unset | Set to exactly `true` by the bundled `docker-compose.yml`, which publishes the port on `127.0.0.1`. Silences the startup warning for a credential-free wildcard bind, only inside a container and only with auth off. True only while the published address is loopback: remove it when you change `ports:` (including in a `docker-compose.override.yml`). Do not set it by hand elsewhere; outside a container it has no effect |
 | `PYRITE_ALLOWED_HOSTS` | unset | Comma-separated extra hostnames a credential-free server answers (see below) |
@@ -361,11 +361,21 @@ Continue a truncated body with `kb_read_body` (offset-based); see
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PYRITE_AI_PROVIDER` | unset | `openai` or `anthropic` |
+| `PYRITE_AI_PROVIDER` | unset (`stub`) | `openai`, `anthropic`, `gemini`, `openrouter`, `ollama`, `local`, `stub` or `none`. `stub` and `none` turn AI off. `openai`, `gemini`, `openrouter`, `ollama` and `local` speak the OpenAI API. |
 | `PYRITE_AI_MODEL` | provider default | Model name |
+| `OPENAI_API_BASE` | unset | Base URL for an OpenAI-compatible provider. Same as `settings.ai_api_base` in `config.yaml`, which wins when set. `gemini` defaults to Google's endpoint and `ollama` to `http://localhost:11434/v1`. |
 
-API keys for providers are the providers' own variables (`OPENAI_API_KEY`,
-`ANTHROPIC_API_KEY`); Pyrite is bring-your-own-key.
+API keys are the providers' own variables: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`
+and `GEMINI_API_KEY`. Pyrite is bring-your-own-key. It uses the first of those
+three that is set, whatever the provider, so set only the one you need. `ollama`
+needs no key.
+
+## Output
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PYRITE_FORMAT` | `json` | Default for `--format`: `json`, `yaml` or `rich`. Only commands whose `--format` help names `PYRITE_FORMAT` read it (for example `create`, `link` and the `task` commands); `pyrite search` and `pyrite kb list` ignore it. An explicit `--format` wins. See [json-contracts.md](json-contracts.md). |
+| `PYRITE_SEARCH_FIELDS` | lean default | Comma-separated fields for `pyrite search` rows. `*` returns every field. `--fields` wins. |
 
 ## Plugins
 

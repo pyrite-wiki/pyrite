@@ -27,12 +27,13 @@ Your AI agents have no memory. Your knowledge is trapped in platform silos. Ever
 ## Quick Start
 
 ```bash
-# Install (no PyPI wheel yet -- from source)
+# Install (no PyPI wheel yet -- from source). Needs Python 3.11+.
 git clone https://github.com/pyrite-wiki/pyrite.git && cd pyrite
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[all]"
 
-# Initialize a knowledge base
-pyrite init --template research --path my-kb
+# Initialize a knowledge base outside the clone
+pyrite init --template research --path ~/my-kb
 
 # Create some entries
 pyrite create -k my-kb --type person --title "Sarah Chen" \
@@ -102,7 +103,7 @@ Your files (git)  →  SQLite index (derived)  →  MCP server / CLI / REST API 
 
 ## MCP Server
 
-Three permission tiers. Each tier includes the tools from lower tiers. Counts below are the core `kb_*`/`task_*` tools only; installed plugins add more per tier (e.g. software-kb adds `sw_adrs`, `sw_backlog`, `sw_new_adr`) — run `pyrite mcp --help` for the live total including plugin tools, generated from the tool registry so it can't drift from what a running server exposes.
+Three permission tiers. Each tier includes the tools from lower tiers. Counts below are the core `kb_*`/`task_*` tools only; installed plugins add more per tier (e.g. software-kb adds `sw_adrs`, `sw_backlog`, `sw_create_adr`) — run `pyrite mcp --help` for the live total including plugin tools, generated from the tool registry so it can't drift from what a running server exposes.
 
 | Tier | Core tools |
 |------|-------|
@@ -112,7 +113,7 @@ Three permission tiers. Each tier includes the tools from lower tiers. Counts be
 
 Pagination and totals differ by tool and by transport (CLI/MCP/REST) — see `docs/json-contracts.md` for the measured shape of each, rather than assuming a uniform `has_more`/`total` contract. `kb_bulk_create` handles up to 50 entries per call. After parameter validation, a missing or empty title is reported per entry without rejecting valid siblings, and results preserve input order. Invalid parameter types, an unavailable KB, or an invalid batch size still reject the whole call. `kb_orient` provides a one-shot KB summary for agent onboarding. `kb_batch_read` fetches multiple entries in one call. Search results return snippets by default (use `include_body` for full text, `fields` for projection).
 
-Plugins add their own tools per tier (e.g., software-kb adds `sw_adrs`, `sw_backlog`, `sw_new_adr`).
+Plugins add their own tools per tier (e.g., software-kb adds `sw_adrs`, `sw_backlog`, `sw_create_adr`).
 
 Also exposes: 4 prompts (`research_topic`, `summarize_entry`, `find_connections`, `daily_briefing`), resources (`pyrite://kbs`, `pyrite://kbs/{name}/entries`, `pyrite://entries/{id}`, `pyrite://kbs/{name}/entries/{id}`).
 
