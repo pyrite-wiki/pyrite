@@ -255,7 +255,12 @@ and says who holds the lock. Local workers: `PW_WORKERS=N`, else Playwright's
 default (half the cores). It is not bounded lower yet: `e2e/seed.spec.ts`
 times out at 1-2 workers (#906); bound it once that is fixed.
 
-**Playwright config** starts both FastAPI (:8088) and Vite (:5173) dev servers. Uses `reuseExistingServer` in dev so you can keep servers running.
+**Playwright config** starts four servers: FastAPI and Vite, and a second pair
+with auth enabled. Their ports are derived per worktree (`web/e2e/ports.ts`),
+so two worktrees can run Playwright at once; `cat .pyrite/e2e-ports` shows
+this worktree's. `PLAYWRIGHT_E2E_PORT` and `PLAYWRIGHT_E2E_VITE_PORT` override
+the first pair. Every server has `reuseExistingServer: false`: Playwright
+never reuses a server already running, and a port in use fails the run.
 
 ## Pre-Commit Hooks
 
