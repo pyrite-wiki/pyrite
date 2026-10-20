@@ -104,7 +104,8 @@ Components [[kb-service]], [[kb-repository]], [[document-manager]],
 #955 P4), `pyrite/schema/field_aliases.py` (`spelling_in`, where a write
 lands; `read_view`, the one lift in front of every `from_frontmatter`, so a
 field spelled only under `metadata:` reads as the top-level spelling does;
-`lift_declared_fields`, the row's read shape, #1025).
+`lift_declared_fields` and `read_metadata`, the read shape: a declared field
+at its own name, `metadata` for undeclared keys, #1025).
 
 ## Tests that pin it
 

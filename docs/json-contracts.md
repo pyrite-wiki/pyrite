@@ -271,8 +271,22 @@ refused like any other update of the field. On create, a declared field or an al
 under `metadata:` (#178); a field Pyrite or the type manages (`id`,
 `provenance`, a task's `status_change_log`, ...) is refused there as an
 update refuses it, on REST `POST`, MCP `kb_create` and the service
-(`links` and `sources` stay a new entry's own content). A read spells a
-field where the file does: `aliases` is its own row column, so a file with a
+(`links` and `sources` stay a new entry's own content). **The reader reads
+every field where the writer writes it (#1025):** a field the type declares
+and the file spells only under `metadata:` reads exactly as if the file
+spelled it at the top level, in the model, the index row, the single-entry
+read, search and health, so `update -f importance=8` then `get` agree and
+`metadata.links` is indexed and appended to. **A single-entry read spells
+each field once, at its own name** (`pyrite get`, MCP `kb_get`, REST `GET
+/api/entries/{id}`; ADR-0051, proposed amendment 2026-10-20): a declared
+field never appears under the read's `metadata`, which holds only keys the
+type does not declare (a backlog item's `rank` reads at `rank`, never at
+`metadata.rank`; a task's `evidence`, `status_reason` and `parked_awaiting`
+likewise). A key the type does not declare is not lifted: it reads under
+`metadata` only. An echo of a read back through REST `PUT` or MCP
+`kb_update`, with a key added or a field edited, is written. The index row
+(`db.get_entry`, `db.list_entries`, the shape the plugins read) keeps its
+whole `metadata` bag. `aliases` is its own row column, so a file with a
 top-level `aliases:` reads it at the top level and never under `metadata`,
 and wikilink resolution by alias reads that column (and the bag, for a file
 that nests it). `index health` lists each
