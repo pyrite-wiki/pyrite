@@ -9,6 +9,75 @@ Tests of experimental surfaces carry the `experimental` marker, applied from
 `tests/experimental_surface.py`; they run in their own non-blocking job and
 locally with `--experimental` (same section).
 
+## Writing a medium test
+
+A medium test drives one real surface (REST, MCP or the CLI) against a real
+world, in-process. Build the world with `tests/_world.py`, or with one of the
+fixtures over it, and the test runs the production wiring:
+
+- the config is `config.yaml` in a real config dir, written by `save_config`
+  and read back by `load_config`. A setting that file cannot express is
+  refused when the world is built, so it never silently falls back to its
+  default;
+- a KB is a directory of files, and `world.add_entry(kb, text)` writes one
+  file and indexes it through the indexer;
+- REST is `create_app(config)` with no `dependency_overrides`. `get_db` is the
+  app's own per-request session (#131), and the `TestClient` is entered, so
+  the lifespan runs;
+- the world closes everything it opened, including `app.state.pyrite_db`.
+
+```python
+def test_one_note_on_every_surface(tmp_path):
+    from pyrite.config import KBConfig
+    from tests._world import build_world
+
+    world = build_world(tmp_path, kbs=[KBConfig(name="notes", path=tmp_path / "notes")])
+    try:
+        world.add_entry("notes", "---\nid: hello\ntype: note\ntitle: Hello\n---\n\nHi\n")
+        assert world.client.get("/api/entries/hello?kb=notes").json()["title"] == "Hello"
+        assert world.cli("get", "hello", "-k", "notes", "--format", "json").exit_code == 0
+        assert world.mcp("read")._dispatch_tool("kb_get", {"entry_id": "hello"})["entry"]
+    finally:
+        world.close()
+```
+
+The rules:
+
+1. **Seed files, not rows.** Do not seed with `db.upsert_entry` or a raw
+   `INSERT` under a surface test. A row with no file behind it cannot show
+   file/index divergence, and a `get` that should read the file passes on the
+   row alone.
+2. **Do not override `get_db` and do not patch `load_config`.** The world
+   gives you both for real. `tests/test_production_wiring_guard.py` counts
+   the sites still left (`tests/production_wiring_baseline.txt`). The count
+   only shrinks: a new site fails, and so does a file that dropped below its
+   line until you lower that line.
+3. **Stub only the process edge.** An LLM provider, a git remote or an HTTP
+   call is an edge. Override that one dependency (`make_client(...,
+   dependency_overrides={get_repo_service: ...})`); never the database or the
+   config. The edges allowed by name are listed in
+   `tests/test_tests_drive_the_surface_not_the_mock.py`.
+4. **Point the CLI, don't patch it.** `cli_world()` points this process's
+   config location at the world for the rest of the test. Setting
+   `PYRITE_CONFIG_DIR` alone with `monkeypatch.setenv` does not do that:
+   `pyrite.config` reads the variable once, at import, and the repo-wide
+   `_isolate_global_config` fixture pins `CONFIG_DIR` for every test.
+5. **One world per write.** A test that writes gets its own world (a
+   function-scoped fixture). A session- or module-scoped world is read-only
+   by convention (`tests/characterization/conftest.py`).
+
+### Which fixture?
+
+| You are testing | Use | You get |
+|---|---|---|
+| a REST route, with your own KB/auth/API keys | `make_client(kb_name=, api_key=, api_keys=, auth=, register_user=)` | `(client, config, db)`; call it again for a second app |
+| a REST route over the standard events + research sample data | `rest_api_env` (with `sample_events` for their ids) | `{"client", "config", "db", "events_kb", "research_kb"}` |
+| an MCP tool | `mcp_server(kb_defs, tier=, extra_setup=)` from `tests/_world.py` (`_make_mcp_server` in `tests/test_mcp_server.py`; seed: `tests/mcp_seed.py`) | `{"server", "config", <kb name>: KBConfig}` |
+| a CLI command | `cli_world(kbs=, settings=)` | a world: `.cli(*args)`, `.add_entry`, `.config_dir` |
+| one property across REST, MCP and the CLI | `build_world(tmp_path, kbs=, settings=)` from `tests/_world.py` | `.client`, `.mcp(tier)`, `.cli(...)`; call `.close()` |
+| the access matrix (principals x KB states) | `world` / `write_world` (`tests/characterization/conftest.py`) | principals, the ADR-0037 KB axis, goldens |
+| a service or storage function, no surface | `kb_service`, `pyrite_db`, `indexed_test_env` | the objects, no app |
+
 ## 8-Section Extension Test Structure
 
 Every extension test file follows this structure. Not every section is required — only include sections for capabilities your extension implements.
