@@ -1,0 +1,1 @@
+- **Wikilinks with `%`, `_`, or backslashes in their titles now resolve only to literal title matches (#1054).**

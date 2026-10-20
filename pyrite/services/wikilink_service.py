@@ -155,8 +155,11 @@ class WikilinkService:
             return picked
 
         # Second pass: title match
-        sql = "SELECT id, kb_name, entry_type, title FROM entry WHERE title LIKE :target"
-        params = {"target": actual_target, **scope_params}
+        sql = (
+            "SELECT id, kb_name, entry_type, title FROM entry WHERE title LIKE :target ESCAPE '\\'"
+        )
+        literal_title = actual_target.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        params = {"target": literal_title, **scope_params}
         if actual_kb:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = actual_kb
