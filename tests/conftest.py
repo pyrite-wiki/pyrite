@@ -298,49 +298,34 @@ def indexed_test_env(pyrite_config, pyrite_db, index_mgr, kb_configs, sample_eve
 
 
 @pytest.fixture
-def rest_api_env(indexed_test_env):
-    """Test environment for REST API tests with TestClient.
+def rest_api_env(tmp_kb_dir, kb_configs, sample_events, sample_person):
+    """The events + research KBs, with their sample entries, served over REST.
 
-    Uses create_app() which stores state on app.state and sets up
-    dependency_overrides for full per-app isolation.
+    A `tests._world` world (#1077) over the same KB directories the
+    `sample_events` / `sample_person` fixtures wrote into, so a test that takes
+    those too sees the same entries: the config is read from the world's
+    `config.yaml`, the files are indexed through the indexer, and the app runs
+    create_app's own `get_db` and its lifespan. `db` is the app's own
+    database. The world is closed (workers joined, app shut down, every DB
+    closed) before `tmp_kb_dir` is removed.
     """
-    from starlette.testclient import TestClient
+    from tests._world import build_world
 
-    from pyrite.server.api import (
-        create_app,
-        get_config,
-        get_db,
-        get_index_mgr,
-        get_index_worker,
+    world = build_world(
+        tmp_kb_dir["tmpdir"],
+        kbs=[kb_configs["events_kb"], kb_configs["research_kb"]],
+        settings={"index_path": tmp_kb_dir["db_path"]},
     )
-
-    config = indexed_test_env["config"]
-    db = indexed_test_env["db"]
-    index_mgr = indexed_test_env["index_mgr"]
-
-    app = create_app(config)
-    # Override DI to use pre-built test objects
-    app.dependency_overrides[get_config] = lambda: config
-    app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_index_mgr] = lambda: index_mgr
-
-    from pyrite.services.index_worker import IndexWorker
-
-    _index_worker = IndexWorker(db, config)
-    app.dependency_overrides[get_index_worker] = lambda: _index_worker
-    client = TestClient(app)
-
-    yield {
-        "client": client,
-        "config": config,
-        "db": db,
-        "events_kb": indexed_test_env["events_kb"],
-        "research_kb": indexed_test_env["research_kb"],
-    }
-    # Join any background sync/rebuild thread before this fixture's own
-    # teardown (and pyrite_db/tmp_kb_dir's) runs -- same full-suite-only
-    # flaky-test root cause as the `worker` fixture in test_index_worker.py.
-    _index_worker.wait_for_idle(timeout=10)
+    try:
+        yield {
+            "client": world.client,
+            "config": world.config,
+            "db": world.db,
+            "events_kb": world.config.get_kb("test-events"),
+            "research_kb": world.config.get_kb("test-research"),
+        }
+    finally:
+        world.close()
 
 
 @pytest.fixture
