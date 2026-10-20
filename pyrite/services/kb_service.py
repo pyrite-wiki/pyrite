@@ -1563,6 +1563,21 @@ class KBService:
         naming fields on its own (``{importance: 5}``) is the caller's values,
         each written as sent; the CLI's ``-f`` never passes through here.
         """
+        # `kb_get` answers `{"entry": {...}}`; sent back whole, that is one
+        # undeclared key holding the read, which an update would write into
+        # the file (#1024). Refused, not unwrapped: the caller sends the
+        # entry's own fields (ADR-0042 decision 9, fail closed). An `entry`
+        # mapping with no read-result key is a declared field's value.
+        envelope = fields.get("metadata")
+        wrapped = fields.get("entry")
+        if wrapped is None and isinstance(envelope, dict):
+            wrapped = envelope.get("entry")  # REST's only spelling of it
+        if isinstance(wrapped, dict) and not _READ_RESULT_MARKERS.isdisjoint(wrapped):
+            raise ValidationError(
+                "Cannot update: `entry` holds a whole read result (the envelope `kb_get` "
+                "answers with). Send the entry's fields at the top level instead: "
+                "the contents of `result['entry']`, with your changes."
+            )
         updatable = self.updatable_fields(entry_id, kb_name)
         # The reading an echo is compared with is the read a get returns -- the
         # file now -- not the row, which may lag it: a value the read

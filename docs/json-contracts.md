@@ -167,6 +167,10 @@ Every entry write — REST `POST /api/entries`, `PUT`/`PATCH
 `kb_update`, `kb_bulk_create`; CLI `pyrite create`, `pyrite update`,
 `pyrite add`, `pyrite import` — goes through one pipeline in `KBService`,
 so the same entry is refused with the same `error_code` on every surface.
+`kb_update` takes the entry's fields, not `kb_get`'s envelope: send
+`result["entry"]`'s fields at the top level. An `entry` key holding a read
+result is refused and the file is left untouched (#1024).
+
 This is the one table of codes an agent meets while writing; the
 how-to (`docs/agent-write-path.md`) links here instead of repeating it. Each row
 is reproduced by a command in "Reproduce the codes" below, which CI runs.

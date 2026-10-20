@@ -284,9 +284,8 @@ def test_kb_update_writes_a_kb_yaml_declared_field_of_a_custom_type(env, mcp):
 def test_kb_update_ignores_identity_and_bookkeeping_fields(env, mcp):
     """An agent echoing a read result back cannot rewrite id, path or created_at."""
     eid = _create(mcp, entry_type="person", title="Keep Me", body="b")
-    got = mcp._dispatch_tool("kb_get", {"kb_name": KB, "entry_id": eid})
-    before = _file(env, eid)
-    created_line = [ln for ln in before.read_text().splitlines() if ln.startswith("created_at")]
+    got = mcp._dispatch_tool("kb_get", {"kb_name": KB, "entry_id": eid})["entry"]
+    before = _file(env, eid).read_bytes()
     res = mcp._dispatch_tool(
         "kb_update",
         {
@@ -301,13 +300,10 @@ def test_kb_update_ignores_identity_and_bookkeeping_fields(env, mcp):
         },
     )
     assert res.get("updated"), res
-    after = _file(env, eid)
-    assert after == before, "the entry moved"
-    text = after.read_text()
-    assert "id: keep-me" in text and "hijacked" not in text
-    assert "1999" not in text and "nowhere" not in text
-    assert [ln for ln in text.splitlines() if ln.startswith("created_at")] == created_line
-    assert "edited" in text
+    # Whole file, not substrings (#1024: `1999` was in the keys this test
+    # added, so the old substring check passed while `entry:` was written).
+    assert _file(env, eid).read_bytes() == before.replace(b"\nb\n", b"\nedited\n")
+    assert _file(env, "hijacked") is None
 
 
 def test_kb_update_field_set_names_no_extension_vocabulary(env, mcp):
@@ -1264,3 +1260,69 @@ def test_update_rejects_malformed_source_and_link_items_by_field(env, field, val
         assert target.read_bytes() == before
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# #1024: an echoed kb_get envelope is refused, and the file is untouched
+# ---------------------------------------------------------------------------
+
+
+def _echo_setup(env, mcp):
+    eid = _create(mcp, entry_type="person", title="Keep Me", body="b")
+    got = mcp._dispatch_tool("kb_get", {"kb_name": KB, "entry_id": eid})
+    return eid, got
+
+
+def test_kb_update_refuses_an_echoed_kb_get_envelope_and_leaves_the_file_alone(env, mcp):
+    """`kb_get` answers `{"entry": {...}}`; sending that back whole writes
+    nothing: it is refused with the hint, and the file is byte-identical."""
+    eid, got = _echo_setup(env, mcp)
+    assert set(got) == {"entry"}, got  # the shape the issue is about
+    before = _file(env, eid).read_bytes()
+    res = mcp._dispatch_tool("kb_update", {**got, "kb_name": KB, "entry_id": eid, "body": "edited"})
+    assert not res.get("updated"), res
+    assert "kb_get" in json.dumps(res) and "entry" in json.dumps(res), res
+    assert _file(env, eid).read_bytes() == before
+
+
+def test_kb_update_of_the_unwrapped_entry_writes_only_the_body(env, mcp):
+    eid, got = _echo_setup(env, mcp)
+    before = _file(env, eid).read_text()
+    res = mcp._dispatch_tool(
+        "kb_update", {**got["entry"], "kb_name": KB, "entry_id": eid, "body": "edited"}
+    )
+    assert res.get("updated"), res
+    assert _file(env, eid).read_text() == before.replace("\nb\n", "\nedited\n")
+
+
+def test_rest_put_never_writes_the_envelope(env, rest):
+    """REST's body model has no `entry` key (a top-level one is not read), so the
+    envelope can only arrive as `metadata.entry`; both leave the file untouched."""
+    assert (
+        rest.post(
+            "/api/entries",
+            json={"kb": KB, "entry_type": "person", "title": "Keep Me", "body": "b"},
+        ).status_code
+        == 200
+    )
+    got = rest.get("/api/entries/keep-me", params={"kb": KB}).json()
+    before = _file(env, "keep-me").read_bytes()
+    top = rest.put("/api/entries/keep-me", json={"kb": KB, "entry": {"entry": got}})
+    assert _file(env, "keep-me").read_bytes() == before, top.text
+    nested = rest.put("/api/entries/keep-me", json={"kb": KB, "metadata": {"entry": got}})
+    assert nested.status_code >= 400, nested.text
+    assert _file(env, "keep-me").read_bytes() == before
+
+
+def test_a_declared_field_named_entry_is_still_written(env, mcp):
+    """Only an `entry` mapping that carries read-result keys is an envelope."""
+    (env["kb_path"] / "kb.yaml").write_text(
+        KB_YAML.replace("      mood:\n", "      entry:\n        type: text\n      mood:\n", 1)
+    )
+    env["config"].get_kb(KB).invalidate_schema_cache()
+    eid = _create(mcp, entry_type="note", title="Has Entry", body="b")
+    res = mcp._dispatch_tool(
+        "kb_update", {"kb_name": KB, "entry_id": eid, "entry": {"label": "mine"}}
+    )
+    assert res.get("updated"), res
+    assert "label: mine" in _file(env, eid).read_text()
