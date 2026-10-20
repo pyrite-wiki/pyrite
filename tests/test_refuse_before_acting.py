@@ -418,7 +418,19 @@ class TestMCPKbLinkReplyMatchesItsSchema:
 
     @pytest.mark.parametrize(
         ("on_disk", "typed"),
-        [("2024", "2024"), ("true", "True"), ("2024-01-01", "2024-01-01")],
+        # `target: true` is the id text "1", as the index stores it (#1022);
+        # "True" was str()'s spelling, which no id has.
+        [
+            pytest.param(
+                "2024", "2024", marks=pytest.mark.control(reason="str() spelled it so too")
+            ),
+            ("true", "1"),
+            pytest.param(
+                "2024-01-01",
+                "2024-01-01",
+                marks=pytest.mark.control(reason="str() spelled it so too"),
+            ),
+        ],
         ids=["int", "bool", "date"],
     )
     def test_target_id_and_relation_are_strings(self, env, mcp, on_disk, typed):

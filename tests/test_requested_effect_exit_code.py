@@ -606,8 +606,10 @@ class TestBacklinksOfALinkedToMissingPage:
             out = cli.run(entry, "backlinks", "ghost-page", "-k", "demo", "--format", "json")
             assert out.returncode == 0, out.stdout + out.stderr
             payload = json.loads(out.stdout)
-            assert payload["total"] == 1, payload
-            assert payload["entries"][0]["id"] == "linker"
+            # Two links, two rows (#1009): the frontmatter item and the body
+            # wikilink, each its own backlink.
+            assert payload["total"] == 2, payload
+            assert [e["id"] for e in payload["entries"]] == ["linker", "linker"]
 
 
 class TestBatchRead:
