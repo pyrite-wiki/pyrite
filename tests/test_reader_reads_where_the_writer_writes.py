@@ -985,6 +985,11 @@ QUERY_COLLECTION = (
 )
 
 
+@pytest.mark.control(
+    reason="passes on dev, where the collection readers found the fields in the read's bag; "
+    "failed on this PR's head 8ae4625 once the single-entry read spelled them at their own "
+    "names only, pinned so the readers follow the read shape"
+)
 def test_a_query_collection_reads_its_fields_at_their_own_names(tmp_path: Path):
     """`KBService.get_collection_entries` and REST `GET /api/collections/{id}`
     took a collection's `source_type`, `query`, `icon`... from the read's
