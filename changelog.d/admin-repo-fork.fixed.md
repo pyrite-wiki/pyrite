@@ -1,1 +1,1 @@
-Make `pyrite-admin repo fork` use the fork-and-subscribe service, report the forked repository, and exit with an error when the fork fails.
+- **`pyrite-admin repo fork` works again (#785).** It called a service method that no longer exists. It now forks and subscribes through the fork-and-subscribe service, names the forked repository, and exits 1 with `FORK_FAILED` when the fork fails.
