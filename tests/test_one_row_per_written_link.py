@@ -470,7 +470,13 @@ def test_the_backlinks_table_lists_a_source_once_with_each_link(two_kbs):
             True,
             marks=pytest.mark.control(reason="the centred walk already kept one edge per pair"),
         ),
-        False,
+        pytest.param(
+            False,
+            marks=pytest.mark.control(
+                reason="dev stored one row here, so one edge; guards the pair check in the "
+                "whole-index branch now that there are two"
+            ),
+        ),
     ],
     ids=["centered", "whole-index"],
 )
