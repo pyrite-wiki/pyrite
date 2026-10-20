@@ -451,6 +451,7 @@ class TestThisRepositoryGuards:
         "tests/test_tests_drive_the_surface_not_the_mock.py",
         "tests/test_test_rules.py",
         "tests/test_cli_help_assertions_are_plain.py",
+        "tests/test_production_wiring_guard.py",
     }
 
     def test_the_acceptance_command_lists_the_guards(self):

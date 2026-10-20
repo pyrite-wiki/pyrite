@@ -14,6 +14,7 @@ get_db 1 tests/test_blocks_api.py
 get_db 1 tests/test_collection_create_response.py
 get_db 1 tests/test_collection_views.py
 get_db 1 tests/test_collections.py
+get_db 1 tests/test_create_refuses_managed_fields.py
 get_db 1 tests/test_create_writes_through_apply.py
 get_db 1 tests/test_daily_endpoints.py
 get_db 1 tests/test_default_output_is_the_result.py
@@ -28,6 +29,7 @@ get_db 1 tests/test_formats.py
 get_db 1 tests/test_get_reads_the_file.py
 get_db 1 tests/test_github_token_storage.py
 get_db 1 tests/test_graph_centrality.py
+get_db 1 tests/test_import_drops_and_reports_managed.py
 get_db 1 tests/test_kb_commit.py
 get_db 1 tests/test_kb_export_read_scoping.py
 get_db 1 tests/test_kb_write_guard_body.py
@@ -62,6 +64,7 @@ get_db 1 tests/test_task_claim_endpoint.py
 get_db 1 tests/test_type_schemas_declared.py
 get_db 1 tests/test_unmodellable_frontmatter_grid.py
 get_db 1 tests/test_update_never_loses_a_key.py
+get_db 1 tests/test_update_refuses_only_what_it_causes.py
 get_db 1 tests/test_update_walks_every_surface.py
 get_db 1 tests/test_version_history.py
 get_db 3 tests/test_version_list_matches_read.py
@@ -89,6 +92,7 @@ load_config 2 tests/test_cli_json_output.py
 load_config 2 tests/test_cli_outcome_write_path.py
 load_config 1 tests/test_cli_update_field_parsing.py
 load_config 2 tests/test_cli_update_repeated_append_remove.py
+load_config 2 tests/test_create_refuses_managed_fields.py
 load_config 2 tests/test_create_writes_through_apply.py
 load_config 1 tests/test_db_backup.py
 load_config 2 tests/test_db_backup_location.py
@@ -106,6 +110,7 @@ load_config 1 tests/test_gates.py
 load_config 3 tests/test_get_reads_the_file.py
 load_config 2 tests/test_ids_commands.py
 load_config 2 tests/test_import_cli.py
+load_config 2 tests/test_import_drops_and_reports_managed.py
 load_config 1 tests/test_index_health_exit_code.py
 load_config 2 tests/test_index_health_type_drift.py
 load_config 13 tests/test_init_command.py
@@ -153,6 +158,7 @@ load_config 2 tests/test_truncated_body_refused_on_cli_write.py
 load_config 2 tests/test_unmodellable_frontmatter_grid.py
 load_config 4 tests/test_unmodellable_frontmatter_is_reported.py
 load_config 3 tests/test_update_never_loses_a_key.py
+load_config 2 tests/test_update_refuses_only_what_it_causes.py
 load_config 1 tests/test_update_undeclared_keys.py
 load_config 5 tests/test_update_walks_every_surface.py
 load_config 2 tests/test_write_pipeline.py

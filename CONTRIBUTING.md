@@ -435,6 +435,7 @@ you before CI does. A source-only change selects none of them. See why with
 | `TestSecurityVocabularyNeedsAReason` (`tests/test_experimental_surface.py`) | is mapped experimental yet touches the security vocabulary, or a reviewed entry no longer matches | list it in `NEVER_EXPERIMENTAL`, or in `REVIEWED_EXPERIMENTAL` with the reason it is not a security test; delete a stale entry |
 | `test_cli_help_assertions_are_plain` (`tests/test_cli_help_assertions_are_plain.py`) | checks a CLI flag against raw help output | wrap it in `tests.cli_help.plain()` |
 | `TestNoTestReadsAFragmentByName` (`tests/test_changelog_fragments.py`) | reads a `changelog.d/` fragment by name | fragments are deleted at release; build the text in the test |
+| `test_no_file_adds_a_site`, `test_a_file_that_shrank_lowers_its_line` and `test_the_ceiling_only_comes_down` (`tests/test_production_wiring_guard.py`) | overrides `get_db` in `dependency_overrides` or patches `load_config` more than `tests/production_wiring_baseline.txt` allows for that file; or a file dropped below its line | use the world (`make_client`, `rest_api_env`, `cli_world`, `tests/_world.py`); after removing sites, lower that file's line and `CEILING`; never raise either |
 
 Adding a guard: mark each scanning function `@pytest.mark.guard`, add its row
 here, and keep it cheap (these run on every push that touches a test).
