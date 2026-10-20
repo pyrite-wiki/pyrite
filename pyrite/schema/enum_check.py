@@ -64,7 +64,13 @@ def enforce_enums(kb_schema: KBSchema) -> bool:
     return value is not False
 
 
-def _is_empty(value: Any) -> bool:
+def is_empty(value: Any) -> bool:
+    """No value: ``None``, ``""`` or ``[]``. The one rule for "empty" every
+    optional check follows -- the enum checks here, the field type checks and
+    rule checks of ``KBSchema.validate_entry``, ``schema validate``'s protocol
+    types -- so the empty value a create writes for a declared field it was
+    not sent passes, whatever the field's type (#86). A ``required`` check
+    still refuses it."""
     return value is None or value == "" or value == []
 
 
@@ -100,7 +106,7 @@ def enum_findings(
             continue
         allowed = fs.allowed_values()
         value = fields[name]
-        if not allowed or _is_empty(value):
+        if not allowed or is_empty(value):
             continue
         if fs.field_type == "multi-select" and not isinstance(value, list):
             continue  # a type error, reported by _validate_field_value under `enforce`
@@ -128,7 +134,7 @@ def enum_findings(
         if not isinstance(rule_def, dict) or "enum" not in rule_def:
             continue
         name = rule_def.get("field")
-        if name not in fields or _is_empty(fields[name]):
+        if name not in fields or is_empty(fields[name]):
             continue
         allowed = list(rule_def.get("enum") or [])
         value = fields[name]

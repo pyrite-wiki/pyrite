@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -120,6 +121,21 @@ class FieldSchema:
             since_version=data.get("since_version"),
             options_conflict=conflict,
         )
+
+    def empty_value(self) -> Any:
+        """What a create writes for this field when the caller sent nothing
+        (#86): the declared ``default`` when there is one; else ``''`` for text
+        and select, ``[]`` for a list, a multi-select or tags, and null for the
+        rest (a number, date, datetime, checkbox, reference or mapping), whose
+        ``''`` would load as a value of the wrong type. The enum check reads
+        all three as "no value" (``enum_check``)."""
+        if self.default is not None:
+            return copy.deepcopy(self.default)
+        if self.field_type in ("text", "select"):
+            return ""
+        if self.field_type in ("list", "multi-select", "tags"):
+            return []
+        return None
 
     def allowed_values(self) -> list[Any]:
         """The declared enum for this field: ``options`` (or ``values``), else

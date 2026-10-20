@@ -11,7 +11,7 @@ import dataclasses
 import logging
 import os
 import re
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from enum import Enum
@@ -45,6 +45,7 @@ from ..models.factory import build_entry
 from ..plugins.context import PluginContext
 from ..schema import Link, Source
 from ..schema.enum_check import is_off_list, is_per_element
+from ..schema.reserved import RESERVED_FIELD_NAMES
 from ..storage.database import PyriteDB
 from ..storage.document_manager import DocumentManager
 from ..storage.entry_writer import (
@@ -464,7 +465,7 @@ class KBService:
         kwargs. The schema declares them for the type all the same, so they
         are validated as the fields they are; a top-level key wins a clash.
         """
-        fields = entry.to_frontmatter()
+        fields = entry.declared_frontmatter()
         nested = fields.get("metadata")
         if isinstance(nested, dict):
             fields = {**nested, **fields}
@@ -1201,7 +1202,9 @@ class KBService:
             entry_type = self._resolve_entry_type(entry_type, kb_config.kb_type)
         if builder is None:
             self._refuse_managed_on_create(entry_type, kb_config, fields, owns)
+            fields, attributes = self._with_declared_fields(entry_type, kb_config, fields)
             entry = build_entry(entry_type, entry_id=entry_id, title=title, body=body, **fields)
+            entry._create_fields = attributes
         else:
             entry = builder(entry_type, entry_id, title, body, fields)
 
@@ -1251,6 +1254,62 @@ class KBService:
                 "change it, or choose a different title/id."
             )
         return entry, warnings
+
+    def _with_declared_fields(
+        self, entry_type: str, kb_config: KBConfig, fields: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        """A create's request with every field the type's schema declares
+        (#86), and the declared fields the model holds as attributes.
+
+        The declaration is ``KBSchema.type_fields`` (core < plugin < kb.yaml),
+        never the class's dataclass fields (the maintainer on #86, 2026-10-20).
+        A field the caller sent, at any spelling and empty or not, is the
+        caller's (ADR-0042 #720). One not sent is added before the entry is
+        built, so the entry that is validated, given to the hooks, indexed,
+        returned and written is one entry:
+
+        - with no model attribute, at ``FieldSchema.empty_value()`` (its
+          declared default, else ``''``, ``[]`` or null by field type);
+        - with a model attribute, at its declared default when there is one;
+          otherwise the attribute keeps the class's own default, so a typed
+          field is never set to a value of the wrong type (``kind: None``).
+
+        Left out: base Entry fields (``RESERVED_FIELD_NAMES``) and the fields
+        a create refuses (``_field_sets``' managed set, #1010). An alias is
+        added at its target's name. The second value maps each declared
+        attribute field to its attribute, for ``Entry._create_fields``.
+        """
+        from ..models.core_types import get_entry_class
+        from ..schema.field_aliases import class_field_aliases, field_at, spellings_of
+
+        cls = get_entry_class(entry_type)
+        skip = RESERVED_FIELD_NAMES | self._field_sets(entry_type, kb_config)[2]
+        model = {f.name for f in dataclasses.fields(cls) if f.init and not f.name.startswith("_")}
+        aliases = class_field_aliases(cls, entry_type)
+        envelope = fields.get("metadata")
+        envelope = envelope if isinstance(envelope, Mapping) else {}
+        added: dict[str, Any] = {}
+        attributes: dict[str, str] = {}
+        for name, schema in kb_config.kb_schema.type_fields(entry_type).items():
+            if name in skip:
+                continue
+            field, _rest = field_at(cls, entry_type, (name,))
+            if field in skip or field in added or field in attributes:
+                continue
+            sent = any(
+                path[-1] in (envelope if len(path) > 1 else fields)
+                for path in spellings_of(cls, entry_type, field)
+            )
+            attribute = field if field in model else None
+            if attribute is None:
+                attribute = next((a for a, t in aliases.items() if t == field and a in model), None)
+            if attribute is not None:
+                attributes[field] = attribute
+                if not sent and schema.default is not None:
+                    added[field] = schema.empty_value()
+            elif not sent:
+                added[field] = schema.empty_value()
+        return {**fields, **added}, attributes
 
     def _prepare_and_save(
         self,

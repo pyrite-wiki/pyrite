@@ -199,8 +199,11 @@ def validate_entry(
             )
 
     # Protocol field type checks
+    from ..schema.enum_check import is_empty
+
     for field_name, expected_type in _PROTOCOL_FIELD_TYPES.items():
-        if field_name in fm and fm[field_name] is not None:
+        # An empty value (None, "", []) is no value (`is_empty`, #86).
+        if field_name in fm and not is_empty(fm[field_name]):
             value = fm[field_name]
             if not isinstance(value, expected_type):
                 errors.append(

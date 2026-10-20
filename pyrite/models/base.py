@@ -372,6 +372,20 @@ class Entry(ABC):
     # restyling the whole block (#46). Never read as data -- only as style.
     _source_frontmatter: Any = field(default=None, init=False, repr=False, compare=False)
 
+    # The declared fields a create holds in model attributes, ``{file key:
+    # attribute}`` (#86): set by ``KBService._prepare`` from the type's schema
+    # for an entry built from a request, empty for one loaded from a file.
+    # ``_frontmatter_for_file`` writes each one the class's ``to_frontmatter``
+    # leaves out when empty (``if self.kind:``), so a new file carries every
+    # declared field at the value the entry was validated and indexed with.
+    # It belongs to this object: a before_save hook that returns a different
+    # entry (``dataclasses.replace``) drops it, and the model-held empties then
+    # leave the file and the index row together, never one of them. Shipped
+    # hooks return the entry they were given.
+    _create_fields: dict[str, str] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
+
     # DEPRECATED (#697, ADR-0045 decision 8): a bare set of alias names has no
     # target. Declare `field_aliases: {alias: target}` in the type's schema
     # (core metadata, a plugin's get_type_metadata(), or kb.yaml) instead; see
@@ -575,7 +589,7 @@ class Entry(ABC):
         the drop this branch fixes (#173 review). Those keys get the raw
         source node back, so the restyle keeps it verbatim.
         """
-        meta = self.to_frontmatter()
+        meta = self.declared_frontmatter()
         if self._source_frontmatter is not None:
             for ts_key in self._unparsed_timestamp_keys:
                 if ts_key in meta and ts_key in self._source_frontmatter:
@@ -597,6 +611,32 @@ class Entry(ABC):
             for k, v in meta.items()
             if not (k in absent and k in pristine and _plain(pristine[k]) == _plain(v))
         }
+
+    def declared_frontmatter(self) -> dict[str, Any]:
+        """``to_frontmatter()`` plus each ``_create_fields`` entry it does not
+        spell (by name, alias or under ``metadata:``), at its attribute's
+        value: the empty value the class leaves out (#86).
+
+        The one field set of a new entry: the file (``_frontmatter_for_file``),
+        the index row (``IndexManager``) and a create's validation
+        (``KBService._validated_fields``) all read it, so the entry a create
+        validates and indexes is the one it writes. For an entry loaded from
+        a file ``_create_fields`` is empty and this is ``to_frontmatter()``.
+        """
+        meta = self.to_frontmatter()
+        if not self._create_fields:
+            return meta
+        from ..schema.field_aliases import spellings_of
+
+        nested = meta.get("metadata")
+        nested = nested if isinstance(nested, Mapping) else {}
+        for key, attribute in self._create_fields.items():
+            if not any(
+                path[-1] in (nested if len(path) > 1 else meta)
+                for path in spellings_of(type(self), self.entry_type, key)
+            ):
+                meta[key] = getattr(self, attribute)
+        return meta
 
     def unrepresented_frontmatter(self) -> dict[str, Any]:
         """The file's keys whose value this entry's model does not reproduce.

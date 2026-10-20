@@ -593,7 +593,9 @@ class IndexManager:
         # Also exclude keys that were explicitly set in data above
         stored_keys = db_column_keys | set(data.keys())
         try:
-            fm = entry.to_frontmatter()
+            # A new entry's declared fields too (#86): the row a create writes
+            # is the row a rebuild from its file writes.
+            fm = entry.declared_frontmatter()
             # The bag of keys the model does not declare first, the model's
             # own reading of every field over it: `metadata.k` is a second
             # spelling of field `k` (Andon #994, decision A), and the reader

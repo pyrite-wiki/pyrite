@@ -78,7 +78,9 @@ def _file_of(config: PyriteConfig, entry_id: str) -> Path:
     return found[0]
 
 
-def assert_file_holds_the_types_values(config: PyriteConfig, entry) -> Path:
+def assert_file_holds_the_types_values(
+    config: PyriteConfig, entry, declared_empties: dict[str, Any] | None = None
+) -> Path:
     path = _file_of(config, entry.id)
     parsed = load_frontmatter(path.read_text(encoding="utf-8"))
     assert parsed is not None
@@ -86,8 +88,10 @@ def assert_file_holds_the_types_values(config: PyriteConfig, entry) -> Path:
     # The file's values are `_frontmatter_for_file()`: `to_frontmatter()` less
     # the default-valued keys a *loaded* source lacked (#46), which is what a
     # file-based create (`add`) must not add; for a fresh create the two are
-    # one dict.
-    expected = _plain(entry._frontmatter_for_file())
+    # one dict. Plus, for an entry built in memory, the fields its schema
+    # declares that the class left out, written empty (#86): the caller
+    # names them (an entry read back from the file already has them).
+    expected = _plain({**entry._frontmatter_for_file(), **(declared_empties or {})})
     got = _plain(fm)
     assert got == expected, f"file: {got}\ntype: {expected}"
     assert list(fm)[0] == "id", f"id is not the first key: {list(fm)}"
@@ -126,7 +130,8 @@ def _with_service(config, fn):
 def test_service_create_writes_the_types_values(tmp_path: Path):
     config = _config(tmp_path)
     written = _with_service(config, lambda svc: svc.create(KB, dict(SPEC)))
-    assert_file_holds_the_types_values(config, written.entry)
+    # CORE_TYPES declares an event's `location`; SPEC sends none (#86).
+    assert_file_holds_the_types_values(config, written.entry, {"location": ""})
 
 
 @pytest.mark.control(
