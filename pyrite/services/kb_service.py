@@ -65,6 +65,8 @@ from ..storage.file_operations import (
     TimestampText,
     Unset,
     apply,
+    may_be_unmodellable,
+    unmodellable_in_text,
 )
 from ..storage.index import IndexManager, content_hash
 from ..storage.repository import KBRepository
@@ -911,9 +913,16 @@ class KBService:
                 # One read: the entry is parsed from the bytes that are hashed.
                 entry = repo.load_entry_from_bytes(path, raw)
             except Exception as exc:
+                # A file the loader refuses (a duplicate key, a root that is
+                # no mapping) is the unmodellable refusal, not a miss (#1035).
+                _refuse_unmodellable(raw, entry_id, "read")
                 unreadable = unreadable or (path, exc)
                 continue
             if id_text(entry.id) == entry_id:
+                # A tagged or complex key loads but cannot be read into the
+                # index's fields (a non-string key): refuse it by the same rule.
+                if may_be_unmodellable(getattr(entry, "_source_frontmatter", None)):
+                    _refuse_unmodellable(raw, entry_id, "read")
                 return path, content_hash(raw), entry
         if unreadable is not None:
             self._unreadable_entry_file(kb_config.name, entry_id, *unreadable)
@@ -1660,10 +1669,14 @@ class KBService:
         for _attempt in range(_UPDATE_ATTEMPTS):
             found = repo.read_for_write(entry_id)
             if found is None:
+                # No file holds the id as the reader reads ids, but `<id>.md`
+                # may be one it cannot read (#1035): that is a refusal, not a miss.
+                _refuse_unmodellable_named(repo, entry_id, "update")
                 raise EntryNotFoundError(
                     f"Entry not found: {entry_id}{repo.not_found_hint(entry_id)}"
                 )
             path, raw = found
+            _refuse_unmodellable(raw, entry_id, "update")
             try:
                 entry = repo.load_entry_from_bytes(path, raw)
             except Exception as e:
@@ -3653,6 +3666,39 @@ def _request_operations(updates: dict[str, Any]) -> list[Any]:
     except ValueError as e:
         raise ValidationError(f"Cannot read a field path in the update: {e}") from None
     return ops
+
+
+def _refuse_unmodellable(raw: bytes, entry_id: str, verb: str) -> None:
+    """Refuse a file whose frontmatter Pyrite cannot model (#760, #1035) as a
+    ``ValidationError`` (``VALIDATION_FAILED`` on every surface), naming the
+    reason and the 1-based line: the one answer for ``get`` and ``update``,
+    instead of a traceback or a miss. The rule is
+    ``file_operations.unmodellable_in_text``, the one ``index health`` lists by."""
+    try:
+        why = unmodellable_in_text(raw.decode("utf-8"))
+    except Exception:  # not UTF-8, or a file the check cannot handle: not this rule's
+        return
+    if why is not None:
+        reason, line = why
+        raise ValidationError(f"Cannot {verb} '{entry_id}': {reason} (line {line})")
+
+
+def _refuse_unmodellable_named(repo: KBRepository, entry_id: str, verb: str) -> None:
+    """``_refuse_unmodellable`` for the files named ``<id>.md``: the one place
+    a file the loader refuses (a duplicate key, a root that is no mapping) can
+    still be found by id. A file whose stem is not its id is not."""
+    try:
+        repo._validate_entry_id(entry_id)
+    except ValidationError:
+        return
+    for path in repo._filename_candidates(entry_id):
+        if not repo._lexically_inside(path):
+            continue
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            continue
+        _refuse_unmodellable(raw, entry_id, verb)
 
 
 def _item_operations(

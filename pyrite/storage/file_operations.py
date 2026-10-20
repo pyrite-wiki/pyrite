@@ -186,7 +186,14 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
-from ..utils.frontmatter import Malformed, Unsupported, Unterminated, describe, split_frontmatter
+from ..utils.frontmatter import (
+    Frontmatter,
+    Malformed,
+    Unsupported,
+    Unterminated,
+    describe,
+    split_frontmatter,
+)
 from ..utils.yaml import _is_yaml11_ambiguous
 
 # --- the public surface -----------------------------------------------------
@@ -712,6 +719,20 @@ def frontmatter_refusal(root: Node | None, y: YAML) -> tuple[tuple[str, Node | N
     if duplicate is not None:
         return (_DUPLICATE.format(duplicate.value), duplicate), None
     return None, loaded
+
+
+def unmodellable_in_text(text: str) -> tuple[str, int] | None:
+    """``unmodellable_reason`` for a whole file's text: ``(reason, line)``, or
+    None when the file has no YAML frontmatter or it can be modelled. The one
+    call every reader of a file's bytes makes (``unmodellable_files``, the
+    service's read and update), so they name the same file for the same
+    reason at the same line (#1035)."""
+    split = split_frontmatter(text)
+    if not isinstance(split, Frontmatter):
+        return None
+    return unmodellable_reason(
+        text, FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
+    )
 
 
 def may_be_unmodellable(loaded: Any) -> bool:

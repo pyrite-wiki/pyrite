@@ -250,7 +250,7 @@ def register_entry_commands(app: typer.Typer) -> None:
         with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
             try:
                 result = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
-            except AmbiguousEntryError as exc:
+            except (AmbiguousEntryError, ValidationError) as exc:
                 cli_error_from(exc, output_format)
 
             if not result:

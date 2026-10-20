@@ -363,8 +363,7 @@ def unmodellable_files(kb: KBConfig, paths: Iterable[Path] | None = None) -> lis
     explicit ``id:``, else the one derived from the title), or the file's
     stem when the file cannot be read at all (a duplicate key).
     """
-    from ..utils.frontmatter import Frontmatter, split_frontmatter
-    from .file_operations import FrontmatterSpan, unmodellable_reason
+    from .file_operations import unmodellable_in_text
 
     repo = KBRepository(kb)
     found: list[dict[str, Any]] = []
@@ -376,12 +375,7 @@ def unmodellable_files(kb: KBConfig, paths: Iterable[Path] | None = None) -> lis
         except (OSError, UnicodeDecodeError):
             continue
         try:
-            split = split_frontmatter(text)
-            if not isinstance(split, Frontmatter):
-                continue
-            why = unmodellable_reason(
-                text, FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
-            )
+            why = unmodellable_in_text(text)
         except Exception as e:
             logger.warning("Could not check the frontmatter of %s: %s", path, e)
             continue
