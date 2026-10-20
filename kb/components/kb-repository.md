@@ -25,7 +25,7 @@ File-system layer for a single knowledge base. Reads and writes markdown files w
 - `rename(old_id, new_id)` — `Set("id", new_id)` on the file's own bytes (and the `updated_at` bookkeeping where the file carries it), published at the new path with `expect=ABSENT`, then the old file removed; every linking file gets a `ReplaceBody` and a `Set` per frontmatter value that holds a `[[old_id]]` wikilink, published against the bytes read and re-read on a change (#955 P4)
 - `delete(entry_id)` — remove file from disk
 - `list_entries()` — iterate all entries and collection YAML files in the KB directory
-- `find_file(entry_id)` — locate markdown file by ID across subdirectories
+- `find_file(entry_id)` — the file holding the id (ADR-0038 I8): files named like the id first, each verified, then `_files_holding`, the whole-KB scan `files_to_delete` and a `get` miss share. The scan reads every file's raw text but parses (`read_entry_id`) only those `could_hold_id` cannot rule out: a file whose frontmatter opens with plain `key: value` lines up to a plain `id: <token>` line holds that token. A KB with schema migrations to apply is parsed in full, since a migration may set the id (#135). No id-to-path cache: stateless by the maintainer's decision of 2026-09-30.
 - `validate_all()` — return paths with validation errors
 - `_maybe_migrate(frontmatter)` — apply schema version migrations on load
 - `_infer_subdir(entry)` — determine target directory from schema/type rules
