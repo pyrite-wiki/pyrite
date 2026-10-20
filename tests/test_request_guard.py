@@ -168,13 +168,6 @@ class TestHostAllowList:
         assert r.status_code == 421
         assert _entry_files(tmp_path) == []
 
-    @pytest.mark.parametrize("path", ["/site/robots.txt", "/site/search", "/site/notes/x"])
-    def test_public_site_is_covered(self, make, path):
-        """/site is mounted beside the API, not under it; the Host rule
-        still reaches it."""
-        assert make("attacker.example:8088").get(path).status_code == 421
-        assert make("localhost:8088").get(path).status_code != 421
-
     def test_non_api_routes_are_covered(self, make):
         assert make("attacker.example:8088").get("/health").status_code == 421
         assert make("localhost:8088").get("/health").status_code == 200

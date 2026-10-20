@@ -619,14 +619,19 @@ class TestLLMRubricInAssessEntry:
         # Check that LLM issues are included (may or may not have judgment items
         # depending on rubric config, but llm_available flag should be set)
 
-    def test_tier2_without_llm_returns_tier1_only(self, qa_env):
-        """assess_entry(tier=2) without LLM returns tier-1 results, llm_available=false."""
+    def test_tier2_without_llm_is_refused(self, qa_env):
+        """assess_entry(tier=2) without an LLM is refused and records nothing (#795).
+
+        It used to record tier 2 from the tier 1 checks alone.
+        """
+        import pyrite.exceptions
+
+        # getattr: on a base without the class, the red is "did not raise".
+        refused = getattr(pyrite.exceptions, "AINotConfiguredError", LookupError)
         qa = QAService(qa_env["config"], qa_env["db"], llm_service=None)
-        result = qa.assess_entry("good-note", "test-kb", tier=2, readable_kbs=UNSCOPED)
-        assert result["llm_available"] is False
-        # No LLM issues (no LLM configured)
-        llm_issues = [i for i in result["issues"] if i.get("rule") == "llm_rubric_violation"]
-        assert len(llm_issues) == 0
+        with pytest.raises(refused):
+            qa.assess_entry("good-note", "test-kb", tier=2, readable_kbs=UNSCOPED)
+        assert qa.get_assessments("test-kb", target_entry="good-note") == []
 
     def test_tier1_no_llm_calls(self, qa_env):
         """assess_entry(tier=1) makes no LLM calls regardless of config."""

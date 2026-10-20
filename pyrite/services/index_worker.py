@@ -18,6 +18,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from ..config import PyriteConfig
+from ..exceptions import public_text
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
 
@@ -213,7 +214,7 @@ class IndexWorker:
                     SET status = 'failed', error = ?, completed_at = ?
                     WHERE job_id = ?
                     """,
-                    (getattr(e, "public_message", None) or str(e), now, job_id),
+                    (public_text(e, already_logged=True, log=logger), now, job_id),
                 )
                 db._raw_conn.commit()
             except Exception:
@@ -256,7 +257,7 @@ class IndexWorker:
                     SET status = 'failed', error = ?, completed_at = ?
                     WHERE job_id = ?
                     """,
-                    (getattr(e, "public_message", None) or str(e), now, job_id),
+                    (public_text(e, already_logged=True, log=logger), now, job_id),
                 )
                 db._raw_conn.commit()
             except Exception:

@@ -40,6 +40,7 @@ def _git(cwd: Path, *args: str) -> str:
         check=True,
         capture_output=True,
         env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "HOME": str(cwd)},
+        timeout=120,
     ).stdout.decode("utf-8")  # not text=True: that drops the \r of a CRLF line
 
 
@@ -230,7 +231,7 @@ def test_missing_exits_three_and_reports_each_kind(kb):
             "bad.md": "---\ntitle: [unclosed\n---\n",
             "nofm.md": "just text\n",
             "latin1.md": b"---\ntitle: caf\xe9\n---\n",
-            # a title YAML reads as a number: today's derivation raises
+            # a title YAML reads as a number: stringified before slugging (#704)
             "numtitle.md": "---\ntitle: 1e3\n---\n",
             ".hidden/x.md": "---\ntitle: Hidden\n---\n",
             "_templates/t.md": "---\ntitle: Template\n---\n",
@@ -243,9 +244,132 @@ def test_missing_exits_three_and_reports_each_kind(kb):
         ("none.md", "missing"),
         ("empty.md", "empty_id"),
         ("nullid.md", "empty_id"),
+        # #704: a numeric YAML title is stringified and indexed, not skipped
+        ("numtitle.md", "missing"),
     }
-    assert {r["path"] for r in data["skipped"]} == {"bad.md", "nofm.md", "latin1.md", "numtitle.md"}
+    assert {r["path"] for r in data["skipped"]} == {"bad.md", "nofm.md", "latin1.md"}
     assert all(r["reason"] for r in data["skipped"])
+
+
+def test_titles_the_index_rejects_stay_skipped_with_a_reason(kb):
+    # #762 review item 2: a list, mapping or NaN title derives no id, so
+    # `ids missing` keeps listing these files as skipped (with a reason,
+    # not a traceback) and `ids pin` never writes an id into them (#711).
+    root, config = kb
+    _write(
+        root,
+        {
+            "ok.md": "---\ntitle: Fine\n---\n",
+            "listtitle.md": "---\ntitle: [a, b]\n---\n",
+            "dicttitle.md": "---\ntitle: {a: 1}\n---\n",
+            "nantitle.md": "---\ntitle: .nan\n---\n",
+        },
+    )
+    result = _run(config, "ids", "missing", "-k", "notes", "--format", "json")
+    assert result.exit_code == OUTSIDE_CONTRACT, result.output
+    data = _json(result)
+    # ok.md has a derivable id and no index row, so it is the one real finding
+    assert [(r["path"], r["id"]) for r in data["missing"]] == [("ok.md", "fine")]
+    assert {r["path"] for r in data["skipped"]} == {
+        "listtitle.md",
+        "dicttitle.md",
+        "nantitle.md",
+    }
+    reasons = {r["path"]: r["reason"] for r in data["skipped"]}
+    assert reasons == {
+        "listtitle.md": "title must be a string, got a list",
+        "dicttitle.md": "title must be a string, got a mapping",
+        "nantitle.md": "title must be a string, got NaN",
+    }
+    assert data["collisions"] == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="ids pin refuses to write on Windows")
+@pytest.mark.control(
+    reason="dev already skips these files via the same TypeError; pins the refusal"
+)
+def test_pin_never_writes_an_id_into_a_title_the_index_rejects(kb):
+    # #762 review item 2, the pin half: the refused files are skipped, so pin
+    # pins the good file and writes nothing into the other three.
+    root, config = kb
+    _write(
+        root,
+        {
+            "ok.md": "---\ntitle: Fine\n---\n",
+            "listtitle.md": "---\ntitle: [a, b]\n---\n",
+            "dicttitle.md": "---\ntitle: {a: 1}\n---\n",
+            "nantitle.md": "---\ntitle: .nan\n---\n",
+        },
+    )
+    _commit(root)
+    pin = _run(config, "ids", "pin", "-k", "notes", "--format", "json")
+    data = _json(pin)
+    assert [p["path"] for p in data["pinned"]] == ["ok.md"]
+    assert _numstat(root) == {"ok.md": ("1", "0")}
+
+
+def test_falsy_titles_keep_the_id_dev_gave_them_and_collisions_are_reported(kb):
+    # #762: `title: false` / `0` / `0.0` / `-0` fell through the empty-title
+    # check to the `entry-da39a3ee` hash on dev. They keep it, so an upgrade
+    # moves no id and breaks no link. The limit: two such files share that id,
+    # and `ids missing` reports the collision. The id also comes from the
+    # parsed value, so `1.10` and `1.1` collide.
+    root, config = kb
+    _write(
+        root,
+        {
+            "zero.md": "---\ntitle: 0\n---\n",
+            "nofalse.md": "---\ntitle: false\n---\n",
+            "one10.md": "---\ntitle: 1.10\n---\n",
+            "one1.md": "---\ntitle: 1.1\n---\n",
+        },
+    )
+    data = _json(_run(config, "ids", "missing", "-k", "notes", "--format", "json"))
+    found = {(r["path"], r["id"]) for r in data["missing"]}
+    assert ("zero.md", "entry-da39a3ee") in found
+    assert ("nofalse.md", "entry-da39a3ee") in found
+
+    groups = {g["id"]: sorted(c["path"] for c in g["claimants"]) for g in data["collisions"]}
+    assert groups == {
+        "1-1": ["one1.md", "one10.md"],
+        "entry-da39a3ee": ["nofalse.md", "zero.md"],
+    }
+
+
+def test_collision_check_reports_two_falsy_titles_sharing_an_id():
+    from pathlib import Path
+
+    from pyrite.cli.schema_commands import detect_id_collisions
+
+    errors = detect_id_collisions(
+        [
+            (Path("a.md"), {"type": "note", "title": 0}),
+            (Path("b.md"), {"type": "note", "title": False}),
+        ]
+    )
+    assert len(errors) == 2
+    assert all("entry-da39a3ee" in e["message"] for e in errors)
+
+
+@pytest.mark.control(
+    reason="ids never builds an entry for an explicit id, so dev already behaves this way; pins it"
+)
+def test_explicit_id_with_an_unindexable_title_is_not_reported_as_missing(kb):
+    # On dev an `id:` line let a list or NaN title through to the index write,
+    # which crashed. Now the index refuses the file; `ids` has nothing to pin
+    # (the id is explicit), reports no collision, and writes nothing.
+    root, config = kb
+    _write(
+        root,
+        {
+            "ok.md": "---\ntitle: Fine\n---\n",
+            "listid.md": "---\nid: list-id\ntitle: [a, b]\n---\n",
+            "nanid.md": "---\nid: nan-id\ntitle: .nan\n---\n",
+        },
+    )
+    data = _json(_run(config, "ids", "missing", "-k", "notes", "--format", "json"))
+    assert [(r["path"], r["id"]) for r in data["missing"]] == [("ok.md", "fine")]
+    assert data["collisions"] == []
 
 
 def test_missing_text_output_names_paths_and_ids(kb):
@@ -467,16 +591,23 @@ def test_a_file_changed_at_the_last_moment_is_not_overwritten(kb, monkeypatch):
     assert _json(result)["skipped"][0]["path"] == "a.md"
 
 
+@pytest.mark.control(
+    reason="the pin never emitted a model; the patched emit moved from the deleted to_markdown to new_entry_text, which the base has (#955 P4)"
+)
 def test_pin_never_goes_through_update_or_to_frontmatter(kb, monkeypatch):
+    """A pin is a textual insertion: never an update, never the model's
+    frontmatter, never the create's whole-file text (`new_entry_text`, the
+    one emit of a model left after #955 B6 P4)."""
     from pyrite.models.base import Entry
     from pyrite.services.kb_service import KBService
+    from pyrite.storage import repository
 
     def boom(*a, **k):
         raise AssertionError("pin must be a textual insertion")
 
     monkeypatch.setattr(KBService, "update", boom)
     monkeypatch.setattr(KBService, "update_entry", boom)
-    monkeypatch.setattr(Entry, "to_markdown", boom)
+    monkeypatch.setattr(repository, "new_entry_text", boom)
     monkeypatch.setattr(Entry, "to_frontmatter", boom)
     root, config = kb
     _write(root, {"a.md": "---\ntitle: A\n---\n"})

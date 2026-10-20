@@ -34,7 +34,9 @@ FORK_CLONE_URL = "https://github.com/me/notes.git"
 
 
 def _git(cwd: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True, env=_git_env())
+    subprocess.run(
+        ["git", *args], cwd=str(cwd), check=True, capture_output=True, env=_git_env(), timeout=120
+    )
 
 
 def _make_repo(path: Path, kbs: dict[str, str]) -> Path:
@@ -107,7 +109,7 @@ def env(tmp_path, monkeypatch):
     def clone_from_local(remote_url, local_path, branch="main", depth=1, token=None):
         src = sources[remote_url]
         cmd = ["git", "clone", "-q", "--branch", branch, "--", str(src), str(local_path)]
-        subprocess.run(cmd, check=True, capture_output=True, env=_git_env())
+        subprocess.run(cmd, check=True, capture_output=True, env=_git_env(), timeout=120)
         return True, "OK", "cloned"
 
     monkeypatch.setattr(GitService, "clone_with_code", staticmethod(clone_from_local))

@@ -57,7 +57,7 @@ The plugin protocol has grown from 5 integration points and 11 methods to **19 m
 18. `get_kb_types()` — KB type declarations
 19. `set_context(ctx)` — receives config, db, and services at startup
 
-Six extensions ship: software-kb, zettelkasten, encyclopedia, social, journalism-investigation, cascade.
+Six extensions ship: software-kb, zettelkasten, encyclopedia, social, journalism-investigation, cascade. (Five since #953 deleted cascade, 2026-10.)
 
 ## Addendum (2026-06-11): Capability Declarations (Tier A r1500, Option B)
 

@@ -264,5 +264,8 @@ class TestCheckLinks:
             for ref in target["references"]:
                 assert ref["source_kb"] == "test-events"
 
-        results_other = wikilink_env["svc"].check_links(kb_name="nonexistent-kb")
-        assert results_other == []
+        # A KB that does not exist is refused, not reported as clean (#846).
+        from pyrite.exceptions import KBNotFoundError
+
+        with pytest.raises(KBNotFoundError):
+            wikilink_env["svc"].check_links(kb_name="nonexistent-kb")

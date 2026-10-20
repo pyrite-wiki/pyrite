@@ -20,7 +20,6 @@ from ..exceptions import (
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
 from .credential_events import announce_kb_policy_change
-from .site_cache import drop_kb_site_pages
 
 logger = logging.getLogger(__name__)
 
@@ -202,6 +201,8 @@ class KBRegistryService:
 
         If ``kb_type`` matches a registered plugin preset, the preset is
         materialized into the KB directory (kb.yaml, subdirectories, templates).
+        A directory that already has a kb.yaml is registered as it stands and
+        nothing is written inside it (#945).
 
         Raises KBAlreadyExistsError (a ConfigError) if a KB with the same
         name already exists.
@@ -272,6 +273,14 @@ class KBRegistryService:
         if not preset:
             return
 
+        # A kb.yaml means this directory is already a KB (#945), so it is being
+        # registered, not created. Registering must not write inside it: Pyrite
+        # is additive to hand maintenance, and a scaffold belongs to `init` or
+        # to an explicit request, not to registering what is already there.
+        if (kb_path / "kb.yaml").exists():
+            logger.info("KB '%s' already has a kb.yaml, leaving its files alone", name)
+            return
+
         logger.info("Applying preset '%s' to KB '%s'", kb_type, name)
 
         # Build kb.yaml content
@@ -305,11 +314,10 @@ class KBRegistryService:
         if types_section:
             kb_yaml["types"] = types_section
 
-        # Write kb.yaml
+        # Write kb.yaml. Absent by the early return above, so no guard here.
         kb_yaml_path = kb_path / "kb.yaml"
-        if not kb_yaml_path.exists():
-            dump_yaml_file(kb_yaml, kb_yaml_path)
-            logger.info("Wrote kb.yaml for KB '%s'", name)
+        dump_yaml_file(kb_yaml, kb_yaml_path)
+        logger.info("Wrote kb.yaml for KB '%s'", name)
 
         # Create subdirectories
         for dirname in preset.get("directories", []):
@@ -372,7 +380,6 @@ class KBRegistryService:
         self.db.unregister_kb(name)
         self.config.forget_db_kb(name)
         announce_kb_policy_change(name)
-        drop_kb_site_pages(self.config, self.db, name)
         return True
 
     def update_kb(self, name: str, **updates: Any) -> dict[str, Any]:
@@ -434,7 +441,6 @@ class KBRegistryService:
         self._refresh_config_view()
         if "default_role" in updates and updates["default_role"] != role_before:
             announce_kb_policy_change(name)
-            drop_kb_site_pages(self.config, self.db, name)
         return self.get_kb(name)  # type: ignore[return-value]
 
     def _yaml_origin(self, name: str, repo_id: int | None) -> str:
@@ -512,6 +518,10 @@ class KBRegistryService:
 
         entry_count = kb.entry_count or 0
         healthy = path_exists and abs(file_count - entry_count) <= max(1, entry_count * 0.1)
+        from ..storage.index import IndexManager
+
+        cfg = self.get_kb_config(name)
+        drift = IndexManager(self.db, self.config)._type_name_drift([cfg] if cfg else [])
 
         return {
             "name": name,
@@ -522,6 +532,7 @@ class KBRegistryService:
             "entry_count": entry_count,
             "last_indexed": kb.last_indexed,
             "source": kb.source or "user",
+            **drift,
         }
 
     def get_kb_config(self, name: str) -> KBConfig | None:
@@ -530,12 +541,24 @@ class KBRegistryService:
         cfg = self.config.get_kb(name)
         if cfg:
             return cfg
+        return self.user_kb_config(name)
 
-        # Build from DB row
+    def user_kb_config(self, name: str) -> KBConfig | None:
+        """The KB `name` as ``pyrite kb add`` registered it: built from its
+        ``kb`` row, or None.
+
+        Only a row whose ``source`` is not ``config``. The server seeds a
+        ``config`` row for every config.yaml KB (`seed_from_config`), and
+        that row carries none of the entry's attributes -- no ``read_only``,
+        no ``shortname`` -- so it never stands in for the entry: a config
+        that does not define the KB does not find it here either (#952
+        review, blocking 1). The resolver (`services/kb_resolver.py`) asks
+        this after the config it was given.
+        """
         from ..storage.models import KB
 
         kb = self.db.session.get(KB, name)
-        if not kb:
+        if not kb or (kb.source or "user") == "config":
             return None
 
         # The same confinement as loading the registry: a row refused there

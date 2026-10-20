@@ -61,8 +61,12 @@ class QueryMixin:
     def search_by_tag(
         self, tag: str, kb_name: str | None = None, limit: int = 50
     ) -> list[dict[str, Any]]:
-        """Search entries by tag."""
-        return self._backend.search_by_tag(tag=tag, kb_name=kb_name, limit=limit)
+        """Search entries by tag. A tag spelled like a timestamp is matched
+        as the index stores it (``query_tag_text``, #987 and #991), on every
+        backend, so the file's own spelling finds the entry."""
+        from .crud import query_tag_text
+
+        return self._backend.search_by_tag(tag=query_tag_text(tag), kb_name=kb_name, limit=limit)
 
     def search_by_date_range(
         self,

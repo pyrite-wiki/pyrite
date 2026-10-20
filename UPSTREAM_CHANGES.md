@@ -26,7 +26,7 @@ Essentially everything else. The scope of changes makes this closer to a rewrite
 | Entry types | Single `Note` model | 8 core types + plugin-defined types + YAML-defined custom types |
 | Storage | In-memory search | SQLAlchemy ORM + SQLite FTS5 + Alembic migrations |
 | Search | Basic text matching | FTS5 with BM25, semantic (embeddings), hybrid mode |
-| Interfaces | Single CLI | CLI (read/write/admin), REST API, MCP server, Streamlit UI, SvelteKit frontend |
+| Interfaces | Single CLI | CLI (read/write/admin), REST API, MCP server, SvelteKit frontend |
 | MCP | 7 tools, single tier | 15+ tools across 3 permission tiers + prompts + resources |
 | AI providers | OpenAI only | OpenAI, Anthropic, stub (abstraction layer) |
 | Extensibility | None | Plugin protocol with 12 extension points |

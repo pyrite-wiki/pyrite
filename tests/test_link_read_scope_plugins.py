@@ -1,6 +1,6 @@
 """Plugin tools learn nothing about a KB the caller cannot read (P-R4, P-R5).
 
-Private #39 names `zettel_graph`, `investigation_network`, `cascade_network`
+Private #39 names `zettel_graph`, `investigation_network` (and `cascade_network`, deleted with cascade)
 and the software-kb tools that read link data (`sw_check_ready`,
 `sw_context_for_item`, `sw_epic_detail`, ...). Each takes the named KB
 through the MCP chokepoint, which checks it, but the links it follows lead
@@ -31,10 +31,55 @@ from tests.link_scope_seed import (
     READABLE,
     READABLE_ENTRY,
     READABLE_POINTER,
+    READ_ONLY,
     seed_links,
 )
 
 PRIVATE_TITLE_MARK = "Private sw"
+
+
+def _seed_zettel_graph(db):
+    entries = [
+        (READABLE, "graph-depth-two-a", "Depth two A"),
+        (READABLE, "graph-depth-two-b", "Depth two B"),
+        (READABLE, "graph-depth-two-c", "Depth two C"),
+        (READABLE, "graph-depth-three-a", "Depth three A"),
+        (READABLE, "graph-depth-three-b", "Depth three B"),
+        (READABLE, "graph-depth-three-c", "Depth three C"),
+        (READABLE, "graph-depth-three-d", "Depth three D"),
+        (READABLE, "graph-scope-a", "Scope A"),
+        (READABLE, "graph-scope-b", "Scope B"),
+        (READABLE, "graph-cycle-a", "Cycle A"),
+        (READABLE, "graph-cycle-b", "Cycle B"),
+        (PRIVATE, "graph-scope-secret", "Private graph secret"),
+        (READABLE, "graph-scope-leak", "Readable graph target"),
+        (READABLE, "graph-xkb-start", "Cross-KB start"),
+        (READ_ONLY, "graph-xkb-bridge", "Cross-KB bridge"),
+        (READ_ONLY, "graph-xkb-far", "Cross-KB far"),
+        (PRIVATE, "graph-xkb-secret", "Private cross-KB secret"),
+    ]
+    for kb_name, entry_id, title in entries:
+        _insert(db, kb_name, entry_id, title, "open", {}, entry_type="note")
+
+    links = [
+        ("graph-depth-two-a", READABLE, "graph-depth-two-b", READABLE),
+        ("graph-depth-two-b", READABLE, "graph-depth-two-c", READABLE),
+        ("graph-depth-three-a", READABLE, "graph-depth-three-b", READABLE),
+        ("graph-depth-three-b", READABLE, "graph-depth-three-c", READABLE),
+        ("graph-depth-three-c", READABLE, "graph-depth-three-d", READABLE),
+        ("graph-scope-a", READABLE, "graph-scope-b", READABLE),
+        ("graph-cycle-a", READABLE, "graph-cycle-b", READABLE),
+        ("graph-cycle-b", READABLE, "graph-cycle-a", READABLE),
+        ("graph-scope-b", READABLE, "graph-scope-secret", PRIVATE),
+        ("graph-scope-secret", PRIVATE, "graph-scope-leak", READABLE),
+        ("graph-xkb-start", READABLE, "graph-xkb-bridge", READ_ONLY),
+        ("graph-xkb-bridge", READ_ONLY, "graph-xkb-far", READ_ONLY),
+        ("graph-xkb-start", READABLE, "graph-xkb-secret", PRIVATE),
+        ("graph-xkb-secret", PRIVATE, "graph-xkb-far", READ_ONLY),
+    ]
+    for source_id, source_kb, target_id, target_kb in links:
+        _link(db, source_id, source_kb, target_id, target_kb, "elaborates", "elaborated_by")
+    db._raw_conn.commit()
 
 
 def _insert(db, kb, entry_id, title, status, meta, entry_type="backlog_item"):
@@ -115,6 +160,7 @@ def w(tmp_path_factory):
     world = build_world(tmp_path_factory, label="link-scope-plugins")
     seed_links(world)
     _seed_software(world.db)
+    _seed_zettel_graph(world.db)
     try:
         yield world
     finally:
@@ -146,7 +192,7 @@ def _by_id(rows, entry_id):
 # -- graph-shaped tools ------------------------------------------------------
 
 
-@pytest.mark.parametrize("tool", ["zettel_graph", "investigation_network", "cascade_network"])
+@pytest.mark.parametrize("tool", ["zettel_graph", "investigation_network"])
 def test_network_tools_drop_private_backlinks(w, scope, tool):
     result = _call(w, tool, {"entry_id": READABLE_ENTRY, "kb_name": READABLE}, scope)
     assert "error" not in result, result
@@ -154,7 +200,7 @@ def test_network_tools_drop_private_backlinks(w, scope, tool):
     assert PRIVATE_SPY not in text and PRIVATE_SPY_TITLE not in text
 
 
-@pytest.mark.parametrize("tool", ["zettel_graph", "investigation_network", "cascade_network"])
+@pytest.mark.parametrize("tool", ["zettel_graph", "investigation_network"])
 def test_network_tools_private_target_reads_like_missing(w, scope, tool):
     result = _call(w, tool, {"entry_id": READABLE_POINTER, "kb_name": READABLE}, scope)
     rows = result["outlinks"]
@@ -168,6 +214,97 @@ def test_investigation_network_totals_count_only_readable_links(w, scope):
     assert result["totals"]["backlinks"] == 0
 
 
+def test_zettel_graph_depth_two_includes_first_neighbor_links(w, scope):
+    result = _call(
+        w,
+        "zettel_graph",
+        {"entry_id": "graph-depth-two-a", "kb_name": READABLE, "depth": 2},
+        scope,
+    )
+    neighbors = result.get("neighbors", {})
+    assert "graph-depth-two-b" in neighbors, result
+    assert "graph-depth-two-c" in [row["id"] for row in neighbors["graph-depth-two-b"]["outlinks"]]
+
+
+def test_zettel_graph_depth_three_includes_second_neighbor_links(w, scope):
+    result = _call(
+        w,
+        "zettel_graph",
+        {"entry_id": "graph-depth-three-a", "kb_name": READABLE, "depth": 3},
+        scope,
+    )
+    neighbors = result.get("neighbors", {})
+    assert "graph-depth-three-c" in neighbors, result
+    assert "graph-depth-three-d" in [
+        row["id"] for row in neighbors["graph-depth-three-c"]["outlinks"]
+    ]
+
+
+def test_zettel_graph_expansion_does_not_read_unreadable_sources(w, scope):
+    result = _call(
+        w,
+        "zettel_graph",
+        {"entry_id": "graph-scope-a", "kb_name": READABLE, "depth": 3},
+        scope,
+    )
+    neighbors = result.get("neighbors", {})
+    assert "graph-scope-b" in neighbors, result
+    assert "graph-scope-secret" not in neighbors
+    assert "Private graph secret" not in json.dumps(result)
+    assert "graph-scope-leak" not in json.dumps(result)
+
+
+def test_zettel_graph_rejects_depth_above_three(w, scope):
+    result = _call(
+        w,
+        "zettel_graph",
+        {"entry_id": "graph-depth-three-a", "kb_name": READABLE, "depth": 4},
+        scope,
+    )
+    assert result.get("error") == "depth must be between 1 and 3"
+
+
+def test_zettel_graph_depth_expansion_handles_cycles_once(w, scope):
+    result = _call(
+        w,
+        "zettel_graph",
+        {"entry_id": "graph-cycle-a", "kb_name": READABLE, "depth": 3},
+        scope,
+    )
+    neighbors = result.get("neighbors", {})
+    assert "graph-cycle-b" in neighbors, result
+    assert len(neighbors) == 1
+
+
+def test_zettel_graph_expands_readable_other_kb_neighbour_under_kb_id_key(w, scope):
+    assert READ_ONLY in scope
+    result = _call(
+        w, "zettel_graph", {"entry_id": "graph-xkb-start", "kb_name": READABLE, "depth": 2}, scope
+    )
+    neighbors = result.get("neighbors", {})
+    key = f"{READ_ONLY}:graph-xkb-bridge"
+    assert key in neighbors, result
+    assert "graph-xkb-bridge" not in neighbors  # the bare id would name this KB's entry
+    bridge = neighbors[key]
+    assert (bridge["id"], bridge["kb_name"]) == ("graph-xkb-bridge", READ_ONLY)
+    assert "graph-xkb-far" in [row["id"] for row in bridge["outlinks"]]
+
+
+def test_zettel_graph_omits_unreadable_other_kb_neighbour(w, scope):
+    args = {"entry_id": "graph-xkb-start", "kb_name": READABLE, "depth": 3}
+    scoped = _call(w, "zettel_graph", args, scope)
+    text = json.dumps(scoped)
+    assert f"{READ_ONLY}:graph-xkb-bridge" in scoped["neighbors"], scoped
+    assert not any(k.startswith(f"{PRIVATE}:") for k in scoped["neighbors"])
+    assert "Private cross-KB secret" not in text
+    # Like any unreadable target it reads as a missing one: a bare pointer, never expanded.
+    assert _by_id(scoped["outlinks"], "graph-xkb-secret")["title"] is None
+    assert not any("graph-xkb-secret" in k for k in scoped["neighbors"])
+    # Control: with no scope the same neighbour is expanded, so the absence above is the scope.
+    unscoped = _call(w, "zettel_graph", args, None)
+    assert f"{PRIVATE}:graph-xkb-secret" in unscoped["neighbors"], unscoped
+
+
 def test_zettel_graph_neighbours_stay_readable(w, scope):
     result = _call(
         w, "zettel_graph", {"entry_id": READABLE_POINTER, "kb_name": READABLE, "depth": 2}, scope
@@ -176,7 +313,7 @@ def test_zettel_graph_neighbours_stay_readable(w, scope):
 
 
 @pytest.mark.control(reason="unscoped network tools still see the private backlink")
-@pytest.mark.parametrize("tool", ["zettel_graph", "investigation_network", "cascade_network"])
+@pytest.mark.parametrize("tool", ["zettel_graph", "investigation_network"])
 def test_network_tools_unscoped_unchanged(w, tool):
     result = _call(w, tool, {"entry_id": READABLE_ENTRY, "kb_name": READABLE}, None)
     assert PRIVATE_SPY in json.dumps(result)

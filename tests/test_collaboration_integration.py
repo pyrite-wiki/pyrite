@@ -31,7 +31,7 @@ def _git(args, cwd):
         "GIT_COMMITTER_DATE",
     ):
         env.pop(var, None)
-    return subprocess.run(args, cwd=str(cwd), capture_output=True, env=env)
+    return subprocess.run(args, cwd=str(cwd), capture_output=True, env=env, timeout=120)
 
 
 class TestIndexWithAttribution:

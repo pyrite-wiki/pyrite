@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from ..utils.errors import PARTIAL_EXIT, cli_error, exit_unless_whole
-from .context import cli_db_context, get_config_and_db
+from .context import cli_db_context, get_config_and_db, require_kb
 from .output import validate_output_format
 
 logger = logging.getLogger(__name__)
@@ -100,6 +100,7 @@ def index_build(
     from ..storage import IndexManager
 
     config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db, output_format="rich")
 
     if background:
         from ..services.index_worker import IndexWorker
@@ -205,11 +206,20 @@ def index_sync(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB to sync (all if omitted)"),
     no_embed: bool = typer.Option(False, "--no-embed", help="Skip auto-embedding after sync"),
     background: bool = typer.Option(False, "--background", help="Run in background thread"),
+    verify: bool = typer.Option(
+        False,
+        "--verify",
+        help="Hash all known files whose stat is unchanged and sync changed content (foreground only).",
+    ),
 ):
-    """Incremental sync: update index for changed files only."""
+    """Incremental sync, with optional content-hash verification."""
     from ..storage import IndexManager
 
+    if background and verify:
+        raise typer.BadParameter("--verify cannot be combined with --background")
+
     config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db, output_format="rich")
 
     if background:
         from ..services.index_worker import IndexWorker
@@ -222,7 +232,10 @@ def index_sync(
 
     index_mgr = IndexManager(db, config)
 
-    results = index_mgr.sync_incremental(kb_name)
+    if verify:
+        results = index_mgr.sync_incremental(kb_name, verify=True)
+    else:
+        results = index_mgr.sync_incremental(kb_name)
 
     console.print("[green]Sync complete:[/green]")
     console.print(f"  Added: {results['added']}")
@@ -339,14 +352,17 @@ def index_embed(
         semantic_unavailable,
     )
 
+    # The KB first (#952): a name that is not a KB is refused before the
+    # dependency check, so the answer names the thing that is wrong.
+    config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db, output_format="rich")
     if not is_available():
+        missing = semantic_unavailable(False)  # never None while the package is absent
         cli_error(
             "sentence-transformers is not installed.",
             error_code="DEPENDENCY_MISSING",
-            suggestion="install with: pip install pyrite[semantic]",
+            suggestion=missing[2] if missing else None,
         )
-
-    config, db = get_config_and_db()
 
     if unavailable := semantic_unavailable(db.vec_available, getattr(db, "vec_load_error", None)):
         # The same cause and remedy `search` gives (one function), not an
@@ -477,7 +493,7 @@ def index_health(
     """
     from ..storage import IndexManager
 
-    with cli_db_context() as (config, db):
+    with cli_db_context(kbs=(kb_name,), output_format=output_format) as (config, db):
         if kb_name is not None and config.get_kb(kb_name) is None:
             # Reporting a clean bill for a KB that does not exist would be the same
             # bug as exiting 0 while unhealthy: a non-answer that reads as success.
@@ -503,6 +519,9 @@ def index_health(
     # (an `allow_other` field) does not move the status.
     off_list_severities = {row.get("severity") for row in off_list_values}
     duplicates = health.get("duplicates", [])
+    removed_extensions = health.get("removed_extensions", [])
+    unmodellable_frontmatter = health.get("unmodellable_frontmatter", [])
+    double_spellings = health.get("double_spellings", [])
     is_unhealthy = (
         health["missing_files"]
         or health["unindexed_files"]
@@ -517,11 +536,19 @@ def index_health(
     has_warning = (
         bool(broken_links)
         or bool(undeclared_types)
+        or bool(health.get("type_name_drift_total"))
+        or bool(health.get("schema_errors"))
         or bool(missing_required)
         or bool(subdirectory_mismatches)
         or bool(malformed_frontmatter)
         or bool(invalid_statuses)
         or "warning" in off_list_severities
+        or bool(removed_extensions)
+        or bool(unmodellable_frontmatter)
+        or bool(double_spellings)
+        # A link row a rebuild would point at a different KB (a shortname
+        # renamed since the file was indexed, or a row from before #980).
+        or bool(health.get("links_stale_kb"))
     )
     status = "unhealthy" if is_unhealthy else ("warning" if has_warning else "healthy")
 
@@ -533,6 +560,7 @@ def index_health(
             "stale_entries": len(health["stale_entries"]),
             "content_changed": len(health.get("content_changed", [])),
             "broken_links": broken_links,
+            "links_stale_kb": health.get("links_stale_kb", 0),
             "undeclared_types": undeclared_types,
             "missing_required_fields": missing_required,
             "subdirectory_mismatches": subdirectory_mismatches,
@@ -540,6 +568,13 @@ def index_health(
             "invalid_statuses": invalid_statuses,
             "off_list_values": off_list_values,
             "duplicates": duplicates,
+            "removed_extensions": removed_extensions,
+            "type_name_drift": health.get("type_name_drift", []),
+            "type_name_drift_total": health.get("type_name_drift_total", 0),
+            "type_name_drift_has_more": health.get("type_name_drift_has_more", False),
+            "schema_errors": health.get("schema_errors", []),
+            "unmodellable_frontmatter": unmodellable_frontmatter,
+            "double_spellings": double_spellings,
             "checks": health,
         },
         output_format,
@@ -559,6 +594,9 @@ def index_health(
         invalid_statuses=invalid_statuses,
         off_list_values=off_list_values,
         duplicates=duplicates,
+        removed_extensions=removed_extensions,
+        unmodellable_frontmatter=unmodellable_frontmatter,
+        double_spellings=double_spellings,
         health=health,
     )
     if is_unhealthy and fail:
@@ -578,6 +616,9 @@ def _report_health(
     invalid_statuses,
     off_list_values,
     duplicates=(),
+    removed_extensions=(),
+    unmodellable_frontmatter=(),
+    double_spellings=(),
     health,
 ):
     """Print the health report. Returns nothing; the caller sets the exit code."""
@@ -599,6 +640,40 @@ def _report_health(
             f"[yellow]⚠ {broken_links} broken link(s) found.[/yellow]"
             " Run 'pyrite links check' for details."
         )
+
+    stale_rows = health.get("links_stale_kb") or 0
+    if stale_rows:
+        console.print(
+            f"[yellow]⚠ {stale_rows} link row(s) point at a different KB than their"
+            " file's prefix now names (a shortname changed since the file was indexed,"
+            " or a row from before the full name was stored).[/yellow]"
+            " Run 'pyrite index build' to rewrite them from the files."
+        )
+
+    if removed_extensions:
+        console.print(
+            f"[yellow]⚠ {len(removed_extensions)} KB(s) still using a removed extension's "
+            "types:[/yellow]"
+        )
+        for row in removed_extensions:
+            console.print(f"  • {row['message']}")
+    for err in health.get("schema_errors", []):
+        console.print(
+            f"kb.yaml failed to load for {err['kb']}: {err['error']}",
+            style="yellow",
+            markup=False,
+            highlight=False,
+        )
+
+    if health.get("type_name_drift_total"):
+        console.print(
+            f"[yellow]Type name drift: {health['type_name_drift_total']} group(s)[/yellow]"
+        )
+        for group in health["type_name_drift"][:10]:
+            names = ", ".join(f"{r['type']} ({r['count']})" for r in group["spellings"][:10])
+            console.print(f"  • {group['kb']}: {names}", markup=False)
+        if health["type_name_drift_total"] > 10:
+            console.print("  ... use --format json for the bounded report and totals")
 
     if undeclared_types:
         total = sum(row["count"] for row in undeclared_types)
@@ -644,6 +719,33 @@ def _report_health(
             console.print(f"  • {row['kb']}: {row['path']} — {row['error']}")
         if len(malformed_frontmatter) > 10:
             console.print(f"  ... and {len(malformed_frontmatter) - 10} more")
+
+    if double_spellings:
+        # Andon #994: `metadata.k` is a second spelling of `k`; a file that
+        # spells a field twice is read at one spelling and refused for update.
+        console.print(
+            f"[yellow]⚠ {len(double_spellings)} field(s) spelled twice in one file "
+            "(the top-level spelling is read; no update reaches the field until one "
+            "spelling is removed):[/yellow]"
+        )
+        for row in double_spellings[:10]:
+            console.print(
+                f"  • {row['kb']}/{row['id']}: {row['field']} as {', '.join(row['spellings'])}"
+            )
+        if len(double_spellings) > 10:
+            console.print(f"  ... and {len(double_spellings) - 10} more")
+
+    if unmodellable_frontmatter:
+        # #760 (b): no write reaches these files; said here, with the line,
+        # so they are never invisible.
+        console.print(
+            f"[yellow]⚠ {len(unmodellable_frontmatter)} file(s) whose frontmatter Pyrite "
+            "cannot model (no update reaches them; fix the key by hand):[/yellow]"
+        )
+        for row in unmodellable_frontmatter[:10]:
+            console.print(f"  • {row['kb']}: {row['path']}:{row['line']} — {row['reason']}")
+        if len(unmodellable_frontmatter) > 10:
+            console.print(f"  ... and {len(unmodellable_frontmatter) - 10} more")
 
     if invalid_statuses:
         console.print(
@@ -724,6 +826,7 @@ def index_reconcile(
     from ..services.kb_service import KBService
 
     config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db, output_format="rich")
     kb_config = config.get_kb(kb_name)
     if not kb_config:
         cli_error(

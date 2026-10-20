@@ -50,7 +50,8 @@ class WorktreeResolver:
         """Get a DB handle for reading, with overlay if user has pending edits.
 
         Returns a WorktreeDB (overlay) if the user has an active worktree,
-        otherwise returns the main DB unchanged.
+        otherwise returns the main DB unchanged. ``kb_name`` is the full
+        name the route's authorization already resolved (#952).
         """
         if not auth_user:
             return self._main_db
@@ -70,6 +71,7 @@ class WorktreeResolver:
 
         Creates the worktree on first write. Returns a modified config
         where the KB path points to the worktree, and an overlay DB.
+        ``kb_name`` is the full name (#952).
         """
         import dataclasses
 

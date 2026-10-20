@@ -15,6 +15,8 @@ from typer.testing import CliRunner
 
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models.core_types import NoteEntry
+from pyrite.storage.entry_writer import create_entry_text
+from pyrite.storage.repository import new_entry_text
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
 
@@ -28,7 +30,10 @@ def config(tmp_path):
     kb_path = tmp_path / "notes"
     kb_path.mkdir()
     for i in range(2):
-        NoteEntry(id=f"n{i}", title=f"Note {i}", body=f"body {i}").save(kb_path / f"n{i}.md")
+        create_entry_text(
+            kb_path / f"n{i}.md",
+            new_entry_text(NoteEntry(id=f"n{i}", title=f"Note {i}", body=f"body {i}")),
+        )
     (kb_path / "stuff.md").write_text(
         "---\nid: stuff\ntitle: Stuff\ntype: collection\nsource_type: query\n"
         "query: 'type:note'\n---\n"

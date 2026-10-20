@@ -53,9 +53,6 @@ web/.e2e-auth-data-*/
 # Playwright MCP (browser automation logs/screenshots)
 .playwright-mcp/
 
-# Streamlit
-.streamlit/
-
 # OS
 .DS_Store
 Thumbs.db
@@ -102,7 +99,7 @@ pyrite_deployments/
 .claude/THEME.md
 
 # The maintainer's desk: a per-repo, local Pyrite KB (conductor queue, tick logs, retros).
-# See docs/conductor-desk.md. Never committed.
+# Never committed.
 desk/
 
 # ADR-0037 theme-0 characterization goldens' regeneration lock sidecars

@@ -616,6 +616,9 @@ class TestListTasks:
         titles = [t["title"] for t in assigned]
         assert "Assigned" in titles
 
+    @pytest.mark.control(
+        reason="a property that held before #978; its old form hand-added the field by re-saving the model through the whole-file save, which decision 4 made a create, so it edits the file's text as the worker does"
+    )
     def test_parked_awaiting_survives_claim_and_surfaces_in_listing(self, task_env):
         """Regression for
         issue-pyrite-task-update-strips-non-schema-frontmatter-fields-silently-unparks-monitors.
@@ -639,16 +642,20 @@ class TestListTasks:
         # the way the human-task / monitor convention requires (no CLI
         # flag exists for this field).
         repo = KBRepository(kb_config)
-        entry = repo.load(entry_id)
-        entry.metadata["parked_awaiting"] = "rfp-due-2026-09-11"
-        repo.save(entry)
+        path = repo.load(entry_id).file_path
+        text = path.read_text(encoding="utf-8")
+        assert text.startswith("---\n") and "\n---\n" in text
+        path.write_text(
+            text.replace("\n---\n", "\nparked_awaiting: rfp-due-2026-09-11\n---\n", 1),
+            encoding="utf-8",
+        )
 
         # This is the exact call the ticket reports as lossy.
         svc.claim_task(entry_id, "test-tasks", "agent:regression-test")
 
         # Write path: the field must still be on disk after claim.
         reloaded = repo.load(entry_id)
-        assert reloaded.metadata.get("parked_awaiting") == "rfp-due-2026-09-11", (
+        assert reloaded.parked_awaiting == "rfp-due-2026-09-11", (
             "task claim dropped parked_awaiting from the file's frontmatter"
         )
 

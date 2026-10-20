@@ -5,6 +5,7 @@ from collections.abc import Callable
 from datetime import UTC
 from typing import Any, ClassVar
 
+from pyrite.exceptions import PyriteError, public_text
 from pyrite.plugins.capabilities import Capability
 from pyrite.plugins.scoping import kb_scope_clause
 from pyrite.schema import generate_entry_id
@@ -27,6 +28,9 @@ from .validators import validate_software_kb
 from .workflows import ADR_LIFECYCLE, BACKLOG_WORKFLOW
 
 logger = logging.getLogger(__name__)
+# Under `pyrite`, where configure_logging puts the handler: a record on this
+# module's own logger would fall to the last-resort handler (#848).
+_masked_log = logging.getLogger("pyrite.ext.software_kb")
 
 
 def _safe_error(e: Exception) -> str:
@@ -39,11 +43,7 @@ def _safe_error(e: Exception) -> str:
     path, a driver's own text. public_message, when set, is what every
     other transport already shows; the real detail still reaches the log.
     """
-    public_message = getattr(e, "public_message", None)
-    if public_message is not None:
-        logger.warning("%s", e)
-        return public_message
-    return str(e)
+    return public_text(e, log=_masked_log)
 
 
 # Default page size for list-shaped sw_* surfaces (#233). These commands are
@@ -84,11 +84,20 @@ class SoftwareKBPlugin:
         """Get DB from injected context, falling back to self-bootstrap."""
         if self.ctx is not None:
             return self.ctx.db, False
-        from pyrite.config import load_config
         from pyrite.storage.database import PyriteDB
 
-        config = load_config()
-        return PyriteDB(config.settings.index_path), True
+        return PyriteDB(self._get_config().settings.index_path), True
+
+    def _get_config(self):
+        """The server's config from the injected context; the process's own
+        only when there is no context (the CLI). A handler never loads a
+        config of its own: a KB resolved against another config than the
+        server's loses the attributes config.yaml gives it (#952)."""
+        if self.ctx is not None:
+            return self.ctx.config
+        from pyrite.config import load_config
+
+        return load_config()
 
     def get_entry_types(self) -> dict[str, type]:
         return {
@@ -1294,10 +1303,9 @@ class SoftwareKBPlugin:
         before_id = args.get("before")
 
         try:
-            from pyrite.config import load_config
             from pyrite.services.kb_service import KBService
 
-            config = load_config()
+            config = self._get_config()
             svc = KBService(config, db)
 
             if item_ids:
@@ -1482,9 +1490,7 @@ class SoftwareKBPlugin:
             board_config = {"lanes": [], "wip_policy": "warn"}
             try:
                 if self.ctx is not None:
-                    from pyrite.config import load_config
-
-                    config = load_config()
+                    config = self._get_config()
                     kb_conf = config.get_kb(kb_name)
                     if kb_conf:
                         board_config = load_board_config(kb_conf.path)
@@ -1663,9 +1669,7 @@ class SoftwareKBPlugin:
         try:
             # Load board config
             if self.ctx is not None and kb_name:
-                from pyrite.config import load_config
-
-                config = load_config()
+                config = self._get_config()
                 kb_conf = config.get_kb(kb_name)
                 board_config = (
                     load_board_config(kb_conf.path) if kb_conf else load_board_config(Path("."))
@@ -1849,9 +1853,7 @@ class SoftwareKBPlugin:
             wip_limit = None
             try:
                 if self.ctx is not None and kb_name:
-                    from pyrite.config import load_config
-
-                    config = load_config()
+                    config = self._get_config()
                     kb_conf = config.get_kb(kb_name)
                     board_config = (
                         load_board_config(kb_conf.path) if kb_conf else load_board_config(Path("."))
@@ -2198,9 +2200,7 @@ class SoftwareKBPlugin:
         from .board import load_board_config
 
         try:
-            from pyrite.config import load_config as _load_config
-
-            cfg = _load_config()
+            cfg = self._get_config()
             kb_conf = cfg.get_kb(kb_name) if kb_name else None
             if kb_conf:
                 return load_board_config(kb_conf.path)
@@ -2467,9 +2467,7 @@ class SoftwareKBPlugin:
             # Load board config for WIP limits
             try:
                 if self.ctx is not None and kb_name:
-                    from pyrite.config import load_config
-
-                    config = load_config()
+                    config = self._get_config()
                     kb_conf = config.get_kb(kb_name)
                     board_config = (
                         load_board_config(kb_conf.path) if kb_conf else load_board_config(Path("."))
@@ -2684,9 +2682,7 @@ class SoftwareKBPlugin:
 
             board_config = {"lanes": [], "wip_policy": "warn"}
             try:
-                from pyrite.config import load_config as _load_config
-
-                cfg = _load_config()
+                cfg = self._get_config()
                 kb_conf = cfg.get_kb(kb_name)
                 if kb_conf:
                     board_config = load_board_config(kb_conf.path)
@@ -2702,10 +2698,9 @@ class SoftwareKBPlugin:
                 return {"claimed": False, "error": "Gate check failed", "gate": gate_result}
 
             # Use KBService CAS pattern
-            from pyrite.config import load_config
             from pyrite.services.kb_service import KBService
 
-            config = load_config()
+            config = self._get_config()
             svc = KBService(config, db)
             result = svc.claim_entry(
                 item_id,
@@ -2763,10 +2758,9 @@ class SoftwareKBPlugin:
                 }
 
             # Use KBService CAS — preserve current assignee
-            from pyrite.config import load_config
             from pyrite.services.kb_service import KBService
 
-            config = load_config()
+            config = self._get_config()
             svc = KBService(config, db)
             current_assignee = row["assignee"] or meta.get("assignee", "")
             cas_result = svc.claim_entry(
@@ -2855,9 +2849,7 @@ class SoftwareKBPlugin:
 
             board_config = {"lanes": [], "wip_policy": "warn"}
             try:
-                from pyrite.config import load_config as _load_config
-
-                cfg = _load_config()
+                cfg = self._get_config()
                 kb_conf = cfg.get_kb(kb_name)
                 if kb_conf:
                     board_config = load_board_config(kb_conf.path)
@@ -2877,10 +2869,9 @@ class SoftwareKBPlugin:
                 }
 
             # Use KBService CAS pattern — preserve current assignee
-            from pyrite.config import load_config
             from pyrite.services.kb_service import KBService
 
-            config = load_config()
+            config = self._get_config()
             svc = KBService(config, db)
             current_assignee = row["assignee"] or meta.get("assignee", "")
             cas_result = svc.claim_entry(
@@ -2988,10 +2979,9 @@ class SoftwareKBPlugin:
                     }
 
             # Use KBService CAS pattern — pass current assignee to preserve it
-            from pyrite.config import load_config
             from pyrite.services.kb_service import KBService
 
-            config = load_config()
+            config = self._get_config()
             svc = KBService(config, db)
             current_assignee = row["assignee"] or meta.get("assignee", "")
             cas_result = svc.claim_entry(
@@ -3037,7 +3027,6 @@ class SoftwareKBPlugin:
         """Create a new backlog item and persist it to the KB."""
         import re
 
-        from pyrite.config import load_config
         from pyrite.services.kb_service import KBService
 
         title = args["title"]
@@ -3054,7 +3043,7 @@ class SoftwareKBPlugin:
 
         db, should_close = self._get_db()
         try:
-            config = load_config()
+            config = self._get_config()
             svc = KBService(config, db)
 
             kwargs: dict[str, Any] = {
@@ -3079,7 +3068,10 @@ class SoftwareKBPlugin:
                 "effort": effort,
             }
         except Exception as e:
-            return {"created": False, "error": _safe_error(e)}
+            refused: dict[str, Any] = {"created": False, "error": _safe_error(e)}
+            if isinstance(e, PyriteError):
+                refused["error_code"] = e.error_code  # KB_NOT_FOUND, KB_READ_ONLY, ...
+            return refused
         finally:
             if should_close:
                 db.close()

@@ -13,7 +13,7 @@ Entry type hierarchy built on abstract `Entry` dataclass with composable protoco
 
 ## Architecture
 
-- `base.py` — abstract `Entry` dataclass with `to_frontmatter()`, `from_frontmatter()`, `to_markdown()`, `from_markdown()`
+- `base.py` — abstract `Entry` dataclass with `to_frontmatter()`, `from_frontmatter()`, `from_markdown()` and the load-time records (`capture_extra_frontmatter`, `_frontmatter_for_file`). The model has no `save` and no markdown emitter since #955 (B6 P4): a create's text is `repository.new_entry_text` (its values set onto a skeleton with `apply()`), and every write is published by `pyrite/storage/entry_writer.py`.
 - `protocols.py` — 6 composable mixin dataclasses: Assignable, Temporal, Locatable, Statusable, Prioritizable, Parentable
 - `core_types.py` — 8 concrete types: Note, Person, Organization, Event, Document, Topic, Relationship, Timeline
 - `factory.py` — `build_entry()` canonical creation with type resolution and metadata overflow
@@ -25,7 +25,7 @@ Entry type hierarchy built on abstract `Entry` dataclass with composable protoco
 
 One function decides it: `split_frontmatter` in `pyrite/utils/frontmatter.py`. Its reference is the convention other tools follow (Hugo and YAML), not Pyrite's old loader (design.md, principles 1 and 8). A file opens with a `---` line (a BOM and leading blank lines are ignored; spaces or a `# comment` may follow the dashes; a first line that starts with `---` and is anything else, such as `----`, `---x` or `---` + a tab, is `Malformed`, never plain text) and closes at the first later line that starts with `---` in column 0. It returns a typed result: `Frontmatter` (YAML text, body and the span, i.e. offsets of the delimiter lines, so a writer can edit in place), `NoFrontmatter`, `Unterminated`, `Malformed` or `Unsupported`. `load_frontmatter` adds the YAML parse; `require_frontmatter` raises `FrontmatterError` for everything but `Frontmatter`.
 
-Callers: `Entry.from_markdown`, `KBRepository._load_entry`, `read_entry_id` / `explicit_entry_id`, `ids pin`, `create --body-file/--stdin`, `add_entry_from_file`, `KBService._extract_frontmatter` (git change summaries), `TemplateService` (a bad template is skipped with a warning in `list_templates`, raised by `get_template`), the markdown importer, collection export, `schema validate`, and the cascade and journalism extensions. A reader that cannot read a file refuses it with a typed error; none reads the YAML as body.
+Callers: `Entry.from_markdown`, `KBRepository._load_entry`, `read_entry_id` / `explicit_entry_id`, `ids pin`, `create --body-file/--stdin`, `add_entry_from_file`, `KBService._extract_frontmatter` (git change summaries), `TemplateService` (a bad template is skipped with a warning in `list_templates`, raised by `get_template`), the markdown importer, collection export, `schema validate`, and the journalism extension. A reader that cannot read a file refuses it with a typed error; none reads the YAML as body.
 
 ### Where Pyrite departs from Hugo
 
@@ -38,7 +38,6 @@ Each is pinned by a row in `ORACLE` in `tests/test_frontmatter_splitter.py`, nex
 - Leading blank lines are ignored (Hugo does the same). That reopens Tier A r1030's risk for a file that starts with blank lines: when the text between its first two `---` rules parses as a mapping, it is read as frontmatter and indexes with an empty title. Stated, not refused.
 - A markdown file is one entry: `import_markdown` (and `pyrite import --format markdown`, `POST /api/entries/import`) never splits a body into entries by default. Multi-entry streams are an explicit opt-in (`stream=True`, `pyrite import --stream`, `stream=true`): after an entry's frontmatter, a `---` line directly followed by a line starting `title:`, `type:` or `id:` begins the next entry, which must then close and parse or the whole file is refused. Limits of the opt-in: an entry must start with one of those keys, and a `---` inside a code block is not understood (a fenced frontmatter example in a body splits the entry or refuses the file; 9 of the 931 valid entries in Pyrite's own `kb/` did, which is why it is off by default).
 - `...` does not close frontmatter (Hugo agrees), and a `---` inside a quoted value that starts a line is a closer (Hugo agrees; the YAML then fails to load).
-- The cascade migration scripts write with `write_text`: a file they change comes out with LF line endings.
 
 ### What the structural test catches
 
@@ -48,12 +47,15 @@ Each is pinned by a row in `ORACLE` in `tests/test_frontmatter_splitter.py`, nex
 
 ```
 YAML frontmatter → entry_from_frontmatter() → ENTRY_TYPE_REGISTRY lookup → concrete class
+                                            → read_view() → cls.from_frontmatter(view, body)
 ```
 
-Protocol mixins promote fields to DB columns (Assignable → assignee, Temporal → date, etc.) enabling indexed queries on protocol fields.
+`read_view` (`pyrite/schema/field_aliases.py`) is the one lift (#1025, ADR-0051's reader half): a declared field the file spells only under `metadata:` is spelled at that name in the view the class reads, so every `from_frontmatter` keeps reading top-level keys and still takes each field's value from `spelling_in(file, field)`, the path the writer writes. The raw mapping stays `_source_frontmatter`. `Entry.from_markdown` (the class-addressed loader behind `Entry.load`) makes the same lift; `tests/test_reader_reads_where_the_writer_writes.py` pins that no other production code calls `from_frontmatter`.
+
+Protocol mixins promote fields to DB columns (Assignable → assignee, Temporal → date, etc.) enabling indexed queries on protocol fields. A declared field with no column (a backlog item's `rank`, a task's `evidence`, `provenance`) rides in the row's `metadata` bag and is read at its own name by `lift_declared_fields`; the single-entry read (`IndexManager.read_fields`) then drops it from its `metadata` (`read_metadata`), so a read spells each field once and `metadata` holds only undeclared keys (ADR-0051, proposed amendment 2026-10-20). The index row keeps the whole bag: the storage dict the plugins read. An undeclared key stays in the bag and is not lifted.
 
 ## Related
 
 - [[entry-factory]] — build_entry() creation path
 - [[entry-protocol-mixins]] — composable field groups
-- [[kb-repository]] — file I/O using Entry.save()/load()
+- [[kb-repository]] — file I/O: `load` / `_load_entry`, `save` (a create, through `new_entry_text` and `create_entry_text`), `rename` (operations on the file's own bytes)

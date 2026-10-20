@@ -79,6 +79,7 @@ def _git(*args: str, cwd: Path) -> str:
         check=True,
         capture_output=True,
         text=True,
+        timeout=120,
     )
     return out.stdout.strip()
 
@@ -94,6 +95,7 @@ def _git_reference(file: Path) -> Path | None:
         env=_clean_env(),
         capture_output=True,
         text=True,
+        timeout=120,
     )
     if out.returncode != 0:
         return None

@@ -8,6 +8,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from pyrite.cli.context import require_kb
 from pyrite.config import load_config
 from pyrite.services.access_policy import UNSCOPED
 from pyrite.storage.database import PyriteDB
@@ -55,6 +56,7 @@ def zettel_new(
 
     config = load_config()
 
+    require_kb(config, kb_name, output_format="rich")
     # Find target KB
     kb_config = None
     if kb_name:
@@ -116,6 +118,7 @@ def zettel_inbox(
 ):
     """List fleeting notes not yet fully processed (not at 'connect' stage)."""
     config = load_config()
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -164,6 +167,7 @@ def zettel_orphans(
 ):
     """Find notes with no incoming or outgoing links."""
     config = load_config()
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -199,6 +203,7 @@ def zettel_maturity(
 ):
     """Show maturity distribution of zettels."""
     config = load_config()
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:

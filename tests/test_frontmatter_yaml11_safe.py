@@ -188,7 +188,7 @@ def test_a_service_update_writes_an_ambiguous_key_pyyaml_reads_back_identically(
 
     text = path.read_text(encoding="utf-8")
     fm = pyyaml.safe_load(_frontmatter(text))
-    assert fm["metadata"]["on"] == "x", text
+    assert fm["on"] == "x", text
 
 
 # ---------------------------------------------------------------------------
@@ -241,14 +241,13 @@ def test_an_empty_string_keeps_ruamels_own_single_quote_style():
 
 
 # ---------------------------------------------------------------------------
-# The migration: a save that touches an unrelated field also requotes any
-# ambiguous value already bare in the file -- the whole document is one
-# dump, not a line patch. The string's value is unchanged; only the bytes
-# that represent it change.
+# An untouched bare `yes` stays as written: the quoting applies to bytes
+# Pyrite emits, never to a value nobody asked to change (ADR-0042 decision
+# 6, which narrows #568; an update is a patch of the named keys, #955).
 # ---------------------------------------------------------------------------
 
 
-def test_an_unrelated_update_requotes_an_existing_bare_ambiguous_value(tmp_path):
+def test_an_unrelated_update_leaves_an_existing_bare_ambiguous_value_as_written(tmp_path):
     text = "---\nid: n\ntitle: N\ntype: note\ndecision: yes\n---\n\nBody.\n"
     config, kb_path = _env(tmp_path, text)
     path = kb_path / "notes" / "n.md"
@@ -256,8 +255,7 @@ def test_an_unrelated_update_requotes_an_existing_bare_ambiguous_value(tmp_path)
     _with_db(config, lambda db: KBService(config, db).update("n", KB, {"title": "Renamed"}))
 
     text = path.read_text(encoding="utf-8")
-    assert 'decision: "yes"' in text, text
-    assert pyyaml.safe_load(_frontmatter(text))["decision"] == "yes", text
+    assert "\ndecision: yes\n" in text, text
 
 
 # ---------------------------------------------------------------------------
@@ -274,13 +272,13 @@ def test_a_service_update_writes_an_ambiguous_string_pyyaml_reads_back_identical
 
     text = path.read_text(encoding="utf-8")
     fm = pyyaml.safe_load(_frontmatter(text))
-    # `decision` is not a declared field on `note` (#407): KBService.update
-    # merges it into the `metadata` dict, written as a nested frontmatter
-    # key -- exercising the "at any depth" part of #568's acceptance.
-    assert fm["metadata"]["decision"] == value, text
+    # `decision` is not a declared field on `note` (#407): the update writes
+    # it as a top-level key, where the request named it (ADR-0042 decision
+    # 6: never nested under `metadata:`, #955).
+    assert fm["decision"] == value, text
     # Pyrite's own read returns the same string too.
     entry = KBRepository(config.get_kb(KB)).load("n")
-    assert entry.metadata.get("decision") == value, text
+    assert entry.extra_frontmatter.get("decision") == value, text
 
 
 def test_a_service_update_writing_a_real_bool_stays_unquoted(tmp_path):
@@ -291,7 +289,7 @@ def test_a_service_update_writing_a_real_bool_stays_unquoted(tmp_path):
 
     text = path.read_text(encoding="utf-8")
     assert "decision: true" in text, text
-    assert pyyaml.safe_load(_frontmatter(text))["metadata"]["decision"] is True, text
+    assert pyyaml.safe_load(_frontmatter(text))["decision"] is True, text
 
 
 #: Values that survive the CLI's own `-f` type guesser (int/float/bool/JSON
@@ -315,4 +313,4 @@ def test_cli_update_writes_an_ambiguous_string_pyyaml_reads_back_identically(tmp
     assert result.exit_code == 0, result.output
 
     text = path.read_text(encoding="utf-8")
-    assert pyyaml.safe_load(_frontmatter(text))["metadata"]["decision"] == value, text
+    assert pyyaml.safe_load(_frontmatter(text))["decision"] == value, text

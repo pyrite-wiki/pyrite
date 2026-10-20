@@ -805,6 +805,81 @@ class TestMultiKB:
         assert backend.get_entry("e1", "other") is not None
 
 
+class TestOneRowPerWrittenLink:
+    """The link rows a backend stores for an entry's ``links``: one per written
+    link, keyed by (target, KB, relation, written prefix) as stored text, the
+    same on SQLite's diff and Postgres's re-insert (#1009, #1022). The links
+    are given as the indexer passes them: the KB resolved, the prefix as
+    written beside it."""
+
+    @staticmethod
+    def _link(target, kb, prefix=None, relation="wikilink", note=""):
+        return {"target": target, "kb": kb, "prefix": prefix, "relation": relation, "note": note}
+
+    @staticmethod
+    def _outlinks(backend):
+        return sorted(
+            (r["id"], r["kb_name"], r["relation"])
+            for r in backend.get_outlinks("s", "test", readable_kbs=UNSCOPED)
+        )
+
+    @pytest.mark.control(
+        reason="the backend key always held the KB; the loss was at extraction (tested there)"
+    )
+    def test_one_id_in_two_kbs_is_two_backlinked_rows(self, backend_with_db):
+        backend, _ = backend_with_db
+        backend.upsert_entry(_make_entry("x", kb_name="test"))
+        backend.upsert_entry(_make_entry("x", kb_name="other"))
+        links = [self._link("x", "test", "test"), self._link("x", "other", "other")]
+        backend.upsert_entry(_make_entry("s", links=links))
+        for kb in ("test", "other"):
+            rows = backend.get_backlinks("x", kb, readable_kbs=UNSCOPED)
+            assert [(r["id"], r["kb_name"]) for r in rows] == [("s", "test")], kb
+
+    def test_two_prefixes_of_one_target_are_two_rows(self, backend_with_db):
+        backend, _ = backend_with_db
+        backend.upsert_entry(_make_entry("x", kb_name="other"))
+        links = [self._link("x", "other", "other"), self._link("x", "other", "o")]
+        backend.upsert_entry(_make_entry("s", links=links))
+        assert self._outlinks(backend) == [("x", "other", "wikilink")] * 2
+
+    def test_one_link_spelled_twice_is_one_row(self, backend_with_db):
+        """`2024` and `'2024'`, and `true` and `'1'`: one stored text, one row;
+        the first spelling's note is kept."""
+        backend, _ = backend_with_db
+        links = [
+            self._link(2024, "test", relation="related_to", note="first"),
+            self._link("2024", "test", relation="related_to", note="second"),
+            self._link(True, "test", relation="related_to"),
+            self._link("1", "test", relation="related_to"),
+        ]
+        backend.upsert_entry(_make_entry("s", links=links))
+        rows = backend.get_outlinks("s", "test", readable_kbs=UNSCOPED)
+        assert sorted((r["id"], r["note"]) for r in rows) == [("1", ""), ("2024", "first")]
+
+    def test_reindexing_the_same_links_changes_no_row(self, backend_with_db):
+        backend, _ = backend_with_db
+        links = [
+            self._link("x", "test"),
+            self._link("x", "test", "test"),
+            self._link("x", "other", "other"),
+            self._link("x", "test", relation="related_to"),
+        ]
+        backend.upsert_entry(_make_entry("s", links=links))
+        first = self._outlinks(backend)
+        assert len(first) == 4
+        backend.upsert_entry(_make_entry("s", links=links))
+        assert self._outlinks(backend) == first
+
+    def test_the_whole_index_graph_has_one_edge_per_pair(self, backend_with_db):
+        backend, _ = backend_with_db
+        backend.upsert_entry(_make_entry("x"))
+        links = [self._link("x", "test"), self._link("x", "test", relation="related_to")]
+        backend.upsert_entry(_make_entry("s", links=links))
+        graph = backend.get_graph_data(readable_kbs=UNSCOPED)
+        assert [(e["source_id"], e["target_id"]) for e in graph["edges"]] == [("s", "x")]
+
+
 # =========================================================================
 # Embeddings (basic — only tests interface, not actual model)
 # =========================================================================

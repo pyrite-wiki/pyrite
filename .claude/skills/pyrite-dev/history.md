@@ -1,7 +1,7 @@
 # Why the rules exist
 
-The incident behind each rule in [SKILL.md](SKILL.md), `pyrite-architect` and
-`pyrite-worker`. Read it when a rule looks arbitrary or before proposing to
+The incident behind each rule in [SKILL.md](SKILL.md) (and in the grooming
+and worker roles of the maintainer's loop, which lives outside this repo). Read it when a rule looks arbitrary or before proposing to
 drop one. The rules themselves live in those files; nothing here is an
 instruction.
 
@@ -33,7 +33,7 @@ instruction.
 - **Reproduce first, or it is a spike.** #46, #86 and #87 were three faces of
   one serialization fault nobody had named when a worker was sent to fix #46.
   The theme took three passes, two cold reads and the circuit breaker.
-- **Groom edits happen in the `kb/` worktree the conductor names.** Before
+- **Groom edits happen in the `kb/` worktree you were given.** Before
   2026-09-21 that was a standing weekly log branch; the tick log now lives
   outside git, so a `kb/` branch exists only when a tick grooms something.
 

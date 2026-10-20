@@ -25,6 +25,8 @@ import {
 	markTransclusionActive,
 	CIRCULAR_REF_MESSAGE
 } from '$lib/editor/transclusion-utils';
+import { kbStore } from '$lib/stores/kbs.svelte';
+import { entryHref } from '$lib/utils/entry-href';
 
 // =============================================================================
 // Autocomplete
@@ -80,7 +82,12 @@ export async function wikilinkCompletions(
 	if (hashIdx !== -1 || caretIdx !== -1) {
 		// Second stage: complete heading or block ID
 		const separatorIdx = hashIdx !== -1 ? hashIdx : caretIdx;
-		const entryId = query.slice(0, separatorIdx).trim();
+		const typed = query.slice(0, separatorIdx).trim();
+		// `kb:id` names the KB; a bare id several KBs hold completes nothing
+		// rather than complete against one of them (#528, #912).
+		const colon = typed.indexOf(':');
+		const typedKb = colon > 0 ? typed.slice(0, colon) : undefined;
+		const entryId = typedKb ? typed.slice(colon + 1) : typed;
 		const fragmentQuery = query.slice(separatorIdx + 1).toLowerCase();
 		const fragmentType = hashIdx !== -1 ? 'heading' : 'block';
 
@@ -88,7 +95,13 @@ export async function wikilinkCompletions(
 
 		// Find the KB for this entry
 		const entries = await refreshTitleCache();
-		const entry = entries.find((e) => e.id === entryId || e.title.toLowerCase() === entryId.toLowerCase());
+		const matches = entries.filter(
+			(e) =>
+				(!typedKb || e.kb_name === typedKb) &&
+				(e.id === entryId || e.title.toLowerCase() === entryId.toLowerCase())
+		);
+		if (new Set(matches.map((e) => e.kb_name)).size > 1) return null;
+		const entry = matches[0];
 		if (!entry) return null;
 
 		try {
@@ -96,7 +109,7 @@ export async function wikilinkCompletions(
 			if (fragmentType === 'heading') {
 				blockOptions.block_type = 'heading';
 			}
-			const res = await api.getEntryBlocks(entryId, entry.kb_name, blockOptions);
+			const res = await api.getEntryBlocks(entry.id, entry.kb_name, blockOptions);
 			const blocks = res.blocks || [];
 
 			const lowerFragment = fragmentQuery.toLowerCase();
@@ -157,7 +170,10 @@ export async function wikilinkCompletions(
 				const fullLine = view.state.doc.lineAt(from);
 				const afterCursor = fullLine.text.slice(to - fullLine.from);
 				const hasClosing = afterCursor.startsWith(']]');
-				const insert = `${e.id}${hasClosing ? '' : ']]'}`;
+				// An id several KBs hold is inserted with its KB, so the link
+				// names the entry it was picked for (#528, #912).
+				const held = entries.filter((o) => o.id === e.id).length > 1;
+				const insert = `${held && e.kb_name ? `${e.kb_name}:` : ''}${e.id}${hasClosing ? '' : ']]'}`;
 				view.dispatch({ changes: { from, to, insert } });
 			}
 		};
@@ -181,7 +197,9 @@ class WikilinkWidget extends WidgetType {
 		readonly target: string,
 		readonly display: string,
 		readonly heading?: string,
-		readonly blockId?: string
+		readonly blockId?: string,
+		/** The KB the link names (`[[kb:id]]`); absent when the text names none. */
+		readonly kb?: string
 	) {
 		super();
 	}
@@ -196,14 +214,15 @@ class WikilinkWidget extends WidgetType {
 			let fragment = '';
 			if (this.heading) fragment = `#${encodeURIComponent(this.heading)}`;
 			else if (this.blockId) fragment = `#block-${encodeURIComponent(this.blockId)}`;
-			window.location.href = `/entries/${encodeURIComponent(this.target)}${fragment}`;
+			window.location.href = `${entryHref(this.target, this.kb)}${fragment}`;
 		});
 		return span;
 	}
 
 	eq(other: WikilinkWidget): boolean {
 		return this.target === other.target && this.display === other.display
-			&& this.heading === other.heading && this.blockId === other.blockId;
+			&& this.heading === other.heading && this.blockId === other.blockId
+			&& this.kb === other.kb;
 	}
 
 	ignoreEvent(): boolean {
@@ -237,7 +256,7 @@ const wikilinkMatcher = new MatchDecorator({
 		}
 
 		return Decoration.replace({
-			widget: new WikilinkWidget(target, display, heading, blockId)
+			widget: new WikilinkWidget(target, display, heading, blockId, kb || undefined)
 		});
 	}
 });
@@ -297,7 +316,9 @@ class TransclusionWidget extends WidgetType {
 		readonly target: string,
 		readonly heading?: string,
 		readonly blockId?: string,
-		readonly options?: Record<string, string | number | boolean>
+		readonly options?: Record<string, string | number | boolean>,
+		/** The KB the embed names (`![[kb:id]]`); absent when the text names none. */
+		readonly kb?: string
 	) {
 		super();
 	}
@@ -327,7 +348,7 @@ class TransclusionWidget extends WidgetType {
 		const cite = document.createElement('div');
 		cite.style.cssText = 'margin-top: 0.5rem; font-size: 0.8em;';
 		const link = document.createElement('a');
-		link.href = `/entries/${encodeURIComponent(this.target)}`;
+		link.href = entryHref(this.target, this.kb);
 		link.textContent = this.target;
 		link.style.cssText = 'color: #3b82f6; text-decoration: underline;';
 		link.addEventListener('click', (e) => {
@@ -367,7 +388,7 @@ class TransclusionWidget extends WidgetType {
 
 		const cleanup = markTransclusionActive(this.target);
 		try {
-			const res = await api.resolveEntry(this.target);
+			const res = await api.resolveEntry(this.target, kbStore.resolveName(this.kb));
 			if (res.resolved && res.entry) {
 				// Collection transclusion: render compact entry list
 				if (res.entry.entry_type === 'collection') {
@@ -512,7 +533,7 @@ class TransclusionWidget extends WidgetType {
 											const nli = document.createElement('li');
 											nli.style.cssText = 'margin: 0.1rem 0;';
 											const nlink = document.createElement('a');
-											nlink.href = `/entries/${encodeURIComponent(nestedEntry.id)}`;
+											nlink.href = entryHref(nestedEntry.id, nestedEntry.kb_name);
 											nlink.textContent = nestedEntry.title;
 											nlink.style.cssText = 'color: #3b82f6; text-decoration: none;';
 											nlink.addEventListener('click', (e) => { e.preventDefault(); window.location.href = nlink.href; });
@@ -534,7 +555,7 @@ class TransclusionWidget extends WidgetType {
 						});
 					} else {
 						const link = document.createElement('a');
-						link.href = `/entries/${encodeURIComponent(entry.id)}`;
+						link.href = entryHref(entry.id, entry.kb_name);
 						link.textContent = entry.title;
 						link.style.cssText = 'color: #3b82f6; text-decoration: none;';
 						link.addEventListener('mouseenter', () => { link.style.textDecoration = 'underline'; });
@@ -597,7 +618,7 @@ class TransclusionWidget extends WidgetType {
 											const nli = document.createElement('li');
 											nli.style.cssText = 'margin: 0.1rem 0;';
 											const nlink = document.createElement('a');
-											nlink.href = `/entries/${encodeURIComponent(nestedEntry.id)}`;
+											nlink.href = entryHref(nestedEntry.id, nestedEntry.kb_name);
 											nlink.textContent = nestedEntry.title;
 											nlink.style.cssText = 'color: #3b82f6; text-decoration: none;';
 											nlink.addEventListener('click', (e) => { e.preventDefault(); window.location.href = nlink.href; });
@@ -619,7 +640,7 @@ class TransclusionWidget extends WidgetType {
 						});
 					} else {
 						const link = document.createElement('a');
-						link.href = `/entries/${encodeURIComponent(entry.id)}`;
+						link.href = entryHref(entry.id, entry.kb_name);
 						link.textContent = entry.title;
 						link.style.cssText = 'color: #3b82f6; text-decoration: none;';
 						link.addEventListener('mouseenter', () => { link.style.textDecoration = 'underline'; });
@@ -663,6 +684,7 @@ class TransclusionWidget extends WidgetType {
 	eq(other: TransclusionWidget): boolean {
 		return (
 			this.target === other.target &&
+			this.kb === other.kb &&
 			this.heading === other.heading &&
 			this.blockId === other.blockId &&
 			JSON.stringify(this.options) === JSON.stringify(other.options)
@@ -697,13 +719,14 @@ function parseOptionsString(optionsStr: string | undefined): Record<string, stri
 const transclusionMatcher = new MatchDecorator({
 	regexp: transclusionPattern,
 	decoration: (match) => {
+		const kb = match[1]?.trim() || undefined;
 		const target = match[2].trim();
 		const heading = match[3]?.trim();
 		const blockId = match[4]?.trim();
 		const options = parseOptionsString(match[6]);
 
 		return Decoration.replace({
-			widget: new TransclusionWidget(target, heading, blockId, options)
+			widget: new TransclusionWidget(target, heading, blockId, options, kb)
 		});
 	}
 });

@@ -88,15 +88,17 @@ def test_allowlist_has_no_stale_entries():
 
 
 def test_the_index_writes_rows_in_two_places_only():
-    """Inside IndexManager, a row is written by `_write_claim` (the reconcile)
-    and `index_entry` (a single write, for DocumentManager's write-through)."""
+    """Inside IndexManager, a row is written by `_write_claim` (the reconcile),
+    `index_entry` (a single write, for DocumentManager's write-through) and
+    `index_row` (an update's row, built by `row_for` before the publish so a
+    result the index cannot store is refused with nothing written; #955 P3a)."""
     source = (ROOT / "pyrite/storage/index.py").read_text(encoding="utf-8")
     writers = sorted(
         node.name
         for node in ast.walk(ast.parse(source))
         if isinstance(node, ast.FunctionDef) and "upsert_entry" in _calls(node)
     )
-    assert writers == ["_write_claim", "index_entry"]
+    assert writers == ["_write_claim", "index_entry", "index_row"]
 
 
 @pytest.mark.control(reason="tests the scanner on a fixed string")

@@ -27,9 +27,9 @@ import json
 
 import typer
 
-from ..exceptions import ValidationError
+from ..exceptions import PyriteError, ValidationError
 from ..services import id_pin_service
-from ..utils.errors import cli_error
+from ..utils.errors import cli_error, cli_error_from
 from .context import cli_context
 from .output import output_format_choice
 
@@ -42,6 +42,14 @@ _FORMAT_HELP = "Output format: json (default) or text"
 
 def _err_format(output_format: str) -> str:
     return "rich" if output_format == "text" else "json"
+
+
+def _find_kb(kb_name: str, output_format: str):
+    """The KB, found without writes; a refusal is rendered in the command's format."""
+    try:
+        return id_pin_service.find_kb_without_writes(kb_name)
+    except PyriteError as e:
+        cli_error_from(e, _err_format(output_format))
 
 
 def _scan(kb_config, kb_name: str, output_format: str) -> id_pin_service.IdScan:
@@ -79,7 +87,7 @@ def ids_missing(
         pyrite ids missing -k notes
         pyrite ids missing -k notes --format text
     """
-    found = _scan(id_pin_service.find_kb_without_writes(kb_name), kb_name, output_format)
+    found = _scan(_find_kb(kb_name, output_format), kb_name, output_format)
     if output_format != "text":
         typer.echo(json.dumps(found.to_dict(), indent=2))
     else:
@@ -138,13 +146,11 @@ def ids_pin(
         pyrite ids pin -k notes --rename drafts/meeting.md=meeting-2026-03
     """
     if dry_run:
-        result = _pin(
-            id_pin_service.find_kb_without_writes(kb_name), kb_name, rename, output_format
-        )
+        result = _pin(_find_kb(kb_name, output_format), kb_name, rename, output_format)
         result["dry_run"] = True
         result["synced"] = False
     else:
-        with cli_context() as (config, _db, svc):
+        with cli_context(kbs=(kb_name,), output_format=output_format) as (config, _db, svc):
             result = _pin(config.get_kb(kb_name), kb_name, rename, output_format, write=True)
             result["dry_run"] = False
             result["synced"] = False

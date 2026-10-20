@@ -35,3 +35,29 @@ files git changed and adds history through its `enrich` hook.
 `check_health` takes duplicates, winners and staleness from it.
 `tests/test_one_reconcile_structure.py` fails when a function walks files and
 writes rows anywhere else.
+
+## What a link row names (ADR-0049 Q3)
+
+`_entry_to_dict` turns `[[x]]`, `[[kb:x]]`, `![[kb:x]]`, a `references` item and
+a frontmatter `links:` item (its `kb` is a KB field in link position) into
+link rows. The row's `target_kb` is the **full KB name** the prefix resolves to
+(`PyriteConfig.readable_kb_named(prefix, readable_kbs=None)`, unscoped: full
+name, then shortname; with duplicate shortnames the first KB in config order,
+as `config.validate` warns), the source entry's KB when there is no prefix, or
+the prefix as written when it names no KB, so the link counts as broken, which
+it is (#952, #979). The prefix as written is kept beside it in
+`target_prefix` (migration v28; NULL for no prefix, or a row from before), so
+a row can always be checked against what the file wrote (#980). Backlinks, the
+graph, `check_health`'s `broken_links` and `qa check-links` therefore agree
+with `WikilinkService.resolve_entry` on whether a `[[short:id]]` link
+resolves. `check_health`'s `links_stale_kb` counts the rows a rebuild would
+point at a different KB: the written prefix (for a row from before v28, its
+`target_kb`, which was the prefix as written) resolved now is not the stored
+KB. That catches a shortname renamed or added in config since the file was
+indexed, which no sync re-reads because the file's hash did not change, and a
+row stored before the full name was. It does not count a link whose prefix
+names no KB: that is a broken link (`broken_links`), and a rebuild writes the
+same row. `index health` warns on it and names `pyrite index build`, which
+re-reads every file and so clears the count. `tests/test_cross_kb_links.py`
+pins all of it, the renamed-shortname probe through a real `config.yaml` and
+the CLI included.

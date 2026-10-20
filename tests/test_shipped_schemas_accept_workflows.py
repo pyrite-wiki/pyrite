@@ -3,9 +3,9 @@
 `validation.rules[].enum` was ignored until #555 made it real, on by default.
 A rule enum is not scoped to a type -- it applies to every entry that has the
 field -- so a shipped schema whose `status` rule lists one type's states
-refuses every other type's. `docs/desk-schema.yaml` listed
-`[open, in_progress, blocked, done, dropped]`, so on a desk built the way
-`docs/conductor-desk.md` says, claiming a task (open -> claimed) was refused.
+refuses every other type's. The desk schema (now `tests/fixtures/desk-schema.yaml`) listed
+`[open, in_progress, blocked, done, dropped]`, so on a desk built from it,
+claiming a task (open -> claimed) was refused.
 The `software` init template and the software-kb preset listed the ADR
 statuses only, so a backlog item could not move to `in_progress`.
 """
@@ -26,18 +26,18 @@ from pyrite.storage.database import PyriteDB
 from pyrite.utils.yaml import load_yaml, load_yaml_file
 
 REPO = Path(__file__).resolve().parents[1]
-DESK_SCHEMA = REPO / "docs" / "desk-schema.yaml"
+DESK_SCHEMA = REPO / "tests" / "fixtures" / "desk-schema.yaml"
 runner = CliRunner()
 
 
 # --------------------------------------------------------------------------
-# (b) the desk, built as docs/conductor-desk.md says, runs the task workflow
+# (b) a task KB built from the desk schema fixture runs the task workflow
 # --------------------------------------------------------------------------
 
 
 @pytest.fixture
 def desk(tmp_path):
-    """`pyrite init -t empty -p <dir> -n <name> --schema-file docs/desk-schema.yaml
+    """`pyrite init -t empty -p <dir> -n <name> --schema-file tests/fixtures/desk-schema.yaml
     --no-examples`, with the config writes kept in tmp_path."""
     desk_path = tmp_path / "desk"
     config = PyriteConfig(
@@ -163,8 +163,10 @@ def _shipped_schemas() -> list[tuple[str, dict]]:
     from pyrite.plugins import get_registry
 
     schemas = [
-        (f"docs/{p.name}", load_yaml_file(p)) for p in sorted((REPO / "docs").glob("*.yaml"))
+        (f"{p.parent.relative_to(REPO).as_posix()}/{p.name}", load_yaml_file(p))
+        for p in sorted((REPO / "docs").glob("*.yaml"))
     ]
+    schemas.append(("tests/fixtures/desk-schema.yaml", load_yaml_file(DESK_SCHEMA)))
     schemas += [(f"init template {k!r}", v) for k, v in BUILTIN_TEMPLATES.items()]
     schemas += [(f"plugin preset {k!r}", v) for k, v in get_registry().get_all_kb_presets().items()]
     return [(name, s) for name, s in schemas if isinstance(s, dict) and "types" in s]
@@ -191,7 +193,7 @@ def _conflicts() -> list[str]:
 @pytest.mark.control(reason="checks the guard itself, not a behaviour change")
 def test_the_guard_sees_the_shipped_schemas():
     names = [name for name, _ in _shipped_schemas()]
-    assert "docs/desk-schema.yaml" in names
+    assert "tests/fixtures/desk-schema.yaml" in names
     assert "init template 'software'" in names
 
 

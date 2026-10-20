@@ -6,6 +6,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from pyrite.cli.context import require_kb
 from pyrite.config import load_config
 from pyrite.storage.database import PyriteDB
 
@@ -27,6 +28,8 @@ def wiki_review(
         raise typer.Exit(1)
 
     config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -61,6 +64,8 @@ def wiki_quality(
     from .entry_types import QUALITY_LEVELS
 
     config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -112,6 +117,7 @@ def wiki_stats(
 ):
     """Show quality distribution and review queue length."""
     config = load_config()
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -175,6 +181,7 @@ def wiki_stubs(
 ):
     """List stub articles needing expansion."""
     config = load_config()
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:

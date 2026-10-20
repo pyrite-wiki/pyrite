@@ -22,6 +22,7 @@ from .context import (
     cli_registry_context,
     get_config_with_registered_kbs,
     open_index_for_validation,
+    require_kb,
 )
 from .output import validate_output_format
 
@@ -146,7 +147,7 @@ def kb_remove(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ):
     """Remove a knowledge base from the registry."""
-    with cli_registry_context() as (config, db, svc, registry):
+    with cli_registry_context(kbs=(name,), output_format="rich") as (config, db, svc, registry):
         kb = registry.get_kb(name)
         if not kb:
             from ..utils.errors import cli_error
@@ -193,20 +194,41 @@ def kb_discover(
         console.print("[yellow]No KB configurations found.[/yellow]")
         return
 
-    formatted = _format_output(
-        {
-            "discovered": [
-                {
-                    "name": kb.name,
-                    "type": kb.kb_type,
-                    "path": str(kb.path),
-                    "already_registered": config.get_kb(kb.name) is not None,
-                }
-                for kb in discovered
-            ]
-        },
-        output_format,
-    )
+    # Snapshot discovery before registration so output keeps its original status.
+    data = {
+        "discovered": [
+            {
+                "name": kb.name,
+                "type": kb.kb_type,
+                "path": str(kb.path),
+                "already_registered": config.get_kb(kb.name) is not None,
+            }
+            for kb in discovered
+        ]
+    }
+
+    added = 0
+    if add:
+        from ..exceptions import KBAlreadyExistsError
+
+        with cli_registry_context() as (_, _, _, registry):
+            for kb in discovered:
+                if not config.get_kb(kb.name):
+                    try:
+                        registry.add_kb(
+                            name=kb.name,
+                            path=str(kb.path),
+                            kb_type=kb.kb_type,
+                            description=kb.description,
+                        )
+                        added += 1
+                    except KBAlreadyExistsError:
+                        pass  # Already registered, including duplicate discovered names.
+                    except (PyriteError, ValueError) as exc:
+                        _kb_error(exc, output_format)
+
+    # The requested write must finish before any presentation branch can return.
+    formatted = _format_output(data, output_format)
     if formatted is not None:
         typer.echo(formatted)
         return
@@ -227,23 +249,8 @@ def kb_discover(
 
     console.print(table)
 
-    if add:
-        with cli_registry_context() as (_, _, _, registry):
-            added = 0
-            for kb in discovered:
-                if not config.get_kb(kb.name):
-                    try:
-                        registry.add_kb(
-                            name=kb.name,
-                            path=str(kb.path),
-                            kb_type=kb.kb_type,
-                            description=kb.description,
-                        )
-                        added += 1
-                    except (PyriteError, ValueError):
-                        pass  # Already exists in DB
-            if added:
-                console.print(f"[green]Added {added} KB(s) to registry.[/green]")
+    if added:
+        console.print(f"[green]Added {added} KB(s) to registry.[/green]")
 
 
 @kb_app.command("validate")
@@ -269,6 +276,7 @@ def kb_validate(
     drift too can check for exit code 2.
     """
     config = load_config()
+    require_kb(config, name, output_format=output_format)
 
     def _select_kbs(current_config) -> list[KBConfig]:
         if name:
@@ -462,7 +470,12 @@ def kb_reindex(
     ),
 ):
     """Reindex a specific knowledge base."""
-    with cli_registry_context() as (config, db, svc, registry):
+    with cli_registry_context(kbs=(kb_name,), output_format=output_format) as (
+        config,
+        db,
+        svc,
+        registry,
+    ):
         from ..exceptions import KBNotFoundError
 
         try:
@@ -511,7 +524,12 @@ def kb_health(
     ),
 ):
     """Check health of a knowledge base."""
-    with cli_registry_context() as (config, db, svc, registry):
+    with cli_registry_context(kbs=(kb_name,), output_format=output_format) as (
+        config,
+        db,
+        svc,
+        registry,
+    ):
         from ..exceptions import KBNotFoundError
 
         try:
@@ -532,6 +550,14 @@ def kb_health(
         console.print(f"  Files: {result['file_count']}, Indexed entries: {result['entry_count']}")
         console.print(f"  Last indexed: {result['last_indexed'] or 'never'}")
         console.print(f"  Source: {result['source']}")
+        for err in result.get("schema_errors", []):
+            console.print(
+                f"  kb.yaml failed to load: {err['error']}", markup=False, highlight=False
+            )
+        if result.get("type_name_drift_total"):
+            console.print(
+                f"  [yellow]Type name drift: {result['type_name_drift_total']} group(s); use --format json for spellings[/yellow]"
+            )
 
 
 @kb_app.command("commit")
@@ -546,7 +572,7 @@ def kb_commit(
     """Commit changes in a KB's git repository."""
     from ..utils.errors import cli_error
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format="rich") as (config, db, svc):
         from ..services.export_service import ExportService
 
         export_svc = ExportService(config, db)
@@ -581,7 +607,7 @@ def kb_push(
     branch: str | None = typer.Option(None, "--branch", "-b", help="Branch to push"),
 ):
     """Push KB commits to a remote repository."""
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format="rich") as (config, db, svc):
         from ..services.export_service import ExportService
 
         export_svc = ExportService(config, db)
@@ -638,6 +664,7 @@ def schema_show(
     from ..services.schema_service import SchemaService
 
     config = get_config_with_registered_kbs(load_config(), name=kb_name)
+    require_kb(config, kb_name, output_format=output_format)
     try:
         svc = SchemaService(config)
         result = svc.show_schema(kb_name)
@@ -698,6 +725,7 @@ def schema_add_type(
     from ..services.schema_service import SchemaService
 
     config = get_config_with_registered_kbs(load_config(), name=kb_name)
+    require_kb(config, kb_name, output_format=output_format)
     type_def: dict[str, Any] = {}
     if description:
         type_def["description"] = description
@@ -743,6 +771,7 @@ def schema_remove_type(
     from ..services.schema_service import SchemaService
 
     config = get_config_with_registered_kbs(load_config(), name=kb_name)
+    require_kb(config, kb_name, output_format=output_format)
     try:
         svc = SchemaService(config)
         result = svc.remove_type(kb_name, type_name)
@@ -777,18 +806,13 @@ def schema_set(
     """Replace schema from a YAML file."""
     from ..services.schema_service import SchemaService
     from ..utils.yaml import load_yaml_file as load_yaml
+    from .context import input_file_or_exit
+
+    # Before the KB lookup: that opens (and may create) the index DB.
+    input_file_or_exit(schema_file, "Schema file", output_format)
 
     config = get_config_with_registered_kbs(load_config(), name=kb_name)
-
-    if not schema_file.exists():
-        from ..utils.errors import cli_error
-
-        cli_error(
-            f"File not found: {schema_file}",
-            output_format,
-            error_code="NOT_FOUND",
-            suggestion="Pass an existing YAML file with --schema-file.",
-        )
+    require_kb(config, kb_name, output_format=output_format)
 
     schema = load_yaml(schema_file)
 

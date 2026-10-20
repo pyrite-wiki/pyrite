@@ -63,9 +63,9 @@ describe('EntryCard', () => {
 		expect(screen.getByText('my-kb')).toBeInTheDocument();
 	});
 
-	it('card link href contains entry id', () => {
+	it('card link href names the entry and its KB (#910)', () => {
 		render(EntryCard, { props: { entry: sampleEntry } });
-		const link = document.querySelector('a[href="/entries/test-1"]');
+		const link = document.querySelector('a[href="/entries/test-1?kb=my-kb"]');
 		expect(link).not.toBeNull();
 	});
 });

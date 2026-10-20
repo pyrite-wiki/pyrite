@@ -26,25 +26,28 @@ def git_kb(tmp_path):
     kb_path.mkdir()
 
     # Init git repo
-    subprocess.run(["git", "init"], cwd=str(kb_path), capture_output=True)
+    subprocess.run(["git", "init"], cwd=str(kb_path), capture_output=True, timeout=120)
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
         cwd=str(kb_path),
         capture_output=True,
+        timeout=120,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test User"],
         cwd=str(kb_path),
         capture_output=True,
+        timeout=120,
     )
 
     # Create initial commit
     (kb_path / "README.md").write_text("# Test KB\n")
-    subprocess.run(["git", "add", "."], cwd=str(kb_path), capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=str(kb_path), capture_output=True, timeout=120)
     subprocess.run(
         ["git", "commit", "-m", "Initial commit"],
         cwd=str(kb_path),
         capture_output=True,
+        timeout=120,
     )
 
     kb = KBConfig(name="test-kb", path=kb_path, kb_type="generic")
@@ -126,6 +129,7 @@ class TestGitServiceCommit:
             cwd=str(kb_path),
             capture_output=True,
             text=True,
+            timeout=120,
         )
         assert "note-b.md" in status.stdout
 
@@ -155,6 +159,7 @@ class TestGitServiceCommit:
             cwd=str(kb_path),
             capture_output=True,
             text=True,
+            timeout=120,
         )
         assert "Signed-off-by:" in log.stdout
 
@@ -172,11 +177,14 @@ class TestGitServicePush:
         kb_path = git_kb["kb_path"]
         # Create a bare remote
         remote_path = tmp_path / "remote.git"
-        subprocess.run(["git", "init", "--bare", str(remote_path)], capture_output=True)
+        subprocess.run(
+            ["git", "init", "--bare", str(remote_path)], capture_output=True, timeout=120
+        )
         subprocess.run(
             ["git", "remote", "add", "origin", str(remote_path)],
             cwd=str(kb_path),
             capture_output=True,
+            timeout=120,
         )
 
         success, msg = GitService.push(kb_path)
@@ -341,6 +349,7 @@ class TestExportServiceCommit:
             cwd=str(kb_path),
             capture_output=True,
             text=True,
+            timeout=120,
         )
         assert "skip.md" in status.stdout
 
@@ -350,11 +359,14 @@ class TestExportServiceCommit:
 
         # Create a bare remote
         remote_path = tmp_path / "remote.git"
-        subprocess.run(["git", "init", "--bare", str(remote_path)], capture_output=True)
+        subprocess.run(
+            ["git", "init", "--bare", str(remote_path)], capture_output=True, timeout=120
+        )
         subprocess.run(
             ["git", "remote", "add", "origin", str(remote_path)],
             cwd=str(kb_path),
             capture_output=True,
+            timeout=120,
         )
 
         result = export_svc.push_kb("test-kb")

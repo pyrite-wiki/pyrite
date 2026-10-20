@@ -16,8 +16,12 @@ Structured knowledge management for software teams -- ADRs, design docs, coding 
 
 **Adds:**
 
-- **Entry types:** `adr`, `design_doc`, `standard`, `component`, `backlog_item`, `runbook`
-- **MCP tools:** `sw_adrs`, `sw_component`, `sw_standards`, `sw_backlog`, `sw_create_adr`, `sw_create_backlog_item`
+- **Entry types:** `adr`, `design_doc`, `standard`, `programmatic_validation`, `development_convention`, `component`, `backlog_item`, `runbook`, `milestone`, `work_log`
+- **MCP tools (23):** read tier (also in write and admin):
+  - Reference: `sw_adrs`, `sw_component`, `sw_standards`, `sw_validations`, `sw_conventions`, `sw_milestones`
+  - Backlog and kanban: `sw_backlog`, `sw_board`, `sw_pull_next`, `sw_review_queue`, `sw_context_for_item`, `sw_epics`, `sw_epic_detail`, `sw_check_ready`, `sw_refine`
+
+  Write tier (also in admin): `sw_claim`, `sw_submit`, `sw_review`, `sw_transition`, `sw_prioritize`, `sw_log`, `sw_create_adr`, `sw_create_backlog_item`
 - **CLI commands:** `pyrite sw`
 - **Preset:** `software`
 - **Workflows:** ADR lifecycle, backlog workflow
@@ -25,7 +29,7 @@ Structured knowledge management for software teams -- ADRs, design docs, coding 
 
 **Use case:** Engineering teams that want to keep architecture decisions, coding standards, component docs, and backlogs in version-controlled markdown alongside their code.
 
-[Full docs](https://github.com/pyrite-wiki/pyrite/tree/main/extensions/software-kb)
+[Full docs](https://github.com/pyrite-wiki/pyrite/blob/main/kb/components/software-kb-extension.md)
 
 ---
 
@@ -103,25 +107,6 @@ Tracked issues: [#92](https://github.com/pyrite-wiki/pyrite/issues/92), [#93](ht
 **Use case:** Local investigative research with sources, claims, entities, and evidence chains. The tools remain available; no tool is removed.
 
 [Full docs](https://github.com/pyrite-wiki/pyrite/tree/main/extensions/journalism-investigation)
-
----
-
-### Cascade
-
-Investigative journalism knowledge management covering actors, organizations, events, themes, mechanisms, scenes, victims, statistics, and timelines.
-
-**Install:** `pip install -e extensions/cascade`
-
-**Adds:**
-
-- **Entry types:** `actor`, `cascade_org`, `cascade_event`, `timeline_event`, `theme`, `victim`, `statistic`, `mechanism`, `scene`, `solidarity_event`
-- **MCP tools:** `cascade_actors`, `cascade_timeline`, `cascade_network`, `solidarity_timeline`, `solidarity_infrastructure_types`, `cascade_capture_lanes`
-- **KB types:** `cascade-research`, `cascade-timeline`, `cascade-solidarity`
-- **Relationships:** `member_of`, `investigated`, `funded_by`, `capture_mechanism`, `built_on`, `responded_to` (and inverses)
-
-**Use case:** Investigative journalists and researchers mapping networks of actors, organizations, events, and power structures across large-scale investigations.
-
-[Full docs](https://github.com/pyrite-wiki/pyrite/tree/main/extensions/cascade)
 
 ---
 

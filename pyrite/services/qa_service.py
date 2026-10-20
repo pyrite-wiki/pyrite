@@ -12,9 +12,18 @@ from __future__ import annotations
 import logging
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from ..config import PyriteConfig
+from ..exceptions import (
+    AINotConfiguredError,
+    EntryNotFoundError,
+    EvaluationFailedError,
+    InvalidQATierError,
+    KBUnreadableError,
+    PyriteError,
+)
 from ..plugins.registry import get_registry
 from ..schema import validate_date, validate_importance
 from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata
@@ -23,6 +32,13 @@ from ..storage.database import PyriteDB
 from ..utils.metadata import parse_metadata
 
 logger = logging.getLogger(__name__)
+
+#: The tiers QA runs: 1 = structural and deterministic rubric checks, 2 = tier
+#: 1 plus the model-judged rubric. Every surface that takes a tier refuses any
+#: other value (``InvalidQATierError``): a record never names a tier no check
+#: stands behind (#795). `qa_assessment`'s schema mentions a tier 3 that
+#: nothing implements.
+QA_TIERS = (1, 2)
 
 
 class QAService:
@@ -95,27 +111,32 @@ class QAService:
         )
 
         if not rows:
-            return {
-                "entry_id": entry_id,
-                "kb_name": kb_name,
-                "issues": [
-                    {
-                        "entry_id": entry_id,
-                        "kb_name": kb_name,
-                        "rule": "entry_not_found",
-                        "severity": "error",
-                        "field": "id",
-                        "message": f"Entry '{entry_id}' not found in KB '{kb_name}'",
-                    }
-                ],
-            }
+            issues.append(
+                {
+                    "entry_id": entry_id,
+                    "kb_name": kb_name,
+                    "rule": "entry_not_found",
+                    "severity": "error",
+                    "field": "id",
+                    "message": f"Entry '{entry_id}' not found in KB '{kb_name}'",
+                }
+            )
+            # A file whose frontmatter Pyrite cannot model never reaches the
+            # index (a tagged or complex key is no JSON key), so the one
+            # check that explains why reads its file (#760 (b)).
+            if self._kb_folder_problem(kb_name) is None:
+                self._check_unmodellable_frontmatter(issues, kb_name, entry_id=entry_id)
+            return {"entry_id": entry_id, "kb_name": kb_name, "issues": issues}
 
         entry = rows[0]
         self._check_entry_fields(entry, issues)
-        sources = self._check_file_values(issues, kb_name, entry_id=entry_id)
         self._check_entry_links(entry_id, kb_name, issues, readable_kbs=readable_kbs)
-        self._check_schema_validation(entry, issues, sources.get(entry_id))
-        self._check_rubric_evaluation(entry, issues)
+        # The checks below read the KB's folder (its files, its kb.yaml).
+        if not self._report_unreadable_kb(issues, kb_name):
+            self._check_unmodellable_frontmatter(issues, kb_name, entry_id=entry_id)
+            sources = self._check_file_values(issues, kb_name, entry_id=entry_id)
+            self._check_schema_validation(entry, issues, sources.get(entry_id))
+            self._check_rubric_evaluation(entry, issues)
 
         return {"entry_id": entry_id, "kb_name": kb_name, "issues": issues}
 
@@ -126,13 +147,20 @@ class QAService:
         staleness_days: int = 90,
         *,
         readable_kbs: set[str] | None,
+        tier: int = 1,
     ) -> dict[str, Any]:
         """Validate all entries in a KB. Returns {kb_name, total, checked, issues: [...]}.
 
         ``readable_kbs`` bounds the link checks (P-R4, P-R5): a target the
         caller cannot read is reported as a missing one, and a link from a
         source it cannot read does not stop an entry being an orphan.
+
+        ``tier`` 2 adds the model-judged rubric, one model call per entry
+        whose type has judgment items, through the evaluator `assess_entry`
+        uses (#795). Refused with no model configured; an entry the model did
+        not answer for is an ``evaluation_failed`` error, never a pass.
         """
+        self.require_tier(tier)
         issues: list[dict[str, Any]] = []
 
         # Count entries
@@ -150,18 +178,29 @@ class QAService:
         self._check_broken_links(issues, kb_name, readable_kbs=readable_kbs)
         self._check_orphans(issues, kb_name, readable_kbs=readable_kbs)
 
-        # Per-file pass: what the index cannot show, because it keeps only
-        # Pyrite's reading -- reserved keys the KB uses for fields of its own
-        # (#557), a task priority read from a word (#554)
-        sources = self._check_file_values(issues, kb_name)
-
-        # Per-entry schema pass (only if kb.yaml exists): the kb.yaml itself,
-        # then each entry, its typed attributes read from its file
-        self._check_schema_retypes_core_fields(issues, kb_name)
-        self._check_schema_all(issues, kb_name, sources)
-
-        # Rubric evaluation pass
+        # Rubric evaluation pass (index only)
         self._check_rubric_all(issues, kb_name)
+
+        # Everything below reads the KB's folder: its files, its kb.yaml. A
+        # folder that is missing or unreadable is one error for the KB, and
+        # those checks are skipped, never passed or crashed (#950 round 2).
+        if not self._report_unreadable_kb(issues, kb_name, tier=tier):
+            self._report_index_out_of_date(issues, kb_name)
+            # Files whose frontmatter Pyrite cannot model (#760 (b)): no write
+            # reaches them, so say so here with the line, as index health does.
+            self._check_unmodellable_frontmatter(issues, kb_name)
+            # Per-file pass: what the index cannot show, because it keeps only
+            # Pyrite's reading -- reserved keys the KB uses for fields of its own
+            # (#557), a task priority read from a word (#554)
+            sources = self._check_file_values(issues, kb_name)
+
+            # Per-entry schema pass (only if kb.yaml exists): the kb.yaml itself,
+            # then each entry, its typed attributes read from its file
+            self._check_schema_retypes_core_fields(issues, kb_name)
+            self._check_schema_all(issues, kb_name, sources)
+
+            if tier >= 2:
+                self._check_llm_rubric_all(issues, kb_name)
 
         # Optional staleness check (delegated to analytics service)
         if check_staleness:
@@ -174,11 +213,111 @@ class QAService:
             "issues": issues,
         }
 
+    def _report_unreadable_kb(
+        self, issues: list[dict[str, Any]], kb_name: str, *, tier: int = 1
+    ) -> bool:
+        """Add one ``kb_unreadable`` error when the KB's folder cannot be read.
+
+        Returns True when it did: the caller then skips every check that
+        reads the folder. A KB that resolves to no config is not judged here
+        (#959).
+        """
+        problem = self._kb_folder_problem(kb_name)
+        if problem is None:
+            return False
+        skipped = "file, schema and kb.yaml checks" + (
+            " and the tier 2 rubric" if tier >= 2 else ""
+        )
+        issues.append(
+            {
+                "entry_id": "",
+                "kb_name": kb_name,
+                "rule": "kb_unreadable",
+                "severity": "error",
+                "field": "path",
+                "message": f"KB '{kb_name}': {problem}, so its {skipped} did not run",
+            }
+        )
+        return True
+
+    def _report_index_out_of_date(self, issues: list[dict[str, Any]], kb_name: str) -> None:
+        """Add one ``index_out_of_date`` error when the index misses the files.
+
+        Every check above the folder pass reads the index. An unindexed KB
+        (`kb add` without `index sync`) or a stale one would pass having
+        validated nothing of what is on disk, so say so with the remedy
+        (#960 item 15, review of #1061).
+        """
+        from ..storage.index import IndexManager
+
+        if self.config.get_kb(kb_name) is None:
+            return
+        health = IndexManager(self.db, self.config).check_health(kb_name)
+        counts = {
+            "unindexed": len(health["unindexed_files"]),
+            "stale": len(health["stale_entries"]) + len(health["content_changed"]),
+            "missing": len(health["missing_files"]),
+        }
+        if not any(counts.values()):
+            return
+        found = ", ".join(f"{n} {what}" for what, n in counts.items() if n)
+        issues.append(
+            {
+                "entry_id": "",
+                "kb_name": kb_name,
+                "rule": "index_out_of_date",
+                "severity": "error",
+                "field": "index",
+                "message": (
+                    f"KB '{kb_name}': the index does not match its files ({found}), so "
+                    f"its checks read entries that are not what is on disk; "
+                    f"run `pyrite index sync -k {kb_name}`"
+                ),
+            }
+        )
+
+    def _require_readable_kb(self, kb_name: str) -> None:
+        """Refuse to assess a KB whose folder cannot be read (``KB_UNREADABLE``).
+
+        An assessment is a record written into the KB: a folder that is not
+        there, or cannot be read, can hold none, and writing one would
+        recreate a missing folder (#950 round 2).
+        """
+        problem = self._kb_folder_problem(kb_name)
+        if problem is not None:
+            raise KBUnreadableError(f"KB '{kb_name}': {problem}; nothing was assessed")
+
+    def _kb_folder_problem(self, kb_name: str) -> str | None:
+        """Why the KB's folder cannot be read, or None when it can.
+
+        Names no path: the message can reach an MCP or REST caller.
+        """
+        import os
+
+        kb_config = self.config.get_kb(kb_name)
+        if kb_config is None:
+            return None
+        path = Path(kb_config.path)
+        try:
+            if not path.exists():
+                return "its folder is missing"
+            if not path.is_dir():
+                return "its path is not a folder"
+            with os.scandir(path) as listing:
+                next(listing, None)
+            kb_yaml = path / "kb.yaml"
+            if kb_yaml.exists():
+                kb_yaml.open("rb").close()
+        except OSError as exc:
+            return f"its folder cannot be read ({exc.strerror or type(exc).__name__})"
+        return None
+
     def validate_all(
         self,
         kb_names: set[str] | list[str] | None = None,
         *,
         readable_kbs: set[str] | None,
+        tier: int = 1,
     ) -> dict[str, Any]:
         """Validate all KBs. Returns {kbs: [{kb_name, total, checked, issues}]}.
 
@@ -186,13 +325,14 @@ class QAService:
         readable set. A KB left out contributes neither issues nor its
         name, so the aggregate totals in ``get_status`` are computed over
         readable rows only. ``readable_kbs`` bounds each KB's link checks
-        (see `validate_kb`).
+        (see `validate_kb`, which also says what ``tier`` does).
         """
+        self.require_tier(tier)
         kbs = []
         for kb in self.config.all_kbs():
             if kb_names is not None and kb.name not in kb_names:
                 continue
-            result = self.validate_kb(kb.name, readable_kbs=readable_kbs)
+            result = self.validate_kb(kb.name, readable_kbs=readable_kbs, tier=tier)
             kbs.append(result)
         return {"kbs": kbs}
 
@@ -232,6 +372,23 @@ class QAService:
             "issues_by_rule": issues_by_rule,
         }
 
+    def require_tier(self, tier: int) -> None:
+        """Refuse a tier QA does not run, or tier 2 with no model to run it.
+
+        Called before anything is checked or written, so a refused tier
+        leaves no record (#795, maintainer decision 2026-10-15).
+        """
+        if isinstance(tier, bool) or tier not in QA_TIERS:
+            raise InvalidQATierError(
+                f"QA tier {tier!r} does not exist; choose one of "
+                f"{', '.join(str(t) for t in QA_TIERS)}"
+            )
+        if tier >= 2 and not self.llm_available:
+            raise AINotConfiguredError(
+                "QA tier 2 runs the model-judged rubric and no model is configured; "
+                "nothing was assessed"
+            )
+
     # =========================================================================
     # Assessment API
     # =========================================================================
@@ -263,12 +420,21 @@ class QAService:
         llm_available.
 
         Tier 1: structural validation + deterministic rubric checks.
-        Tier 2+: tier 1 + LLM judgment rubric evaluation.
+        Tier 2: tier 1 + LLM judgment rubric evaluation.
+
+        A tier that does not run writes no record (#795): an unknown tier
+        raises ``InvalidQATierError``, tier 2 with no model
+        ``AINotConfiguredError``, and a model that did not answer
+        ``EvaluationFailedError``, each before anything is written. With
+        ``create_task_on_fail``, a task that could not be created comes back
+        as ``task_failed: {entry_id, reason}``.
         """
+        self.require_tier(tier)
+        self._require_readable_kb(kb_name)
         result = self.validate_entry(entry_id, kb_name, readable_kbs=readable_kbs)
         issues = result["issues"]
 
-        # Tier 2+: LLM rubric evaluation
+        # Tier 2: LLM rubric evaluation, before anything is written
         if tier >= 2:
             llm_issues = self._evaluate_llm_rubric(entry_id, kb_name)
             issues.extend(llm_issues)
@@ -307,10 +473,11 @@ class QAService:
             tags=["qa", f"qa-{qa_status}"],
         )
 
+        task_failed = None
         if create_task_on_fail and qa_status == "fail":
-            self._maybe_create_task(entry_id, kb_name, assessment_id, issues)
+            task_failed = self._maybe_create_task(entry_id, kb_name, assessment_id, issues)
 
-        return {
+        out = {
             "assessment_id": assessment_id,
             "target_entry": entry_id,
             "kb_name": kb_name,
@@ -319,6 +486,9 @@ class QAService:
             "issues": issues,
             "llm_available": self.llm_available,
         }
+        if task_failed is not None:
+            out["task_failed"] = task_failed
+        return out
 
     def assess_kb(
         self,
@@ -333,14 +503,23 @@ class QAService:
 
         ``readable_kbs`` bounds each entry's link checks, as in `validate_entry`.
 
-        Returns dict with kb_name, assessed count, skipped count, and results list.
+        Returns dict with kb_name, assessed count, skipped count, results list,
+        ``failed`` (each entry that was not assessed: ``{entry_id, error_code,
+        reason}``; it has no record) and ``tasks_failed`` (tasks
+        ``create_task_on_fail`` could not create). One failed entry does not
+        stop the rest. A tier refused outright (unknown, or 2 with no model)
+        raises before any entry is touched.
         """
+        self.require_tier(tier)
+        self._require_readable_kb(kb_name)
         rows = self.db.execute_sql(
             "SELECT id, entry_type FROM entry WHERE kb_name = :kb_name",
             {"kb_name": kb_name},
         )
 
         results = []
+        failed: list[dict[str, Any]] = []
+        tasks_failed: list[dict[str, Any]] = []
         skipped = 0
 
         for row in rows:
@@ -357,20 +536,38 @@ class QAService:
                 skipped += 1
                 continue
 
-            result = self.assess_entry(
-                eid,
-                kb_name,
-                tier=tier,
-                create_task_on_fail=create_task_on_fail,
-                readable_kbs=readable_kbs,
-            )
+            try:
+                result = self.assess_entry(
+                    eid,
+                    kb_name,
+                    tier=tier,
+                    create_task_on_fail=create_task_on_fail,
+                    readable_kbs=readable_kbs,
+                )
+            except Exception as exc:
+                # A model that did not answer (EvaluationFailedError, with its
+                # reason) or a record whose write raised: the entry has no
+                # record, so it is listed, never dropped.
+                logger.warning("Assessment of %s failed", eid, exc_info=True)
+                failed.append(
+                    {
+                        "entry_id": eid,
+                        "error_code": getattr(exc, "error_code", "INTERNAL_ERROR"),
+                        "reason": getattr(exc, "reason", None) or f"{type(exc).__name__}: {exc}",
+                    }
+                )
+                continue
             results.append(result)
+            if "task_failed" in result:
+                tasks_failed.append(result["task_failed"])
 
         return {
             "kb_name": kb_name,
             "assessed": len(results),
             "skipped": skipped,
             "results": results,
+            "failed": failed,
+            "tasks_failed": tasks_failed,
         }
 
     def _format_assessment_body(
@@ -415,8 +612,13 @@ class QAService:
 
     def _maybe_create_task(
         self, entry_id: str, kb_name: str, assessment_id: str, issues: list[dict]
-    ) -> None:
-        """Create a task for failed assessment."""
+    ) -> dict[str, Any] | None:
+        """Create a task for failed assessment.
+
+        Returns ``None`` when the task was created, else ``{entry_id,
+        reason}``: a task that was not created is reported, never only
+        logged (#788).
+        """
         try:
             from .task_service import TaskService
 
@@ -431,6 +633,8 @@ class QAService:
             )
         except Exception as e:
             logger.warning("Task creation failed for %s: %s", entry_id, e, exc_info=True)
+            return {"entry_id": entry_id, "reason": f"{type(e).__name__}: {e}"}
+        return None
 
     # =========================================================================
     # Query API
@@ -893,6 +1097,80 @@ class QAService:
     # Reserved-key pass (reads the files)
     # =========================================================================
 
+    def _check_unmodellable_frontmatter(
+        self, issues: list[dict[str, Any]], kb_name: str, *, entry_id: str | None = None
+    ) -> None:
+        """One issue per file whose frontmatter ``apply()`` cannot model (a
+        tagged, complex or duplicate key), with the line and the reason: the
+        same walk ``index health`` reports (``storage.index.unmodellable_files``),
+        on every file of the KB or on ``entry_id``'s file alone. A warning,
+        as it is to ``index health``: the file reads; no write reaches it."""
+        from ..storage.index import unmodellable_files
+        from ..storage.repository import KBRepository
+
+        kb_config = self.config.get_kb(kb_name)
+        if kb_config is None:
+            return
+        if entry_id is None:
+            rows = unmodellable_files(kb_config)
+        else:
+            only = KBRepository(kb_config).find_file(entry_id)
+            # A file no lookup can read (a duplicate key) is found by no id;
+            # the KB walk lists it under its stem, so the one-entry report
+            # takes the KB walk's own rows for that id and the two agree.
+            rows = (
+                unmodellable_files(kb_config, [only])
+                if only is not None
+                else [row for row in unmodellable_files(kb_config) if row["id"] == entry_id]
+            )
+        for row in rows:
+            issues.append(
+                {
+                    "entry_id": row["id"],
+                    "kb_name": kb_name,
+                    "rule": "frontmatter_unmodellable",
+                    "severity": "warning",
+                    "field": "frontmatter",
+                    "path": row["path"],
+                    "line": row["line"],
+                    "message": (
+                        f"frontmatter Pyrite cannot model at line {row['line']}: "
+                        f"{row['reason']}. No update reaches this file; fix the key by hand."
+                    ),
+                }
+            )
+
+    @staticmethod
+    def _check_double_spellings(
+        issues: list[dict[str, Any]], kb_name: str, entry: Any, shown: Any
+    ) -> None:
+        """One issue per field the file spells twice (`k:` and `metadata.k`,
+        or a field and its alias): the reader believes the top-level spelling
+        and no update reaches the field until one spelling is removed
+        (Andon #994, decision A: `metadata.k` is a second spelling of `k`)."""
+        from ..schema.field_aliases import double_spellings
+
+        source = getattr(entry, "_source_frontmatter", None)
+        if not isinstance(source, dict):
+            return
+        for field_name, paths in double_spellings(source, type(entry), entry.entry_type).items():
+            spelled = ", ".join("`" + ".".join(p) + "`" for p in paths)
+            issues.append(
+                {
+                    "entry_id": entry.id,
+                    "kb_name": kb_name,
+                    "rule": "field_spelled_twice",
+                    "severity": "warning",
+                    "field": field_name,
+                    "path": str(shown),
+                    "message": (
+                        f"Entry '{entry.id}' spells '{field_name}' twice ({spelled}); the "
+                        "top-level spelling is read and no update reaches the field. "
+                        "Remove one spelling by hand."
+                    ),
+                }
+            )
+
     def _check_file_values(
         self, issues: list[dict[str, Any]], kb_name: str, *, entry_id: str | None = None
     ) -> dict[str, dict[str, Any]]:
@@ -903,7 +1181,6 @@ class QAService:
         Returns each loaded entry's own frontmatter by id, for the schema
         pass to read typed attributes as the file wrote them.
         """
-        from pathlib import Path
 
         from ..storage.repository import KBRepository
         from ..utils.frontmatter import leaked_frontmatter_line
@@ -922,8 +1199,24 @@ class QAService:
                 return sources
             try:
                 entries = [(repo.load_entry_from_file(Path(path)), Path(path))]
-            except Exception:
+            except Exception as exc:
+                # The file-value checks cannot run on a file that will not
+                # load: say so, rather than return as if they found nothing
+                # (#795).
                 logger.debug("file-value checks: cannot load %s", path, exc_info=True)
+                issues.append(
+                    {
+                        "entry_id": entry_id,
+                        "kb_name": kb_name,
+                        "rule": "file_unloadable",
+                        "severity": "error",
+                        "field": "file",
+                        "message": (
+                            f"Entry '{entry_id}': its file could not be loaded, so the "
+                            f"checks that read it did not run: {exc}"
+                        ),
+                    }
+                )
                 return sources
 
         for entry, file_path in entries:
@@ -933,6 +1226,7 @@ class QAService:
                 shown = file_path
             self._check_reserved_key_collisions(issues, kb_name, entry, shown)
             self._check_task_priority(issues, kb_name, entry, shown)
+            self._check_double_spellings(issues, kb_name, entry, shown)
             if entry._source_frontmatter is not None:
                 leaked = leaked_frontmatter_line(entry._source_frontmatter, entry.body or "")
                 if leaked is not None:
@@ -952,6 +1246,11 @@ class QAService:
                         }
                     )
                 sources[entry.id] = entry._source_frontmatter
+        if entry_id is None:
+            # The single-entry path looks up the file through the index, which
+            # never holds a row for a file that cannot load; only the KB-wide
+            # pass reads every file and can see it.
+            self._check_non_string_titles(issues, kb_name, repo, kb_config)
         return sources
 
     def _check_schema_retypes_core_fields(self, issues: list[dict[str, Any]], kb_name: str) -> None:
@@ -1024,6 +1323,72 @@ class QAService:
                 ),
             }
         )
+
+    @staticmethod
+    def _check_non_string_titles(
+        issues: list[dict[str, Any]], kb_name: str, repo: Any, kb_config: Any
+    ) -> None:
+        """Report a file whose ``title`` is a list, a mapping or NaN (#711).
+
+        The loader refuses such a title before an id can be derived, so the
+        entry pass above never sees these files: this reads each file's own
+        frontmatter directly. A scalar title (``title: 2024``) is stringified
+        at load (#704) and is not reported here. The path in the message is the
+        handle to use: no index row exists for such a file.
+        """
+        from ..storage.repository import _is_regular_file
+        from ..utils.frontmatter import Frontmatter, split_frontmatter
+        from ..utils.yaml import load_yaml
+
+        for file_path in repo.list_files():
+            if not _is_regular_file(file_path):
+                continue  # a FIFO would block the read (#972; the dev-to-arch merge, #1026)
+            try:
+                text = file_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            split = split_frontmatter(text)
+            if not isinstance(split, Frontmatter):
+                continue
+            try:
+                fm = load_yaml(split.text)
+            except Exception:  # noqa: BLE001 - every way a document fails to load
+                # Frontmatter that will not parse or construct (`title: [a, b`,
+                # a `2024-02-30:` key, `!!float abc`, 800 nested brackets) has
+                # no title to judge, and the reader's malformed-file row already
+                # reports it (#760). `load_yaml` turns a YAML error into a
+                # `FrontmatterError`, but a constructor failure is a
+                # `ValueError`, a `TypeError` or a `RecursionError`; left
+                # unhandled any of them aborts the whole KB-wide pass over one
+                # bad file, so the rest of the KB goes unreported (#1026).
+                logger.debug("non-string title check: skipping %s", file_path, exc_info=True)
+                continue
+            if not isinstance(fm, dict) or "title" not in fm:
+                continue
+            title = fm["title"]
+            if isinstance(title, (list, tuple, dict)):
+                kind = "a mapping" if isinstance(title, dict) else "a list"
+            elif isinstance(title, float) and title != title:
+                kind = "NaN"
+            else:
+                continue
+            try:
+                shown = file_path.relative_to(kb_config.path)
+            except ValueError:
+                shown = file_path
+            issues.append(
+                {
+                    "entry_id": "",
+                    "kb_name": kb_name,
+                    "rule": "non_string_title",
+                    "severity": "error",
+                    "field": "title",
+                    "message": (
+                        f"{shown}: title is {kind}, not a string; pyrite "
+                        f"cannot index it. Quote it as a single line (#711)."
+                    ),
+                }
+            )
 
     @staticmethod
     def _check_reserved_key_collisions(
@@ -1266,8 +1631,24 @@ class QAService:
                 issue = fn(enriched, kb_schema, params)
                 if issue is not None:
                     issues.append(issue)
-            except Exception:
+            except Exception as exc:
+                # The item was not checked: report it, like an unknown checker
+                # above, rather than let the entry pass it (#795).
                 logger.warning("Named rubric checker '%s' failed", checker_name, exc_info=True)
+                issues.append(
+                    {
+                        "entry_id": entry_id,
+                        "kb_name": kb_name,
+                        "rule": "checker_failed",
+                        "severity": "warning",
+                        "field": "evaluation_rubric",
+                        "message": (
+                            f"Rubric checker '{checker_name}' failed on this entry, so "
+                            f"'{item.get('text', '')}' was not checked: "
+                            f"{type(exc).__name__}: {exc}"
+                        ),
+                    }
+                )
 
     def _collect_judgment_items(self, entry_type: str, kb_name: str) -> list[str]:
         """Filter rubric items to judgment-only (no deterministic checker, not schema-covered)."""
@@ -1285,10 +1666,17 @@ class QAService:
         return result
 
     def _evaluate_llm_rubric(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
-        """Run LLM rubric evaluation on a single entry. Returns list of issues."""
+        """Run LLM rubric evaluation on a single entry. Returns list of issues.
+
+        ``[]`` only when the model answered every judgment item and passed
+        them, or the type has none. No model raises ``AINotConfiguredError``,
+        an entry not in the index ``EntryNotFoundError``, and a model that did
+        not answer ``EvaluationFailedError`` (#795).
+        """
         if not self.llm_available:
-            logger.info("LLM not configured; skipping LLM rubric evaluation for %s", entry_id)
-            return []
+            raise AINotConfiguredError(
+                "QA tier 2 runs the model-judged rubric and no model is configured"
+            )
 
         # Fetch entry row
         rows = self.db.execute_sql(
@@ -1297,13 +1685,19 @@ class QAService:
             {"entry_id": entry_id, "kb_name": kb_name},
         )
         if not rows:
-            return []
+            raise EntryNotFoundError(
+                f"Entry '{entry_id}' is not in the index of KB '{kb_name}'; "
+                "tier 2 has nothing to evaluate"
+            )
+        return self._evaluate_llm_rubric_row(rows[0])
 
-        entry = rows[0]
+    def _evaluate_llm_rubric_row(self, entry: dict[str, Any]) -> list[dict[str, Any]]:
+        """The model-judged rubric for one index row (see `_evaluate_llm_rubric`)."""
+        kb_name = entry["kb_name"]
         entry_type = entry.get("entry_type", "")
         judgment_items = self._collect_judgment_items(entry_type, kb_name)
         if not judgment_items:
-            return []
+            return []  # nothing for the model to judge: a legitimate empty
 
         # Get guidelines for context
         kb_config = self.config.get_kb(kb_name)
@@ -1311,6 +1705,20 @@ class QAService:
         type_meta = resolve_type_metadata(entry_type, kb_schema)
         guidelines = type_meta.get("guidelines", "")
 
+        try:
+            return self._run_evaluator(entry, judgment_items, guidelines)
+        except PyriteError:
+            raise
+        except Exception as exc:
+            # Whatever the evaluator did not expect is still a check that did
+            # not run: name it for this entry, never end the caller's run.
+            logger.warning("Tier 2 evaluation of %s failed", entry["id"], exc_info=True)
+            raise EvaluationFailedError(entry["id"], f"{type(exc).__name__}: {exc}") from exc
+
+    def _run_evaluator(
+        self, entry: dict[str, Any], judgment_items: list[str], guidelines: str
+    ) -> list[dict[str, Any]]:
+        """Run the async evaluator from sync code, in or out of an event loop."""
         import asyncio
 
         try:
@@ -1330,6 +1738,38 @@ class QAService:
                 )
         except RuntimeError:
             return asyncio.run(self.llm_evaluator.evaluate(dict(entry), judgment_items, guidelines))
+
+    def _check_llm_rubric_all(self, issues: list[dict[str, Any]], kb_name: str) -> None:
+        """Tier 2 of `validate_kb`: the model-judged rubric over every entry.
+
+        Skips ``qa_assessment`` entries, as `assess_kb` does. A model finding
+        is an issue as `assess_entry` records it; an entry the model did not
+        answer for is an ``evaluation_failed`` error naming the reason, so
+        `ci` can never pass a check that did not run (#795).
+        """
+        rows = self.db.execute_sql(
+            "SELECT id, kb_name, entry_type, title, date, importance, body, status, metadata "
+            "FROM entry WHERE kb_name = :kb_name AND entry_type != 'qa_assessment' ORDER BY id",
+            {"kb_name": kb_name},
+        )
+        for row in rows:
+            try:
+                issues.extend(self._evaluate_llm_rubric_row(row))
+            # Second layer: `_evaluate_llm_rubric_row` already turns any error
+            # into EvaluationFailedError; this catch keeps the run going if a
+            # future path does not.
+            except Exception as exc:  # one entry's failure never ends the run
+                issues.append(
+                    {
+                        "entry_id": row["id"],
+                        "kb_name": kb_name,
+                        "rule": "evaluation_failed",
+                        "severity": "error",
+                        "field": "evaluation_rubric",
+                        "message": f"Tier 2 did not run for '{row['id']}': "
+                        + getattr(exc, "reason", str(exc)),
+                    }
+                )
 
     def _check_rubric_all(self, issues: list[dict[str, Any]], kb_name: str) -> None:
         """Bulk SQL rubric checks across all entries in a KB."""

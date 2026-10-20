@@ -129,13 +129,16 @@ class TestBulkCreate:
         assert entry is not None
         assert len(entry.links) == 0
 
+    @pytest.mark.control(
+        reason="a property that held before #978; its old form pre-created the link through the whole-file save, which decision 4 made a create, so it goes through `pyrite link` now"
+    )
     def test_duplicate_skipped(self, bulk_env):
         """Existing links are skipped."""
-        # Pre-create a link
-        repo = KBRepository(bulk_env["config"].knowledge_bases[0])
-        entry = repo.load("entry-a")
-        entry.add_link(target="entry-b", relation="related_to", kb="test-notes")
-        repo.save(entry)
+        # Pre-create a link through the write that exists (a save over an
+        # existing entry is refused since #978, decision 4).
+        with _patch_config(bulk_env):
+            first = runner.invoke(app, ["link", "entry-a", "entry-b", "--kb", "test-notes"])
+            assert first.exit_code == 0, first.output
 
         links = [
             {"source": "entry-a", "target": "entry-b", "relation": "related_to"},
@@ -153,14 +156,16 @@ class TestBulkCreate:
             assert "1 created" in result.output
             assert "1 skipped" in result.output
 
+    @pytest.mark.control(
+        reason="a property that held before #978; its old form pre-created the link through the whole-file save, which decision 4 made a create, so it goes through `pyrite link` now"
+    )
     def test_distinct_relation_is_created_not_skipped(self, bulk_env):
         """A different relation between the same (source, target, kb) is a
         new link, not a duplicate (#396): the duplicate key is
         (target, kb, relation)."""
-        repo = KBRepository(bulk_env["config"].knowledge_bases[0])
-        entry = repo.load("entry-a")
-        entry.add_link(target="entry-b", relation="related_to", kb="test-notes")
-        repo.save(entry)
+        with _patch_config(bulk_env):
+            first = runner.invoke(app, ["link", "entry-a", "entry-b", "--kb", "test-notes"])
+            assert first.exit_code == 0, first.output
 
         links = [
             {"source": "entry-a", "target": "entry-b", "relation": "implements"},
@@ -304,8 +309,16 @@ class TestBulkCreate:
         assert entry is not None
         assert entry.links[0].relation == "related_to"
 
+    @pytest.mark.control(reason="control: a target_kb that exists is still written")
     def test_target_kb_field(self, bulk_env):
-        """target_kb is set on the link when provided."""
+        """target_kb is set on the link when provided.
+
+        The target entry need not exist yet; the target KB must (#846), as
+        `pyrite link --target-kb` has always required.
+        """
+        other = bulk_env["tmpdir"] / "other"
+        other.mkdir()
+        bulk_env["config"].add_kb(KBConfig(name="other-kb", path=other, kb_type=KBType.GENERIC))
         links = [
             {"source": "entry-a", "target": "ext-entry", "target_kb": "other-kb"},
         ]
@@ -355,9 +368,9 @@ class TestBulkCreate:
                 ["links", "bulk-create", str(yaml_file), "--kb", "no-such-kb", "--format", "rich"],
             )
             assert result.exit_code == 1
-            assert "KB not found" in result.output
-            # The hint this command gave before it moved to the outcome contract.
-            assert "Run `pyrite kb list`" in result.output
+            assert "not found" in result.output and "no-such-kb" in result.output
+            # The one resolver's hint (#952): the CLI resolves -k before the body.
+            assert "orient" in result.output
 
 
 @pytest.mark.cli

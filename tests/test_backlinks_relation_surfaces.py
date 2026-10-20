@@ -52,7 +52,6 @@ def _assert_rows(rows):
 
 def test_rest_entry_backlinks_carry_both_relations(w):
     p = w.principals["admin_key"]
-    w.release_idle_connections()
     r = w.client.get(
         f"/api/entries/{TARGET}",
         params={"kb": READABLE},

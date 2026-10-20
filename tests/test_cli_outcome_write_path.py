@@ -147,16 +147,16 @@ def doc(result):
 REFUSALS = [
     # (id, argv, code, hint): `hint` is a substring of the suggestion dev gave for the
     # same input, or None when it gave none.
-    ("create-kb", ["create", "-k", "nokb", "-t", "note", "--title", "x"], "KB_NOT_FOUND", None),
-    ("update-kb", ["update", "hello", "-k", "nokb", "--title", "x"], "KB_NOT_FOUND", None),
-    ("link-kb", ["link", "hello", "hello", "-k", "nokb"], "KB_NOT_FOUND", None),
-    ("rename-kb", ["rename", "hello", "other", "-k", "nokb"], "KB_NOT_FOUND", None),
-    ("add-kb", ["add", "{f_ok}", "-k", "nokb"], "KB_NOT_FOUND", None),
+    ("create-kb", ["create", "-k", "nokb", "-t", "note", "--title", "x"], "KB_NOT_FOUND", "orient"),
+    ("update-kb", ["update", "hello", "-k", "nokb", "--title", "x"], "KB_NOT_FOUND", "orient"),
+    ("link-kb", ["link", "hello", "hello", "-k", "nokb"], "KB_NOT_FOUND", "orient"),
+    ("rename-kb", ["rename", "hello", "other", "-k", "nokb"], "KB_NOT_FOUND", "orient"),
+    ("add-kb", ["add", "{f_ok}", "-k", "nokb"], "KB_NOT_FOUND", "orient"),
     (
         "bulk-kb",
         ["links", "bulk-create", "{links}", "-k", "nokb"],
         "KB_NOT_FOUND",
-        "pyrite kb list",
+        "orient",  # the one resolver's hint: the CLI resolves -k before the body (#924)
     ),
     ("create-ro", ["create", "-k", "ro", "-t", "note", "--title", "x"], "KB_READ_ONLY", None),
     ("update-ro", ["update", "hello", "-k", "ro", "--title", "x"], "KB_READ_ONLY", None),

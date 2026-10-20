@@ -1,6 +1,6 @@
 /** Entry store: current entry, entry list, dirty state */
 
-import { api } from '$lib/api/client';
+import { api, ApiError } from '$lib/api/client';
 import type { EntryResponse } from '$lib/api/types';
 
 class EntryStore {
@@ -14,9 +14,16 @@ class EntryStore {
 	listKB = $state<string | undefined>(undefined);
 	saving = $state(false);
 	error = $state<string | null>(null);
+	/** KBs holding the requested id when the API refused it as AMBIGUOUS (#910). */
+	ambiguousKbs = $state<string[] | null>(null);
 	dirty = $state(false);
-	recentIds = $state<string[]>([]);
-	recentTitles = $state<Record<string, string>>({});
+	/** Recently opened entries, keyed on (kb, id): two KBs' twins stay two rows (#912). */
+	recent = $state<{ id: string; kb: string; title: string }[]>([]);
+	private loadRequestId = 0;
+
+	get recentIds(): string[] {
+		return this.recent.map((r) => r.id);
+	}
 	sortBy = $state('updated_at');
 	sortOrder = $state<'asc' | 'desc'>('desc');
 	private listRequestId = 0;
@@ -63,17 +70,25 @@ class EntryStore {
 	}
 
 	async loadEntry(id: string, kb?: string) {
+		const requestId = ++this.loadRequestId;
 		this.loading = true;
 		this.error = null;
+		this.ambiguousKbs = null;
 		try {
-			this.current = await api.getEntry(id, { kb, with_links: true });
+			const entry = await api.getEntry(id, { kb, with_links: true });
+			if (requestId !== this.loadRequestId) return; // a newer load owns the page
+			this.current = entry;
 			this.dirty = false;
 			this.addRecent(id);
 		} catch (e) {
+			if (requestId !== this.loadRequestId) return;
+			if (e instanceof ApiError && e.code === 'AMBIGUOUS' && e.candidateKbs?.length) {
+				this.ambiguousKbs = e.candidateKbs;
+			}
 			this.error = e instanceof Error ? e.message : 'Failed to load entry';
 			this.current = null;
 		} finally {
-			this.loading = false;
+			if (requestId === this.loadRequestId) this.loading = false;
 		}
 	}
 
@@ -98,10 +113,12 @@ class EntryStore {
 	}
 
 	private addRecent(id: string) {
-		this.recentIds = [id, ...this.recentIds.filter((r) => r !== id)].slice(0, 10);
-		if (this.current?.title) {
-			this.recentTitles = { ...this.recentTitles, [id]: this.current.title };
-		}
+		const kb = this.current?.kb_name ?? '';
+		const title = this.current?.title ?? id;
+		this.recent = [
+			{ id, kb, title },
+			...this.recent.filter((r) => !(r.id === id && r.kb === kb))
+		].slice(0, 10);
 	}
 }
 

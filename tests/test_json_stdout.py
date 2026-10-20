@@ -16,7 +16,7 @@ runner = CliRunner()
 
 
 @contextmanager
-def _fake_cli_context():
+def _fake_cli_context(*args, **kwargs):
     """Same shape as cli_context(): a context manager yielding (config, db, svc)."""
     yield None, None, None
 

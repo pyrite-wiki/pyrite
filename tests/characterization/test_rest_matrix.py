@@ -165,17 +165,6 @@ class TestRestPrincipalMatrix:
         skipped = []
         for method, path in sorted(all_routes):
             for kb_state in KB_STATES:
-                # Releases this world's DB's per-thread fallback SQLAlchemy
-                # sessions before every call (see
-                # `World.release_idle_connections`'s docstring) -- without
-                # it, this many `TestClient` requests against the shared
-                # `get_db` override exhausts the connection pool partway
-                # through one principal's route sweep, and the request that
-                # finds it empty hangs forever rather than erroring
-                # (confirmed with faulthandler while building this harness;
-                # a sparser interval was not reliably enough headroom for a
-                # write-tier principal's heavier per-request session use).
-                world.release_idle_connections()
                 key = f"{method} {path} | {principal_name} | {kb_state}"
                 try:
                     kwargs = build_call(

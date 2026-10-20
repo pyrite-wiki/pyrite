@@ -8,7 +8,7 @@ from ...exceptions import EntryNotFoundError
 from ...plugins.registry import get_registry
 from ...services.access_policy import KB, AccessPolicy, Action, ReadScope
 from ...services.kb_service import KBService
-from ...utils.metadata import parse_metadata
+from ...utils.metadata import declared_over_bag, parse_metadata
 from ..api import (
     get_access_policy,
     get_kb_service,
@@ -156,7 +156,7 @@ def create_collection(
     )
 
     return CollectionResponse(
-        id=result["id"],
+        id=result.id,
         title=body.title,
         description=body.description or "",
         source_type="query",
@@ -194,7 +194,12 @@ def get_collection(
             detail={"code": "NOT_FOUND", "message": f"Collection '{collection_id}' not found"},
         )
 
-    meta = _parse_metadata(result.get("metadata"))
+    # A single-entry read spells a collection's declared fields at their own
+    # names and keeps `metadata` for undeclared keys (#1025, option B).
+    meta = declared_over_bag(
+        result,
+        ("description", "source_type", "icon", "view_config", "folder_path", "query"),
+    )
     resp = CollectionResponse(
         id=result["id"],
         title=result.get("title", ""),

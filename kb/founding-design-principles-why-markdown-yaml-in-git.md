@@ -9,10 +9,6 @@ tags:
 - git
 - markdown
 - trust
-metadata:
-  status: active
-  author: markr
-  date: '2025-06-01'
 status: active
 author: markr
 date: '2025-06-01'

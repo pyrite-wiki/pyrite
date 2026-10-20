@@ -31,7 +31,13 @@ GIT_USING_TESTS = [
 
 def _git(args, cwd, env=None):
     return subprocess.run(
-        ["git", *args], cwd=str(cwd), capture_output=True, text=True, env=env, check=False
+        ["git", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        timeout=120,
     )
 
 
@@ -78,6 +84,7 @@ def test_suite_under_a_git_hook_leaves_the_outer_repo_untouched(decoy_repo, test
         capture_output=True,
         text=True,
         check=False,
+        timeout=120,
     )
 
     assert _fingerprint(decoy_repo) == before, "a test wrote into the outer repository"

@@ -158,7 +158,7 @@ class VersionService:
         if not _COMMIT_HASH_RE.fullmatch(commit_hash):
             raise InvalidGitRefError("Invalid commit hash: expected a hex object id")
 
-        from ..services.git_service import GitService
+        from ..services.git_service import SERVABLE, GitService
 
         kb_config = self.config.get_kb(kb_name)
         if not kb_config:
@@ -216,64 +216,7 @@ class VersionService:
             current_rel_path = str(Path(entry["file_path"]).relative_to(kb_path))
         except ValueError:
             current_rel_path = None
-        if versioned_path:
-            # Stored KB-relative from this fix onward. Tolerate an absolute
-            # path under the KB (a dev database may hold rows from before
-            # paths were stored relative); any other absolute path is
-            # refused below, never resolved.
-            if Path(versioned_path).is_absolute():
-                try:
-                    rel_path = str(Path(versioned_path).relative_to(kb_path))
-                except ValueError:
-                    rel_path = versioned_path
-            else:
-                rel_path = versioned_path
-        else:
-            rel_path = current_rel_path
-        if rel_path is None:
-            # The entry's indexed path is not under the KB: nothing to read.
-            return None
-        # A version read at a path other than the entry's current one goes
-        # through read_file_at, which refuses an absolute path or a ".."
-        # segment (git anchors "./" at the KB, so either names a file other
-        # than the recorded one), and must hold this entry: a row pointing at
-        # another entry's file (as rename pairing by similarity alone once
-        # recorded) is not served. The current path came from relative_to
-        # above, so it is already KB-relative.
-        if rel_path != current_rel_path:
-            from ..models.core_types import entry_id_from_markdown
-
-            text = GitService.read_file_at(kb_path, commit, rel_path)
-            if text is None or entry_id_from_markdown(text) != entry_id:
-                return None
-            return text
-
-        # Read the entry's file at the peeled, full commit id. `<rev>:<path>`
-        # is resolved by git relative to the repo root, not to `cwd`, so a
-        # path relative to a KB directory that is itself a subdirectory of
-        # its repo must be anchored with `./` -- otherwise git looks for it
-        # at the repo root and never finds it (#415).
-        try:
-            result = subprocess.run(
-                ["git", "show", "--end-of-options", f"{commit}:./{rel_path}"],
-                cwd=str(kb_path),
-                capture_output=True,
-                text=True,
-                timeout=10,
-                env=GitService.subprocess_env(),
-            )
-            if result.returncode == 0:
-                # The same path can hold a different entry at an older
-                # commit (one entry deleted, another created there later).
-                # A file that states another id is not this entry's
-                # version. A file with no explicit id is served: its id
-                # comes from the title, which a normal edit may change.
-                from ..models.core_types import explicit_entry_id
-
-                stated_id = explicit_entry_id(result.stdout)
-                if stated_id is not None and stated_id != entry_id:
-                    return None
-                return result.stdout
-        except Exception:
-            logger.warning("Git show failed for KB", exc_info=True)
-        return None
+        verdict, text = GitService.version_servability(
+            kb_path, commit, versioned_path, current_rel_path, entry_id
+        )
+        return text if verdict == SERVABLE else None

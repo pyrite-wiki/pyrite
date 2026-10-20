@@ -12,9 +12,8 @@ from a hand-kept table:
   admin tier registers every tool, core and plugin).
 
 What neither walk sees is named in ``NON_ROUTE_ENTRY_POINTS`` (the same two
-surfaces ``test_read_scoping_is_structural.py`` records), and the CLI and
-the Streamlit UI are modules rather than registries; the layer ratchet
-covers them by path.
+surfaces ``test_read_scoping_is_structural.py`` records), and the CLI is a
+set of modules rather than a registry; the layer ratchet covers it by path.
 """
 
 from __future__ import annotations

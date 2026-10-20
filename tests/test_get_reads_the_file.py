@@ -397,17 +397,18 @@ def test_no_row_but_a_file_is_found(env, svc):
     assert got["indexed_at"] is None and got["links"] == []
 
 
-@pytest.mark.control(reason="dev never reads a file on a miss; guards the no-scan rule")
-def test_no_row_and_no_file_named_like_the_id_is_a_miss_without_a_scan(env, svc):
-    """A miss reads no file: an id with no row is looked for under its own name
-    only (a scan of every file costs seconds on a large KB). A file whose id is
-    not its filename is found once the index has it."""
+def test_no_row_and_no_file_named_like_the_id_is_found_by_the_scan(env, svc):
+    """An id with no row and no file named like it is found by the scan
+    ``find_file`` uses, so ``get`` and ``create`` agree (maintainer,
+    2026-10-15, #135). #857 left the scan out of the read because it cost
+    seconds on a large KB; the raw-text prefilter makes it a read of each
+    file with no parse (``test_find_file_prefilter.py`` counts the parses)."""
     (env["kb_path"] / "notes" / "other-name.md").write_text(
         "---\nid: renamed-id\ntitle: R\ntype: note\n---\n\nx\n"
     )
-    with _files_opened() as opened:
-        assert svc.get_entry("renamed-id", KB, readable_kbs=None) is None
-    assert opened == []
+    got = svc.get_entry("renamed-id", KB, readable_kbs=None)
+    assert got is not None and got["title"] == "R"
+    assert svc.get_entry("no-file-holds-this", KB, readable_kbs=None) is None
 
 
 def test_a_row_but_no_file_is_not_found(env, svc):
@@ -631,6 +632,11 @@ PIN_FILES = {
 }
 
 
+@pytest.mark.control(
+    reason="the pin held on dev, where the two projections were equal key for key; it is "
+    "loosened on the one key they now differ on by decision (#1025, option B), so it "
+    "passes without the fix and pins that nothing else drifts"
+)
 def test_on_a_fresh_index_the_file_read_equals_the_row(tmp_path):
     """``IndexManager.read_fields`` mirrors the backend's row shape; this is
     the test that fails when one changes without the other (a finding for
@@ -660,7 +666,18 @@ def test_on_a_fresh_index_the_file_read_equals_the_row(tmp_path):
             got = {k: v for k, v in read.items() if k not in ("outlinks", "backlinks")}
             got.pop("content_hash")
             assert list(got) == list(row), entry_id
-            assert got == row, entry_id
+            # The one key the two projections differ on, by decision (#1025,
+            # option B): the read's `metadata` holds the row's bag less every
+            # key the read spells at its own name with the same value (a
+            # declared field); the row, the storage dict, keeps the whole bag.
+            read_bag, row_bag = got.pop("metadata"), dict(row["metadata"])
+            assert got == {k: v for k, v in row.items() if k != "metadata"}, entry_id
+            for key, value in row_bag.items():
+                if key in read_bag:
+                    assert read_bag[key] == value, (entry_id, key)
+                else:
+                    assert key in got and got[key] == value, (entry_id, key, "lost from the read")
+            assert set(read_bag) <= set(row_bag), entry_id
     finally:
         db.close()
 
@@ -687,7 +704,9 @@ def test_the_overlay_reads_the_users_own_file_never_mains_in_its_place(tmp_path)
     main_file = kb_path / "notes" / f"{ENTRY}.md"
     main_file.write_text(ORIGINAL)
     for cmd in (["git", "add", "."], ["git", "commit", "-qm", "kb"]):
-        subprocess.run(cmd, cwd=repo, env=_clean_git_env(), check=True, capture_output=True)
+        subprocess.run(
+            cmd, cwd=repo, env=_clean_git_env(), check=True, capture_output=True, timeout=120
+        )
     config = _config(tmp_path, KBConfig(name=KB, path=kb_path, kb_type="generic"))
     _index(config)
     db = PyriteDB(config.settings.index_path)

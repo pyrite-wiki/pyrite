@@ -58,6 +58,39 @@ typed MCP create tool schema if it has one (`sw_create_backlog_item` has real
 pyrite create -k notes -t note --title "Hello agent" --body "First note."
 ```
 
+**What a create writes.** A create from fields (`create`, MCP `kb_create` and
+`kb_bulk_create`, REST `POST /api/entries`, the web clipper, `pyrite import` of
+JSON, YAML or markdown) writes every field the type's schema declares: the
+fields in this KB's `kb.yaml` (`fields`, `optional`, `required`), any a plugin
+declares through `get_field_schemas()` (no shipped plugin does yet), and the
+core type's own (a `person`'s `role` and `affiliations`). `kb.yaml` can add a
+field or change its type and default; it cannot remove a core type's field.
+Base fields (`summary`, `tags`, `aliases`, `sources`, `links`, ...) are written
+only when set, and a field the type manages (a task's audit trail, an ADR's
+number) is never added.
+
+A declared field you send is written as sent, an empty value included: in a KB
+whose `kb.yaml` declares `kind` for `backlog_item` (one made with
+`pyrite init -t software` does), `-f kind=` writes `kind: ""`; where nothing
+declares it, an empty `kind` is not written. A declared field you leave out
+gets its `default` when it declares one, otherwise an empty value: `""` for
+text and select, `[]` for a list, multi-select or tags, `null` for a number,
+date, datetime, checkbox or reference. A field the type's model holds keeps
+the model's type when empty (`affiliations: []`). The create validates, runs
+its hooks on and indexes these values, so a default that breaks the schema is
+refused like a value you sent. An empty value (`""`, `[]`, `null`) is no value
+to every optional check, whatever the field's declared type; a `required`
+field still refuses it. A typed entry writes a declared field its model
+has no attribute for under `metadata:`, where it writes the same field when
+you send it. When an update later fills an empty `""`, the value is written
+plain (`kind: bug`).
+
+`pyrite import` reads a markdown file's frontmatter as fields and builds the
+entry from them, so it is a create from fields too. `pyrite add` writes the
+file's own keys and nothing else, and an update never adds a key the file
+lacks. A `note` declares no fields of its own, so the file below has none
+(#86).
+
 `create` defaults to JSON like every write command (see the
 [`--format` table](json-contracts.md#--format-defaults); `--format rich` prints
 `Created: <id>`). Read the id from `entry_id`. To change it, use `update`:
@@ -69,20 +102,95 @@ pyrite update hello-agent -k notes --body "Second note."
 
 <!-- output-keys -->
 ```json
-{"updated": true, "entry_id": "hello-agent", "outcome": "done"}
+{"updated": true, "entry_id": "hello-agent", "outcome": "done", "locked": false}
 ```
 
-A field the type does not declare is stored under `metadata`, not at the top
-level of the entry:
+`locked: false` says this KB is not a git work tree: the write compared the
+file with what it read and replaced it, with no lock (two writers can both
+pass that compare). Inside git the key is absent, which means `true`.
 
-<!-- expect-text: "foo": "bar" -->
+A field the type does not declare is written at the top level of the file;
+`get` returns it under `metadata`. Read the file to see where it landed:
+
+<!-- expect-text: foo: bar -->
 ```bash
 pyrite update hello-agent -k notes -f foo=bar
-pyrite get hello-agent -k notes
+cat notes/notes/hello-agent.md
+```
+
+```text
+---
+id: hello-agent
+title: Hello agent
+type: note
+importance: 5
+foo: bar
+---
+
+Second note.
 ```
 
 Which fields an update may set, and which it refuses, is the **Update
-fields** paragraph of the contracts page.
+fields** paragraph of the contracts page. An update writes only the fields it
+names, so the lines you did not name keep their bytes; see
+[How Pyrite edits your files](how-pyrite-edits-your-files.md).
+
+### Add or remove one item
+
+`--tags` (MCP `tags`) replaces the whole list. To add or drop one item
+without resending the list, use an item operation. `--append` takes
+`field=item`, or a JSON list (`'tags=["x","y"]'`) for several items:
+
+<!-- expect-text: - x -->
+<!-- expect-text: - y -->
+```bash
+pyrite update hello-agent -k notes --append 'tags=["x","y"]'
+cat notes/notes/hello-agent.md
+```
+
+```text
+---
+id: hello-agent
+title: Hello agent
+type: note
+importance: 5
+foo: bar
+tags:
+- x
+- y
+---
+
+Second note.
+```
+
+`--remove` drops one item and `--unset` removes a key with its lines. The
+last line of the block fails the step if either is still in the file:
+
+<!-- expect-text: - y -->
+```bash
+pyrite update hello-agent -k notes --remove tags=x
+pyrite update hello-agent -k notes --unset foo
+cat notes/notes/hello-agent.md
+test "$(grep -c -e '^foo:' -e '^- x$' notes/notes/hello-agent.md)" = 0
+```
+
+```text
+---
+id: hello-agent
+title: Hello agent
+type: note
+importance: 5
+tags:
+- y
+---
+
+Second note.
+```
+
+MCP `kb_update` spells these `"append": {"tags": "x"}`, `"remove": {"tags":
+"x"}` and `"unset": ["foo"]`; REST `PATCH` takes `op`. The table is in
+[How Pyrite edits your files](how-pyrite-edits-your-files.md), the result
+shapes in [Write success shapes](json-contracts.md#update).
 
 ## 3. Read it back
 
@@ -131,8 +239,10 @@ codes, what each means and what to do are one table:
 [Write refusals](json-contracts.md#write-refusals-create-import-update).
 Two things this page adds:
 
-- All are `retryable: false`: retrying the same request unchanged fails the
-  same way. Change the request.
+- All are `retryable: false` except `CONFLICT` and `STORAGE_ERROR` on a locked
+  database (`retryable: true`): for `CONFLICT`, re-read the entry, then repeat
+  the update. For every other code, retrying the same request unchanged fails
+  the same way. Change the request.
 - A CLI write command prints a refusal as JSON by default
   (`{"error", "error_code", ...}`), or as `ERROR [CODE]: message` under
   `--format rich`; branch on exit code `1` and read `error_code`. (`delete`,
@@ -149,8 +259,14 @@ pyrite update hello-agent -k nokb --title x
 
 <!-- output-keys -->
 ```json
-{"outcome": "error", "error": "KB not found: nokb", "error_code": "KB_NOT_FOUND", "retryable": false}
+{"outcome": "error", "error": "KB 'nokb' not found", "error_code": "KB_NOT_FOUND", "retryable": false, "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.", "did_you_mean": []}
 ```
+
+An update is refused only for a violation it causes. A schema violation
+already in the file, in a field your request does not name, comes back as a
+warning in the result (`note`: "already on disk"), and the file's value is
+left as it was. Setting that field to another bad value, or a change that
+triggers a new finding, is still refused (ADR-0042 decision 8).
 
 ## Not covered here
 
@@ -158,4 +274,4 @@ pyrite update hello-agent -k nokb --title x
   [Write success shapes](json-contracts.md#write-success-shapes).
 - Truncated bodies: never write back a body marked `body_truncated`; see
   [Writing a body back](json-contracts.md#writing-a-body-back).
-- #303 (open) is the decision that would make CLI output format one rule.
+- CLI output format is one rule, decided in #303: see [`--format` defaults](json-contracts.md#--format-defaults). Modules not yet migrated are listed in `tests/legacy_commands/`.

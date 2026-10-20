@@ -75,6 +75,10 @@ def _frontmatter(kb_path: Path) -> dict:
     return load_yaml(text.split("---", 2)[1])
 
 
+@pytest.mark.control(
+    reason="the create-then-update round trip of an undeclared key already landed under "
+    "metadata: before #955; the control pins that the update edits it there and nowhere else"
+)
 def test_update_field_writes_an_undeclared_metadata_key(tmp_path):
     """`foo` on a note, set at create time, is still writable through update."""
     config, kb_path = _make_env(tmp_path, "notes", NOTE_KB_YAML)
@@ -91,7 +95,11 @@ def test_update_field_writes_an_undeclared_metadata_key(tmp_path):
     result = _invoke(config, ["update", entry_id, "-k", "notes", "-f", "foo=baz"])
     assert result.exit_code == 0, result.output
 
-    assert _frontmatter(kb_path)["metadata"]["foo"] == "baz"
+    # The update edits the key where the file holds it (ADR-0042 decision 6,
+    # #955): under `metadata:`, where create put it, and nowhere else.
+    fm = _frontmatter(kb_path)
+    assert fm["metadata"]["foo"] == "baz"
+    assert "foo" not in fm
 
 
 def test_update_field_writes_a_brand_new_undeclared_metadata_key(tmp_path):
@@ -101,10 +109,18 @@ def test_update_field_writes_a_brand_new_undeclared_metadata_key(tmp_path):
     assert result.exit_code == 0, result.output
     entry_id = _entry_id(kb_path)
 
+    before = list(kb_path.rglob("*.md"))[0].read_text(encoding="utf-8")
     result = _invoke(config, ["update", entry_id, "-k", "notes", "-f", "newkey=v1"])
     assert result.exit_code == 0, result.output
 
-    assert _frontmatter(kb_path)["metadata"]["newkey"] == "v1"
+    # A key the file does not hold is a new top-level key, on the last line
+    # of the frontmatter (ADR-0042 decision 6: update never nests a key under
+    # `metadata:`, #955); the file gains exactly that line.
+    fm = _frontmatter(kb_path)
+    assert fm["newkey"] == "v1"
+    assert "newkey" not in (fm.get("metadata") or {})
+    after = list(kb_path.rglob("*.md"))[0].read_text(encoding="utf-8")
+    assert after.replace("newkey: v1\n", "", 1) == before
 
 
 def test_update_field_writes_undeclared_top_level_task_key(tmp_path):

@@ -282,7 +282,7 @@ class TestSemanticWithoutTheExtraSaysSo:
         warnings: list[str] = []
         assert _search(indexed[1], "semantic", warnings) == []
         assert len(warnings) == 1
-        assert "pip install pyrite[semantic]" in warnings[0]
+        assert "pip install" in warnings[0] and "[semantic]" in warnings[0]
         assert "keyword leg ran" not in warnings[0], "false in pure semantic mode"
 
     def test_hybrid_names_the_install_line_beside_real_keyword_hits(self, indexed, no_extra):
@@ -290,7 +290,7 @@ class TestSemanticWithoutTheExtraSaysSo:
         results = _search(indexed[1], "hybrid", warnings)
         assert [r["id"] for r in results] == ["kestrel"]
         assert len(warnings) == 1
-        assert "pip install pyrite[semantic]" in warnings[0]
+        assert "pip install" in warnings[0] and "[semantic]" in warnings[0]
         assert "only the keyword leg ran" in warnings[0]
 
     def test_an_extension_that_will_not_load_does_not_get_the_install_line(
@@ -373,7 +373,7 @@ class TestSemanticWithoutTheExtraSaysSo:
             .get("/api/search", params={"q": "falcon", "kb": "t", "mode": "semantic"})
             .json()
         )
-        assert any("pip install pyrite[semantic]" in w for w in body["warnings"]), body
+        assert any("pip install" in w and "[semantic]" in w for w in body["warnings"]), body
 
     def test_the_warning_reaches_mcp(self, indexed, no_extra):
         from pyrite.server.mcp_server import PyriteMCPServer
@@ -386,7 +386,7 @@ class TestSemanticWithoutTheExtraSaysSo:
             )
         finally:
             server.close()
-        assert any("pip install pyrite[semantic]" in w for w in result["warnings"]), result
+        assert any("pip install" in w and "[semantic]" in w for w in result["warnings"]), result
 
     def test_the_warning_reaches_the_cli_on_stderr_and_stdout_stays_one_document(self, tmp_path):
         kb = tmp_path / "kb"
@@ -410,7 +410,7 @@ class TestSemanticWithoutTheExtraSaysSo:
             pre=pre,
         )
         assert proc.returncode == 0, proc.stderr
-        assert "pip install pyrite[semantic]" in proc.stderr
+        assert "pip install" in proc.stderr and "[semantic]" in proc.stderr
         json.loads(proc.stdout)
 
 

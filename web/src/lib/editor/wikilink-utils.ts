@@ -1,3 +1,5 @@
+import { entryHref } from '$lib/utils/entry-href';
+
 /**
  * Wikilink parsing and rendering utilities.
  *
@@ -116,13 +118,13 @@ export function renderWikilinks(html: string, existingIds?: Set<string>): string
 	// First, handle transclusions: ![[...]] -> blockquote embeds
 	let result = html.replace(
 		TRANSCLUSION_REGEX,
-		(_match, _kb: string | undefined, target: string, heading?: string, blockId?: string) => {
+		(_match, transclusionKb: string | undefined, target: string, heading?: string, blockId?: string) => {
 			const trimmed = target.trim();
 			const headingTrimmed = heading?.trim() || '';
 			const blockIdTrimmed = blockId?.trim() || '';
-			return `<blockquote class="transclusion" data-transclusion-target="${trimmed}" data-transclusion-heading="${headingTrimmed}" data-transclusion-block="${blockIdTrimmed}">
+			return `<blockquote class="transclusion" data-transclusion-target="${trimmed}" data-transclusion-kb="${transclusionKb?.trim() ?? ''}" data-transclusion-heading="${headingTrimmed}" data-transclusion-block="${blockIdTrimmed}">
   <p class="transclusion-loading">Loading transcluded content...</p>
-  <cite><a href="/entries/${encodeURIComponent(trimmed)}">${trimmed}</a></cite>
+  <cite><a href="${entryHref(trimmed, transclusionKb?.trim())}">${trimmed}</a></cite>
 </blockquote>`;
 		}
 	);
@@ -157,7 +159,7 @@ export function renderWikilinks(html: string, existingIds?: Set<string>): string
 			} else if (blockIdTrimmed) {
 				fragment = `#block-${encodeURIComponent(blockIdTrimmed)}`;
 			}
-			const href = `/entries/${encodeURIComponent(trimmed)}${kbPrefix ? `?kb=${encodeURIComponent(kbPrefix)}` : ''}${fragment}`;
+			const href = `${entryHref(trimmed, kbPrefix)}${fragment}`;
 
 			const missing = existingIds && !existingIds.has(trimmed);
 			const cls = missing ? 'wikilink wikilink-missing' : 'wikilink';

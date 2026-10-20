@@ -9,7 +9,7 @@ tags:
 - conductor
 importance: 5
 kind: tech_debt
-status: proposed
+status: in_progress
 priority: high
 effort: S
 rank: 0
@@ -24,8 +24,8 @@ github_issue: 168
 
 1. `scripts/e2e.sh [playwright args…]` runs `npx playwright test` from `web/` under the **same** lock as `scripts/suite.sh` (one heavy thing on the machine, whichever kind), with the same waiting message and timeout. `web/package.json`'s `test:e2e` script calls it, so `npm run test:e2e` cannot bypass the lock.
 2. `web/playwright.config.ts` bounds local workers: `workers: process.env.CI ? 1 : Number(process.env.PW_WORKERS ?? 2)` (today `undefined` = half the cores).
-3. Every instruction to run the suite says `scripts/suite.sh`, and every instruction to run Playwright says `scripts/e2e.sh`: `.claude/agents/pyrite-worker.md`, `pyrite-reviewer.md`, `pyrite-explorer.md`, `.claude/skills/pyrite-dev/SKILL.md`, `.claude/skills/pyrite-conductor/{SKILL,dispatch,review}.md`, `CONTRIBUTING.md`. A test greps those files and fails on a bare `pytest tests/ extensions/` with `-n auto` or a bare `npx playwright test` outside a code block marked as CI.
-4. The conductor's health step (`.claude/skills/pyrite-conductor/SKILL.md`) has a stated refusal: no worker, review suite or Playwright run is started when the 1-minute load average is above the core count or free+inactive memory is under 4 GB; the tick log records the refusal. (Prose in the skill plus `scripts/machine_ok.sh` printing the two numbers and exiting non-zero — so the rule is a command, not a judgement.)
+3. Every instruction to run the suite says `scripts/suite.sh`, and every instruction to run Playwright says `scripts/e2e.sh`: `.claude/skills/pyrite-dev/SKILL.md` and `CONTRIBUTING.md` here (the maintainer's loop prompts and skills live outside this repo and follow the same rule). A test greps those files and fails on a bare `pytest tests/ extensions/` with `-n auto` or a bare `npx playwright test` outside a code block marked as CI.
+4. The maintainer's loop health step (outside this repo) has a stated refusal: no worker, review suite or Playwright run is started when the 1-minute load average is above the core count or free+inactive memory is under 4 GB; the tick log records the refusal. (Prose in the skill plus `scripts/machine_ok.sh` printing the two numbers and exiting non-zero — so the rule is a command, not a judgement.)
 5. Outside-PR review agents are told the conductor runs the suite once and hands them the result (the interim rule in #168, made permanent).
 
 ## Groom 2026-09-18 (serial)
@@ -39,3 +39,7 @@ github_issue: 168
 **Model:** sonnet (mechanical once the lock exists). **heavy:** yes, once — one single-spec Playwright run through the wrapper to prove criterion 1; it takes the machine's one slot. **Cold read:** no. **Size:** S, ~150 lines, mostly one-line edits across the prompt files.
 
 **Out of scope:** raising the WIP limit; rewriting the conductor's tick structure; the CI `e2e` job (package H).
+
+## Re-scoped 2026-10-14 (feature/machine-wide-suite-lock)
+
+Done on the same branch as the lock. `scripts/suite.sh` does not exist (test-affected replaced it); instructions name `scripts/test-affected --run`, `scripts/heavy_lock.py -- <command>` for a full suite, and `scripts/e2e.sh`. The grep test is `tests/test_suite_lock.py::TestInstructions`; it also covers the pyrite-dev skill's testing/tdd/debugging pages and `CLAUDE.md`. `scripts/machine_ok.sh` uses the conductor skill's existing limits (load 0.8 x cores, 30% available memory) rather than this item's "load above cores / under 4 GB", which were older than the skill text. Criterion 5 (outside-PR review agents get the conductor's result) was already in the conductor skill's machine budget.

@@ -13,6 +13,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from .cli.context import require_kb
 from .config import (
     CONFIG_FILE,
     KBConfig,
@@ -113,7 +114,7 @@ def kb_add(
 def kb_remove(name: str = typer.Argument(..., help="KB name")):
     """Remove a KB from the registry."""
     config = load_config()
-
+    require_kb(config, name, output_format="rich")
     if not config.get_kb(name):
         console.print(f"[red]Error:[/red] KB '{name}' not found")
         raise typer.Exit(1)
@@ -149,6 +150,7 @@ def kb_discover(path: Path = typer.Argument(".", help="Path to search")):
 def kb_validate(name: str = typer.Argument(..., help="KB name")):
     """Validate a KB configuration."""
     config = load_config()
+    require_kb(config, name, output_format="rich")
     kb = config.get_kb(name)
 
     if not kb:
@@ -179,17 +181,19 @@ def index_build(
 ):
     """Build or rebuild the search index."""
     from .cli.context import index_db_context
-    from .storage import IndexManager
+    from .services.kb_service import KBService
 
     config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     with index_db_context(config) as db:
-        index_mgr = IndexManager(db, config)
+        kb_svc = KBService(config, db)
 
         if kb_name:
-            count = index_mgr.index_kb(kb_name)
+            count = kb_svc.index_kb(kb_name)
             console.print(f"[green]Indexed {count} entries from {kb_name}[/green]")
         else:
-            results = index_mgr.index_all()
+            results = kb_svc.build_index()
             total = sum(results.values())
             console.print(f"[green]Indexed {total} entries across {len(results)} KBs[/green]")
 
@@ -200,13 +204,15 @@ def index_sync(
 ):
     """Incremental index sync with file changes."""
     from .cli.context import index_db_context
-    from .storage import IndexManager
+    from .services.kb_service import KBService
 
     config = load_config()
-    with index_db_context(config) as db:
-        index_mgr = IndexManager(db, config)
 
-        results = index_mgr.sync_incremental(kb_name)
+    require_kb(config, kb_name, output_format="rich")
+    with index_db_context(config) as db:
+        kb_svc = KBService(config, db)
+
+        results = kb_svc.sync_index(kb_name)
         console.print(
             f"[green]Synced:[/green] +{results['added']} -{results['removed']} ~{results['updated']}"
         )
@@ -227,13 +233,15 @@ def index_sync(
 def index_stats(kb_name: str | None = typer.Argument(None, help="KB name")):
     """Show index statistics."""
     from .cli.context import index_db_context
-    from .storage import IndexManager
+    from .services.kb_service import KBService
 
     config = load_config()
-    with index_db_context(config) as db:
-        index_mgr = IndexManager(db, config)
 
-        stats = index_mgr.get_index_stats()
+    require_kb(config, kb_name, output_format="rich")
+    with index_db_context(config) as db:
+        kb_svc = KBService(config, db)
+
+        stats = kb_svc.get_index_stats()
         console.print(f"[bold]Total entries:[/bold] {stats.get('total_entries', 0)}")
         console.print(f"[bold]Total tags:[/bold] {stats.get('total_tags', 0)}")
         console.print(f"[bold]Total links:[/bold] {stats.get('total_links', 0)}")
@@ -249,24 +257,22 @@ def index_embed(kb_name: str = typer.Argument(..., help="KB to generate embeddin
         is_available,
         semantic_unavailable_for,
     )
+    from .utils.install_hints import extra_install_command
 
+    # The KB first (#952): a name that is not a KB is refused before the
+    # dependency check, so the answer names the thing that is wrong.
+    config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db, output_format="rich")
     if not is_available():
         # Nothing was embedded: refused, exit 1 (#526). `cli_error` keeps the
         # brackets of `pyrite[semantic]` literal; a markup string would not.
         cli_error(
             "sentence-transformers is not installed.",
             error_code="DEPENDENCY_MISSING",
-            suggestion="Install semantic extras: pip install pyrite[semantic]",
+            suggestion=f"Install semantic extras: {extra_install_command('semantic')}",
         )
 
-    config, db = get_config_and_db()
     try:
-        if config.get_kb(kb_name) is None:
-            cli_error(
-                f"KB '{kb_name}' not found",
-                error_code="KB_NOT_FOUND",
-                suggestion="run `pyrite-admin kb list` to see registered KBs",
-            )
         if unavailable := semantic_unavailable_for(db):
             # The same cause and remedy `pyrite index embed` gives.
             _, cause, remedy = unavailable
@@ -295,13 +301,13 @@ def index_embed(kb_name: str = typer.Argument(..., help="KB to generate embeddin
 def index_health():
     """Check index health and consistency."""
     from .cli.context import index_db_context
-    from .storage import IndexManager
+    from .services.kb_service import KBService
 
     config = load_config()
     with index_db_context(config) as db:
-        index_mgr = IndexManager(db, config)
+        kb_svc = KBService(config, db)
 
-        health = index_mgr.check_health()
+        health = kb_svc.check_index_health()
         is_healthy = not (
             health["missing_files"] or health["unindexed_files"] or health["stale_entries"]
         )
@@ -592,6 +598,8 @@ def schema_show(kb_name: str = typer.Argument(..., help="KB name")):
     import json
 
     config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     kb = config.get_kb(kb_name)
 
     if not kb:

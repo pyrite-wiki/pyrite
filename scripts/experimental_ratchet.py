@@ -172,7 +172,9 @@ def incompleteness(pytest_exit: str | None, junit: Path) -> str | None:
     return None
 
 
-_NAMED = re.compile(r"`([^`\s]+\.py(?:::[^`]*)?)`")
+# Only bullet entries acknowledge failures; a file mentioned in prose is context.
+# A collection failure is filed as a bare path, while test nodes include ::.
+_NAMED = re.compile(r"^- `([^`\s]+\.py(?:::[^`\r\n]+)?)`", re.M)
 
 
 def open_issue_tests() -> dict[str, int]:
@@ -394,10 +396,13 @@ def file_issues(
             continue
         if f.tests:
             seen = json.loads(_gh(["issue", "view", str(number), "--json", "body,comments"]))
-            text = seen.get("body", "") + "\n".join(
-                c.get("body", "") for c in seen.get("comments", [])
+            text = (
+                seen.get("body", "")
+                + "\n"
+                + "\n".join(c.get("body", "") for c in seen.get("comments", []))
             )
-            unseen = [t for t in f.tests if f"`{t}`" not in text]
+            named = set(_NAMED.findall(text))
+            unseen = [t for t in f.tests if t not in named]
             if not unseen:
                 print(f"already named in #{number}: {f.title}")
                 continue

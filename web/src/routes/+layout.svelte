@@ -54,7 +54,11 @@
 		const unregisterWS = wsClient.onEvent((event) => {
 			if (event.type === 'entry_updated' || event.type === 'entry_deleted') {
 				// If viewing the changed entry, auto-reload
-				if (entryStore.current && entryStore.current.id === event.entry_id) {
+				if (
+					entryStore.current &&
+					entryStore.current.id === event.entry_id &&
+					(!event.kb_name || entryStore.current.kb_name === event.kb_name)
+				) {
 					if (event.type === 'entry_updated') {
 						entryStore.loadEntry(event.entry_id, event.kb_name);
 						uiStore.toast(`"${event.entry_id}" was updated in another tab`, 'info');

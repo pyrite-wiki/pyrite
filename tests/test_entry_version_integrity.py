@@ -22,7 +22,12 @@ from pyrite.storage.models import EntryVersion
 
 def _git(cwd, *args):
     return subprocess.run(
-        ["git", *args], cwd=str(cwd), capture_output=True, text=True, check=True
+        ["git", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
     ).stdout.strip()
 
 
@@ -480,3 +485,370 @@ class TestReadFileAtRefusesUnsafePaths:
             commit_date="2026-01-01T00:00:00+00:00",
         )
         assert repo.svc.get_entry_at_version("stray", "k", c) is None
+
+
+# ---------------------------------------------------------------------------
+# 5. A version list offers only versions a read can serve (#453).
+# ---------------------------------------------------------------------------
+
+
+def _seed_row(repo, entry_id, commit, **kw):
+    """A row an earlier build recorded (a stale one, when the walk now
+    rejects the commit)."""
+    repo.db.upsert_entry_version(
+        entry_id=entry_id,
+        kb_name="k",
+        commit_hash=commit,
+        author_name="T",
+        author_email="t@example.com",
+        commit_date=kw.pop("commit_date", "2026-01-01T00:00:00+00:00"),
+        change_type="created",
+        **kw,
+    )
+
+
+class TestVersionListOffersOnlyReadableVersions:
+    """`entry_version` is derived from git, so an attribution pass replaces an
+    entry's rows with the commits the history walk accepts. A row the walk
+    rejects (another entry's commit at a reused path, #432) must not stay
+    listed while the read refuses it with a 404 (#453). The rows gate which
+    commits a read may serve (#415): removing one only narrows."""
+
+    def test_an_entry_with_only_stale_rows_ends_with_none(self, repo):
+        repo.write("kb/a.md", _note("a1", "A", "text"))
+        c_a = repo.commit("a")
+        repo.write("kb/other.md", _note("o1", "Other", "text"))
+        c_o = repo.commit("other")
+        repo.index()
+        # a1's only row is a commit that never touched a1's file.
+        _seed_row(repo, "a1", c_o, file_path="other.md")
+        repo.attribute()
+        assert repo.versions("a1") == [(c_a, "created")]
+
+    @pytest.mark.control(
+        reason="Guards against an over-eager replace: dev keeps these rows too; "
+        "rows the walk accepts must survive a rebuild unchanged."
+    )
+    def test_rows_the_walk_accepts_are_untouched(self, repo):
+        repo.write("kb/n.md", _note("n1", "N", "one"))
+        c1 = repo.commit("v1")
+        repo.write("kb/n.md", _note("n1", "N", "two"))
+        c2 = repo.commit("v2")
+        repo.index()
+        assert repo.svc.record_commit("k", c2) == 1  # a row from the write path
+        repo.attribute()
+        before = repo.versions("n1")
+        repo.attribute()
+        assert before == repo.versions("n1") == [(c2, "modified"), (c1, "created")]
+
+    def test_since_commit_replaces_only_the_re_read_entries_rows(self, tmp_path):
+        # KB at the repo root: `git diff --name-only` is repo-relative, so a
+        # KB in a subdirectory re-reads nothing under since_commit (#898).
+        repo = _Repo(tmp_path, kb_dir="")
+        try:
+            repo.write("a.md", _note("a1", "A", "text"))
+            c_a = repo.commit("a")
+            repo.write("b.md", _note("b1", "B", "text"))
+            c_b = repo.commit("b")
+            repo.index()
+            _seed_row(repo, "a1", c_b, file_path="b.md")
+            _seed_row(repo, "b1", c_a, file_path="a.md")
+            # Only b.md changed since c_a: only b1 is re-read.
+            IndexManager(repo.db, repo.config).index_with_attribution(
+                "k", GitService, since_commit=c_a
+            )
+            assert [h for h, _ in repo.versions("b1")] == [c_b]
+            assert c_b in [h for h, _ in repo.versions("a1")]  # not re-read: left alone
+        finally:
+            repo.close()
+
+    @pytest.mark.control(
+        reason="Guards against an over-eager delete: an empty walk is absence "
+        "of evidence (not a git repo / file git does not know), so rows stay."
+    )
+    def test_an_empty_walk_deletes_nothing(self, tmp_path):
+        r = _Repo(tmp_path)
+        try:
+            r.write("kb/n.md", _note("n1", "N", "text"))  # never committed
+            r.index()
+            _seed_row(r, "n1", "a" * 40, file_path="n.md")
+            r.attribute()
+            assert [h for h, _ in r.versions("n1")] == ["a" * 40]
+        finally:
+            r.close()
+
+    @pytest.mark.control(reason="Not a git repository: nothing was learned, so nothing is deleted.")
+    def test_a_kb_outside_git_keeps_its_rows(self, tmp_path):
+        kb = tmp_path / "plain"
+        kb.mkdir()
+        (kb / "n.md").write_text(_note("n1", "N", "text"))
+        config = PyriteConfig(
+            knowledge_bases=[KBConfig(name="k", path=kb)],
+            settings=Settings(index_path=tmp_path / "index.db"),
+        )
+        db = PyriteDB(tmp_path / "index.db")
+        try:
+            IndexManager(db, config).index_all()
+            db.upsert_entry_version(
+                entry_id="n1",
+                kb_name="k",
+                commit_hash="b" * 40,
+                author_name="T",
+                author_email="t@example.com",
+                commit_date="2026-01-01T00:00:00+00:00",
+            )
+            IndexManager(db, config).index_with_attribution("k", GitService)
+            assert [v["commit_hash"] for v in db.get_entry_versions("n1", "k")] == ["b" * 40]
+        finally:
+            db.close()
+
+
+class TestAttributionNeverDropsAServableRow:
+    """Property (#453, round 1): attribution deletes a version row only when
+    the version read would refuse it. Every way a row can be servable yet
+    absent from the current walk is spared by the servability check."""
+
+    @pytest.mark.control(
+        reason="Dev keeps every row, so this passes there; it fails against a "
+        "delete-everything-outside-the-walk implementation (round 0 of #453)."
+    )
+    def test_a_row_recorded_between_the_walk_and_the_delete_survives(self, repo):
+        """`record_commit` (the server's write path) can add a row after
+        `get_file_log` ran and before stale rows are dropped. Deterministic
+        stand-in: a subclass hook makes the commit at that exact point."""
+        repo.write("kb/n.md", _note("n1", "N", "one"))
+        c1 = repo.commit("v1")
+        repo.index()
+        late = {}
+
+        class Racing(IndexManager):
+            def _drop_unservable_versions(self, *a, **kw):
+                repo.write("kb/n.md", _note("n1", "N", "two"))
+                late["hash"] = repo.commit("written during the pass")
+                assert repo.svc.record_commit("k", late["hash"]) == 1
+                super()._drop_unservable_versions(*a, **kw)
+
+        Racing(repo.db, repo.config).index_with_attribution("k", GitService)
+        hashes = [h for h, _ in repo.versions("n1")]
+        assert late["hash"] in hashes and c1 in hashes
+        assert repo.svc.get_entry_at_version("n1", "k", late["hash"]) is not None
+
+    @pytest.mark.control(
+        reason="Dev keeps every row, so this passes there; it fails against a "
+        "delete-everything-outside-the-walk implementation (round 0 of #453)."
+    )
+    def test_an_undetected_rename_keeps_the_older_rows(self, repo):
+        repo.write("kb/q.md", _note("n1", "N", "alpha beta gamma " * 40))
+        c1 = repo.commit("c1")
+        repo.index()
+        repo.attribute()
+        (repo.kb / "q.md").unlink()
+        repo.write("kb/p.md", _note("n1", "N", "totally different words here " * 40))
+        c2 = repo.commit("move and rewrite")
+        repo.index()
+        repo.attribute()
+        assert {h for h, _ in repo.versions("n1")} == {c1, c2}
+        assert repo.svc.get_entry_at_version("n1", "k", c1) is not None
+
+
+class TestAttributionDeletesOnlyOnAPositiveFact:
+    """Attribution deletes a version row only on a positive fact: the stored
+    path is unsafe, or git read the blob at that path in that commit and it
+    holds another entry (#453, restart). Every other outcome keeps the row:
+    git's stderr is never classified, because "exists on disk, but not in"
+    covers both "path absent from this commit" and "commit unreadable".
+    Failures are injected at the git subprocess edge or in `.git/objects`,
+    with a real git KB underneath; no service is patched."""
+
+    @pytest.fixture
+    def undetected_rename(self, repo):
+        repo.write("kb/q.md", _note("n1", "N", "alpha beta gamma " * 40))
+        c1 = repo.commit("c1")
+        repo.index()
+        repo.attribute()
+        (repo.kb / "q.md").unlink()
+        repo.write("kb/p.md", _note("n1", "N", "totally different words here " * 40))
+        c2 = repo.commit("move and rewrite")
+        repo.index()
+        return repo, c1, c2
+
+    @staticmethod
+    def _failing_read(outcome):
+        """A `subprocess.run` that fails every version read (a git command
+        naming `<rev>:./<path>`, however the read spells the rest) and passes
+        all other git to real git."""
+        real = subprocess.run
+
+        def run(cmd, *a, **kw):
+            if cmd[:1] == ["git"] and any(":./" in str(arg) for arg in cmd):
+                if isinstance(outcome, BaseException):
+                    raise outcome
+                return outcome
+            return real(cmd, *a, **kw)
+
+        return run
+
+    @pytest.mark.control(
+        reason="Dev keeps every row. Guards against acting on a git failure; "
+        "the does-not-exist stderr case fails on round 2, which classified it."
+    )
+    @pytest.mark.parametrize(
+        "outcome",
+        [
+            subprocess.TimeoutExpired(["git"], 10),
+            OSError("git vanished"),
+            subprocess.CompletedProcess([], 128, b"", b"fatal: unable to read tree abc"),
+            subprocess.CompletedProcess([], 128, b"", b"fatal: path 'q.md' does not exist in 'x'"),
+        ],
+        ids=["timeout", "oserror", "unreadable-tree", "does-not-exist-stderr"],
+    )
+    def test_a_git_failure_keeps_the_row_and_a_clean_rerun_still_has_it(
+        self, undetected_rename, outcome
+    ):
+        from unittest.mock import patch
+
+        repo, c1, _ = undetected_rename
+        with patch("pyrite.services.git_service.subprocess.run", self._failing_read(outcome)):
+            repo.attribute()
+        assert c1 in [h for h, _ in repo.versions("n1")]
+        repo.attribute()
+        assert c1 in [h for h, _ in repo.versions("n1")]
+        assert repo.svc.get_entry_at_version("n1", "k", c1) is not None
+
+    @staticmethod
+    def _side_commit(repo):
+        """A commit of n.md that HEAD's history does not reach (an earlier
+        build recorded it, then the branch moved): the walk never accepts it,
+        so only the servability check decides its row."""
+        _git(repo.root, "checkout", "-q", "-b", "side")
+        repo.write("kb/n.md", _note("n1", "N", "side edit"))
+        c_side = repo.commit("side")
+        _git(repo.root, "checkout", "-q", "-")
+        return c_side
+
+    @pytest.mark.control(
+        reason="Dev keeps every row; 'missing' fails on round 2, which deleted it."
+    )
+    @pytest.mark.parametrize("damage", ["missing", "corrupt"])
+    def test_an_unreadable_commit_object_keeps_the_row(self, repo, damage):
+        """A missing commit fails on round 2: git's stderr for it matched
+        what round 2 read as "definitely absent", and the row was deleted."""
+        repo.write("kb/n.md", _note("n1", "N", "one"))
+        c1 = repo.commit("v1")
+        c_side = self._side_commit(repo)
+        repo.index()
+        _seed_row(repo, "n1", c_side, file_path="n.md")
+        obj = repo.root / ".git" / "objects" / c_side[:2] / c_side[2:]
+        obj.chmod(0o644)
+        if damage == "missing":
+            obj.unlink()
+        else:
+            obj.write_bytes(b"garbage")
+        repo.attribute()
+        assert {h for h, _ in repo.versions("n1")} == {c1, c_side}
+        assert repo.svc.get_entry_at_version("n1", "k", c_side) is None  # still refused
+
+    @pytest.mark.control(reason="Dev keeps every row; fails on round 2, which deleted it.")
+    def test_a_shallow_clone_boundary_keeps_rows_older_than_the_clone(self, tmp_path):
+        """Fails on round 2: the commit past the shallow boundary is absent,
+        which round 2 classified as a definite refusal."""
+        (tmp_path / "src_root").mkdir()
+        src = _Repo(tmp_path / "src_root")
+        try:
+            src.write("kb/n.md", _note("n1", "N", "one"))
+            c1 = src.commit("v1")
+            src.write("kb/n.md", _note("n1", "N", "two"))
+            c2 = src.commit("v2")
+        finally:
+            src.close()
+        clone_parent = tmp_path / "clone_root"
+        clone_parent.mkdir()
+        subprocess.run(
+            [
+                "git",
+                "clone",
+                "-q",
+                "--depth",
+                "1",
+                f"file://{src.root}",
+                str(clone_parent / "repo"),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=120,
+        )
+        kb = clone_parent / "repo" / "kb"
+        config = PyriteConfig(
+            knowledge_bases=[KBConfig(name="k", path=kb)],
+            settings=Settings(index_path=tmp_path / "index.db"),
+        )
+        db = PyriteDB(tmp_path / "index.db")
+        try:
+            IndexManager(db, config).index_all()
+            # A full-history build recorded c1 before the KB was re-cloned shallow.
+            db.upsert_entry_version(
+                entry_id="n1",
+                kb_name="k",
+                commit_hash=c1,
+                author_name="T",
+                author_email="t@example.com",
+                commit_date="2026-01-01T00:00:00+00:00",
+                file_path="n.md",
+            )
+            IndexManager(db, config).index_with_attribution("k", GitService)
+            hashes = {v["commit_hash"] for v in db.get_entry_versions("n1", "k")}
+            assert hashes == {c1, c2}
+        finally:
+            db.close()
+
+    def test_a_non_utf8_old_version_reads_as_none_and_keeps_its_row(self, repo):
+        """Fails on round 2: its read decoded with text=True outside any
+        handler, so both the read and attribution raised UnicodeDecodeError."""
+        (repo.kb / "q.md").write_bytes(
+            b"---\nid: n1\ntitle: N\n---\n" + b"caf\xe9 latin-1 body " * 40 + b"\n"
+        )
+        c1 = repo.commit("latin-1 version")
+        repo.index()
+        (repo.kb / "q.md").unlink()
+        repo.write("kb/p.md", _note("n1", "N", "totally different words here " * 40))
+        c2 = repo.commit("move and rewrite")
+        repo.index()
+        _seed_row(repo, "n1", c1, file_path="q.md")
+        assert repo.svc.get_entry_at_version("n1", "k", c1) is None
+        repo.attribute()
+        assert {h for h, _ in repo.versions("n1")} == {c1, c2}
+
+    @pytest.mark.control(
+        reason="Dev keeps every row; fails on round 2, which read git's "
+        "'does not exist in' as a refusal and deleted it."
+    )
+    def test_a_path_absent_from_a_readable_commit_keeps_its_row(self, repo):
+        """Not a positive fact under the narrowed rule: the commit was read,
+        but nothing at the stored path says another entry is there. The read
+        refuses this version anyway, so keeping the row is the safe side."""
+        repo.write("kb/n.md", _note("n1", "N", "text"))
+        c1 = repo.commit("v1")
+        c_side = self._side_commit(repo)
+        repo.index()
+        _seed_row(repo, "n1", c_side, file_path="gone.md")  # c_side has no gone.md
+        repo.attribute()
+        assert {h for h, _ in repo.versions("n1")} == {c1, c_side}
+        assert repo.svc.get_entry_at_version("n1", "k", c_side) is None
+
+    def test_a_readable_commit_holding_another_id_deletes_the_row(self, repo):
+        repo.write("kb/n.md", _note("n1", "N", "text"))
+        c1 = repo.commit("v1")
+        repo.write("kb/other.md", _note("o1", "Other", "text"))
+        c_o = repo.commit("other")
+        repo.index()
+        _seed_row(repo, "n1", c_o, file_path="other.md")
+        repo.attribute()
+        assert [h for h, _ in repo.versions("n1")] == [c1]
+
+    def test_an_unsafe_stored_path_deletes_the_row(self, repo):
+        repo.write("kb/n.md", _note("n1", "N", "text"))
+        c1 = repo.commit("v1")
+        repo.index()
+        _seed_row(repo, "n1", "c" * 40, file_path="../n.md")  # never resolved
+        repo.attribute()
+        assert [h for h, _ in repo.versions("n1")] == [c1]

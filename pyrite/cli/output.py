@@ -170,6 +170,11 @@ def backlinks_table(entry_id: str, links: list[dict]):
     no declared inverse); ``Written as`` is what the source's file says, so an
     undeclared relation such as ``informs`` is still visible (#527). An
     edge-derived row has no ``forward_relation`` and leaves the cell empty.
+
+    One table row per source (its KB and id): the index holds one row per
+    link the source writes (#1009), so a frontmatter link and a body
+    ``[[x]]`` are two rows from one source. Their relations stand one per
+    line in the cells, in the order the rows came.
     """
     from rich.markup import escape
     from rich.table import Table
@@ -180,13 +185,17 @@ def backlinks_table(entry_id: str, links: list[dict]):
     table.add_column("Type", style="dim")
     table.add_column("Relation", style="dim")
     table.add_column("Written as", style="dim")
+    sources: dict[tuple[str, str], list[dict]] = {}
     for link in links:
+        sources.setdefault((link.get("kb_name", ""), link.get("id", "")), []).append(link)
+    for rows in sources.values():
+        first = rows[0]
         # Cells are Rich markup: a relation is free text and may hold brackets.
         table.add_row(
-            link.get("id", ""),
-            link.get("title", ""),
-            link.get("entry_type", ""),
-            escape(link.get("relation") or ""),
-            escape(link.get("forward_relation") or ""),
+            first.get("id", ""),
+            first.get("title", ""),
+            first.get("entry_type", ""),
+            "\n".join(escape(r.get("relation") or "") for r in rows),
+            "\n".join(escape(r.get("forward_relation") or "") for r in rows),
         )
     return table

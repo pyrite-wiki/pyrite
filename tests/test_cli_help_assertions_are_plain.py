@@ -54,6 +54,7 @@ def test_guard_allows_normalized_or_unrelated_comparisons(source):
     assert _raw_flag_comparisons(source) == []
 
 
+@pytest.mark.guard
 def test_cli_help_assertions_are_plain():
     root = Path(__file__).resolve().parents[1]
     paths = sorted({*root.glob("tests/**/test_*.py"), *root.glob("extensions/*/tests/test_*.py")})

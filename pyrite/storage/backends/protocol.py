@@ -131,6 +131,7 @@ class SearchBackend(Protocol):
         lifecycle: str | None = None,
         fips: str | None = None,
         state: str | None = None,
+        status: str | None = None,
         non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """Full-text search across entries."""

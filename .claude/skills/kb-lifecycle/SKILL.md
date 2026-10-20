@@ -410,5 +410,3 @@ Agents must NOT run `git add` or `git commit`. The orchestrator commits all chan
 - **`references/lessons-learned.md`** -- Case studies from real KB builds documenting problems encountered and solutions
 
 ### Related Skills
-
-- **research-flow** -- Structured Gather-Connect-Analyze-Synthesize research methodology. Useful during Phase 2 Stage 1 and Phase 4 gap research.

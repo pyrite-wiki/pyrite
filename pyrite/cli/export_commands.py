@@ -118,7 +118,7 @@ def export_collection(
         console.print(f"Valid options: {', '.join(source_map.keys())}")
         raise typer.Exit(1)
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb,), output_format="rich") as (config, db, svc):
         entries: list[Entry] = []
         unreadable: list[object] = []  # matched, but could not be loaded for the export
 
@@ -255,7 +255,7 @@ def export_site(
     type_filter = set(exclude_types.split(",")) if exclude_types else set()
     status_filter = set(exclude_status.split(",")) if exclude_status else set()
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb,), output_format="rich") as (config, db, svc):
         kb_config = config.get_kb(kb)
         if not kb_config:
             console.print(f"[red]KB not found: {kb}[/red]")

@@ -47,7 +47,7 @@ reason to prioritise #95, and the docs pass should say which.
 
 - `README.md`, `CLAUDE.md`, `docs/getting-started.md`,
   `docs/configuration.md`, and the CHANGELOG's `[Unreleased]` wording.
-- The `pyrite-dev` and `pyrite-conductor` skills' own commands, which drift
+- The `pyrite-dev` skill's own commands, which drift
   the same way and are read by every agent.
 - `kb/` component and standard entries for the modules that changed.
 - The release runbook, now that `scripts/release.py` exists (#140) — check

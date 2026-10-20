@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { entryHref } from '$lib/utils/entry-href';
 	import Topbar from '$lib/components/layout/Topbar.svelte';
 	import TemplatePicker from '$lib/components/entry/TemplatePicker.svelte';
 	import TypeChoice from '$lib/components/entry/TypeChoice.svelte';
@@ -179,7 +180,7 @@
 
 			const res = await api.createEntry(req as any);
 			uiStore.toast('Entry created', 'success');
-			goto(`/entries/${res.id}`);
+			goto(entryHref(res.id, res.kb_name));
 		} catch (e) {
 			// Surface the server's own refusal message (e.g. #378's
 			// undeclared-type refusal) instead of a generic failure -- the

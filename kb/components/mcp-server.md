@@ -27,7 +27,7 @@ Tier is set at construction time via the `tier` parameter and validated against 
 
 `kb_orient` is the first call of a session. With no `kb_name` it answers from `KBService.orient_overview` with the KBs the caller may read in pages of 50 by default (maximum 100); use `offset` when `has_more` is true. The handler applies `readable_kbs` before paging, which also lets a scoped caller past the dispatcher's fail-closed rule for a call that names no KB. With a `kb_name` it answers from `KBService.orient`; `detail="brief"` drops the write-side schema blocks (`ai_instructions`, `evaluation_rubric`, `guidelines`, `goals`, and the top-level `guidelines`) but keeps `relationship_types`, and blocks a plugin adds (`get_orient_supplement`) are returned whole.
 
-A caller with a readable set is refused by `_kb_not_found` for any KB name outside that set, absent or private alike, before a handler runs, so one caller cannot tell the two apart. The code is `KB_NOT_FOUND` (with `legacy_error_code: NOT_FOUND` for 0.25.7 only). Handlers' own not-found answers are only ever reached for a name the caller may read, so they need not match it; several still say `NOT_FOUND` and move with the error-code sweep.
+Every KB a call names goes through the one resolver (`services/kb_resolver.py`, #952) in `_kb_refusal`, at all three KB-content chokepoints (`_dispatch_tool`, `_get_prompt`, `_read_resource`) and for every caller: an unknown name, a KB outside a scoped caller's readable set and a shortname (link syntax only) are one `KB_NOT_FOUND` before a handler runs, so one caller cannot tell the three apart. The envelope is `_refusal`'s: the resolver's `suggestion`, `did_you_mean` (near matches from the readable set; the full name for a readable KB's shortname) and `legacy_error_code: NOT_FOUND` for one release. A handler's own not-found answer is only ever reached for a name the caller may read.
 
 The types orient and `kb_schema` list come from `KBSchema.declared_types()`, the rule the write path's `UNDECLARED_TYPE` refusal uses.
 
@@ -43,7 +43,7 @@ Four built-in prompts available at all tiers:
 
 - `research_topic` — search across all KBs, summarize findings, identify gaps
 - `summarize_entry` — fetch entry and generate concise summary
-- `find_connections` — analyze relationships between two entries
+- `find_connections` — analyze relationships between two entries (`kb_a`/`kb_b` name each entry's KB)
 - `daily_briefing` — summarize recent timeline events (configurable lookback days)
 
 Each prompt returns MCP `PromptMessage` objects with pre-built user messages.
@@ -55,8 +55,11 @@ Static resources and URI templates for browsing:
 - `pyrite://kbs` — list all knowledge bases
 - `pyrite://kbs/{name}/entries` — list entries in a KB (limit 200)
 - `pyrite://entries/{id}` — get a specific entry
+- `pyrite://kbs/{name}/entries/{id}` — get a specific entry from a named KB
 
 Resources are read via `_read_resource()` which dispatches based on URI prefix matching.
+
+**An id in more than one KB (#528).** Every entry read without a KB (`kb_get`, `kb_read_body`, the task tools, `summarize_entry`, `find_connections`, `pyrite://entries/{id}`) is refused with `AMBIGUOUS` and `candidate_kbs` when the id is in more than one KB the caller can read; a private KB is never a candidate. Tools answer the refusal envelope (`_refusal`) as their result; prompts and resources, which have no result shape for a refusal, send it as a JSON-RPC error whose `data` is that envelope (`_protocol_refusal` in `build_sdk_server`), and each has a way to name the KB: `kb_name`, `kb_a`/`kb_b`, or the KB-qualified resource. `tests/test_ambiguous_id_is_refused.py` drives these over a real MCP session, walks the tool schemas and prompts, and fails on an id-taking surface it has not judged.
 
 ## SDK Integration
 

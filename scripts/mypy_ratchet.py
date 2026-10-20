@@ -4,6 +4,7 @@
     mypy pyrite/ --ignore-missing-imports > mypy.out || true
     python scripts/mypy_ratchet.py mypy.out            # compare to the baseline
     python scripts/mypy_ratchet.py mypy.out --update   # after fixing errors
+    python scripts/mypy_ratchet.py mypy.out --base base.out   # CI: compare to the base commit
 
 `.mypy-baseline.json` records, per file, how many errors mypy reports and which
 ones. Identity of an error is (code, message), never the line number, so edits
@@ -11,6 +12,14 @@ that shift lines do not look like new errors. The verdict is per file: a file
 whose count rose fails the job and the errors above its baseline are printed;
 fixing 3 errors in one file cannot hide 3 new ones in another. A file absent
 from the baseline has a baseline of 0.
+
+With `--base FILE` (mypy's output for the change's BASE commit: HEAD^1 of a PR's
+merge ref, the pre-push SHA of a push to dev) the committed baseline is not
+read: the verdict is what this change added to that commit, so a base that is
+itself above `.mypy-baseline.json` (#1084) cannot paint every PR red, and a
+push to dev that adds errors is red on its own run. The committed file stays
+the fallback for a run with no base commit (a manual dispatch) and what
+`--update` lowers.
 
 `--update` rewrites the baseline from the output, and refuses when any file
 rose unless `--allow-increase`, so the baseline only ratchets down.
@@ -92,7 +101,9 @@ def risen(errors: Errors, baseline: dict) -> dict[str, list[str]]:
     return dict(sorted(out.items()))
 
 
-def summary(errors: Errors, baseline: dict, rose: dict[str, list[str]]) -> str:
+def summary(
+    errors: Errors, baseline: dict, rose: dict[str, list[str]], against: str = "committed baseline"
+) -> str:
     now = sum(counts(errors).values())
     was = baseline.get("total", 0)
     fell = {
@@ -102,7 +113,7 @@ def summary(errors: Errors, baseline: dict, rose: dict[str, list[str]]) -> str:
     }
     lines = [
         "### mypy ratchet",
-        f"errors: {now} (baseline {was}, delta {now - was:+d})",
+        f"errors: {now} ({against} {was}, delta {now - was:+d})",
         f"files that rose: {len(rose)}; files that fell: {len(fell)}",
     ]
     for f, ids in rose.items():
@@ -115,20 +126,38 @@ def summary(errors: Errors, baseline: dict, rose: dict[str, list[str]]) -> str:
 
 
 def run(
-    output: str, baseline_path: Path, *, update: bool = False, allow_increase: bool = False
+    output: str,
+    baseline_path: Path,
+    *,
+    update: bool = False,
+    allow_increase: bool = False,
+    base_output: str | None = None,
 ) -> tuple[int, str]:
     """The whole decision as a pure function: (exit code, text for the log)."""
     try:
         errors = parse(output)
     except NotMypyOutputError as e:
         return 2, f"mypy_ratchet: {e}\n"
-    baseline = (
-        json.loads(baseline_path.read_text())
-        if baseline_path.exists()
-        else {"total": 0, "files": {}}
-    )
+    if base_output is not None:
+        if update:
+            return (
+                2,
+                "mypy_ratchet: --update lowers the committed baseline; it cannot take --base\n",
+            )
+        try:
+            baseline = to_baseline(parse(base_output))
+        except NotMypyOutputError as e:
+            return 2, f"mypy_ratchet: the base commit's mypy run: {e}\n"
+        against = "base commit"
+    else:
+        baseline = (
+            json.loads(baseline_path.read_text())
+            if baseline_path.exists()
+            else {"total": 0, "files": {}}
+        )
+        against = "committed baseline"
     rose = risen(errors, baseline)
-    text = summary(errors, baseline, rose)
+    text = summary(errors, baseline, rose, against)
     if rose:
         text += "\nNew type errors:\n"
         for f, ids in rose.items():
@@ -154,12 +183,24 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("output", nargs="?", default="-", help="mypy output file (default: stdin)")
     p.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     p.add_argument(
+        "--base",
+        type=Path,
+        help="mypy output for the base commit; compare to it instead of the baseline file",
+    )
+    p.add_argument(
         "--update", action="store_true", help="rewrite the baseline (refuses to raise it)"
     )
     p.add_argument("--allow-increase", action="store_true", help="with --update, accept a rise")
     a = p.parse_args(argv)
     output = sys.stdin.read() if a.output == "-" else Path(a.output).read_text()
-    code, text = run(output, a.baseline, update=a.update, allow_increase=a.allow_increase)
+    base_output = a.base.read_text() if a.base else None
+    code, text = run(
+        output,
+        a.baseline,
+        update=a.update,
+        allow_increase=a.allow_increase,
+        base_output=base_output,
+    )
     sys.stdout.write(text)
     step = os.environ.get("GITHUB_STEP_SUMMARY")
     if step:

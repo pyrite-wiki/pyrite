@@ -30,7 +30,7 @@ The roadmap's 0.24.2 Workstream 1 lists "Post-tag workflow: install from the tag
 
 **Regimes:** a tag that is not a version (`vtest`) — runs and fails on the version check, harmlessly; `workflow_dispatch` against `v0.24.1` (the only evidence available before 0.24.2 is cut — and v0.24.1's tutorial predates #43/#44's looser assertions, so say which result is expected); the tutorial's semantic-search step on a runner with no HF cache (#13/#43 — the tutorial already tolerates it; do not tighten here); a Docker build on a runner with no layer cache (timeout-minutes set).
 
-**Touches** — existing: `tests/test_dev_process_config.py`, `.claude/skills/pyrite-conductor/release-runbook.md` (one paragraph). New: `.github/workflows/post-tag.yml`.
+**Touches** — existing: `tests/test_dev_process_config.py`, the maintainer's release runbook (outside this repo) (one paragraph). New: `.github/workflows/post-tag.yml`.
 
 **Sequence:** after #140 (`scripts/release.py`) merges — the runbook paragraph sits beside its steps; after package H (same test file, same pins). Independent of the packaged-UI themes (when they land, the `install` job gains the `.woff2`/`.svg` check — one line, in that theme).
 

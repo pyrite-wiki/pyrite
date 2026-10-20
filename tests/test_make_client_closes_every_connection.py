@@ -52,18 +52,20 @@ def wal_teardown_probe():
 def test_fixture_leaves_no_live_wal_connection(wal_teardown_probe, make_client):
     """One self-contained test: build a client, then let the fixtures tear down.
 
-    The premise is asserted here -- create_app parks a second `PyriteDB` on
-    `app.state`, and nothing in `pyrite/` closes it -- and the WAL assertion
-    runs in `wal_teardown_probe`'s finalizer, after `make_client`'s teardown.
+    The premise is asserted here -- create_app parks a `PyriteDB` on
+    `app.state` that nothing in `pyrite/` closes, and since #1077 that is the
+    `db` the fixture hands back (one connection, not a second beside it) --
+    and the WAL assertion runs in `wal_teardown_probe`'s finalizer, after
+    `make_client`'s teardown.
     """
     client, config, db = make_client()
     assert client.get("/api/kbs").status_code == 200
 
     app_state_db = client.app.state.pyrite_db
     assert app_state_db is not None, "create_app no longer parks a db on app.state"
-    assert app_state_db is not db, (
-        "create_app no longer opens its own second connection -- if this is "
-        "now intentional, the fixture's app-state tracking can be simplified"
+    assert app_state_db is db, (
+        "make_client hands back a database other than the app's own: the "
+        "fixture now owns two connections and must close both"
     )
 
     wal_teardown_probe["dir"] = config.settings.index_path.parent

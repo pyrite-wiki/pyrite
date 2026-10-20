@@ -3,7 +3,11 @@
 Handles rubric items that require semantic judgment (e.g., "Entry body explains
 the why, not just the what") by batching them into a single LLM call per entry.
 
-Gracefully degrades when no LLM is configured — returns empty results.
+An empty list means the model answered every item and passed them all, or
+there were no items to ask about. Anything short of an answer -- no model, a
+call that raised, a reply that is empty, not JSON, not a list, or silent on an
+item -- raises ``EvaluationFailedError`` with the reason (#795): a check that
+did not run is never reported as one that found nothing.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from ..exceptions import EvaluationFailedError
 from ..utils.metadata import parse_metadata
 
 if TYPE_CHECKING:
@@ -42,22 +47,28 @@ class LLMRubricEvaluator:
     ) -> list[dict[str, Any]]:
         """Evaluate rubric items against an entry using LLM.
 
-        Returns list of issue dicts for failed items only.
+        Returns list of issue dicts for failed items only. Raises
+        ``EvaluationFailedError`` when the model did not answer (module
+        docstring); ``[]`` with no items is the one empty that is not an answer
+        and needs none.
         """
         if not rubric_items:
             return []
 
+        entry_id = entry.get("id", "")
         if not self.is_available():
-            return []
+            raise EvaluationFailedError(entry_id, "no model is configured")
 
         system_prompt = self._build_system_prompt()
         user_prompt = self._build_user_prompt(entry, rubric_items, guidelines)
 
         try:
             response = await self._llm.complete(user_prompt, system=system_prompt, max_tokens=1024)
-        except Exception:
+        except Exception as exc:
             logger.warning("LLM rubric evaluation failed", exc_info=True)
-            return []
+            raise EvaluationFailedError(
+                entry_id, f"the model call failed: {type(exc).__name__}: {exc}"
+            ) from exc
 
         return self._parse_response(response, entry, rubric_items)
 
@@ -115,9 +126,14 @@ class LLMRubricEvaluator:
         entry: dict[str, Any],
         rubric_items: list[str],
     ) -> list[dict[str, Any]]:
-        """Parse LLM response into issue dicts for failed items."""
+        """Parse LLM response into issue dicts for failed items.
+
+        Raises ``EvaluationFailedError`` unless the reply answers every item
+        with a boolean ``pass``.
+        """
+        entry_id = entry.get("id", "")
         if not response or not response.strip():
-            return []
+            raise EvaluationFailedError(entry_id, "the model's reply was empty")
 
         # Extract JSON from response (handle markdown code fences)
         text = response.strip()
@@ -129,13 +145,33 @@ class LLMRubricEvaluator:
             results = json.loads(text)
         except (json.JSONDecodeError, ValueError):
             logger.warning("LLM rubric response was not valid JSON: %s", text[:200])
-            return []
+            raise EvaluationFailedError(entry_id, "the model's reply was not JSON") from None
 
         if not isinstance(results, list):
-            return []
+            raise EvaluationFailedError(entry_id, "the model's reply was not a JSON list")
 
         # Build set of valid rubric items for validation
         valid_items = set(rubric_items)
+
+        # Only an item the model judged pass or fail counts as answered; an
+        # item it left out, or answered without a boolean, was not checked.
+        # The item must be a string before the set lookup: a list or object
+        # there is unhashable and would end the whole run in a TypeError.
+        answered = {
+            r["item"]
+            for r in results
+            if isinstance(r, dict)
+            and isinstance(r.get("item"), str)
+            and r["item"] in valid_items
+            and isinstance(r.get("pass"), bool)
+        }
+        unanswered = [item for item in rubric_items if item not in answered]
+        if unanswered:
+            raise EvaluationFailedError(
+                entry_id,
+                f"the model did not answer {len(unanswered)} of {len(rubric_items)} rubric "
+                f"item(s): {'; '.join(unanswered)}",
+            )
 
         issues: list[dict[str, Any]] = []
         status = self._llm.status()
@@ -145,26 +181,43 @@ class LLMRubricEvaluator:
             if not isinstance(result, dict):
                 continue
 
-            item_text = result.get("item", "")
-            passed = result.get("pass", True)
+            item_text = result.get("item")
+            passed = result.get("pass")
             confidence = result.get("confidence", 0.5)
             reasoning = result.get("reasoning", "")
 
-            if passed:
+            # Only include items from our rubric list, judged fail
+            if (
+                not isinstance(item_text, str)
+                or item_text not in valid_items
+                or passed is not False
+            ):
                 continue
-
-            # Only include items from our rubric list
-            if item_text not in valid_items:
-                continue
+            # NaN compares false with everything, so the range check refuses
+            # NaN and infinity too (#1055). math.isfinite() is not used: it
+            # raises OverflowError on a JSON integer too big for a float.
+            if (
+                isinstance(confidence, bool)
+                or not isinstance(confidence, int | float)
+                or not 0 <= confidence <= 1
+            ):
+                raise EvaluationFailedError(
+                    entry_id,
+                    f"the model's confidence for '{item_text}' is not a number "
+                    f"between 0 and 1: {confidence!r}",
+                )
 
             issues.append(
                 {
                     "entry_id": entry.get("id", ""),
                     "kb_name": entry.get("kb_name", ""),
                     "rule": "llm_rubric_violation",
-                    "severity": "info",
+                    # A warning, so an entry the model failed is recorded
+                    # `warn`, never `pass`, and fails `ci` at its default
+                    # severity (#795). It was `info`, which no status counted.
+                    "severity": "warning",
                     "field": "body",
-                    "message": reasoning or f"Failed rubric: {item_text}",
+                    "message": str(reasoning) if reasoning else f"Failed rubric: {item_text}",
                     "rubric_item": item_text,
                     "confidence": float(confidence),
                     "evaluator": evaluator,

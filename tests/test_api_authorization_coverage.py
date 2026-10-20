@@ -53,8 +53,10 @@ READ_TIER_ALLOWED: dict[tuple[str, str], str] = {
 # called with a body that passes validation and must still refuse a read-tier
 # key with one of the listed statuses.
 INLINE_GUARDED: dict[tuple[str, str], tuple[dict, tuple[int, ...]]] = {
-    # Global admin OR per-KB admin.
-    ("POST", "/api/kbs/{name}/permissions"): ({"user_id": 1, "role": "read"}, (403,)),
+    # Global admin OR per-KB admin -- after the KB is resolved: the path's
+    # placeholder names no KB, so a read-tier key is refused as KB_NOT_FOUND
+    # (existence before role, ADR-0037 §4; the one resolver, #952).
+    ("POST", "/api/kbs/{name}/permissions"): ({"user_id": 1, "role": "read"}, (404,)),
     # Needs a logged-in user (401 for a bare API key), then enforces the
     # operator-configurable ephemeral_min_tier (403).
     ("POST", "/api/kbs/ephemeral"): ({}, (401, 403)),

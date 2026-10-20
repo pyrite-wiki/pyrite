@@ -90,8 +90,18 @@ class TestMergeGroupTrigger:
         assert {"push", "pull_request", "workflow_dispatch"} <= set(map(str, triggers))
 
     def test_push_and_pull_request_still_target_main_and_dev(self, triggers):
-        for event in ("push", "pull_request"):
-            assert set(triggers[event]["branches"]) == {"main", "dev"}, event
+        assert set(triggers["push"]["branches"]) == {"main", "dev"}
+        # Pull requests into an architecture sprint's integration branch
+        # (arch/**, #952) get the same checks before the branch lands on dev.
+        assert set(triggers["pull_request"]["branches"]) == {"main", "dev", "arch/**"}
+
+
+class TestPullRequestEventTypes:
+    def test_a_body_edit_does_not_restart_ci(self, triggers):
+        # `edited` fires on every title or body edit and cancels and restarts all of
+        # CI. verify-red is advisory, so it does not need a retitle to re-run (#1074).
+        types = set(triggers["pull_request"].get("types", ["opened", "synchronize", "reopened"]))
+        assert "edited" not in types
 
 
 class TestGateIsReachableOnAMergeGroup:

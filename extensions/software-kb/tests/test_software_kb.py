@@ -217,6 +217,9 @@ class TestADREntry:
         entry = ADREntry.from_frontmatter(meta, "")
         assert entry.id == "use-event-sourcing"
 
+    @pytest.mark.control(
+        reason="a rewritten test of a property that already held; its old form used the model's emitter (Entry.save/to_markdown), gone since #955 P4"
+    )
     def test_roundtrip_markdown(self):
         entry = ADREntry(
             id="adr-001",
@@ -226,7 +229,9 @@ class TestADREntry:
             status="accepted",
             tags=["database"],
         )
-        md = entry.to_markdown()
+        from pyrite.storage.repository import new_entry_text
+
+        md = new_entry_text(entry)
         assert "adr_number: 1" in md
         assert "status: accepted" in md
         assert "Database choice." in md
@@ -1525,16 +1530,64 @@ def _make_test_db(tmpdir, entries=None, links=None):
     return db
 
 
+def _cli_config(tmpdir):
+    """A config naming the test KB: the CLI resolves ``--kb`` before the body (#952)."""
+    from pyrite.config import KBConfig, PyriteConfig, Settings
+
+    return PyriteConfig(
+        knowledge_bases=[KBConfig(name="test", path=Path(tmpdir), kb_type="software")],
+        settings=Settings(index_path=Path(tmpdir) / "test.db"),
+    )
+
+
 def _make_plugin_with_db(db):
-    """Create a plugin with injected DB context."""
+    """Create a plugin with injected DB context.
+
+    The context carries the config too, as the server's does: a handler
+    resolves the KB it is given against ``ctx.config`` (#952), so the
+    config names every KB the test db registered, at the path it registered.
+    """
+    from pyrite.config import KBConfig, PyriteConfig, Settings
 
     class _Ctx:
         def __init__(self, db):
             self.db = db
+            rows = db._raw_conn.execute("SELECT name, path, kb_type FROM kb").fetchall()
+            self.config = PyriteConfig(
+                knowledge_bases=[
+                    KBConfig(name=name, path=Path(path), kb_type=kb_type)
+                    for name, path, kb_type in rows
+                ],
+                settings=Settings(index_path=Path(rows[0][1]) / "test.db"),
+            )
 
     plugin = SoftwareKBPlugin()
     plugin.set_context(_Ctx(db))
     return plugin
+
+
+class TestCreateBacklogItemRefusals:
+    """A refused create carries the refusal's `error_code`, as every other
+    MCP refusal does, so a caller can tell a read-only KB from an unknown
+    one without parsing the message (#965 round 2)."""
+
+    @pytest.mark.parametrize(
+        ("kb_name", "code", "read_only"),
+        [("test", "KB_READ_ONLY", True), ("no-such-kb", "KB_NOT_FOUND", False)],
+    )
+    def test_a_refusal_names_its_code(self, kb_name, code, read_only):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_test_db(tmpdir, entries=[{"id": "seed", "title": "Seed"}])
+            try:
+                plugin = _make_plugin_with_db(db)
+                plugin._get_config().get_kb("test").read_only = read_only
+                out = plugin._mcp_create_backlog_item(
+                    {"kb_name": kb_name, "title": "A refused item", "kind": "bug"}
+                )
+                assert out["created"] is False
+                assert out["error_code"] == code, out
+            finally:
+                db.close()
 
 
 # =========================================================================
@@ -3540,9 +3593,12 @@ class TestContextForItemCLI:
                 ],
             )
             try:
-                with patch(
-                    "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
-                    return_value=(db, False),
+                with (
+                    patch("pyrite_software_kb.cli.load_config", return_value=_cli_config(tmpdir)),
+                    patch(
+                        "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
+                        return_value=(db, False),
+                    ),
                 ):
                     result = runner.invoke(
                         sw_app,
@@ -3595,9 +3651,12 @@ class TestContextForItemCLI:
                 ],
             )
             try:
-                with patch(
-                    "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
-                    return_value=(db, False),
+                with (
+                    patch("pyrite_software_kb.cli.load_config", return_value=_cli_config(tmpdir)),
+                    patch(
+                        "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
+                        return_value=(db, False),
+                    ),
                 ):
                     result = runner.invoke(
                         sw_app,
@@ -3640,9 +3699,12 @@ class TestContextForItemCLI:
                 ],
             )
             try:
-                with patch(
-                    "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
-                    return_value=(db, False),
+                with (
+                    patch("pyrite_software_kb.cli.load_config", return_value=_cli_config(tmpdir)),
+                    patch(
+                        "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
+                        return_value=(db, False),
+                    ),
                 ):
                     result = runner.invoke(
                         sw_app,
@@ -3674,9 +3736,12 @@ class TestContextForItemCLI:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = _make_test_db(tmpdir)
             try:
-                with patch(
-                    "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
-                    return_value=(db, False),
+                with (
+                    patch("pyrite_software_kb.cli.load_config", return_value=_cli_config(tmpdir)),
+                    patch(
+                        "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
+                        return_value=(db, False),
+                    ),
                 ):
                     result = runner.invoke(
                         sw_app,
@@ -4340,7 +4405,11 @@ class TestBacklogCliPaginationFlags:
         mock_plugin = MagicMock()
         mock_plugin._mcp_backlog.return_value = {"count": 0, "items": [], "has_more": False}
 
-        with patch("pyrite_software_kb.plugin.SoftwareKBPlugin", return_value=mock_plugin):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("pyrite_software_kb.cli.load_config", return_value=_cli_config(tmpdir)),
+            patch("pyrite_software_kb.plugin.SoftwareKBPlugin", return_value=mock_plugin),
+        ):
             result = runner.invoke(
                 sw_app,
                 ["backlog", "--limit", "5", "--offset", "10", "--kb", "test"],

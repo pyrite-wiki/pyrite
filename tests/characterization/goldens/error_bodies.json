@@ -1,4 +1,30 @@
 {
+  "AINotConfiguredError": {
+    "cli": {
+      "error": "characterization message for AINotConfiguredError",
+      "error_code": "AI_NOT_CONFIGURED",
+      "outcome": "error",
+      "retryable": false,
+      "suggestion": "Set ai_provider, ai_api_key and ai_model in the config, or use tier 1."
+    },
+    "mcp": {
+      "error": "characterization message for AINotConfiguredError",
+      "error_code": "AI_NOT_CONFIGURED",
+      "retryable": false,
+      "suggestion": "Set ai_provider, ai_api_key and ai_model in the config, or use tier 1."
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "AI_NOT_CONFIGURED",
+          "hint": "Set ai_provider, ai_api_key and ai_model in the config, or use tier 1.",
+          "message": "characterization message for AINotConfiguredError",
+          "retryable": false
+        }
+      },
+      "status": 500
+    }
+  },
   "AccessDenied": {
     "cli": {
       "error": "characterization message for AccessDenied",
@@ -20,6 +46,44 @@
         }
       },
       "status": 500
+    }
+  },
+  "AmbiguousEntryError": {
+    "cli": {
+      "candidate_kbs": [
+        "kb-a",
+        "kb-b"
+      ],
+      "error": "Entry 'characterization-entry' exists in multiple KBs: kb-a, kb-b",
+      "error_code": "AMBIGUOUS",
+      "outcome": "error",
+      "retryable": false,
+      "suggestion": "Name one of these KBs: -k on the CLI, kb on REST, kb_name on MCP (or a pyrite://kbs/<kb>/entries/<id> resource)."
+    },
+    "mcp": {
+      "candidate_kbs": [
+        "kb-a",
+        "kb-b"
+      ],
+      "error": "Entry 'characterization-entry' exists in multiple KBs: kb-a, kb-b",
+      "error_code": "AMBIGUOUS",
+      "retryable": false,
+      "suggestion": "Name one of these KBs: -k on the CLI, kb on REST, kb_name on MCP (or a pyrite://kbs/<kb>/entries/<id> resource)."
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "candidate_kbs": [
+            "kb-a",
+            "kb-b"
+          ],
+          "code": "AMBIGUOUS",
+          "hint": "Name one of these KBs: -k on the CLI, kb on REST, kb_name on MCP (or a pyrite://kbs/<kb>/entries/<id> resource).",
+          "message": "Entry 'characterization-entry' exists in multiple KBs: kb-a, kb-b",
+          "retryable": false
+        }
+      },
+      "status": 409
     }
   },
   "BrandingInvalidError": {
@@ -140,6 +204,30 @@
       "status": 409
     }
   },
+  "ConflictError": {
+    "cli": {
+      "error": "characterization message for ConflictError",
+      "error_code": "CONFLICT",
+      "outcome": "error",
+      "retryable": true
+    },
+    "mcp": {
+      "error": "characterization message for ConflictError",
+      "error_code": "CONFLICT",
+      "legacy_error_code": "REQUEST_REFUSED",
+      "retryable": true
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "CONFLICT",
+          "message": "characterization message for ConflictError",
+          "retryable": true
+        }
+      },
+      "status": 409
+    }
+  },
   "DroppedHookRefusedError": {
     "cli": {
       "error": "characterization message for DroppedHookRefusedError",
@@ -209,6 +297,29 @@
         }
       },
       "status": 404
+    }
+  },
+  "EvaluationFailedError": {
+    "cli": {
+      "error": "Tier 2 evaluation of 'characterization-entry' did not run: the model's reply was not JSON",
+      "error_code": "EVALUATION_FAILED",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "Tier 2 evaluation of 'characterization-entry' did not run: the model's reply was not JSON",
+      "error_code": "EVALUATION_FAILED",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "EVALUATION_FAILED",
+          "message": "Tier 2 evaluation of 'characterization-entry' did not run: the model's reply was not JSON",
+          "retryable": false
+        }
+      },
+      "status": 500
     }
   },
   "Forbidden": {
@@ -299,6 +410,29 @@
         "detail": {
           "code": "INVALID_REF",
           "message": "characterization message for InvalidGitRefError",
+          "retryable": false
+        }
+      },
+      "status": 422
+    }
+  },
+  "InvalidQATierError": {
+    "cli": {
+      "error": "characterization message for InvalidQATierError",
+      "error_code": "INVALID_TIER",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for InvalidQATierError",
+      "error_code": "INVALID_TIER",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "INVALID_TIER",
+          "message": "characterization message for InvalidQATierError",
           "retryable": false
         }
       },
@@ -422,6 +556,29 @@
         }
       },
       "status": 403
+    }
+  },
+  "KBUnreadableError": {
+    "cli": {
+      "error": "characterization message for KBUnreadableError",
+      "error_code": "KB_UNREADABLE",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for KBUnreadableError",
+      "error_code": "KB_UNREADABLE",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "KB_UNREADABLE",
+          "message": "characterization message for KBUnreadableError",
+          "retryable": false
+        }
+      },
+      "status": 500
     }
   },
   "LastAdminError": {

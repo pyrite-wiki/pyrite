@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import textwrap
@@ -55,7 +56,12 @@ def _write(root: Path, rel: str, text: str = "") -> None:
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
     ).stdout
 
 
@@ -77,6 +83,19 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.delenv("FAKE_EXIT", raising=False)
     monkeypatch.delenv("FAKE_PY_VERSION", raising=False)
     monkeypatch.delenv("FAKE_DURING", raising=False)
+    # The machine-wide lock (scripts/heavy_lock.py) lives under HOME, which
+    # is tmp here: each case has its own, never the real one.
+    # CI and the escape hatch skip the lock, and a held marker means "nested":
+    # the lock cases must see the lock path on a laptop and in CI alike.
+    for var in (
+        "PYRITE_SUITE_LOCK",
+        "PYRITE_SUITE_LOCK_SKIP",
+        "PYRITE_SUITE_LOCK_TIMEOUT",
+        "PYRITE_SUITE_LOCK_HELD",
+        "CI",
+        "GITHUB_ACTIONS",
+    ):
+        monkeypatch.delenv(var, raising=False)
     for var in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
         monkeypatch.setenv(var, "Test")
     for var in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
@@ -119,6 +138,7 @@ def _run(repo: Path, *args: str, **env: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         env={**os.environ, **env},
+        timeout=120,
     )
 
 
@@ -138,6 +158,203 @@ def _stamps(repo: Path) -> list[dict]:
 
 def _tree(repo: Path, rev: str = "HEAD") -> str:
     return _git(repo, "rev-parse", f"{rev}^{{tree}}").strip()
+
+
+class TestTheRunTakesTheMachineLock:
+    """`--run` waits for any other heavy run on the machine (#168)."""
+
+    @pytest.fixture
+    def held(self, tmp_path):
+        import fcntl
+
+        lock = tmp_path / "home" / ".cache" / "pyrite" / "heavy.lock"
+        lock.parent.mkdir(parents=True)
+        fd = os.open(lock, os.O_RDWR | os.O_CREAT)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        os.write(fd, json.dumps({"pid": 4242, "command": "another suite"}).encode())
+        yield lock
+        os.close(fd)
+
+    def test_the_run_waits_for_the_holder(self, repo, held):
+        out = _run(repo, PYRITE_SUITE_LOCK_TIMEOUT="0.5")
+        assert out.returncode == 75, out.stderr
+        assert "pid 4242" in out.stderr and "another suite" in out.stderr
+        assert _calls() == []
+
+    @pytest.mark.control(
+        reason="a dry run never ran pytest; pins that the lock did not move earlier"
+    )
+    def test_a_dry_run_takes_no_lock(self, repo, held):
+        out = _run(repo, "--dry-run", PYRITE_SUITE_LOCK_TIMEOUT="0.5")
+        assert out.returncode == 0, out.stderr
+
+    @pytest.mark.control(
+        reason="a stamp skip never ran pytest; pins that the lock did not move earlier"
+    )
+    def test_a_stamped_tree_skips_without_waiting(self, repo, held):
+        held_fd_free = _run(repo, PYRITE_SUITE_LOCK_SKIP="1")
+        assert held_fd_free.returncode == 0
+        out = _run(repo, PYRITE_SUITE_LOCK_TIMEOUT="0.5")
+        assert out.returncode == 0, out.stderr
+        assert "skipping" in out.stderr
+        assert len(_calls()) == 1
+
+    def test_pytest_runs_marked_as_the_holder(self, repo, tmp_path):
+        seen = tmp_path / "held.txt"
+        out = _run(repo, FAKE_DURING=f'echo "$PYRITE_SUITE_LOCK_HELD" > {seen}')
+        assert out.returncode == 0, out.stderr
+        lock = (tmp_path / "home" / ".cache" / "pyrite" / "heavy.lock").resolve()
+        assert seen.read_text().strip() == str(lock)
+
+
+PY_FAKE_PYTHON = """\
+#!{python}
+# The worktree's interpreter, as a pytest that takes a moment to stop on
+# SIGTERM and otherwise runs until FAKE_RELEASE exists.
+import os, signal, sys, time
+if sys.argv[1:2] == ["-c"]:
+    print("3.12")
+    sys.exit(0)
+log = os.environ["FAKE_EVENTS"]
+def note(event):
+    with open(log, "a") as f:
+        f.write(f"{{event}} {{os.getpid()}} {{time.time():.6f}}\\n")
+def on_term(signum, frame):
+    note("term")
+    time.sleep(0.5)
+    note("end")
+    sys.exit(0)
+signal.signal(signal.SIGTERM, on_term)
+note("start")
+while not os.path.exists(os.environ["FAKE_RELEASE"]):
+    time.sleep(0.02)
+note("end")
+"""
+
+
+class TestStoppingTestAffected:
+    """While test-affected's pytest still runs, no other heavy run starts --
+    however test-affected itself is stopped (#905 round 1)."""
+
+    DEADLINE = 60.0
+
+    @pytest.fixture
+    def setup(self, repo, tmp_path):
+        python = repo / ".venv" / "bin" / "python"
+        python.write_text(PY_FAKE_PYTHON.format(python=sys.executable))
+        python.chmod(0o755)
+        events = tmp_path / "events.log"
+        release = tmp_path / "release"
+        lock = tmp_path / "home" / ".cache" / "pyrite" / "heavy.lock"
+        env = {**os.environ, "FAKE_EVENTS": str(events), "FAKE_RELEASE": str(release)}
+        for var in ("CI", "GITHUB_ACTIONS"):
+            env.pop(var, None)
+        holder = subprocess.Popen(
+            [sys.executable, str(SCRIPT), "--root", str(repo), "--run", "-n", "2", "--force"],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        end = time.monotonic() + self.DEADLINE
+        while not (events.exists() and "start" in events.read_text()):
+            assert holder.poll() is None, holder.communicate(timeout=60)
+            assert time.monotonic() < end, "pytest never started"
+            time.sleep(0.02)
+        waiter_log = tmp_path / "waiter.log"
+        waiter = subprocess.Popen(
+            [
+                sys.executable,
+                str(SCRIPT.parent / "heavy_lock.py"),
+                "--",
+                sys.executable,
+                "-c",
+                f"import time; open({str(waiter_log)!r}, 'w').write(str(time.time()))",
+            ],
+            env={**env, "PYRITE_SUITE_LOCK_TIMEOUT": "30"},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        queue = Path(str(lock) + ".queue")
+        while not list(queue.glob("*.ticket")):
+            assert waiter.poll() is None, waiter.communicate(timeout=60)
+            assert time.monotonic() < end, "the waiter never queued"
+            time.sleep(0.02)
+        yield holder, waiter, events, release, waiter_log
+        release.touch()
+        for proc in (holder, waiter):
+            if proc.poll() is None:
+                proc.kill()
+
+    @staticmethod
+    def _events(path):
+        out = {}
+        for line in path.read_text().splitlines():
+            event, _pid, t = line.split()
+            out[event] = float(t)
+        return out
+
+    def test_sigterm_reaches_pytest_and_the_lock_waits_for_it(self, setup):
+        holder, waiter, events, release, waiter_log = setup
+        holder.send_signal(signal.SIGTERM)
+        holder.communicate(timeout=self.DEADLINE)
+        waiter.communicate(timeout=self.DEADLINE)
+        seen = self._events(events)
+        assert "term" in seen, "SIGTERM was not passed on to pytest"
+        assert float(waiter_log.read_text()) >= seen["end"]
+
+    def test_sigkill_the_next_run_waits_for_the_orphaned_pytest(self, setup):
+        holder, waiter, events, release, waiter_log = setup
+        holder.send_signal(signal.SIGKILL)
+        holder.wait(timeout=60)
+        time.sleep(1.5)
+        assert not waiter_log.exists(), "a second run started beside the orphaned pytest"
+        release.touch()
+        _out, err = waiter.communicate(timeout=self.DEADLINE)
+        assert "holder was killed" in err
+        assert float(waiter_log.read_text()) >= self._events(events)["end"]
+
+
+HIDE_FCNTL = """\
+import runpy, sys
+class Hide:
+    def find_spec(self, name, path=None, target=None):
+        if name in ("fcntl", "pwd"):
+            raise ImportError(f"No module named {name!r} (hidden)")
+sys.meta_path.insert(0, Hide())
+for name in ("fcntl", "pwd"):
+    sys.modules.pop(name, None)
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+
+
+class TestWithoutFcntl:
+    """Windows has no fcntl or pwd: test-affected still lists, dry-runs and
+    runs, without the lock, saying so once."""
+
+    def _run(self, repo, *args):
+        return subprocess.run(
+            [sys.executable, "-c", HIDE_FCNTL, str(SCRIPT), "--root", str(repo), *args],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+    @pytest.mark.control(
+        reason="dev never imported fcntl; red when heavy_lock imports it unguarded"
+    )
+    def test_dry_run(self, repo):
+        out = self._run(repo, "--run", "--dry-run")
+        assert out.returncode == 0, out.stderr
+        assert "Traceback" not in out.stderr
+
+    def test_run_goes_ahead_without_the_lock(self, repo):
+        out = self._run(repo, "--run", "-n", "2", "--force")
+        assert out.returncode == 0, out.stderr
+        assert "no fcntl" in out.stderr
+        assert len(_calls()) == 1
 
 
 class TestStampWritten:
@@ -233,6 +450,27 @@ class TestNeverStamped:
         _write(repo, "tests/fixture.db", "x")
         assert _run(repo).returncode == 0
         assert _stamps(repo) == []
+
+    def test_a_file_the_run_leaves_behind_is_named_not_called_uncommitted(self, repo):
+        # #852: a passing run left a gitignored fixture under a code root; git
+        # status stayed clean, and the message said "uncommitted changes".
+        (repo / ".gitignore").write_text(".venv/\n*.db\n")
+        _git(repo, "commit", "-qam", "ignore dbs")
+        assert _git(repo, "status", "--porcelain").strip() == ""
+        out = _run(repo, FAKE_DURING="echo x > tests/leftover.db")
+        assert out.returncode == 0, out.stderr
+        assert _stamps(repo) == []
+        assert _git(repo, "status", "--porcelain").strip() == "", "git still sees a clean tree"
+        assert "uncommitted" not in out.stderr
+        assert "the run left the tree unclean" in out.stderr
+        assert "gitignored file under a code root: tests/leftover.db" in out.stderr
+
+    def test_a_tree_unclean_before_the_run_says_so_and_names_the_file(self, repo):
+        _write(repo, "tests/data.json", "{}")
+        out = _run(repo)
+        assert "not clean before the run: untracked file under a code root: tests/data.json" in (
+            out.stderr
+        )
 
     def test_build_noise_under_a_code_root_does_not_make_the_tree_dirty(self, repo):
         (repo / ".gitignore").write_text(".venv/\n__pycache__/\n*.egg-info/\n.pytest_cache/\n")

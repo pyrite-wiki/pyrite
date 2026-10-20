@@ -41,6 +41,38 @@ class TestIsFixCommit:
     def test_empty_message_is_not_a_fix_commit(self):
         assert is_fix_commit("") is False
 
+    @pytest.mark.parametrize(
+        "subject",
+        [
+            "fix(cli): correct the thing",
+            "fix!: drop the old flag",
+            "fix(api)!: rename the field",
+            "fix(a/b-c): scope with punctuation\n\nBody.",
+        ],
+    )
+    def test_scoped_and_breaking_fixes_are_fix_commits(self, subject):
+        """#1074: a fifth of `fix` commits are `fix(scope):`; they were unchecked."""
+        assert is_fix_commit(subject) is True
+
+    @pytest.mark.parametrize("subject", ["Fix the crash", "Fix: the crash", "FIX: the crash"])
+    def test_matching_is_case_sensitive_on_purpose(self, subject):
+        """Conventional Commits types are lower case; 'Fix the crash' is prose, not
+        a typed commit, and the gate must not guess at prose (#1074)."""
+        assert is_fix_commit(subject) is False
+
+    @pytest.mark.parametrize(
+        "subject",
+        [
+            "fixup: squash me",
+            "fix(cli) correct the thing",
+            "fix correct the thing",
+            "feat(fix): add a fixer",
+            "refactor!: not a fix",
+        ],
+    )
+    def test_near_misses_are_not_fix_commits(self, subject):
+        assert is_fix_commit(subject) is False
+
 
 class TestTouchesTests:
     def test_top_level_tests_dir_counts(self):
@@ -108,6 +140,7 @@ class TestRangeMode:
                 "GIT_COMMITTER_EMAIL": "t@example.com",
                 "PATH": "/usr/bin:/bin:/usr/local/bin",
             },
+            timeout=120,
         )
 
     def _commit(self, repo, path: str, message: str, content: str = "x"):
@@ -135,6 +168,7 @@ class TestRangeMode:
             cwd=repo,
             capture_output=True,
             text=True,
+            timeout=120,
         )
         assert result.returncode == 0, result.stderr
 
@@ -149,6 +183,7 @@ class TestRangeMode:
             cwd=repo,
             capture_output=True,
             text=True,
+            timeout=120,
         )
         assert result.returncode != 0
         assert "fix:" in result.stderr
@@ -165,6 +200,7 @@ class TestRangeMode:
             cwd=repo,
             capture_output=True,
             text=True,
+            timeout=120,
         )
         assert result.returncode == 0, result.stderr
 
@@ -180,8 +216,49 @@ class TestRangeMode:
             cwd=repo,
             capture_output=True,
             text=True,
+            timeout=120,
         )
         # The offending commit is the FIRST one; a naive "does the whole
         # range touch tests/" check would wrongly pass because the second
         # commit happens to add a tests/ file.
         assert result.returncode != 0, result.stderr
+
+
+class TestTheErrorNamesEveryFixSpelling:
+    def test_the_range_error_names_the_scoped_spelling(self, tmp_path):
+        import os
+
+        env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@x",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@x",
+        }
+
+        def git(*a):
+            subprocess.run(
+                ["git", "-C", str(tmp_path), *a],
+                check=True,
+                capture_output=True,
+                env=env,
+                timeout=60,
+            )
+
+        git("init", "-q", "-b", "main")
+        (tmp_path / "a.py").write_text("1\n")
+        git("add", "a.py")
+        git("commit", "-q", "-m", "base")
+        (tmp_path / "a.py").write_text("2\n")
+        git("add", "a.py")
+        git("commit", "-q", "-m", "fix(core): no test")
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--range", "HEAD~1", "HEAD"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 1
+        assert "fix(scope):" in result.stderr
+        assert "fix(core): no test" in result.stderr

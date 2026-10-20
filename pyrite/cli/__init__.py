@@ -41,7 +41,7 @@ from ..services.kb_service import KBService
 from ..utils.errors import PyriteCLIGroup, cli_error, exit_unless_whole
 from .browse_commands import register_browse_commands
 from .collection_commands import collections_app
-from .context import cli_context, open_index_db
+from .context import cli_context, get_config_and_db, open_index_db, require_kb
 from .db_commands import db_app
 from .entry_commands import register_entry_commands
 from .export_commands import export_app
@@ -186,7 +186,20 @@ app.add_typer(task_app, name="task")
 try:
     from ..plugins import get_registry
 
-    for name, command in get_registry().get_all_cli_commands():
+    _registry = get_registry()
+    _cli_commands = _registry.get_all_cli_commands()
+    # A plugin whose get_cli_commands raised vanishes from `app`; say so on
+    # stderr rather than only in a logger nobody listens to (#900).
+    for _plugin, _method, _exc in _registry.aggregate_failures:
+        if _method == "get_cli_commands":
+            import sys as _sys
+
+            print(
+                f"pyrite: plugin '{_plugin}' CLI commands are unavailable: "
+                f"{type(_exc).__name__}: {_exc}",
+                file=_sys.stderr,
+            )
+    for name, command in _cli_commands:
         if hasattr(command, "registered_commands"):
             # It's a Typer app — register as sub-app
             app.add_typer(command, name=name)
@@ -223,59 +236,69 @@ def ci_command(
         "warning", "--severity", help="Minimum severity to fail on: error or warning"
     ),
     tier: int = typer.Option(
-        1, "--tier", help="Assessment tier: 1=structural, 2=structural+LLM judgment"
+        1,
+        "--tier",
+        help="Assessment tier: 1=structural, 2=structural plus the model-judged rubric "
+        "(one model call per entry with judgment items; needs a configured model)",
     ),
 ):
     """CI/CD-optimized KB validation. Exits 0 on pass, 1 on failure.
 
     Validates knowledge base integrity and reports results in a format
     suitable for CI pipelines. Use --format json for machine-readable output.
-    Use --tier 2 to include LLM-assisted rubric evaluation (requires AI config).
+    Use --tier 2 to include the model-judged rubric: its findings are warnings
+    that count at the gate, and an entry the model did not answer for is an
+    `evaluation_failed` error. With no model configured, --tier 2 is refused
+    (AI_NOT_CONFIGURED); an unknown tier is refused (INVALID_TIER).
+
+    Without --kb, every KB is validated: those in the config and those
+    registered in the index (`pyrite kb add`). A KB whose folder is missing or
+    unreadable fails with one `kb_unreadable` error, and the others are still
+    validated.
     """
+    from ..services.llm_service import LLMService
     from ..services.qa_service import QAService
+    from ..utils.errors import cli_error_from
 
     config = load_config()
 
-    # Handle no KBs configured
-    if not config.knowledge_bases:
-        if output_format == "json":
-            typer.echo(
-                _json.dumps(
-                    {
-                        "kbs": [],
-                        "total_entries": 0,
-                        "total_errors": 0,
-                        "total_warnings": 0,
-                        "result": "pass",
-                    }
-                )
-            )
-        else:
-            typer.echo("pyrite ci — no KBs configured, nothing to validate.")
-        raise typer.Exit(0)
-
-    db = open_index_db(config)
+    # A tier that cannot run is refused before anything else, even with no
+    # KB to validate: `ci` never says "pass" for a tier that did not run (#795).
+    llm_service = LLMService(config.settings) if tier >= 2 else None
     try:
-        # Set up LLM service for tier >= 2
-        llm_service = None
-        if tier >= 2:
-            from ..services.llm_service import LLMService
+        # require_tier reads no database; no index is opened for a refused tier.
+        QAService(config, None, llm_service=llm_service).require_tier(tier)  # type: ignore[arg-type]
+    except PyriteError as exc:
+        cli_error_from(exc, output_format)
+    # Resolve KBs as the other commands do, DB-registered ones merged, so a
+    # named KB's checks (schema, files, rubric) read its real config. A KB
+    # that resolves to nothing is refused: the index alone cannot run them,
+    # and validating nothing is not a pass (#795).
+    config, db = get_config_and_db(config)
+    try:
+        # The one resolver (#952, #924): an unknown name or a shortname is
+        # KB_NOT_FOUND with its hint, the same as every other command.
+        require_kb(config, kb, db=db, output_format=output_format)
 
-            llm_service = LLMService(config.settings)
-            if not llm_service.status()["configured"]:
-                if output_format != "json":
-                    typer.echo(
-                        "Note: LLM not configured — tier 2 evaluation will skip "
-                        "judgment rubric items. Configure ai_provider + ai_api_key "
-                        "in pyrite.yaml to enable."
-                    )
+        # `config.knowledge_bases` is config.yaml only; `all_kbs()` adds the
+        # `kb add` ones, the set `validate_all` sweeps. Zero KBs read is not a
+        # pass (#960 item 15).
+        if not config.all_kbs():
+            cli_error_from(
+                PyriteError(
+                    "no KBs configured or registered, nothing was validated "
+                    "(add one with `pyrite kb add`)"
+                ),
+                "rich" if output_format == "text" else output_format,
+                error_code="NO_KBS_TO_VALIDATE",
+            )
 
         qa = QAService(config, db, llm_service=llm_service)
 
         if kb:
-            result = {"kbs": [qa.validate_kb(kb, readable_kbs=UNSCOPED)]}
+            result = {"kbs": [qa.validate_kb(kb, readable_kbs=UNSCOPED, tier=tier)]}
         else:
-            result = qa.validate_all(readable_kbs=UNSCOPED)
+            result = qa.validate_all(readable_kbs=UNSCOPED, tier=tier)
 
         # Aggregate results
         severity_order = {"error": 0, "warning": 1, "info": 2}
@@ -732,7 +755,7 @@ def _mcp_command_help() -> str:
     per tier, so this can't drift the way two fixed enumerations already
     have: a hardcoded "8 read tools" once drifted to 29 as orient/batch_read/
     task_* etc. were added; then 29/11/8 (core tools only) drifted from the
-    live count once plugins (sw_*, investigation_*, cascade_*, zettel_*,
+    live count once plugins (sw_*, investigation_*, zettel_*,
     wiki_*, social_*) started exposing 41+ tools at read tier alone (#229).
     Mirrors how PyriteMCPServer.__init__ assembles self.tools, without
     constructing a full server (no DB/config needed for --help text)."""
@@ -746,7 +769,7 @@ def _mcp_command_help() -> str:
         "exposed (counts include plugin tools registered for that tier):\n\n"
         f"- read: {read_total} tools (kb_orient, kb_search, kb_get, "
         "kb_timeline, kb_backlinks, kb_tags, kb_stats, kb_schema, task_*, "
-        "sw_*/investigation_*/cascade_* and other plugin tools, and more)\n"
+        "sw_*/investigation_* and other plugin tools, and more)\n"
         f"- write: read tier + {write_total - read_total} more (kb_create, "
         "kb_update, kb_delete, kb_link, task_claim, and more)\n"
         f"- admin: write tier + {admin_total - write_total} more (kb_registry_*, "
@@ -806,7 +829,7 @@ def import_entries(
     fmt: str = typer.Option(
         None,
         "--format",
-        help="json, yaml or markdown (json and yaml are auto-detected from the extension)",
+        help="json, yaml or markdown (auto-detected from .json, .yaml, .yml or .md)",
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Validate without creating entries"),
     allow_undeclared: bool = typer.Option(
@@ -837,23 +860,20 @@ def import_entries(
     does not close or parse) is refused whole before any record is written.
     """
     from ..formats.importers import get_importer_registry
+    from .context import input_file_or_exit
 
-    if not file_path.exists():
-        cli_error(
-            f"File not found: {file_path}",
-            error_code="NOT_FOUND",
-        )
+    input_file_or_exit(file_path, "File")  # `--format` here is the file's format
 
     # Auto-detect format from extension
     if fmt is None:
         suffix = file_path.suffix.lower()
-        format_map = {".json": "json", ".yaml": "yaml", ".yml": "yaml"}
+        format_map = {".json": "json", ".yaml": "yaml", ".yml": "yaml", ".md": "markdown"}
         fmt = format_map.get(suffix)
         if fmt is None:
             cli_error(
                 f"Cannot detect format from extension '{suffix}'.",
                 error_code="VALIDATION_FAILED",
-                suggestion="Use --format json or --format yaml.",
+                suggestion="Use --format json, --format yaml, or --format markdown.",
             )
 
     if stream and fmt != "markdown":
@@ -892,10 +912,14 @@ def import_entries(
         line.append(f": {title}: {r.get('error', 'unknown error')}")
         return line
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format=fmt) as (config, db, svc):
         try:
             results = svc.bulk_create_entries(
-                kb_name, parsed, allow_undeclared=allow_undeclared, validate_only=dry_run
+                kb_name,
+                parsed,
+                allow_undeclared=allow_undeclared,
+                validate_only=dry_run,
+                drop_managed=True,
             )
         except PyriteError as e:
             _cli_err(e)
@@ -925,6 +949,10 @@ def import_entries(
                 for warning in r.get("warnings", []):
                     console.print(
                         "    [yellow]Warning:[/yellow]", _json.dumps(warning, default=str)
+                    )
+                if r.get("ignored"):
+                    console.print(
+                        "    [yellow]Ignored:[/yellow]", ", ".join(r["ignored"]), markup=False
                     )
             else:
                 failed += 1
@@ -956,7 +984,7 @@ def generate_readme_cmd(
     write: bool = typer.Option(False, "--write", "-w", help="Write to KB's README.md"),
 ):
     """Generate a README.md for a knowledge base."""
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format="rich") as (config, db, svc):
         try:
             readme = svc.generate_readme(kb_name)
         except PyriteError as e:

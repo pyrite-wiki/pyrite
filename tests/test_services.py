@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
-from pyrite.exceptions import KBReadOnlyError, QuerySyntaxError
+from pyrite.exceptions import KBReadOnlyError, QuerySyntaxError, ValidationError
 from pyrite.services import KBService, QueryExpansionService, SearchMode, SearchService
 from pyrite.services.query_expansion_service import is_available
 from pyrite.storage.database import PyriteDB
@@ -247,6 +247,22 @@ class TestSearchService:
         service.search("orange county absentterm", mode="keyword", trace=trace)
         assert trace.get("relaxed") is True
 
+    def test_search_refuses_unknown_mode(self, test_db):
+        """An unknown mode is refused, never silently answered as keyword (#917)."""
+        service = SearchService(test_db)
+        with pytest.raises(ValidationError) as exc_info:
+            service.search("hello", mode="zzz")
+        for valid in ("keyword", "semantic", "hybrid"):
+            assert valid in str(exc_info.value)
+        assert "zzz" in str(exc_info.value)
+
+    def test_search_accepts_valid_modes(self, test_db):
+        service = SearchService(test_db)
+        for mode in ("keyword", SearchMode.KEYWORD):
+            trace: dict = {}
+            service.search("hello", mode=mode, trace=trace)
+            assert trace["requested_mode"] == "keyword"
+
     @pytest.mark.parametrize(
         "query",
         [
@@ -409,11 +425,11 @@ class TestSearchService:
         results = service.search("test", mode=SearchMode.SEMANTIC)
         assert isinstance(results, list)
 
-    def test_search_invalid_mode_falls_back(self, test_db, test_config):
-        """Invalid mode string falls back to keyword."""
+    def test_search_invalid_mode_is_refused(self, test_db, test_config):
+        """An invalid mode string is refused, not silently run as keyword (#917)."""
         service = SearchService(test_db)
-        results = service.search("test", mode="invalid_mode")
-        assert isinstance(results, list)
+        with pytest.raises(ValidationError):
+            service.search("test", mode="invalid_mode")
 
     def test_hybrid_search_offset_returns_correct_page(self, test_db, test_config):
         """Hybrid search with offset returns the correct page of fused results."""
@@ -624,12 +640,14 @@ class TestKBService:
         assert entry is not None
         assert entry["title"] == "Get Test"
 
-    def test_get_entry_projects_well_known_metadata_fields_to_top_level(self, test_db, test_config):
-        """The read projection lifts well-known software-kb metadata fields
-        (rank, effort, kind) to the top level. Regression for Tier A 1200:
-        `pyrite get` silently omitted `rank` from JSON even though it was in
-        the index's metadata column. The conductor's rank-aware grooming
-        scripts and the cascade-cluster sequencing depend on this.
+    def test_get_entry_keeps_an_undeclared_key_in_metadata(self, test_db, test_config):
+        """A read spells a declared field at its own name and keeps a key the
+        type does not declare in `metadata` (#1025: one rule,
+        `lift_declared_fields`, in place of a hand-written list of five keys).
+        `rank`, `effort` and `kind` are fields of a software-kb backlog item,
+        where `pyrite get` reads them at the top level (Tier A 1200;
+        tests/test_reader_reads_where_the_writer_writes.py); on an `actor`
+        they are undeclared keys, and the bag is where they are read.
         """
         service = KBService(test_config, test_db)
 
@@ -638,8 +656,6 @@ class TestKBService:
             entry_id="rank-projection-test",
             title="Rank Projection Test",
             entry_type="actor",
-            # These three are software-kb fields stored in metadata; they
-            # used to silently disappear from the read projection.
             rank=1200,
             effort="S",
             kind="bug",
@@ -648,14 +664,10 @@ class TestKBService:
         entry = service.get_entry("rank-projection-test", "test-research", readable_kbs=UNSCOPED)
 
         assert entry is not None
-        # Lifted fields — primary regression assertions.
-        assert entry.get("rank") == 1200, (
-            f"rank missing from get_entry projection (Tier A 1200); got keys {sorted(entry.keys())}"
-        )
-        assert entry.get("effort") == "S", "effort missing from projection"
-        assert entry.get("kind") == "bug", "kind missing from projection"
-        # The full metadata bag is still nested for callers that need it.
-        assert isinstance(entry.get("metadata"), dict)
+        assert (entry["metadata"]["rank"], entry["metadata"]["effort"]) == (1200, "S")
+        assert entry["metadata"]["kind"] == "bug"
+        for key in ("rank", "effort", "kind"):
+            assert key not in entry, f"{key}: an undeclared key was lifted out of metadata"
 
     def test_get_entry_searches_all_kbs(self, test_db, test_config):
         """get_entry without kb_name searches all KBs."""

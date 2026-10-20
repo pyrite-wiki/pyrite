@@ -228,6 +228,7 @@ export interface TagTreeResponse {
 
 export interface TimelineEvent {
 	id: string;
+	kb_name: string;
 	date: string;
 	title: string;
 	importance: number;

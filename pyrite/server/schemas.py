@@ -4,7 +4,7 @@ Pydantic models for the pyrite REST API.
 Extracted from api.py to reduce file size and improve organization.
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -50,6 +50,10 @@ class KBHealthResponse(BaseModel):
     entry_count: int
     last_indexed: str | None = None
     source: str = "user"
+    type_name_drift: list[dict[str, Any]] = Field(default_factory=list)
+    type_name_drift_total: int = 0
+    type_name_drift_has_more: bool = False
+    schema_errors: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class KBReindexResponse(BaseModel):
@@ -157,7 +161,19 @@ class PersonCreate(EntryBase):
 
 
 class EntryResponse(BaseModel):
-    """Full entry response."""
+    """Full entry response.
+
+    The fields below are the stable core every entry has. A single-entry
+    read spells each field the type declares at its own name (#1025; a
+    task's ``status_reason`` and ``evidence``, a backlog item's ``rank``,
+    every type's ``provenance``), and those keys have no slot here, so the
+    model passes every other key of the read through unchanged: what the
+    read returns reaches REST as it reaches MCP ``kb_get`` and the CLI's
+    JSON (``docs/json-contracts.md``, the read shape). A fixed list dropped
+    them silently once they left ``metadata``.
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     id: str
     kb_name: str
@@ -191,6 +207,7 @@ class TimelineEvent(BaseModel):
     """Timeline event."""
 
     id: str
+    kb_name: str = ""
     date: str
     title: str
     importance: int
@@ -385,6 +402,15 @@ class UpdateResponse(BaseModel):
     #: the response by field name sees no shape change.
     ignored: list[str] = []
     unchanged: list[str] = []
+    #: ADR-0042 (#955). `changed` is false when the request changed nothing
+    #: and nothing was written; `locked` is false when the KB is outside git
+    #: and the file was replaced with compare-before-replace and no lock;
+    #: `not_moved` says why a templated-folder field left an unpinned file in
+    #: place. Defaults are the usual case, so an existing caller sees no
+    #: shape change.
+    changed: bool = True
+    locked: bool = True
+    not_moved: str | None = None
 
 
 class DeleteResponse(BaseModel):
@@ -392,28 +418,6 @@ class DeleteResponse(BaseModel):
 
     deleted: bool
     id: str
-
-
-class SiteCacheSyncStatus(BaseModel):
-    """Outcome of the site-cache render `wait=true` triggers alongside a sync.
-
-    Independent of the sync's own success (#349's cold-read round): a sync
-    that added, updated or removed entries has already committed by the time
-    the render runs, so a render failure is reported here rather than
-    failing the whole request. ``error`` is a generic message for callers;
-    the real exception and its traceback go to the server log only.
-
-    ``rendered`` means the render ran to completion (#408); it says nothing
-    about whether every page came out clean. ``errors`` is always present --
-    it is 0 when the render didn't get far enough to produce per-entry stats
-    (e.g. the service failed to construct) and the count of per-entry
-    failures otherwise -- so a caller reads ``rendered and errors == 0`` as
-    "all pages are fresh."
-    """
-
-    rendered: bool
-    errors: int = 0
-    error: str | None = None
 
 
 class SyncResponse(BaseModel):
@@ -424,7 +428,6 @@ class SyncResponse(BaseModel):
     updated: int
     removed: int
     skipped: list[dict[str, str]] = Field(default_factory=list)
-    site_cache: SiteCacheSyncStatus | None = None
 
 
 class ErrorResponse(BaseModel):
@@ -469,11 +472,18 @@ class UpdateEntryRequest(BaseModel):
 
 
 class PatchEntryRequest(BaseModel):
-    """Request to update a single field on an entry."""
+    """Request to update a single field on an entry.
+
+    ``op`` is ``set`` (the default: ``value`` replaces the field; ``null`` is a
+    value), ``append`` or ``remove`` (``value`` is one item of the list
+    ``field``, or a list of items), or ``unset`` (the key is removed with its
+    own lines; ``value`` is ignored). ADR-0042 decision 1; #955, B6 P3b.
+    """
 
     kb: str
     field: str
-    value: str
+    value: Any = None
+    op: Literal["set", "append", "remove", "unset"] = "set"
 
 
 class EntryListResponse(BaseModel):

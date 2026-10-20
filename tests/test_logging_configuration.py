@@ -25,6 +25,7 @@ def test_bare_import_does_not_configure_application_logging():
         check=True,
         capture_output=True,
         text=True,
+        timeout=120,
     )
 
     assert probe.stdout.splitlines() == ["['NullHandler']", "[]"]
@@ -45,6 +46,7 @@ def test_cli_warning_is_formatted_on_stderr_and_json_stdout_stays_parseable():
         check=True,
         capture_output=True,
         text=True,
+        timeout=120,
     )
 
     assert json.loads(probe.stdout) == {"ok": True}

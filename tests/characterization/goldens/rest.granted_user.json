@@ -3,7 +3,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -12,7 +15,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -117,7 +123,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -126,7 +135,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -149,7 +161,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -158,7 +173,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -185,7 +203,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -194,7 +215,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -221,7 +245,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -230,7 +257,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -251,7 +281,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -260,7 +293,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -287,7 +323,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -296,7 +335,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -333,7 +375,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -342,7 +387,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -375,7 +423,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -384,7 +435,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -413,7 +467,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -422,7 +479,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -453,7 +513,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -462,7 +525,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2045,7 +2111,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2054,7 +2123,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2079,7 +2151,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2088,7 +2163,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2111,7 +2189,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2120,27 +2201,44 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
   },
   "GET /api/entries/{entry_id} | granted_user | private-kb": {
     "body": {
+      "aliases": [],
+      "assigned_at": null,
+      "assignee": null,
       "backlinks": [],
       "body": "a zebra behind the wall",
       "content_hash": "0b3eb8d547f96ecac571def342dbb93479b96410fcddef62f2510886021c5173",
+      "coordinates": null,
       "created_at": "<TIMESTAMP>",
+      "created_by": null,
       "date": null,
+      "due_date": null,
+      "end_date": null,
       "entry_type": "note",
       "file_path": "<TMPDIR>/private-kb/notes/private-note.md",
       "id": "private-note",
       "importance": 5,
+      "indexed_at": "<TIMESTAMP>",
       "kb_name": "private-kb",
+      "lifecycle": "active",
+      "links": [],
+      "location": null,
       "metadata": {},
+      "modified_by": null,
       "outlinks": [],
       "participants": [],
+      "priority": null,
       "sources": [],
+      "start_date": null,
       "status": null,
       "summary": "",
       "tags": [],
@@ -2151,20 +2249,34 @@
   },
   "GET /api/entries/{entry_id} | granted_user | readable-kb": {
     "body": {
+      "aliases": [],
+      "assigned_at": null,
+      "assignee": null,
       "backlinks": [],
       "body": "a zebra in the open",
       "content_hash": "75a0ede94d46612f5bd4f9a26fc86dfcf7c40ce08024dae647c9bece56e9e2c1",
+      "coordinates": null,
       "created_at": "<TIMESTAMP>",
+      "created_by": null,
       "date": null,
+      "due_date": null,
+      "end_date": null,
       "entry_type": "note",
       "file_path": "<TMPDIR>/readable-kb/notes/readable-note.md",
       "id": "readable-note",
       "importance": 5,
+      "indexed_at": "<TIMESTAMP>",
       "kb_name": "readable-kb",
+      "lifecycle": "active",
+      "links": [],
+      "location": null,
       "metadata": {},
+      "modified_by": null,
       "outlinks": [],
       "participants": [],
+      "priority": null,
       "sources": [],
+      "start_date": null,
       "status": null,
       "summary": "",
       "tags": [],
@@ -2177,7 +2289,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2186,7 +2301,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2213,7 +2331,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2222,7 +2343,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2249,7 +2373,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2258,7 +2385,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2285,7 +2415,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2294,7 +2427,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2505,7 +2641,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2514,7 +2653,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2557,7 +2699,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2566,7 +2711,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2589,7 +2737,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2598,7 +2749,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2612,7 +2766,11 @@
       "name": "private-kb",
       "path": "<TMPDIR>/private-kb",
       "path_exists": true,
-      "source": "config"
+      "schema_errors": [],
+      "source": "config",
+      "type_name_drift": [],
+      "type_name_drift_has_more": false,
+      "type_name_drift_total": 0
     },
     "status": 200
   },
@@ -2625,7 +2783,11 @@
       "name": "readable-kb",
       "path": "<TMPDIR>/readable-kb",
       "path_exists": true,
-      "source": "config"
+      "schema_errors": [],
+      "source": "config",
+      "type_name_drift": [],
+      "type_name_drift_has_more": false,
+      "type_name_drift_total": 0
     },
     "status": 200
   },
@@ -2633,7 +2795,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2642,7 +2807,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -2692,7 +2860,6 @@
           "sourcing": "Claims should link to evidence. Prefer primary sources."
         },
         "relationship_types": {
-          "actor_reference": "Event references an actor (resolved from string or wikilink)",
           "advised_by": "Advised by another entity",
           "advises": "Advisory relationship",
           "amended_by": "An ADR is amended by a later one",
@@ -2706,8 +2873,6 @@
           "blocked_by": "Backlog item cannot start until blocker completes",
           "blocks": "Backlog item must complete before another can start",
           "branches_from": "Branches from a parent note",
-          "built_on": "Solidarity infrastructure built on earlier infrastructure",
-          "capture_mechanism": "Mechanism used in a capture event",
           "causally_follows": "Causal successor",
           "causally_precedes": "Causal predecessor",
           "contains_part": "Contains a part",
@@ -2727,13 +2892,10 @@
           "elaborates": "Elaborates on another note",
           "employed_by": "Employment relationship",
           "employs": "Employs",
-          "enabled": "Earlier infrastructure enabled later solidarity infrastructure",
-          "enabled_capture": "Event enabled by a capture mechanism",
           "extended_by": "Extended by",
           "extends": "Extends or elaborates on",
-          "funded_by": "Organization is funded by another organization",
-          "funds": "Organization funds another organization",
-          "has_actor": "Actor is referenced by an event",
+          "funded_by": "Entity is funded by another entity",
+          "funds": "Entity funds another entity",
           "has_branch": "Has a branch note",
           "has_example": "Has example",
           "has_member": "Organization has a member",
@@ -2742,15 +2904,13 @@
           "has_subtask": "Epic or large item decomposed into subtasks",
           "implemented_by": "Component implements a design doc",
           "implements": "Design doc implemented by a component",
-          "investigated": "Actor investigated an event",
-          "investigated_by": "Event was investigated by an actor",
           "involved_in": "Involved in",
           "involves": "Involvement",
           "is_example_of": "Example of a concept",
           "is_part_of": "Part of a larger whole",
           "located_at": "Location relationship",
           "location_of": "Location of",
-          "member_of": "Actor is a member of an organization",
+          "member_of": "Person is a member of an organization",
           "mentioned_by": "Mentioned by",
           "mentions": "Mentions",
           "owned_by": "Asset or organization is owned by an entity",
@@ -2758,11 +2918,9 @@
           "party_to": "Entity is a party to a legal action",
           "produced_by": "Entry was produced by a task",
           "produces": "Task produces an entry as evidence",
-          "provoked_response": "Capture event provoked a solidarity response",
           "received_transaction_from": "Entity received a transaction from another entity",
           "refined_by": "Refined by",
           "refines": "Refines or narrows",
-          "responded_to": "Solidarity action responded to a capture event",
           "session_for": "Work log records a session for a backlog item",
           "source_for": "Document is a source for a claim or fact",
           "sourced_from": "Claim or fact is sourced from a document",
@@ -3034,7 +3192,6 @@
           "sourcing": "Claims should link to evidence. Prefer primary sources."
         },
         "relationship_types": {
-          "actor_reference": "Event references an actor (resolved from string or wikilink)",
           "advised_by": "Advised by another entity",
           "advises": "Advisory relationship",
           "amended_by": "An ADR is amended by a later one",
@@ -3048,8 +3205,6 @@
           "blocked_by": "Backlog item cannot start until blocker completes",
           "blocks": "Backlog item must complete before another can start",
           "branches_from": "Branches from a parent note",
-          "built_on": "Solidarity infrastructure built on earlier infrastructure",
-          "capture_mechanism": "Mechanism used in a capture event",
           "causally_follows": "Causal successor",
           "causally_precedes": "Causal predecessor",
           "contains_part": "Contains a part",
@@ -3069,13 +3224,10 @@
           "elaborates": "Elaborates on another note",
           "employed_by": "Employment relationship",
           "employs": "Employs",
-          "enabled": "Earlier infrastructure enabled later solidarity infrastructure",
-          "enabled_capture": "Event enabled by a capture mechanism",
           "extended_by": "Extended by",
           "extends": "Extends or elaborates on",
-          "funded_by": "Organization is funded by another organization",
-          "funds": "Organization funds another organization",
-          "has_actor": "Actor is referenced by an event",
+          "funded_by": "Entity is funded by another entity",
+          "funds": "Entity funds another entity",
           "has_branch": "Has a branch note",
           "has_example": "Has example",
           "has_member": "Organization has a member",
@@ -3084,15 +3236,13 @@
           "has_subtask": "Epic or large item decomposed into subtasks",
           "implemented_by": "Component implements a design doc",
           "implements": "Design doc implemented by a component",
-          "investigated": "Actor investigated an event",
-          "investigated_by": "Event was investigated by an actor",
           "involved_in": "Involved in",
           "involves": "Involvement",
           "is_example_of": "Example of a concept",
           "is_part_of": "Part of a larger whole",
           "located_at": "Location relationship",
           "location_of": "Location of",
-          "member_of": "Actor is a member of an organization",
+          "member_of": "Person is a member of an organization",
           "mentioned_by": "Mentioned by",
           "mentions": "Mentions",
           "owned_by": "Asset or organization is owned by an entity",
@@ -3100,11 +3250,9 @@
           "party_to": "Entity is a party to a legal action",
           "produced_by": "Entry was produced by a task",
           "produces": "Task produces an entry as evidence",
-          "provoked_response": "Capture event provoked a solidarity response",
           "received_transaction_from": "Entity received a transaction from another entity",
           "refined_by": "Refined by",
           "refines": "Refines or narrows",
-          "responded_to": "Solidarity action responded to a capture event",
           "session_for": "Work log records a session for a backlog item",
           "source_for": "Document is a source for a claim or fact",
           "sourced_from": "Claim or fact is sourced from a document",
@@ -3335,7 +3483,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -3344,7 +3495,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -3375,7 +3529,6 @@
         "sourcing": "Claims should link to evidence. Prefer primary sources."
       },
       "relationship_types": {
-        "actor_reference": "Event references an actor (resolved from string or wikilink)",
         "advised_by": "Advised by another entity",
         "advises": "Advisory relationship",
         "amended_by": "An ADR is amended by a later one",
@@ -3389,8 +3542,6 @@
         "blocked_by": "Backlog item cannot start until blocker completes",
         "blocks": "Backlog item must complete before another can start",
         "branches_from": "Branches from a parent note",
-        "built_on": "Solidarity infrastructure built on earlier infrastructure",
-        "capture_mechanism": "Mechanism used in a capture event",
         "causally_follows": "Causal successor",
         "causally_precedes": "Causal predecessor",
         "contains_part": "Contains a part",
@@ -3410,13 +3561,10 @@
         "elaborates": "Elaborates on another note",
         "employed_by": "Employment relationship",
         "employs": "Employs",
-        "enabled": "Earlier infrastructure enabled later solidarity infrastructure",
-        "enabled_capture": "Event enabled by a capture mechanism",
         "extended_by": "Extended by",
         "extends": "Extends or elaborates on",
-        "funded_by": "Organization is funded by another organization",
-        "funds": "Organization funds another organization",
-        "has_actor": "Actor is referenced by an event",
+        "funded_by": "Entity is funded by another entity",
+        "funds": "Entity funds another entity",
         "has_branch": "Has a branch note",
         "has_example": "Has example",
         "has_member": "Organization has a member",
@@ -3425,15 +3573,13 @@
         "has_subtask": "Epic or large item decomposed into subtasks",
         "implemented_by": "Component implements a design doc",
         "implements": "Design doc implemented by a component",
-        "investigated": "Actor investigated an event",
-        "investigated_by": "Event was investigated by an actor",
         "involved_in": "Involved in",
         "involves": "Involvement",
         "is_example_of": "Example of a concept",
         "is_part_of": "Part of a larger whole",
         "located_at": "Location relationship",
         "location_of": "Location of",
-        "member_of": "Actor is a member of an organization",
+        "member_of": "Person is a member of an organization",
         "mentioned_by": "Mentioned by",
         "mentions": "Mentions",
         "owned_by": "Asset or organization is owned by an entity",
@@ -3441,11 +3587,9 @@
         "party_to": "Entity is a party to a legal action",
         "produced_by": "Entry was produced by a task",
         "produces": "Task produces an entry as evidence",
-        "provoked_response": "Capture event provoked a solidarity response",
         "received_transaction_from": "Entity received a transaction from another entity",
         "refined_by": "Refined by",
         "refines": "Refines or narrows",
-        "responded_to": "Solidarity action responded to a capture event",
         "session_for": "Work log records a session for a backlog item",
         "source_for": "Document is a source for a claim or fact",
         "sourced_from": "Claim or fact is sourced from a document",
@@ -3694,7 +3838,6 @@
         "sourcing": "Claims should link to evidence. Prefer primary sources."
       },
       "relationship_types": {
-        "actor_reference": "Event references an actor (resolved from string or wikilink)",
         "advised_by": "Advised by another entity",
         "advises": "Advisory relationship",
         "amended_by": "An ADR is amended by a later one",
@@ -3708,8 +3851,6 @@
         "blocked_by": "Backlog item cannot start until blocker completes",
         "blocks": "Backlog item must complete before another can start",
         "branches_from": "Branches from a parent note",
-        "built_on": "Solidarity infrastructure built on earlier infrastructure",
-        "capture_mechanism": "Mechanism used in a capture event",
         "causally_follows": "Causal successor",
         "causally_precedes": "Causal predecessor",
         "contains_part": "Contains a part",
@@ -3729,13 +3870,10 @@
         "elaborates": "Elaborates on another note",
         "employed_by": "Employment relationship",
         "employs": "Employs",
-        "enabled": "Earlier infrastructure enabled later solidarity infrastructure",
-        "enabled_capture": "Event enabled by a capture mechanism",
         "extended_by": "Extended by",
         "extends": "Extends or elaborates on",
-        "funded_by": "Organization is funded by another organization",
-        "funds": "Organization funds another organization",
-        "has_actor": "Actor is referenced by an event",
+        "funded_by": "Entity is funded by another entity",
+        "funds": "Entity funds another entity",
         "has_branch": "Has a branch note",
         "has_example": "Has example",
         "has_member": "Organization has a member",
@@ -3744,15 +3882,13 @@
         "has_subtask": "Epic or large item decomposed into subtasks",
         "implemented_by": "Component implements a design doc",
         "implements": "Design doc implemented by a component",
-        "investigated": "Actor investigated an event",
-        "investigated_by": "Event was investigated by an actor",
         "involved_in": "Involved in",
         "involves": "Involvement",
         "is_example_of": "Example of a concept",
         "is_part_of": "Part of a larger whole",
         "located_at": "Location relationship",
         "location_of": "Location of",
-        "member_of": "Actor is a member of an organization",
+        "member_of": "Person is a member of an organization",
         "mentioned_by": "Mentioned by",
         "mentions": "Mentions",
         "owned_by": "Asset or organization is owned by an entity",
@@ -3760,11 +3896,9 @@
         "party_to": "Entity is a party to a legal action",
         "produced_by": "Entry was produced by a task",
         "produces": "Task produces an entry as evidence",
-        "provoked_response": "Capture event provoked a solidarity response",
         "received_transaction_from": "Entity received a transaction from another entity",
         "refined_by": "Refined by",
         "refines": "Refines or narrows",
-        "responded_to": "Solidarity action responded to a capture event",
         "session_for": "Work log records a session for a backlog item",
         "source_for": "Document is a source for a claim or fact",
         "sourced_from": "Claim or fact is sourced from a document",
@@ -3991,7 +4125,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4000,7 +4137,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4023,7 +4163,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4032,7 +4175,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4057,15 +4203,27 @@
   },
   "GET /api/kbs/{name}/permissions | granted_user | missing-kb": {
     "body": {
-      "detail": "Admin access required for this KB"
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
+      }
     },
-    "status": 403
+    "status": 404
   },
   "GET /api/kbs/{name}/permissions | granted_user | no-default-role-kb": {
     "body": {
-      "detail": "Admin access required for this KB"
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
+      }
     },
-    "status": 403
+    "status": 404
   },
   "GET /api/kbs/{name}/permissions | granted_user | private-kb": {
     "body": {
@@ -4083,7 +4241,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4092,7 +4253,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4119,7 +4283,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4128,7 +4295,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4173,7 +4343,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4182,7 +4355,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4211,7 +4387,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4220,7 +4399,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4247,7 +4429,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4256,7 +4441,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4283,7 +4471,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4292,7 +4483,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4365,7 +4559,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4374,7 +4571,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4415,7 +4615,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4424,7 +4627,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4465,7 +4671,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4474,7 +4683,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4515,7 +4727,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4524,7 +4739,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4571,7 +4789,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4580,7 +4801,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4643,7 +4867,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4652,7 +4879,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4675,7 +4905,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4684,7 +4917,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4705,7 +4941,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4714,7 +4953,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4737,7 +4979,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4746,7 +4991,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4771,17 +5019,27 @@
   },
   "GET /api/worktree/changes | granted_user | missing-kb": {
     "body": {
-      "changes": [],
-      "count": 0
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
+      }
     },
-    "status": 200
+    "status": 404
   },
   "GET /api/worktree/changes | granted_user | no-default-role-kb": {
     "body": {
-      "changes": [],
-      "count": 0
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
+      }
     },
-    "status": 200
+    "status": 404
   },
   "GET /api/worktree/changes | granted_user | private-kb": {
     "body": {
@@ -4799,25 +5057,27 @@
   },
   "GET /api/worktree/status | granted_user | missing-kb": {
     "body": {
-      "branch": null,
-      "changes_count": 0,
-      "feedback": null,
-      "has_worktree": false,
-      "status": "none",
-      "submitted_at": null
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
+      }
     },
-    "status": 200
+    "status": 404
   },
   "GET /api/worktree/status | granted_user | no-default-role-kb": {
     "body": {
-      "branch": null,
-      "changes_count": 0,
-      "feedback": null,
-      "has_worktree": false,
-      "status": "none",
-      "submitted_at": null
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
+      }
     },
-    "status": 200
+    "status": 404
   },
   "GET /api/worktree/status | granted_user | private-kb": {
     "body": {
@@ -4845,7 +5105,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4854,7 +5117,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4971,7 +5237,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -4980,7 +5249,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5001,7 +5273,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5010,7 +5285,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5031,7 +5309,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5040,7 +5321,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5097,7 +5381,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5106,7 +5393,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5127,7 +5417,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5136,7 +5429,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5199,7 +5495,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5208,7 +5507,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5229,7 +5531,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5238,7 +5543,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5287,7 +5595,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5296,7 +5607,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5321,15 +5635,27 @@
   },
   "POST /api/kbs/{name}/permissions | granted_user | missing-kb": {
     "body": {
-      "detail": "Admin access required for this KB"
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
+      }
     },
-    "status": 403
+    "status": 404
   },
   "POST /api/kbs/{name}/permissions | granted_user | no-default-role-kb": {
     "body": {
-      "detail": "Admin access required for this KB"
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
+      }
     },
-    "status": 403
+    "status": 404
   },
   "POST /api/kbs/{name}/permissions | granted_user | private-kb": {
     "body": {
@@ -5395,7 +5721,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5404,7 +5733,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5449,7 +5781,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5458,7 +5793,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5527,7 +5865,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'missing-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
       }
     },
     "status": 404
@@ -5536,7 +5877,10 @@
     "body": {
       "detail": {
         "code": "KB_NOT_FOUND",
-        "message": "KB 'no-default-role-kb' not found"
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
       }
     },
     "status": 404

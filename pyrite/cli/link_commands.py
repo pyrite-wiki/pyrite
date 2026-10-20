@@ -20,7 +20,7 @@ from rich.table import Table
 
 from ..exceptions import EntryNotFoundError, KBNotFoundError, ValidationError
 from ..services.access_policy import UNSCOPED
-from .context import cli_context, get_config_and_db
+from .context import cli_context, get_config_and_db, read_input_file, require_kb
 from .outcome import Outcome
 from .output import OUTPUT_FORMAT
 
@@ -46,6 +46,7 @@ def links_check(
     from ..services.wikilink_service import WikilinkService
 
     config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db)
     try:
         targets = WikilinkService(config, db).check_links(kb_name=kb_name, limit=limit)
     finally:
@@ -115,18 +116,6 @@ def _parse_link_specs(raw: str) -> list[dict]:
     return data
 
 
-def _validate_link_spec(spec: dict, index: int) -> list[str]:
-    """Validate a single link spec dict. Returns list of error strings."""
-    errors = []
-    if not isinstance(spec, dict):
-        return [f"Link {index}: expected a mapping, got {type(spec).__name__}"]
-    if "source" not in spec:
-        errors.append(f"Link {index}: missing required field 'source'")
-    if "target" not in spec:
-        errors.append(f"Link {index}: missing required field 'target'")
-    return errors
-
-
 @links_app.command("bulk-create")
 def links_bulk_create(
     file: str | None = typer.Argument(
@@ -160,14 +149,11 @@ def links_bulk_create(
     if input_path == "-" or (input_path is None and not sys.stdin.isatty()):
         raw = sys.stdin.read()
     elif input_path is not None:
-        from pathlib import Path
-
-        p = Path(input_path)
-        if not p.exists():
-            error = EntryNotFoundError(f"File not found: {input_path}")
+        try:
+            raw = read_input_file(input_path)
+        except EntryNotFoundError as error:
             error.suggestion = "Provide a path to an existing YAML file."
-            raise error
-        raw = p.read_text(encoding="utf-8")
+            raise
     else:
         raise ValidationError("Provide a YAML file path, --file, or pipe to stdin")
 
@@ -176,14 +162,10 @@ def links_bulk_create(
     except Exception as e:
         raise ValidationError(f"Failed to parse YAML: {e}") from None
 
-    # Validate all specs up front
-    all_errors: list[str] = []
-    for i, spec in enumerate(specs):
-        all_errors.extend(_validate_link_spec(spec, i))
-    if all_errors:
-        raise ValidationError("; ".join(all_errors))
-
-    with cli_context() as (_config, _db, svc):
+    # Each spec is checked by the service (KBService.add_links), the one place
+    # a link spec is judged (#846): a malformed one fails alone, before its
+    # source is touched, and the others go on.
+    with cli_context(kbs=(kb_name,)) as (_config, _db, svc):
         # KBService.add_links saves each source once, in place, through the
         # same path `pyrite link` uses. This command used to `repo.save` the
         # source, which re-derived its path from the type and wrote a second
@@ -199,12 +181,13 @@ def links_bulk_create(
     created = skipped = failed = 0
     items: list[dict] = []
     for i, (spec, r) in enumerate(zip(specs, results, strict=True)):
+        given = spec if isinstance(spec, dict) else {}
         item = {
             "index": i,
-            "source": spec["source"],
-            "target": spec["target"],
-            "relation": spec.get("relation", "related_to"),
-            "target_kb": spec.get("target_kb", kb_name),
+            "source": given.get("source"),
+            "target": given.get("target"),
+            "relation": given.get("relation", "related_to"),
+            "target_kb": given.get("target_kb", kb_name),
             "status": r["status"] if r["status"] in ("created", "skipped") else "failed",
         }
         if item["status"] == "created":
@@ -214,6 +197,8 @@ def links_bulk_create(
         else:
             failed += 1
             item["error"] = r.get("error", "failed")
+            if r.get("error_code"):
+                item["error_code"] = r["error_code"]
         items.append(item)
 
     def rich(console: Console, data: dict) -> None:
@@ -301,7 +286,13 @@ def links_suggest(
     """
     from ..services.kb_service import KBService
 
+    # The service first: it refuses a KB that does not exist (KB_NOT_FOUND),
+    # which the entry lookup below would report as a missing entry (#846).
+    candidates = _suggest_links(entry_id, kb_name, target_kb, limit)
+
     config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db)
+    require_kb(config, target_kb, db=db)
     try:
         svc = KBService(config, db)
         entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
@@ -310,8 +301,6 @@ def links_suggest(
 
     if entry is None:
         raise EntryNotFoundError(f"Entry not found: {entry_id} (kb={kb_name})")
-
-    candidates = _suggest_links(entry_id, kb_name, target_kb, limit)
 
     data = {
         "entry_id": entry_id,
@@ -428,16 +417,8 @@ def links_discover(
     """
     from ..services.kb_service import KBService
 
-    config, db = get_config_and_db()
-    try:
-        svc = KBService(config, db)
-        entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
-    finally:
-        db.close()
-
-    if entry is None:
-        raise EntryNotFoundError(f"Entry not found: {entry_id} (kb={kb_name})")
-
+    # The service first: it refuses a KB that does not exist (KB_NOT_FOUND),
+    # which the entry lookup below would report as a missing entry (#846).
     candidates = _discover_neighbors(
         entry_id,
         kb_name,
@@ -447,6 +428,18 @@ def links_discover(
         exclude_linked=exclude_linked,
         include_empty=include_empty,
     )
+
+    config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db)
+    require_kb(config, target_kb, db=db)
+    try:
+        svc = KBService(config, db)
+        entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
+    finally:
+        db.close()
+
+    if entry is None:
+        raise EntryNotFoundError(f"Entry not found: {entry_id} (kb={kb_name})")
 
     data = {
         "entry_id": entry_id,

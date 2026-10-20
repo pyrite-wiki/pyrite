@@ -11,11 +11,26 @@ import logging
 from typing import Any
 
 from ..config import PyriteConfig
+from ..exceptions import ValidationError
 from ..storage.database import PyriteDB
-from .access_policy import UNSCOPED
+from .access_policy import UNSCOPED, named_kb
 from .search_service import build_or_query, clip_semantic_text
 
 logger = logging.getLogger(__name__)
+
+
+#: Modes the link discovery service understands. An unknown mode is refused
+#: with a ValidationError naming these (#867) instead of silently running
+#: as keyword.
+LINK_DISCOVERY_MODES = ("keyword", "semantic", "hybrid")
+
+
+def _validate_mode(mode: str) -> None:
+    if mode not in LINK_DISCOVERY_MODES:
+        raise ValidationError(
+            f"Unknown link discovery mode: {mode!r}. "
+            f"Valid modes: {', '.join(LINK_DISCOVERY_MODES)}."
+        )
 
 
 class LinkDiscoveryService:
@@ -28,6 +43,23 @@ class LinkDiscoveryService:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _require_kbs(self, *names: str | None) -> None:
+        """Refuse a KB name that matches no KB, before any read (#846).
+
+        Each public read here names its KBs, and without this answered an
+        empty result -- ``outcome: done``, exit 0 -- for a typo. ``None`` is
+        "not narrowed" (every KB), never a name. Called once per public
+        call; the per-entry ``discover_neighbors`` calls inside
+        ``batch_suggest`` and ``find_orphans`` repeat a dict lookup.
+
+        A blank name names no KB (``access_policy.named_kb``): it is not a
+        typo to refuse here but an id left unplaced, which the entry lookup
+        refuses as ``AMBIGUOUS`` when more than one KB holds it (#528).
+        """
+        for name in names:
+            if kb := named_kb(name):
+                self.config.require_kb(kb)
 
     @staticmethod
     def build_suggest_query(entry: dict) -> str:
@@ -57,6 +89,7 @@ class LinkDiscoveryService:
         Returns a list of candidate dicts with id, kb_name, title, entry_type,
         score, and snippet.
         """
+        self._require_kbs(kb_name, target_kb)
         from .kb_service import KBService
         from .search_service import SearchService
 
@@ -65,6 +98,11 @@ class LinkDiscoveryService:
         entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
         if entry is None:
             return []
+        # The KB the entry was found in, whatever the caller wrote: a blank
+        # `kb_name` placed the id by lookup, and every comparison below
+        # (self, backlinks) must use that KB, not the blank (#912).
+        kb_name = entry.get("kb_name") or kb_name
+        target_kb = named_kb(target_kb)
 
         query = self.build_suggest_query(entry)
         if not query.strip():
@@ -91,7 +129,7 @@ class LinkDiscoveryService:
         candidates = []
         for r in raw_results:
             rid = r.get("id", "")
-            if rid == entry_id:
+            if rid == entry_id and r.get("kb_name", search_kb) == kb_name:
                 continue
             if rid in existing_targets:
                 continue
@@ -144,6 +182,9 @@ class LinkDiscoveryService:
         applies to candidates only: an empty source entry still gets
         suggestions.
         """
+        self._require_kbs(kb_name, target_kb)
+        _validate_mode(mode)
+
         from .kb_service import KBService
         from .search_service import SearchService
 
@@ -151,6 +192,8 @@ class LinkDiscoveryService:
         entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=readable_kbs)
         if entry is None:
             return []
+        kb_name = entry.get("kb_name") or kb_name  # see suggest_links
+        target_kb = named_kb(target_kb)
 
         # Build search query from entry content
         title = entry.get("title", "")
@@ -270,7 +313,13 @@ class LinkDiscoveryService:
         For each entry in source_kb, runs discover_neighbors against target_kb,
         then deduplicates bidirectional matches and sorts by score. Targets
         with no body and no summary are left out unless `include_empty` (#200).
+
+        The mode is validated up front so an empty source KB refuses a bad
+        mode instead of silently returning [] (#867).
         """
+        self._require_kbs(source_kb, target_kb)
+        _validate_mode(mode)
+
         from .kb_service import KBService
 
         svc = KBService(self.config, self.db)
@@ -331,6 +380,7 @@ class LinkDiscoveryService:
         Orphan score = potential_matches - cross_kb_links. High score means
         "should be connected but isn't."
         """
+        self._require_kbs(kb_name)
         from .kb_service import KBService
 
         svc = KBService(self.config, self.db)
@@ -400,6 +450,7 @@ class LinkDiscoveryService:
         Returns links that exist in one direction (A\u2192B) but not the reverse (B\u2192A).
         When both names are the same, each directed link is considered once.
         """
+        self._require_kbs(kb_a, kb_b)
         if kb_a == kb_b:
             entries = self.db.list_entries(kb_name=kb_a, limit=10000)
             entry_ids = {entry["id"] for entry in entries}

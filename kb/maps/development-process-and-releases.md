@@ -18,41 +18,34 @@ tags:
 
 Answers "how does a change reach `dev` and `main`?", "where do I file a bug, a
 request, a process finding?", "what does a release require?". Layer 2 under
-[[design]] (P8, P9). The operating rules are in `CLAUDE.md` and
-`.claude/skills/pyrite-conductor/release-runbook.md`; this map says which ADR
-each rests on.
+[[design]] (P8, P9). The operating rules are in `CONTRIBUTING.md` (the process) and
+`.claude/skills/pyrite-dev/` (the method); this map says which ADR each rests
+on. The release runbook is the maintainer's and lives outside this repository.
 
 ## How the work is run: the agent loop
 
-Pyrite is built by agents under one maintainer. The rules live in the skills
-under `.claude/skills/` and `.claude/agents/`, which `pyrite search` does not
-index; these are the ones a contributor or an agent asks about, and where each
-is defined.
+Pyrite is built by agents under one maintainer. A contributor's agent loads one
+skill from this repository, `pyrite-dev` (`.claude/skills/pyrite-dev/`), and the
+process facts in [CONTRIBUTING.md](../../CONTRIBUTING.md); `pyrite search` does
+not index the skill, so the table below says where each rule is. The
+maintainer's orchestration loop (the conductor that composes themes, dispatches
+workers and reviews branches, and its retro) runs outside this repository and
+is not part of the contributor surface. What it means for a contributor:
 
-- **The Andon cord.** Anyone (the maintainer, the conductor, a worker, a
-  reviewer, the architect, a contributor) can stop the loop when work churns
-  instead of progressing: two themes fail review the same way, a theme passes
-  twice its groomed size, a decision is being re-decided, a fix round would
-  repeat the last one, or the work runs against [[design]]. Pull it by opening
-  an issue labelled `andon` (security findings on the private repository).
-  While one is open nothing is dispatched and no fix round is sent; the root
-  cause is found and a directed fix made, then the issue is closed and the loop
-  resumes. Defined in `.claude/skills/pyrite-conductor/SKILL.md`, "The Andon
-  cord". (Named for the Toyota Production System's cord; see the `tps` demo
-  KB.)
-- **The circuit breaker.** A theme that reaches its third worker fix round, two
-  red pushes to `dev`, or a reverted PR stops the loop and goes to the
-  maintainer. Same skill, "Stop conditions".
-- **The groom.** Before work is dispatched the architect reads [[design]],
-  names the principle at stake, challenges the ticket's framing, states the
-  user's model and the implementation model, and raises a request that breaks
-  the architecture while the user's problem is real to the maintainer. A bug
-  report stays a bug report. `.claude/agents/pyrite-architect.md`.
+- **The Andon cord.** Anyone can stop the work when it churns instead of
+  progressing: two themes fail review the same way, a decision is being
+  re-decided, a fix round would repeat the last one, or the work runs against
+  [[design]]. A contributor pulls it by commenting on the ticket with the
+  evidence and stopping (`pyrite-dev`, "Debugging"); security findings go to
+  the maintainer privately. (Named for the Toyota Production System's cord; see
+  the `tps` demo KB.)
+- **The groom.** A ticket's `## Groom` names the principle at stake, the
+  contracts that apply and a predicted footprint. Read it, and test its
+  riskiest assumption first (`pyrite-dev`, "Before you build").
 - **The cold read.** A reviewer that sees only the diff checks the claimed
-  property everywhere it must hold. `.claude/agents/pyrite-reviewer.md`.
-- **A fix round states the property, not the instances.** The conductor skill.
-- **Risk spikes.** Throwaway code to learn before building, used when the scope
-  or approach is uncertain. `.claude/agents/pyrite-spike.md`.
+  property everywhere it must hold; a worker's report lists each instance it
+  covers (`pyrite-dev`, "Finishing: the report").
+- **A fix round states the property, not the instances.**
 
 ## Find an agent process rule
 
@@ -66,11 +59,6 @@ search vocabulary, not a second copy of the rules.
 | test driven development red green | [pyrite-dev: Test-driven development](../../.claude/skills/pyrite-dev/SKILL.md#test-driven-development) |
 | claim scope before building | [pyrite-dev: Before you build](../../.claude/skills/pyrite-dev/SKILL.md#before-you-build) |
 | finished worker report testing limits | [pyrite-dev: Finishing: the report](../../.claude/skills/pyrite-dev/SKILL.md#finishing-the-report) |
-| Andon cord pause resume | [pyrite-conductor: The Andon cord](../../.claude/skills/pyrite-conductor/SKILL.md#the-andon-cord) |
-| cold review finding fixes | [pyrite-conductor: 2. Absorb: review before it becomes a PR](../../.claude/skills/pyrite-conductor/SKILL.md#2-absorb-review-before-it-becomes-a-pr) |
-| blocked split risk spike small theme | [pyrite-conductor: 3. Choose: compose themes](../../.claude/skills/pyrite-conductor/SKILL.md#3-choose-compose-themes) |
-| release deployment tagged build | [pyrite-conductor: Releasing and deploying](../../.claude/skills/pyrite-conductor/SKILL.md#releasing-and-deploying) |
-| stop conditions autonomy | [pyrite-conductor: Stop conditions](../../.claude/skills/pyrite-conductor/SKILL.md#stop-conditions) |
 | bookkeeping feedback | [pyrite-dev: Capture what you learned](../../.claude/skills/pyrite-dev/SKILL.md#capture-what-you-learned) |
 
 ## The design today
@@ -108,7 +96,7 @@ search vocabulary, not a second copy of the rules.
    experimental. `kb/roadmap.md`, [[design]].
 10. A pull request is a unit a reviewer can hold: complete on one theme, never a
     fragment. Review attention is the constraint. [[adr-0019]], [[adr-0032]];
-    `CLAUDE.md`.
+    `CONTRIBUTING.md`.
 11. A reviewed-changes flow for users mirrors this one. **proposed** ADR-0044.
 
 ## Invariants a test could check
@@ -142,7 +130,7 @@ No component doc covers the process. Paths: `.github/workflows/`,
 `.pre-commit-config.yaml`, `scripts/new-worktree.sh`, `scripts/release.py`,
 `scripts/test-affected`, `scripts/verified_commit.py`,
 `scripts/check_fix_commit_has_tests.py`,
-`changelog.d/`, `.claude/skills/pyrite-conductor/release-runbook.md`.
+`changelog.d/`.
 
 ## Tests that pin it
 
@@ -165,5 +153,5 @@ suite needs), `tests/test_readme_install_tag.py`, `tests/test_readme.py`.
   is not marked superseded (verified by reading it; not edited here).
 - Not decided: whether `main` moves untagged between releases, and who bumps
   the snapshot version ([[adr-0032]] open questions on 3b).
-- No ADR covers the conductor, worker and reviewer roles; they are skills under
-  `.claude/`.
+- No ADR covers the worker and reviewer roles; the worker method is the
+  `pyrite-dev` skill, and the maintainer's loop is outside this repository.

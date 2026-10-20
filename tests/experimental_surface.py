@@ -54,9 +54,8 @@ class Surface:
 EXPERIMENTAL: tuple[Surface, ...] = (
     # -- Section 5 and 2: extensions ---------------------------------------
     Surface(
-        "Extensions: software-kb, journalism-investigation, social, encyclopedia,"
-        " zettelkasten; cascade (unsupported)",
-        "5, 2 (`sw`, `investigation`, `social`, `wiki`, `zettel`, `cascade`)",
+        "Extensions: software-kb, journalism-investigation, social, encyclopedia, zettelkasten",
+        "5, 2 (`sw`, `investigation`, `social`, `wiki`, `zettel`)",
         (
             "extensions/*/tests/*",
             # Core-tree tests whose subject is an extension's behaviour.
@@ -115,11 +114,6 @@ EXPERIMENTAL: tuple[Surface, ...] = (
         ),
     ),
     Surface(
-        "Streamlit (`ui_streamlit.py`, `pyrite/ui`), unsupported",
-        "4",
-        ("tests/test_ui_data.py",),
-    ),
-    Surface(
         "AI endpoints (`/api/ai/*`) and the LLM service behind them",
         "4",
         (
@@ -129,15 +123,6 @@ EXPERIMENTAL: tuple[Surface, ...] = (
             "tests/test_llm_usage_service.py",
             "tests/test_llm_usage_endpoints.py",
             "tests/test_llm_rubric_evaluator.py",
-        ),
-    ),
-    Surface(
-        "`/site` static HTML cache and the sitemap",
-        "4",
-        (
-            "tests/test_site_cache.py",
-            "tests/test_sync_wait_rerenders_site_cache.py",
-            "tests/test_sitemap.py::TestRobotsTxt::*",
         ),
     ),
     Surface(
@@ -180,7 +165,6 @@ EXPERIMENTAL: tuple[Surface, ...] = (
     Surface(
         "Docker and one-click deploys (the demo's seed)",
         "5",
-        # test_demo_public_kbs_upgrade.py is all security (see below).
         ("tests/test_demo_seed_public_kbs.py",),
     ),
     # `.claude-plugin/plugin.json`: no test reads it.
@@ -292,6 +276,7 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     # A tier's tool list is what an HTTP MCP credential of that tier may call.
     "extensions/software-kb/tests/test_software_kb.py::*read_tier_no_write_tools*": AUTHZ,
     "extensions/software-kb/tests/test_software_kb.py::*read_tier_does_not_have*": AUTHZ,
+    "extensions/software-kb/tests/test_software_kb.py::TestCreateBacklogItemRefusals::*": AUTHZ,
     "extensions/journalism-investigation/tests/test_mcp_tools.py::*read_tier_tools_registered*": AUTHZ,
     # The social extension's author-only edit rule.
     "extensions/social/tests/test_social.py::*blocks_non_author*": AUTHZ,
@@ -315,16 +300,12 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     "tests/test_private_kb_read_scoping.py": SCOPE,
     "tests/test_read_scope_queries.py": SCOPE,
     "tests/test_read_scoping_is_structural.py": SCOPE,
-    "tests/test_site_cache_follows_deletes.py": SCOPE,  # P-S3: only the public set
-    "tests/test_site_public_only.py": SCOPE,
-    "tests/test_sitemap.py::TestSitemapXml::*": SCOPE,  # public KBs only
     "tests/test_stats_read_scoping.py": SCOPE,
     "tests/test_websocket_kb_policy_lifetime.py": SCOPE,
     "tests/test_websocket_scoping.py": SCOPE,
     "tests/test_websocket_delivery.py::*private_entry_reaches_granted_socket_only*": SCOPE,
     "tests/test_websocket_delivery.py::*reaches_unscoped_sockets_only*": SCOPE,
     "tests/test_llm_usage_service.py::*scopes_to_requested_user_only*": SCOPE,
-    "extensions/cascade/tests/test_cascade_readable_set.py": SCOPE,
     "extensions/journalism-investigation/tests/test_cross_kb_readable_set.py": SCOPE,
     "extensions/journalism-investigation/tests/test_single_kb_readable_set.py": SCOPE,
     "extensions/journalism-investigation/tests/test_dedup.py::*readable*": SCOPE,
@@ -342,7 +323,6 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     "tests/test_collection_export.py::*source_public*": SCOPE,
     "extensions/journalism-investigation/tests/test_export_pack.py::*test_source_redaction*": SCOPE,
     "extensions/journalism-investigation/tests/test_export_pack.py::*redacted_sources*": SCOPE,
-    "tests/test_demo_public_kbs_upgrade.py": SCOPE,
     "tests/test_demo_seed_public_kbs.py::*default_role_wins*": SCOPE,
     # -- containment of paths and names inside their root --
     "tests/test_config_isolation.py": CONTAIN,
@@ -361,8 +341,8 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     "tests/test_notebooklm_renderer.py::*absolute_path*": CONTAIN,
     # Git acts on the repository it was told to, not one a parent process leaked.
     "tests/test_worktree_service.py::TestGitServiceEnvIsolation::*": CONTAIN,
-    "tests/test_site_cache.py::*traversal*": CONTAIN,
     "tests/test_branding_endpoints.py::*traversal*": CONTAIN,
+    "tests/test_branding_endpoints.py::TestBrokenBrandingDoesNotLeakOnPublicRoutes::*": ESCAPE,
     "tests/test_branding_service.py::*traversal*": CONTAIN,
     # -- credential handling --
     "tests/test_auth_endpoints.py": CRED,
@@ -382,14 +362,7 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     # -- output escaping and request forgery --
     "tests/test_clipper.py": ESCAPE,  # SSRF defence for the web clipper
     "tests/test_repo_error_disclosure.py": ESCAPE,  # no git stderr or server paths
-    "tests/test_site_xss.py": ESCAPE,
     "tests/test_spa_csp_headers.py": ESCAPE,
-    "tests/test_site_cache.py::*escaped*": ESCAPE,
-    "tests/test_site_cache.py::*javascript_url_blocked*": ESCAPE,
-    "tests/test_site_cache.py::TestXSSPrevention::*": ESCAPE,
-    "tests/test_site_cache.py::*does_not_leak_path*": ESCAPE,
-    "tests/test_site_cache.py::TestBrokenBrandingDoesNotLeakOnPublicRoutes::*": ESCAPE,
-    "tests/test_site_cache.py::TestBrandingFailureCacheDoesNotLeakTracebackFrames::*": ESCAPE,
     "tests/test_web_clipper.py::*strips_scripts*": ESCAPE,
     # An error body carries the public message, never the raw exception.
     "tests/test_rest_api.py::*public_message_replaces_str_exc*": ESCAPE,
@@ -456,15 +429,8 @@ REVIEWED_EXPERIMENTAL: dict[str, str] = {
     "tests/test_personal_kb.py::TestMigrationV10::test_migration_adds_usage_tier_column": "a migration's table DDL names password_hash; tests the new column",
     "tests/test_repo_endpoints.py::TestFork::test_fork_success": "a stub token is set to reach the success path",
     "tests/test_repo_endpoints.py::TestCreatePR::test_pr_success": "a stub token is set to reach the success path",
-    "tests/test_site_cache.py::TestSiteCacheRenderAll::test_includes_db_only_kb": _PUBLIC_FIXTURE,
-    "tests/test_site_cache.py::TestAboutPageLink::*": _PUBLIC_FIXTURE,
-    "tests/test_site_cache.py::TestRenderSiteCacheEndpoint::*": _PUBLIC_FIXTURE,
-    "tests/test_site_cache.py::TestBrandingNestedMappingValidation::*": _PUBLIC_FIXTURE,
-    "tests/test_site_cache.py::TestBrandingScalarFieldValidation::*": _PUBLIC_FIXTURE,
-    "tests/test_site_cache.py::TestEditLinkVisibility::test_edit_link_hidden_for_read_only_kb": "hides an edit link in the page (UI); the write refusal itself is tested in the gate",
-    "tests/test_site_cache.py::TestSEOAndSocialMetadata::*": _JSONLD,
-    "tests/test_site_cache.py::TestSiteCacheBranding::test_jsonld_publisher_is_brand": _JSONLD,
     "tests/test_static_routes_with_a_built_dist.py::test_a_reserved_prefix_and_everything_under_it_is_404_never_the_spa": "routing: a reserved prefix is a 404, with or without a credential; no access decision",
+    "tests/test_demo_seed_public_kbs.py::test_seeded_kbs_are_public": "the demo seed opens its KBs on purpose; which KBs a deploy opens is the operator's choice, read back through the policy, not the policy itself",
     "tests/test_task_cli_create_fields.py::test_conductor_desk_recipe_creates_a_task_in_one_step": "a tag named 'outside'",
     "tests/test_task_service.py::TestListTasks::test_list_preserves_priority": "'readable' in a docstring; priority round-trip",
 }

@@ -12,11 +12,11 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .cli.context import open_index_db
+from .cli.context import open_index_db, require_kb
 from .cli.output import validate_output_format
 from .cli.search_commands import register_search_command
 from .config import CONFIG_FILE, load_config
-from .exceptions import PyriteError
+from .exceptions import PyriteError, refusal_fields
 from .logging import configure_entry_point_logging, logging_epilog
 from .services.access_policy import UNSCOPED
 from .services.kb_service import KBService
@@ -36,25 +36,52 @@ console = Console()
 err_console = Console(stderr=True)
 
 
-def _emit_error(message: str, output_format: str, *, error_code: str = "ERROR") -> None:
+def _emit_error(
+    message: str,
+    output_format: str,
+    *,
+    error_code: str = "ERROR",
+    suggestion: str | None = None,
+    extra: dict | None = None,
+) -> None:
     """Report a CLI error without polluting stdout in machine formats.
 
     In a non-rich format, write a valid JSON error object to stdout so a
     programmatic caller's ``json.load()`` still parses; otherwise print a
     human-readable error to stderr. Either way stdout stays parseable.
+    ``extra`` carries a refusal's public fields (``refusal_fields``: the
+    candidate KBs of an ``AMBIGUOUS`` id, #528).
     """
     if output_format and output_format != "rich":
         import json
 
-        typer.echo(json.dumps({"error": message, "error_code": error_code}))
+        payload = {**(extra or {}), "error": message, "error_code": error_code}
+        if suggestion:
+            payload["suggestion"] = suggestion
+        typer.echo(json.dumps(payload))
     else:
-        err_console.print(f"[red]Error:[/red] {message}")
+        from rich.text import Text
+
+        err_console.print("[red]Error:[/red]", Text(message))
+        if suggestion:
+            err_console.print("    [dim]hint:[/dim]", Text(suggestion))
 
 
-def _get_svc():
-    """Create a KBService instance for CLI commands."""
+def _get_svc(*kbs: object, output_format: str = "rich"):
+    """Create a KBService instance for CLI commands.
+
+    Every KB the command named (``kbs``) is resolved first, through the
+    one resolver (#952, #924): an unknown name or a shortname is refused
+    before anything is read, rendered in ``output_format``; None names no KB.
+    """
     config = load_config()
     db = open_index_db(config)
+    try:
+        for kb in kbs:
+            require_kb(config, kb, db=db, output_format=output_format)
+    except BaseException:
+        db.close()
+        raise
     return KBService(config, db), db
 
 
@@ -85,7 +112,7 @@ def get_entry(
     ),
 ):
     """Get a specific entry by ID."""
-    svc, db = _get_svc()
+    svc, db = _get_svc(kb_name, output_format=output_format)
     try:
         result = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
 
@@ -120,7 +147,13 @@ def get_entry(
                 else:
                     console.print(f"  • {src.title}: {src.url}")
     except (PyriteError, ValueError) as e:
-        _emit_error(str(e), output_format)
+        _emit_error(
+            str(e),
+            output_format,
+            error_code=getattr(e, "error_code", "ERROR"),
+            suggestion=getattr(e, "suggestion", None),
+            extra=refusal_fields(e),
+        )
         raise typer.Exit(1) from None
     finally:
         db.close()
@@ -257,7 +290,7 @@ def tags_cmd(
     ),
 ):
     """List tags with counts."""
-    svc, db = _get_svc()
+    svc, db = _get_svc(kb_name, output_format=output_format)
     try:
         tag_list = svc.get_tags(kb_name=kb_name, limit=limit)
 
@@ -306,7 +339,7 @@ def backlinks_cmd(
     ),
 ):
     """Find entries that link to a given entry."""
-    svc, db = _get_svc()
+    svc, db = _get_svc(kb_name, output_format=output_format)
     try:
         from .services.graph_service import GraphService
 

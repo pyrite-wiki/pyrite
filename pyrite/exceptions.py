@@ -33,8 +33,9 @@ the CLI all already agreed, and continue to agree -- no ``legacy_error_code``
 for it.
 
 **Messages are public or private by construction.** ``public_message`` is
-``None`` by default -- every transport's
-``exc.public_message or str(exc)`` then falls back to ``str(exc)``, which
+``None`` by default -- every transport's ``public_text(exc)`` (which returns
+``exc.public_message`` when set, else ``str(exc)``, and logs the real text at
+WARNING when it substitutes; #848) then falls back to ``str(exc)``, which
 every refusal family here whose message is *always* written to be safe to
 show (not-found, read-only, the ``ValidationError`` family, query errors)
 relies on. **A class *can* carry server-side detail in ``str(exc)`` at some
@@ -51,6 +52,42 @@ phrase themselves safely, which is exactly the trap: a class-level
 ``public_message=None`` looked correct until the next raise site embedded a
 path).
 """
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def public_text(
+    exc: BaseException,
+    *,
+    already_logged: bool = False,
+    log: logging.Logger | None = None,
+) -> str:
+    """The text a response may show for ``exc``, and the one place that decides it.
+
+    Returns ``exc.public_message`` when the class sets one, else ``str(exc)``.
+    When it substitutes, the real ``str(exc)`` is logged at WARNING (#848), so
+    the cause stays findable server-side -- on the CLI, stderr at the default
+    level. A class that leaves ``public_message`` unset shows ``str(exc)`` and
+    logs nothing extra. A caller that has already logged the exception (REST
+    at 5xx, a handler with its own ``logger.error(..., exc_info=...)`` line)
+    passes ``already_logged=True`` so the cause is not logged twice. ``log`` is
+    the caller's logger, so the record names the surface that masked the error
+    (``pyrite.server.errors``, ``pyrite.server.mcp_server``, ``pyrite.utils.errors``);
+    it defaults to this module's.
+
+    Every reader of ``.public_message`` goes through here;
+    ``tests/test_public_message_logged_once.py`` fails on one that does not.
+    ``exc`` need not be a ``PyriteError`` (some call sites catch
+    ``ValueError`` too), hence ``getattr``.
+    """
+    public = getattr(exc, "public_message", None)
+    if public is None:
+        return str(exc)
+    if not already_logged:
+        (log or logger).warning("%s: %s", type(exc).__name__, exc)
+    return str(public)
 
 
 class PyriteError(Exception):
@@ -76,10 +113,78 @@ class EntryNotFoundError(PyriteError):
     error_code = "ENTRY_NOT_FOUND"
 
 
+class AmbiguousEntryError(PyriteError):
+    """An entry id given without a KB names more than one KB the caller can read (#528).
+
+    Never resolved by config order: the caller names the KB. ``candidate_kbs``
+    lists only KBs the caller can read -- the raise site counts matches over
+    the readable set, so a private KB holding the same id is neither listed
+    nor a cause of the refusal (ADR-0037 section 4). The list is public by
+    construction; every transport copies it into its body through
+    ``refusal_fields`` (REST ``server/errors.py``, MCP ``_refusal``, the CLI's
+    ``utils/errors.py``).
+    """
+
+    error_code = "AMBIGUOUS"
+    suggestion = (
+        "Name one of these KBs: -k on the CLI, kb on REST, kb_name on MCP "
+        "(or a pyrite://kbs/<kb>/entries/<id> resource)."
+    )
+
+    def __init__(self, entry_id: str, candidate_kbs: list[str]):
+        self.entry_id = entry_id
+        self.candidate_kbs = list(candidate_kbs)
+        super().__init__(f"Entry '{entry_id}' exists in multiple KBs: {', '.join(candidate_kbs)}")
+
+
+#: Attributes a refusal carries beside its code, message and suggestion, each
+#: public by construction. Every transport copies those an exception has into
+#: its error body under the same key, through ``refusal_fields``, so a class
+#: that adds one (#777's unreadable candidates) is mapped on REST, MCP and the
+#: CLI by naming it here. Not every extra goes through it yet:
+#: ``UndeclaredTypeError.declared_types`` is still copied by MCP's ``_refusal``
+#: and REST's write-refusal path themselves, with their own suggestion text.
+REFUSAL_FIELDS: tuple[str, ...] = ("candidate_kbs", "did_you_mean")
+
+
+def refusal_fields(exc: BaseException) -> dict:
+    """The ``REFUSAL_FIELDS`` ``exc`` carries, keyed by name (absent ones left out)."""
+    out = {}
+    for name in REFUSAL_FIELDS:
+        value = getattr(exc, name, None)
+        if value is not None:
+            out[name] = value
+    return out
+
+
 class KBNotFoundError(PyriteError):
-    """Raised when a knowledge base cannot be found."""
+    """Raised when a knowledge base cannot be found.
+
+    The one refusal for a KB name that is unknown, that the caller may not
+    read (the same answer, ADR-0037 §4), or that is a shortname outside link
+    syntax (#952). ``services/kb_resolver.py`` raises it with a
+    ``suggestion`` and ``did_you_mean`` (near matches from the KBs the caller
+    may read; the full name for a readable KB's shortname), which every
+    transport copies into its body through ``refusal_fields``. Raised bare
+    (message only) elsewhere, it carries neither.
+    """
 
     error_code = "KB_NOT_FOUND"
+    suggestion: str | None = None
+    did_you_mean: list[str] | None = None
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        suggestion: str | None = None,
+        did_you_mean: list[str] | None = None,
+    ):
+        super().__init__(message)
+        if suggestion is not None:
+            self.suggestion = suggestion
+        if did_you_mean is not None:
+            self.did_you_mean = list(did_you_mean)
 
 
 class KBReadOnlyError(PyriteError):
@@ -286,6 +391,22 @@ class StorageBusyError(StorageError):
     retryable = True
 
 
+class ConflictError(PyriteError):
+    """A write lost the race for its file and nothing was written (ADR-0042
+    decision 10, #955).
+
+    The update re-reads the file and re-applies its operations when the file
+    changed between its read and its replace (``FileChanged``), at most five
+    times; a file that keeps changing is this. Safe to show: the message
+    names the entry and the KB, never a path. REST answers 409 (the
+    ``CONFLICT`` row), MCP ``CONFLICT`` with ``retryable``, the CLI its
+    refusal shape with the same code.
+    """
+
+    error_code = "CONFLICT"
+    retryable = True
+
+
 class KBProtectedError(PyriteError):
     """Raised when attempting to modify/remove a config-protected KB."""
 
@@ -320,10 +441,10 @@ class BrandingInvalidError(PyriteError):
 
     ``str()`` names the real branding.yaml path and the parser's own text --
     useful in the server log, not safe to return over HTTP or MCP: every
-    caller of ``BrandingService`` runs on an anonymous, always-public path
-    (``/config/branding``, ``/sitemap.xml``, ``/robots.txt``, the MCP
-    ``research_topic`` prompt), not just the admin-only render endpoint
-    (#445's cold read). ``public_message`` is safe to show; it names neither.
+    caller of ``BrandingService`` runs on an anonymous or always-public
+    path (``/config/branding``, the MCP ``research_topic`` prompt, the KB
+    README footer), with no admin in the loop (#445's cold read).
+    ``public_message`` is safe to show; it names neither.
     """
 
     error_code = "BRANDING_INVALID"
@@ -487,3 +608,53 @@ class Forbidden(AccessDenied):
     """
 
     error_code = "FORBIDDEN"
+
+
+class InvalidQATierError(ValidationError):
+    """A QA tier that does not exist was asked for (#795).
+
+    ``QA_TIERS`` in ``services/qa_service.py`` lists the tiers QA runs. Any
+    other value is refused before anything is checked or recorded, so a
+    record never names a tier no check stands behind.
+    """
+
+    error_code = "INVALID_TIER"
+
+
+class AINotConfiguredError(PyriteError):
+    """A QA tier needs a model and none is configured (#795).
+
+    The same code REST's AI routes answer (``endpoints/ai_ep.py``). Refused
+    before anything is recorded: a tier that cannot run writes no record and
+    is never reported as a pass.
+    """
+
+    error_code = "AI_NOT_CONFIGURED"
+    suggestion = "Set ai_provider, ai_api_key and ai_model in the config, or use tier 1."
+
+
+class EvaluationFailedError(PyriteError):
+    """A model-judged check did not run to an answer (#795).
+
+    The model call raised, or its reply was empty, not JSON, not a list, or
+    did not answer every rubric item it was asked. ``reason`` says which.
+    Not an empty finding list: a check that did not answer is not a pass.
+    """
+
+    error_code = "EVALUATION_FAILED"
+
+    def __init__(self, entry_id: str, reason: str):
+        self.entry_id = entry_id
+        self.reason = reason
+        super().__init__(f"Tier 2 evaluation of '{entry_id}' did not run: {reason}")
+
+
+class KBUnreadableError(PyriteError):
+    """A KB's folder is missing or cannot be read (#950).
+
+    QA refuses to assess it: no record could be read back from, or written
+    to, a folder that is not there, and writing one would recreate a missing
+    folder. The message names the KB and the reason, never the path.
+    """
+
+    error_code = "KB_UNREADABLE"

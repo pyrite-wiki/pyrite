@@ -30,7 +30,8 @@ KBRepository.save() → PyriteDB.register_kb() → IndexManager.index_entry()
 
 ## Consumers
 
-- `KBService.create_entry()`, `update_entry()`, `delete_entry()` — all write paths go through DocumentManager
+- `KBService.create_entry()` (a create: `KBRepository.save(exclusive=True)` writes the type's values onto a skeleton with `apply()` and publishes with `expect=ABSENT`, #955 C2) and `delete_entry()`.
+- Not an update and not a link: since #955 (B6 P3a) `KBService._update` applies operations to the file's own bytes and publishes through `pyrite/storage/entry_writer.py`, and since B6 P4 `add_link()`/`add_links()` append one `links:` item through the same write. `save_entry` is only a create's path now; its subdirectory preservation and `keep_filename` serve no caller and go with it.
 
 ## Related
 

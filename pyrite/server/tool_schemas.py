@@ -850,7 +850,7 @@ WRITE_TOOLS = {
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Replacement tags (overwrites existing)",
+                    "description": "Replaces the whole tag list; to add or drop one tag use `append`/`remove`",
                 },
                 "participants": {
                     "type": "array",
@@ -859,7 +859,7 @@ WRITE_TOOLS = {
                 },
                 "metadata": {
                     "type": "object",
-                    "description": "Additional/extension fields to update",
+                    "description": "Fields by name (a key here is the field of that name, ADR-0051); a managed field is refused",
                 },
                 "status": {
                     "type": "string",
@@ -868,6 +868,19 @@ WRITE_TOOLS = {
                 "date": {"type": "string", "description": "Date (YYYY-MM-DD)"},
                 "location": {"type": "string", "description": "Location/venue"},
                 "summary": {"type": "string", "description": "Short summary or subtitle"},
+                "append": {
+                    "type": "object",
+                    "description": 'Add one item to a list field without sending the list: {field: item}; a list value appends each item. Links: {"links": {"target": "id", "relation": "related_to"}}. The other items keep their bytes.',
+                },
+                "remove": {
+                    "type": "object",
+                    "description": "Remove one item equal to the value from a list field: {field: item}; a list value removes each item.",
+                },
+                "unset": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Remove these keys from the frontmatter, with their own lines. Sending null as a field's value sets it to null; it does not remove the key.",
+                },
                 "validate": {
                     "type": "boolean",
                     "description": "Run QA validation after save and return issues. Also runs automatically if KB has qa_on_write: true in kb.yaml.",
@@ -1053,7 +1066,7 @@ WRITE_TOOLS = {
         },
     },
     "kb_qa_assess": {
-        "description": "Run QA assessment on an entry or entire KB. Creates qa_assessment entries recording results. Optionally creates tasks for failures.",
+        "description": "Run QA assessment on an entry or entire KB. Creates qa_assessment entries recording results; a tier that did not run records nothing (an entry is refused with EVALUATION_FAILED, a KB run lists the entry under `failed`). Optionally creates tasks for failures; tasks it could not create are returned under `task_failed` / `tasks_failed`.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1067,7 +1080,13 @@ WRITE_TOOLS = {
                 },
                 "tier": {
                     "type": "integer",
-                    "description": "Assessment tier: 1=structural (default)",
+                    "minimum": 1,
+                    "maximum": 2,
+                    "description": (
+                        "Assessment tier: 1=structural (default); 2=structural plus the "
+                        "model-judged rubric, refused with AI_NOT_CONFIGURED when no model "
+                        "is configured. Any other value is refused with INVALID_TIER."
+                    ),
                 },
                 "max_age_hours": {
                     "type": "integer",

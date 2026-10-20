@@ -1,6 +1,6 @@
 # Pyrite Architecture: Key Source Files
 
-Reference map of the core modules. Consult this when planning a change to know where to look first; SKILL.md keeps the architectural *decisions* (ADRs + 6 plugin integration points) since those affect process choices on every task.
+Reference map of the core modules. Consult it when planning a change, to know where to look first. The decisions behind them are the ADRs: `pyrite sw adrs`.
 
 ## Plugins
 
@@ -15,14 +15,16 @@ Reference map of the core modules. Consult this when planning a change to know w
 |------|---------|
 | `pyrite/models/core_types.py` | 9 built-in entry types + `ENTRY_TYPE_REGISTRY` |
 | `pyrite/models/factory.py` | Entry factory — `build_entry()` single dispatch point |
-| `pyrite/schema/` | `KBSchema`, `FieldSchema` — schema-as-config validation (6 submodules) |
+| `pyrite/schema/` | `KBSchema`, `FieldSchema` — schema-as-config validation |
+| `pyrite/schema/field_aliases.py` | Which key a type reads under another name (`field_aliases` in a schema), and which spelling a file uses for a field (`metadata.k`: ADR-0051) |
 | `pyrite/config.py` | `PyriteConfig`, `Settings`, `KBConfig` |
 
 ## CLI
 
 | File | Purpose |
 |------|---------|
-| `pyrite/cli/__init__.py` | Main Typer CLI app, all commands |
+| `pyrite/cli/__init__.py` | Main Typer app; registers the command groups |
+| `pyrite/cli/*_commands.py` | One module per command group; KB names via `cli/context.py` → `services/kb_resolver.py` |
 
 ## Storage
 
@@ -30,6 +32,8 @@ Reference map of the core modules. Consult this when planning a change to know w
 |------|---------|
 | `pyrite/storage/database.py` | `PyriteDB` (SQLite + FTS5) |
 | `pyrite/storage/queries.py` | SQL queries (FTS search, tag search, graph) |
+| `pyrite/storage/file_operations.py` | `apply(text, ops, span)`: field operations on a file's own text, a value-level patch (ADR-0042) |
+| `pyrite/storage/entry_writer.py` | The only writer of an entry file's bytes (one exception left, `ids pin`): `create_entry_text`, `publish_entry_text` (compare-and-replace under the lock) |
 
 ## Server (REST + MCP)
 
@@ -44,6 +48,7 @@ Reference map of the core modules. Consult this when planning a change to know w
 | File | Purpose |
 |------|---------|
 | `pyrite/services/kb_service.py` | `KBService` CRUD with hooks |
+| `pyrite/services/kb_resolver.py` | The one KB resolver: a KB name becomes one KB, a KB set, or `KB_NOT_FOUND` (ADR-0049) |
 | `pyrite/services/search_service.py` | `SearchService` — keyword, semantic, hybrid search + RRF |
 | `pyrite/services/embedding_service.py` | `EmbeddingService` — vector storage, similarity search |
 | `pyrite/services/embedding_worker.py` | `EmbeddingWorker` — background embedding pipeline |

@@ -93,10 +93,10 @@ packages = ["src/pyrite_<snake_name>"]
 ```bash
 # Install in dev mode
 cd <pyrite repo root>
-.venv/bin/pip install -e extensions/<name>
+uv pip install --python .venv/bin/python -e extensions/<name>
 
 # Verify plugin loads
-.venv/bin/python -c "from pyrite.plugins.registry import get_registry; r = get_registry(); print([p.name for p in r.list_plugins()])"
+.venv/bin/python -c "from pyrite.plugins.registry import get_registry; r = get_registry(); print(r.list_plugins())"
 
 # Run extension tests
 .venv/bin/pytest extensions/<name>/tests/ -v
@@ -109,9 +109,9 @@ For patterns and conventions, consult:
 - `.claude/skills/pyrite-dev/testing.md` — test patterns and conventions
 
 For working examples, read these existing extensions:
-- `extensions/zettelkasten/` — simplest (1 entry type, hooks)
-- `extensions/encyclopedia/` — medium (4 entry types, validators)
-- `extensions/social/` — complex (custom tables, workflows)
+- `extensions/zettelkasten/` — simplest (2 entry types, no hooks)
+- `extensions/encyclopedia/` — medium (2 entry types and the article review workflow)
+- `extensions/social/` — complex (2 entry types and the hooks, no workflow)
 - `extensions/software-kb/` — full-featured (CLI, MCP tools, multiple types)
 
 ## Key Rules
@@ -121,6 +121,7 @@ For working examples, read these existing extensions:
 3. `from_frontmatter()` MUST call `generate_entry_id(title)` when `meta.get("id")` is empty
 4. Validators MUST return `[]` for unrelated types
 5. Prefix custom DB table names with extension name
-6. Hooks MUST return the entry (before_save) or None (after_save)
-7. All list/dict fields MUST handle None → default: `meta.get("field", []) or []`
-8. Tests MUST pass before claiming completion
+6. Hooks MUST return the entry (before_save) or None (after_save). A before_save hook may refuse by raising; on update its changes are ignored, only create keeps them
+7. Declare `capabilities` for every method the plugin implements; the registry skips methods whose capability is missing
+8. All list/dict fields MUST handle None → default: `meta.get("field", []) or []`
+9. Tests MUST pass before claiming completion

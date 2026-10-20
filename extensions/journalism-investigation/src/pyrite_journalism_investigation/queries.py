@@ -8,12 +8,12 @@ from typing import Any
 
 from .utils import parse_meta, strip_wikilink
 
-# Map user-facing entity type names to DB-stored types.
-# Core types like "person" and "organization" get resolved to plugin
-# subtypes ("actor", "cascade_org") by KBService._resolve_entry_type.
+# Map user-facing entity type names to DB-stored types. A core type like
+# "person" may be stored under a plugin subtype that KBService's
+# _resolve_entry_type picked (an `actor` from an older KB).
 ENTITY_TYPE_ALIASES: dict[str, list[str]] = {
     "person": ["person", "actor"],
-    "organization": ["organization", "cascade_org"],
+    "organization": ["organization"],
     "asset": ["asset"],
     "account": ["account"],
 }

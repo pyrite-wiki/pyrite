@@ -34,7 +34,7 @@ runner = CliRunner()
 
 
 def _git(args: list[str], cwd: Path) -> None:
-    subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, check=True)
+    subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, check=True, timeout=120)
 
 
 @pytest.fixture

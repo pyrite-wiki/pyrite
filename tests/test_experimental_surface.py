@@ -258,6 +258,7 @@ class TestSecurityVocabularyNeedsAReason:
     A new security test added to an experimental file therefore stops the
     gate until someone decides, whatever it is called."""
 
+    @pytest.mark.guard
     def test_every_experimental_test_touching_security_is_reviewed(self):
         unreviewed = [
             nodeid
@@ -270,6 +271,7 @@ class TestSecurityVocabularyNeedsAReason:
             "not one:\n" + "\n".join(unreviewed)
         )
 
+    @pytest.mark.guard
     def test_no_reviewed_entry_is_stale(self):
         hits = {
             nodeid for nodeid, body in _experimental_test_bodies() if surface.touches_security(body)
@@ -385,7 +387,7 @@ class TestCollectionErrors:
         ("path", "expected"),
         [
             ("extensions/zettelkasten/tests/test_zettelkasten.py", False),  # has security cases
-            ("extensions/cascade/tests/test_aliases.py", True),
+            ("extensions/journalism-investigation/tests/test_plugin.py", True),
             ("tests/test_task_dag.py", True),
             ("tests/test_settings.py", False),  # only a class is experimental
             ("tests/test_storage.py", False),

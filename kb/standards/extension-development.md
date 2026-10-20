@@ -74,6 +74,14 @@ shape, the way `tests/test_plugin_contract.py` does for every installed
 plugin. That test would have caught #376/#48 the day the validator was
 written, not months later against production data.
 
+## Capabilities
+- Declare `capabilities: ClassVar[set[Capability]]` on the plugin class (`from pyrite.plugins.capabilities import Capability`).
+- Declare one capability for every method the plugin implements. The registry skips a method whose capability is not declared, and a plugin with no `capabilities` has every method skipped.
+- The method-to-capability map is `_METHOD_CAPABILITIES` in `pyrite/plugins/registry.py`.
+
+## Hook rules
+A `before_save` hook may refuse a write by raising. On update its changes are ignored; only create keeps them (ADR-0042 decision 4). An `after_save` hook never writes another entry; `tests/test_after_save_hooks_write_no_other_entry.py` runs every installed plugin's `after_save` hooks and fails if one does.
+
 ## CLI Rules
 - CLI module imported lazily inside `get_cli_commands()` to handle missing typer
 - Dependencies list should be empty — pyrite is a peer dependency

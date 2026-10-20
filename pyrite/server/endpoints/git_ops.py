@@ -3,16 +3,17 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
 from ...exceptions import InvalidGitRefError, KBNotFoundError, PyriteError
-from ...services.access_policy import KB, Action
+from ...services.access_policy import KB, AccessPolicy, Action
 from ...services.export_service import ExportService
 from ...services.kb_service import KBService
 from ..api import (
+    get_access_policy,
     get_export_service,
     get_kb_service,
     limiter,
     requires_tier,
 )
-from ..authz import authorize
+from ..authz import authorize, resolve_named_kb
 
 router = APIRouter(tags=["Git Operations"])
 
@@ -46,8 +47,10 @@ def publish_changes(
     kb_name: str,
     summary: str | None = Body(None, embed=True),
     svc: KBService = Depends(get_kb_service),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Commit and push all pending changes in a KB."""
+    resolve_named_kb(request, policy, kb_name)  # the one resolver first (#952)
     try:
         return svc.publish_changes(kb_name, summary=summary)
     except KBNotFoundError:
@@ -67,8 +70,10 @@ def commit_kb(
     paths: list[str] | None = Body(None, embed=True),
     sign_off: bool = Body(False, embed=True),
     export_svc: ExportService = Depends(get_export_service),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Commit changes in a KB's git repository."""
+    resolve_named_kb(request, policy, kb_name)
     try:
         result = export_svc.commit_kb(kb_name, message=message, paths=paths, sign_off=sign_off)
         return result
@@ -88,8 +93,10 @@ def push_kb(
     remote: str = Body("origin", embed=True),
     branch: str | None = Body(None, embed=True),
     export_svc: ExportService = Depends(get_export_service),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Push KB commits to a remote repository."""
+    resolve_named_kb(request, policy, kb_name)
     try:
         result = export_svc.push_kb(kb_name, remote=remote, branch=branch)
         return result

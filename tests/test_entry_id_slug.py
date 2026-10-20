@@ -12,6 +12,7 @@ import re
 import pytest
 
 from pyrite.models.core_types import NoteEntry
+from pyrite.storage.repository import new_entry_text
 from pyrite.schema import generate_entry_id
 
 SAFE = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
@@ -44,6 +45,33 @@ def test_ascii_ids_are_unchanged():
     assert generate_entry_id("Use A/B testing: now, or later?") == "use-a-b-testing-now-or-later"
 
 
+def test_non_string_yaml_scalar_titles_are_stringified_before_slugging():
+    # #704: `title: 1e3` / `title: 2024` / `title: true` load as non-strings.
+    assert generate_entry_id(2024) == "2024"
+    assert generate_entry_id(1000.0) == "1000-0"
+    assert generate_entry_id(True) == "true"
+    # falsy scalars keep the empty-title id they had before #704: no id moves
+    assert generate_entry_id(False) == generate_entry_id("") == "entry-da39a3ee"
+    assert generate_entry_id(0) == generate_entry_id(0.0) == "entry-da39a3ee"
+    assert generate_entry_id(None).startswith("entry-")
+    for value in (2024, 1000.0, True, False, 0):
+        assert SAFE.match(generate_entry_id(value)), repr(value)
+
+
+@pytest.mark.control(
+    reason="dev already skips these files via the same TypeError; pins the refusal"
+)
+def test_titles_that_cannot_be_indexed_get_no_id():
+    # #762 review item 2: a sequence, mapping or NaN title must stay out of id
+    # derivation with a named reason, so `ids pin` never writes an id into a
+    # file Pyrite cannot index (list titles are #711).
+    import math
+
+    for value in (["a", "b"], (1, 2), {"a": 1}, math.nan):
+        with pytest.raises(TypeError):
+            generate_entry_id(value)
+
+
 def test_accents_transliterate_instead_of_vanishing():
     assert generate_entry_id("Café résumé naïve") == "cafe-resume-naive"
 
@@ -62,9 +90,12 @@ def test_long_titles_are_capped_at_a_word_boundary():
     assert entry_id.startswith("long-title-word-")
 
 
+@pytest.mark.control(
+    reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+)
 def test_markdown_ends_with_exactly_one_newline():
     # `pyrite create` wrote a trailing blank line, so every new entry failed the
     # end-of-file hook once (#17, second half).
     for body in ("body", "body\n", "body\n\n\n", ""):
-        text = NoteEntry(id="n", title="N", body=body).to_markdown()
+        text = new_entry_text(NoteEntry(id="n", title="N", body=body))
         assert text.endswith("\n") and not text.endswith("\n\n"), repr(text[-6:])

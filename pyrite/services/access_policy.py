@@ -38,7 +38,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -299,9 +299,15 @@ NOT_FOUND = "NOT_FOUND"
 
 @dataclass(frozen=True)
 class Decision:
-    """Allow (`code` None), or a denial with its code."""
+    """Allow (`code` None), or a denial with its code.
+
+    A NOT_FOUND for a named KB carries the resolver's own refusal
+    (`services/kb_resolver.py`, #952) so `require` raises it with its
+    suggestion and near matches; two decisions compare equal on `code` alone.
+    """
 
     code: str | None = None
+    refusal: KBNotFoundError | None = field(default=None, compare=False, repr=False)
 
     @property
     def allowed(self) -> bool:
@@ -438,10 +444,29 @@ class AccessPolicy:
     # -- facts about a KB -----------------------------------------------------
 
     def kb_exists(self, kb_name: str) -> bool:
-        """Is `kb_name` a KB this instance knows -- in config or the registry?"""
-        if self.config.get_kb(kb_name):
-            return True
-        return self._kb_registry().is_registered(kb_name)
+        """Is `kb_name` a KB this instance knows -- in config or the registry?
+
+        The one existence lookup, `kb_resolver.resolve_kb` with no scope
+        (#952, #925): a shortname is not a KB here either.
+        """
+        from .kb_resolver import resolve_kb
+
+        try:
+            return resolve_kb(self.config, kb_name, readable_kbs=UNSCOPED, db=self.db) is not None
+        except KBNotFoundError:
+            return False
+
+    def resolve_kb_for(self, principal: Principal, kb_name: object):
+        """The KB `kb_name` means for `principal`, or the one refusal
+        (`kb_resolver.resolve_kb` with the principal's read scope).
+
+        None when `kb_name` names no KB.
+        """
+        from .kb_resolver import resolve_kb
+
+        return resolve_kb(
+            self.config, kb_name, readable_kbs=self.read_scope(principal).as_set(), db=self.db
+        )
 
     def kb_default_role(self, kb_name: str) -> str | None:
         """A KB's default_role: config first, then the registry.
@@ -515,9 +540,15 @@ class AccessPolicy:
 
         if isinstance(resource, KB | Row):
             kb_name = resource.name if isinstance(resource, KB) else resource.kb_name
-            if not self.kb_exists(kb_name):
+            # The resolver decides existence, readability and the shortname
+            # rule in one place (#952); a NOT_FOUND carries its refusal.
+            try:
+                kb = self.resolve_kb_for(principal, kb_name)
+            except KBNotFoundError as refusal:
+                return Decision(NOT_FOUND, refusal=refusal)
+            if kb is None:
                 return Decision(NOT_FOUND)
-            effective = self.effective_kb_role(principal, kb_name)
+            effective = self.effective_kb_role(principal, kb.name)
             if role_at_least(effective, tier):
                 return ALLOW
             if not role_at_least(effective, "read"):
@@ -540,6 +571,8 @@ class AccessPolicy:
         decision = self.authorize(principal, action, resource)
         if decision.allowed:
             return
+        if decision.refusal is not None:
+            raise decision.refusal
         if decision.code == NOT_FOUND:
             kb_name = (
                 resource.name if isinstance(resource, KB) else getattr(resource, "kb_name", "")

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { entryHref } from '$lib/utils/entry-href';
 	import Topbar from '$lib/components/layout/Topbar.svelte';
 	import SkeletonLoader from '$lib/components/common/SkeletonLoader.svelte';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
@@ -166,7 +167,7 @@
 						></div>
 
 						<a
-							href="/entries/{event.id}"
+							href={entryHref(event.id, event.kb_name)}
 							class="block rounded-lg border border-zinc-200 p-3 transition-colors hover:border-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
 						>
 							<div class="flex items-center gap-3">

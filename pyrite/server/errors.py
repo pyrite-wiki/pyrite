@@ -41,6 +41,8 @@ from ..exceptions import (
     PyriteError,
     StorageError,
     ValidationError,
+    public_text,
+    refusal_fields,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,7 @@ logger = logging.getLogger(__name__)
 # class whose code nobody added below yet) maps to 500 INTERNAL_ERROR --
 # fails safe, the same way an unrecognised exception type used to.
 _STATUS_BY_CODE: dict[str, int] = {
+    "AMBIGUOUS": 409,
     "ENTRY_NOT_FOUND": 404,
     "KB_NOT_FOUND": 404,
     "KB_READ_ONLY": 403,
@@ -88,13 +91,10 @@ _STATUS_BY_CODE: dict[str, int] = {
     "CONFLICT": 409,
     "PLUGIN_ERROR": 502,
     "STORAGE_ERROR": 500,
-    # 500, not 409: this row governs the anonymous, always-public GET routes
-    # that build a BrandingService as a side effect of serving content
-    # (/config/branding, /sitemap.xml, /robots.txt) -- a broken branding.yaml
-    # there is a server misconfiguration, not something wrong with the
-    # caller's request. POST /api/site/render catches BrandingInvalidError
-    # itself before this handler ever sees it and answers 409 (#408); this
-    # row is unreached from that path.
+    # 500, not 409: this row governs the anonymous, always-public GET route
+    # that builds a BrandingService as a side effect of serving content
+    # (/config/branding) -- a broken branding.yaml there is a server
+    # misconfiguration, not something wrong with the caller's request.
     "BRANDING_INVALID": 500,
     # ClipperBlockedHostError had no row in the old isinstance table either
     # (it is a direct PyriteError, not a ValidationError), so it already fell
@@ -166,24 +166,22 @@ def error_response(exc: PyriteError) -> tuple[int, dict]:
         # The exception itself, not True: outside an except frame,
         # sys.exc_info() is empty and exc_info=True logs no traceback (#431).
         logger.error("Unhandled %s: %s", type(exc).__name__, exc, exc_info=exc)
-    message = str(exc)
-    public_message = exc.public_message
-    if public_message is not None:
-        # str(exc) may name a real filesystem path or other operator detail
-        # unsafe to return over HTTP (#377's ConfigSaveRefusedError pattern,
-        # extended to any PyriteError subclass that sets a public_message --
-        # e.g. BrandingInvalidError, #445's cold read). A 5xx already logged
-        # the detail above (with exc_info); logging it again here would
-        # double it on every request -- the #445 delta cold read's second
-        # finding. Only a sub-500 refusal needs this line, since nothing else
-        # logs it.
-        if status_code < 500:
-            logger.warning("%s", exc)
-        message = public_message
+    # public_message, when the class sets one, replaces str(exc), which may
+    # name a real filesystem path or other operator detail unsafe to return
+    # over HTTP (#377's ConfigSaveRefusedError pattern, extended to any
+    # PyriteError subclass that sets one -- e.g. BrandingInvalidError, #445's
+    # cold read). A 5xx already logged the detail above (with exc_info);
+    # logging it again would double it on every request -- the #445 delta
+    # cold read's second finding. public_text writes the line for a sub-500
+    # refusal, where nothing else logs it (#848).
+    message = public_text(exc, already_logged=status_code >= 500, log=logger)
     detail: dict = {"code": code, "message": message, "retryable": _retryable(exc)}
     suggestion = getattr(exc, "suggestion", None)
     if suggestion:
         detail["hint"] = suggestion
+    # A refusal's public extras (AMBIGUOUS's candidate_kbs, #528), mapped
+    # once for every class from REFUSAL_FIELDS in pyrite.exceptions.
+    detail.update(refusal_fields(exc))
     return status_code, {"detail": detail}
 
 

@@ -163,6 +163,24 @@ describe('ApiClient', () => {
 			await expect(api.getEntry('missing')).rejects.toThrow(ApiError);
 		});
 
+		it('carries an AMBIGUOUS refusal\'s code and candidate KBs', async () => {
+			mockFetch.mockResolvedValueOnce({
+				ok: false,
+				status: 409,
+				statusText: 'Conflict',
+				json: () =>
+					Promise.resolve({
+						detail: { code: 'AMBIGUOUS', message: 'ambiguous', candidate_kbs: ['kb-a', 'kb-b'] }
+					})
+			});
+
+			const err = await api.getEntry('dup').catch((e) => e);
+			expect(err).toBeInstanceOf(ApiError);
+			expect(err.status).toBe(409);
+			expect(err.code).toBe('AMBIGUOUS');
+			expect(err.candidateKbs).toEqual(['kb-a', 'kb-b']);
+		});
+
 		it('includes status code in ApiError', async () => {
 			mockFetch.mockResolvedValueOnce({
 				ok: false,

@@ -21,6 +21,7 @@ visitor sends no credential at all.
 """
 
 import os
+import re
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -227,7 +228,10 @@ def write_env(stub_clip):
 
 
 def _normalised(resp, kb):
-    return resp.status_code, resp.text.replace(kb, "<KB>")
+    # The name as a word, not as a substring: PRIVATE is "p", and the
+    # refusal's hint names `pyrite orient`.
+    text = re.sub(rf"(?<![A-Za-z0-9_-]){re.escape(kb)}(?![A-Za-z0-9_-])", "<KB>", resp.text)
+    return resp.status_code, text
 
 
 @pytest.mark.parametrize("route", sorted(WRITE_CALLS))

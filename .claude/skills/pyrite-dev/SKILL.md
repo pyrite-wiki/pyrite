@@ -1,17 +1,18 @@
 ---
 name: pyrite-dev
-description: "This skill should be used by an agent developing Pyrite code — fixing a bug, adding a feature, writing or running tests, debugging, or completing a backlog item — on its own branch in its own worktree. Enforces TDD, root-cause debugging and evidence-before-claims, and ends with a report the conductor can review. For picking work, dispatching agents, reviewing branches, opening PRs, releasing or deploying, use pyrite-conductor."
+description: "This skill should be used by an agent developing Pyrite code — fixing a bug, adding a feature, writing or running tests, debugging, or completing a backlog item — on its own branch in its own worktree. Enforces TDD, root-cause debugging and evidence-before-claims, and ends with a report for the PR. Opens a draft PR after the first push; the maintainer reviews and merges it. Process commands (setup, hooks, branches, PRs) live in CONTRIBUTING.md."
 ---
 
-# Pyrite Development Skill (the worker)
+# Pyrite Development Skill
 
 **Announce at start:** "I'm using the pyrite-dev skill."
 
-You develop Pyrite on **one branch, in one worktree, on one theme**. Picking the
-theme, and reviewing, readying or merging the PR, belong to
-[pyrite-conductor](../pyrite-conductor/SKILL.md); you never touch `dev`. If
-nobody dispatched you, you are also the conductor: finish here, then load
-pyrite-conductor for review and the PR.
+You develop Pyrite on **one branch, in one worktree, on one theme**, and you
+never push to `dev`. Review and merge are the maintainer's. Every process
+fact (setup, hooks, branches, the PR, the heavy-run lock) has one home,
+[CONTRIBUTING.md](../../../CONTRIBUTING.md#branches-hooks-and-pull-requests),
+"Branches, hooks and pull requests"; this skill gives the method and links there rather than repeating
+it.
 
 A theme produces code and what was learned building it; record both. Why each
 rule exists: [history.md](history.md).
@@ -28,13 +29,14 @@ rule exists: [history.md](history.md).
 ## Where you are
 
 ```bash
-git branch --show-current     # feature/*, fix/*, kb/* or process/* -- never dev
-pwd                           # a worktree under ../pyrite-wt/, with its own .venv
+git branch --show-current     # fix/*, feature/*, docs/*, kb/* or process/* -- never dev
+pwd                           # your checkout; a worktree under ../pyrite-wt/ if others share the clone
 .venv/bin/pyrite kb list      # the `pyrite` KB path must be THIS worktree's kb/
 ```
 
-- Any of them wrong: stop, and run `scripts/new-worktree.sh <branch>` from the
-  main checkout (ADR-0032).
+- On `dev`, or sharing a clone with another session or agent, or a wrong
+  `pyrite` KB path: stop and set up a worktree (CONTRIBUTING,
+  [Initial Setup](../../../CONTRIBUTING.md#initial-setup)).
 - Use the worktree's `.venv/bin/...`; the main checkout's venv imports the main
   checkout's code.
 - Sub-agents share your branch and worktree: give them disjoint files, never
@@ -65,7 +67,7 @@ Bugs and user requests live in GitHub Issues, the roadmap (epics, backlog
 items, ADRs) in `kb/`, never both (ADR-0033). A bug you fix here needs no
 issue. A bug you find and do not fix:
 `gh issue create --label bug --label <area>`, with placeholders for anything
-private. A security finding goes to the conductor, not a public issue.
+private. A security finding goes to the maintainer privately (SECURITY.md), never to a public issue.
 
 Editing a function on the `tests/test_layer_boundaries.py` allowlist? Remove
 its entry: move the storage access behind a service.
@@ -76,26 +78,42 @@ RED, verify RED (it fails for the right reason), GREEN (the minimal code),
 verify GREEN, REFACTOR, commit with a conventional prefix. Code written before
 its test is deleted and started over. Patterns: [tdd.md](tdd.md).
 
+**A test's expected value comes from the property, never from the code under
+test.** Never build an expected value, model or checker by restating the
+module's own scan, model or check: a copy shares the code's blind spots, so the
+test passes for the wrong reason and verify-red cannot see it. Where the
+property is about bytes ("everything not named is unchanged"), compare bytes
+directly, before against after. Where it is about behaviour, write the
+expected value by hand or take it from a reference tool (YAML, git, the OS).
+(#732: an "independent" oracle copied the module's line scan character for
+character, and three comment-losing edits passed 2,602 cases.)
+
 ## Debugging
 
 Find the root cause before any fix: reproduce, trace the bad value to its
 origin, test one hypothesis at a time ([debugging.md](debugging.md)). After
 three failed fixes, stop and question the design in your report.
 
-You may pull the Andon cord (pyrite-conductor, "The Andon cord"): when the
-work is churning, when the fix you are asked for would patch one instance of
-a missing rule, or when it runs against `kb/design.md`, open an `andon` issue
-with the evidence and stop. That is a finding, not a failure.
+You may stop and say so: when the work is churning, when the fix you are asked
+for would patch one instance of a missing rule, or when it runs against
+`kb/design.md`, comment on the ticket with the evidence and stop. That is a
+finding, not a failure.
 
 ## Verification
 
 Run the command that proves the claim, read its output, then claim. "Should
 work" is not evidence.
 
+**CI is the verification gate.** Locally, run the tests of the files you
+changed; then push to your draft PR and read its CI. Don't hold a push for a
+slow local run of the whole affected set (how the hooks, the heavy-run lock
+and a verified commit work: CONTRIBUTING, [Running the
+tests](../../../CONTRIBUTING.md#running-the-tests)).
+
 | Claim | Run | Look for |
 |---|---|---|
 | Backend tests pass (local) | `scripts/test-affected --run` | `N passed, 0 failed` |
-| Backend tests pass (all) | the draft PR's CI: `gh pr checks <n>` | `gate` passes (it waits for every `test (<py>, <shard>)` leg) |
+| Backend tests pass (all) | the draft PR's CI: `gh pr checks <n>` (the whole suite locally: `scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/*/tests/ -n 4 -q`) | `gate` passes (it waits for every `test (<py>, <shard>)` leg) |
 | The tests guard the change (every branch that changes code, `feat` included) | `scripts/verify-red.sh`, once (CI's `verify-red` job runs the same code) | `verify-red: N red · 0 import-only · 0 unexpected pass · 0 n/a`; paste its summary line into the report |
 | Each guard is tested | delete that guard alone, run the tests | a test fails, for every guard you added |
 | Frontend passes | `cd web && npm run check && npm run test:unit && npm run build` | all green |
@@ -123,13 +141,17 @@ work" is not evidence.
 - Commit each passing step as you reach it, with the reason in the message.
   Uncommitted work and the thinking behind it are lost when a session stops
   (2026-10-02: a worker died with eight files edited and no note of why).
-- Open a draft PR right after your first push (`gh pr create --draft --base dev
-  --fill`, `Fixes #N` in the body). Its CI is the authority.
-- Test each tree once: run `scripts/test-affected --run` in the foreground on a
-  committed tree, and the pre-push hook reuses the pass.
-- After a failure that looks load-caused, re-run only the failures
-  (`scripts/test-affected --run -- --lf`); never start a second suite while
-  one is running.
+- Open a draft PR right after your first push, with `Fixes #N` in the body;
+  its CI is the authority. Leave it a draft until your report is done (steps
+  and fork flags: CONTRIBUTING, [Branches, hooks and pull
+  requests](../../../CONTRIBUTING.md#branches-hooks-and-pull-requests)).
+- Commit each passing step as you reach it, with the reason in the message.
+  Uncommitted work and the thinking behind it are lost when a session stops
+  (2026-10-02: a worker died with eight files edited and no note of why).
+- Test each tree once, and after a load-caused failure re-run only the
+  failures (`scripts/test-affected --run -- --lf`). Never start a second heavy
+  run while one is running; the lock and its wrapper are in CONTRIBUTING,
+  "Running the tests".
 - A test that passes alone and fails in parallel is a bug in that test.
 
 ## Capture what you learned
@@ -172,10 +194,9 @@ Done means the whole theme, with evidence for every claim. Then, in order:
    origin/dev`). `git diff <noted-head> HEAD` must be empty: the rewrite
    changes history, never content. Then `git push --force-with-lease`. Only your own branch, and only before the PR
    is marked ready.
-3. **Push**: `git push -u origin <branch>`. A red pre-push in a test your change
-   touches: fix it. In a test it does not touch: re-run that test alone, and if
-   it passes, push with `--no-verify` and name the test in the report. If CI
-   then fails the same test, it is yours to fix.
+3. **Push** (CONTRIBUTING, "Branches, hooks and pull requests"). A red
+   pre-push in a test your change touches is yours to fix. If you push past an
+   unrelated flake as that section allows, name the test in the report.
 4. **Report with the pushed SHA.** The PR stays a draft.
 
 ```
