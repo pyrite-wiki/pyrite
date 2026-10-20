@@ -83,6 +83,9 @@ REST `GET /api/entries/{id}` without `kb` is refused the same way (`409`,
 **Not yet:** extension commands and tools that look ids up through
 their own queries (`sw`, `wiki`, `social vote`, `investigation_*`) and bare
 `[[id]]` resolution (`/api/entries/resolve`) are not covered either (#911).
+The admin-tier MCP tools `kb_registry_health`, `kb_registry_reindex` and
+`kb_registry_remove` also bypass the resolver: an unknown KB answers
+`NOT_FOUND`, not `KB_NOT_FOUND` (#610).
 
 **MCP only, for one release: `legacy_error_code`.** Where a class's code
 changed on MCP because REST's more specific code won (ADR-0037 theme 2:
@@ -240,14 +243,14 @@ spelling `{type, count, declared}` (`declared`: that exact spelling is a
 (`type_name_drift_total`, `type_name_drift_has_more`) and 50 spellings per
 group. Read-only: nothing is renamed. Any group makes the status
 `warning`. `pyrite kb health`, REST `GET /api/kbs/{kb}/health` and MCP
-`kb_health` carry the same three fields for their one KB.
+`kb_registry_health` (admin tier; argument `name`) carry the same three fields for their one KB.
 
 **`index health` → `schema_errors`.** One row `{kb, error}` per KB whose
 `kb.yaml` failed to load (invalid YAML, `types: null`, `types` a list).
 Health still answers for that KB: it counts as declaring no types, so its
 non-core types appear in `undeclared_types` and no spelling is `declared`.
 Any row makes the status `warning`. The same field is on `kb health`, REST
-and MCP `kb_health`.
+and MCP `kb_registry_health`.
 
 **`index health` → `double_spellings`; `qa validate` →
 `field_spelled_twice`.** `metadata` is not a field: `metadata.k` is a
@@ -393,9 +396,11 @@ only if it still holds the bytes the edit was computed on, under a lock in
 the KB's git directory; a file that keeps changing is refused with
 `CONFLICT` (`409` on REST, `retryable: true`). A KB outside git is written
 without a lock and the result says `"locked": false`. On a server that gives
-each user a worktree (auth on), a non-admin user's write to a KB outside
-git is refused: there is no worktree to isolate it in (ADR-0042 A1;
-today `VALIDATION_FAILED`, its own code is #1043). An item operation
+each user a worktree (auth on), a non-admin user's REST POST, PUT or DELETE
+to a KB outside git is refused: there is no worktree to isolate it in
+(ADR-0042 A1; today `VALIDATION_FAILED`). REST PATCH falls back to the main
+checkout, and HTTP MCP never routes a write through a worktree, so both
+still write to the main checkout until #1043 lands. An item operation
 (`append`, `remove`) touches the one item it names: the other items keep
 their bytes, and `links`/`sources` take item operations on every surface
 though a set of the whole list is still refused; an appended link is
@@ -1315,7 +1320,7 @@ reason}` when its task could not be created. On a KB run, these are listed in
 `tasks_failed`. `--format csv` and `--format markdown` render only `results`,
 so each entry not assessed (`not assessed: <id>: <code>: <reason>`) and each
 task not created (`task not created: <id>: <reason>`) is also written to
-stderr. The default (rich) output lists both. The exit code is still 0 when only some entries failed; ADR-0046
+stderr. The default (json) output carries both lists; `--format rich` prints them as tables. The exit code is still 0 when only some entries failed; ADR-0046
 slice 6 settles partial results.
 
 **`ci --tier 2`** runs the judgment rubric over every entry whose type has

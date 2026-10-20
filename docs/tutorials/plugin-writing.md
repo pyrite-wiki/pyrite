@@ -249,6 +249,9 @@ The plugin class ties everything together. It follows the `PyritePlugin` protoco
 # extensions/reading-list/src/pyrite_reading_list/plugin.py
 
 from collections.abc import Callable
+from typing import ClassVar
+
+from pyrite.plugins.capabilities import Capability
 
 from .entry_types import ReadingItemEntry
 from .preset import READING_LIST_PRESET
@@ -257,6 +260,11 @@ from .validators import validate_reading_item
 
 class ReadingListPlugin:
     name = "reading_list"
+    capabilities: ClassVar[set[Capability]] = {
+        Capability.SCHEMA,  # entry types, field schemas, type metadata
+        Capability.STORAGE,  # validators
+        Capability.SURFACE,  # KB presets and KB types
+    }
 
     def get_entry_types(self) -> dict[str, type]:
         return {"reading_item": ReadingItemEntry}
@@ -300,6 +308,12 @@ class ReadingListPlugin:
         }
 ```
 
+The registry only calls a method whose capability the plugin declares: an
+undeclared capability makes the registry ignore the method. Without the
+`capabilities` line above, `pyrite init --template reading-list` and
+`pyrite create -k reading --type reading_item` both fail, while the plain unit tests in
+the next step still pass, because they call the plugin directly.
+
 ### 7. Write tests
 
 ```python
@@ -307,6 +321,7 @@ class ReadingListPlugin:
 
 import pytest
 
+from pyrite.plugins.registry import PluginRegistry
 from pyrite_reading_list.entry_types import ReadingItemEntry
 from pyrite_reading_list.plugin import ReadingListPlugin
 from pyrite_reading_list.validators import validate_reading_item
@@ -366,6 +381,14 @@ class TestPlugin:
         assert "reading_item" in plugin.get_entry_types()
         assert "reading-list" in plugin.get_kb_presets()
         assert len(plugin.get_validators()) == 1
+
+    def test_registry_returns_reading_item(self):
+        # The registry, not the bare plugin, is what `pyrite create` asks.
+        # It skips every method whose capability the plugin did not declare.
+        registry = PluginRegistry()
+        registry.register(ReadingListPlugin())
+        assert "reading_item" in registry.get_all_entry_types()
+        assert "reading-list" in registry.get_all_kb_presets()
 ```
 
 ## Install and Test

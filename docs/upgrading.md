@@ -16,6 +16,11 @@ The commands below that run Pyrite are run by CI
 throwaway KBs. Skip the next block if you try the steps on your own KBs; use
 your own KB names where the page says `my-kb` and `second`.
 
+**Demonstration blocks.** Steps 3 and 5 contain blocks marked
+"Demonstration on the scratch KBs: do not run on your own". They append
+shortnames to `~/.pyrite/config.yaml` and write junk entries so the page can
+show the refusal. Read them; run them only on the scratch KBs.
+
 <!-- expect-exit: 0 -->
 ```bash
 pyrite init -t research -p ./my-kb --name my-kb --no-examples
@@ -37,6 +42,18 @@ Pyrite installs from source; from your checkout:
 ```shell
 git pull
 pip install -e ".[all]"
+cd web && npm ci && npm run build && cd ..
+```
+
+`pyrite serve` serves the gitignored `web/dist`, so the old build keeps
+calling `/api/site/render`, which step 4 says is gone, until you rebuild it.
+**Restart `pyrite serve` and your MCP clients** afterwards: a running process
+keeps the old code. Installed from a release tag instead of a checkout?
+Reinstall it:
+
+<!-- not-run: installs packages into the environment -->
+```shell
+pip install --force-reinstall "pyrite[server,cli] @ git+https://github.com/pyrite-wiki/pyrite@v0.26.0"
 ```
 
 This release adds two columns to the index (`link.target_prefix` and
@@ -73,7 +90,7 @@ A KB's **shortname** (the `shortname:` key of its entry in `config.yaml`,
 shown by `pyrite kb list`) is now link syntax only: `[[mk:some-entry]]` keeps
 working, but `-k mk`, REST `kb=mk` (and `/api/kbs/mk/...`) and MCP
 `kb_name="mk"` are refused with `KB_NOT_FOUND`. Your scripts and MCP configs
-must name the KB. Give `my-kb` a shortname to see the refusal:
+must name the KB. Give `my-kb` a shortname to see the refusal. *Demonstration on the scratch KBs: do not run on your own.*
 
 ```bash
 perl -pi -e '$_ .= "  shortname: mk\n" if /name: my-kb$/' ~/.pyrite/config.yaml
@@ -104,7 +121,7 @@ Send `my-kb` instead. The reference row for the code is
 **Rebuild after you add or rename a shortname.** A file that links to
 `[[k2:target]]` was indexed while `k2` named no KB. Give `second` the
 shortname `k2` and the link now means a different KB, which `index sync` does
-not notice in a file it has already read:
+not notice in a file it has already read. *Demonstration on the scratch KBs: do not run on your own.*
 
 ```bash
 pyrite create -k second -t note --title Target --body "Target." > /dev/null
@@ -167,7 +184,7 @@ The [changelog](../CHANGELOG.md) lists every removed route and option.
   [How Pyrite edits your files](how-pyrite-edits-your-files.md).
 - **A field written twice is refused.** A file with `status:` and `metadata:
   {status: ...}` is read one way, and an update of that field is refused until
-  you remove one spelling:
+  you remove one spelling. *Demonstration on the scratch KBs: do not run on your own.*
 
 <!-- expect-exit: 1 -->
 <!-- expect-text: the file spells 'status' twice -->
