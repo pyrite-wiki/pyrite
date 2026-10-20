@@ -103,6 +103,16 @@ Mathematician and writer. Wrote the first algorithm intended for a machine.
 
 The `id` is auto-generated from the title. Pyrite validates fields against the type schema on every write.
 
+## Commit Your Changes
+
+A write leaves a file in your working tree; it does not make a git commit. Commit when you want the change in history:
+
+```bash
+pyrite kb commit -k my-research -m "Add first entries"
+```
+
+(`git add` and `git commit` in the KB directory do the same.)
+
 ## Search Your Knowledge Base
 
 **Keyword search** works out of the box:

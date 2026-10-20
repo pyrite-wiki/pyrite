@@ -16,7 +16,7 @@ Your AI agents have no memory. Your knowledge is trapped in platform silos. Ever
 **Why Pyrite instead of vectors-in-Postgres or Notion+AI?**
 
 - **Typed entries with schema validation** — not flat vector blobs. Define `person`, `decision`, `event`, `component` types with validated fields. Query structurally, not just by vibes.
-- **Git-native** — every change is a versioned commit, not a database mutation. Branch, diff, review, rollback. Your knowledge has a full audit trail.
+- **Git-native** — every change is a file you commit to git (`git commit` or `pyrite kb commit`), not a database mutation. Branch, diff, review, rollback. Your knowledge has a full audit trail.
 - **MCP server with three-tier access control** — read/write/admin tiers. Give untrusted agents read-only access. Give your own agents write access. Keep admin for yourself.
 - **Semantic + structured search** — find by meaning (vector embeddings) AND by type, tag, date range, or relationship. Both at once in hybrid mode.
 - **Plugin system with 19 extension points** — custom entry types, MCP tools, CLI commands, validators, lifecycle hooks, relationship semantics, schema migrations.
@@ -145,7 +145,7 @@ pyrite schema diff --kb=research      # Show type versions and field annotations
 pyrite schema migrate --kb=research   # Migrate entries to current schema version
 ```
 
-All commands support `--format json` for agent consumption.
+Most commands print JSON by default; `--format` (or `PYRITE_FORMAT`) picks json, yaml or rich where a command offers it. See [docs/json-contracts.md](docs/json-contracts.md), "--format defaults", for the commands that do not.
 
 ## Custom Types
 
@@ -298,7 +298,7 @@ fly volumes create pyrite_data --size 1
 fly deploy
 ```
 
-All three platforms use the included Dockerfile, persist data at `/data`, and expose port 8088. They start with accounts turned on (`PYRITE_AUTH_ENABLED=true`). Registration stays closed until an admin exists: create yours after the first deploy with `pyrite-admin user create <name> --role admin` in the container. Set `PYRITE_OPENAI_API_KEY` and other env vars in your platform's dashboard.
+All three platforms use the included Dockerfile, persist data at `/data`, and expose port 8088. They start with accounts turned on (`PYRITE_AUTH_ENABLED=true`). Registration stays closed until an admin exists: create yours after the first deploy with `pyrite-admin user create <name> --role admin` in the container. Set `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) and `PYRITE_AI_PROVIDER` for AI features, and other env vars, in your platform's dashboard; see [docs/configuration.md](docs/configuration.md#ai-features).
 
 The container image binds `0.0.0.0` (`PYRITE_HOST`) and honours the platform `$PORT` when `PYRITE_PORT` is unset (`PYRITE_PORT` wins if both are set). Railway does not attach a persistent volume from the one-click button — add a volume mounted at `/data` in the Railway dashboard after the first deploy, or data will not survive restarts.
 
@@ -315,7 +315,7 @@ This installs Docker, starts Pyrite + Caddy (auto TLS), and seeds Pyrite's own K
 
 ```bash
 docker compose -f deploy/selfhost/docker-compose.yml exec pyrite \
-  python /app/deploy/selfhost/create-user.py admin yourpassword
+  pyrite-admin user create admin --role admin
 ```
 
 Auth is required, registration is closed by default — add users manually with the same command.
@@ -360,7 +360,7 @@ download); without it, keyword search works and a semantic search says so.
 
 Already running Pyrite? [Upgrading](docs/upgrading.md) lists what changes between releases.
 
-Narrower extras: `pip install -e ".[server]"` (REST API + web UI),
+Narrower extras: `pip install -e ".[server,cli]"` (REST API, MCP and the CLI; the web UI also needs `cd web && npm ci && npm run build`),
 `pip install -e ".[ai]"` (OpenAI + Anthropic SDKs),
 `pip install -e ".[semantic]"` (sentence-transformers + sqlite-vec).
 
