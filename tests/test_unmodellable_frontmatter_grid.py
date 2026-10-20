@@ -198,7 +198,8 @@ def test_an_unmodellable_file_answers_validation_failed_with_reason_and_line(
 @pytest.mark.parametrize("shape", sorted(SHAPES))
 def test_a_refused_read_does_not_talk_about_editing(tmp_path: Path, shape: str, surface: str):
     config, _path = _build(tmp_path, SHAPES[shape][0])
-    _code, message = SURFACES[surface](config)
+    code, message = SURFACES[surface](config)
+    assert code == "VALIDATION_FAILED", (code, message)
     assert not any(word in message for word in EDIT_WORDS), message
 
 
@@ -220,6 +221,10 @@ READABLE: dict[str, str] = {
 }
 
 
+@pytest.mark.control(
+    reason="dev already reads these files; the property is that the fix keeps them readable "
+    "(the flow-style root is red against the first version of this fix, not against dev)"
+)
 @pytest.mark.parametrize("surface", READ_SURFACES)
 @pytest.mark.parametrize("name", sorted(READABLE))
 def test_a_file_dev_reads_still_reads(tmp_path: Path, name: str, surface: str):
@@ -228,6 +233,10 @@ def test_a_file_dev_reads_still_reads(tmp_path: Path, name: str, surface: str):
     assert code == "OK", (code, message)
 
 
+@pytest.mark.control(
+    reason="dev already refuses an update of a flow-style root with its line; this pins that "
+    "the read fix did not widen or drop it"
+)
 @pytest.mark.parametrize("surface", UPDATE_SURFACES)
 def test_a_flow_style_root_is_still_refused_for_update_with_its_line(tmp_path: Path, surface: str):
     config, path = _build(tmp_path, READABLE["flow-style-root"])
