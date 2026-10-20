@@ -258,6 +258,7 @@ class TestSecurityVocabularyNeedsAReason:
     A new security test added to an experimental file therefore stops the
     gate until someone decides, whatever it is called."""
 
+    @pytest.mark.guard
     def test_every_experimental_test_touching_security_is_reviewed(self):
         unreviewed = [
             nodeid
@@ -270,6 +271,7 @@ class TestSecurityVocabularyNeedsAReason:
             "not one:\n" + "\n".join(unreviewed)
         )
 
+    @pytest.mark.guard
     def test_no_reviewed_entry_is_stale(self):
         hits = {
             nodeid for nodeid, body in _experimental_test_bodies() if surface.touches_security(body)

@@ -313,6 +313,7 @@ class TestNoTestReadsAFragmentByName:
                     found.append(f"{f}:{n}: {line.strip()}")
         return found
 
+    @pytest.mark.guard
     def test_no_test_names_a_real_fragment(self):
         files = list((REPO / "tests").rglob("test_*.py"))
         files += list((REPO / "extensions").glob("*/tests/**/*.py"))

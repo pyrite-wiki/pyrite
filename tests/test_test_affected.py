@@ -139,6 +139,23 @@ def repo(tmp_path: Path) -> Path:
         "tests/test_core_annotated.py": (
             "import pytest\n\npytestmark: list = [pytest.mark.core, pytest.mark.cli]\n"
         ),
+        "tests/test_guards.py": """
+            import pytest
+
+            @pytest.mark.guard
+            @pytest.mark.parametrize("p", ["a", "b"])
+            def test_scan_per_file(p):
+                pass
+
+            def test_not_a_guard():
+                pass
+
+            class TestScans:
+                @pytest.mark.guard
+                def test_scan(self):
+                    pass
+        """,
+        "extensions/foo/tests/test_ext.py": "def test_ext():\n    pass\n",
     }
     for rel, text in files.items():
         _write(tmp_path, rel, text)
@@ -356,6 +373,94 @@ class TestCore:
         args = ta.pytest_args(sel, workers=4)
         assert "tests/test_core.py" in args
         assert not any(a.startswith("tests/test_core.py::") for a in args)
+
+
+class TestGuards:
+    """#1075: a guard scans test sources, so it runs whenever one changes."""
+
+    GUARDS = {
+        "tests/test_guards.py::test_scan_per_file",  # the whole function, not one case
+        "tests/test_guards.py::TestScans::test_scan",
+    }
+
+    def test_a_changed_test_selects_the_guards(self, repo):
+        sel = _select(repo, "tests/test_unrelated.py")
+        assert set(sel.guards) == self.GUARDS
+
+    def test_a_source_only_change_selects_no_guard(self, repo):
+        assert _select(repo, "pyrite/b.py").guards == []
+
+    def test_a_deleted_test_file_selects_the_guards(self, repo):
+        assert set(_select(repo, "tests/test_deleted_long_ago.py").guards) == self.GUARDS
+
+    def test_an_extension_test_change_selects_the_guards(self, repo):
+        assert set(_select(repo, "extensions/foo/tests/test_ext.py").guards) == self.GUARDS
+
+    def test_a_changed_non_test_helper_in_a_test_root_selects_the_guards(self, repo):
+        assert set(_select(repo, "tests/helpers.py", helper_threshold=5).guards) == self.GUARDS
+
+    def test_guards_are_run_and_listed(self, repo):
+        args = ta.pytest_args(_select(repo, "tests/test_unrelated.py"), workers=4)
+        assert self.GUARDS <= set(args)
+
+    def test_a_guard_in_a_selected_file_is_not_run_twice(self, repo):
+        args = ta.pytest_args(_select(repo, "tests/test_guards.py"), workers=4)
+        assert "tests/test_guards.py" in args
+        assert not any(a.startswith("tests/test_guards.py::") for a in args)
+
+    def test_explain_says_why(self, repo):
+        out = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--root",
+                str(repo),
+                "--explain",
+                "--files",
+                "tests/test_unrelated.py",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert "guard (a test path changed: tests/test_unrelated.py)" in out.stdout
+
+    def test_list_names_the_guards_for_a_changed_test(self, repo):
+        out = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--root",
+                str(repo),
+                "--list",
+                "--files",
+                "tests/test_unrelated.py",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert self.GUARDS <= set(out.stdout.split())
+
+
+class TestThisRepositoryGuards:
+    # The guards, pinned by file (#1075). A scan of test sources that loses its
+    # mark silently stops running before a push; add a guard here on purpose.
+    GUARDS_IN = {
+        "tests/test_experimental_surface.py",
+        "tests/test_tests_drive_the_surface_not_the_mock.py",
+        "tests/test_test_rules.py",
+        "tests/test_cli_help_assertions_are_plain.py",
+    }
+
+    def test_the_acceptance_command_lists_the_guards(self):
+        root = SCRIPT.parent.parent
+        sel = ta.select(root, ["tests/test_llm_rubric_evaluator.py"])
+        assert {g.split("::")[0] for g in sel.guards} >= self.GUARDS_IN
+
+    def test_a_source_change_lists_none(self):
+        root = SCRIPT.parent.parent
+        assert ta.select(root, ["pyrite/storage/database.py"]).guards == []
 
 
 class TestPytestArgs:

@@ -2,9 +2,12 @@
 
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
+@pytest.mark.guard
 def test_cheap_bcrypt_patch_lives_only_in_the_root_conftest():
     """The test-only bcrypt cost is set in one place, the root conftest.py.
 
@@ -181,6 +184,7 @@ def _scanned_files() -> list[Path]:
     return sorted(files)
 
 
+@pytest.mark.guard
 @pytest.mark.parametrize("path", _scanned_files(), ids=lambda p: str(p.relative_to(ROOT)))
 def test_no_test_call_can_wait_forever(path):
     offenders = unbounded_calls(path.read_text())

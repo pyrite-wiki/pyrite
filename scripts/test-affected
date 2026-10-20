@@ -14,6 +14,10 @@ Selection
              storage, the KB service, auth/read scoping, the REST app
              factory, MCP dispatch and the CLI entry point (pinned, file by
              file, in tests/test_test_affected.py). Always runs.
+  guard      tests marked ``@pytest.mark.guard``: they scan the test sources,
+             so they run whenever a changed path is in a test root (a
+             deleted test file and extensions/*/tests count), and never
+             otherwise. Mark the scanning functions, not the module.
   affected   test files that import a changed module, directly or through
              any chain of imports; built with ``ast`` over pyrite/,
              extensions/*/src/, scripts/ and the test trees, so no database
@@ -404,11 +408,15 @@ def _used_fixture_names(tree: ast.AST) -> set[str]:
     return used
 
 
-def _core_ids(rel: str, tree: ast.Module) -> list[str]:
+def _marked_ids(rel: str, tree: ast.Module, mark: str) -> list[str]:
+    """Node ids (without parameters) carrying ``@pytest.mark.<mark>``, found at
+    module, class and function level. A parametrized function is one id: the
+    whole function runs, not one case."""
+
     def is_core(expr: ast.expr) -> bool:
         target = expr.func if isinstance(expr, ast.Call) else expr
-        # pytest.mark.core, or mark.core after `from pytest import mark`
-        if not (isinstance(target, ast.Attribute) and target.attr == "core"):
+        # pytest.mark.<mark>, or mark.<mark> after `from pytest import mark`
+        if not (isinstance(target, ast.Attribute) and target.attr == mark):
             return False
         owner = target.value
         return (isinstance(owner, ast.Attribute) and owner.attr == "mark") or (
@@ -440,11 +448,16 @@ def _core_ids(rel: str, tree: ast.Module) -> list[str]:
     return ids
 
 
+def _core_ids(rel: str, tree: ast.Module) -> list[str]:
+    return _marked_ids(rel, tree, "core")
+
+
 class Graph:
     def __init__(self, root: Path):
         self.root = root
         self.files: dict[str, _File] = {}
         self.core: list[str] = []
+        self.guards: list[str] = []
         self._trees: dict[str, ast.Module] = {}
         self._packages: dict[str, str] = {}
         test_roots = _test_roots(root)
@@ -482,6 +495,7 @@ class Graph:
                     f.deps.setdefault(dep, "")
             if f.is_test:
                 self.core += _core_ids(rel, tree)
+                self.guards += _marked_ids(rel, tree, "guard")
 
         self._attribute_fixtures(test_roots)
 
@@ -626,6 +640,9 @@ class Selection:
     files: dict[str, str]  # test path -> why
     core: list[str]
     full: str | None = None  # the reason the full suite runs, if it does
+    # Guards scan test sources, so they run when a test path changed (#1075).
+    guards: list[str] = field(default_factory=list)
+    guard_why: str = ""  # the changed test path that selected them
 
 
 def _full_suite_reason(graph: Graph, rel: str) -> str | None:
@@ -687,6 +704,11 @@ def select(
         if reason:
             selection.full = reason
             return selection
+
+    trigger = next((r for r in changed if graph.in_test_root(r)), None)
+    if trigger:
+        selection.guards = list(graph.guards)
+        selection.guard_why = trigger
 
     # reached[name] = (the name it was reached from, or None for a seed; seed label)
     reached: dict[str, tuple[str | None, str]] = {}
@@ -798,8 +820,10 @@ def pytest_args(selection: Selection, workers: int | str = DEFAULT_WORKERS) -> l
     if selection.full is not None:
         return [*args, "tests/", "extensions/"]
     files = sorted(selection.files)
-    extra = [c for c in selection.core if c.split("::")[0] not in selection.files]
-    return [*args, *files, *extra]
+    extra = [
+        c for c in [*selection.core, *selection.guards] if c.split("::")[0] not in selection.files
+    ]
+    return [*args, *files, *dict.fromkeys(extra)]
 
 
 def _test_ids(path: Path, rel: str) -> list[str]:
@@ -1231,6 +1255,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"core ({len(selection.core)}):")
         for node in selection.core:
             print(f"  {node}")
+        print(f"guard ({len(selection.guards)}):")
+        for node in selection.guards:
+            print(f"  {node}  <- guard (a test path changed: {selection.guard_why})")
         print(f"affected ({len(selection.files)}):")
         for path, why in sorted(selection.files.items()):
             print(f"  {path}  <- {why}")
@@ -1246,7 +1273,10 @@ def main(argv: list[str] | None = None) -> int:
         label = (
             selection.full
             and f"full suite: {selection.full}"
-            or (f"{len(selection.files)} affected test files + {len(selection.core)} core")
+            or (
+                f"{len(selection.files)} affected test files + {len(selection.core)} core"
+                + (f" + {len(selection.guards)} guard" if selection.guards else "")
+            )
         )
         print(f"test-affected: {label}", file=sys.stderr)
         left_out = None if with_experimental else experimental_left_out(root, args[2:])

@@ -150,6 +150,10 @@ markers = [
     # the KB service, read scoping, the REST app factory, MCP dispatch and the
     # CLI entry point. Keep it under a minute at -n 4.
     "core: always run by scripts/test-affected, whatever the branch changed",
+    # #1075: a test that scans the test sources (a vocabulary or no-mock
+    # guard). scripts/test-affected runs these whenever a changed path is in a
+    # test root, because that is the only change that can fail them.
+    "guard: scans test sources; scripts/test-affected runs it when a test path changes",
     # #657: a test of a surface kb/designs/alpha-supported-surface.md calls
     # experimental. Applied by path from tests/experimental_surface.py (never
     # by hand). The gating CI job and the pre-push hook run -m "not

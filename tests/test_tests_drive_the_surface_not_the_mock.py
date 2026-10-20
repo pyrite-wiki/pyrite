@@ -634,6 +634,7 @@ def _message(path: str, line: int, target: str, eps: str) -> str:
     )
 
 
+@pytest.mark.guard
 def test_no_test_mocks_the_service_behind_the_entry_point_it_drives():
     found = _scan()
     new = [
@@ -645,6 +646,7 @@ def test_no_test_mocks_the_service_behind_the_entry_point_it_drives():
     assert not new, "\n" + "\n".join(new)
 
 
+@pytest.mark.guard
 def test_the_allowlist_can_only_shrink():
     found = _scan()
     stale = sorted(set(ALLOWLIST) - set(found))
