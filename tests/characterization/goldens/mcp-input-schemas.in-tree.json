@@ -1,111 +1,5 @@
 {
   "admin": {
-    "cascade_actors": {
-      "arguments": {},
-      "inputSchema": {
-        "properties": {
-          "capture_lane": {
-            "description": "Filter by capture lane",
-            "type": "string"
-          },
-          "era": {
-            "description": "Filter by era",
-            "type": "string"
-          },
-          "kb_name": {
-            "description": "KB name (default: cascade-research)",
-            "type": "string"
-          },
-          "min_importance": {
-            "description": "Minimum importance (1-10)",
-            "type": "integer"
-          }
-        },
-        "required": [],
-        "type": "object"
-      }
-    },
-    "cascade_capture_lanes": {
-      "arguments": {},
-      "inputSchema": {
-        "properties": {
-          "kb_name": {
-            "description": "KB name (optional)",
-            "type": "string"
-          }
-        },
-        "required": [],
-        "type": "object"
-      }
-    },
-    "cascade_network": {
-      "arguments": {
-        "entry_id": "example",
-        "kb_name": "example"
-      },
-      "inputSchema": {
-        "properties": {
-          "entry_id": {
-            "description": "Entry ID to get network for",
-            "type": "string"
-          },
-          "kb_name": {
-            "description": "KB name",
-            "type": "string"
-          },
-          "limit": {
-            "description": "Max results per direction (default 50; 0 = no cap)",
-            "type": "integer"
-          },
-          "offset": {
-            "description": "Results to skip per direction (default 0)",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "entry_id",
-          "kb_name"
-        ],
-        "type": "object"
-      }
-    },
-    "cascade_timeline": {
-      "arguments": {},
-      "inputSchema": {
-        "properties": {
-          "actor": {
-            "description": "Filter by actor name",
-            "type": "string"
-          },
-          "capture_lane": {
-            "description": "Filter by capture lane",
-            "type": "string"
-          },
-          "from_date": {
-            "description": "Start date (YYYY-MM-DD)",
-            "type": "string"
-          },
-          "kb_name": {
-            "description": "KB name (default: cascade-timeline)",
-            "type": "string"
-          },
-          "limit": {
-            "description": "Max results (default 50)",
-            "type": "integer"
-          },
-          "min_importance": {
-            "description": "Minimum importance (1-10)",
-            "type": "integer"
-          },
-          "to_date": {
-            "description": "End date (YYYY-MM-DD)",
-            "type": "string"
-          }
-        },
-        "required": [],
-        "type": "object"
-      }
-    },
     "investigation_bulk_edges": {
       "arguments": {
         "edges": []
@@ -957,6 +851,10 @@
             "description": "Exclude already-linked pairs (default: true)",
             "type": "boolean"
           },
+          "include_empty": {
+            "description": "Also return entries with no body and no summary (default: false, they are left out)",
+            "type": "boolean"
+          },
           "limit_per_entry": {
             "description": "Max matches per source entry (default 3)",
             "type": "integer"
@@ -1191,6 +1089,10 @@
           },
           "exclude_linked": {
             "description": "Exclude entries that already have a link to the source (default: true)",
+            "type": "boolean"
+          },
+          "include_empty": {
+            "description": "Also return entries with no body and no summary (default: false, they are left out)",
             "type": "boolean"
           },
           "kb_name": {
@@ -1581,6 +1483,17 @@
               "null"
             ]
           },
+          "limit": {
+            "description": "Maximum KBs in the no-name overview (default 50).",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "description": "KB offset for the no-name overview; use with has_more to page.",
+            "minimum": 0,
+            "type": "integer"
+          },
           "recent_limit": {
             "description": "Number of recent entries to include (default 5)",
             "type": "integer"
@@ -1637,7 +1550,9 @@
             "type": "integer"
           },
           "tier": {
-            "description": "Assessment tier: 1=structural (default)",
+            "description": "Assessment tier: 1=structural (default); 2=structural plus the model-judged rubric, refused with AI_NOT_CONFIGURED when no model is configured. Any other value is refused with INVALID_TIER.",
+            "maximum": 2,
+            "minimum": 1,
             "type": "integer"
           }
         },
@@ -2007,6 +1922,10 @@
       },
       "inputSchema": {
         "properties": {
+          "append": {
+            "description": "Add one item to a list field without sending the list: {field: item}; a list value appends each item. Links: {\"links\": {\"target\": \"id\", \"relation\": \"related_to\"}}. The other items keep their bytes.",
+            "type": "object"
+          },
           "body": {
             "description": "New body content (markdown)",
             "type": "string"
@@ -2032,7 +1951,7 @@
             "type": "string"
           },
           "metadata": {
-            "description": "Additional/extension fields to update",
+            "description": "Fields by name (a key here is the field of that name, ADR-0051); a managed field is refused",
             "type": "object"
           },
           "participants": {
@@ -2041,6 +1960,10 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "remove": {
+            "description": "Remove one item equal to the value from a list field: {field: item}; a list value removes each item.",
+            "type": "object"
           },
           "status": {
             "description": "Status field (e.g. draft, confirmed, done)",
@@ -2051,7 +1974,7 @@
             "type": "string"
           },
           "tags": {
-            "description": "Replacement tags (overwrites existing)",
+            "description": "Replaces the whole tag list; to add or drop one tag use `append`/`remove`",
             "items": {
               "type": "string"
             },
@@ -2060,6 +1983,13 @@
           "title": {
             "description": "New title",
             "type": "string"
+          },
+          "unset": {
+            "description": "Remove these keys from the frontmatter, with their own lines. Sending null as a field's value sets it to null; it does not remove the key.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "validate": {
             "description": "Run QA validation after save and return issues. Also runs automatically if KB has qa_on_write: true in kb.yaml.",
@@ -2235,56 +2165,6 @@
           "user_id",
           "value"
         ],
-        "type": "object"
-      }
-    },
-    "solidarity_infrastructure_types": {
-      "arguments": {},
-      "inputSchema": {
-        "properties": {
-          "kb_name": {
-            "description": "KB name (default: cascade-solidarity)",
-            "type": "string"
-          }
-        },
-        "required": [],
-        "type": "object"
-      }
-    },
-    "solidarity_timeline": {
-      "arguments": {},
-      "inputSchema": {
-        "properties": {
-          "actor": {
-            "description": "Filter by actor name",
-            "type": "string"
-          },
-          "from_date": {
-            "description": "Start date (YYYY-MM-DD)",
-            "type": "string"
-          },
-          "infrastructure_type": {
-            "description": "Filter by infrastructure type",
-            "type": "string"
-          },
-          "kb_name": {
-            "description": "KB name (default: cascade-solidarity)",
-            "type": "string"
-          },
-          "limit": {
-            "description": "Max results (default 50)",
-            "type": "integer"
-          },
-          "min_importance": {
-            "description": "Minimum importance (1-10)",
-            "type": "integer"
-          },
-          "to_date": {
-            "description": "End date (YYYY-MM-DD)",
-            "type": "string"
-          }
-        },
-        "required": [],
         "type": "object"
       }
     },
@@ -3545,7 +3425,9 @@
       "inputSchema": {
         "properties": {
           "depth": {
-            "description": "Link traversal depth (default 1)",
+            "description": "Link traversal depth (default 1, maximum 3)",
+            "maximum": 3,
+            "minimum": 1,
             "type": "integer"
           },
           "entry_id": {
@@ -3579,112 +3461,6 @@
     }
   },
   "read": {
-    "cascade_actors": {
-      "arguments": {},
-      "inputSchema": {
-        "properties": {
-          "capture_lane": {
-            "description": "Filter by capture lane",
-            "type": "string"
-          },
-          "era": {
-            "description": "Filter by era",
-            "type": "string"
-          },
-          "kb_name": {
-            "description": "KB name (default: cascade-research)",
-            "type": "string"
-          },
-          "min_importance": {
-            "description": "Minimum importance (1-10)",
-            "type": "integer"
-          }
-        },
-        "required": [],
-        "type": "object"
-      }
-    },
-    "cascade_capture_lanes": {
-      "arguments": {},
-      "inputSchema": {
-        "properties": {
-          "kb_name": {
-            "description": "KB name (optional)",
-            "type": "string"
-          }
-        },
-        "required": [],
-        "type": "object"
-      }
-    },
-    "cascade_network": {
-      "arguments": {
-        "entry_id": "example",
-        "kb_name": "example"
-      },
-      "inputSchema": {
-        "properties": {
-          "entry_id": {
-            "description": "Entry ID to get network for",
-            "type": "string"
-          },
-          "kb_name": {
-            "description": "KB name",
-            "type": "string"
-          },
-          "limit": {
-            "description": "Max results per direction (default 50; 0 = no cap)",
-            "type": "integer"
-          },
-          "offset": {
-            "description": "Results to skip per direction (default 0)",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "entry_id",
-          "kb_name"
-        ],
-        "type": "object"
-      }
-    },
-    "cascade_timeline": {
-      "arguments": {},
-      "inputSchema": {
-        "properties": {
-          "actor": {
-            "description": "Filter by actor name",
-            "type": "string"
-          },
-          "capture_lane": {
-            "description": "Filter by capture lane",
-            "type": "string"
-          },
-          "from_date": {
-            "description": "Start date (YYYY-MM-DD)",
-            "type": "string"
-          },
-          "kb_name": {
-            "description": "KB name (default: cascade-timeline)",
-            "type": "string"
-          },
-          "limit": {
-            "description": "Max results (default 50)",
-            "type": "integer"
-          },
-          "min_importance": {
-            "description": "Minimum importance (1-10)",
-            "type": "integer"
-          },
-          "to_date": {
-            "description": "End date (YYYY-MM-DD)",
-            "type": "string"
-          }
-        },
-        "required": [],
-        "type": "object"
-      }
-    },
     "investigation_claims": {
       "arguments": {},
       "inputSchema": {
@@ -4159,6 +3935,10 @@
             "description": "Exclude already-linked pairs (default: true)",
             "type": "boolean"
           },
+          "include_empty": {
+            "description": "Also return entries with no body and no summary (default: false, they are left out)",
+            "type": "boolean"
+          },
           "limit_per_entry": {
             "description": "Max matches per source entry (default 3)",
             "type": "integer"
@@ -4201,6 +3981,10 @@
           },
           "exclude_linked": {
             "description": "Exclude entries that already have a link to the source (default: true)",
+            "type": "boolean"
+          },
+          "include_empty": {
+            "description": "Also return entries with no body and no summary (default: false, they are left out)",
             "type": "boolean"
           },
           "kb_name": {
@@ -4485,6 +4269,17 @@
               "string",
               "null"
             ]
+          },
+          "limit": {
+            "description": "Maximum KBs in the no-name overview (default 50).",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "description": "KB offset for the no-name overview; use with has_more to page.",
+            "minimum": 0,
+            "type": "integer"
           },
           "recent_limit": {
             "description": "Number of recent entries to include (default 5)",
@@ -4831,56 +4626,6 @@
               "month",
               "all"
             ],
-            "type": "string"
-          }
-        },
-        "required": [],
-        "type": "object"
-      }
-    },
-    "solidarity_infrastructure_types": {
-      "arguments": {},
-      "inputSchema": {
-        "properties": {
-          "kb_name": {
-            "description": "KB name (default: cascade-solidarity)",
-            "type": "string"
-          }
-        },
-        "required": [],
-        "type": "object"
-      }
-    },
-    "solidarity_timeline": {
-      "arguments": {},
-      "inputSchema": {
-        "properties": {
-          "actor": {
-            "description": "Filter by actor name",
-            "type": "string"
-          },
-          "from_date": {
-            "description": "Start date (YYYY-MM-DD)",
-            "type": "string"
-          },
-          "infrastructure_type": {
-            "description": "Filter by infrastructure type",
-            "type": "string"
-          },
-          "kb_name": {
-            "description": "KB name (default: cascade-solidarity)",
-            "type": "string"
-          },
-          "limit": {
-            "description": "Max results (default 50)",
-            "type": "integer"
-          },
-          "min_importance": {
-            "description": "Minimum importance (1-10)",
-            "type": "integer"
-          },
-          "to_date": {
-            "description": "End date (YYYY-MM-DD)",
             "type": "string"
           }
         },
@@ -5485,7 +5230,9 @@
       "inputSchema": {
         "properties": {
           "depth": {
-            "description": "Link traversal depth (default 1)",
+            "description": "Link traversal depth (default 1, maximum 3)",
+            "maximum": 3,
+            "minimum": 1,
             "type": "integer"
           },
           "entry_id": {
@@ -5519,112 +5266,6 @@
     }
   },
   "write": {
-    "cascade_actors": {
-      "arguments": {},
-      "inputSchema": {
-        "properties": {
-          "capture_lane": {
-            "description": "Filter by capture lane",
-            "type": "string"
-          },
-          "era": {
-            "description": "Filter by era",
-            "type": "string"
-          },
-          "kb_name": {
-            "description": "KB name (default: cascade-research)",
-            "type": "string"
-          },
-          "min_importance": {
-            "description": "Minimum importance (1-10)",
-            "type": "integer"
-          }
-        },
-        "required": [],
-        "type": "object"
-      }
-    },
-    "cascade_capture_lanes": {
-      "arguments": {},
-      "inputSchema": {
-        "properties": {
-          "kb_name": {
-            "description": "KB name (optional)",
-            "type": "string"
-          }
-        },
-        "required": [],
-        "type": "object"
-      }
-    },
-    "cascade_network": {
-      "arguments": {
-        "entry_id": "example",
-        "kb_name": "example"
-      },
-      "inputSchema": {
-        "properties": {
-          "entry_id": {
-            "description": "Entry ID to get network for",
-            "type": "string"
-          },
-          "kb_name": {
-            "description": "KB name",
-            "type": "string"
-          },
-          "limit": {
-            "description": "Max results per direction (default 50; 0 = no cap)",
-            "type": "integer"
-          },
-          "offset": {
-            "description": "Results to skip per direction (default 0)",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "entry_id",
-          "kb_name"
-        ],
-        "type": "object"
-      }
-    },
-    "cascade_timeline": {
-      "arguments": {},
-      "inputSchema": {
-        "properties": {
-          "actor": {
-            "description": "Filter by actor name",
-            "type": "string"
-          },
-          "capture_lane": {
-            "description": "Filter by capture lane",
-            "type": "string"
-          },
-          "from_date": {
-            "description": "Start date (YYYY-MM-DD)",
-            "type": "string"
-          },
-          "kb_name": {
-            "description": "KB name (default: cascade-timeline)",
-            "type": "string"
-          },
-          "limit": {
-            "description": "Max results (default 50)",
-            "type": "integer"
-          },
-          "min_importance": {
-            "description": "Minimum importance (1-10)",
-            "type": "integer"
-          },
-          "to_date": {
-            "description": "End date (YYYY-MM-DD)",
-            "type": "string"
-          }
-        },
-        "required": [],
-        "type": "object"
-      }
-    },
     "investigation_bulk_edges": {
       "arguments": {
         "edges": []
@@ -6476,6 +6117,10 @@
             "description": "Exclude already-linked pairs (default: true)",
             "type": "boolean"
           },
+          "include_empty": {
+            "description": "Also return entries with no body and no summary (default: false, they are left out)",
+            "type": "boolean"
+          },
           "limit_per_entry": {
             "description": "Max matches per source entry (default 3)",
             "type": "integer"
@@ -6676,6 +6321,10 @@
           },
           "exclude_linked": {
             "description": "Exclude entries that already have a link to the source (default: true)",
+            "type": "boolean"
+          },
+          "include_empty": {
+            "description": "Also return entries with no body and no summary (default: false, they are left out)",
             "type": "boolean"
           },
           "kb_name": {
@@ -7007,6 +6656,17 @@
               "null"
             ]
           },
+          "limit": {
+            "description": "Maximum KBs in the no-name overview (default 50).",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "description": "KB offset for the no-name overview; use with has_more to page.",
+            "minimum": 0,
+            "type": "integer"
+          },
           "recent_limit": {
             "description": "Number of recent entries to include (default 5)",
             "type": "integer"
@@ -7038,7 +6698,9 @@
             "type": "integer"
           },
           "tier": {
-            "description": "Assessment tier: 1=structural (default)",
+            "description": "Assessment tier: 1=structural (default); 2=structural plus the model-judged rubric, refused with AI_NOT_CONFIGURED when no model is configured. Any other value is refused with INVALID_TIER.",
+            "maximum": 2,
+            "minimum": 1,
             "type": "integer"
           }
         },
@@ -7326,6 +6988,10 @@
       },
       "inputSchema": {
         "properties": {
+          "append": {
+            "description": "Add one item to a list field without sending the list: {field: item}; a list value appends each item. Links: {\"links\": {\"target\": \"id\", \"relation\": \"related_to\"}}. The other items keep their bytes.",
+            "type": "object"
+          },
           "body": {
             "description": "New body content (markdown)",
             "type": "string"
@@ -7351,7 +7017,7 @@
             "type": "string"
           },
           "metadata": {
-            "description": "Additional/extension fields to update",
+            "description": "Fields by name (a key here is the field of that name, ADR-0051); a managed field is refused",
             "type": "object"
           },
           "participants": {
@@ -7360,6 +7026,10 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "remove": {
+            "description": "Remove one item equal to the value from a list field: {field: item}; a list value removes each item.",
+            "type": "object"
           },
           "status": {
             "description": "Status field (e.g. draft, confirmed, done)",
@@ -7370,7 +7040,7 @@
             "type": "string"
           },
           "tags": {
-            "description": "Replacement tags (overwrites existing)",
+            "description": "Replaces the whole tag list; to add or drop one tag use `append`/`remove`",
             "items": {
               "type": "string"
             },
@@ -7379,6 +7049,13 @@
           "title": {
             "description": "New title",
             "type": "string"
+          },
+          "unset": {
+            "description": "Remove these keys from the frontmatter, with their own lines. Sending null as a field's value sets it to null; it does not remove the key.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "validate": {
             "description": "Run QA validation after save and return issues. Also runs automatically if KB has qa_on_write: true in kb.yaml.",
@@ -7554,56 +7231,6 @@
           "user_id",
           "value"
         ],
-        "type": "object"
-      }
-    },
-    "solidarity_infrastructure_types": {
-      "arguments": {},
-      "inputSchema": {
-        "properties": {
-          "kb_name": {
-            "description": "KB name (default: cascade-solidarity)",
-            "type": "string"
-          }
-        },
-        "required": [],
-        "type": "object"
-      }
-    },
-    "solidarity_timeline": {
-      "arguments": {},
-      "inputSchema": {
-        "properties": {
-          "actor": {
-            "description": "Filter by actor name",
-            "type": "string"
-          },
-          "from_date": {
-            "description": "Start date (YYYY-MM-DD)",
-            "type": "string"
-          },
-          "infrastructure_type": {
-            "description": "Filter by infrastructure type",
-            "type": "string"
-          },
-          "kb_name": {
-            "description": "KB name (default: cascade-solidarity)",
-            "type": "string"
-          },
-          "limit": {
-            "description": "Max results (default 50)",
-            "type": "integer"
-          },
-          "min_importance": {
-            "description": "Minimum importance (1-10)",
-            "type": "integer"
-          },
-          "to_date": {
-            "description": "End date (YYYY-MM-DD)",
-            "type": "string"
-          }
-        },
-        "required": [],
         "type": "object"
       }
     },
@@ -8830,7 +8457,9 @@
       "inputSchema": {
         "properties": {
           "depth": {
-            "description": "Link traversal depth (default 1)",
+            "description": "Link traversal depth (default 1, maximum 3)",
+            "maximum": 3,
+            "minimum": 1,
             "type": "integer"
           },
           "entry_id": {

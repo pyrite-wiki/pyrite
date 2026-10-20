@@ -92,6 +92,10 @@
             "description": "Exclude already-linked pairs (default: true)",
             "type": "boolean"
           },
+          "include_empty": {
+            "description": "Also return entries with no body and no summary (default: false, they are left out)",
+            "type": "boolean"
+          },
           "limit_per_entry": {
             "description": "Max matches per source entry (default 3)",
             "type": "integer"
@@ -326,6 +330,10 @@
           },
           "exclude_linked": {
             "description": "Exclude entries that already have a link to the source (default: true)",
+            "type": "boolean"
+          },
+          "include_empty": {
+            "description": "Also return entries with no body and no summary (default: false, they are left out)",
             "type": "boolean"
           },
           "kb_name": {
@@ -614,7 +622,7 @@
             "type": "array"
           },
           "kb_name": {
-            "description": "KB to browse (optional — lists all KBs if omitted)",
+            "description": "KB to browse (optional \u2014 lists all KBs if omitted)",
             "type": "string"
           },
           "limit": {
@@ -716,6 +724,17 @@
               "null"
             ]
           },
+          "limit": {
+            "description": "Maximum KBs in the no-name overview (default 50).",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "description": "KB offset for the no-name overview; use with has_more to page.",
+            "minimum": 0,
+            "type": "integer"
+          },
           "recent_limit": {
             "description": "Number of recent entries to include (default 5)",
             "type": "integer"
@@ -772,7 +791,9 @@
             "type": "integer"
           },
           "tier": {
-            "description": "Assessment tier: 1=structural (default)",
+            "description": "Assessment tier: 1=structural (default); 2=structural plus the model-judged rubric, refused with AI_NOT_CONFIGURED when no model is configured. Any other value is refused with INVALID_TIER.",
+            "maximum": 2,
+            "minimum": 1,
             "type": "integer"
           }
         },
@@ -1142,6 +1163,10 @@
       },
       "inputSchema": {
         "properties": {
+          "append": {
+            "description": "Add one item to a list field without sending the list: {field: item}; a list value appends each item. Links: {\"links\": {\"target\": \"id\", \"relation\": \"related_to\"}}. The other items keep their bytes.",
+            "type": "object"
+          },
           "body": {
             "description": "New body content (markdown)",
             "type": "string"
@@ -1167,7 +1192,7 @@
             "type": "string"
           },
           "metadata": {
-            "description": "Additional/extension fields to update",
+            "description": "Fields by name (a key here is the field of that name, ADR-0051); a managed field is refused",
             "type": "object"
           },
           "participants": {
@@ -1176,6 +1201,10 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "remove": {
+            "description": "Remove one item equal to the value from a list field: {field: item}; a list value removes each item.",
+            "type": "object"
           },
           "status": {
             "description": "Status field (e.g. draft, confirmed, done)",
@@ -1186,7 +1215,7 @@
             "type": "string"
           },
           "tags": {
-            "description": "Replacement tags (overwrites existing)",
+            "description": "Replaces the whole tag list; to add or drop one tag use `append`/`remove`",
             "items": {
               "type": "string"
             },
@@ -1195,6 +1224,13 @@
           "title": {
             "description": "New title",
             "type": "string"
+          },
+          "unset": {
+            "description": "Remove these keys from the frontmatter, with their own lines. Sending null as a field's value sets it to null; it does not remove the key.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "validate": {
             "description": "Run QA validation after save and return issues. Also runs automatically if KB has qa_on_write: true in kb.yaml.",
@@ -1677,6 +1713,10 @@
             "description": "Exclude already-linked pairs (default: true)",
             "type": "boolean"
           },
+          "include_empty": {
+            "description": "Also return entries with no body and no summary (default: false, they are left out)",
+            "type": "boolean"
+          },
           "limit_per_entry": {
             "description": "Max matches per source entry (default 3)",
             "type": "integer"
@@ -1719,6 +1759,10 @@
           },
           "exclude_linked": {
             "description": "Exclude entries that already have a link to the source (default: true)",
+            "type": "boolean"
+          },
+          "include_empty": {
+            "description": "Also return entries with no body and no summary (default: false, they are left out)",
             "type": "boolean"
           },
           "kb_name": {
@@ -1943,7 +1987,7 @@
             "type": "array"
           },
           "kb_name": {
-            "description": "KB to browse (optional — lists all KBs if omitted)",
+            "description": "KB to browse (optional \u2014 lists all KBs if omitted)",
             "type": "string"
           },
           "limit": {
@@ -2003,6 +2047,17 @@
               "string",
               "null"
             ]
+          },
+          "limit": {
+            "description": "Maximum KBs in the no-name overview (default 50).",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "description": "KB offset for the no-name overview; use with has_more to page.",
+            "minimum": 0,
+            "type": "integer"
           },
           "recent_limit": {
             "description": "Number of recent entries to include (default 5)",
@@ -2529,6 +2584,10 @@
             "description": "Exclude already-linked pairs (default: true)",
             "type": "boolean"
           },
+          "include_empty": {
+            "description": "Also return entries with no body and no summary (default: false, they are left out)",
+            "type": "boolean"
+          },
           "limit_per_entry": {
             "description": "Max matches per source entry (default 3)",
             "type": "integer"
@@ -2729,6 +2788,10 @@
           },
           "exclude_linked": {
             "description": "Exclude entries that already have a link to the source (default: true)",
+            "type": "boolean"
+          },
+          "include_empty": {
+            "description": "Also return entries with no body and no summary (default: false, they are left out)",
             "type": "boolean"
           },
           "kb_name": {
@@ -2999,7 +3062,7 @@
             "type": "array"
           },
           "kb_name": {
-            "description": "KB to browse (optional — lists all KBs if omitted)",
+            "description": "KB to browse (optional \u2014 lists all KBs if omitted)",
             "type": "string"
           },
           "limit": {
@@ -3060,6 +3123,17 @@
               "null"
             ]
           },
+          "limit": {
+            "description": "Maximum KBs in the no-name overview (default 50).",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "description": "KB offset for the no-name overview; use with has_more to page.",
+            "minimum": 0,
+            "type": "integer"
+          },
           "recent_limit": {
             "description": "Number of recent entries to include (default 5)",
             "type": "integer"
@@ -3091,7 +3165,9 @@
             "type": "integer"
           },
           "tier": {
-            "description": "Assessment tier: 1=structural (default)",
+            "description": "Assessment tier: 1=structural (default); 2=structural plus the model-judged rubric, refused with AI_NOT_CONFIGURED when no model is configured. Any other value is refused with INVALID_TIER.",
+            "maximum": 2,
+            "minimum": 1,
             "type": "integer"
           }
         },
@@ -3379,6 +3455,10 @@
       },
       "inputSchema": {
         "properties": {
+          "append": {
+            "description": "Add one item to a list field without sending the list: {field: item}; a list value appends each item. Links: {\"links\": {\"target\": \"id\", \"relation\": \"related_to\"}}. The other items keep their bytes.",
+            "type": "object"
+          },
           "body": {
             "description": "New body content (markdown)",
             "type": "string"
@@ -3404,7 +3484,7 @@
             "type": "string"
           },
           "metadata": {
-            "description": "Additional/extension fields to update",
+            "description": "Fields by name (a key here is the field of that name, ADR-0051); a managed field is refused",
             "type": "object"
           },
           "participants": {
@@ -3413,6 +3493,10 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "remove": {
+            "description": "Remove one item equal to the value from a list field: {field: item}; a list value removes each item.",
+            "type": "object"
           },
           "status": {
             "description": "Status field (e.g. draft, confirmed, done)",
@@ -3423,7 +3507,7 @@
             "type": "string"
           },
           "tags": {
-            "description": "Replacement tags (overwrites existing)",
+            "description": "Replaces the whole tag list; to add or drop one tag use `append`/`remove`",
             "items": {
               "type": "string"
             },
@@ -3432,6 +3516,13 @@
           "title": {
             "description": "New title",
             "type": "string"
+          },
+          "unset": {
+            "description": "Remove these keys from the frontmatter, with their own lines. Sending null as a field's value sets it to null; it does not remove the key.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "validate": {
             "description": "Run QA validation after save and return issues. Also runs automatically if KB has qa_on_write: true in kb.yaml.",
