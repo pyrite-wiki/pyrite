@@ -1163,6 +1163,10 @@ class KBService:
         """
         from ..schema import generate_entry_id
 
+        if not isinstance(owns, frozenset):
+            raise ValidationError(
+                f"owns must be a frozenset of field names, got {type(owns).__name__}"
+            )
         ensure_not_truncated(spec)
         # MARKER_KEYS are ADR-0034 read transport, never entry content: an
         # allowed `body_truncated: false` must not be persisted as frontmatter.

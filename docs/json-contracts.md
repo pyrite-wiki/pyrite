@@ -167,9 +167,18 @@ Every entry write — REST `POST /api/entries`, `PUT`/`PATCH
 `kb_update`, `kb_bulk_create`; CLI `pyrite create`, `pyrite update`,
 `pyrite add`, `pyrite import` — goes through one pipeline in `KBService`,
 so the same entry is refused with the same `error_code` on every surface.
-`pyrite add FILE` is the one exception to "a request cannot set a managed
-field": it adopts a hand-written file's own values (an ADR keeps its
-`adr_number`, a task its audit trail), which are not a request (#1010).
+A request cannot set a managed field. Two rules relax that: an in-process
+owner sets its own field through `create_entry(..., owns=...)` (`sw new-adr`
+names `adr_number`), and an import drops the managed fields and the index and
+location keys an export carries and reports them (below). One more exception
+stands, pending the maintainer's explicit OK: `pyrite add FILE` adopts a
+hand-written file's own values (an ADR keeps its `adr_number`, a task its audit
+trail), which are not a request (#1010).
+
+REST `POST /api/entries` refuses the `metadata` envelope spelling; its body
+model ignores any other extra key, so a managed field sent as a top-level key
+there is silently dropped (200, created, nothing written). A follow-up makes
+it refuse.
 
 This is the one table of codes an agent meets while writing; the
 how-to (`docs/agent-write-path.md`) links here instead of repeating it. Each row
@@ -183,7 +192,7 @@ is reproduced by a command in "Reproduce the codes" below, which CI runs.
 | `UNDECLARED_TYPE` | the KB's `kb.yaml` declares types and this is not one of them. Core types (`note`, `person`, …) are **not** exempt. Override with `allow_undeclared` (MCP, REST body or import query) / `--allow-undeclared` (CLI). The error carries `declared_types` on MCP and REST. | Use a declared type (`pyrite kb schema show <kb>`), or pass the override. |
 | `ENTRY_EXISTS` | the id (given, or derived from the title) already exists. Create never replaces; use update. REST answers `409`. | `update` it, or choose another title or id. |
 | `SCHEMA_VIOLATION` | the KB schema or a plugin validator rejected a field: enum, required, range, format. A kb.yaml enum (`options:`/`values:`, list `items:`, rule `enum:`) is refused when `validation.enforce_enums` is on (the default); every other kb.yaml finding when `validation.enforce` is on. The message names the field, the value and the allowed list (`kind: 'chore' is not one of [...]`). An update that leaves an off-list value as it was is not refused (see **Warnings**). | Re-read the message: it names the field and the allowed values. |
-| `VALIDATION_FAILED` | anything else the entry model refuses (an event without a date, a missing title), a `managed_fields` key in an update, a field Pyrite or the type manages on a create at any spelling (`status_change_log`, `adr_number`, `file_path`, ...: top level, dotted `metadata.k`, under `metadata`, or an alias; #1010), an `entry` key holding a whole `kb_get` envelope sent to `kb_update` or REST `PUT` (send `result["entry"]`'s fields at the top level; the file is left untouched; #1024), and the ADR-0034 truncated-body refusal below. Unchanged by ADR-0037 theme 2 (2026-09-25): REST, MCP and the CLI already agreed on this code, so no `legacy_error_code`. | Fix the named field. For a truncated body, reassemble it with `kb_read_body` and retry without the marker. |
+| `VALIDATION_FAILED` | anything else the entry model refuses (an event without a date, a missing title), a `managed_fields` key in an update, a field Pyrite or the type manages on a create at any spelling (`status_change_log`, `adr_number`, `file_path`, ...: top level, dotted `metadata.k`, under `metadata`, or an alias of the field; REST `POST` refuses only the `metadata` spelling, see above; #1010), an `entry` key holding a whole `kb_get` envelope sent to `kb_update` or REST `PUT` (send `result["entry"]`'s fields at the top level; the file is left untouched; #1024), and the ADR-0034 truncated-body refusal below. Unchanged by ADR-0037 theme 2 (2026-09-25): REST, MCP and the CLI already agreed on this code, so no `legacy_error_code`. | Fix the named field. For a truncated body, reassemble it with `kb_read_body` and retry without the marker. |
 | `QUERY_SYNTAX` | (`search`, not a write, but what an agent hits right after a failed write) a token containing `-`, `:` or `.` used beside `AND`/`OR`/`NOT` or a quote, unquoted. | Quote the token yourself: `"bar-baz"`. |
 
 All are `retryable: false`. REST reports them as
@@ -210,8 +219,8 @@ managed fields (a task's `assigned_at`, `status_change_log`, `evidence`,
 `POST /api/entries/import` (not the direct creates `kb_create`,
 `kb_bulk_create`, REST `POST`, `create -f`, which refuse them) drop those
 keys from each record and list every one in that record's `ignored`:
-REST `entries[].ignored`, `pyrite import`'s `Ignored:` line. A key whose
-value is `null` is "not given" and is not listed. The entry's `id` and
+REST `entries[].ignored`, `pyrite import`'s `Ignored:` line. Every dropped key is listed, whatever its value (a `null` index column such
+as `created_by` is listed too). The entry's `id` and
 `entry_type` are kept, so an export from one KB imports into another with
 `imported` equal to the count. `pyrite import` prints
 `Failed [CODE]: <title>: <message>` per refused record and exits `3` when some

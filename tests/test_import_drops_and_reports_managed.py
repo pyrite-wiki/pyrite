@@ -31,6 +31,7 @@ runner = CliRunner()
 
 DROPPED = {"kb_name", "file_path", "indexed_at", "content_hash", "outlinks", "backlinks"}
 TASK_MANAGED = {"assigned_at", "status_change_log"}
+TASK_MANAGED_ALL = TASK_MANAGED | {"evidence", "agent_context"}
 
 
 @pytest.fixture
@@ -120,11 +121,18 @@ def test_an_export_imports_into_another_kb_through_rest(env):
     for title, names in ignored.items():
         assert {"kb_name", "file_path"} <= names, (title, names)
     assert TASK_MANAGED & ignored["A Task"], ignored["A Task"]
-    # Every key dropped is named: nothing the export carried and the file lacks is unreported.
+    # `ignored` is exactly the keys dropped, whatever their value (a null index
+    # column is listed too). Written by hand from the property: the index and
+    # location keys, and a task's managed fields.
+    index_keys = {
+        "kb_name", "file_path", "indexed_at", "content_hash", "outlinks", "backlinks",
+        "created_by", "modified_by",
+    }  # fmt: skip
     for rec in json.loads(exported)["entries"]:
-        # a null column is "not given", not a value dropped
-        gone = {k for k in set(rec) & (DROPPED | TASK_MANAGED) if rec[k] is not None}
-        assert gone <= ignored[rec["title"]], (rec["title"], gone, ignored[rec["title"]])
+        expected = set(rec) & index_keys
+        if rec["entry_type"] == "task":
+            expected |= set(rec) & TASK_MANAGED_ALL
+        assert ignored[rec["title"]] == expected, (rec["title"], ignored[rec["title"]], expected)
 
 
 def test_an_export_imports_through_the_cli_and_names_what_it_dropped(env):

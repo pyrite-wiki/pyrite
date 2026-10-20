@@ -72,10 +72,10 @@ class TaskService:
         allows for ``task`` beyond the parameters above (#397) -- e.g. the
         desk schema's ``project``/``kind``, without which a KB requiring
         them refuses every task this command tries to create. The CLI and
-        MCP are responsible for refusing a key that already has its own
-        parameter or that `TaskEntry.managed_fields` reserves; this method
-        does not re-check that, so an in-process caller passing `fields`
-        directly is trusted the way `create_entry`'s own `**kwargs` is.
+        MCP refuse a key that already has its own parameter. A field the
+        task manages (`TaskEntry.managed_fields`: the audit trail) or Pyrite
+        manages is refused here too, at every spelling, by `KBService.create`
+        (#1010); a caller cannot set it through `fields`.
 
         Returns:
             Dict with created=True and entry details.
