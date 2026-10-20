@@ -1,1 +1,1 @@
-MCP setup names the actual reason a removed Claude Code entry cannot be restored: a non-object entry or a NUL in its command line. Existing env/extra-key hints and recovery command choices are preserved.
+- **`pyrite mcp-setup` names the real reason it cannot print a restore command (#841).** After a failed change, the report blamed env or other keys even when the previous entry held a NUL or was not an object.
