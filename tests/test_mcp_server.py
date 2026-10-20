@@ -16,107 +16,11 @@ from pyrite.schema import Link
 from pyrite.server.mcp_server import PyriteMCPServer
 from pyrite.storage.repository import KBRepository
 
-
-# ---------------------------------------------------------------------------
-# Shared helpers — build MCP servers with minimal boilerplate
-# ---------------------------------------------------------------------------
-
-
-@contextlib.contextmanager
-def _make_mcp_server(kb_defs, *, tier="admin", extra_setup=None):
-    """Context manager that creates a PyriteMCPServer with temp dirs.
-
-    Parameters
-    ----------
-    kb_defs : list[dict]
-        Each dict has keys: name, kb_type, and optionally description, subdirs
-        (list of sub-directory names to create under the KB path), read_only.
-    tier : str
-        MCP tier — "read", "write", or "admin".
-    extra_setup : callable or None
-        Called with (config, kb_configs_by_name) before server creation, so
-        callers can write kb.yaml files or create custom entries.
-
-    Yields
-    ------
-    dict with "server", "config", and each KB name mapped to its KBConfig.
-    """
-    from tests._world import build_world
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir = Path(tmpdir)
-        db_path = tmpdir / "index.db"
-
-        kb_configs = []
-        kb_map = {}
-        for defn in kb_defs:
-            kb_path = tmpdir / defn["name"]
-            kb_path.mkdir()
-            for sub in defn.get("subdirs", []):
-                (kb_path / sub).mkdir(parents=True, exist_ok=True)
-            kbc = KBConfig(
-                name=defn["name"],
-                path=kb_path,
-                kb_type=defn["kb_type"],
-                description=defn.get("description", ""),
-                read_only=defn.get("read_only", False),
-            )
-            kb_configs.append(kbc)
-            kb_map[defn["name"]] = kbc
-
-        config = PyriteConfig(
-            knowledge_bases=kb_configs,
-            settings=Settings(index_path=db_path),
-        )
-
-        if extra_setup:
-            extra_setup(config, kb_map)
-
-        # A world (#1077): the config goes through config.yaml and the real
-        # loader, the KB files are indexed through the indexer, and the world
-        # closes the server and every database it opened.
-        world = build_world(tmpdir, config=config, rest=False)
-        try:
-            server = world.mcp(tier=tier)
-            result = {"server": server, "config": world.config}
-            result.update({kb.name: kb for kb in world.config.knowledge_bases})
-            yield result
-        finally:
-            world.close()
-
-
-def _populate_events_and_person(_config, kb_map):
-    """Populate standard test entries (3 events + 1 person)."""
-    events_repo = KBRepository(kb_map["test-events"])
-    for i in range(3):
-        event = EventEntry.create(
-            date=f"2025-01-{10 + i:02d}",
-            title=f"Test Event {i}",
-            body=f"This is test event {i} about immigration policy.",
-            importance=5 + i,
-        )
-        event.tags = ["test", "immigration"]
-        event.actors = ["Stephen Miller", "Joe Biden"]
-        events_repo.save(event)
-
-    research_repo = KBRepository(kb_map["test-research"])
-    actor = PersonEntry.create(
-        name="Stephen Miller", role="Immigration policy architect", importance=9
-    )
-    actor.body = "Stephen Miller is the architect of Trump's immigration policy."
-    actor.tags = ["trump-admin", "immigration"]
-    research_repo.save(actor)
-
-
-_STANDARD_KB_DEFS = [
-    {"name": "test-events", "kb_type": KBType.EVENTS, "description": "Test events KB"},
-    {
-        "name": "test-research",
-        "kb_type": KBType.RESEARCH,
-        "description": "Test research KB",
-        "subdirs": ["actors"],
-    },
-]
+# The builder and the standard seed live outside this file, so other test
+# modules use them without importing a test module (#1077).
+from tests._world import mcp_server as _make_mcp_server
+from tests.mcp_seed import STANDARD_KB_DEFS as _STANDARD_KB_DEFS
+from tests.mcp_seed import populate_events_and_person as _populate_events_and_person
 
 
 # ---------------------------------------------------------------------------

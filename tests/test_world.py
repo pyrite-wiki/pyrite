@@ -132,6 +132,18 @@ def test_close_shuts_the_app_down_and_closes_every_connection(tmp_path):
     assert not live, f"a connection survived close(): {live}"
 
 
+def test_close_without_rest_closes_its_own_and_mcps_connections(tmp_path):
+    # Asserted on the -wal/-shm files, not a ResourceWarning: an unclosed
+    # pooled SQLite connection emits none while the test runs (tried, #1077).
+    w = build_world(tmp_path, kbs=[KBConfig(name=KB, path=tmp_path / KB)], rest=False)
+    w.add_entry(KB, _note("x", "X"))
+    w.mcp(tier="read")._dispatch_tool("kb_get", {"entry_id": "x", "kb_name": KB})
+    index_dir = w.config.settings.index_path.parent
+    w.close()
+    live = sorted(p.name for p in index_dir.iterdir() if p.name.endswith(("-wal", "-shm")))
+    assert not live, f"a connection survived close(): {live}"
+
+
 def test_close_is_idempotent(tmp_path):
     w = build_world(tmp_path, kbs=[KBConfig(name=KB, path=tmp_path / KB)])
     w.close()
