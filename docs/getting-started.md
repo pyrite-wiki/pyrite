@@ -86,6 +86,7 @@ cat people/ada-lovelace.md
 ```
 <!-- runner: expect-text id: ada-lovelace title: Ada Lovelace type: person -->
 <!-- runner: expect-text tags: - mathematics - computing importance: 5 research_status: stub -->
+<!-- runner: expect-text role: "" affiliations: [] -->
 
 ```markdown
 ---
@@ -97,12 +98,14 @@ tags:
 - computing
 importance: 5
 research_status: stub
+role: ""
+affiliations: []
 ---
 
 Mathematician and writer. Wrote the first algorithm intended for a machine.
 ```
 
-The `id` is auto-generated from the title. Pyrite validates fields against the type schema on every write.
+The `id` is auto-generated from the title. A new file carries every field the type's schema declares, empty until you fill it in (`role`, `affiliations`). Pyrite validates fields against the type schema on every write.
 
 ## Commit Your Changes
 

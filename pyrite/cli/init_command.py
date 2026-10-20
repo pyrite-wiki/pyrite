@@ -244,7 +244,7 @@ BUILTIN_TEMPLATES = {
             "person": {
                 "description": "Person profile",
                 "required": ["title"],
-                "optional": ["role", "affiliation"],
+                "optional": ["role", "affiliations"],
                 "subdirectory": "people/",
             },
             "organization": {
@@ -289,7 +289,7 @@ BUILTIN_TEMPLATES = {
             "person": {
                 "description": "People in the subject's network",
                 "required": ["title"],
-                "optional": ["role", "affiliation"],
+                "optional": ["role", "affiliations"],
                 "subdirectory": "people/",
             },
             "source": {
@@ -360,7 +360,7 @@ BUILTIN_TEMPLATES = {
             "person": {
                 "description": "People in the movement",
                 "required": ["title"],
-                "optional": ["role", "affiliation"],
+                "optional": ["role", "affiliations"],
                 "subdirectory": "people/",
             },
             "source": {
