@@ -865,7 +865,6 @@ class TestIndexEmbedUnavailableModel:
         from typer.testing import CliRunner
 
         from pyrite.cli import app
-        from pyrite.services.embedding_service import EmbeddingService
 
         kb_path = tmp_path / "kb"
         kb_path.mkdir()
@@ -887,10 +886,6 @@ class TestIndexEmbedUnavailableModel:
         monkeypatch.setattr("pyrite.services.embedding_service.is_available", lambda: True)
         load_model = MagicMock(side_effect=OSError("model unavailable offline"))
         monkeypatch.setattr("pyrite.services.embedding_service._load_model", load_model)
-        embed_all = MagicMock(
-            return_value={"embedded": 0, "skipped": 0, "errors": 0, "truncated": 0}
-        )
-        monkeypatch.setattr(EmbeddingService, "embed_all", embed_all)
         monkeypatch.setattr("pyrite.cli.index_commands.get_config_and_db", lambda: (config, db))
 
         try:
@@ -902,7 +897,7 @@ class TestIndexEmbedUnavailableModel:
             assert "cache" in result.output.lower()
             assert "pending" in result.output.lower()
             assert load_model.call_count == 1
-            embed_all.assert_not_called()
+            assert _vector_count(db) == 0
             rows = db._raw_conn.execute(
                 "SELECT entry_id, attempts, status FROM embed_queue ORDER BY entry_id"
             ).fetchall()
