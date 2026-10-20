@@ -236,14 +236,24 @@ REST), search and health.
 - **A double spelling** is left to the model (the top-level spelling wins,
   decision 3) and to `index health`; the lift skips the field, and the
   read keeps the reported second value under `metadata`: a read never
-  loses a value the file holds, so a bag key leaves `metadata` only when
-  the read carries the field at its own name with the same value.
+  loses a value the file holds. The rule for a bag key (round 3): it leaves
+  `metadata` whenever the file has no top-level spelling of the field (the
+  field has one value, the lift's, whatever a column made of it:
+  `metadata: {importance: '8'}` reads `importance: 8` and no
+  `metadata.importance`); a key the file also spells at the top level, a
+  true double spelling, leaves only when the two values agree.
 - **Every key the read returns reaches every surface** (REST `GET`, MCP
   `kb_get`, the CLI's JSON) with the same value. REST's `EntryResponse`
   declares the stable core and passes every other key through; its fixed
   field list dropped a lifted field with no slot (a task's `status_reason`,
   a backlog item's `rank`, `provenance`). A parametrised test compares the
-  three surfaces for one entry of every registered type.
+  three surfaces for one entry of every registered type, and one test
+  compares the key sets of REST `GET` (as an anonymous reader of a public
+  KB) and MCP `kb_get`, bookkeeping fields (`created_by`, `modified_by`,
+  `indexed_at`, `assignee`) included. REST's one key of its own is the
+  `participants: []` default of `EntryResponse` on a type without that
+  field; the web client reads it unguarded, so whether REST drops it is
+  the maintainer's call (round 3).
 - A declared field a class never reads from its frontmatter at any
   spelling (protocol mixin fields a class took but did not wire up: a
   person's `location`, an event's `start_date`) has nothing to lift; the

@@ -287,11 +287,23 @@ likewise). A key the type does not declare is not lifted: it reads under
 spells a field twice reads the top-level value at the field's name and
 keeps the nested value under `metadata` (where `index health` reports the
 double spelling), and a declared field a type's class does not read from
-its frontmatter keeps its `metadata` spelling. **Every key the read returns
-reaches every surface** with the same value: REST `GET /api/entries/{id}`
-(`EntryResponse` declares the stable core and passes every other key of the
-read through; a fixed field list used to drop a lifted field), MCP `kb_get`
-and `pyrite get --format json`. An echo of a read back through REST `PUT` or
+its frontmatter keeps its `metadata` spelling. A `metadata` key leaves the
+read whenever the file has no top-level spelling of the field, whatever
+the index column made of its value (`metadata: {importance: '8'}` reads
+`importance: 8` and no `metadata.importance`); only a true double spelling
+compares values. **A single-entry read returns every key the read
+produces, the same set on all three surfaces:** REST `GET
+/api/entries/{id}`, MCP `kb_get` and `pyrite get --format json` carry the
+same keys with the same values, the bookkeeping fields included
+(`created_by`, `modified_by`, `indexed_at`, `assignee`, `content_hash`,
+`file_path`, ...). `EntryResponse` declares the stable core and passes every
+other key of the read through (a fixed field list used to drop a lifted
+field such as a task's `status_reason` or a backlog item's `rank`). One
+REST-only key remains: `participants: []` on an entry whose type has no
+such field, an `EntryResponse` default the web client reads unguarded
+(under review, #1025). An anonymous REST reader of a public KB sees the
+same keys as an authenticated one: the read scope decides whether the
+entry is returned, never which of its keys. An echo of a read back through REST `PUT` or
 MCP `kb_update`, with a key added or a field edited, is written; a `metadata`
 key the file did not hold lands at the top level of the file (decision 6).
 The index row (`db.get_entry`, `db.list_entries`, the shape the plugins
