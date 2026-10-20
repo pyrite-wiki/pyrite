@@ -293,10 +293,20 @@ class PluginRegistry:
             logger.warning("Plugin discovery failed: %s", e)
 
         self._discovered = True
+        self._aliases_changed()
+
+    @staticmethod
+    def _aliases_changed() -> None:
+        """A plugin arrived: a type's aliases, and so its declared fields, may
+        have changed (``schema.field_aliases.declared_fields`` caches them)."""
+        from ..schema.field_aliases import clear_declared_fields_cache
+
+        clear_declared_fields_cache()
 
     def register(self, plugin: PyritePlugin) -> None:
         """Manually register a plugin (for testing or programmatic use)."""
         self._plugins[plugin.name] = plugin
+        self._aliases_changed()
         # A re-register (e.g. a test replacing a plugin instance under the
         # same name) must not serve a stale conformance result computed from
         # the previous instance's validators/hooks.

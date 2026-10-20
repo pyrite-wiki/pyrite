@@ -38,6 +38,7 @@ _TASK_KNOWN_KEYS = {
     "lifecycle",
     "status",
     "status_reason",
+    "parked_awaiting",
     "assignee",
     "parent",
     "parent_task",
@@ -484,6 +485,11 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
 
     status: str = "open"  # overrides Statusable default
     status_reason: str = ""  # Free-string reason for the current status (Tier A r1175)
+    # Why a task is parked (the conductor's parked-monitor convention; the
+    # human worklist board groups by it). A declared field since #1025: a
+    # read spells only a declared field at the top level, and
+    # `TaskService.list_tasks` and the web UI read it there.
+    parked_awaiting: str = ""
     parent: str = ""  # overrides Parentable default
     dependencies: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
@@ -517,6 +523,8 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
         meta["status"] = self.status
         if self.status_reason:
             meta["status_reason"] = self.status_reason
+        if self.parked_awaiting:
+            meta["parked_awaiting"] = self.parked_awaiting
         if self.assignee:
             meta["assignee"] = self.assignee
         if self.parent:
@@ -571,6 +579,7 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
             **kwargs,
             status=meta.get("status", "open"),
             status_reason=meta.get("status_reason", "") or "",
+            parked_awaiting=meta.get("parked_awaiting", "") or "",
             assignee=meta.get("assignee", ""),
             parent=parent,
             dependencies=meta.get("dependencies", []) or [],

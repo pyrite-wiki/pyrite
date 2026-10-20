@@ -185,7 +185,10 @@ class TestTaskEntryUnknownFrontmatterKeys:
     survive a load -> save round trip rather than being silently dropped.
     """
 
-    def test_from_frontmatter_collects_unknown_key_into_metadata(self):
+    def test_from_frontmatter_reads_parked_awaiting_as_a_field(self):
+        """`parked_awaiting` is a declared field of a task (#1025, the
+        maintainer's decision of 2026-10-20: the task tools read it at the
+        top of a read, and only a declared field is read there)."""
         meta = {
             "id": "task-003",
             "title": "Monitor task",
@@ -194,7 +197,19 @@ class TestTaskEntryUnknownFrontmatterKeys:
             "parked_awaiting": "2026-09-11",
         }
         entry = TaskEntry.from_frontmatter(meta, "")
-        assert entry.metadata.get("parked_awaiting") == "2026-09-11"
+        assert entry.parked_awaiting == "2026-09-11"
+        assert "parked_awaiting" not in entry.metadata
+
+    def test_from_frontmatter_collects_an_unknown_key_into_metadata(self):
+        meta = {
+            "id": "task-003",
+            "title": "Monitor task",
+            "type": "task",
+            "status": "in_progress",
+            "park_until": "2026-09-11",
+        }
+        entry = TaskEntry.from_frontmatter(meta, "")
+        assert entry.metadata.get("park_until") == "2026-09-11"
 
     def test_to_frontmatter_promotes_unknown_key_to_top_level(self):
         entry = TaskEntry(

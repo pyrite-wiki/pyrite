@@ -374,13 +374,29 @@ _NOT_FIELDS = frozenset(
 )
 
 
+#: ``declared_fields`` per (class, type name): the alias map behind it walks
+#: the plugin registry, and a read asks for every entry. Cleared whenever a
+#: plugin is registered or discovered (``clear_declared_fields_cache``), the
+#: one event that changes a type's aliases.
+_DECLARED_FIELDS: dict[tuple[type, str], frozenset[str]] = {}
+
+
+def clear_declared_fields_cache() -> None:
+    """Forget the cached ``declared_fields``: the plugin registry changed."""
+    _DECLARED_FIELDS.clear()
+
+
 def declared_fields(cls: type, entry_type: str) -> frozenset[str]:
     """The fields a type declares: the class's public dataclass fields that are
     file keys, and every alias target. What the reader lifts (``read_view``,
-    ``lift_declared_fields``): a key that is no field of the type is the
-    ``metadata`` bag's, at every spelling."""
+    ``lift_declared_fields``) and what a single-entry read keeps out of its
+    ``metadata`` (``read_metadata``): a key that is no field of the type is
+    the ``metadata`` bag's, at every spelling."""
     import dataclasses
 
+    cached = _DECLARED_FIELDS.get((cls, entry_type))
+    if cached is not None:
+        return cached
     if not dataclasses.is_dataclass(cls):
         return frozenset()
     aliases = class_field_aliases(cls, entry_type)
@@ -393,7 +409,9 @@ def declared_fields(cls: type, entry_type: str) -> frozenset[str]:
     # `actors` is read into) is a spelling of its target, not a field.
     names -= set(aliases)
     names |= set(aliases.values())
-    return frozenset(names)
+    result = frozenset(names)
+    _DECLARED_FIELDS[(cls, entry_type)] = result
+    return result
 
 
 def read_view(file_values: dict[str, Any], cls: type, entry_type: str) -> dict[str, Any]:
@@ -404,14 +422,16 @@ def read_view(file_values: dict[str, Any], cls: type, entry_type: str) -> dict[s
     and takes each field's value from ``spelling_in(file, field)``, the path
     the writer writes (ADR-0042 decision 12).
 
-    Both spellings stay: ``metadata`` is the mapping the file has, so a
-    read's shape carries the field at its own key and under ``metadata`` (an
-    echo of either back is unchanged), and ``capture_extra_frontmatter``
-    keeps the raw mapping as ``_source_frontmatter``. A field spelled twice
-    is left as it is: the model reads the top-level spelling (decision 3) and
-    ``double_spellings`` reports the file. A key the type does not declare is
-    the bag's and is not lifted. Returns ``file_values`` itself when there is
-    nothing to lift."""
+    The view adds the top-level key and leaves ``metadata`` as the file has
+    it (the model's bag, and the index row's, keep the nested spelling: the
+    storage shape); the single-entry read then spells the field once, at its
+    own name (``read_metadata``, option B of the maintainer's decision of
+    2026-10-20). ``capture_extra_frontmatter`` keeps the raw mapping as
+    ``_source_frontmatter``. A field spelled twice is left as it is: the
+    model reads the top-level spelling (decision 3) and ``double_spellings``
+    reports the file. A key the type does not declare is the bag's and is
+    not lifted. Returns ``file_values`` itself when there is nothing to
+    lift."""
     nested = file_values.get(METADATA)
     if not isinstance(nested, Mapping) or not nested:
         return file_values
@@ -446,19 +466,56 @@ def lift_declared_fields(
     task's ``status_reason``) is read at its own name too; the bag keeps it,
     and a key the type does not declare stays the bag's (#1025). One rule for
     ``IndexManager.read_fields`` and the backend's row, in place of a
-    hand-written list of five keys."""
+    hand-written list of five keys. Where the bag spells the field is
+    ``spelling_in``'s answer (the field's name or an alias); a bag spelling
+    it twice reads the field's own name, the model's reading (decision 3)."""
     if not isinstance(bag, Mapping) or not bag:
         return
-    aliases = class_field_aliases(cls, entry_type)
     for field in sorted(declared_fields(cls, entry_type)):
         if field in result:
             continue
-        # The field's own name first (the model's reading, decision 3), then
-        # an alias the bag spells it by; read at the field's name either way.
-        for key in (field, *(a for a, t in aliases.items() if t == field)):
-            if key in bag:
-                result[field] = bag[key]
-                break
+        try:
+            path = spelling_in(bag, cls, entry_type, field)
+        except SpelledTwiceError:
+            path = (field,)
+        if path[0] != METADATA and path[-1] in bag:
+            result[field] = bag[path[-1]]
+
+
+def read_metadata(
+    bag: Mapping[str, Any] | None, result: Mapping[str, Any], cls: type, entry_type: str
+) -> dict[str, Any]:
+    """The single-entry read's ``metadata``: the bag, less every key that spells
+    a declared field the read carries at its own name (``field_at`` folded, so
+    an alias of a declared field is a spelling of it). A read spells each field once, at its own name, and ``metadata``
+    holds only keys the type does not declare (option B of the maintainer's
+    decision of 2026-10-20 on #1025). A declared field the read does not carry
+    (a class that never reads it from its frontmatter) keeps its bag spelling,
+    so the read loses nothing. The index row keeps the whole bag: the storage
+    shape the plugins read."""
+    if not isinstance(bag, Mapping) or not bag:
+        return {}
+    declared = declared_fields(cls, entry_type)
+    out: dict[str, Any] = {}
+    for key, value in bag.items():
+        if isinstance(key, str) and key != METADATA:
+            try:
+                field, _rest = field_at(cls, entry_type, (key,))
+            except ValueError:
+                field = key
+            if field in declared and _carried(result.get(field)):
+                continue
+        out[key] = value
+    return out
+
+
+def _carried(read_value: Any) -> bool:
+    """Whether a read carries a field at its own name: a column the model
+    never filled reads ``None`` or ``""`` (a class that does not read the
+    field from its frontmatter, or a model default the index stores as
+    empty), and the bag then stays the one place the file's value shows.
+    A TEXT column spells ``2`` as ``"2"``, so values are not compared."""
+    return read_value is not None and read_value != ""
 
 
 def _spellings_present(

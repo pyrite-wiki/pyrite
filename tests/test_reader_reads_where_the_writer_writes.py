@@ -20,10 +20,12 @@ nested ones are the evidence. Each cell's sample value is hand-written
 (``SAMPLES``) and must read as given at the top level (the witness), so a cell
 cannot pass because both twins read a default.
 
-Read shape (proposed here, #1025 open question 1): the field's own key carries
-the value and the file's nested spelling stays under ``metadata`` unchanged.
-Migrations run before the lift, on the file's own spellings (open question 2):
-``schema migrate`` diffs their result against the file.
+Read shape (the maintainer's decision of 2026-10-20, option B): the
+single-entry read spells a declared field once, at its own name, and its
+``metadata`` holds only keys the type does not declare; the index row, the
+storage dict the plugins read, keeps its bag as stored. An undeclared key is
+not lifted. Migrations run before the lift, on the file's own spellings (open
+question 2): ``schema migrate`` diffs their result against the file.
 """
 
 from __future__ import annotations
@@ -157,6 +159,7 @@ SAMPLES: dict[str, Any] = {
     "assignee": "ann",
     "assigned_at": "2026-01-01T00:00:00+00:00",
     "status_reason": "why",
+    "parked_awaiting": "rfp-due",
     "dependencies": ["d1"],
     "evidence": ["e1"],
     "agent_context": {"run": 1},
@@ -546,13 +549,17 @@ def test_a_field_reads_the_same_at_every_spelling(
     assert spelled_hit == twin_hit, "a search hit"
 
     if spelling[0] == "metadata":
-        # The read shape "both": the nested spelling is still there, as the
-        # file has it, so an echo of the read back changes nothing.
+        # The read shape (maintainer decision 2026-10-20, option B): the
+        # single-entry read spells a declared field once, at its own name,
+        # and its `metadata` holds no spelling of it; the index row (the
+        # storage dict the plugins read) keeps the bag as stored.
         expected = _plain(json.loads(json.dumps(_sample(type_name, field))))
-        for name, shape in (("row", _row(config, spelled)), ("get", _get(config, spelled))):
-            assert _plain((shape.get("metadata") or {}).get(spelling[1])) == expected, (
-                f"{name}: the nested spelling left `metadata`"
-            )
+        row_bag = _row(config, spelled).get("metadata") or {}
+        assert _plain(row_bag.get(spelling[1])) == expected, "the row's bag lost the spelling"
+        read_bag = _get(config, spelled).get("metadata") or {}
+        assert spelling[1] not in read_bag and field not in read_bag, (
+            f"the single-entry read spells {field} under `metadata` too: {read_bag}"
+        )
 
 
 @pytest.mark.control(
@@ -764,24 +771,155 @@ def test_update_then_get_agree_on_a_field_spelled_only_under_metadata(tmp_path: 
     assert _rest_get(config, "n1")["importance"] == 8
 
 
-def test_an_echo_of_either_spelling_back_changes_nothing(tmp_path: Path):
-    """The read shape "both": a read of a file spelling `importance` only
-    under `metadata:` carries `importance: 3` and `metadata: {importance: 3}`;
-    sending either back as an update leaves the file's bytes unchanged."""
+def _mcp_update(config: PyriteConfig, args: dict[str, Any]) -> dict[str, Any]:
+    from pyrite.server.mcp_server import PyriteMCPServer
+
+    server = PyriteMCPServer(config, tier="write")
+    try:
+        result = server._dispatch_tool("kb_update", args)
+    finally:
+        server.close()
+    if result.get("error") or result.get("isError"):
+        raise ValidationError(str(result))
+    return result
+
+
+def _rest_put(config: PyriteConfig, entry_id: str, body: dict[str, Any]) -> Any:
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    from fastapi.testclient import TestClient
+
+    from pyrite.server.api import create_app, get_config, get_db, get_index_mgr
+
+    db = PyriteDB(config.settings.index_path)
+    index_mgr = IndexManager(db, config)
+    rest = create_app(config)
+    rest.dependency_overrides[get_config] = lambda: config
+    rest.dependency_overrides[get_db] = lambda: db
+    rest.dependency_overrides[get_index_mgr] = lambda: index_mgr
+    client = TestClient(rest, raise_server_exceptions=False)
+    try:
+        res = client.put(f"/api/entries/{entry_id}", json={"kb": KB, **body})
+    finally:
+        client.close()
+        db.close()
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def test_a_single_read_spells_a_nested_field_once_and_an_echo_is_a_no_op(tmp_path: Path):
+    """Option B: a read of a file spelling `importance` only under `metadata:`
+    carries `importance: 3` and an empty `metadata`; echoing the read back
+    (the whole of it through MCP `kb_update`, or the one key through the
+    service) leaves the file's bytes unchanged."""
     config, path = _note_kb(tmp_path, NESTED_IMPORTANCE)
     read = _get(config, "n1")
-    assert read["importance"] == 3 and read["metadata"] == {"importance": 3}, read
+    assert read["importance"] == 3 and read["metadata"] == {}, read
     before = path.read_bytes()
 
     db = PyriteDB(config.settings.index_path)
     try:
-        svc = KBService(config, db)
-        svc.update("n1", KB, {"importance": read["importance"]})
-        assert path.read_bytes() == before, "echoing the top-level key rewrote the file"
-        svc.update("n1", KB, {"metadata": {"importance": read["metadata"]["importance"]}})
-        assert path.read_bytes() == before, "echoing the nested key rewrote the file"
+        KBService(config, db).update("n1", KB, {"importance": read["importance"]})
     finally:
         db.close()
+    assert path.read_bytes() == before, "echoing the top-level key rewrote the file"
+    _mcp_update(config, {"kb_name": KB, "entry_id": "n1", **_mcp_get(config, "n1")})
+    assert path.read_bytes() == before, "echoing the whole read rewrote the file"
+
+
+# --------------------------------------------------------------------------
+# Round trips from the decision packet: read, edit, send back
+# --------------------------------------------------------------------------
+
+PROVENANCE_NOTE = (
+    "---\nid: n3\ntitle: N3\ntype: note\nprovenance:\n  created_by: me\n"
+    "metadata:\n  reviewed: false\n---\n\nText.\n"
+)
+EVIDENCE_TASK = (
+    "---\nid: t2\ntitle: T2\ntype: task\nstatus: open\nevidence:\n- e1\n"
+    "metadata:\n  reviewed: false\n---\n\nText.\n"
+)
+
+
+def _kb_with(tmp_path: Path, text: str, entry_id: str) -> tuple[PyriteConfig, Path]:
+    kb_path = tmp_path / "kb"
+    (kb_path / "notes").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=kb_path, check=True, capture_output=True, timeout=30)
+    path = kb_path / "notes" / f"{entry_id}.md"
+    path.write_text(text, encoding="utf-8")
+    config = _config(tmp_path, kb_path, "note")
+    _index(config)
+    return config, path
+
+
+def test_a_single_read_spells_a_declared_field_once_and_the_row_keeps_its_bag(tmp_path: Path):
+    """A task spelling `evidence` and `provenance` at the top level: the
+    single-entry read has each at its own name and `metadata` holds only the
+    undeclared `reviewed`; the index row (the storage dict about 45 plugin
+    call sites read declared fields from) keeps them in its bag."""
+    config, _path = _kb_with(
+        tmp_path,
+        EVIDENCE_TASK.replace("metadata:", "provenance:\n  created_by: me\nmetadata:"),
+        "t2",
+    )
+    read = _get(config, "t2")
+    assert read["evidence"] == ["e1"] and read["provenance"]["created_by"] == "me", read
+    assert read["metadata"] == {"reviewed": False}, read
+    row_bag = _row(config, "t2")["metadata"]
+    assert row_bag["evidence"] == ["e1"] and "provenance" in row_bag, row_bag
+
+
+def test_rest_put_of_a_reads_metadata_with_a_key_added_writes_it(tmp_path: Path):
+    """The blocking item: on a note with `provenance`, PUT the read's
+    `metadata` back with one key added. It is written, nothing refused."""
+    config, path = _kb_with(tmp_path, PROVENANCE_NOTE, "n3")
+    read = _rest_get(config, "n3")
+    assert "provenance" not in read["metadata"], read["metadata"]
+
+    _rest_put(config, "n3", {"metadata": {**read["metadata"], "reviewed_by": "me"}})
+
+    after = _get(config, "n3")
+    assert after["metadata"]["reviewed_by"] == "me", after["metadata"]
+    assert after["provenance"] == {"created_by": "me"} or after["provenance"]["created_by"] == "me"
+    assert "provenance:\n  created_by: me\n" in path.read_text(encoding="utf-8")
+
+
+def test_mcp_echo_of_a_whole_read_with_a_metadata_key_added_writes_it(tmp_path: Path):
+    config, _path = _kb_with(tmp_path, PROVENANCE_NOTE, "n3")
+    read = _mcp_get(config, "n3")
+    read["metadata"] = {**read["metadata"], "reviewed_by": "me"}
+
+    _mcp_update(config, {"kb_name": KB, "entry_id": "n3", **read})
+
+    assert _get(config, "n3")["metadata"]["reviewed_by"] == "me"
+
+
+def test_mcp_echo_of_a_whole_read_with_importance_changed_on_a_nested_note(tmp_path: Path):
+    config, path = _note_kb(tmp_path, NESTED_IMPORTANCE)
+    read = _mcp_get(config, "n1")
+    read["importance"] = 8
+
+    _mcp_update(config, {"kb_name": KB, "entry_id": "n1", **read})
+
+    assert _get(config, "n1")["importance"] == 8
+    after = path.read_text(encoding="utf-8")
+    assert "metadata:\n  importance: 8\n" in after and "\nimportance:" not in after, after
+
+
+def test_mcp_echo_editing_a_top_level_field_and_a_metadata_key_on_a_task(tmp_path: Path):
+    """A task spelling `evidence` at the top level: the whole read, with the
+    title edited and a `metadata` key added, is written; `evidence` (a managed
+    field) rides along at its own name only, so no spelling of it is sent
+    under `metadata` and nothing is refused."""
+    config, path = _kb_with(tmp_path, EVIDENCE_TASK, "t2")
+    read = _mcp_get(config, "t2")
+    read["title"] = "T2 edited"
+    read["metadata"] = {**read["metadata"], "reviewed_by": "me"}
+
+    _mcp_update(config, {"kb_name": KB, "entry_id": "t2", **read})
+
+    after = _get(config, "t2")
+    assert after["title"] == "T2 edited" and after["metadata"]["reviewed_by"] == "me", after
+    assert "evidence:\n- e1\n" in path.read_text(encoding="utf-8")
 
 
 # --------------------------------------------------------------------------
@@ -843,16 +981,19 @@ BACKLOG = (
 )
 TASK = (
     "---\nid: t1\ntitle: T1\ntype: task\nstatus: blocked\nstatus_reason: why\n"
-    "assignee: ann\nparked_awaiting: rfp\n---\n\nText.\n"
+    "assignee: ann\nparked_awaiting: rfp\ncustom_note: kept\n---\n\nText.\n"
 )
 
 
 def test_a_declared_field_the_row_keeps_in_its_bag_is_read_at_its_own_name(tmp_path: Path):
-    """`rank`, `effort` and `kind` are fields of a backlog item and
-    `status_reason` of a task: a read spells each at its own name (and the bag
-    still holds it). `parked_awaiting` is no field of a task: it stays in the
-    bag, where `TaskService.list_tasks` reads it, with or without an assignee
-    filter. No hand-written list decides this (`_LIFTED_METADATA_KEYS`)."""
+    """`rank`, `effort` and `kind` are fields of a backlog item, `status_reason`
+    and `parked_awaiting` of a task (declared on `TaskEntry` by the
+    maintainer's decision of 2026-10-20, so the task tools keep reading it at
+    the top): a read spells each at its own name, the row's bag still holds
+    it, and the single-entry read's `metadata` does not. An undeclared key
+    (`custom_note`) stays in the bag and is not lifted. `TaskService.list_tasks`
+    surfaces `parked_awaiting` with or without an assignee filter. No
+    hand-written list decides this (`_LIFTED_METADATA_KEYS`)."""
     from pyrite.services.task_service import TaskService
 
     kb_path = tmp_path / "kb"
@@ -865,8 +1006,11 @@ def test_a_declared_field_the_row_keeps_in_its_bag_is_read_at_its_own_name(tmp_p
         assert (shape["rank"], shape["effort"], shape["kind"]) == (3, "M", "bug"), (name, shape)
     for name, shape in (("row", _row(config, "t1")), ("get", _get(config, "t1"))):
         assert shape["status_reason"] == "why", (name, shape)
-        assert "parked_awaiting" not in shape, (name, "an undeclared key was lifted")
-        assert shape["metadata"]["parked_awaiting"] == "rfp", (name, shape)
+        assert shape["parked_awaiting"] == "rfp", (name, shape)
+        assert "custom_note" not in shape, (name, "an undeclared key was lifted")
+        assert shape["metadata"]["custom_note"] == "kept", (name, shape)
+    assert "parked_awaiting" in _row(config, "t1")["metadata"], "the row's bag lost the field"
+    assert "parked_awaiting" not in _get(config, "t1")["metadata"], "spelled twice in a read"
     db = PyriteDB(config.settings.index_path)
     try:
         svc = TaskService(config, db)
@@ -1017,6 +1161,18 @@ def test_the_row_shaping_and_the_file_read_share_the_one_lift_rule():
     ):
         node = next(n for n in _functions(sources[label]) if n.name == name)
         assert "lift_declared_fields" in _calls(node), f"{label}::{name} does not use the rule"
+    # Option B is the single-entry read's alone: it drops the declared fields
+    # from its `metadata` through the rule; the row's shaping does not.
+    read_fields = next(
+        n for n in _functions(sources["pyrite/storage/index.py"]) if n.name == "read_fields"
+    )
+    assert "read_metadata" in _calls(read_fields)
+    row = next(
+        n
+        for n in _functions(sources["pyrite/storage/backends/base_backend.py"])
+        if n.name == "_entry_to_dict"
+    )
+    assert "read_metadata" not in _calls(row), "the row's bag must stay as stored (plugins read it)"
 
 
 @pytest.mark.control(

@@ -660,7 +660,18 @@ def test_on_a_fresh_index_the_file_read_equals_the_row(tmp_path):
             got = {k: v for k, v in read.items() if k not in ("outlinks", "backlinks")}
             got.pop("content_hash")
             assert list(got) == list(row), entry_id
-            assert got == row, entry_id
+            # The one key the two projections differ on, by decision (#1025,
+            # option B): the read's `metadata` holds the row's bag less every
+            # key the read spells at its own name with the same value (a
+            # declared field); the row, the storage dict, keeps the whole bag.
+            read_bag, row_bag = got.pop("metadata"), dict(row["metadata"])
+            assert got == {k: v for k, v in row.items() if k != "metadata"}, entry_id
+            for key, value in row_bag.items():
+                if key in read_bag:
+                    assert read_bag[key] == value, (entry_id, key)
+                else:
+                    assert key in got and got[key] == value, (entry_id, key, "lost from the read")
+            assert set(read_bag) <= set(row_bag), entry_id
     finally:
         db.close()
 

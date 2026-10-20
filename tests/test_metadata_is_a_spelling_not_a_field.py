@@ -1027,11 +1027,12 @@ def test_a_save_through_the_model_keeps_both_values_of_a_doubly_spelled_key(text
 
 
 def test_a_read_spells_aliases_where_the_file_does(tmp_path: Path):
-    """Decision 5, as #1025 reads it: a file with a top-level `aliases:`
-    reads it at the top level and nothing under `metadata`; a file that nests
-    it reads it at the top level too (the reader reads where the writer
-    writes) and still under `metadata`, as the file has it, so an echo of
-    either is unchanged. The row and the single-entry read agree."""
+    """Decision 5, as #1025 reads it (the maintainer's option B, 2026-10-20):
+    a file with a top-level `aliases:` reads it at the top level and nothing
+    under `metadata`; a file that nests it reads it at the top level too (the
+    reader reads where the writer writes). The single-entry read spells it
+    once, at its own name; the index row, the storage dict, keeps the bag as
+    stored, nested spelling included."""
     kb_path = tmp_path / "kb"
     (kb_path / "notes").mkdir(parents=True)
     (kb_path / "notes" / "a1.md").write_text(
@@ -1061,7 +1062,8 @@ def test_a_read_spells_aliases_where_the_file_does(tmp_path: Path):
         assert shape["aliases"] == ["Top"] and "aliases" not in shape["metadata"], shape
     for shape in (nested_row, nested_read):
         assert shape["aliases"] == ["Nested"], shape
-        assert shape["metadata"].get("aliases") == ["Nested"], shape
+    assert nested_row["metadata"].get("aliases") == ["Nested"], nested_row
+    assert "aliases" not in nested_read["metadata"], nested_read
 
 
 def _create_cells() -> list[Any]:

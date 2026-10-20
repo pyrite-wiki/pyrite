@@ -428,7 +428,9 @@ class BaseBackend(ABC):
         # get`, REST `/entries/{id}` and MCP `kb_get` see the file's shape
         # (Tier A 1200, r1175). The rule is `lift_declared_fields` (#1025),
         # shared with `IndexManager.read_fields`; a key the type does not
-        # declare (a task's `parked_awaiting`) stays the bag's.
+        # declare stays the bag's. The bag itself is kept whole here: this
+        # is the storage dict the plugins read declared fields from; only
+        # the single-entry read drops them from its `metadata`.
         from ...models.core_types import get_entry_class
         from ...schema.field_aliases import lift_declared_fields
 

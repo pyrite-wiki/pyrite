@@ -655,7 +655,7 @@ class TestListTasks:
 
         # Write path: the field must still be on disk after claim.
         reloaded = repo.load(entry_id)
-        assert reloaded.metadata.get("parked_awaiting") == "rfp-due-2026-09-11", (
+        assert reloaded.parked_awaiting == "rfp-due-2026-09-11", (
             "task claim dropped parked_awaiting from the file's frontmatter"
         )
 

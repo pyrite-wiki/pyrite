@@ -28,7 +28,7 @@ from ..models.protocols import (
     Statusable,
     Temporal,
 )
-from ..schema.field_aliases import lift_declared_fields, read_view
+from ..schema.field_aliases import lift_declared_fields, read_metadata, read_view
 from ..utils.metadata import parse_metadata
 from .database import PyriteDB
 from .repository import KBRepository
@@ -823,10 +823,9 @@ class IndexManager:
         for key in _READ_COLUMNS:
             result[key] = _as_column(key, data.get(key))
         result["lifecycle"] = result["lifecycle"] or "active"
-        result["metadata"] = metadata
+        result["metadata"] = metadata  # replaced below, once the fields are lifted
         # Its own column (#1001, decision 5), read back through JSON like the
-        # row: a read spells `aliases` where the file does, never under
-        # `metadata` for a file that spells it at the top level.
+        # row: a read spells `aliases` at its own name, never under `metadata`.
         result["aliases"] = json.loads(json.dumps(list(data["aliases"] or []), cls=SafeEncoder))
         # A timestamp the file does not carry (or carries unparsed) is not the
         # file's: the model fills it with "now", which would change on every
@@ -842,6 +841,12 @@ class IndexManager:
         # A declared field the row keeps in its bag is read at its own name
         # (#1025): the one rule the backend's row shaping applies too.
         lift_declared_fields(result, metadata, type(entry), entry.entry_type)
+        # The single-entry read spells a declared field once, at its own name
+        # (just lifted), and its `metadata` holds only keys the type does not
+        # declare (#1025, option B of the maintainer's decision of 2026-10-20).
+        # The row keeps the whole bag: the storage dict the plugins read
+        # declared fields from.
+        result["metadata"] = read_metadata(metadata, result, type(entry), entry.entry_type)
         # As _sync_tags stores them: falsy skipped, duplicates (by ==, so
         # ``1`` and ``true`` are one) dropped first-wins, names as TEXT.
         result["tags"] = [_one_text(t) for t in dict.fromkeys(t for t in data["tags"] if t)]
