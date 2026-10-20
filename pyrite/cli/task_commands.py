@@ -74,6 +74,13 @@ _FIELD_CREATE_ENTRY_COLLISION: frozenset[str] = frozenset(
     {"kb_name", "entry_id", "entry_type", "allow_undeclared"}
 )
 
+#: `--field` keys `task create` owns or builds another way: the id comes from
+#: the title, and a task's links and sources are made with `link` (which
+#: checks the target) -- `--field links=[{"target": "ghost"}]` created a task
+#: already linked to a target that does not exist. Not a managed-field list:
+#: what Pyrite or the task manages is refused by `KBService.create` (#1010).
+_FIELD_CREATE_OWNED: frozenset[str] = frozenset({"id", "links", "sources"})
+
 #: `--field` keys refused because a freshly created entry can never actually
 #: carry them, the #407 symptom recurring on `create` (round-2 cold read):
 #: `type` is frontmatter-only -- `build_entry` always writes the caller's
@@ -101,25 +108,16 @@ def _parse_task_create_fields(
     - a key that already has its own option;
     - `status` (task lifecycle is `task update --status`, not a free-form
       field);
-    - a `TaskEntry.managed_fields` key -- `create` does not run `update`'s
-      managed-field refusal, so without this an agent could forge the audit
-      trail (`status_change_log`, `evidence`, `agent_context`,
-      `assigned_at`) at creation instead of only failing to set it later;
-    - every service-level `KBService._MANAGED_FIELDS` key (`id`, `kb_name`,
-      `file_path`, `links`, `sources`, `provenance`, `extra_frontmatter`) --
-      `update` already refuses these on every entry type, not just tasks;
-      `create` didn't, so `--field links=[{"target": "ghost"}]` created a
-      task already linked to a target that doesn't exist, bypassing the
-      dangling-target check `add_link` applies everywhere else (round-1
-      cold read);
     - a key colliding with `create_entry`'s own call signature or control
       parameters (`_FIELD_CREATE_ENTRY_COLLISION`);
     - `type`, `created_at` and `updated_at` -- a freshly created entry can
       never actually carry them (`_FIELD_CREATE_NEVER_TAKES_EFFECT`), the
       #407 symptom recurring on `create` (round-2 cold read).
+
+    A field Pyrite or the task manages (the audit trail, `file_path`, ...) is
+    not refused here: `KBService.create` refuses it for every surface
+    (#1010), so the rule has one home.
     """
-    from ..models.task import TaskEntry
-    from ..services.kb_service import _MANAGED_FIELDS
     from .entry_commands import _field_type_for, _parse_field_value
 
     fields: dict[str, Any] = {}
@@ -136,14 +134,10 @@ def _parse_task_create_fields(
                 "--field status=... is refused: a new task is always created open; "
                 "use `task update --status` to change it."
             )
-        if k in TaskEntry.managed_fields:
+        if k in _FIELD_CREATE_OWNED:
             raise ValidationError(
-                f"--field {k}=... is refused: Pyrite maintains this field as part of "
-                f"the task's audit trail."
-            )
-        if k in _MANAGED_FIELDS:
-            raise ValidationError(
-                f"--field {k}=... is refused: Pyrite maintains this field; `update` refuses it too."
+                f"--field {k}=... is refused: `task create` sets the id from the title; "
+                "add links with `pyrite link`."
             )
         if k in _FIELD_CREATE_ENTRY_COLLISION:
             raise ValidationError(
