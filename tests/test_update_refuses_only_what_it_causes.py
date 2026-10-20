@@ -46,6 +46,8 @@ validation:
 """
 
 #: kind -> (entry id, file text, the violated field)
+CONTROL = pytest.mark.control(reason="already true before the change: the rule must keep holding")
+
 ON_DISK = {
     "multi-select holds a scalar": (
         "typed3",
@@ -160,7 +162,10 @@ def _request(env, surface, entry_id, fields):
 
 
 @pytest.mark.parametrize("surface", SURFACES)
-@pytest.mark.parametrize("kind", list(ON_DISK))
+@pytest.mark.parametrize(
+    "kind",
+    [pytest.param(k, marks=CONTROL) if "control" in k else k for k in ON_DISK],
+)
 def test_an_update_that_does_not_name_the_bad_field_is_accepted_with_a_warning(env, surface, kind):
     entry_id, _text, field = ON_DISK[kind]
     before = _file(env, entry_id).read_text()
@@ -196,6 +201,7 @@ def test_an_echo_of_kb_get_is_accepted_with_the_warning(env, kind):
     assert any(w.get("field") == field for w in res.get("warnings", [])), res
 
 
+@CONTROL
 def test_a_request_that_sets_the_bad_field_to_another_bad_value_is_refused(env):
     before = _file(env, "scored").read_bytes()
     ok, _w, text = _request(env, "mcp", "scored", {"score": 98})
@@ -223,6 +229,7 @@ def test_a_request_that_changes_nothing_is_not_refused_for_what_is_on_disk(env):
     assert _file(env, "scored").read_bytes() == before
 
 
+@CONTROL
 def test_create_with_the_same_values_is_still_refused(env):
     from pyrite.server.mcp_server import PyriteMCPServer
 
@@ -236,6 +243,7 @@ def test_create_with_the_same_values_is_still_refused(env):
     assert not res.get("created"), res
 
 
+@CONTROL
 def test_a_violation_the_write_introduces_in_an_unnamed_field_is_refused(tmp_path):
     """Cross-field: setting `transaction_type: payment` makes `amount` required.
     The request does not name `amount`, but the finding is new, so it refuses."""

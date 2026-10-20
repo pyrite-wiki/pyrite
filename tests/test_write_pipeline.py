@@ -281,6 +281,9 @@ def test_kb_update_writes_a_kb_yaml_declared_field_of_a_custom_type(env, mcp):
     assert "severity: high" in path.read_text()
 
 
+@pytest.mark.control(
+    reason="the unwrapped echo already ignored identity fields; the test now asserts the file's bytes, not substrings"
+)
 def test_kb_update_ignores_identity_and_bookkeeping_fields(env, mcp):
     """An agent echoing a read result back cannot rewrite id, path or created_at."""
     eid = _create(mcp, entry_type="person", title="Keep Me", body="b")
@@ -1285,6 +1288,9 @@ def test_kb_update_refuses_an_echoed_kb_get_envelope_and_leaves_the_file_alone(e
     assert _file(env, eid).read_bytes() == before
 
 
+@pytest.mark.control(
+    reason="the unwrapped echo already wrote only the body; the envelope is what was broken"
+)
 def test_kb_update_of_the_unwrapped_entry_writes_only_the_body(env, mcp):
     eid, got = _echo_setup(env, mcp)
     before = _file(env, eid).read_text()
@@ -1314,6 +1320,7 @@ def test_rest_put_never_writes_the_envelope(env, rest):
     assert _file(env, "keep-me").read_bytes() == before
 
 
+@pytest.mark.control(reason="a declared field named entry was written before and must stay written")
 def test_a_declared_field_named_entry_is_still_written(env, mcp):
     """Only an `entry` mapping that carries read-result keys is an envelope."""
     (env["kb_path"] / "kb.yaml").write_text(

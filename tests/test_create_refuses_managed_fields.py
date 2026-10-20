@@ -81,11 +81,20 @@ def _cli(env, args):
         return runner.invoke(cli_app, args)
 
 
+ENVELOPE_CONTROL = pytest.mark.control(
+    reason="the metadata envelope was already refused (#1001 decision 6); only the top level was open"
+)
+WHERE = [
+    "top level",
+    pytest.param("envelope", marks=ENVELOPE_CONTROL),
+]
+
+
 def _spellings(field, value):
     return {"top level": {field: value}, "envelope": {"metadata": {field: value}}}
 
 
-@pytest.mark.parametrize("where", ["top level", "envelope"])
+@pytest.mark.parametrize("where", WHERE)
 @pytest.mark.parametrize(("etype", "field", "value"), MANAGED, ids=IDS)
 def test_mcp_kb_create_refuses_a_managed_field(env, mcp, etype, field, value, where):
     spec = {"kb_name": KB, "entry_type": etype, "title": "T1", **_spellings(field, value)[where]}
@@ -95,7 +104,7 @@ def test_mcp_kb_create_refuses_a_managed_field(env, mcp, etype, field, value, wh
     assert _md_files(env) == []
 
 
-@pytest.mark.parametrize("where", ["top level", "envelope"])
+@pytest.mark.parametrize("where", WHERE)
 @pytest.mark.parametrize(("etype", "field", "value"), MANAGED, ids=IDS)
 def test_mcp_kb_bulk_create_refuses_the_item_and_creates_its_sibling(
     env, mcp, etype, field, value, where
@@ -109,7 +118,7 @@ def test_mcp_kb_bulk_create_refuses_the_item_and_creates_its_sibling(
     assert _md_files(env) == ["good.md"]
 
 
-@pytest.mark.parametrize("where", ["top level", "envelope"])
+@pytest.mark.parametrize("where", WHERE)
 @pytest.mark.parametrize(("etype", "field", "value"), MANAGED, ids=IDS)
 def test_cli_import_refuses_a_managed_field(env, etype, field, value, where):
     path = env["tmp_path"] / "in.json"
@@ -163,6 +172,9 @@ def test_rest_bulk_import_refuses_a_managed_field(env, etype, field, value):
         db.close()
 
 
+@pytest.mark.control(
+    reason="no alias of a managed field is declared today, so this guards the day one is"
+)
 def test_an_alias_of_a_managed_field_is_refused(env, mcp):
     from pyrite.models.core_types import get_entry_class
     from pyrite.schema.field_aliases import field_at
@@ -206,6 +218,9 @@ def test_task_commands_keeps_no_managed_field_list():
     assert "_MANAGED_FIELDS" not in src
 
 
+@pytest.mark.control(
+    reason="task create refused this before, by its own list; now by the service rule"
+)
 def test_cli_task_create_still_refuses_a_managed_field(env):
     result = _cli(env, ["task", "create", "-k", KB, "T1", "--field", "evidence=forged"])
     assert result.exit_code != 0, result.output
