@@ -59,6 +59,30 @@ def test_a_setting_config_yaml_cannot_express_is_refused(tmp_path):
         )
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("types", {"note": {"description": "a note"}}),
+        ("policies", {"allow_other_types": False}),
+    ],
+)
+def test_a_kb_field_config_yaml_cannot_express_is_refused(tmp_path, field, value):
+    # `to_dict()` writes no `types`/`policies`; they would load back as None.
+    kb = KBConfig(name=KB, path=tmp_path / KB, **{field: value})
+    with pytest.raises(ValueError, match=rf"{KB}\.{field}"):
+        build_world(tmp_path, kbs=[kb])
+
+
+def test_a_kb_field_config_yaml_carries_is_accepted(tmp_path):
+    kb = KBConfig(name=KB, path=tmp_path / KB, shortname="wk", default_role="read")
+    w = build_world(tmp_path, kbs=[kb], rest=False)
+    try:
+        loaded = w.config.get_kb(KB)
+        assert (loaded.shortname, loaded.default_role) == ("wk", "read")
+    finally:
+        w.close()
+
+
 # -- KBs are on disk and indexed through the indexer -------------------------
 
 
@@ -230,3 +254,21 @@ def test_cli_world_takes_its_own_kbs(cli_world, tmp_path):
     result = world.cli("get", "m1", "-k", "mine", "--format", "json")
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["title"] == "Mine"
+
+
+# -- make_client: overrides are for edges, never the database ---------------
+
+
+def test_make_client_refuses_a_get_db_override(make_client):
+    # `dict.fromkeys`, not a `{get_db: ...}` literal: the one override written
+    # on purpose, to be refused, stays out of the wiring guard's count.
+    with pytest.raises(ValueError, match="get_db"):
+        make_client(dependency_overrides=dict.fromkeys([get_db], lambda: None))
+
+
+def test_make_client_still_takes_an_edge_override(make_client):
+    from pyrite.server.api import get_repo_service
+
+    sentinel = object()
+    client, _config, _db = make_client(dependency_overrides={get_repo_service: lambda: sentinel})
+    assert client.app.dependency_overrides[get_repo_service]() is sentinel

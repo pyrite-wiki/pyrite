@@ -29,13 +29,17 @@ This test walks the AST of every ``.py`` under ``tests/`` and
 ``tests/production_wiring_baseline.txt`` records the count per file as of
 #1077. It can only shrink: a file above its line fails, a file not listed
 fails, and a file below its line fails too, so the line is lowered (or
-removed) in the same pull request. The ceilings below equal the baseline's
-totals; a pull request may lower them and never raise them.
+removed) in the same pull request. The baseline file itself is compared with
+its copy at the merge base with the base branch (``origin/dev``, or
+``origin/$GITHUB_BASE_REF``): a line added or raised there fails, so raising a
+count and its line together does not pass.
 """
 
 from __future__ import annotations
 
 import ast
+import os
+import subprocess
 from collections import Counter
 from pathlib import Path
 
@@ -44,9 +48,6 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = ROOT / "tests" / "production_wiring_baseline.txt"
 KINDS = ("get_db", "load_config")
-
-#: The baseline's totals at #1077. Lower these when the baseline shrinks.
-CEILING = {"get_db": 84, "load_config": 223}
 
 
 def _terminal(node: ast.AST) -> str | None:
@@ -113,9 +114,9 @@ def current_counts() -> dict[tuple[str, str], int]:
     return out
 
 
-def read_baseline() -> dict[tuple[str, str], int]:
+def parse_baseline(text: str) -> dict[tuple[str, str], int]:
     out: dict[tuple[str, str], int] = {}
-    for line in BASELINE.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -123,6 +124,39 @@ def read_baseline() -> dict[tuple[str, str], int]:
         assert kind in KINDS, f"unknown kind {kind!r} in {BASELINE.name}: {line}"
         out[(kind, rel)] = int(count)
     return out
+
+
+def read_baseline() -> dict[tuple[str, str], int]:
+    return parse_baseline(BASELINE.read_text(encoding="utf-8"))
+
+
+def _git(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args], cwd=ROOT, capture_output=True, text=True, timeout=30, check=False
+    )
+
+
+def base_baseline() -> dict[tuple[str, str], int] | None:
+    """The baseline at the merge base with the base branch; None when this
+    branch introduced the file. Skips when the base branch is not fetched."""
+    base_ref = f"origin/{os.environ.get('GITHUB_BASE_REF') or 'dev'}"
+    merge_base = _git("merge-base", "HEAD", base_ref)
+    if merge_base.returncode != 0:
+        pytest.skip(f"{base_ref} is not fetched here; CI's test job fetches it (fetch-depth: 0)")
+    rel = BASELINE.relative_to(ROOT).as_posix()
+    shown = _git("show", f"{merge_base.stdout.strip()}:{rel}")
+    if shown.returncode != 0:
+        return None
+    return parse_baseline(shown.stdout)
+
+
+def raised_lines(base: dict[tuple[str, str], int], now: dict[tuple[str, str], int]) -> list[str]:
+    """Lines of ``now`` that are new or higher than in ``base``."""
+    return [
+        f"{kind} {n} {rel}  (merge base: {base.get((kind, rel), 0)})"
+        for (kind, rel), n in sorted(now.items())
+        if n > base.get((kind, rel), 0)
+    ]
 
 
 # -- the counter, on sources whose counts are known by hand -----------------
@@ -182,17 +216,27 @@ def test_a_file_that_shrank_lowers_its_line():
         if current.get((kind, rel), 0) < n
     ]
     assert not shrunk, (
-        f"Lower these lines in {BASELINE.relative_to(ROOT)} (remove a line at 0), "
-        "and CEILING in this file by the same amount:\n  " + "\n  ".join(shrunk)
+        f"Lower these lines in {BASELINE.relative_to(ROOT)} (remove a line at 0):\n  "
+        + "\n  ".join(shrunk)
     )
 
 
+def test_raised_lines_on_planted_baselines():
+    base = {("get_db", "a.py"): 2, ("load_config", "b.py"): 1}
+    assert raised_lines(base, base) == []
+    assert raised_lines(base, {("get_db", "a.py"): 1}) == []  # lowered, and b.py removed
+    assert raised_lines(base, {("get_db", "a.py"): 3}) == ["get_db 3 a.py  (merge base: 2)"]
+    assert raised_lines(base, {**base, ("get_db", "c.py"): 1}) == ["get_db 1 c.py  (merge base: 0)"]
+
+
 @pytest.mark.guard
-def test_the_ceiling_only_comes_down():
-    totals = Counter()
-    for (kind, _rel), n in read_baseline().items():
-        totals[kind] += n
-    assert dict(totals) == CEILING, (
-        f"The baseline's totals are {dict(totals)}; CEILING is {CEILING}. CEILING "
-        "may be lowered to match a shrinking baseline, never raised."
+def test_the_baseline_only_comes_down_from_the_merge_base():
+    base = base_baseline()
+    if base is None:
+        pytest.skip("the baseline is new on this branch (#1077); nothing to compare yet")
+    raised = raised_lines(base, read_baseline())
+    assert not raised, (
+        f"{BASELINE.relative_to(ROOT)} may only lose or lower lines against the "
+        "merge base. Move the file onto the world (tests/_world.py) instead:\n  "
+        + "\n  ".join(raised)
     )

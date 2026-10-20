@@ -347,8 +347,7 @@ def make_client(tmp_path):
         client, config, db = make_client(api_key="secret", kb_name="test-kb")
 
     `dependency_overrides` is for seams that are not the database (an
-    external service a test stubs). Overriding `get_db` through it is
-    counted by `tests/test_production_wiring_guard.py`, which only shrinks.
+    external service a test stubs); a `get_db` key is refused.
     """
     if not _HAS_FASTAPI:
         pytest.skip("fastapi not installed")
@@ -367,6 +366,15 @@ def make_client(tmp_path):
         register_user: tuple[str, str] | None = None,
         dependency_overrides: dict | None = None,
     ):
+        if dependency_overrides:
+            from pyrite.server.api import get_db
+
+            if get_db in dependency_overrides:
+                raise ValueError(
+                    "make_client(dependency_overrides=...) refuses get_db: the world "
+                    "runs the production per-request session. Seed the world's db "
+                    "(the third value returned), or build_world over your config."
+                )
         work_dir = tmp_path / f"client-{len(worlds) + 1}"
         settings: dict = {"index_path": work_dir / "index.db", "api_key": api_key}
         if api_keys is not None:

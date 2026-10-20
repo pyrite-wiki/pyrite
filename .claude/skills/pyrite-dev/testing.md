@@ -16,9 +16,9 @@ world, in-process. Build the world with `tests/_world.py`, or with one of the
 fixtures over it, and the test runs the production wiring:
 
 - the config is `config.yaml` in a real config dir, written by `save_config`
-  and read back by `load_config`. A setting that file cannot express is
-  refused when the world is built, so it never silently falls back to its
-  default;
+  and read back by `load_config`. A setting or KB field (`types`,
+  `policies`) that file cannot express is refused when the world is built,
+  so it never silently falls back to its default;
 - a KB is a directory of files, and `world.add_entry(kb, text)` writes one
   file and indexes it through the indexer;
 - REST is `create_app(config)` with no `dependency_overrides`. `get_db` is the

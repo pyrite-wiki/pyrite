@@ -12,8 +12,9 @@ What "production wiring" means here, property by property (each pinned in
 
 - **The config is read from disk.** `build_world` writes `config.yaml` with
   `save_config` and reads it back with `load_config`, so the app, the CLI and
-  MCP all see what the loader parsed. A setting `config.yaml` cannot express is
-  refused at build time rather than silently replaced by its default.
+  MCP all see what the loader parsed. A setting or KB field `config.yaml`
+  cannot express is refused at build time rather than silently replaced by
+  its default.
 - **No dependency overrides.** The app is `create_app(config)` and nothing
   else: `get_db` is create_app's own `_app_get_db`, a per-request
   `request_handle()` session closed when the request ends (#131), on the
@@ -288,21 +289,41 @@ def _requested(settings: Settings) -> dict[str, Any]:
     }
 
 
-def _check_round_trip(requested: dict[str, Any], loaded: Settings) -> None:
-    """Every setting the caller asked for reached the loaded config.
+def _requested_kb_fields(kb: KBConfig) -> dict[str, Any]:
+    """The init fields of ``kb`` that differ from a bare `KBConfig(name, path)`."""
+    default = KBConfig(name=kb.name, path=kb.path)
+    return {
+        f.name: getattr(kb, f.name)
+        for f in dataclasses.fields(KBConfig)
+        if f.init and getattr(kb, f.name) != getattr(default, f.name)
+    }
+
+
+def _check_round_trip(intended: PyriteConfig, loaded: PyriteConfig) -> None:
+    """Every setting and KB field the caller asked for reached the loaded config.
 
     Only the requested ones: a default the loader derives differently
-    (``workspace_path`` under the config dir) is production behaviour, not a
-    loss.
+    (``workspace_path`` under the config dir, a KB's ``kb.yaml``) is
+    production behaviour, not a loss.
     """
-    lost = sorted(k for k, v in requested.items() if getattr(loaded, k) != v)
+    lost = [k for k, v in _requested(intended.settings).items() if getattr(loaded.settings, k) != v]
+    loaded_kbs = {kb.name: kb for kb in loaded.knowledge_bases}
+    for kb in intended.knowledge_bases:
+        got = loaded_kbs.get(kb.name)
+        if got is None:
+            lost.append(kb.name)
+            continue
+        lost += [
+            f"{kb.name}.{k}" for k, v in _requested_kb_fields(kb).items() if getattr(got, k) != v
+        ]
+    lost.sort()
     if lost:
         detail = ", ".join(
             f"{k} (set by {_ENV_ONLY_SETTINGS[k]})" if k in _ENV_ONLY_SETTINGS else k for k in lost
         )
         raise ValueError(
             f"config.yaml cannot express {detail}: the world reads its config back "
-            "from disk, as production does, and these settings did not survive. "
+            "from disk, as production does, and these did not survive. "
             "Set them through the environment, or teach PyriteConfig.to_dict/"
             "from_dict to carry them."
         )
@@ -342,7 +363,7 @@ def build_world(
     with pointed(config_dir):
         save_config(config)
         loaded = load_config()
-    _check_round_trip(_requested(config.settings), loaded.settings)
+    _check_round_trip(config, loaded)
 
     world = World(root, config_dir, loaded, rest=rest)
     try:

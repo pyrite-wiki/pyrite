@@ -67,7 +67,6 @@ get_db 1 tests/test_update_never_loses_a_key.py
 get_db 1 tests/test_update_refuses_only_what_it_causes.py
 get_db 1 tests/test_update_walks_every_surface.py
 get_db 1 tests/test_version_history.py
-get_db 3 tests/test_version_list_matches_read.py
 get_db 2 tests/test_version_service.py
 get_db 1 tests/test_wikilink_resolve_kb.py
 get_db 2 tests/test_write_pipeline.py
