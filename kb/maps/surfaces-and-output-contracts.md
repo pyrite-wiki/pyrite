@@ -87,7 +87,9 @@ Components [[rest-api]], [[mcp-server]], [[mcp-tool-schemas]], [[cli-system]],
 `tests/test_body_bounds.py`, `tests/test_read_shaping_parity.py`,
 `tests/test_truncated_body_refused_on_write.py`,
 `tests/test_truncated_body_refused_on_cli_write.py`, `tests/test_mcp_tiers.py`,
-`tests/test_api_tiers.py`, `tests/test_error_bodies.py`,
+`tests/test_api_tiers.py`,
+`tests/characterization/test_error_bodies.py` (goldens in
+`tests/characterization/goldens/error_bodies.json`),
 `tests/test_mcp_refusal_error_codes.py`, `tests/test_cli_errors.py`,
 `tests/test_readme_mcp_tool_table.py`, `tests/test_mcp_help_tool_counts.py`
 (the last two pin README counts; no ADR states them).

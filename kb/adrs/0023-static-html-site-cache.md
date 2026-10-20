@@ -3,7 +3,7 @@ id: adr-0023
 type: adr
 title: "Static HTML Site Cache for SEO-Friendly KB Pages"
 adr_number: 23
-status: accepted
+status: deprecated
 deciders: ["markr"]
 date: "2026-03-25"
 tags: [architecture, site-cache, seo, deployment]

@@ -99,9 +99,11 @@ contracts are alpha.
 |---|---|
 | Files, index, what is derived | [[adr-0001]], [[adr-0029]] |
 | The principle | ADR-0041 (accepted) |
-| Writes, reads, identity, hooks | ADR-0042 (accepted), [[adr-0038]] (accepted) |
+| Writes, reads, identity, hooks | ADR-0042 (accepted), ADR-0051 (accepted), [[adr-0038]] (accepted) |
+| KB names, scope, links | ADR-0049 (accepted) |
 | Registry, config, state | ADR-0039 (accepted), [[adr-0029]] |
 | Who may do what | [[adr-0037]], ADR-0043 (accepted) |
+| CLI outcomes and exit codes | ADR-0046 (accepted) |
 | Types, protocols, plugins | [[adr-0014]], [[adr-0017]], [[adr-0040]], ADR-0045 (accepted) |
 | Review of changes | ADR-0044 (proposed) |
 | What the alpha supports | `alpha-supported-surface` (approved 2026-10-02) |
@@ -152,8 +154,9 @@ code follows it; check, and treat a mismatch as the work to do.
 - Save hooks no longer change an update (principle 4), but what a hook sets
   in place still reaches that write's index row until the index derives it
   (P6); a create still takes a hook's changes.
-- An entry with no `id:` takes its identity from its title, and no command
-  lists or pins the files missing one (principle 5).
+- An entry with no `id:` still takes its identity from its title;
+  `pyrite ids missing` lists such files and `pyrite ids pin` pins them before
+  the switch to path ids (principle 5).
 - A single-entry read returns the type's defaults and normalised values
   among the file's own fields, so a client that sends a read back writes them
   into the file (principles 3 and 4).
