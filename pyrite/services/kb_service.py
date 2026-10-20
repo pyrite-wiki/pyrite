@@ -73,7 +73,7 @@ from ..storage.repository import KBRepository
 from ..utils.atomic_write import HardLinked
 from ..utils.file_lock import LOCK_TIMEOUT, LockDirError, LockTimeout
 from ..utils.frontmatter import Frontmatter, NoFrontmatter, describe, split_frontmatter
-from ..utils.metadata import parse_metadata
+from ..utils.metadata import declared_over_bag, parse_metadata
 from ..utils.yaml import load_yaml
 from .access_policy import named_kb
 from .body_bounds import MARKER_KEYS, ensure_not_truncated
@@ -2557,7 +2557,11 @@ class KBService:
         entry = self.get_entry(collection_id, kb_name, readable_kbs=readable_kbs)
         if not entry or entry.get("entry_type") != "collection":
             raise EntryNotFoundError(f"Collection not found: {collection_id}")
-        metadata = parse_metadata(entry.get("metadata", {}))
+        # A single-entry read spells a declared field (`source_type`,
+        # `folder_path`, `query`, `entry_filter`) at its own name and keeps
+        # `metadata` for undeclared keys (#1025, option B); the bag is read
+        # second for a dict shaped like a row.
+        metadata = declared_over_bag(entry, ("source_type", "folder_path", "query", "entry_filter"))
 
         source_type = metadata.get("source_type", "folder")
 

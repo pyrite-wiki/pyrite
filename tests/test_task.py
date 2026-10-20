@@ -200,6 +200,10 @@ class TestTaskEntryUnknownFrontmatterKeys:
         assert entry.parked_awaiting == "2026-09-11"
         assert "parked_awaiting" not in entry.metadata
 
+    @pytest.mark.control(
+        reason="an undeclared key went into metadata before #1025 declared parked_awaiting; "
+        "pinned with a key that stays undeclared"
+    )
     def test_from_frontmatter_collects_an_unknown_key_into_metadata(self):
         meta = {
             "id": "task-003",

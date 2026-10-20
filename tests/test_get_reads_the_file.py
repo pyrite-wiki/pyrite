@@ -631,6 +631,11 @@ PIN_FILES = {
 }
 
 
+@pytest.mark.control(
+    reason="the pin held on dev, where the two projections were equal key for key; it is "
+    "loosened on the one key they now differ on by decision (#1025, option B), so it "
+    "passes without the fix and pins that nothing else drifts"
+)
 def test_on_a_fresh_index_the_file_read_equals_the_row(tmp_path):
     """``IndexManager.read_fields`` mirrors the backend's row shape; this is
     the test that fails when one changes without the other (a finding for

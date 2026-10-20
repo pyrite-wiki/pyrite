@@ -883,6 +883,10 @@ def test_rest_put_of_a_reads_metadata_with_a_key_added_writes_it(tmp_path: Path)
     assert "provenance:\n  created_by: me\n" in path.read_text(encoding="utf-8")
 
 
+@pytest.mark.control(
+    reason="passes on dev, where no read carried provenance; refused on this PR's first head "
+    "(the read shape 'both'), pinned so option B keeps the echo writable"
+)
 def test_mcp_echo_of_a_whole_read_with_a_metadata_key_added_writes_it(tmp_path: Path):
     config, _path = _kb_with(tmp_path, PROVENANCE_NOTE, "n3")
     read = _mcp_get(config, "n3")
@@ -969,6 +973,54 @@ def test_pyrite_link_appends_where_the_file_spells_links(tmp_path: Path):
     finally:
         db.close()
     assert out == {"n2", "n3"}, out
+
+
+# --------------------------------------------------------------------------
+# In-repo readers of a single-entry read take a declared field at its own name
+# --------------------------------------------------------------------------
+
+QUERY_COLLECTION = (
+    "---\nid: c1\ntitle: C1\ntype: collection\nsource_type: query\n"
+    "query: 'type:note'\nicon: star\n---\n\nA stored query.\n"
+)
+
+
+def test_a_query_collection_reads_its_fields_at_their_own_names(tmp_path: Path):
+    """`KBService.get_collection_entries` and REST `GET /api/collections/{id}`
+    took a collection's `source_type`, `query`, `icon`... from the read's
+    `metadata`; a single-entry read spells them at their own names now, so
+    both read them there (CI on the first round-1 head: three stored-query
+    tests returned no rows)."""
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    from fastapi.testclient import TestClient
+
+    from pyrite.server.api import create_app, get_config, get_db, get_index_mgr
+
+    config, _path = _note_kb(tmp_path, QUERY_COLLECTION.replace("c1", "n1"))
+    (config.knowledge_bases[0].path / "notes" / "n2.md").write_text(N2, encoding="utf-8")
+    _index(config)
+    db = PyriteDB(config.settings.index_path)
+    try:
+        svc = KBService(config, db)
+        entries, total = svc.get_collection_entries("n1", KB, readable_kbs=UNSCOPED)
+        assert total >= 1 and {e["id"] for e in entries} >= {"n2"}, (total, entries)
+        index_mgr = IndexManager(db, config)
+        rest = create_app(config)
+        rest.dependency_overrides[get_config] = lambda: config
+        rest.dependency_overrides[get_db] = lambda: db
+        rest.dependency_overrides[get_index_mgr] = lambda: index_mgr
+        client = TestClient(rest, raise_server_exceptions=False)
+        try:
+            res = client.get("/api/collections/n1", params={"kb": KB})
+        finally:
+            client.close()
+    finally:
+        db.close()
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert (body["source_type"], body["query"], body["icon"]) == ("query", "type:note", "star"), (
+        body
+    )
 
 
 # --------------------------------------------------------------------------
