@@ -41,6 +41,8 @@ def _make_mcp_server(kb_defs, *, tier="admin", extra_setup=None):
     ------
     dict with "server", "config", and each KB name mapped to its KBConfig.
     """
+    from tests._world import build_world
+
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
         db_path = tmpdir / "index.db"
@@ -70,14 +72,17 @@ def _make_mcp_server(kb_defs, *, tier="admin", extra_setup=None):
         if extra_setup:
             extra_setup(config, kb_map)
 
-        server = PyriteMCPServer(config, tier=tier)
-        server.index_mgr.index_all()
-
-        result = {"server": server, "config": config}
-        result.update(kb_map)
-        yield result
-
-        server.close()
+        # A world (#1077): the config goes through config.yaml and the real
+        # loader, the KB files are indexed through the indexer, and the world
+        # closes the server and every database it opened.
+        world = build_world(tmpdir, config=config, rest=False)
+        try:
+            server = world.mcp(tier=tier)
+            result = {"server": server, "config": world.config}
+            result.update({kb.name: kb for kb in world.config.knowledge_bases})
+            yield result
+        finally:
+            world.close()
 
 
 def _populate_events_and_person(_config, kb_map):

@@ -276,12 +276,22 @@ def _create_app_without_static(config: PyriteConfig, root: Path):
             os.environ["PYRITE_STATIC_DIR"] = prior
 
 
+def _requested(settings: Settings) -> dict[str, Any]:
+    """The fields of ``settings`` that differ from a default `Settings()`."""
+    default = Settings()
+    return {
+        f.name: getattr(settings, f.name)
+        for f in dataclasses.fields(Settings)
+        if getattr(settings, f.name) != getattr(default, f.name)
+    }
+
+
 def _check_round_trip(requested: dict[str, Any], loaded: Settings) -> None:
     """Every setting the caller asked for reached the loaded config.
 
     Only the requested ones: a default the loader derives differently
-    (``workspace_path`` under the config dir, ``auto_embed`` from the file) is
-    production behaviour, not a loss.
+    (``workspace_path`` under the config dir) is production behaviour, not a
+    loss.
     """
     lost = sorted(k for k, v in requested.items() if getattr(loaded, k) != v)
     if lost:
@@ -301,6 +311,7 @@ def build_world(
     *,
     kbs: Sequence[KBConfig] = (),
     settings: dict[str, Any] | None = None,
+    config: PyriteConfig | None = None,
     rest: bool = True,
 ) -> World:
     """Build a world under ``root`` and return it; the caller calls ``close()``.
@@ -308,24 +319,30 @@ def build_world(
     ``kbs`` are written into the config as given; a KB directory that does not
     exist is created. Files already in a KB directory are indexed. ``settings``
     are `Settings` keyword arguments; ``index_path`` defaults to
-    ``root/index.db``. ``rest=False`` builds no app (for MCP and CLI worlds).
+    ``root/index.db``. Or pass a whole in-memory ``config`` instead of the
+    two; either way it is written to ``config.yaml`` and the world runs on
+    what `load_config` reads back. ``rest=False`` builds no app (for MCP and
+    CLI worlds).
     """
     from pyrite.config import load_config, save_config
 
     root = Path(root)
     config_dir = root / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
-    settings_kwargs = {"index_path": root / "index.db", **(settings or {})}
-    for kb in kbs:
+    if config is None:
+        settings_kwargs = {"index_path": root / "index.db", **(settings or {})}
+        config = PyriteConfig(knowledge_bases=list(kbs), settings=Settings(**settings_kwargs))
+    elif kbs or settings:
+        raise TypeError("pass config, or kbs/settings, not both")
+    for kb in config.knowledge_bases:
         Path(kb.path).mkdir(parents=True, exist_ok=True)
-    intended = PyriteConfig(knowledge_bases=list(kbs), settings=Settings(**settings_kwargs))
 
     with pointed(config_dir):
-        save_config(intended)
-        config = load_config()
-    _check_round_trip(settings_kwargs, config.settings)
+        save_config(config)
+        loaded = load_config()
+    _check_round_trip(_requested(config.settings), loaded.settings)
 
-    world = World(root, config_dir, config, rest=rest)
+    world = World(root, config_dir, loaded, rest=rest)
     try:
         world.index()
     except BaseException:
