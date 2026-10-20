@@ -331,3 +331,34 @@ class TestIdEditedToAnotherFilesId:
         assert data["orphaned_entries"] == [{"kb": KB, "id": "a", "path": str(a)}]
         assert [d["id"] for d in data["duplicates"]] == ["b"]
         assert data["status"] == "unhealthy"
+
+
+class TestFolderTheProcessCannotSearch:
+    """`pyrite index health` reports a file it cannot reach; it does not crash."""
+
+    @pytest.mark.parametrize("mode", [0o600, 0o000], ids=["no-search-bit", "no-access"])
+    def test_an_unsearchable_folder_is_reported_not_a_traceback(self, cli_world, mode):
+        import os
+
+        world, kb_path = _collection_world(cli_world)
+        sub = kb_path / "sub"
+        sub.mkdir()
+        (sub / "d.md").write_text(
+            "---\nid: d\ntype: note\ntitle: D\n---\nBody d\n", encoding="utf-8"
+        )
+        world.index()
+        sub.chmod(mode)
+        try:
+            if os.access(sub / "d.md", os.R_OK):
+                pytest.skip("running as a user that can read through a mode-%o folder" % mode)
+
+            result = runner.invoke(app, ["index", "health", "--format", "json"])
+
+            assert not isinstance(result.exception, OSError), repr(result.exception)
+            data = json.loads(result.stdout)
+            assert [r["path"] for r in data["unreadable_files"]] == [str(sub / "d.md")]
+            assert data["unreadable_files"][0]["error"].startswith("PermissionError")
+            assert data["status"] == "unhealthy"
+            assert result.exit_code == 1
+        finally:
+            sub.chmod(0o755)

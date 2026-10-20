@@ -1586,11 +1586,28 @@ class IndexManager:
                         )
 
             # Check for missing files and IDs superseded at an existing path.
+            reported_unreadable = {row["path"] for row in health["unreadable_files"]}
             for entry_id, info in indexed.items():
                 if not info["file_path"]:
                     continue  # an index-only row has no file to be missing
                 indexed_path = Path(info["file_path"])
-                if not indexed_path.exists():
+                try:
+                    present = indexed_path.exists()
+                except OSError as e:
+                    # A folder this process cannot search (Python 3.13 raises
+                    # PermissionError where 3.12 said "absent"): the file may
+                    # well be there. Report it; never let one row end the report.
+                    if str(indexed_path) not in reported_unreadable:
+                        reported_unreadable.add(str(indexed_path))
+                        health["unreadable_files"].append(
+                            {
+                                "kb": kb.name,
+                                "path": str(indexed_path),
+                                "error": f"{type(e).__name__}: {e}",
+                            }
+                        )
+                    continue
+                if not present:
                     health["missing_files"].append(
                         {"kb": kb.name, "id": entry_id, "path": info["file_path"]}
                     )

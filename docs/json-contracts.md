@@ -278,7 +278,13 @@ drift.
   `UnicodeError`, for a Markdown file and a `__collection.yaml` alike);
   `error` includes the exception type and message. Any such row makes status
   `unhealthy` and the CLI exits `1`; `pyrite-admin index health` counts them
-  too.
+  too. A file in a folder the process cannot search (mode `600` or `000`) is
+  listed here too, with its `PermissionError`; health reports it and does not
+  stop. **Behaviour change:** before this, a file with an encoding or
+  permission failure was filed under `malformed_frontmatter` (status
+  `warning`, exit `0`); it now moves to `unreadable_files` (status
+  `unhealthy`, exit `1`). A caller keying on the old field or on exit `0`
+  for such a KB sees the change.
 - `orphaned_entries` rows are `{kb, id, path}` for an indexed ID absent from
   the files health check successfully loaded while its recorded path still
   exists. The files checked are the ones `index sync` walks (Markdown and
