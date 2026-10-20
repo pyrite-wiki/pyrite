@@ -76,7 +76,7 @@ working, but `-k mk`, REST `kb=mk` (and `/api/kbs/mk/...`) and MCP
 must name the KB. Give `my-kb` a shortname to see the refusal:
 
 ```bash
-sed -i '/name: my-kb/a\  shortname: mk' ~/.pyrite/config.yaml
+perl -pi -e '$_ .= "  shortname: mk\n" if /name: my-kb$/' ~/.pyrite/config.yaml
 pyrite kb list | grep '"shortname"'
 ```
 
@@ -109,7 +109,7 @@ not notice in a file it has already read:
 ```bash
 pyrite create -k second -t note --title Target --body "Target." > /dev/null
 pyrite create -k my-kb -t note --title Source --body "See [[k2:target]]." > /dev/null
-sed -i '/name: second/a\  shortname: k2' ~/.pyrite/config.yaml
+perl -pi -e '$_ .= "  shortname: k2\n" if /name: second$/' ~/.pyrite/config.yaml
 pyrite index health | grep -m1 '"links_stale_kb"'
 ```
 
