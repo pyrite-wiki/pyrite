@@ -350,7 +350,7 @@ class TestFolderTheProcessCannotSearch:
         sub.chmod(mode)
         try:
             if os.access(sub / "d.md", os.R_OK):
-                pytest.skip("running as a user that can read through a mode-%o folder" % mode)
+                pytest.skip(f"running as a user that can read through a mode-{mode:o} folder")
 
             result = runner.invoke(app, ["index", "health", "--format", "json"])
 
