@@ -50,17 +50,18 @@ become `pyrite.services.git_service.GitService.fork_repo`). The rules:
 Scanned: every `.py` under `tests/` and `extensions/*/tests`, so `conftest.py` and the seed
 helpers are covered too (a patch hidden in a shared helper counts when the file drives).
 
-Known limits: the allowlist is per file, not per site (a listed file can add another service
-patch), and the ceiling below lives in this file, which a PR can edit; review is the check on
-both.
+Known limit: the allowlist and its pinned size live in this file, which a PR can edit; review
+is the check on both. Each listed file carries its patch count, so a new patch in a listed file
+fails too (#1075).
 
 The failure message names the fix:
 `file:line: <target> is the service behind <entry point>; seed the world instead`.
 
-`ALLOWLIST` names every file that violates today with one line of why. It can
-only shrink: a file not on it that violates fails, a file on it that no longer
-violates fails (remove the line), and `ALLOWLIST_SIZE_AT_LANDING` is a ceiling a
-pull request may lower and never raise.
+`ALLOWLIST` names every file that violates today, with its patch count and one line of why.
+It can only shrink, and every number is pinned with `==` (as in tests/test_layer_boundaries.py):
+a file not on it that violates fails, a file on it that no longer violates fails (remove the
+line), a file whose count differs fails (lower it; raising it is the fix this rule refuses), and
+`ALLOWLIST_SIZE` must equal the number of files.
 """
 
 from __future__ import annotations
@@ -129,59 +130,177 @@ MOCK_CALLS = {
 }
 
 #: Files that violate on dev. The migration debt; it can only shrink.
-#: path (relative to the repo root) -> why it is listed.
-ALLOWLIST: dict[str, str] = {
-    "extensions/social/tests/test_social.py": "1 patch(es) behind PluginContext: kb_service.KBService.create_entry",
-    "extensions/software-kb/tests/test_software_kb.py": "11 patch(es) behind CliRunner, PluginContext: kb_service.KBService, kb_service.KBService.create_entry",
-    "extensions/zettelkasten/tests/test_zettelkasten.py": "1 patch(es) behind CliRunner: kb_service.KBService.create_entry",
-    "tests/test_admin_cli.py": "1 patch(es) behind CliRunner: storage.repository.KBRepository._get_file_path",
-    "tests/test_anonymous_and_missing_kb_writes.py": "1 patch(es) behind TestClient: clipper.ClipperService.clip_url",
-    "tests/test_auth_bootstrap.py": "3 patch(es) behind CliRunner, TestClient: auth_service.AuthService._verify_password, auth_service.AuthService.login",
-    "tests/test_auth_endpoints.py": "1 patch(es) behind TestClient: auth_service.AuthService.login",
-    "tests/test_auth_user_management.py": "1 patch(es) behind TestClient: auth_service.AuthService.set_role",
-    "tests/test_authz_authorize.py": "1 patch(es) behind TestClient: access_policy.AccessPolicy.read_scope",
-    "tests/test_cli_finds_db_registered_kbs.py": "3 patch(es) behind CliRunner: storage.database.PyriteDB.close, storage.index.IndexManager.check_health",
-    "tests/test_cli_json_output.py": "5 patch(es) behind CliRunner: search_service.SearchService.search, storage.database.PyriteDB.close ...",
-    "tests/test_cli_outcome_write_path.py": "2 patch(es) behind CliRunner: kb_service.KBService.add_link",
-    "tests/test_default_output_is_the_result.py": "9 patch(es) behind CliRunner, PyriteMCPServer, TestClient, _dispatch_tool: embedding_service.EmbeddingService._get_model, embedding_service.EmbeddingService.embed_all ...",
-    "tests/test_embed_queue_debt_is_honest.py": "5 patch(es) behind TestClient: embedding_worker.EmbeddingWorker, embedding_worker.EmbeddingWorker._get_embedding_svc",
-    "tests/test_fields_single_entry.py": "2 patch(es) behind CliRunner: kb_service.KBService.get_entry",
-    "tests/test_ids_commands.py": "12 patch(es) behind CliRunner: id_pin_service._rename, id_pin_service._write_pin ...",
-    "tests/test_json_stdout.py": "2 patch(es) behind CliRunner: url_checker.URLChecker.check_url, url_checker.URLChecker.collect_urls",
-    "tests/test_kb_bulk_create_description.py": "1 patch(es) behind PyriteMCPServer, _dispatch_tool: kb_service.build_entry",
-    "tests/test_kb_export_read_scoping.py": "1 patch(es) behind TestClient: export_service.ExportService.export_kb_to_repo",
-    "tests/test_kb_policy_availability.py": "5 patch(es) behind TestClient: ephemeral_service.save_config, repo_service.save_config ...",
-    "tests/test_kb_scoped_writes.py": "1 patch(es) behind TestClient: clipper.ClipperService.clip_url",
-    "tests/test_mcp_server.py": "1 patch(es) behind PyriteMCPServer, _dispatch_tool: <unresolved>:_run_hooks",
-    "tests/test_one_reconcile.py": "2 patch(es) behind CliRunner: storage.index._hash_file, storage.repository.KBRepository.load_entry_from_file",
-    "tests/test_private_kb_read_scoping.py": "1 patch(es) behind TestClient: search_service.SearchService.search",
-    "tests/test_qa_assessment.py": "6 patch(es) behind CliRunner, PyriteMCPServer: pyrite.cli.context.PyriteDB, qa_service.QAService._maybe_create_task ...",
-    "tests/test_qa_commands_run.py": "1 patch(es) behind CliRunner: url_checker.URLChecker.check_url",
-    "tests/test_repo_subscribe_never_adopts_existing_kb.py": "2 patch(es) behind TestClient: git_service.GitService.clone_with_code, git_service.GitService.fork_repo",
-    "tests/test_requested_effect_exit_code.py": "6 patch(es) behind CliRunner: kb_service.KBService.add_link, kb_service.KBService.reconcile_templated_subdirectories ...",
-    "tests/test_save_config_never_drops_unnamed_kbs.py": "2 patch(es) behind CliRunner, TestClient: repo_service.GitService.clone_with_code, repo_service.GitService.fork_repo",
-    "tests/test_search_contract.py": "13 patch(es) behind CliRunner, PyriteMCPServer, _dispatch_tool: embedding_service.EmbeddingService.has_embeddings, embedding_service.EmbeddingService.search_similar ...",
-    "tests/test_server_write_embedding_debt.py": "2 patch(es) behind TestClient: embedding_worker.EmbeddingWorker._get_embedding_svc",
-    "tests/test_untrusted_local_config.py": "1 patch(es) behind CliRunner, TestClient: embedding_service.EmbeddingService.__init__",
-    "tests/test_websocket_credential_lifetime.py": "1 patch(es) behind TestClient: clipper.ClipperService.clip_url",
-    "tests/test_websocket_kb_policy_lifetime.py": "1 patch(es) behind TestClient: repo_service.save_config",
-    "tests/test_websocket_scoping.py": "1 patch(es) behind TestClient: clipper.ClipperService.clip_url",
-    "tests/test_write_pipeline.py": "2 patch(es) behind CliRunner, PyriteMCPServer, TestClient, _dispatch_tool: clipper.ClipperService.clip_url, kb_service.KBService._prepare_and_save",
-    "tests/conftest.py": "the console_width fixture sets Rich's terminal width on the CLI consoles (a terminal edge, unresolved by the walk)",
-    "tests/test_cli_surfaces_through_services.py": "patch target held in a variable; unresolved",
-    "tests/test_doc_write_as_patch.py": "patches a class held in a variable (cls.emit); unresolved",
-    "tests/test_embedding_prewarm.py": "patches _get_model on a local service instance behind the REST client; unresolved",
-    "tests/test_ephemeral_kb_name_is_not_a_path.py": "patches execute_sql on a local service db; unresolved",
-    "tests/test_get_reads_the_file.py": "spies on os/glob/Path directory-walk functions to count walks (a filesystem process edge; the owners come from a loop, unresolved)",
-    "tests/test_index_worker.py": "patches IndexManager behind the REST client",
-    "tests/test_link_asymmetric.py": "patches close on a fixture-held db; unresolved",
-    "tests/test_mcp_finders.py": "patches a method named by a variable; unresolved",
-    "tests/test_mcp_setup_reads_back.py": "21 patches of names held in variables; unresolved",
-    "tests/test_plugin_integration.py": "patches get_hooks_for_kb on a local registry; unresolved",
-    "tests/test_repo_error_disclosure.py": "unit tests of GitService's error text patch GitService in a file whose other classes drive REST via make_client; split the file (Q8) or migrate",
-    "tests/test_shipped_schemas_accept_workflows.py": "patch target built with an f-string; unresolved",
+#: path (relative to the repo root) -> (patches in it today, why it is listed). Both are
+#: pinned with `==`: a new patch in a listed file, or one removed, fails until the count is edited.
+ALLOWLIST: dict[str, tuple[int, str]] = {
+    "extensions/social/tests/test_social.py": (
+        1,
+        "behind PluginContext: kb_service.KBService.create_entry",
+    ),
+    "extensions/software-kb/tests/test_software_kb.py": (
+        11,
+        "behind CliRunner, PluginContext: kb_service.KBService, kb_service.KBService.create_entry",
+    ),
+    "extensions/zettelkasten/tests/test_zettelkasten.py": (
+        1,
+        "behind CliRunner: kb_service.KBService.create_entry",
+    ),
+    "tests/test_admin_cli.py": (
+        2,
+        "behind CliRunner: storage.repository.KBRepository._get_file_path",
+    ),
+    "tests/test_anonymous_and_missing_kb_writes.py": (
+        1,
+        "behind TestClient: clipper.ClipperService.clip_url",
+    ),
+    "tests/test_auth_bootstrap.py": (
+        3,
+        "behind CliRunner, TestClient: auth_service.AuthService._verify_password, auth_service.AuthService.login",
+    ),
+    "tests/test_auth_endpoints.py": (1, "behind TestClient: auth_service.AuthService.login"),
+    "tests/test_auth_user_management.py": (
+        1,
+        "behind TestClient: auth_service.AuthService.set_role",
+    ),
+    "tests/test_authz_authorize.py": (
+        1,
+        "behind TestClient: access_policy.AccessPolicy.read_scope",
+    ),
+    "tests/test_cli_finds_db_registered_kbs.py": (
+        3,
+        "behind CliRunner: storage.database.PyriteDB.close, storage.index.IndexManager.check_health",
+    ),
+    "tests/test_cli_json_output.py": (
+        6,
+        "behind CliRunner: search_service.SearchService.search, storage.database.PyriteDB.close ...",
+    ),
+    "tests/test_cli_outcome_write_path.py": (2, "behind CliRunner: kb_service.KBService.add_link"),
+    "tests/test_default_output_is_the_result.py": (
+        13,
+        "behind CliRunner, PyriteMCPServer, TestClient, _dispatch_tool: embedding_service.EmbeddingService._get_model, embedding_service.EmbeddingService.embed_all ...",
+    ),
+    "tests/test_embed_queue_debt_is_honest.py": (
+        5,
+        "behind TestClient: embedding_worker.EmbeddingWorker, embedding_worker.EmbeddingWorker._get_embedding_svc",
+    ),
+    "tests/test_fields_single_entry.py": (2, "behind CliRunner: kb_service.KBService.get_entry"),
+    "tests/test_ids_commands.py": (
+        12,
+        "behind CliRunner: id_pin_service._rename, id_pin_service._write_pin ...",
+    ),
+    "tests/test_json_stdout.py": (
+        2,
+        "behind CliRunner: url_checker.URLChecker.check_url, url_checker.URLChecker.collect_urls",
+    ),
+    "tests/test_kb_bulk_create_description.py": (
+        1,
+        "behind PyriteMCPServer, _dispatch_tool: kb_service.build_entry",
+    ),
+    "tests/test_kb_export_read_scoping.py": (
+        1,
+        "behind TestClient: export_service.ExportService.export_kb_to_repo",
+    ),
+    "tests/test_kb_policy_availability.py": (
+        1,
+        "behind TestClient: ephemeral_service.save_config, repo_service.save_config ...",
+    ),
+    "tests/test_kb_scoped_writes.py": (1, "behind TestClient: clipper.ClipperService.clip_url"),
+    "tests/test_mcp_server.py": (
+        2,
+        "behind PyriteMCPServer, _dispatch_tool: <unresolved>:_run_hooks",
+    ),
+    "tests/test_one_reconcile.py": (
+        3,
+        "behind CliRunner: storage.index._hash_file, storage.repository.KBRepository.load_entry_from_file",
+    ),
+    "tests/test_private_kb_read_scoping.py": (
+        1,
+        "behind TestClient: search_service.SearchService.search",
+    ),
+    "tests/test_qa_assessment.py": (
+        8,
+        "behind CliRunner, PyriteMCPServer: pyrite.cli.context.PyriteDB, qa_service.QAService._maybe_create_task ...",
+    ),
+    "tests/test_qa_commands_run.py": (1, "behind CliRunner: url_checker.URLChecker.check_url"),
+    "tests/test_repo_subscribe_never_adopts_existing_kb.py": (
+        1,
+        "behind TestClient: git_service.GitService.clone_with_code, git_service.GitService.fork_repo",
+    ),
+    "tests/test_requested_effect_exit_code.py": (
+        7,
+        "behind CliRunner: kb_service.KBService.add_link, kb_service.KBService.reconcile_templated_subdirectories ...",
+    ),
+    "tests/test_save_config_never_drops_unnamed_kbs.py": (
+        2,
+        "behind CliRunner, TestClient: repo_service.GitService.clone_with_code, repo_service.GitService.fork_repo",
+    ),
+    "tests/test_search_contract.py": (
+        21,
+        "behind CliRunner, PyriteMCPServer, _dispatch_tool: embedding_service.EmbeddingService.has_embeddings, embedding_service.EmbeddingService.search_similar ...",
+    ),
+    "tests/test_server_write_embedding_debt.py": (
+        2,
+        "behind TestClient: embedding_worker.EmbeddingWorker._get_embedding_svc",
+    ),
+    "tests/test_untrusted_local_config.py": (
+        3,
+        "behind CliRunner, TestClient: embedding_service.EmbeddingService.__init__",
+    ),
+    "tests/test_websocket_credential_lifetime.py": (
+        1,
+        "behind TestClient: clipper.ClipperService.clip_url",
+    ),
+    "tests/test_websocket_kb_policy_lifetime.py": (
+        1,
+        "behind TestClient: repo_service.save_config",
+    ),
+    "tests/test_websocket_scoping.py": (1, "behind TestClient: clipper.ClipperService.clip_url"),
+    "tests/test_write_pipeline.py": (
+        9,
+        "behind CliRunner, PyriteMCPServer, TestClient, _dispatch_tool: clipper.ClipperService.clip_url, kb_service.KBService._prepare_and_save",
+    ),
+    "tests/conftest.py": (
+        2,
+        "the console_width fixture sets Rich's terminal width on the CLI consoles (a terminal edge, unresolved by the walk)",
+    ),
+    "tests/test_cli_surfaces_through_services.py": (
+        1,
+        "patch target held in a variable; unresolved",
+    ),
+    "tests/test_doc_write_as_patch.py": (
+        3,
+        "patches a class held in a variable (cls.emit); unresolved",
+    ),
+    "tests/test_embedding_prewarm.py": (
+        2,
+        "patches _get_model on a local service instance behind the REST client; unresolved",
+    ),
+    "tests/test_ephemeral_kb_name_is_not_a_path.py": (
+        2,
+        "patches execute_sql on a local service db; unresolved",
+    ),
+    "tests/test_get_reads_the_file.py": (
+        1,
+        "spies on os/glob/Path directory-walk functions to count walks (a filesystem process edge; the owners come from a loop, unresolved)",
+    ),
+    "tests/test_index_worker.py": (1, "patches IndexManager behind the REST client"),
+    "tests/test_link_asymmetric.py": (1, "patches close on a fixture-held db; unresolved"),
+    "tests/test_mcp_finders.py": (1, "patches a method named by a variable; unresolved"),
+    "tests/test_mcp_setup_reads_back.py": (21, "21 patches of names held in variables; unresolved"),
+    "tests/test_plugin_integration.py": (
+        2,
+        "patches get_hooks_for_kb on a local registry; unresolved",
+    ),
+    "tests/test_repo_error_disclosure.py": (
+        12,
+        "unit tests of GitService's error text patch GitService in a file whose other classes drive REST via make_client; split the file (Q8) or migrate",
+    ),
+    "tests/test_shipped_schemas_accept_workflows.py": (
+        1,
+        "patch target built with an f-string; unresolved",
+    ),
 }
-ALLOWLIST_SIZE_AT_LANDING = 53
+ALLOWLIST_SIZE = 49  # lower it with every file removed; never raise it
 
 
 def _is_service_path(dotted: str) -> bool:
@@ -619,6 +738,76 @@ def test_a_neighbour_of_an_edge_is_still_flagged(source, target):
     assert [t for _, t in violations(source)] == [target]
 
 
+# --------------------------------------------------------------- the ratchet
+
+
+def ratchet_problems(
+    found: dict[str, list], allowlist: dict[str, tuple[int, str]], size: int
+) -> list[str]:
+    """Everything wrong with the allowlist against what the scan found; [] when exact."""
+    problems = []
+    if len(allowlist) != size:
+        problems.append(
+            f"ALLOWLIST lists {len(allowlist)} files but the pinned size {size}. Removing a "
+            "file: lower ALLOWLIST_SIZE to match. Adding one is not the fix; seed the world "
+            "in the new test instead of listing it"
+        )
+    for path, (count, why) in sorted(allowlist.items()):
+        if path not in found:
+            problems.append(f"{path} no longer violates; remove it from ALLOWLIST")
+        elif len(found[path]) > count:
+            problems.append(
+                f"{path} has {len(found[path])} service patches, ALLOWLIST says {count}; "
+                "seed the world instead of adding one"
+            )
+        elif len(found[path]) < count:
+            problems.append(
+                f"{path} has {len(found[path])} service patches, ALLOWLIST says {count}; "
+                "lower the count"
+            )
+        if not why.strip():
+            problems.append(f"{path} says why it is listed: give a reason")
+    return problems
+
+
+def _hits(n: int) -> list[tuple[int, str, str]]:
+    return [(i + 1, "pyrite.services.x.X", "TestClient") for i in range(n)]
+
+
+@pytest.mark.control(reason="Pins the ratchet on planted data, independent of the tree")
+class TestTheRatchetHasNoSlack:
+    LISTED = {"tests/test_a.py": (2, "why a"), "tests/test_b.py": (1, "why b")}
+
+    def test_a_tree_that_matches_passes(self):
+        found = {"tests/test_a.py": _hits(2), "tests/test_b.py": _hits(1)}
+        assert ratchet_problems(found, self.LISTED, size=2) == []
+
+    def test_listing_one_more_file_fails(self):
+        listed = {**self.LISTED, "tests/test_c.py": (1, "why c")}
+        found = {p: _hits(n) for p, (n, _) in listed.items()}
+        problems = ratchet_problems(found, listed, size=2)
+        assert any("3 files" in p and "pinned size 2" in p for p in problems)
+
+    def test_one_more_patch_in_a_listed_file_fails(self):
+        found = {"tests/test_a.py": _hits(3), "tests/test_b.py": _hits(1)}
+        problems = ratchet_problems(found, self.LISTED, size=2)
+        assert any("tests/test_a.py" in p and "3" in p and "2" in p for p in problems)
+
+    def test_one_fewer_patch_asks_for_the_count_to_be_lowered(self):
+        found = {"tests/test_a.py": _hits(1), "tests/test_b.py": _hits(1)}
+        problems = ratchet_problems(found, self.LISTED, size=2)
+        assert any("tests/test_a.py" in p and "lower" in p for p in problems)
+
+    def test_a_file_that_no_longer_violates_must_be_removed(self):
+        problems = ratchet_problems({"tests/test_a.py": _hits(2)}, self.LISTED, size=2)
+        assert any("tests/test_b.py" in p and "remove" in p for p in problems)
+
+    def test_every_entry_says_why(self):
+        listed = {"tests/test_a.py": (1, "")}
+        problems = ratchet_problems({"tests/test_a.py": _hits(1)}, listed, size=1)
+        assert any("why" in p for p in problems)
+
+
 # ------------------------------------------------------------------- the tree
 
 
@@ -647,13 +836,6 @@ def test_no_test_mocks_the_service_behind_the_entry_point_it_drives():
 
 
 @pytest.mark.guard
-def test_the_allowlist_can_only_shrink():
-    found = _scan()
-    stale = sorted(set(ALLOWLIST) - set(found))
-    assert not stale, f"no longer violate; remove them from ALLOWLIST: {stale}"
-    assert len(ALLOWLIST) <= ALLOWLIST_SIZE_AT_LANDING, (
-        f"ALLOWLIST grew to {len(ALLOWLIST)} (ceiling {ALLOWLIST_SIZE_AT_LANDING}): "
-        "seed the world in the new test instead of listing it"
-    )
-    assert all(ALLOWLIST.values()), "every entry says why"
+def test_the_allowlist_matches_the_tree_exactly():
+    assert ratchet_problems(_scan(), ALLOWLIST, ALLOWLIST_SIZE) == []
     assert all((ROOT / p).exists() for p in ALLOWLIST)
