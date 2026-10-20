@@ -5,6 +5,7 @@ Pyrite ships these ~8 base types that any KB can use out of the box.
 Every field is optional except title.
 """
 
+import functools
 import logging
 import re
 from collections.abc import Callable
@@ -20,7 +21,7 @@ from ..schema import (
     validate_date,
     validate_importance,
 )
-from ..utils.frontmatter import load_frontmatter
+from ..utils.frontmatter import load_frontmatter, yaml_start
 from ..utils.parse import safe_int
 from .base import Entry, capture_extra_frontmatter
 from .collection import CollectionEntry
@@ -518,6 +519,80 @@ def read_entry_id(
         # largest share for nothing.
         return id_text(meta["id"])
     return id_text(entry_from_frontmatter(meta, body).id)
+
+
+# ``could_hold_id``'s line shapes. Neither may hold a lone CR or a Unicode line
+# break before its end: YAML would break the line there, and what follows
+# could open a value the scan cannot see (``# c\rtitle: "abc``).
+_LINE_TEXT = "[^\r\n\x85\u2028\u2029]"
+# A plain key other than ``id``, then nothing or a plain scalar that starts with
+# a letter, digit or ``_``: it opens no quoted, flow or block value, so the
+# next line at column 0 starts a new key.
+_PLAIN_KEY_LINE = re.compile(rf"(?!id:)[A-Za-z_][A-Za-z0-9_-]*:(?: +[A-Za-z0-9_]{_LINE_TEXT}*)?\r?")
+_COMMENT_OR_BLANK_LINE = re.compile(rf"(?:#{_LINE_TEXT}*|[ \t]*)\r?")
+_PLAIN_ID_LINE = re.compile(rf"id: +([A-Za-z0-9_][A-Za-z0-9_.-]*)(?: +#{_LINE_TEXT}*)? *\r?")
+
+
+@functools.lru_cache(maxsize=1 << 16)
+def _resolves_to_str(value: str) -> bool:
+    """A plain scalar ``value`` loads as that string, not as a bool, number,
+    date or null (``true``, ``0x1A``, ``2026-01-01``): the resolver of the
+    YAML 1.2 loader ``load_yaml`` uses. Cached: every scan of a KB asks it
+    about the same ids."""
+    from ruamel.yaml.nodes import ScalarNode
+
+    tag: str = _resolver().resolve(ScalarNode, value, (True, False))
+    return tag == "tag:yaml.org,2002:str"
+
+
+@functools.cache
+def _resolver() -> Any:
+    from ruamel.yaml.resolver import VersionedResolver
+
+    return VersionedResolver()
+
+
+def could_hold_id(text: str, entry_id: str) -> bool:
+    """False only when ``read_entry_id(text)`` cannot be ``entry_id`` (#135).
+
+    A lookup by id parses only the files this lets through. It reads the raw
+    text, no YAML: a file with no frontmatter (or a refused one) holds no id,
+    and a file whose frontmatter opens with plain ``key: value`` lines (and
+    comments) up to a plain ``id: <token>`` line holds that token. That needs
+    no parse when the lines before it cannot open a multi-line value, the
+    token loads as the same string, and the next line starts at column 0 (the
+    token cannot continue on it). A duplicate ``id`` key later makes the file
+    unreadable, which holds no id either. Anything else -- no ``id:`` line (a
+    derived id), a quoted, escaped, aliased or scalar id, a quoted or block
+    value before it -- answers True, and the caller parses.
+
+    It knows nothing of schema migrations, which run before the id is read
+    and may set it: a caller in a KB with migrations to apply must not use it
+    (``KBRepository._files_holding``).
+    """
+    start = yaml_start(text)
+    if start is None:
+        return False  # read_entry_id returns None, or raises: no id
+    # The scan stops at the id line, and every line before it is a key, a
+    # comment or blank, none a ``---`` line: the frontmatter closes after it,
+    # or never (no id), or on a malformed line (refused, no id). So where it
+    # closes need not be found; a ``---`` line before an id line answers True.
+    while start < len(text):
+        end = text.find("\n", start)
+        line = text[start:] if end < 0 else text[start:end]
+        found = _PLAIN_ID_LINE.fullmatch(line)
+        if found:
+            token = found.group(1)
+            following = "" if end < 0 else text[end + 1 : end + 2]
+            if following.isspace() or not _resolves_to_str(token):
+                return True  # the token may continue, or load as no string
+            return token == entry_id
+        if not (_PLAIN_KEY_LINE.fullmatch(line) or _COMMENT_OR_BLANK_LINE.fullmatch(line)):
+            return True
+        if end < 0:
+            break
+        start = end + 1
+    return True
 
 
 def entry_id_from_markdown(text: str) -> str | None:

@@ -126,11 +126,26 @@ def next_delimiter(text: str, pos: int = 0) -> tuple[int, int] | None:
     return None
 
 
-def split_frontmatter(text: str) -> SplitResult:
-    """Split ``text`` into frontmatter and body by the rule in the module doc."""
+def _opening(text: str) -> tuple[int, re.Match[str] | None]:
+    """Where the content starts (after a BOM and blank lines), and the opening
+    ``---`` line there, if the text opens with one."""
     start = 1 if text.startswith(_BOM) else 0
     start = _LEADING.match(text, start).end()
-    opening = _OPENING.match(text, start)
+    return start, _OPENING.match(text, start)
+
+
+def yaml_start(text: str) -> int | None:
+    """Where the YAML starts: the end of the opening ``---`` line. None when the
+    text does not open with one, so ``split_frontmatter`` returns no
+    ``Frontmatter``. Where, and whether, it closes is not looked for: a reader
+    that stops at an earlier line (``could_hold_id``) need not find out."""
+    opening = _opening(text)[1]
+    return opening.end() if opening else None
+
+
+def split_frontmatter(text: str) -> SplitResult:
+    """Split ``text`` into frontmatter and body by the rule in the module doc."""
+    start, opening = _opening(text)
     if not opening:
         if _TOML_OPENING.match(text, start):
             return Unsupported("toml")

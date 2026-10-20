@@ -397,17 +397,18 @@ def test_no_row_but_a_file_is_found(env, svc):
     assert got["indexed_at"] is None and got["links"] == []
 
 
-@pytest.mark.control(reason="dev never reads a file on a miss; guards the no-scan rule")
-def test_no_row_and_no_file_named_like_the_id_is_a_miss_without_a_scan(env, svc):
-    """A miss reads no file: an id with no row is looked for under its own name
-    only (a scan of every file costs seconds on a large KB). A file whose id is
-    not its filename is found once the index has it."""
+def test_no_row_and_no_file_named_like_the_id_is_found_by_the_scan(env, svc):
+    """An id with no row and no file named like it is found by the scan
+    ``find_file`` uses, so ``get`` and ``create`` agree (maintainer,
+    2026-10-15, #135). #857 left the scan out of the read because it cost
+    seconds on a large KB; the raw-text prefilter makes it a read of each
+    file with no parse (``test_find_file_prefilter.py`` counts the parses)."""
     (env["kb_path"] / "notes" / "other-name.md").write_text(
         "---\nid: renamed-id\ntitle: R\ntype: note\n---\n\nx\n"
     )
-    with _files_opened() as opened:
-        assert svc.get_entry("renamed-id", KB, readable_kbs=None) is None
-    assert opened == []
+    got = svc.get_entry("renamed-id", KB, readable_kbs=None)
+    assert got is not None and got["title"] == "R"
+    assert svc.get_entry("no-file-holds-this", KB, readable_kbs=None) is None
 
 
 def test_a_row_but_no_file_is_not_found(env, svc):

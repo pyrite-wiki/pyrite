@@ -901,11 +901,13 @@ class KBService:
 
         The index row only says where to look. Its file is read if it still
         holds the id (ADR-0038 I8); otherwise, and when there is no row, the
-        files named ``<id>.md`` in the KB are tried, each verified. No file
-        holding the id is a miss (``None``) even when a row remains: the file
-        decides (principle 5). A miss reads no file's content, because the
-        whole-KB scan ``find_file`` falls back to costs seconds on a large KB
-        (#135); a file whose id is not its name is found once it is indexed.
+        files named ``<id>.md`` in the KB are tried, each verified, and then
+        the KB is scanned as ``find_file`` scans it, so a file renamed by hand
+        answers before the next sync, as create's exists check already saw
+        it. No file holding the id is a miss (``None``) even when a row
+        remains: the file decides (principle 5). The scan reads every file's
+        raw text but parses only those it cannot rule out (#135; under
+        ~100 ms on 2,000 files, the maintainer's bound for adding it here).
 
         A row whose path lies outside the KB root is a user's worktree file
         (the overlay read service, ``WorktreeResolver.get_read_service``): it
@@ -957,14 +959,18 @@ class KBService:
                 yield indexed
             if indexed is not None and not repo._lexically_inside(indexed):
                 return  # an overlay row: never main's file in its place
-            # find_file's first step, without its whole-KB tail (see _read_entry).
+            # find_file's steps: the files named like the id, then the
+            # prefiltered scan of the KB (#135), so a read and a create agree
+            # on which file holds the id.
             try:
                 repo._validate_entry_id(entry_id)
             except ValidationError:
-                return
-            for c in repo._filename_candidates(entry_id):
-                if c != indexed and repo._lexically_inside(c):
-                    yield c
+                pass
+            else:
+                for c in repo._filename_candidates(entry_id):
+                    if c != indexed and repo._lexically_inside(c):
+                        yield c
+            yield from repo._files_holding(entry_id, skip=tried)
 
         unreadable: tuple[Path, Exception] | None = None
         tried: set[Path] = set()

@@ -75,8 +75,11 @@ class DocumentManager:
         """
         repo = KBRepository(kb_config)
 
-        # Find current on-disk location before saving to new path
-        old_path = repo.find_file(entry.id)
+        # Find current on-disk location before saving to new path. A create
+        # has none: its exists() check just walked the KB for the id, and a
+        # second walk here doubled a create's cost (#135). A file that
+        # appears in between is refused by the exclusive publish.
+        old_path = None if is_create else repo.find_file(entry.id)
 
         # Preserve deliberate placement on update. By default repo.save()
         # re-infers the type-default subdirectory, which would relocate a file

@@ -10,7 +10,7 @@ import io
 import logging
 import os
 import stat
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Set
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,7 +26,12 @@ from ..exceptions import (
 from ..migrations import get_migration_registry, load_plugin_migrations
 from ..models import Entry, EventEntry
 from ..models.collection import CollectionEntry
-from ..models.core_types import entry_from_frontmatter, explicit_entry_id, read_entry_id
+from ..models.core_types import (
+    could_hold_id,
+    entry_from_frontmatter,
+    explicit_entry_id,
+    read_entry_id,
+)
 from ..schema import CORE_TYPES
 from ..utils.frontmatter import Frontmatter, split_frontmatter
 from ..utils.yaml import load_yaml, load_yaml_file
@@ -196,6 +201,33 @@ def _is_regular_file(path: Path) -> bool:
         return stat.S_ISREG(path.stat().st_mode)
     except OSError:
         return False
+
+
+def _regular_file_text(path: Path) -> str | None:
+    """``path.read_text(encoding="utf-8")`` -- UTF-8, universal newlines -- if
+    ``path`` is a regular file (symlinks followed), else None; None too when
+    it cannot be read or decoded. One ``open`` and ``fstat`` where
+    ``_is_regular_file`` and ``read_text`` stat and open: a lookup's scan
+    pays it once per file in the KB (#135). ``O_NONBLOCK``: a FIFO opens
+    without blocking and is refused by the ``fstat``."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        raw = io.FileIO(fd, closefd=False).readall()
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def new_entry_text(entry: Entry) -> str:
@@ -561,20 +593,20 @@ class KBRepository:
         """
         return self.read_id(file_path)[0]
 
-    def read_id(self, file_path: Path) -> tuple[str | None, str | None]:
+    def read_id(self, file_path: Path, text: str | None = None) -> tuple[str | None, str | None]:
         """``id_of_file`` with the reason: ``(id, None)``, or ``(None, why)``
         where ``why`` is the loader's own message (``title must be a string,
         got a list``), or None when the file simply holds no entry. A path
-        that is not a regular file is not read (a FIFO would block)."""
+        that is not a regular file is not read (a FIFO would block).
+        ``text``: the markdown file's text, when the caller has read it."""
         if not _is_regular_file(file_path):
             return None, "not a regular file"
         try:
             if file_path.name == "__collection.yaml":
                 return self._load_collection(file_path).id or None, None
-            return (
-                read_entry_id(file_path.read_text(encoding="utf-8"), migrate=self._maybe_migrate),
-                None,
-            )
+            if text is None:
+                text = file_path.read_text(encoding="utf-8")
+            return read_entry_id(text, migrate=self._maybe_migrate), None
         except Exception as e:
             logger.warning("Skipping unreadable file during id lookup: %s (%s)", file_path, e)
             # One line, KB-relative: a ruamel message spans lines and may name
@@ -615,10 +647,41 @@ class KBRepository:
                 if self._lexically_inside(candidate) and self.id_of_file(candidate) == entry_id:
                     return candidate
 
+        return next(self._files_holding(entry_id, skip=tried), None)
+
+    def _files_holding(self, entry_id: str, skip: Set[Path] = frozenset()) -> Iterator[Path]:
+        """Every file ``list_files`` walks that holds ``entry_id``, in walk
+        order: the whole-KB scan behind ``find_file``, ``files_to_delete`` and
+        a ``get`` miss.
+
+        ``could_hold_id`` rules out from the raw text the files that state
+        another id, so only the rest are parsed (#135: a miss parsed every
+        file, about 1 ms each). Not in a KB with schema migrations to apply:
+        one may set the id the text does not show, so there every file is
+        parsed, as before.
+        """
+        prefilter = not self._migrations_apply()
         for md_file in self.list_files():
-            if md_file not in tried and self.id_of_file(md_file) == entry_id:
-                return md_file
-        return None
+            if md_file in skip:
+                continue
+            # None: not read here; read_id reads it, or says why it cannot.
+            text = _regular_file_text(md_file) if prefilter else None
+            if text is not None and not could_hold_id(text, entry_id):
+                continue
+            if self.read_id(md_file, text)[0] == entry_id:
+                yield md_file
+
+    def _migrations_apply(self) -> bool:
+        """Whether ``_maybe_migrate`` can change any file's frontmatter here:
+        a type ``kb.yaml`` gives a version, with migrations registered."""
+        if not hasattr(self.config, "kb_yaml_path") or not self.config.kb_yaml_path.exists():
+            return False
+        versioned = [name for name, t in self.config.kb_schema.types.items() if t.version]
+        if not versioned:
+            return False
+        load_plugin_migrations()
+        registry = get_migration_registry()
+        return any(registry.has_migrations(name) for name in versioned)
 
     def _holds(self, file_path: Path, entry_id: str) -> str | None:
         """How ``file_path`` holds ``entry_id``: ``"explicit"`` (its ``id:``
@@ -680,7 +743,7 @@ class KBRepository:
         if explicit:
             return explicit
 
-        held = {f: self._holds(f, entry_id) for f in self.list_files()}
+        held = {f: self._holds(f, entry_id) for f in self._files_holding(entry_id)}
         held = {f: how for f, how in held.items() if how}
         if len(held) > 1:
             self._refuse_if_derived(entry_id, held)
@@ -1135,16 +1198,26 @@ class KBRepository:
     def _listed(self, md_file: Path) -> bool:
         """Whether ``list_files`` walks ``md_file``; ``find_file`` uses the
         same rule, so what sync indexes is what lookup finds."""
-        try:
-            rel = md_file.relative_to(self.path)
-        except ValueError:
-            return False
+        # The parts below the KB root. A string prefix first: ``relative_to``
+        # walks the path's parents, and on a lookup's walk of a 2,000-file KB
+        # that was a third of the cost (#135). Both are lexical; a path the
+        # prefix does not match (another case on Windows) gets the full rule.
+        root = str(self.path)
+        prefix = root if root.endswith(os.sep) else root + os.sep
+        name = str(md_file)
+        if name.startswith(prefix):
+            parts: tuple[str, ...] = tuple(name[len(prefix) :].split(os.sep))
+        else:
+            try:
+                parts = md_file.relative_to(self.path).parts
+            except ValueError:
+                return False
         # Skip hidden directories and files (check relative path only,
         # so a KB stored under e.g. ~/.pyrite/kbs/ is not skipped)
-        if any(part.startswith(".") for part in rel.parts):
+        if any(part.startswith(".") for part in parts):
             return False
         # Skip template scaffold files in _templates directories
-        if "_templates" in rel.parts:
+        if "_templates" in parts:
             return False
         # Skip README files (case-insensitive) — they lack frontmatter
         return md_file.name.lower() != "readme.md"
