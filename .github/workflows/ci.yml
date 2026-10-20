@@ -345,8 +345,10 @@ jobs:
       # only ran as a local commit-msg hook, so outside contributors' PRs
       # (which never run local hooks) could land a `fix:` commit with zero
       # test lines -- all three outside PRs so far did exactly that. `push`
-      # events have no PR to diff against (base.sha is unset there), so this
-      # only runs on pull_request; fetch-depth: 0 above makes base.sha walkable.
+      # events have no PR to diff against, so this only runs on pull_request;
+      # fetch-depth: 0 above makes the range walkable. HEAD is the PR's merge
+      # commit, HEAD^1 the base tip now: base.sha (the tip when the PR last
+      # synced) would put every PR merged since into this range (#1074).
       # --range walks each commit individually (not the range's cumulative
       # diff), so an earlier offending commit isn't hidden by a later,
       # unrelated commit that happens to touch tests/.
@@ -354,7 +356,7 @@ jobs:
         if: github.event_name == 'pull_request' && matrix.shard == 1
         run: >-
           python scripts/check_fix_commit_has_tests.py --range
-          ${{ github.event.pull_request.base.sha }} ${{ github.sha }}
+          HEAD^1 HEAD
 
       # Advisory, never blocking (#278). #173 merged with its entry appended to
       # CHANGELOG.md under the already-released 0.24.3 heading, so the
@@ -913,16 +915,22 @@ jobs:
   # summary; `test-evidence.json` (verdict counts plus the test job's diff
   # coverage) is the measurement for the gating decision.
   #
-  # A SIGNAL, NOT A GATE: absent from `gate`'s needs and not a required check;
-  # it fails only when the check itself could not run. It waits for `test`
-  # (for the diff coverage) but runs whatever `test` concluded.
+  # ADVISORY (#1074): not in `gate`'s needs, and CI does not pass --enforce-fix
+  # (a local flag), so its verdict never blocks a merge. Gating waits for #1104's
+  # claim model. It grades against the merge commit's first parent (HEAD^1: the
+  # base tip now, so PRs merged since this one was opened are not graded as its
+  # own). The job goes red only for a control marker the PR adds at module or
+  # class level, or when the check itself could not run (exit 2); neither blocks.
+  # It waits for `test` (for the diff coverage) but runs whatever `test` concluded.
+  # It runs on pull_request only: it is skipped in the merge queue (merge_group).
   # ===========================================================================
   verify-red:
     needs: [changes, test, shard-report]
     if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
-    # Two pytest runs of at most --timeout each, plus setup.
-    timeout-minutes: 20
+    # Three subprocesses: a collect-only run of the base's test files (capped at
+    # 60 s), then two pytest runs of at most --timeout each, plus setup.
+    timeout-minutes: 22
     permissions:
       contents: read
     steps:
@@ -960,9 +968,12 @@ jobs:
       - name: Run the new tests with and without the change
         env:
           HF_HUB_OFFLINE: "1"
+          # An env var, not interpolated into the script: a title is untrusted.
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: >-
           python scripts/verify_red_ci.py --timeout 420
-          --base "${{ github.event.pull_request.base.sha }}"
+          --base "HEAD^1"
+          --title "$PR_TITLE"
           --pr "${{ github.event.pull_request.number }}"
           --head-sha "${{ github.event.pull_request.head.sha }}"
           --diff-cover-json diff-cover.json

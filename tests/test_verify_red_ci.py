@@ -171,9 +171,16 @@ PASSED = {"outcome": "passed"}
 class TestClassify:
     ADDED = frozenset({"helper", "pyrite.newmod", "newmod"})
 
-    def verdict(self, vr, with_fix, without, *, collect_failed=False, control=None):
+    def verdict(
+        self, vr, with_fix, without, *, collect_failed=False, control=None, inherited=False
+    ):
         return vr.classify(
-            with_fix, without, collect_failed=collect_failed, control=control, added=self.ADDED
+            with_fix,
+            without,
+            collect_failed=collect_failed,
+            control=control,
+            inherited=inherited,
+            added=self.ADDED,
         )[0]
 
     def test_red(self, vr):
@@ -186,9 +193,16 @@ class TestClassify:
     def test_a_declared_control_is_not_a_warning(self, vr):
         assert self.verdict(vr, PASSED, PASSED, control="a still-works guard") == vr.CONTROL
 
+    def test_a_control_already_at_the_base_is_inherited_not_a_warning(self, vr):
+        assert self.verdict(vr, PASSED, PASSED, control="a guard", inherited=True) == vr.INHERITED
+
+    def test_an_inherited_control_that_is_red_is_still_red(self, vr):
+        failed = {"outcome": "failed", "exc": _exc(["AssertionError"], "assert 0 == 4")}
+        assert self.verdict(vr, PASSED, failed, control="a guard", inherited=True) == vr.RED
+
     def test_a_control_without_a_reason_is_rejected(self, vr):
         verdict, detail = vr.classify(
-            PASSED, PASSED, collect_failed=False, control="", added=self.ADDED
+            PASSED, PASSED, collect_failed=False, control="", inherited=False, added=self.ADDED
         )
         assert verdict == vr.UNEXPECTED
         assert "needs a reason" in detail
@@ -241,6 +255,8 @@ def test_the_summary_line(vr):
     )
     counts[vr.CONTROL] = 2
     assert vr.summary_line(counts).endswith(" · 2 control")
+    counts[vr.INHERITED] = 4
+    assert vr.summary_line(counts).endswith(" · 2 control · 4 inherited")
 
 
 # ---------------------------------------------------------------------------
@@ -555,6 +571,7 @@ def test_the_evidence_file(pr_run):
         "unexpected pass": 2,
         "n/a": 1,
         "control": 2,
+        "inherited": 0,
         "pre-existing": 1,
     }
     assert ev["merge_base"] == git(pr_run["repo"], "merge-base", "dev", "HEAD")
@@ -1096,11 +1113,18 @@ class TestTheVerifyRedJob:
         assert "github.event_name == 'pull_request'" in condition, condition
         assert "||" not in condition, f"another event could reach it: {condition}"
 
-    @pytest.mark.control(reason="kept from the old job")
-    def test_it_is_not_a_gate(self, ci):
-        # `shard-report` (tests Q2) joined the gate: it proves the test shards'
-        # union is the full collection. verify-red is still not in it.
-        assert ci["jobs"]["gate"]["needs"] == ["changes", "kb", "test", "shard-report", "frontend"]
+    def test_it_is_advisory_and_never_fails_gate(self, ci):
+        # #1074: the verdict is reported, not required. Gating waits for #1104's
+        # claim model; the flag stays in the script for local use only.
+        assert "verify-red" not in ci["jobs"]["gate"]["needs"]
+        assert "--enforce-fix" not in _runs(ci["jobs"]["verify-red"])
+        # The title is untrusted text: through the environment, never the script.
+        step = next(
+            s for s in ci["jobs"]["verify-red"]["steps"] if "verify_red_ci" in s.get("run", "")
+        )
+        assert "pull_request.title" not in step["run"]
+        assert step["env"]["PR_TITLE"] == "${{ github.event.pull_request.title }}"
+        assert '--title "$PR_TITLE"' in step["run"]
 
     @pytest.mark.control(reason="kept from the old job")
     def test_it_is_read_only(self, ci):
@@ -1111,14 +1135,22 @@ class TestTheVerifyRedJob:
         m = re.search(r"--timeout (\d+)", _runs(job))
         assert m, "the job must pass --timeout"
         setup = 5 * 60  # checkout, Python, uv, the installs
-        assert 2 * int(m.group(1)) + setup <= job["timeout-minutes"] * 60
+        base_collect = 60  # the collect-only run of the base's test files (BASE_COLLECT_TIMEOUT)
+        assert 2 * int(m.group(1)) + base_collect + setup <= job["timeout-minutes"] * 60
 
-    @pytest.mark.control(reason="kept from the old job")
-    def test_it_runs_the_script_against_the_merge_base_with_the_pr_base(self, ci):
+    def test_the_comment_counts_all_three_subprocesses(self, ci):
+        text = CI_PATH.read_text()
+        assert "Two pytest runs of at most --timeout each, plus setup." not in text
+
+    def test_it_grades_against_the_merge_commits_first_parent(self, ci):
+        # The checkout is the merge of the PR into the base tip *now*; base.sha
+        # is the tip when the PR last synced. Grading against it counted every
+        # PR merged in between as this PR's (#1057 graded #1053's tests).
         job = ci["jobs"]["verify-red"]
         run = _runs(job)
         assert "scripts/verify_red_ci.py" in run
-        assert "github.event.pull_request.base.sha" in run
+        assert '--base "HEAD^1"' in run
+        assert "github.event.pull_request.base.sha" not in run
         checkout = next(s for s in job["steps"] if s.get("uses", "").startswith("actions/checkout"))
         assert checkout.get("with", {}).get("fetch-depth") == 0, "the merge base must be in history"
 
@@ -1237,3 +1269,632 @@ def test_a_new_test_that_does_not_run_with_the_fix_is_no_claim_not_an_infra_erro
     result, summary = run_vr(repo, tmp_path)
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert "verify-red: 0 red" in summary, summary
+
+
+# ---------------------------------------------------------------------------
+# #1074: honest base, honest controls, and a verdict that gates a fix.
+# ---------------------------------------------------------------------------
+
+
+class TestEnforcement:
+    COUNTS = {
+        "red": 1,
+        "import-only": 0,
+        "unexpected pass": 0,
+        "n/a": 0,
+        "control": 0,
+        "inherited": 0,
+    }
+
+    @pytest.mark.parametrize(
+        ("title", "subjects", "typed"),
+        [
+            ("fix: x", [], True),
+            ("fix(cli): x", [], True),
+            ("fix!: x", [], True),
+            ("feat: add x", ["wip", "fix(api)!: y"], True),
+            ("feat: add x", ["chore: z"], False),
+            ("docs: fix a typo", [], False),
+        ],
+    )
+    def test_a_fix_typed_pr_is_one_whose_title_or_commits_say_fix(self, vr, title, subjects, typed):
+        assert vr.is_fix_typed(title, subjects) is typed
+
+    def reasons(self, vr, counts=None, **kw):
+        args = {
+            "fix_typed": True,
+            "touches_code": True,
+            "enforce": True,
+            "refused": [],
+            "selected": 1,
+            "data_files": (),
+        }
+        return vr.failures({**self.COUNTS, **(counts or {})}, **{**args, **kw})
+
+    def test_a_red_test_and_nothing_else_passes(self, vr):
+        assert self.reasons(vr) == []
+
+    def test_zero_red_names_what_the_selected_tests_were(self, vr):
+        out = " ".join(self.reasons(vr, {"red": 0, "control": 2, "inherited": 1}))
+        assert "0 red" in out and "2 control" in out and "1 inherited" in out
+
+    def test_every_cell_n_a_is_named_as_that_not_as_zero_red(self, vr):
+        out = " ".join(self.reasons(vr, {"red": 0, "n/a": 3}))
+        assert "n/a" in out and "0 red" not in out
+
+    def test_nothing_selected_is_named_as_that_not_as_zero_red(self, vr):
+        out = " ".join(self.reasons(vr, {"red": 0}, selected=0))
+        assert "no test added or edited" in out and "0 red" not in out
+
+    def test_a_data_file_no_test_reads_names_the_file(self, vr):
+        out = " ".join(self.reasons(vr, {"red": 0}, selected=0, data_files=("tests/golden.txt",)))
+        assert "no test reads tests/golden.txt" in out
+        assert "a fix needs a test that fails without it" in out
+
+    def test_an_unexpected_pass_fails(self, vr):
+        assert "unexpected pass" in " ".join(self.reasons(vr, {"unexpected pass": 2}))
+
+    def test_a_control_or_an_inherited_control_does_not_fail(self, vr):
+        assert self.reasons(vr, {"control": 3, "inherited": 4}) == []
+
+    def test_a_pr_that_is_not_fix_typed_is_not_held(self, vr):
+        assert self.reasons(vr, {"red": 0, "unexpected pass": 5}, fix_typed=False) == []
+
+    def test_a_fix_that_changes_no_pyrite_or_extension_code_is_not_held(self, vr):
+        assert self.reasons(vr, {"red": 0}, touches_code=False) == []
+
+    def test_without_the_flag_nothing_but_broad_controls_fail(self, vr):
+        assert self.reasons(vr, {"red": 0}, enforce=False) == []
+        assert self.reasons(vr, enforce=False, refused=["tests/test_x.py: x"])
+
+    def test_a_refused_control_fails_any_pr_and_names_the_file(self, vr):
+        out = self.reasons(vr, fix_typed=False, refused=["tests/test_x.py: x"])
+        assert out and "tests/test_x.py" in out[0]
+
+
+class TestTablesAndHelpersSelectTheTestsTheyFeed:
+    """A module-level parametrize table, or a helper that builds one, is part of
+    the test it decorates: changing it changes the test (#1074 R6)."""
+
+    TEST = "import pytest\n\nfrom pyrite import add\n\n{table}\n\n\n@pytest.mark.parametrize('a, b', {use})\ndef test_add(a, b):\n    assert add(a, a) == b\n"
+
+    def src(self, table, use="CASES"):
+        return self.TEST.format(table=table, use=use)
+
+    def test_a_new_row_in_a_module_level_table_selects_the_test(self, vr):
+        base = self.src("CASES = [(1, 2)]")
+        head = self.src("CASES = [(1, 2), (2, 4)]")
+        assert vr.touched_tests(base, head) == set()  # the function itself did not change
+        assert vr.table_touched_tests(base, head) == {("test_add",)}
+
+    def test_a_helper_the_decorator_calls_counts_as_the_table(self, vr):
+        base = self.src("def _grid():\n    return [(1, 2)]", use="_grid()")
+        head = self.src("def _grid():\n    return [(1, 2), (2, 4)]", use="_grid()")
+        assert vr.table_touched_tests(base, head) == {("test_add",)}
+
+    def test_a_table_reached_through_another_constant_counts(self, vr):
+        base = self.src("ROWS = [(1, 2)]\nCASES = ROWS")
+        head = self.src("ROWS = [(1, 2), (2, 4)]\nCASES = ROWS")
+        assert vr.table_touched_tests(base, head) == {("test_add",)}
+
+    def test_an_unrelated_constant_selects_nothing(self, vr):
+        base = self.src("CASES = [(1, 2)]\nOTHER = 1")
+        head = self.src("CASES = [(1, 2)]\nOTHER = 2")
+        assert vr.table_touched_tests(base, head) == set()
+
+    def test_a_test_whose_own_body_changed_is_not_a_table_selection(self, vr):
+        base = self.src("CASES = [(1, 2)]")
+        head = self.src("CASES = [(1, 2), (2, 4)]").replace("add(a, a)", "add(a, a) + 0")
+        assert vr.table_touched_tests(base, head) == set()
+        assert vr.touched_tests(base, head) == {("test_add",)}
+
+    def test_a_new_file_is_all_function_selection(self, vr):
+        assert vr.table_touched_tests(None, self.src("CASES = [(1, 2)]")) == set()
+
+
+def _pr_with_stale_base(repo: Path) -> None:
+    """The CI shape: dev moved on after the PR was opened; the checkout is the
+    merge of the PR into dev's tip, and `HEAD^1` is that tip."""
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    (repo / "tests" / "test_new.py").write_text(
+        "from pyrite import add\n\n\ndef test_new():\n    assert add(2, 2) == 4\n"
+    )
+    commit_all(repo, "fix: add adds")
+    git(repo, "checkout", "-q", "dev")
+    # Another PR landed on dev since: a source change with its own test.
+    (repo / "pyrite" / "other.py").write_text("def other():\n    return 1\n")
+    (repo / "tests" / "test_other.py").write_text(
+        "from pyrite.other import other\n\n\ndef test_other():\n    assert other() == 1\n"
+    )
+    commit_all(repo, "fix: other lands")
+    git(repo, "checkout", "-q", "-b", "merge", "dev")
+    git(repo, "merge", "-q", "--no-ff", "-m", "Merge fix/add", "fix/add")
+
+
+def test_a_stale_pr_base_grades_the_other_prs_tests(repo: Path, tmp_path: Path) -> None:
+    # What `--base <base.sha>` did: the tests merged in between are this PR's.
+    _pr_with_stale_base(repo)
+    base_sha = git(repo, "merge-base", "dev", "fix/add")
+    result, summary = run_vr(repo, tmp_path, "--base", base_sha)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "tests/test_other.py::test_other" in summary, summary  # not this PR's
+
+
+def test_grading_against_the_first_parent_grades_only_the_prs_own_file(
+    repo: Path, tmp_path: Path
+) -> None:
+    _pr_with_stale_base(repo)
+    result, summary = run_vr(repo, tmp_path, "--base", "HEAD^1", "--json", str(tmp_path / "e.json"))
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "verify-red: 1 red · 0 import-only · 0 unexpected pass · 0 n/a" in summary, summary
+    assert json.loads((tmp_path / "e.json").read_text())["verify_red"]["red"] == 1
+
+
+PRE_CONTROLLED = """\
+import pytest
+
+from pyrite import add
+
+
+@pytest.mark.control(reason="add(0, 0) was already right")
+def test_old_guard():
+    assert add(0, 0) == 0
+"""
+
+
+def _at_dev(repo: Path, files: dict[str, str]) -> None:
+    """Put files on dev (so they are at the merge base), then branch the PR from it."""
+    git(repo, "checkout", "-q", "dev")
+    for name, text in files.items():
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text(text)
+    commit_all(repo, "test: already on dev")
+    git(repo, "checkout", "-q", "-B", "fix/add", "dev")
+
+
+RED_TEST = "from pyrite import add\n\n\ndef test_red():\n    assert add(2, 2) == 4\n"
+
+# The shapes this repo attaches controls with. A marker is read from what pytest
+# records for the cell, not from the decorator's spelling (#1074 fix round 1).
+CONTROL_SHAPES = {
+    "decorator": (
+        "import pytest\nfrom pyrite import add\n\n\n"
+        "@pytest.mark.control(reason='r')\ndef test_g():\n    assert add(0, 0) == 0\n"
+    ),
+    "helper": (
+        "import pytest\nfrom pyrite import add\n\n\n"
+        "def _ctl():\n    return pytest.mark.control(reason='r')\n\n\n"
+        "@_ctl()\ndef test_g():\n    assert add(0, 0) == 0\n"
+    ),
+    "module constant": (
+        "import pytest\nfrom pyrite import add\n\n"
+        "CTL = pytest.mark.control(reason='r')\n\n\n"
+        "@CTL\ndef test_g():\n    assert add(0, 0) == 0\n"
+    ),
+    "grid helper": (
+        "import pytest\nfrom pyrite import add\n\n\n"
+        "def _grid():\n    return [pytest.param(0, marks=pytest.mark.control(reason='r')), "
+        "pytest.param(1, marks=pytest.mark.control(reason='r'))]\n\n\n"
+        "@pytest.mark.parametrize('n', _grid())\ndef test_g(n):\n    assert add(0, n) == n\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", list(CONTROL_SHAPES))
+def test_a_control_the_pr_adds_is_honoured_however_it_is_built(
+    repo: Path, tmp_path: Path, shape: str
+) -> None:
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    (repo / "tests" / "test_red.py").write_text(RED_TEST)
+    (repo / "tests" / "test_guard.py").write_text(CONTROL_SHAPES[shape])
+    commit_all(repo)
+    result, summary = run_vr(repo, tmp_path, *_enforce_args(tmp_path, "fix: add adds"))
+    assert result.returncode == 0, (result.stdout, result.stderr, summary)
+    assert "0 unexpected pass" in summary, summary
+    assert " control" in summary.splitlines()[2], summary  # the summary line counts it
+    assert "unexpected pass | " not in summary
+
+
+@pytest.mark.parametrize("shape", list(CONTROL_SHAPES))
+def test_a_control_already_at_the_base_on_an_edited_test_is_inherited_not_a_failure(
+    repo: Path, tmp_path: Path, shape: str
+) -> None:
+    _at_dev(repo, {"tests/test_guard.py": CONTROL_SHAPES[shape]})
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    (repo / "tests" / "test_red.py").write_text(RED_TEST)
+    # An edit the AST sees, to the guard's body.
+    (repo / "tests" / "test_guard.py").write_text(
+        CONTROL_SHAPES[shape]
+        .replace("add(0, 0)", "add(0, 0) + 0")
+        .replace("add(0, n)", "add(0, n) + 0")
+    )
+    commit_all(repo)
+    result, summary = run_vr(repo, tmp_path, *_enforce_args(tmp_path, "fix: add adds"))
+    assert result.returncode == 0, (result.stdout, result.stderr, summary)
+    assert "0 unexpected pass" in summary and " inherited" in summary.splitlines()[2], summary
+    assert (
+        verdict_of(
+            summary, "tests/test_guard.py::test_g" + ("[0]" if shape == "grid helper" else "")
+        )
+        == "inherited"
+    )
+
+
+def test_a_cell_added_to_a_table_of_controls_is_the_prs_own_and_the_old_cells_are_not_graded(
+    repo: Path, tmp_path: Path
+) -> None:
+    grid = (
+        "import pytest\n\n\n"
+        "def _grid():\n    return [{rows}]\n\n\n"
+        "@pytest.mark.parametrize('n', _grid())\ndef test_g(n):\n    assert isinstance(n, int)\n"
+    )
+    ctl = "pytest.param({n}, id='{i}', marks=pytest.mark.control(reason='r'))"
+    old = f"{ctl.format(n=0, i='a')}, {ctl.format(n=1, i='b')}"
+    _at_dev(repo, {"tests/test_guard.py": grid.format(rows=old)})
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    (repo / "tests" / "test_red.py").write_text(RED_TEST)
+    (repo / "tests" / "test_guard.py").write_text(
+        grid.format(rows=old + ", " + ctl.format(n=7, i="new"))
+    )
+    commit_all(repo)
+    result, summary = run_vr(repo, tmp_path, *_enforce_args(tmp_path, "fix: add adds"))
+    assert result.returncode == 0, (result.stdout, result.stderr, summary)
+    assert verdict_of(summary, "tests/test_guard.py::test_g[new]") == "control", summary
+    # a and b were at the base: not this PR's cells, so not graded.
+    assert "test_g[a]" not in summary and "test_g[b]" not in summary, summary
+
+
+def test_a_vacuous_cell_next_to_a_red_one_still_fails(repo: Path, tmp_path: Path) -> None:
+    # One red cell must not excuse the others: #1065's unmarked passes.
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    (repo / "tests" / "test_grid.py").write_text(
+        "import pytest\nfrom pyrite import add\n\n\n"
+        "@pytest.mark.parametrize('a, b', [(2, 4), (0, 0)])\ndef test_g(a, b):\n    assert add(a, a) == b\n"
+    )
+    commit_all(repo)
+    result, summary = run_vr(repo, tmp_path, *_enforce_args(tmp_path, "fix: add adds"))
+    assert result.returncode == 1, (result.stdout, result.stderr, summary)
+    assert verdict_of(summary, "tests/test_grid.py::test_g[0-0]") == "unexpected pass", summary
+    assert "1 red" in summary and "1 unexpected pass" in summary
+
+
+GOLDEN_TEST = (
+    "from pathlib import Path\n\nfrom pyrite import add\n\n\n"
+    "def test_golden():\n"
+    "    want = int(Path(__file__).with_name('golden.txt').read_text())\n"
+    "    assert add(2, 2) == want\n"
+)
+
+
+def test_a_fix_that_changes_only_a_golden_is_graded_by_the_tests_that_read_it(
+    repo: Path, tmp_path: Path
+) -> None:
+    _at_dev(repo, {"tests/test_golden.py": GOLDEN_TEST, "tests/golden.txt": "0\n"})
+    # The fix is right, the golden follows it: the test file itself is untouched.
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    (repo / "tests" / "golden.txt").write_text("4\n")
+    commit_all(repo)
+    result, summary = run_vr(repo, tmp_path, *_enforce_args(tmp_path, "fix: add adds"))
+    assert result.returncode == 0, (result.stdout, result.stderr, summary)
+    assert "verify-red: 1 red" in summary, summary
+
+
+def test_a_golden_nothing_reads_cannot_carry_a_fix(repo: Path, tmp_path: Path) -> None:
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    (repo / "tests" / "stray.txt").write_text("unused\n")
+    commit_all(repo)
+    result, summary = run_vr(repo, tmp_path, *_enforce_args(tmp_path, "fix: add adds"))
+    assert result.returncode == 1, (result.stdout, result.stderr, summary)
+    assert "a fix needs a test that fails without it; no test reads tests/stray.txt" in summary
+
+
+TABLE_TEST = (
+    "import pytest\n\nfrom pyrite import add\n\n"
+    "CASES = [{rows}]\n\n\n"
+    "@pytest.mark.parametrize('a, b', CASES)\ndef test_table(a, b):\n    assert add(a, a) == b\n"
+)
+
+
+def test_a_fix_that_only_adds_a_row_to_a_module_level_table_is_graded_on_the_new_row(
+    repo: Path, tmp_path: Path
+) -> None:
+    _at_dev(repo, {"tests/test_table.py": TABLE_TEST.format(rows="(0, 0)")})
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    (repo / "tests" / "test_table.py").write_text(TABLE_TEST.format(rows="(0, 0), (2, 4)"))
+    commit_all(repo)
+    result, summary = run_vr(repo, tmp_path, *_enforce_args(tmp_path, "fix: add adds"))
+    assert result.returncode == 0, (result.stdout, result.stderr, summary)
+    # The new row is red; the row that was already there is not this PR's cell.
+    assert "verify-red: 1 red · 0 import-only · 0 unexpected pass" in summary, summary
+    assert "test_table[0-0]" not in summary
+
+
+def test_a_fix_with_no_test_at_all_names_that_not_zero_red(repo: Path, tmp_path: Path) -> None:
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    commit_all(repo)
+    result, summary = run_vr(repo, tmp_path, *_enforce_args(tmp_path, "fix: add adds"))
+    assert result.returncode == 1, (result.stdout, result.stderr, summary)
+    assert "no test added or edited" in summary and "0 red" not in summary
+
+
+def _enforce_args(tmp: Path, title: str) -> tuple[str, ...]:
+    return ("--enforce-fix", "--title", title)
+
+
+def test_a_fix_whose_test_passes_without_it_fails(repo: Path, tmp_path: Path) -> None:
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    (repo / "tests" / "test_vacuous.py").write_text(
+        "from pyrite import add\n\n\ndef test_vacuous():\n    assert callable(add)\n"
+    )
+    commit_all(repo)
+    result, summary = run_vr(repo, tmp_path, *_enforce_args(tmp_path, "fix: add adds"))
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "0 red" in summary and "unexpected pass" in summary, summary
+    assert "::error" in result.stdout
+
+
+def test_a_fix_with_no_new_test_fails(repo: Path, tmp_path: Path) -> None:
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    commit_all(repo)
+    result, summary = run_vr(repo, tmp_path, *_enforce_args(tmp_path, "fix(core): add adds"))
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "no test added or edited" in summary, summary
+
+
+def test_a_fix_with_a_red_test_passes(repo: Path, tmp_path: Path) -> None:
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    (repo / "tests" / "test_new.py").write_text(
+        "from pyrite import add\n\n\ndef test_new():\n    assert add(2, 2) == 4\n"
+    )
+    commit_all(repo)
+    result, summary = run_vr(repo, tmp_path, *_enforce_args(tmp_path, "fix: add adds"))
+    assert result.returncode == 0, (result.stdout, result.stderr, summary)
+
+
+def test_the_same_diff_titled_feat_is_not_held_by_a_non_fix_title(
+    repo: Path, tmp_path: Path
+) -> None:
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    commit_all(repo, "refactor: tidy")
+    result, _ = run_vr(repo, tmp_path, *_enforce_args(tmp_path, "refactor: tidy"))
+    assert result.returncode == 0, (result.stdout, result.stderr)
+
+
+def test_a_fix_commit_makes_a_pr_fix_typed_whatever_its_title(repo: Path, tmp_path: Path) -> None:
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    commit_all(repo, "fix(core): add adds")
+    result, _ = run_vr(repo, tmp_path, *_enforce_args(tmp_path, "Add adds"))
+    assert result.returncode == 1, (result.stdout, result.stderr)
+
+
+# ---------------------------------------------------------------------------
+# #1074 round 2: a cell is (test function, its parameter values), never its id.
+# ---------------------------------------------------------------------------
+
+ROWS_TEST = (
+    "import pytest\n\nfrom pyrite import add\n\n"
+    "CASES = [{rows}]\n\n\n"
+    "@pytest.mark.parametrize('a, b', CASES{ids})\n"
+    "def test_rows(a, b):\n    assert add(a, a) == b\n"
+)
+CASE_IDS = ", ids=[f'case{i}' for i in range(len(CASES))]"
+
+
+def _rows_pr(repo: Path, tmp: Path, base: str, head: str, ids: str = "") -> tuple:
+    _at_dev(repo, {"tests/test_rows.py": ROWS_TEST.format(rows=base, ids=ids)})
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    (repo / "tests" / "test_rows.py").write_text(ROWS_TEST.format(rows=head, ids=ids))
+    commit_all(repo)
+    return run_vr(repo, tmp, *_enforce_args(tmp, "fix: add adds"))
+
+
+def test_a_row_whose_values_changed_is_claimed_whatever_its_explicit_id(
+    repo: Path, tmp_path: Path
+) -> None:
+    # (a) the row keeps id='one'; only its expected value changes. The node id
+    # existed at the base, the (function, values) pair did not.
+    result, summary = _rows_pr(
+        repo,
+        tmp_path,
+        "pytest.param(1, 0, id='one'), pytest.param(0, 0, id='zero')",
+        "pytest.param(1, 2, id='one'), pytest.param(0, 0, id='zero')",
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr, summary)
+    assert "verify-red: 1 red · 0 import-only · 0 unexpected pass · 0 n/a" in summary, summary
+    assert "not collected" not in summary and "zero" not in summary
+
+
+def test_a_row_prepended_to_index_ids_is_the_only_claim(repo: Path, tmp_path: Path) -> None:
+    # (b) case0 is now the new row and the old (0, 0) became case1: by id the new
+    # red row looked old and the shifted old row looked new.
+    result, summary = _rows_pr(repo, tmp_path, "(0, 0)", "(2, 4), (0, 0)", CASE_IDS)
+    assert result.returncode == 0, (result.stdout, result.stderr, summary)
+    assert "verify-red: 1 red · 0 import-only · 0 unexpected pass · 0 n/a" in summary, summary
+    assert "case1" not in summary
+
+
+def test_a_row_appended_is_the_only_claim(repo: Path, tmp_path: Path) -> None:
+    # (c)
+    result, summary = _rows_pr(repo, tmp_path, "(0, 0)", "(0, 0), (2, 4)", CASE_IDS)
+    assert result.returncode == 0, (result.stdout, result.stderr, summary)
+    assert "verify-red: 1 red · 0 import-only · 0 unexpected pass · 0 n/a" in summary, summary
+
+
+def test_reordered_rows_claim_nothing_and_say_so(repo: Path, tmp_path: Path) -> None:
+    # (d) the same values in another order: no cell is the PR's claim.
+    result, summary = _rows_pr(repo, tmp_path, "(0, 0), (2, 4)", "(2, 4), (0, 0)", CASE_IDS)
+    assert result.returncode == 1, (result.stdout, result.stderr, summary)  # a fix needs a red
+    assert "already at the merge base" in summary, summary
+    assert "unexpected pass" not in summary.split("verify-red fails")[1].split("already")[0]
+    assert "verify-red: 0 red · 0 import-only · 0 unexpected pass · 0 n/a" in summary
+
+
+# A marker is the test's own only when written on the function or on one of its
+# parameters. Anything else is refused, and the error names where it came from.
+def _refused_pr(repo: Path, tmp: Path, test_src: str, conftest: str = "") -> tuple:
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    (repo / "tests" / "test_red.py").write_text(RED_TEST)
+    (repo / "tests" / "test_origin.py").write_text(test_src)
+    if conftest:
+        (repo / "tests" / "conftest.py").write_text(conftest)
+    commit_all(repo)
+    return run_vr(repo, tmp, *_enforce_args(tmp, "fix: add adds"))
+
+
+HEAD_ = "import pytest\nfrom pyrite import add\n\n"
+ORIGINS = {
+    "a module-level pytestmark": (
+        HEAD_ + "pytestmark = pytest.mark.control(reason='r')\n\n\n"
+        "def test_o():\n    assert add(0, 0) == 0\n",
+        "",
+    ),
+    "a module-level pytestmark through a constant": (
+        HEAD_ + "CTL = pytest.mark.control(reason='r')\npytestmark = CTL\n\n\n"
+        "def test_o():\n    assert add(0, 0) == 0\n",
+        "",
+    ),
+    "a class-level mark": (
+        HEAD_ + "@pytest.mark.control(reason='r')\nclass TestK:\n"
+        "    def test_o(self):\n        assert add(0, 0) == 0\n",
+        "",
+    ),
+    "a conftest collection hook": (
+        HEAD_ + "def test_o():\n    assert add(0, 0) == 0\n",
+        "import pytest\n\n\ndef pytest_collection_modifyitems(items):\n"
+        "    for item in items:\n        if item.name == 'test_o':\n"
+        "            item.add_marker(pytest.mark.control(reason='r'))\n",
+    ),
+    "an autouse fixture": (
+        HEAD_ + "def test_o():\n    assert add(0, 0) == 0\n",
+        "import pytest\n\n\n@pytest.fixture(autouse=True)\ndef _mark(request):\n"
+        "    if request.node.name == 'test_o':\n"
+        "        request.applymarker(pytest.mark.control(reason='r'))\n",
+    ),
+    "applymarker in the test": (
+        HEAD_ + "def test_o(request):\n"
+        "    request.applymarker(pytest.mark.control(reason='r'))\n    assert add(0, 0) == 0\n",
+        "",
+    ),
+}
+
+
+@pytest.mark.parametrize("origin", list(ORIGINS))
+def test_a_control_that_is_not_the_tests_own_is_refused_naming_where_it_came_from(
+    repo: Path, tmp_path: Path, origin: str
+) -> None:
+    src, conftest = ORIGINS[origin]
+    result, summary = _refused_pr(repo, tmp_path, src, conftest)
+    text = result.stderr + summary
+    assert result.returncode == 1, (result.stdout, result.stderr, summary)
+    assert "tests/test_origin.py" in text, text
+    assert "not declared on the test or one of its parameters" in text, text
+    assert {
+        "a module-level pytestmark": "module or class level",
+        "a module-level pytestmark through a constant": "module or class level",
+        "a class-level mark": "module or class level",
+        "a conftest collection hook": "collection hook",
+        "an autouse fixture": "setup",
+        "applymarker in the test": "inside the test",
+    }[origin] in text, text
+    # And the refused marker is no exemption: the cell is an unexpected pass.
+    assert "1 unexpected pass" in summary, summary
+
+
+def test_a_control_already_refusable_at_the_base_is_inherited_not_an_error(
+    repo: Path, tmp_path: Path
+) -> None:
+    # The four whole-module files of #1074: editing a test in one is not the PR
+    # adding the module mark.
+    wide = (
+        HEAD_
+        + "pytestmark = pytest.mark.control(reason='r')\n\n\ndef test_o():\n    assert add(0, 0) == 0\n"
+    )
+    _at_dev(repo, {"tests/test_origin.py": wide})
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    (repo / "tests" / "test_red.py").write_text(RED_TEST)
+    (repo / "tests" / "test_origin.py").write_text(wide.replace("add(0, 0)", "add(0, 0) + 0"))
+    commit_all(repo)
+    result, summary = run_vr(repo, tmp_path, *_enforce_args(tmp_path, "fix: add adds"))
+    assert result.returncode == 0, (result.stdout, result.stderr, summary)
+    assert verdict_of(summary, "tests/test_origin.py::test_o") == "inherited", summary
+
+
+def test_a_marker_on_a_parameter_is_the_tests_own(repo: Path, tmp_path: Path) -> None:
+    src = (
+        HEAD_
+        + "@pytest.mark.parametrize('n', [pytest.param(0, marks=pytest.mark.control(reason='r'))])\n"
+        "def test_o(n):\n    assert add(0, n) == n\n"
+    )
+    result, summary = _refused_pr(repo, tmp_path, src)
+    assert result.returncode == 0, (result.stdout, result.stderr, summary)
+    assert "1 control" in summary, summary
+
+
+def test_a_base_file_that_does_not_collect_says_its_cells_count_as_new(
+    repo: Path, tmp_path: Path
+) -> None:
+    broken = "from pyrite import helper\n\n\ndef test_h():\n    assert helper() == 1\n"
+    _at_dev(repo, {"tests/test_h.py": broken})  # helper does not exist at the base
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    (repo / "tests" / "test_h.py").write_text(broken.replace("== 1", "== 1 + 0"))
+    commit_all(repo)
+    result, summary = run_vr(repo, tmp_path, *_enforce_args(tmp_path, "fix: add adds"))
+    assert "base collect failed for tests/test_h.py: its cells count as new" in summary, summary
+
+
+def test_the_base_collect_is_capped_at_a_minute(vr) -> None:
+    assert vr.BASE_COLLECT_TIMEOUT == 60
+
+
+def test_the_docs_say_verify_red_is_advisory_and_what_its_claim_rule_misses() -> None:
+    for path in ("CONTRIBUTING.md", "docs/testing.md"):
+        text = (REPO / path).read_text()
+        assert "verify-red" in text and "advisory" in text
+    docs = (REPO / "docs" / "testing.md").read_text()
+    assert "Gating waits for #1104" in docs
+    lowered = docs.lower()
+    for shape in ("inline `parametrize` lists", "class-level", "fixture-params", "generate-hook"):
+        assert shape in lowered, shape
+    assert "imported tables" in lowered
+
+
+def test_the_docs_say_verify_red_is_skipped_in_the_merge_queue() -> None:
+    for path in ("CONTRIBUTING.md", "docs/testing.md"):
+        text = (REPO / path).read_text()
+        assert "merge queue" in text and "verify-red" in text
+    assert "skipped in the merge queue" in (REPO / "docs" / "testing.md").read_text()
+    assert "CI's environment" in (REPO / "docs" / "testing.md").read_text()
+
+
+def test_a_set_valued_row_is_the_same_cell_in_every_process(repo: Path, tmp_path: Path) -> None:
+    # frozenset({'a', 'b', 'c', 'd'}) reprs in a different order under another hash
+    # seed; the base collect and the two runs are three processes.
+    table = "(frozenset({{'a', 'b', 'c', 'd', 'e', 'f'}}), 7), {new}"
+    src = (
+        "import pytest\n\nfrom pyrite import add\n\nCASES = [{rows}]\n\n\n"
+        "@pytest.mark.parametrize('s, b', CASES)\n"
+        "def test_sets(s, b):\n    assert add(len(s), 1) == b\n"
+    )
+    _at_dev(repo, {"tests/test_sets.py": src.format(rows=table.format(new="(frozenset(), 1)"))})
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    (repo / "tests" / "test_sets.py").write_text(
+        src.format(rows=table.format(new="(frozenset({'x', 'y'}), 3)"))
+    )
+    commit_all(repo)
+    result, summary = run_vr(repo, tmp_path, *_enforce_args(tmp_path, "fix: add adds"))
+    assert result.returncode == 0, (result.stdout, result.stderr, summary)
+    assert "verify-red: 1 red · 0 import-only · 0 unexpected pass" in summary, summary
+
+
+def test_without_the_flag_a_vacuous_fix_is_reported_and_never_fails(
+    repo: Path, tmp_path: Path
+) -> None:
+    # What CI runs: no --enforce-fix, so the verdict is a report (#1074).
+    (repo / "pyrite" / "__init__.py").write_text(FIXED)
+    (repo / "tests" / "test_vacuous.py").write_text(
+        "from pyrite import add\n\n\ndef test_vacuous():\n    assert callable(add)\n"
+    )
+    commit_all(repo, "fix: add adds")
+    result, summary = run_vr(repo, tmp_path, "--title", "fix: add adds")
+    assert result.returncode == 0, (result.stdout, result.stderr, summary)
+    assert "1 unexpected pass" in summary and "verify-red fails" not in summary

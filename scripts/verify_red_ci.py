@@ -21,13 +21,40 @@ Verdicts, for each new or edited test:
 - **unexpected pass**: passes without the fix; it does not test the change.
   ``@pytest.mark.control(reason=...)`` declares a deliberate negative control
   instead.
+- **inherited**: passes without the fix and carries a control marker that was
+  already on that node id at the merge base. Not a failure, and not evidence.
 - **n/a**: no claim (did not pass with the fix, skipped, not run, timed out).
 
 Test-side files are those under ``tests/`` or ``extensions/*/tests/``, and any
 ``conftest.py``; everything else the PR changes is the fix. Tests the PR did not
 add or edit (compared by AST, so formatting does not count) are a count.
 
-Exit 0 whatever the verdicts; 2 when the check itself could not run.
+ADVISORY (#1074): CI neither gates on this nor passes ``--enforce-fix``; gating
+waits for #1104's model. The claim rule is sound only for module-level tables on the
+test function itself. A test cell's identity is its test function and its parameter
+values, recorded at collection at the base and at the head -- never the generated
+node id, which an inserted row shifts and an edited row keeps. A cell is the PR's
+claim when that pair is absent at the base. A test selected only because a
+module-level table or helper in its decorators changed is graded on those cells
+alone. Inline ``parametrize`` lists change the function, so the whole function is
+graded; class-level, fixture-params, generate-hook and imported tables change no
+test function and select nothing. A test file that names a changed data file (a
+golden) has every test claimed; if none names it, that is the cause.
+
+A control marker counts when it is written on the test function or one of its
+parameters (``pytest.param(marks=...)``), however it was built. One that came from
+anywhere else -- a class or module ``pytestmark`` (a constant too), a collection
+hook, an autouse fixture's ``request.applymarker``, ``applymarker`` or
+``add_marker`` in the test body or at teardown -- is refused with an error naming
+the file and the origin; one the base already had on the same cell is *inherited*.
+Not caught: a hook that rewrites the function's own ``pytestmark`` before the items
+are built (it looks like a decorator).
+
+Exit 0 whatever the verdicts, except: 1 for a ``@pytest.mark.control`` the PR adds
+that the test did not declare on itself or a parameter; 2 when the check itself
+could not run. With ``--enforce-fix`` (local use only; CI does not pass it) also 1
+for a fix-typed PR that changes ``pyrite/`` or ``extensions/`` code and has no test
+added or edited, no red test, every selected test n/a, or an unexpected pass.
 """
 
 from __future__ import annotations
@@ -41,17 +68,21 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
-RED, IMPORT_ONLY, UNEXPECTED, NA, CONTROL = (
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from check_fix_commit_has_tests import FIX_SUBJECT  # noqa: E402  one definition of "a fix"
+
+RED, IMPORT_ONLY, UNEXPECTED, NA, CONTROL, INHERITED = (
     "red",
     "import-only",
     "unexpected pass",
     "n/a",
     "control",
+    "inherited",
 )
-VERDICTS = (RED, IMPORT_ONLY, UNEXPECTED, NA, CONTROL)
+VERDICTS = (RED, IMPORT_ONLY, UNEXPECTED, NA, CONTROL, INHERITED)
 PLUGIN = Path(__file__).resolve().parent / "verify_red_record.py"
 _MISSING_NAME = {"ImportError", "AttributeError", "NameError"}
 _QUOTED = re.compile(r"'([A-Za-z_][\w.]*)'")
@@ -121,6 +152,128 @@ def touched_tests(base_src: str | None, head_src: str) -> set[tuple[str, ...]]:
     return {k for k, dump in head.items() if base.get(k) != dump}
 
 
+def is_fix_typed(title: str, subjects: list[str]) -> bool:
+    """The PR title or any commit subject is a conventional ``fix``."""
+    return any(FIX_SUBJECT.match(s.strip()) for s in [title, *subjects])
+
+
+def failures(
+    counts: dict[str, int],
+    *,
+    fix_typed: bool,
+    touches_code: bool,
+    enforce: bool,
+    refused: list[str],
+    selected: int = 1,
+    data_files: tuple[str, ...] = (),
+) -> list[str]:
+    """Why this run must fail ``gate``; empty when it may pass.
+
+    Each reason names its cause: nothing selected, every cell n/a, or no red among
+    the cells that ran are three different things to fix."""
+    out = list(refused)
+    if not (enforce and fix_typed and touches_code):
+        return out
+    if selected == 0:
+        if data_files:
+            out.append(
+                "a fix needs a test that fails without it; no test reads "
+                + ", ".join(data_files[:3])
+            )
+        else:
+            out.append(
+                "no test added or edited: a fix that changes pyrite/ or extensions/ needs a "
+                "test that fails without it"
+            )
+    elif counts[RED] == 0:
+        ran = {v: counts.get(v, 0) for v in VERDICTS if counts.get(v)}
+        if not ran:
+            out.append(
+                "every selected cell was already at the merge base (a changed table or helper "
+                "selected the test): add a case that fails without the fix"
+            )
+        elif set(ran) == {NA}:
+            out.append(
+                f"every one of the {ran[NA]} selected tests is n/a (did not pass with the fix, "
+                "was skipped or was not run), so none could show red"
+            )
+        else:
+            parts = ", ".join(f"{n} {v}" for v, n in ran.items())
+            out.append(
+                f"0 red of {sum(ran.values())} selected tests ({parts}): none fails without the fix"
+            )
+    if counts[UNEXPECTED]:
+        out.append(
+            f"{counts[UNEXPECTED]} unexpected pass: a test that passes without the fix "
+            "does not test it; make it fail without the fix, or mark it "
+            "@pytest.mark.control(reason=...) in this PR"
+        )
+    return out
+
+
+def _module_defs(tree: ast.Module) -> dict[str, ast.stmt]:
+    """Module-level names -> the statement that defines them."""
+    out: dict[str, ast.stmt] = {}
+    for stmt in tree.body:
+        if isinstance(stmt, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            out[stmt.name] = stmt
+        else:
+            targets = stmt.targets if isinstance(stmt, ast.Assign) else []
+            targets = [stmt.target] if isinstance(stmt, ast.AnnAssign) else targets
+            out.update({t.id: stmt for t in targets if isinstance(t, ast.Name)})
+    return out
+
+
+def _decorator_inputs(tree: ast.Module) -> dict[tuple[str, ...], str]:
+    """Test key -> a dump of every module-level definition its decorators reach.
+
+    A ``parametrize`` table, or the helper that builds one, is part of the test it
+    decorates: the names in the decorators, then the names in what those define,
+    and so on. Nothing the body reaches (a fixture, a helper it calls): that would
+    select half the suite for one changed helper."""
+    defs = _module_defs(tree)
+
+    def reach(nodes: list[ast.expr]) -> str:
+        seen: dict[str, ast.stmt] = {}
+        todo = [n.id for node in nodes for n in ast.walk(node) if isinstance(n, ast.Name)]
+        while todo:
+            name = todo.pop()
+            if name in defs and name not in seen:
+                seen[name] = defs[name]
+                todo += [n.id for n in ast.walk(defs[name]) if isinstance(n, ast.Name)]
+        return "\n".join(ast.dump(seen[n]) for n in sorted(seen))
+
+    out: dict[tuple[str, ...], str] = {}
+
+    def walk(body: list[ast.stmt], prefix: tuple[str, ...]) -> None:
+        for node in body:
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                if node.name.startswith("test"):
+                    out[prefix + (node.name,)] = reach(node.decorator_list)
+            elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+                walk(node.body, prefix + (node.name,))
+
+    walk(tree.body, ())
+    return out
+
+
+def table_touched_tests(base_src: str | None, head_src: str) -> set[tuple[str, ...]]:
+    """Tests whose own AST did not change but whose decorators' tables or helpers did.
+
+    The function-level selection (``touched_tests``) misses these: adding a row to a
+    module-level ``parametrize`` table changes no test function (#1074 R6)."""
+    base_tree, head_tree = _parse(base_src), _parse(head_src)
+    if base_tree is None or head_tree is None:
+        return set()
+    base_inputs, head_inputs = _decorator_inputs(base_tree), _decorator_inputs(head_tree)
+    own = touched_tests(base_src, head_src)
+    return {
+        k
+        for k, dump in head_inputs.items()
+        if k in base_inputs and base_inputs[k] != dump and k not in own
+    }
+
+
 def defined_names(src: str | None) -> set[str]:
     """The functions, classes and variables a source defines at module or class level.
 
@@ -177,11 +330,13 @@ def classify(
     collect_failed: bool,
     control: str | None,
     added: frozenset[str] | set[str],
+    inherited: bool = False,
 ) -> tuple[str, str]:
     """(verdict, detail) for one test, from its record in each run.
 
     `control` is the reason a ``@pytest.mark.control`` gives (its ``reason=`` or
-    the test's docstring): None without the marker, "" for a bare one.
+    the test's docstring): None without the marker, "" for a bare one. `inherited`:
+    the base already had that marker on this node id.
     """
     if with_fix is None or with_fix["outcome"] != "passed":
         return NA, f"{with_fix['outcome'] if with_fix else 'not run'} with the fix"
@@ -190,6 +345,8 @@ def classify(
     if without is None or without["outcome"] == "skipped":
         return NA, f"{without['outcome'] if without else 'not run'} without the fix"
     if without["outcome"] == "passed":
+        if control is not None and inherited:
+            return INHERITED, "control marker already at the merge base"
         if control:
             return CONTROL, ""
         if control == "":
@@ -204,7 +361,8 @@ def classify(
 
 def summary_line(counts: dict[str, int]) -> str:
     line = " · ".join(f"{counts[v]} {v}" for v in (RED, IMPORT_ONLY, UNEXPECTED, NA))
-    return f"verify-red: {line}" + (f" · {counts[CONTROL]} control" if counts[CONTROL] else "")
+    extra = "".join(f" · {counts[v]} {v}" for v in (CONTROL, INHERITED) if counts.get(v))
+    return f"verify-red: {line}{extra}"
 
 
 def _key(nodeid: str) -> tuple[str, ...]:
@@ -235,6 +393,9 @@ class Change:
     selected: list[tuple[str, ...]]  # (file, class..., function) of each new or edited test
     pre_existing: int
     added: frozenset[str]  # identifiers the code change defines
+    dep_only: frozenset[tuple[str, ...]] = frozenset()  # selected for a changed table, not a body
+    data_files: tuple[str, ...] = ()  # test-side files that are not Python: goldens, fixtures
+    renamed_from: dict[str, str] = field(default_factory=dict)  # test file -> its path at the base
 
 
 def read_change(top: Path, mb: str) -> Change:
@@ -250,13 +411,45 @@ def read_change(top: Path, mb: str) -> Change:
         before = _show(top, mb, p)
         added |= defined_names((top / p).read_text(errors="replace")) - defined_names(before)
         added |= module_names(p) if before is None else set()
-    selected, pre_existing = [], 0
-    for f in (p for p in test_side if is_test_file(p) and (top / p).is_file()):
+    data_files = tuple(p for p in test_side if not p.endswith(".py"))
+    readers = _tests_reading(top, [PurePosixPath(p).name for p in data_files])
+    selected, pre_existing, dep_only = [], 0, set()
+    for f in sorted({p for p in test_side if p.endswith(".py")} | readers):
+        if not (top / f).is_file() or not is_test_file(f):
+            continue
         head = (top / f).read_text(errors="replace")
-        touched = touched_tests(_show(top, mb, renamed_from.get(f, f)), head)
-        selected += [(f, *k) for k in sorted(touched)]
-        pre_existing += len(_test_defs(head)) - len(touched)
-    return Change(test_side, code, selected, pre_existing, frozenset(added))
+        base_src = _show(top, mb, renamed_from.get(f, f))
+        touched = touched_tests(base_src, head)
+        via_table = table_touched_tests(base_src, head) - touched
+        if f in readers:  # the data it reads changed: every test in it is claimed
+            touched = set(_test_defs(head))
+            via_table = set()
+        selected += [(f, *k) for k in sorted(touched | via_table)]
+        dep_only |= {(f, *k) for k in via_table}
+        pre_existing += len(_test_defs(head)) - len(touched | via_table)
+    return Change(
+        test_side,
+        code,
+        selected,
+        pre_existing,
+        frozenset(added),
+        frozenset(dep_only),
+        data_files,
+        {f: b for f, b in renamed_from.items() if f in test_side},
+    )
+
+
+def _tests_reading(top: Path, names: list[str]) -> set[str]:
+    """The test files whose source mentions one of these data files by name."""
+    if not names:
+        return set()
+    listed = git("ls-files", "--cached", "--others", "--exclude-standard", "-z", cwd=top)
+    found = set()
+    for p in (p for p in listed.split("\0") if p and is_test_file(p) and (top / p).is_file()):
+        text = (top / p).read_text(errors="replace")
+        if any(n in text for n in names):
+            found.add(p)
+    return found
 
 
 # ---------------------------------------------------------------------------
@@ -344,21 +537,93 @@ def scratch_env(home: Path) -> dict[str, str]:
     return env
 
 
-def run_pytest(
-    python: str, tree: Path, work: Path, name: str, timeout: float, head_pkgs: set[str]
-) -> Run:
-    record = work / f"{name}.jsonl"
+def pytest_env(tree: Path, work: Path, record: Path) -> dict[str, str]:
     roots = [*map(str, import_roots(tree)), str(work / "stubs"), str(work / "plugin")]
-    env = {
+    return {
         **os.environ,
         **scratch_env(work / "home"),
         # Both runs import one tree whose sources change in between; a .pyc the
         # first wrote (same size, same mtime second) would serve it to the second.
         "PYTHONDONTWRITEBYTECODE": "1",
+        # A cell's identity includes the repr of its values; a set of strings
+        # reprs in another order in another process unless hashing is fixed.
+        "PYTHONHASHSEED": "0",
         "PYTHONPATH": os.pathsep.join([*roots, os.environ.get("PYTHONPATH", "")]),
         "VERIFY_RED_RECORD": str(record),
         "VERIFY_RED_SELECT": str(work / "select.json"),
     }
+
+
+BASE_COLLECT_TIMEOUT = 60  # seconds: nothing runs, so a file that needs longer is not collecting
+
+
+Cell = tuple[tuple[str, ...], str]  # (file, class..., function), the parameter values
+
+
+@dataclass
+class Base:
+    """What the merge base's test files collect to, keyed by a cell's identity: the
+    test function and its parameter values, never the generated node id."""
+
+    controls: dict[Cell, str | None]  # the control reason a cell carried there (any origin)
+    bad: dict[Cell, list[str]]  # where a refusable mark on it came from
+    failed: set[str]  # test files (head paths) that did not collect at the base
+    timed_out: bool = False
+
+    def values_of(self, key: tuple[str, ...]) -> set[str]:
+        return {v for k, v in self.controls if k == key}
+
+
+def collect_base(
+    python: str,
+    tree: Path,
+    work: Path,
+    files: dict[str, str],
+    timeout: float,
+    head_pkgs: set[str],
+) -> Base:
+    """Collect-only run of the merge base's copy of each test file (`files`: head
+    path -> base path). Nothing runs. A file absent at the base is all new; one that
+    does not collect there is reported, and its cells count as new."""
+    present = {h: b for h, b in files.items() if (tree / b).is_file()}
+    if not present:
+        return Base({}, {}, set())
+    back = {b: h for h, b in present.items()}
+    record = work / "base.jsonl"
+    env = {**pytest_env(tree, work, record), "VERIFY_RED_BASE_COLLECT": "1"}
+    check_imports(python, tree, work / "stubs", env, head_pkgs)
+    cmd = [python, "-m", "pytest", *sorted(back), "-p", "verify_red_record"]
+    timed_out = False
+    try:
+        with open(work / "base.log", "w") as out:
+            subprocess.run(
+                [*cmd, "-p", "no:cacheprovider", "--collect-only", "-q"]
+                + ["--continue-on-collection-errors"],
+                cwd=tree,
+                env=env,
+                stdout=out,
+                stderr=subprocess.STDOUT,
+                timeout=min(timeout, BASE_COLLECT_TIMEOUT),
+            )
+    except subprocess.TimeoutExpired:
+        timed_out = True
+    base = Base({}, {}, set(), timed_out)
+    for rec in map(json.loads, record.read_text().splitlines() if record.exists() else []):
+        if "collect" in rec:
+            base.failed.add(back.get(rec["collect"], rec["collect"]))
+        elif "base" in rec:
+            parts = _key(rec["base"])
+            cell = ((back.get(parts[0], parts[0]), *parts[1:]), rec["values"])
+            base.controls[cell] = rec["control"]
+            base.bad[cell] = rec["bad"]
+    return base
+
+
+def run_pytest(
+    python: str, tree: Path, work: Path, name: str, timeout: float, head_pkgs: set[str]
+) -> Run:
+    record = work / f"{name}.jsonl"
+    env = pytest_env(tree, work, record)
     check_imports(python, tree, work / "stubs", env, head_pkgs)
     files = sorted({k[0] for k in json.loads((work / "select.json").read_text())})
     cmd = [python, "-m", "pytest", *files, "-p", "verify_red_record", "-p", "no:cacheprovider"]
@@ -399,7 +664,9 @@ def run_pytest(
         final = final or next((r for r in recs if r["outcome"] == "skipped"), None)
         final = final or next((r for r in recs if r["when"] == "call"), None)
         if final:
-            results[nodeid] = final
+            # Where a refused marker came from can show in any phase, not only the deciding one.
+            bad = sorted({b for r in recs for b in r.get("bad", [])})
+            results[nodeid] = {**final, "bad": bad}
     return Run(results, collect_failed, timed_out)
 
 
@@ -415,8 +682,10 @@ def forget_stale_trees(top: Path) -> None:
             shutil.rmtree(gitdir.parent)
 
 
-def verify(python: str, top: Path, mb: str, change: Change, timeout: float) -> tuple[Run, Run]:
-    """(run without the fix, run with it), in one throwaway tree."""
+def verify(
+    python: str, top: Path, mb: str, change: Change, timeout: float
+) -> tuple[Run, Run, Base]:
+    """(run without the fix, run with it, the base's own cells), in one throwaway tree."""
     forget_stale_trees(top)
     head_pkgs = packages(top)
     work = Path(tempfile.mkdtemp(prefix="verify-red-"))
@@ -426,32 +695,59 @@ def verify(python: str, top: Path, mb: str, change: Change, timeout: float) -> t
         (work / "plugin").mkdir()
         shutil.copy(PLUGIN, work / "plugin")
         (work / "select.json").write_text(json.dumps(change.selected))
+        files = {k[0]: change.renamed_from.get(k[0], k[0]) for k in change.selected}
+        base = collect_base(python, tree, work, files, timeout, head_pkgs)
         overlay(top, tree, change.test_side)
         without = run_pytest(python, tree, work, "without", timeout, head_pkgs)
         overlay(top, tree, change.code)
-        return without, run_pytest(python, tree, work, "with", timeout, head_pkgs)
+        return without, run_pytest(python, tree, work, "with", timeout, head_pkgs), base
     finally:
         remove = ["git", "worktree", "remove", "--force", str(tree)]
         subprocess.run(remove, cwd=top, capture_output=True)
         shutil.rmtree(work, ignore_errors=True)
 
 
-def verdicts(change: Change, without: Run, with_fix: Run) -> list[tuple[str, str, str]]:
-    """(nodeid, verdict, detail) for every selected test, parameters expanded."""
+def _cell(nodeid: str, *records: dict | None) -> Cell:
+    """A cell's identity: its test function and its parameter values."""
+    rec = next((r for r in records if r), {})
+    return _key(nodeid), rec.get("values", "")
+
+
+def verdicts(
+    change: Change, without: Run, with_fix: Run, base: Base | None = None
+) -> list[tuple[str, str, str]]:
+    """(nodeid, verdict, detail) for every claimed cell, parameters expanded.
+
+    A cell is this PR's claim when its (test function, parameter values) pair is
+    absent at the merge base: a new function, a new row, a row whose values changed.
+    A test selected only because a table or helper changed is graded on those
+    cells alone; every cell of one whose body or data changed is claimed. The node
+    id is only a label (an inserted row shifts index ids; an edited row keeps its
+    explicit one). A control the base already carried on the same cell is
+    *inherited*."""
+    base = base or Base({}, {}, set())
     rows = []
+    seen: set[tuple[str, ...]] = set()
     for nodeid in sorted(set(with_fix.results) | set(without.results)):
         w, wo = with_fix.results.get(nodeid), without.results.get(nodeid)
+        cell = _cell(nodeid, w, wo)
+        seen.add(cell[0])
+        if cell[0] in change.dep_only and cell[1] in base.values_of(cell[0]):
+            continue  # a row the base had, untouched: not this PR's claim
+        control, inherited = (w or wo or {}).get("control"), cell in base.controls
+        if control is None and base.controls.get(cell) is not None:
+            control = base.controls[cell]  # refusable now, but the base had it too: inherited
         verdict, detail = classify(
             w,
             wo,
             collect_failed=nodeid.split("::")[0] in without.collect_failed,
-            control=(w or wo or {}).get("control"),
+            control=control,
+            inherited=inherited and base.controls.get(cell) is not None,
             added=change.added,
         )
         if verdict == NA and (w is None and with_fix.timed_out or wo is None and without.timed_out):
             detail = "not reached: the run timed out"
         rows.append((nodeid, verdict, detail))
-    seen = {_key(n) for n, _, _ in rows}
     for k in (k for k in change.selected if k not in seen):
         if k[0] in with_fix.collect_failed:
             detail = "its file does not collect with the fix"
@@ -463,6 +759,23 @@ def verdicts(change: Change, without: Run, with_fix: Run) -> list[tuple[str, str
     return rows
 
 
+def refusals(without: Run, with_fix: Run, base: Base) -> list[str]:
+    """Control markers a PR adds that the test did not declare on itself or on one of
+    its parameters, each with where it came from. One the base already had on the
+    same cell is not this PR's to answer for."""
+    out: set[str] = set()
+    for nodeid in set(with_fix.results) | set(without.results):
+        w, wo = with_fix.results.get(nodeid), without.results.get(nodeid)
+        cell = _cell(nodeid, w, wo)
+        bad = {b for r in (w, wo) if r for b in r.get("bad", [])}
+        for origin in sorted(bad - set(base.bad.get(cell, []))):
+            out.add(
+                f"{nodeid.split('::')[0]}: control marker not declared on the test or one of "
+                f"its parameters: {origin} ({'::'.join(cell[0][1:])})"
+            )
+    return sorted(out)
+
+
 # ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
@@ -471,7 +784,9 @@ LEGEND = (
     "*red* (not listed): fails without the fix -- the evidence a review wants. *import-only*: "
     "fails only because a name the PR adds is missing -- weak. *unexpected pass*: passes "
     "without the fix, so it does not test the change (`@pytest.mark.control(reason=...)` "
-    "marks a deliberate negative control). *n/a*: no claim."
+    "marks a deliberate negative control). *inherited*: passes without the fix and its "
+    "control marker was already on that test at the merge base -- not a failure, not "
+    "evidence. *n/a*: no claim."
 )
 
 
@@ -491,22 +806,29 @@ def report(args: argparse.Namespace) -> tuple[dict, str]:
     change = read_change(top, mb)
     subjects = git("log", "--format=%s", f"{mb}..HEAD", cwd=top).splitlines()
     checked_out = git("rev-parse", "HEAD", cwd=top).strip()
+    fix_typed = is_fix_typed(args.title or "", subjects)
     evidence: dict = {
         "pr": args.pr,
+        "fix_typed": fix_typed,
         # CI checks out the PR's merge commit, which joins to nothing: the PR's
         # own head is passed in (--head-sha), the merge commit kept apart (B5).
         "head": args.head_sha or checked_out,
         "merge_commit": checked_out,
         "merge_base": mb,
-        "fix_commits": sum(bool(re.match(r"fix(\(.*\))?!?:", s)) for s in subjects),
+        "fix_commits": sum(bool(FIX_SUBJECT.match(s)) for s in subjects),
         "verify_red": None,
         "diff_coverage": None,
     }
     out = ["## verify-red: do this PR's new tests fail without its change?", ""]
     ci = os.environ.get("GITHUB_ACTIONS") == "true"
     code = [p for p in change.code if not is_inert(p)]
+    counts = dict.fromkeys(VERDICTS, 0)
+    refused: list[str] = []
     if not code or not change.selected:
-        if code:
+        if code and change.data_files:
+            named = ", ".join(change.data_files[:3])
+            why = f"no test selected: no test reads {named}"
+        elif code:
             why = "no new or edited test"
         elif not change.test_side and not change.code:
             why = "empty diff: no changed files"
@@ -524,11 +846,17 @@ def report(args: argparse.Namespace) -> tuple[dict, str]:
         if code and ci:
             print(f"::warning title=verify-red::this PR changes code but has {why}", flush=True)
     else:
-        rows = verdicts(change, *verify(args.python, top, mb, change, args.timeout))
+        without, with_fix, base = verify(args.python, top, mb, change, args.timeout)
+        rows = verdicts(change, without, with_fix, base)
+        refused = refusals(without, with_fix, base)
         counts = {v: sum(r[1] == v for r in rows) for v in VERDICTS}
         n = change.pre_existing
         tail = f"({n} pre-existing test{'s' * (n != 1)} in these files not run)"
         out += [f"{summary_line(counts)} {tail}", ""]
+        out += [f"base collect failed for {f}: its cells count as new" for f in sorted(base.failed)]
+        if base.timed_out:
+            out.append("base collect timed out: every cell counts as new")
+        out += [""] if base.failed or base.timed_out else []
         listed = [r for r in rows if r[1] != RED]
         if listed:
             out += ["| Test | Verdict | Detail |", "|---|---|---|"]
@@ -541,6 +869,19 @@ def report(args: argparse.Namespace) -> tuple[dict, str]:
                     f"::warning file={t.split('::')[0]},title=verify-red::{t} passes without the fix"
                 )
         evidence["verify_red"] = {**counts, "pre-existing": n}
+    touches_code = any(PurePosixPath(p).parts[0] in ("pyrite", "extensions") for p in code)
+    evidence["failures"] = failures(
+        counts,
+        fix_typed=fix_typed,
+        touches_code=touches_code,
+        enforce=args.enforce_fix,
+        refused=refused,
+        selected=len(change.selected),
+        data_files=change.data_files,
+    )
+    if evidence["failures"]:
+        out += ["", "**verify-red fails this PR:**", ""]
+        out += [f"- {f}" for f in evidence["failures"]]
     if args.diff_cover_json and Path(args.diff_cover_json).is_file():
         dc = json.loads(Path(args.diff_cover_json).read_text())
         d = evidence["diff_coverage"] = {
@@ -566,6 +907,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--diff-cover-json", help="diff-cover's JSON report, carried into --json")
     parser.add_argument("--pr", type=int, help="the pull request number, for --json")
     parser.add_argument("--head-sha", help="the PR's head commit, for --json (CI: not the merge)")
+    parser.add_argument("--title", help="the pull request title, for --enforce-fix")
+    parser.add_argument(
+        "--enforce-fix",
+        action="store_true",
+        help="local use only (CI does not pass it, #1074): exit 1 for a fix-typed PR that "
+        "changes pyrite/ or extensions/ and has 0 red "
+        "tests or an unexpected pass",
+    )
     args = parser.parse_args(argv)
     try:
         evidence, text = report(args)
@@ -581,7 +930,10 @@ def main(argv: list[str] | None = None) -> int:
             fh.write(text + "\n")
     if args.json:
         Path(args.json).write_text(json.dumps(evidence, indent=2) + "\n")
-    return 0
+    for reason in evidence["failures"]:
+        print(f"::error title=verify-red::{reason}", file=sys.stdout, flush=True)
+        print(f"verify-red: {reason}", file=sys.stderr)
+    return 1 if evidence["failures"] else 0
 
 
 if __name__ == "__main__":

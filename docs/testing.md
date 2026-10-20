@@ -1,15 +1,25 @@
 # Test evidence: verify-red and diff coverage
 
-Two advisory checks run on every pull request that changes backend code. Each
-answers a question the other cannot:
+Two checks run on every pull request that changes backend code. Each answers a
+question the other cannot:
 
 | Check | Question | Blind spot |
 |---|---|---|
 | **Diff coverage** | Is every changed line run by some test? | Code that runs but whose result no test checks |
 | **verify-red** | Do the PR's new tests notice the change as a whole? | Which part of the change each test notices (per-hunk revert, planned for 0.27) |
 
-Neither fails `gate` yet. Each PR's numbers go into a `test-evidence` artifact;
-after about ten PRs the maintainer decides what, if anything, becomes required.
+Both checks are **advisory**: neither is in `gate`'s needs, so neither blocks a
+merge. `verify-red` reports a verdict table and a summary line on every backend
+PR, and CI does not pass it `--enforce-fix` (a flag for local use that makes the
+script exit 1 for a fix-typed PR with no test, 0 red or an unexpected pass).
+Gating waits for #1104's model, because the claim rule below is not yet sound
+for every way a test gets its cases. What `verify-red` does do on its own (#1074):
+
+- It grades against the merge commit's first parent (`HEAD^1`), so a PR merged
+  since yours was opened is not graded as yours.
+- It refuses a `@pytest.mark.control` that the test did not declare on itself or
+  one of its parameters (the job goes red; nothing is blocked).
+- Each PR's numbers go into a `test-evidence` artifact.
 
 ## verify-red
 
@@ -75,11 +85,19 @@ verify-red: 3 red · 1 import-only · 0 unexpected pass · 0 n/a (12 pre-existin
   either way, such as a "this still works" guard, add
   `@pytest.mark.control(reason="...")`, or the marker plus a docstring that
   says why. It then counts as **control**. A bare marker is rejected and the
-  test stays an unexpected pass.
+  test stays an unexpected pass. The marker is read from what pytest records for
+  each test cell; see "What a `control` marker may be" under Known limits.
+- **inherited**: the test passes without the fix and its control marker was
+  already on that cell -- the same function and parameter values -- at the merge
+  base (the runner does a collect-only run of the base's test files). Not a failure, and not evidence: the PR still needs
+  a red test of its own.
 - **n/a**: no claim. The test failed or skipped with the fix, skipped without
   it, was not collected, or its run timed out.
 
-Tests the PR did not add or edit are counted, not listed. Workers run
+Tests the PR did not add or edit are counted, not listed. A test is also
+selected when a module-level table or helper its decorators use changed (a new
+`parametrize` row); then only the cells whose parameter values the base did not
+have are graded. Workers run
 `scripts/verify-red.sh` once before reporting and paste the summary line. A
 reviewer reads the CI job's line instead of running it again.
 
@@ -100,6 +118,55 @@ These are not fixed; weigh the line with them in mind.
 - **Any Markdown counts as not code.** A PR that changes only a skill,
   `CONTRIBUTING.md` or other `.md` file, plus a test that pins its text, has
   nothing to verify.
+- **What a `control` marker may be, and what is caught.** It counts only when
+  written on the test function or on one of its parameters
+  (`pytest.param(marks=...)`), however the marker object was built (a helper, a
+  module constant, `_grid()`). The runner reads each cell's markers from pytest
+  and refuses, with an error naming the file, the origin and the test, a
+  `control` that came from anywhere else: a class decorator, a module or class
+  `pytestmark` (a constant too), a `pytest_collection_modifyitems` hook, an
+  autouse fixture's `request.applymarker`, or `applymarker`/`add_marker` in the
+  test body or a teardown. A refused marker is no exemption either: the cell is
+  an *unexpected pass*. One the merge base already had on the same cell is
+  *inherited*, not an error. **Not caught:** a hook that rewrites the
+  function's own `pytestmark` list before pytest builds the items, which looks
+  exactly like a decorator; and a refusable mark whose base copy was not
+  collectable (the file then counts as new).
+- **The claim rule is sound only for module-level tables.** A cell is a test
+  function and its parameter values, not a node id: the runner records each
+  cell's `callspec.params` at collection, at the base and at the head, and a
+  cell is the PR's claim when that pair is absent at the base (whatever its
+  `id`, wherever it sits; a reordered table claims nothing). That is what it
+  does for a module-level table named in the test function's own decorators
+  (`CASES = [...]`, `@pytest.mark.parametrize("a, b", CASES)`), including a
+  helper that builds one in the same module. **What it does not handle:**
+  - **Inline `parametrize` lists** (the common shape here) change the test
+    function, so the whole function is graded, old cells included.
+  - **Class-level** parametrization, **fixture-params**
+    (`@pytest.fixture(params=...)`), **generate-hook** parametrization
+    (`pytest_generate_tests`) and **imported tables** change no test function
+    in the file, so a changed row selects nothing and is reported as no test
+    added or edited.
+
+  Gating waits for #1104's model. The base is collected from its own copy of the
+  test files (capped at 60 s); a file that does not collect there is named in
+  the summary and all its cells count as new. A value whose `repr` carries a
+  memory address is compared without it; a value whose `repr` differs between
+  runs reads as a new row.
+- **A fix that changes only test data** (a golden, a fixture file) is graded by
+  the test files whose source names that file: every test in them is claimed. If
+  no test names it, the summary says `no test reads <file>` (and `--enforce-fix`
+  would fail it).
+- **`verify-red` runs on pull requests only.** It is skipped in the merge queue
+  (`merge_group`). It is not in `gate` at all (advisory), and it does not re-run
+  on a title or body edit: the `pull_request` event is not asked for `edited`,
+  since that cancels and restarts all of CI.
+- **CI's environment decides.** The `verify-red` job has no Postgres service, so
+  every `[postgres]` cell is *n/a* there. On a machine with
+  `PYRITE_TEST_PG_URL` set those cells run and can pass without the fix, so a
+  local run can show more *unexpected pass* than CI does (#1053 showed 2 locally
+  and none in CI). What CI prints is the line a reviewer reads, and your local
+  line is evidence, not the verdict; to see CI's line, unset `PYRITE_TEST_PG_URL`.
 - **Any docstring satisfies `control`.** The runner can't tell a docstring
   that says why the test passes without the fix from one that only says what
   it tests.
@@ -144,7 +211,7 @@ The `verify-red` job waits for `test`, whatever its result, and writes
   "merge_base": "<sha>",
   "fix_commits": 1,
   "verify_red": {"red": 3, "import-only": 1, "unexpected pass": 0, "n/a": 0,
-                 "control": 0, "pre-existing": 12},
+                 "control": 0, "inherited": 0, "pre-existing": 12},
   "diff_coverage": {"percent": 87.5, "lines": 40, "uncovered": 5}
 }
 ```

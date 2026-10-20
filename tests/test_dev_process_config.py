@@ -205,9 +205,13 @@ class TestFixCommitCheckRunsInCI:
         assert checkout.get("with", {}).get("fetch-depth") == 0, checkout
 
     def test_the_step_walks_the_pr_commit_range(self, ci):
+        # The checkout is the PR's merge commit; its first parent is the base
+        # tip *now*. base.sha is the tip when the PR last opened or synced, so
+        # dev's commits merged since would be graded as this PR's (#1074).
         step = self._step(ci)
         run = str(step.get("run", ""))
-        assert "github.event.pull_request.base.sha" in run, run
+        assert "HEAD^1 HEAD" in run, run
+        assert "github.event.pull_request.base.sha" not in run, run
 
 
 class TestPrePushStage:
@@ -1601,7 +1605,14 @@ class TestTheRedLineIsFirstAndEveryGatingRunLeavesATimingRecord:
     def test_gate_changes_kb_and_frontend_keep_their_names_and_gate_aggregates_the_shards(self, ci):
         # `shard-report` (tests Q2) is the shards' union proof; the shard legs are
         # `test (<py>, <k>)` and are aggregated by `gate`, never required by name.
-        assert ci["jobs"]["gate"]["needs"] == ["changes", "kb", "test", "shard-report", "frontend"]
+        # `verify-red` (#1074) is advisory: never in `gate`'s needs.
+        assert ci["jobs"]["gate"]["needs"] == [
+            "changes",
+            "kb",
+            "test",
+            "shard-report",
+            "frontend",
+        ]
         assert "name" not in ci["jobs"]["test"], "`test (<python>)` is the matrix leg's name"
         assert "name" not in ci["jobs"]["gate"], "`gate` is looked up by exact name"
 

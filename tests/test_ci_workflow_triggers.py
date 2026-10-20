@@ -96,6 +96,14 @@ class TestMergeGroupTrigger:
         assert set(triggers["pull_request"]["branches"]) == {"main", "dev", "arch/**"}
 
 
+class TestPullRequestEventTypes:
+    def test_a_body_edit_does_not_restart_ci(self, triggers):
+        # `edited` fires on every title or body edit and cancels and restarts all of
+        # CI. verify-red is advisory, so it does not need a retitle to re-run (#1074).
+        types = set(triggers["pull_request"].get("types", ["opened", "synchronize", "reopened"]))
+        assert "edited" not in types
+
+
 class TestGateIsReachableOnAMergeGroup:
     """`gate` is the one required check; the queue blocks until it reports."""
 
