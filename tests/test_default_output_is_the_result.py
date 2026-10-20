@@ -891,7 +891,7 @@ class TestIndexEmbedUnavailableModel:
         try:
             result = CliRunner().invoke(app, ["index", "embed"])
 
-            assert result.exit_code == 0, result.output
+            assert result.exit_code == 1, result.output  # nothing embedded: never 0
             assert result.output.count("Could not load the embedding model") == 1
             assert "'configured-offline-model'" in result.output
             assert "cache" in result.output.lower()

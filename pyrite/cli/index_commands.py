@@ -394,7 +394,10 @@ def index_embed(
     queue_worker = EmbeddingWorker(db, model_name=config.settings.embedding_model)
     if queue_worker.has_pending() and (model_problem := queue_worker.model_unavailable()):
         typer.echo(model_problem)
-        return
+        # Nothing was embedded and the queued entries stay owed: the batch rule
+        # (docs/json-contracts.md, "Exit codes (CLI)": offline with nothing
+        # embedded is 1, never 0).
+        exit_unless_whole(queue_worker.get_status()["pending"], 0)
 
     by_kb = settle_embed_queue_by_kb(db, model_name=config.settings.embedding_model)
     from_queue = sum(by_kb.values()) if kb_name is None else by_kb.get(kb_name, 0)
