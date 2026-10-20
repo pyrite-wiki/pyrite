@@ -345,42 +345,32 @@ def rest_api_env(indexed_test_env):
 
 @pytest.fixture
 def make_client(tmp_path):
-    """Factory fixture: build a `TestClient` + `PyriteConfig` + `PyriteDB`
-    for a REST API test, replacing the hand-rolled `_make_client` helpers
-    duplicated across test_api_tiers.py, test_api_wikilinks.py,
-    test_api_security.py, and test_repo_endpoints.py.
+    """Factory fixture: a `TestClient` + `PyriteConfig` + `PyriteDB` for a
+    REST API test, built as a `tests._world` world (#1077).
 
-    Owns every DB opened on its behalf -- its own, AND the second one
-    `create_app()` opens on `application.state.pyrite_db` (see below) --
-    plus the app's index worker. Workers are joined and DBs closed at
-    teardown, in that order, before pytest removes `tmp_path`.
-    This is what those hand-rolled helpers were missing --
-    tests-leak-open-pyritedb-connections-into-temporarydirectory-teardown
-    (an unclosed WAL connection) and GitHub #55 (an index-worker thread
-    still writing when the directory is removed). Also used to build
-    extra dbs/apps beyond the returned one; call it more than once per
-    test and every db/worker it creates is tracked and cleaned up.
+    The app is `create_app(config)` over a config the real loader read from
+    the world's `config.yaml`, with create_app's own `get_db` (a per-request
+    session) and the lifespan running. `db` is the app's own
+    `app.state.pyrite_db` -- one database, not a second connection beside
+    it. Every world this fixture builds is closed at teardown (index workers
+    joined, the app shut down, every DB closed), before pytest removes
+    `tmp_path`: the teardown the hand-rolled `_make_client` helpers were
+    missing (tests-leak-open-pyritedb-connections-into-temporarydirectory-
+    teardown, GitHub #55). Call it more than once per test for more apps.
 
     Usage:
         client, config, db = make_client(api_key="secret", kb_name="test-kb")
 
-    `tmp_path` (not `tempfile.TemporaryDirectory()`) is a second line of
-    defence: pytest's default retention policy does not delete it during
-    the run, so a late writer cannot fail this session. That is a
-    mitigation, not the fix -- the fix is closing every connection below,
-    because the retention policy is a default a project can change.
+    `dependency_overrides` is for seams that are not the database (an
+    external service a test stubs). Overriding `get_db` through it is
+    counted by `tests/test_production_wiring_guard.py`, which only shrinks.
     """
     if not _HAS_FASTAPI:
         pytest.skip("fastapi not installed")
 
-    from starlette.testclient import TestClient
+    from tests._world import build_world
 
-    from pyrite.server.api import create_app, get_config, get_db, get_index_worker
-    from pyrite.services.index_worker import IndexWorker
-
-    created_dbs: list[PyriteDB] = []
-    created_workers: list[IndexWorker] = []
-    counter = {"n": 0}
+    worlds: list = []
 
     def _make(
         api_key: str = "",
@@ -392,56 +382,27 @@ def make_client(tmp_path):
         register_user: tuple[str, str] | None = None,
         dependency_overrides: dict | None = None,
     ):
-        counter["n"] += 1
-        work_dir = tmp_path / f"client-{counter['n']}"
-        db_path = work_dir / "index.db"
-        kb_path = work_dir / "kb"
-        kb_path.mkdir(parents=True, exist_ok=True)
-
-        settings_kwargs: dict = {"index_path": db_path, "api_key": api_key}
+        work_dir = tmp_path / f"client-{len(worlds) + 1}"
+        settings: dict = {"index_path": work_dir / "index.db", "api_key": api_key}
         if api_keys is not None:
-            settings_kwargs["api_keys"] = api_keys
+            settings["api_keys"] = api_keys
         if cors_origins is not None:
-            settings_kwargs["cors_origins"] = cors_origins
+            settings["cors_origins"] = cors_origins
         if auth is not None:
-            settings_kwargs["auth"] = auth
+            settings["auth"] = auth
         if extra_settings:
-            settings_kwargs.update(extra_settings)
+            settings.update(extra_settings)
 
-        config = PyriteConfig(
-            knowledge_bases=[KBConfig(name=kb_name, path=kb_path, kb_type="generic")],
-            settings=Settings(**settings_kwargs),
+        world = build_world(
+            work_dir,
+            kbs=[KBConfig(name=kb_name, path=work_dir / "kb", kb_type="generic")],
+            settings=settings,
         )
-
-        application = create_app(config=config)
-        db = PyriteDB(db_path)
-        created_dbs.append(db)
-        application.dependency_overrides[get_config] = lambda: config
-        application.dependency_overrides[get_db] = lambda: db
-
-        # `create_app()` eagerly seeds the KB registry, which calls its own
-        # `_app_get_db()` and opens a SECOND PyriteDB on the same file,
-        # stored as `application.state.pyrite_db`. The overrides above
-        # redirect dependency injection but do NOT close that connection,
-        # and some routes read it directly rather than through DI (the
-        # export path in pyrite/server/endpoints/kbs.py). Nothing in
-        # pyrite/ ever closes `app.state.pyrite_db`, so unless this fixture
-        # owns it too, it stays open in WAL mode with its -wal/-shm files
-        # live -- the very leak this fixture exists to end, merely hidden
-        # by tmp_path not being deleted during the run.
-        app_state_db = getattr(application.state, "pyrite_db", None)
-        if app_state_db is not None and app_state_db is not db:
-            created_dbs.append(app_state_db)
-
-        index_worker = IndexWorker(db, config)
-        created_workers.append(index_worker)
-        application.dependency_overrides[get_index_worker] = lambda: index_worker
+        worlds.append(world)
 
         if dependency_overrides:
             for dep, override in dependency_overrides.items():
-                application.dependency_overrides[dep] = override
-
-        client = TestClient(application)
+                world.app.dependency_overrides[dep] = override
 
         if register_user is not None:
             # The operator path, not /auth/register: registration is closed
@@ -449,28 +410,17 @@ def make_client(tmp_path):
             from tests.auth_seed import seed_and_sign_in
 
             username, password = register_user
-            seed_and_sign_in(client, username, password)
+            seed_and_sign_in(world.client, username, password)
 
-        return client, config, db
+        return world.client, world.config, world.db
 
     yield _make
 
-    # Teardown order matters: join/stop every index worker's background
-    # threads BEFORE closing the DB connections they write through, and
-    # both before pytest removes tmp_path.
-    #
-    # Each step is individually guarded: an unguarded loop lets one failing
-    # join or close leak every DB after it, which is the same class of bug
-    # this fixture exists to fix.
+    # Every world is closed even if one fails; the first error is re-raised.
     errors: list[BaseException] = []
-    for index_worker in created_workers:
+    for world in worlds:
         try:
-            index_worker.wait_for_idle(timeout=10)
-        except BaseException as exc:  # noqa: BLE001 - re-raised below
-            errors.append(exc)
-    for db in created_dbs:
-        try:
-            db.close()
+            world.close()
         except BaseException as exc:  # noqa: BLE001 - re-raised below
             errors.append(exc)
     if errors:
