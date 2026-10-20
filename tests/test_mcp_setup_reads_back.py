@@ -3117,6 +3117,9 @@ def test_the_report_is_true_of_the_file_and_every_printed_command_works(
 
     suggestion = item.get("suggestion", "")
     by_hand = item.get("by_hand", [])
+    if name.startswith("restore-reason-"):
+        # The public cause (#841): the report names the real obstacle.
+        assert case.suggestion in suggestion, suggestion
     if now is UNREADABLE:
         # Claude Code replaces a file it cannot read: no command that runs it.
         said = [suggestion, *by_hand, *item["notes"]]
@@ -3658,29 +3661,3 @@ def test_the_suggestion_after_a_change_that_left_no_entry_says_what_a_re_run_wri
     assert item["status"] == "failed" and "removed" in item, item
     assert "not what the previous entry held" in item["suggestion"], item["suggestion"]
     assert "write tier" in item["suggestion"], item["suggestion"]
-
-
-@pytest.mark.parametrize(
-    "name",
-    [
-        pytest.param(name, marks=_WAS_TRUE) if case.was_true else name
-        for name, case in CLAUDE_CODE_CASES.items()
-        if name.startswith("restore-reason-")
-    ],
-)
-def test_failed_change_names_the_actual_restore_obstacle(env, monkeypatch, exit_taken, name):
-    """Exercise the existing file/command contract, then pin the public cause."""
-    results = []
-    real_run = Target.run
-
-    def capture(target, *extra):
-        result = real_run(target, *extra)
-        results.append(result)
-        return result
-
-    monkeypatch.setattr(Target, "run", capture)
-    test_the_report_is_true_of_the_file_and_every_printed_command_works(
-        env, monkeypatch, exit_taken, name
-    )
-    item = only_client(results[0])
-    assert CLAUDE_CODE_CASES[name].suggestion in item["suggestion"], item["suggestion"]
