@@ -300,9 +300,14 @@ one entry alike) reports one `frontmatter_unmodellable` issue per such file,
 and `entry_id` and the reason in `message`. One rule decides both
 (`storage.file_operations.frontmatter_refusal`), so a file is listed exactly
 when an update of it is refused, for the same reason, at the same line.
-`get` of such a file (CLI, MCP `kb_get`, REST `GET`) is refused the same way
-as `update`: `VALIDATION_FAILED`, the reason and `(line N)` in the message, found
-by the file named `<id>.md` (#1035).
+A read is refused only when the file has no readable fields: `get` of a
+file with a tagged key, a complex key, a duplicate key, a root that is not a
+mapping, or a value JSON cannot hold (`!!set`) (CLI, MCP `kb_get`, REST
+`GET`) answers `VALIDATION_FAILED` with the reason (worded for a read, not an
+edit) and, for the #760 shapes, `(line N)`. A file whose frontmatter is one
+flow-style mapping still reads; only its update is refused. A duplicate-key
+or non-mapping-root file is found by the file named `<id>.md` only, since the
+reader cannot read its `id:` (#1035).
 Frontmatter that does not parse is not listed here: it is the reader's
 `malformed_frontmatter` row. A file that is not a regular file, cannot be
 read or is not UTF-8 is skipped, as the reconcile skips it.

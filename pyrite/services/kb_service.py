@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 if TYPE_CHECKING:
     from .kb_registry_service import KBRegistryService
@@ -65,7 +65,7 @@ from ..storage.file_operations import (
     TimestampText,
     Unset,
     apply,
-    may_be_unmodellable,
+    reason_for_read,
     unmodellable_in_text,
 )
 from ..storage.index import IndexManager, content_hash
@@ -873,7 +873,15 @@ class KBService:
         if found is None:
             return None
         path, digest, entry = found
-        return self._index_mgr.read_fields(entry, kb_name, path, content_hash=digest, row=row)
+        try:
+            return self._index_mgr.read_fields(entry, kb_name, path, content_hash=digest, row=row)
+        except TypeError as exc:
+            # A file with no readable fields: a tagged or complex key, or a
+            # value JSON cannot hold (a `!!set`). Refused, not a traceback
+            # (#1035). A file that reads (a flow-style root) never gets here:
+            # a read is refused only when it cannot be answered.
+            _refuse_unreadable_fields(path, entry_id, exc)
+            raise
 
     def _entry_file(
         self, kb_config: KBConfig, entry_id: str, row: dict[str, Any] | None
@@ -919,10 +927,6 @@ class KBService:
                 unreadable = unreadable or (path, exc)
                 continue
             if id_text(entry.id) == entry_id:
-                # A tagged or complex key loads but cannot be read into the
-                # index's fields (a non-string key): refuse it by the same rule.
-                if may_be_unmodellable(getattr(entry, "_source_frontmatter", None)):
-                    _refuse_unmodellable(raw, entry_id, "read")
                 return path, content_hash(raw), entry
         if unreadable is not None:
             self._unreadable_entry_file(kb_config.name, entry_id, *unreadable)
@@ -3680,7 +3684,22 @@ def _refuse_unmodellable(raw: bytes, entry_id: str, verb: str) -> None:
         return
     if why is not None:
         reason, line = why
+        if verb == "read":
+            reason = reason_for_read(reason)
         raise ValidationError(f"Cannot {verb} '{entry_id}': {reason} (line {line})")
+
+
+def _refuse_unreadable_fields(path: Path, entry_id: str, exc: Exception) -> NoReturn:
+    """``read_fields`` raised ``TypeError`` on a loaded entry: refuse it as the
+    #760 rule does when the rule names it (with its line), else as a value
+    Pyrite cannot read (a `!!set`)."""
+    try:
+        _refuse_unmodellable(path.read_bytes(), entry_id, "read")
+    except OSError:
+        pass
+    raise ValidationError(
+        f"Cannot read '{entry_id}': the frontmatter holds a value Pyrite cannot read ({exc})"
+    ) from exc
 
 
 def _refuse_unmodellable_named(repo: KBRepository, entry_id: str, verb: str) -> None:

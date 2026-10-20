@@ -721,6 +721,18 @@ def frontmatter_refusal(root: Node | None, y: YAML) -> tuple[tuple[str, Node | N
     return None, loaded
 
 
+def reason_for_read(reason: str) -> str:
+    """A refusal's reason worded for a read: the same fact without the
+    edit-side tail ("not edited", "the body is not written either", "so it
+    edits nothing in this file"), which says nothing true of a ``get``."""
+    for tail in (f"; not edited{_BODY_TOO}", _BODY_TOO, "; not edited"):
+        reason = reason.replace(tail, "")
+    return reason.replace(
+        " that Pyrite cannot model, so it edits nothing in this file, body included",
+        ", which Pyrite cannot model",
+    )
+
+
 def unmodellable_in_text(text: str) -> tuple[str, int] | None:
     """``unmodellable_reason`` for a whole file's text: ``(reason, line)``, or
     None when the file has no YAML frontmatter or it can be modelled. The one

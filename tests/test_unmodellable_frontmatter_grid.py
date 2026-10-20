@@ -170,6 +170,13 @@ SURFACES = {
 }
 
 
+READ_SURFACES = ("cli.get", "mcp.kb_get", "rest.get")
+UPDATE_SURFACES = ("cli.update", "mcp.kb_update", "rest.put", "rest.patch")
+
+#: The read wording says nothing about editing or writing: a read edits nothing.
+EDIT_WORDS = ("edit", "written", "not edited")
+
+
 @pytest.mark.parametrize("surface", sorted(SURFACES))
 @pytest.mark.parametrize("shape", sorted(SHAPES))
 def test_an_unmodellable_file_answers_validation_failed_with_reason_and_line(
@@ -185,3 +192,58 @@ def test_an_unmodellable_file_answers_validation_failed_with_reason_and_line(
     assert words in message, message
     assert f"line {line}" in message, message
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("surface", READ_SURFACES)
+@pytest.mark.parametrize("shape", sorted(SHAPES))
+def test_a_refused_read_does_not_talk_about_editing(tmp_path: Path, shape: str, surface: str):
+    config, _path = _build(tmp_path, SHAPES[shape][0])
+    _code, message = SURFACES[surface](config)
+    assert not any(word in message for word in EDIT_WORDS), message
+
+
+#: Files whose frontmatter has readable fields and that ``dev`` reads: a read
+#: of each still reads (a read is refused only when the file has no readable
+#: fields). name -> file text, each the entry ``shape``.
+READABLE: dict[str, str] = {
+    "flow-style-root": f"---\n{{id: {ID}, title: S, type: note}}\n---\n\nText.\n",
+    "anchor-and-alias": f"---\nid: {ID}\ntitle: S\ntype: note\nbase: &b 1\nref: *b\n---\n\nText.\n",
+    "merge-key": (
+        f"---\nid: {ID}\ntitle: S\ntype: note\nbase: &b {{a: 1}}\nm:\n  <<: *b\n  c: 2\n---\n\nText.\n"
+    ),
+    "flow-value": f"---\nid: {ID}\ntitle: S\ntype: note\ntags: [a, b]\nextra: {{k: v}}\n---\n\nText.\n",
+    "int-key": f"---\nid: {ID}\ntitle: S\ntype: note\nextra:\n  1: one\n---\n\nText.\n",
+    "comments-crlf": (
+        f"---\r\n# c\r\nid: {ID}\r\ntitle: S  # t\r\ntype: note\r\n---\r\n\r\nText.\r\n"
+    ),
+    "bom": f"\ufeff---\nid: {ID}\ntitle: S\ntype: note\n---\n\nText.\n",
+}
+
+
+@pytest.mark.parametrize("surface", READ_SURFACES)
+@pytest.mark.parametrize("name", sorted(READABLE))
+def test_a_file_dev_reads_still_reads(tmp_path: Path, name: str, surface: str):
+    config, _path = _build(tmp_path, READABLE[name])
+    code, message = SURFACES[surface](config)
+    assert code == "OK", (code, message)
+
+
+@pytest.mark.parametrize("surface", UPDATE_SURFACES)
+def test_a_flow_style_root_is_still_refused_for_update_with_its_line(tmp_path: Path, surface: str):
+    config, path = _build(tmp_path, READABLE["flow-style-root"])
+    before = path.read_bytes()
+    code, message = SURFACES[surface](config)
+    assert code == "VALIDATION_FAILED", (code, message)
+    assert "flow-style" in message and "line 2" in message, message
+    assert path.read_bytes() == before
+
+
+SET_VALUE = f"---\nid: {ID}\ntitle: S\ntype: note\ns: !!set {{a, b}}\n---\n\nText.\n"
+
+
+@pytest.mark.parametrize("surface", READ_SURFACES)
+def test_a_set_value_is_a_refusal_not_a_traceback(tmp_path: Path, surface: str):
+    config, _path = _build(tmp_path, SET_VALUE)
+    code, message = SURFACES[surface](config)
+    assert code == "VALIDATION_FAILED", (code, message)
+    assert f"'{ID}'" in message and not any(w in message for w in EDIT_WORDS), message
