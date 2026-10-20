@@ -413,6 +413,40 @@ def make_client(tmp_path):
 
 
 @pytest.fixture
+def cli_world(tmp_path):
+    """Factory fixture: a `tests._world` world for driving the CLI (#1077).
+
+    `cli_world()` builds a world with one generic KB, `test-kb`; pass `kbs=`
+    and `settings=` as to `build_world`. The process's config location points
+    at the world's config dir for the rest of the test, so every in-process
+    `pyrite` command -- `world.cli(...)` or a `CliRunner` of your own -- reads
+    the world's `config.yaml` through the real `load_config`, and a command
+    that writes the config (`kb add`) is read back by the next one. Nothing
+    patches `load_config`; `tests/test_production_wiring_guard.py` counts the
+    tests that still do. Every world is closed at teardown.
+    """
+    import contextlib
+
+    from tests._world import build_world
+
+    stack = contextlib.ExitStack()
+    count = {"n": 0}
+
+    def _make(kbs=None, settings=None):
+        count["n"] += 1
+        root = tmp_path / f"cli-world-{count['n']}"
+        if kbs is None:
+            kbs = [KBConfig(name="test-kb", path=root / "kb", kb_type="generic")]
+        world = build_world(root, kbs=kbs, settings=settings, rest=False)
+        stack.callback(world.close)
+        stack.enter_context(world.pointed())
+        return world
+
+    with stack:
+        yield _make
+
+
+@pytest.fixture
 def console_width(monkeypatch):
     """Set the width of the Rich consoles the read commands print through.
 

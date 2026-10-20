@@ -183,3 +183,38 @@ def test_a_world_without_rest_builds_no_app(tmp_path):
         assert w.db.get_entry("n", KB)["title"] == "N"
     finally:
         w.close()
+
+
+# -- cli_world: the CLI over the real config dir, with no load_config patch --
+
+
+def test_cli_world_points_load_config_at_the_world(cli_world):
+    import pyrite.config as config_module
+
+    world = cli_world()
+    assert config_module.load_config.__module__ == "pyrite.config"
+    assert config_module.current_config_file() == world.config_dir / "config.yaml"
+    assert [kb.name for kb in load_config().knowledge_bases] == ["test-kb"]
+
+
+def test_a_kb_added_by_one_command_is_seen_by_the_next(cli_world, tmp_path):
+    """The escape class of #448/#363 and #1061: a KB registered by `kb add`
+    must reach later commands through the config the loader reads."""
+    world = cli_world()
+    new_kb = tmp_path / "added"
+    new_kb.mkdir()
+    (new_kb / "found.md").write_text(_note("found", "Found it"))
+
+    added = world.cli("kb", "add", str(new_kb), "--name", "added")
+    assert added.exit_code == 0, added.output
+    listed = world.cli("kb", "list", "--format", "json")
+    assert listed.exit_code == 0, listed.output
+    assert "added" in listed.output
+
+
+def test_cli_world_takes_its_own_kbs(cli_world, tmp_path):
+    world = cli_world(kbs=[KBConfig(name="mine", path=tmp_path / "mine")])
+    world.add_entry("mine", _note("m1", "Mine"))
+    result = world.cli("get", "m1", "-k", "mine", "--format", "json")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["title"] == "Mine"
