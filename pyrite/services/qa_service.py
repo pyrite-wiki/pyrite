@@ -185,6 +185,7 @@ class QAService:
         # folder that is missing or unreadable is one error for the KB, and
         # those checks are skipped, never passed or crashed (#950 round 2).
         if not self._report_unreadable_kb(issues, kb_name, tier=tier):
+            self._report_index_out_of_date(issues, kb_name)
             # Files whose frontmatter Pyrite cannot model (#760 (b)): no write
             # reaches them, so say so here with the line, as index health does.
             self._check_unmodellable_frontmatter(issues, kb_name)
@@ -238,6 +239,42 @@ class QAService:
             }
         )
         return True
+
+    def _report_index_out_of_date(self, issues: list[dict[str, Any]], kb_name: str) -> None:
+        """Add one ``index_out_of_date`` error when the index misses the files.
+
+        Every check above the folder pass reads the index. An unindexed KB
+        (`kb add` without `index sync`) or a stale one would pass having
+        validated nothing of what is on disk, so say so with the remedy
+        (#960 item 15, review of #1061).
+        """
+        from ..storage.index import IndexManager
+
+        if self.config.get_kb(kb_name) is None:
+            return
+        health = IndexManager(self.db, self.config).check_health(kb_name)
+        counts = {
+            "unindexed": len(health["unindexed_files"]),
+            "stale": len(health["stale_entries"]) + len(health["content_changed"]),
+            "missing": len(health["missing_files"]),
+        }
+        if not any(counts.values()):
+            return
+        found = ", ".join(f"{n} {what}" for what, n in counts.items() if n)
+        issues.append(
+            {
+                "entry_id": "",
+                "kb_name": kb_name,
+                "rule": "index_out_of_date",
+                "severity": "error",
+                "field": "index",
+                "message": (
+                    f"KB '{kb_name}': the index does not match its files ({found}), so "
+                    f"its checks read entries that are not what is on disk; "
+                    f"run `pyrite index sync -k {kb_name}`"
+                ),
+            }
+        )
 
     def _require_readable_kb(self, kb_name: str) -> None:
         """Refuse to assess a KB whose folder cannot be read (``KB_UNREADABLE``).

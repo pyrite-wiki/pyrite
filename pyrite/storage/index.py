@@ -1511,6 +1511,8 @@ class IndexManager:
 
             # Check for missing files
             for entry_id, info in indexed.items():
+                if not info["file_path"]:
+                    continue  # an index-only row has no file to be missing
                 if not Path(info["file_path"]).exists():
                     health["missing_files"].append(
                         {"kb": kb.name, "id": entry_id, "path": info["file_path"]}

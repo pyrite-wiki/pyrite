@@ -288,7 +288,7 @@ def ci_command(
                     "no KBs configured or registered, nothing was validated "
                     "(add one with `pyrite kb add`)"
                 ),
-                output_format,
+                "rich" if output_format == "text" else output_format,
                 error_code="NO_KBS_TO_VALIDATE",
             )
 

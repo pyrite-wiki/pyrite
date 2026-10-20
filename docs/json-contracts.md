@@ -1312,6 +1312,19 @@ with `KB_NOT_FOUND`; it used to validate nothing and pass. Plain `ci`, with
 no `--kb`, now validates the DB-registered KBs too, not only those in
 `config.yaml`.
 
+**Nothing to validate.** A `ci` run that finds no KB, in `config.yaml` or
+registered with `pyrite kb add`, did not read anything and so does not pass:
+it exits 1 with `NO_KBS_TO_VALIDATE` (`retryable: false`), in the CLI error
+shape in JSON and as one line of prose in `--format text`. It used to print
+`"result": "pass"` and exit 0. Add a KB with `pyrite kb add`.
+
+**An index that does not match the files.** The index-only checks read the
+index, so a KB whose files the index does not have (added with `kb add` and
+never indexed, or edited, added or deleted since) would pass having validated
+nothing of them. `ci` and `qa validate` report one `index_out_of_date`
+**error** for that KB, with the counts and the remedy, `pyrite index sync -k
+<kb>`. An empty KB has no files to miss and may pass.
+
 **A KB whose folder cannot be read.** When a KB's folder is missing, is not a
 folder, or cannot be read (its `kb.yaml` included), `ci` and `qa validate`
 (KB, entry or all) report one `kb_unreadable` **error** for that KB. The
