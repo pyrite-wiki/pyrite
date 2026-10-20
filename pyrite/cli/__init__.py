@@ -266,7 +266,8 @@ def ci_command(
     # KB to validate: `ci` never says "pass" for a tier that did not run (#795).
     llm_service = LLMService(config.settings) if tier >= 2 else None
     try:
-        QAService(config, None, llm_service=llm_service).require_tier(tier)
+        # require_tier reads no database; no index is opened for a refused tier.
+        QAService(config, None, llm_service=llm_service).require_tier(tier)  # type: ignore[arg-type]
     except PyriteError as exc:
         cli_error_from(exc, output_format)
     # Resolve KBs as the other commands do, DB-registered ones merged, so a

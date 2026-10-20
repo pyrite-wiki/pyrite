@@ -434,7 +434,8 @@ class BaseBackend(ABC):
         from ...models.core_types import get_entry_class
         from ...schema.field_aliases import lift_declared_fields
 
-        lift_declared_fields(result, metadata, get_entry_class(entry.entry_type), entry.entry_type)
+        entry_type = str(entry.entry_type)
+        lift_declared_fields(result, metadata, get_entry_class(entry_type), entry_type)
         return result
 
     def _get_entry_tags(self, entry_id: str, kb_name: str) -> list[str]:

@@ -597,6 +597,8 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # HEAD^1 of the PR merge ref is the base commit
 
       - uses: actions/setup-python@v5
         with:
@@ -618,14 +620,40 @@ jobs:
             fi
           done
 
-      # Red means this change ADDED type errors (#885): mypy's output is
-      # compared per file to the committed `.mypy-baseline.json`. The mypy
-      # exit code is ignored on purpose; the ratchet decides (and exits 2 if
-      # mypy never finished, so a crash cannot read as zero errors).
+      # Red means this change ADDED type errors (#885, #1084): mypy runs on the
+      # change and on its BASE commit, and the ratchet compares them per file.
+      # The base is HEAD^1 of a PR's merge ref, the pre-push SHA of a push to
+      # dev, the queue's base SHA in the merge queue. Comparing with the base
+      # rather than `.mypy-baseline.json` is what keeps the answer true: the
+      # file drifted above dev once (the architecture sprint merged with this
+      # job red because it is advisory) and every PR then read red for errors
+      # it did not add. The file stays the fallback when there is no base
+      # commit (a manual dispatch, a first push) and is lowered with
+      # `--update`. The mypy exit code is ignored on purpose; the ratchet
+      # decides (and exits 2 if either run never finished, so a crash cannot
+      # read as zero errors).
       - name: Type check with mypy (ratchet)
+        env:
+          EVENT: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
           mypy pyrite/ --ignore-missing-imports > mypy.out || true
-          python scripts/mypy_ratchet.py mypy.out
+          case "$EVENT" in
+            pull_request) base="$(git rev-parse HEAD^1)" ;;
+            push) base="$PUSH_BEFORE" ;;
+            merge_group) base="$QUEUE_BASE" ;;
+            *) base="" ;;
+          esac
+          if [ -n "${base//0/}" ] && { git cat-file -e "$base^{commit}" 2>/dev/null \
+              || git fetch --depth=1 origin "$base"; }; then
+            git worktree add --detach "$RUNNER_TEMP/mypy-base" "$base"
+            (cd "$RUNNER_TEMP/mypy-base" && mypy pyrite/ --ignore-missing-imports > "$GITHUB_WORKSPACE/mypy-base.out" || true)
+            python scripts/mypy_ratchet.py mypy.out --base mypy-base.out
+          else
+            echo "no base commit for a '$EVENT' run: comparing with .mypy-baseline.json"
+            python scripts/mypy_ratchet.py mypy.out
+          fi
 
   # ===========================================================================
   # Coverage: its own job so the matrix stays the fast gate. Not a required

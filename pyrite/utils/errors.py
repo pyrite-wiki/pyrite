@@ -27,7 +27,7 @@ import sys
 import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import typer
 from typer.core import TyperGroup
@@ -339,7 +339,7 @@ def _answered(*, watch_stdout: bool):
             _tell_a_person(error)
         else:
             _print_click_error(error, _format_in(_ARGV.get()))
-        raise typer.Exit(error.exit_code) from error
+        raise typer.Exit(cast(Any, error).exit_code) from error
     except EOFError as error:
         sys.stderr.write("\nAborted!\n")
         raise typer.Exit(1) from error

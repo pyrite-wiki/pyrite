@@ -373,7 +373,7 @@ def values_equal(a: Any, b: Any) -> bool:
     that value's ISO form or the same instant; int and float compare by value;
     a bool never equals an int; mappings compare unordered; lists in order."""
     if type(a) is type(b) and type(a) in (str, int):
-        return a == b
+        return bool(a == b)
     a, b = _plain(a), _plain(b)
     if isinstance(a, bool) or isinstance(b, bool):
         return isinstance(a, bool) and isinstance(b, bool) and a == b
@@ -409,7 +409,7 @@ def values_equal(a: Any, b: Any) -> bool:
         return False
     if isinstance(a, frozenset):  # a !!set: its members compare as values (NaN too)
         return len(a) == len(b) and all(any(values_equal(x, y) for y in b) for x in a)
-    return a == b  # bytes
+    return bool(a == b)  # bytes
 
 
 def _scalar_eq(a: Any, b: Any) -> bool:
@@ -446,7 +446,7 @@ def _temporal_equals_text(value: date, text: str) -> bool:
             return False
     if (value.tzinfo is None) != (other.tzinfo is None):
         return False
-    return value == other
+    return bool(value == other)
 
 
 def _plain(value: Any) -> Any:
@@ -887,7 +887,7 @@ def _retyped_key_node(node: Node, y: YAML) -> Node | None:
         if not isinstance(k, ScalarNode):
             return False
         implicit = (True, False) if k.style is None else (False, True)
-        return k.tag != y.resolver.resolve(ScalarNode, k.value, implicit)
+        return bool(k.tag != y.resolver.resolve(ScalarNode, k.value, implicit))
 
     return _first_key(node, retyped)
 

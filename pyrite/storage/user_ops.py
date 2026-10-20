@@ -6,15 +6,22 @@ Uses ORM session for all writes.
 """
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func
+from sqlalchemy.orm import Session
 
 from .models import EntryVersion, Repo, User, WorkspaceRepo
 
 
 class UserOpsMixin:
     """User management, repo registration, workspace, and entry versions."""
+
+    if TYPE_CHECKING:
+        # Supplied by ConnectionMixin in PyriteDB; declared here so the mixin
+        # type-checks on its own. Typing only, nothing exists at runtime.
+        @property
+        def session(self) -> Session: ...
 
     # =========================================================================
     # Users

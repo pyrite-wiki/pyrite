@@ -58,8 +58,8 @@ class LinkDiscoveryService:
         refuses as ``AMBIGUOUS`` when more than one KB holds it (#528).
         """
         for name in names:
-            if named_kb(name):
-                self.config.require_kb(name)
+            if kb := named_kb(name):
+                self.config.require_kb(kb)
 
     @staticmethod
     def build_suggest_query(entry: dict) -> str:

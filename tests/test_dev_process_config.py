@@ -1563,6 +1563,15 @@ class TestTheRedLineIsFirstAndEveryGatingRunLeavesATimingRecord:
                 assert "||" in r or "mypy_ratchet" in r
         assert (REPO / ".mypy-baseline.json").exists()
 
+    def test_the_mypy_ratchet_compares_with_the_base_commit(self, ci):
+        """#1084: the committed baseline drifted above dev and every PR read red."""
+        job = ci["jobs"]["mypy"]
+        run = "\n".join(str(s.get("run", "")) for s in job["steps"])
+        assert "mypy_ratchet.py mypy.out --base mypy-base.out" in run
+        assert "HEAD^1" in run and "PUSH_BEFORE" in run
+        checkout = next(s for s in job["steps"] if "checkout" in str(s.get("uses", "")))
+        assert checkout["with"]["fetch-depth"] >= 2, "HEAD^1 of the merge ref must exist"
+
     def test_every_gating_pytest_line_records_durations_and_junit(self, ci):
         runs = self._gating_pytest_runs(ci)
         assert {j for j, _ in runs} == {"test", "smoke"}

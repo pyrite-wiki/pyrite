@@ -50,7 +50,7 @@ def query_tag_text(tag: str) -> str:
         return tag
     value = loaded["k"]
     if isinstance(value, date | datetime):
-        return temporal_text(value)
+        return str(temporal_text(value))
     return tag
 
 

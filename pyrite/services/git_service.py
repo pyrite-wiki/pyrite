@@ -288,6 +288,7 @@ class GitService:
         """
         from ..models.core_types import entry_id_from_markdown, explicit_entry_id
 
+        rel_path: str | None
         if versioned_path:
             # Stored KB-relative from #432 onward. Tolerate an absolute path
             # under the KB (a dev database may hold rows from before paths

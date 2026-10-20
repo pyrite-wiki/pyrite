@@ -357,10 +357,11 @@ def index_embed(
     config, db = get_config_and_db()
     require_kb(config, kb_name, db=db, output_format="rich")
     if not is_available():
+        missing = semantic_unavailable(False)  # never None while the package is absent
         cli_error(
             "sentence-transformers is not installed.",
             error_code="DEPENDENCY_MISSING",
-            suggestion=semantic_unavailable(False)[2],
+            suggestion=missing[2] if missing else None,
         )
 
     if unavailable := semantic_unavailable(db.vec_available, getattr(db, "vec_load_error", None)):

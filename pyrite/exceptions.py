@@ -87,7 +87,7 @@ def public_text(
         return str(exc)
     if not already_logged:
         (log or logger).warning("%s: %s", type(exc).__name__, exc)
-    return public
+    return str(public)
 
 
 class PyriteError(Exception):

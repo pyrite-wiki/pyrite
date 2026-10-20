@@ -938,10 +938,10 @@ class TaskService:
             frames.append((dep_id, iter(dependencies_by_task[dep_id])))
 
         result: list[dict[str, Any]] = []
-        current_id = next_dependency[task_id]
-        while current_id is not None:
-            result.append(_task_dependency_summary(tasks[current_id], derived))
-            current_id = next_dependency[current_id]
+        next_id = next_dependency[task_id]
+        while next_id is not None:
+            result.append(_task_dependency_summary(tasks[next_id], derived))
+            next_id = next_dependency[next_id]
         return result
 
 
@@ -958,7 +958,7 @@ def _task_dependency_ids(task: dict[str, Any]) -> list[str]:
 
 def _effective_status(task_id: str, derived: dict[str, dict[str, Any]]) -> str:
     """Return the status task readers should use for dependency decisions."""
-    return (derived.get(task_id) or no_derived()).get("effective_status", "open")
+    return str((derived.get(task_id) or no_derived()).get("effective_status", "open"))
 
 
 def _task_dependency_summary(
