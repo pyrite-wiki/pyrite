@@ -392,8 +392,8 @@ def index_embed(
     from ..services.embedding_worker import EmbeddingWorker, settle_embed_queue_by_kb
 
     queue_worker = EmbeddingWorker(db, model_name=config.settings.embedding_model)
-    if queue_worker.has_pending() and (unavailable := queue_worker.model_unavailable()):
-        typer.echo(unavailable)
+    if queue_worker.has_pending() and (model_problem := queue_worker.model_unavailable()):
+        typer.echo(model_problem)
         return
 
     by_kb = settle_embed_queue_by_kb(db, model_name=config.settings.embedding_model)
