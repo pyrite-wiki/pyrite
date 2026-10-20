@@ -13,6 +13,7 @@ registers a hook wrapper that asserts once every other teardown impl has run.
 """
 
 import gc
+import weakref
 
 import pytest
 
@@ -30,12 +31,6 @@ def clear_fastapi_caches(request):
         if callable(fn):
             return fn
     pytest.fail("the repo-root conftest.py does not define clear_fastapi_caches")
-
-
-def _live_apps():
-    from fastapi import FastAPI
-
-    return [o for o in gc.get_objects() if isinstance(o, FastAPI)]
 
 
 def _who_holds(target, depth=8):
@@ -75,7 +70,11 @@ def test_fastapi_caches_are_found(clear_fastapi_caches):
 
 
 def test_apps_a_test_builds_are_freed_after_its_teardown(request, make_client):
-    from pyrite.server import api
+    # Counts weakrefs to the apps THIS test built, not every FastAPI in the
+    # process: another module may hold one of its own apps in a module-level
+    # cache (tests/test_every_entry_point_passes_the_policy._real_operations),
+    # which is not this test's leak and made the canary fail in CI (#1098).
+    built: list[weakref.ref] = []
 
     class _AfterRootTeardown:
         @pytest.hookimpl(wrapper=True)
@@ -83,12 +82,12 @@ def test_apps_a_test_builds_are_freed_after_its_teardown(request, make_client):
             result = yield
             if item is request.node:
                 gc.collect()
-                strays = [a for a in _live_apps() if a is not api.app]
-                assert len(strays) <= 1, (
-                    f"{len(strays)} FastAPI apps are still alive after the test "
-                    f"built {APPS_BUILT}: something caches their closures "
+                alive = [app for ref in built if (app := ref()) is not None]
+                assert not alive, (
+                    f"{len(alive)} of the {APPS_BUILT} FastAPI apps this test built are "
+                    "still alive after its teardown: something caches their closures "
                     "(#1098; the root conftest should clear it). "
-                    f"One is held by: {_who_holds(strays[0]) if strays else ''}"
+                    f"One is held by: {_who_holds(alive[0]) if alive else ''}"
                 )
             return result
 
@@ -98,5 +97,6 @@ def test_apps_a_test_builds_are_freed_after_its_teardown(request, make_client):
 
     for _ in range(APPS_BUILT):
         client, _config, _db = make_client()
+        built.append(weakref.ref(client.app))
         assert client.get("/api/kbs").status_code == 200
         del client, _config, _db
