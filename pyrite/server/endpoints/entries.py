@@ -914,7 +914,8 @@ def update_entry(
     # Broadcast WebSocket event
     from ..websocket import broadcast_event
 
-    broadcast_event("entry_updated", entry_id=entry_id, kb_name=req.kb)
+    if written.changed:
+        broadcast_event("entry_updated", entry_id=entry_id, kb_name=req.kb)
 
     return UpdateResponse(
         updated=True,

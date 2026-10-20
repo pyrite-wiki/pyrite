@@ -141,6 +141,31 @@ class TestSyncRoutesDeliver:
                     ws, {"type": "entry_updated", "entry_id": entry_id, "kb_name": PUBLIC}
                 )
 
+    @pytest.mark.parametrize(
+        "fields",
+        [
+            pytest.param(("body",), id="same-body"),
+            pytest.param(("tags", "importance"), id="echoed-fields"),
+            pytest.param(("id",), id="ignored-fields"),
+            pytest.param((), id="no-fields"),
+        ],
+    )
+    def test_noop_update_sends_no_event(self, open_app, fields):
+        """A successful PUT that changes no file sends no update event (#1089)."""
+        with TestClient(open_app) as c:
+            entry_id = _create(c, PUBLIC, "Unchanged note")
+            got = c.get(f"/api/entries/{entry_id}", params={"kb": PUBLIC})
+            assert got.status_code == 200, got.text
+            entry = got.json()
+            payload = {"kb": PUBLIC, **{field: entry[field] for field in fields}}
+            with c.websocket_connect("/ws") as ws:
+                r = c.put(f"/api/entries/{entry_id}", json=payload)
+                assert r.status_code == 200, r.text
+                assert r.json()["updated"] is True
+                assert r.json()["changed"] is False
+                _marker(c)
+                assert receive_json(ws) == MARKER
+
     def test_entry_deleted(self, open_app):
         with TestClient(open_app) as c:
             entry_id = _create(c, PUBLIC, "Deleted note")
