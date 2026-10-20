@@ -72,7 +72,6 @@ def w(tmp_path_factory):
 
 def _get(w, principal, url, **params):
     p = w.principals[principal]
-    w.release_idle_connections()
     return w.client.get(url, params=params, headers=p.rest_headers, cookies=p.rest_cookies)
 
 
@@ -213,7 +212,6 @@ def test_created_daily_note_carries_no_private_backlinks(w):
         row["id"], READABLE, "write", granted_by=row["id"]
     )
     cookie = {SESSION_COOKIE: sign_in(w.app, "link-scope-writer")}
-    w.release_idle_connections()
     r = w.client.post(f"/api/daily/{WANTED_DAILY_DATE}", params={"kb": READABLE}, cookies=cookie)
     assert r.status_code == 200, r.text
     assert "private-diary-watcher" not in r.text

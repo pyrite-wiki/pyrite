@@ -118,13 +118,6 @@ def _rest(world, principal_name: str, method: str, path: str, kb: str, tag: str)
     principal = world.principals[principal_name]
     # The key becomes part of a disposable entry id, so it must be URL-safe.
     tag = re.sub(r"[^A-Za-z0-9-]", "_", tag)
-    # Before the call is built, not after: building it may write a fixture
-    # row through the world's own session, and a server thread's idle
-    # fallback session holding a connection is what makes that write wait
-    # for the busy timeout on a slow runner ("database is locked", which
-    # rolls the session back and loses the row for every later call). See
-    # `World.release_idle_connections`.
-    world.release_idle_connections()
     kwargs = build_call(world, method, path, kb, call_key=f"walk-{principal_name}-{tag}")
     if "skip" in kwargs or not _names_kb_rest(path, kwargs, kb):
         return None
@@ -237,7 +230,6 @@ class TestRest:
             kwargs = build_call(world, method, path, "", call_key=f"blank-{principal_name}")
             if "skip" in kwargs:
                 continue
-            world.release_idle_connections()
             url = kwargs.pop("url")
             resp = world.client.request(
                 method,
@@ -262,7 +254,6 @@ class TestRest:
 
 def _mcp(world, principal_name: str, tool: str, kb: str, tag: str):
     principal = world.principals[principal_name]
-    world.release_idle_connections()  # as in `_rest`: before the build's writes
     args = build_arguments(world, tool, kb, call_key=f"walk-{principal_name}-{tag}")
     if not _names_kb_mcp(args, kb):
         return None
@@ -568,7 +559,6 @@ def _admin_rest(world, method: str, path: str, kb: str):
 
     assert (method, path) in REST_ACCESS_EXCLUSIONS, (method, path)
     url = path.format(name=kb, kb_name=kb)
-    world.release_idle_connections()
     resp = world.client.request(
         method,
         url,

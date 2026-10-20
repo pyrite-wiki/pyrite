@@ -2,7 +2,6 @@
 # still in the suite after #1077, per file. Shrink only: lower or remove a line
 # when a file moves onto the world (tests/_world.py); never add or raise one.
 # <kind> <count> <path>
-get_db 1 tests/characterization/world.py
 get_db 1 tests/test_ai_endpoints.py
 get_db 1 tests/test_ai_quota_enforcement.py
 get_db 1 tests/test_api_tiers.py

@@ -257,7 +257,8 @@ def _create_app_without_static(config: PyriteConfig, root: Path):
     """`create_app(config)` with static mounting pointed at an empty dir.
 
     `create_app` mounts the SPA when `web/dist/index.html` exists, so a world
-    would change shape after `npm run build`. `PYRITE_STATIC_DIR` is the
+    would change shape after `npm run build` (#504: the route-completeness
+    tests went red on a tree with a built frontend). `PYRITE_STATIC_DIR` is the
     production lever for where static assets live; it is read once, during
     the call, and restored at once.
     """

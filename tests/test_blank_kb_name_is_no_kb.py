@@ -154,7 +154,6 @@ BLANKS = ["", "   "]
 def _rest_answer(w, cookies, method, path, variant, monkeypatch, blank):
     _patch_ids(monkeypatch, variant)
     kwargs = rest_calls.build_call(w, method, path, blank, call_key=ID_PAIRS["call_key"][variant])
-    w.release_idle_connections()
     r = w.client.request(method, cookies=cookies, **kwargs)
     try:
         body = normalize_rest_body(method, path, r.json(), tmpdir=str(w.tmpdir))
@@ -306,7 +305,6 @@ def test_auto_tag_vocabulary_holds_only_readable_tags(w, writer, echo_llm):
     from tests.characterization.world import READABLE_ENTRY
 
     echo_llm.prompts.clear()
-    w.release_idle_connections()
     r = w.client.post(
         "/api/ai/auto-tag",
         json={"entry_id": READABLE_ENTRY, "kb_name": ""},

@@ -46,7 +46,7 @@ BASELINE = ROOT / "tests" / "production_wiring_baseline.txt"
 KINDS = ("get_db", "load_config")
 
 #: The baseline's totals at #1077. Lower these when the baseline shrinks.
-CEILING = {"get_db": 82, "load_config": 217}
+CEILING = {"get_db": 81, "load_config": 217}
 
 
 def _terminal(node: ast.AST) -> str | None:

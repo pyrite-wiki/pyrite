@@ -437,7 +437,6 @@ def test_every_rest_id_route_is_a_case_or_excluded(world):
 
 def _rest(world, method, url, **kwargs):
     principal = world.principals["local_user"]
-    world.release_idle_connections()
     return world.client.request(
         method, url, headers=principal.rest_headers, cookies=principal.rest_cookies, **kwargs
     )
@@ -511,7 +510,6 @@ def ai_writer(world):
 @pytest.mark.parametrize("case", sorted(REST_BODY_CASES), ids=lambda c: c[1])
 def test_rest_ai_route_refuses_an_ambiguous_id_with_a_blank_kb(world, ai_writer, case):
     method, path = case
-    world.release_idle_connections()
     response = world.client.request(method, path, cookies=ai_writer, json=REST_BODY_CASES[case])
     assert response.status_code == 409, response.text
     detail = response.json()["detail"]
