@@ -347,7 +347,7 @@ pyrite serve
 
 Visit [http://localhost:8088](http://localhost:8088). The web UI includes a markdown editor with wikilink autocomplete, an interactive knowledge graph, collections with kanban/table/gallery views, and an AI chat sidebar.
 
-Signing in, the features that need an AI provider, and the submit and merge flow for non-admin users are in [Use the web UI](web-ui.md). To call the API directly, see [Call the REST API](rest-api.md).
+Signing in and the features that need an AI provider are in [Use the web UI](web-ui.md). To call the API directly, see [Call the REST API](rest-api.md).
 
 An install from a release tag has no web UI yet: the built frontend is not packaged. `pyrite serve` there starts the API and says so. The CLI and the MCP server are unaffected.
 

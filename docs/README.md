@@ -10,7 +10,7 @@ guides solve a task; references describe contracts; explanations describe why.
 
 ## Operators
 
-- [Web UI](web-ui.md) — how-to: how do I sign in, enable AI features, and get a non-admin's changes merged?
+- [Web UI](web-ui.md) — how-to: how do I sign in and enable AI features?
 - [Configuration](configuration.md) — reference: which config keys and environment variables control my installation?
 - [Upgrading](upgrading.md) — how-to: how do I upgrade Pyrite, and what stops working when I do?
 - [Pinning entry IDs](pinning-entry-ids.md) — how-to: how do I pin the identity of files before upgrading?

@@ -1,7 +1,6 @@
 # Use the web UI
 
-How to sign in, which features need an AI provider, and how a non-admin's
-changes reach the main KB. To build and start the UI, see
+How to sign in and which features need an AI provider. To build and start the UI, see
 [Launch the Web UI](getting-started.md#launch-the-web-ui).
 
 ## Sign in for the first time
@@ -42,28 +41,6 @@ Set a provider one of two ways:
 - **For you (any signed-in user, auth on):** Settings → My API Keys. Your key
   is used for your requests only.
 
-## Submit and merge changes (non-admin users)
+## Changes by non-admin users
 
-With auth on, a signed-in user whose role is `write` does not write to the main
-KB. Their first write creates a git worktree of their own, and their creates,
-updates and deletes go there. Only they see those edits until an admin merges
-them. A KB that is not in a git repository has no worktree, and the write is
-refused. A request made with an API key, not a session, writes to the main KB.
-
-The UI shows none of this to the writer: its Changes page lists the main KB's
-uncommitted changes, not your worktree. You review, submit and discard through
-REST, with the session cookie from `POST /auth/login`:
-
-| Step | Request |
-|---|---|
-| State: `none`, `active`, `submitted`, `merged` or `rejected`, plus reviewer feedback | `GET /api/worktree/status?kb=<kb>` |
-| The diff of your branch against main (submit commits your edits to it, so it is empty before) | `GET /api/worktree/changes?kb=<kb>` |
-| Submit for review | `POST /api/worktree/submit` with `{"kb": "<kb>"}` |
-| Discard all your edits | `POST /api/worktree/reset` with `{"kb": "<kb>"}` |
-
-An admin decides in the UI. Merge Queue in the sidebar lists submissions;
-"Diff" shows one, "Merge" merges it into main, and "Reject" sends it back with
-optional feedback, which the author reads in `worktree/status`.
-
-Admins write straight to the main KB. Their Changes page lists what is not yet
-committed, and "Publish" commits and pushes it.
+How a signed-in non-admin user's changes reach the main KB is changing in 0.26.0; this section will describe it then.
