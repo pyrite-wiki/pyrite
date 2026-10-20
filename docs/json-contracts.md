@@ -940,6 +940,16 @@ appears twice in that entry's `backlinks`, once per link; `[[x]]` written
 twice, or `[[x]]` and `[[x#Heading]]`, is one row (the heading is not part of
 the key). `![[x]]` is one row, relation `transclusion`.
 
+The web panel and the `backlinks` table list each source once, with each of
+its links' relation in the row; the graph draws one edge per pair of entries.
+
+A link's target is compared as the text the index stores an id as (#1022):
+`target: true` in a file is the id `"1"`, so `pyrite link src 1`, MCP
+`kb_link` with `target_id: "1"` and `links bulk-create` find it and write
+nothing, while `target_id: "True"` names a different id and is a new link. The
+KB is compared as it resolves (`kb: ops`, the shortname of `ops-kb`, is the
+link `--target-kb ops-kb` asks for), whatever prefix the file wrote.
+
 `outlinks` rows carry one field, `relation`, which is the forward relation.
 
 ## Body truncation

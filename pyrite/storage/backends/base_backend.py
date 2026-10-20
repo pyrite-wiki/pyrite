@@ -1031,7 +1031,11 @@ class BaseBackend(ABC):
                 for r in link_rows:
                     src = (r["source_id"], r["source_kb"])
                     tgt = (r["target_id"], r["target_kb"])
-                    if src in nodes and tgt in nodes:
+                    # One edge per pair of entries, as the centred walk draws
+                    # it: a source writes one link row per link (#1009), and
+                    # two links between one pair are not two edges.
+                    if src in nodes and tgt in nodes and (*src, *tgt) not in edge_set:
+                        edge_set.add((*src, *tgt))
                         edges.append(r)
 
         node_list = []

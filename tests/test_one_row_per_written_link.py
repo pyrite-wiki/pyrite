@@ -426,3 +426,141 @@ def test_the_link_code_has_one_conversion_of_a_target_to_text():
     for name, source in sources.items():
         assert not re.search(r"str\([^)]*target", source), name
     assert "as_stored_text" in sources["base_backend._link_rows"]
+
+
+# -- Fix round 1: every consumer handles several rows from one source ---------
+
+
+def _two_links_from_one_source(two_kbs):
+    """`s` links `ka:x` twice: a frontmatter item and a body wikilink."""
+    config, db, root = two_kbs
+    _write(
+        root / "ka" / "s.md",
+        "s",
+        body="See [[x]].",
+        frontmatter="links:\n  - target: x\n    relation: related_to\n",
+    )
+    _sync(config, db)
+    return config, db
+
+
+def test_the_backlinks_table_lists_a_source_once_with_each_link(two_kbs):
+    """The CLI's rich table (`pyrite backlinks --format rich`, `pyrite-read
+    backlinks`): one row per source, its links' relations in the cells, rather
+    than two rows that read as one source listed twice."""
+    from rich.console import Console
+
+    from pyrite.cli.output import backlinks_table
+
+    _, db = _two_links_from_one_source(two_kbs)
+    links = db.get_backlinks("x", "ka", readable_kbs=None)
+    assert len(links) == 2
+    console = Console(width=200, record=True)
+    console.print(backlinks_table("x", links))
+    text = console.export_text()
+    rows = [line for line in text.splitlines() if " s " in f" {line} "]
+    assert len(rows) == 1, text
+    assert "related_to" in text and "wikilink" in text, text
+
+
+@pytest.mark.parametrize(
+    "centered",
+    [
+        pytest.param(
+            True,
+            marks=pytest.mark.control(reason="the centred walk already kept one edge per pair"),
+        ),
+        False,
+    ],
+    ids=["centered", "whole-index"],
+)
+def test_the_graph_draws_one_edge_per_pair_of_entries(two_kbs, centered):
+    """Two links from one source to one target are one edge, and the node's
+    `link_count` counts it once, centred on an entry or not."""
+    _, db = _two_links_from_one_source(two_kbs)
+    if centered:
+        graph = db.get_graph_data(center="s", center_kb="ka", readable_kbs=None)
+    else:
+        graph = db.get_graph_data(readable_kbs=None)
+    pairs = [
+        (e["source_id"], e["source_kb"], e["target_id"], e["target_kb"]) for e in graph["edges"]
+    ]
+    assert pairs == [("s", "ka", "x", "ka")]
+    counts = {(n["id"], n["kb_name"]): n["link_count"] for n in graph["nodes"]}
+    assert {k: counts.get(k) for k in (("s", "ka"), ("x", "ka"))} == {
+        ("s", "ka"): 1,
+        ("x", "ka"): 1,
+    }
+
+
+@pytest.fixture
+def shortname_kbs(tmp_path):
+    """`dev-kb` (shortname `dev`) holds `src`; `ops-kb` (shortname `ops`)
+    holds `x`."""
+    for name in ("dev", "ops"):
+        (tmp_path / name).mkdir()
+    _write(tmp_path / "ops" / "x.md", "x", body="ops x")
+    config = PyriteConfig(
+        knowledge_bases=[
+            KBConfig(name="dev-kb", path=tmp_path / "dev", shortname="dev"),
+            KBConfig(name="ops-kb", path=tmp_path / "ops", shortname="ops"),
+        ],
+        settings=Settings(index_path=tmp_path / "index.db"),
+    )
+    return config, tmp_path
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "ops",
+        pytest.param(
+            "ops-kb",
+            marks=pytest.mark.control(reason="a full name already matched the target KB"),
+        ),
+    ],
+    ids=["shortname", "full-name"],
+)
+def test_link_is_a_duplicate_whatever_prefix_the_file_wrote(shortname_kbs, written):
+    """The conductor's probe: a file holding `{target: x, kb: ops}` (the
+    shortname) and `pyrite link src x --target-kb ops-kb` is the same link,
+    the same resolved KB, target and relation; it is not appended again."""
+    from pyrite.services.kb_service import KBService
+
+    config, root = shortname_kbs
+    src = _write(
+        root / "dev" / "src.md",
+        "src",
+        frontmatter=f"links:\n  - target: x\n    relation: related_to\n    kb: {written}\n",
+    )
+    before = src.read_bytes()
+    db = PyriteDB(config.settings.index_path)
+    try:
+        svc = KBService(config, db)
+        result = svc.add_link("src", "dev-kb", "x", "related_to", target_kb="ops-kb")
+        assert result["created"] is False, result
+        assert svc.add_links(
+            "dev-kb", [{"source": "src", "target": "x", "target_kb": "ops-kb"}]
+        ) == [{"status": "skipped"}]
+    finally:
+        db.close()
+    assert src.read_bytes() == before
+
+
+@pytest.mark.control(reason="a different KB was never a duplicate; the negative case")
+def test_link_to_the_same_id_in_another_kb_is_not_a_duplicate(shortname_kbs):
+    from pyrite.services.kb_service import KBService
+
+    config, root = shortname_kbs
+    _write(root / "dev" / "x.md", "x", body="dev x")
+    _write(
+        root / "dev" / "src.md",
+        "src",
+        frontmatter="links:\n  - target: x\n    relation: related_to\n    kb: ops\n",
+    )
+    db = PyriteDB(config.settings.index_path)
+    try:
+        result = KBService(config, db).add_link("src", "dev-kb", "x", "related_to")
+    finally:
+        db.close()
+    assert result["created"] is True, result

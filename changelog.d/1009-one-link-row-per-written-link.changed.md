@@ -10,3 +10,7 @@
   `broken_links` count, and `![[x]]` is now stored as a `transclusion` rather
   than a `wikilink`. Rebuild the index (`pyrite index build`) to see the new
   rows for files that have not changed.
+  The web backlinks panel and the `backlinks` table list a source once with
+  each of its links' relations, and the graph draws one edge per pair of
+  entries. Two spellings of one link (`2024` and `'2024'`) keep the first
+  one's note.
