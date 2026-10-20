@@ -396,11 +396,10 @@ only if it still holds the bytes the edit was computed on, under a lock in
 the KB's git directory; a file that keeps changing is refused with
 `CONFLICT` (`409` on REST, `retryable: true`). A KB outside git is written
 without a lock and the result says `"locked": false`. On a server that gives
-each user a worktree (auth on), a non-admin user's REST POST, PUT or DELETE
-to a KB outside git is refused: there is no worktree to isolate it in
-(ADR-0042 A1; today `VALIDATION_FAILED`). REST PATCH falls back to the main
-checkout, and HTTP MCP never routes a write through a worktree, so both
-still write to the main checkout until #1043 lands. An item operation
+each user a worktree (auth on), a non-admin user's write to a KB outside
+git is refused: there is no worktree to isolate it in (ADR-0042 A1; today
+`VALIDATION_FAILED`). Not every route follows this rule yet; #1043 tracks the
+rest. An item operation
 (`append`, `remove`) touches the one item it names: the other items keep
 their bytes, and `links`/`sources` take item operations on every surface
 though a set of the whole list is still refused; an appended link is
