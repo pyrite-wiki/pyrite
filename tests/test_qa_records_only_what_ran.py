@@ -941,3 +941,54 @@ def test_assess_refuses_a_kb_whose_files_cannot_be_read(broken_plain, surface, t
     assert code == "KB_UNREADABLE", body
     # A missing folder is not recreated to hold a record.
     assert folder.exists() == (fault != "missing")
+
+
+# =========================================================================
+# #960 item 15: `ci` resolves KBs through the one resolver, as `qa validate` does
+# =========================================================================
+
+
+def _only_registered(tmp_path: Path) -> PyriteConfig:
+    """config.yaml lists no KB; `judged` exists only as a `kb add` registry row."""
+    full = _required_world(tmp_path)
+    path = full.get_kb(JUDGED).path
+    db = PyriteDB(full.settings.index_path)
+    db.register_kb(name=JUDGED, kb_type="generic", path=str(path), description="", source="user")
+    db.close()
+    return PyriteConfig(knowledge_bases=[], settings=full.settings)
+
+
+@pytest.mark.parametrize("named", [True, False], ids=["kb-named", "kb-not-named"])
+def test_ci_with_only_a_registered_kb_validates_it(tmp_path, named):
+    config = _only_registered(tmp_path)
+    args = ["ci", "--severity", "error", "--format", "json"] + (["--kb", JUDGED] if named else [])
+    code, body = _cli(config, args)
+    assert (code, body["result"]) == (1, "fail"), body
+    assert JUDGED in [kb["kb_name"] for kb in body["kbs"]], body
+    assert "schema_violation" in {i["rule"] for kb in body["kbs"] for i in kb["issues"]}, body
+
+
+def test_ci_with_only_a_registered_kb_finds_what_qa_validate_finds(tmp_path):
+    config = _only_registered(tmp_path)
+    code, validated = _cli(config, ["qa", "validate", JUDGED, "--format", "json"])
+    assert validated["issues"], validated  # the world really has issues
+    _, body = _cli(config, ["ci", "--severity", "info", "--format", "json"])
+    ci_kb = next(kb for kb in body["kbs"] if kb["kb_name"] == JUDGED)
+    assert len(ci_kb["issues"]) == len(validated["issues"]), (body, validated)
+
+
+def test_ci_with_a_configured_kb_validates_it(tmp_path):
+    config = _required_world(tmp_path)
+    code, body = _cli(config, ["ci", "--severity", "error", "--format", "json"])
+    assert (code, body["result"]) == (1, "fail"), body
+    assert JUDGED in [kb["kb_name"] for kb in body["kbs"]], body
+
+
+@pytest.mark.parametrize("fmt", ["json", "text"])
+def test_ci_that_read_no_kb_does_not_pass(tmp_path, fmt):
+    """Zero KBs anywhere: nothing was read, so the gate cannot say pass."""
+    config = PyriteConfig(knowledge_bases=[], settings=Settings(index_path=tmp_path / "i.db"))
+    result = _invoke(config, ["ci", "--format", fmt])
+    assert result.exit_code != 0, result.stdout
+    assert '"pass"' not in result.stdout, result.stdout
+    assert "no KBs" in result.stdout + result.stderr, result.stdout + result.stderr

@@ -233,7 +233,7 @@ class TestCISeverityFilter:
 @pytest.mark.cli
 class TestCINoKBs:
     def test_ci_no_kbs(self):
-        """No KBs configured should print friendly message, exit 0."""
+        """No KB configured or registered: nothing was read, so ci fails (#960)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             config = PyriteConfig(
                 knowledge_bases=[],
@@ -241,8 +241,8 @@ class TestCINoKBs:
             )
             with patch("pyrite.cli.load_config", return_value=config):
                 result = runner.invoke(app, ["ci"])
-                assert result.exit_code == 0
-                assert "no" in result.output.lower() and "kb" in result.output.lower()
+                assert result.exit_code == 1
+                assert "no kbs" in result.output.lower()
 
 
 @pytest.mark.cli

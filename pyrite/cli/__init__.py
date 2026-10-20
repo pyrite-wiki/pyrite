@@ -279,23 +279,18 @@ def ci_command(
         # KB_NOT_FOUND with its hint, the same as every other command.
         require_kb(config, kb, db=db, output_format=output_format)
 
-        # Handle no KBs configured
-        if not config.knowledge_bases:
-            if output_format == "json":
-                typer.echo(
-                    _json.dumps(
-                        {
-                            "kbs": [],
-                            "total_entries": 0,
-                            "total_errors": 0,
-                            "total_warnings": 0,
-                            "result": "pass",
-                        }
-                    )
-                )
-            else:
-                typer.echo("pyrite ci — no KBs configured, nothing to validate.")
-            raise typer.Exit(0)
+        # `config.knowledge_bases` is config.yaml only; `all_kbs()` adds the
+        # `kb add` ones, the set `validate_all` sweeps. Zero KBs read is not a
+        # pass (#960 item 15).
+        if not config.all_kbs():
+            cli_error_from(
+                PyriteError(
+                    "no KBs configured or registered, nothing was validated "
+                    "(add one with `pyrite kb add`)"
+                ),
+                output_format,
+                error_code="NO_KBS_TO_VALIDATE",
+            )
 
         qa = QAService(config, db, llm_service=llm_service)
 
