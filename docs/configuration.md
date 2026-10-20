@@ -322,10 +322,14 @@ Limits on what the setting can do:
 `config.yaml` also lists `embedding_model` (default `all-MiniLM-L6-v2`, ~90 MB,
 downloaded on first use).
 
-**The Postgres backend is experimental in 0.25.x.** It has no migration for
-columns added after alembic revision 006, so an existing Postgres database may
-not upgrade between releases
-([#718](https://github.com/pyrite-wiki/pyrite/issues/718)). Nothing in 0.25.x
+**The Postgres backend is experimental in 0.25.x.** The alembic chain it
+upgrades through was forked (`alembic upgrade head` failed with "Multiple
+heads"), and revision 007 ([#718](https://github.com/pyrite-wiki/pyrite/issues/718))
+now adds the entry columns an old database lacks (`lifecycle`, `content_hash`,
+`file_mtime_ns`, `file_size`), so a rev-006 database upgrades cleanly. Table
+changes since 006 outside `entry` still have no revision and rely on
+`create_all`, so an existing Postgres database may still not upgrade between
+releases. Nothing in 0.25.x
 reads the `search_backend` and `database_url` keys yet: the index is always
 SQLite, and only the test suite builds a Postgres backend. If code does
 construct it, Pyrite says so once per process, on stderr and in the server log
