@@ -1,7 +1,7 @@
 """Pin SDK-published MCP input schemas and fixed valid argument examples (#609).
 
 These examples validate the wire contract, not handler semantics or live KB data.
-Core always runs; the explicit in-tree profile requires the six shipped plugins.
+Core always runs; the explicit in-tree profile requires the five shipped plugins.
 Snapshots are reviewed files. They are rewritten only by `test_regenerate_goldens`, and only
 when `PYRITE_CHARACTERIZATION_REGENERATE=1` (the switch the other goldens use); read the diff.
 """
