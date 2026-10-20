@@ -565,7 +565,10 @@ class TestIndexManager:
     def setup(self):
         """Create temporary DB and KB for indexing tests."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            tmpdir = Path(tmpdir)
+            # resolve(): on macOS the temp dir is under /var, a symlink to /private/var;
+            # the index stores the resolved path, so tests that look a file up by
+            # the path they built must build it resolved (#893).
+            tmpdir = Path(tmpdir).resolve()
 
             # Create DB
             db_path = tmpdir / "index.db"
@@ -670,6 +673,83 @@ class TestIndexManager:
         stale = setup["index_mgr"].check_staleness()
         assert len(stale) == 1
         assert stale[0]["kb"] == "test-kb"
+
+    def test_sync_verify_reindexes_same_size_edit_with_restored_mtime(self, setup):
+        """Verify catches edits whose size and restored mtime both match."""
+        import os
+
+        index_mgr = setup["index_mgr"]
+        index_mgr.index_kb("test-kb")
+        target = sorted(setup["kb_path"].rglob("*.md"))[0]
+        before = target.stat()
+        original = target.read_bytes()
+        marker = b"title: Event "
+        offset = original.index(marker) + len(marker)
+        changed = original[:offset] + b"X" + original[offset + 1 :]
+        assert len(changed) == len(original)
+
+        target.write_bytes(changed)
+        os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+        after = target.stat()
+        assert after.st_size == before.st_size
+        assert after.st_mtime_ns == before.st_mtime_ns
+
+        ordinary_sync = index_mgr.sync_incremental("test-kb")
+        assert ordinary_sync["updated"] == 0
+
+        verified_sync = index_mgr.sync_incremental("test-kb", verify=True)
+        assert verified_sync["updated"] == 1
+
+        row = (
+            setup["db"]
+            ._raw_conn.execute(
+                "SELECT title FROM entry WHERE file_path = ?",
+                (str(target),),
+            )
+            .fetchone()
+        )
+        assert row[0] == "Event X"
+
+    def test_sync_verify_keeps_index_when_file_cannot_be_read(self, setup, monkeypatch):
+        """An unavailable verification read must not retire a known index row."""
+        from pyrite.storage import index as index_module
+
+        index_mgr = setup["index_mgr"]
+        index_mgr.index_kb("test-kb")
+        target = sorted(setup["kb_path"].rglob("*.md"))[0]
+        original_hash = index_module._hash_file
+
+        def unavailable_hash(path):
+            if path == target:
+                return None
+            return original_hash(path)
+
+        original_load = KBRepository.load_entry_from_file
+
+        def unavailable_load(repo, path):
+            if path == target:
+                raise PermissionError("simulated unreadable file")
+            return original_load(repo, path)
+
+        monkeypatch.setattr(index_module, "_hash_file", unavailable_hash)
+        monkeypatch.setattr(KBRepository, "load_entry_from_file", unavailable_load)
+
+        results = index_mgr.sync_incremental("test-kb", verify=True)
+        row = (
+            setup["db"]
+            ._raw_conn.execute(
+                "SELECT id FROM entry WHERE file_path = ?",
+                (str(target),),
+            )
+            .fetchone()
+        )
+
+        assert row is not None
+        assert results["removed"] == 0
+        assert any(
+            item["path"] == str(target) and "hash" in item["error"].lower()
+            for item in results["malformed"]
+        )
 
     def test_check_health_detects_same_second_content_edit(self, setup):
         """A file edited without its mtime advancing (same-second double
@@ -1563,9 +1643,8 @@ class TestUndeclaredTypesInHealth:
             finally:
                 db.close()
 
-    def test_core_types_treated_as_declared(self):
-        """Entries using core types (e.g. `note`) should not be flagged,
-        even if kb.yaml doesn't explicitly redeclare them."""
+    def test_core_types_require_declaration(self):
+        """Core types are reported when a typed KB does not declare them."""
         with tempfile.TemporaryDirectory() as raw_tmp:
             tmp = Path(raw_tmp)
             kb_path = tmp / "core-kb"
@@ -1589,8 +1668,9 @@ class TestUndeclaredTypesInHealth:
 
                 index_mgr = IndexManager(db, config)
                 health = index_mgr.check_health()
-                for row in health.get("undeclared_types", []):
-                    assert row["type"] != "note", f"core type 'note' must not be flagged: {row}"
+                assert {"kb": kb_path.name, "type": "note", "count": 1} in health[
+                    "undeclared_types"
+                ]
             finally:
                 db.close()
 

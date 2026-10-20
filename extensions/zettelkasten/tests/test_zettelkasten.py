@@ -7,6 +7,7 @@ from pyrite_zettelkasten.preset import ZETTELKASTEN_PRESET
 from pyrite_zettelkasten.validators import validate_zettel
 
 from pyrite.plugins.registry import PluginRegistry
+from pyrite.storage.repository import new_entry_text
 
 # =========================================================================
 # Plugin registration
@@ -55,6 +56,12 @@ class TestPluginRegistration:
         commands = registry.get_all_cli_commands()
         cmd_names = [name for name, _ in commands]
         assert "zettel" in cmd_names
+
+    def test_zettel_graph_depth_schema_is_bounded(self):
+        tool = ZettelkastenPlugin().get_mcp_tools("read")["zettel_graph"]
+        depth = tool["inputSchema"]["properties"]["depth"]
+        assert depth["minimum"] == 1
+        assert depth["maximum"] == 3
 
     def test_mcp_tools_registered(self):
         registry = PluginRegistry()
@@ -142,6 +149,9 @@ class TestZettelEntry:
         entry = ZettelEntry.from_frontmatter(meta, "")
         assert entry.id == "my-great-note"
 
+    @pytest.mark.control(
+        reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+    )
     def test_roundtrip_markdown(self):
         entry = ZettelEntry(
             id="test-note",
@@ -151,7 +161,7 @@ class TestZettelEntry:
             maturity="sapling",
             tags=["knowledge", "test"],
         )
-        md = entry.to_markdown()
+        md = new_entry_text(entry)
         assert "zettel_type: permanent" in md
         assert "maturity: sapling" in md
         assert "Some content" in md

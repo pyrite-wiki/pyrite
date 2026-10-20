@@ -184,10 +184,12 @@ class TestResourceTemplatesList:
     def test_templates_list_returns_templates(self, mcp_server):
         """resources/templates/list returns URI templates."""
         templates = mcp_server.resource_templates
-        assert len(templates) == 2
+        assert len(templates) == 3
 
         uri_templates = {t["uriTemplate"] for t in templates}
         assert "pyrite://kbs/{name}/entries" in uri_templates
+        # #528: an entry id in more than one KB is read through its KB.
+        assert "pyrite://kbs/{name}/entries/{id}" in uri_templates
         assert "pyrite://entries/{id}" in uri_templates
 
     def test_templates_have_required_fields(self, mcp_server):
@@ -291,8 +293,8 @@ class TestCapabilities:
                 try:
                     assert len(server.prompts) == 4, f"Tier {tier} should have 4 prompts"
                     assert len(server.resources) >= 1, f"Tier {tier} should have resources"
-                    assert len(server.resource_templates) == 2, (
-                        f"Tier {tier} should have 2 templates"
+                    assert len(server.resource_templates) == 3, (
+                        f"Tier {tier} should have 3 templates"
                     )
                 finally:
                     server.close()

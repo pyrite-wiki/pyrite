@@ -169,12 +169,13 @@ def test_search_unregistered_kb_returns_kb_not_found():
 
 
 def test_search_kb_not_found_suggestion_includes_db_only_kb(tmp_path, monkeypatch):
-    """The 'known KBs' suggestion on KB_NOT_FOUND must include KBs
-    registered only via `pyrite kb add` (DB-only, not in config.yaml's
-    knowledge_bases) -- collapse-kb-registry-to-one-source-of-truth's
-    all_kbs() sweep. Previously iterated knowledge_bases directly, so a
-    DB-only KB was invisible in the typo-suggestion even though it's a
-    real, searchable KB."""
+    """The near-match suggestion on KB_NOT_FOUND must draw on KBs registered
+    only via `pyrite kb add` (DB-only, not in config.yaml's knowledge_bases)
+    -- collapse-kb-registry-to-one-source-of-truth's all_kbs() sweep.
+    Previously iterated knowledge_bases directly, so a DB-only KB was
+    invisible in the typo-suggestion even though it's a real, searchable KB.
+    The one resolver (#952) offers an unscoped caller its near matches, so
+    the probe is one letter off the DB-only KB's name."""
     from unittest.mock import patch
 
     from typer.testing import CliRunner
@@ -190,12 +191,14 @@ def test_search_kb_not_found_suggestion_includes_db_only_kb(tmp_path, monkeypatc
 
     runner = CliRunner()
     with patch("pyrite.cli.search_commands.load_config", return_value=config):
-        result = runner.invoke(app, ["search", "anything", "-k", "typo-kb", "--format", "json"])
+        result = runner.invoke(app, ["search", "anything", "-k", "db-only-kbb", "--format", "json"])
 
     assert result.exit_code == 1
     parsed = json.loads(result.stdout)
+    assert parsed["error_code"] == "KB_NOT_FOUND"
+    assert parsed["did_you_mean"] == ["db-only-kb"]
     assert "db-only-kb" in parsed["suggestion"], (
-        f"expected DB-only KB in the known-KBs suggestion; got {parsed['suggestion']!r}"
+        f"expected DB-only KB in the near-match suggestion; got {parsed['suggestion']!r}"
     )
 
 

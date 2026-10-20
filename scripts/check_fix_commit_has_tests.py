@@ -22,15 +22,22 @@ Two modes:
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
 
+# `fix:`, `fix(scope):`, `fix!:` and `fix(scope)!:` (#1074). Case-sensitive on
+# purpose: Conventional Commits types are lower case, and "Fix the crash" is
+# prose that this check should not guess at.
+FIX_SUBJECT = re.compile(r"fix(\([^)\n]*\))?!?:")
+
 
 def is_fix_commit(message: str) -> bool:
-    """True if the commit message's subject line starts with `fix:`."""
+    """True if the subject line is a conventional fix: `fix:`, `fix(scope):`,
+    `fix!:` or `fix(scope)!:`."""
     subject = message.strip().splitlines()[0] if message.strip() else ""
-    return subject.startswith("fix:")
+    return FIX_SUBJECT.match(subject) is not None
 
 
 _FRONTEND_TEST_SUFFIXES = (".test.ts", ".test.js", ".spec.ts", ".spec.js")
@@ -101,8 +108,8 @@ _NO_TEST_MESSAGE = (
     "no {what} is under a tests/ directory.\n"
     "  Iron Law 1: no production code without a failing test first.\n"
     "  If this fix genuinely has no testable behavior change (e.g. a\n"
-    "  pure docs/config fix), reword the subject to drop the 'fix:'\n"
-    "  prefix, or add the regression test the fix should have shipped\n"
+    "  pure docs/config fix), reword the subject to drop the 'fix:' (or\n"
+    "  'fix(scope):', 'fix!:') prefix, or add the regression test the fix should have shipped\n"
     "  with."
 )
 
@@ -122,7 +129,7 @@ def check_range(base: str, head: str) -> int:
             continue
         subject = message.strip().splitlines()[0] if message.strip() else ""
         print(
-            f"ERROR: {sha[:12]} '{subject}' starts with 'fix:' but "
+            f"ERROR: {sha[:12]} '{subject}' starts with a fix prefix (fix:, fix(scope):, fix!:) but "
             + _NO_TEST_MESSAGE.format(what="changed file"),
             file=sys.stderr,
         )
@@ -147,7 +154,7 @@ def main() -> int:
         return 0
 
     print(
-        "ERROR: commit message starts with 'fix:' but "
+        "ERROR: commit message starts with a fix prefix (fix:, fix(scope):, fix!:) but "
         + _NO_TEST_MESSAGE.format(what="staged file"),
         file=sys.stderr,
     )

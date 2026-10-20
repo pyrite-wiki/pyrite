@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 from ..config import PyriteConfig
-from ..exceptions import KBNotFoundError, PyriteError
+from ..exceptions import PyriteError
 from ..storage.database import PyriteDB
 from ..utils.sanitize import sanitize_filename, unique_path_component
 
@@ -57,9 +57,7 @@ class ExportService:
         """
         import shutil
 
-        kb_config = self.config.get_kb(kb_name)
-        if not kb_config:
-            raise KBNotFoundError(f"KB not found: {kb_name}")
+        kb_config = self.config.require_kb(kb_name, db=self.db)  # the one resolver (#952)
 
         target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -153,9 +151,7 @@ class ExportService:
         """
         from .git_service import GitService
 
-        kb_config = self.config.get_kb(kb_name)
-        if not kb_config:
-            raise KBNotFoundError(f"KB not found: {kb_name}")
+        self.config.require_kb(kb_name, db=self.db)  # the one resolver (#952)
         # The branch is cloned and then pushed: refuse a value that is not a
         # plain branch name before either runs.
         GitService.validate_branch_name(branch)
@@ -235,9 +231,7 @@ class ExportService:
         """
         from .git_service import GitService
 
-        kb = self.config.get_kb(kb_name)
-        if not kb:
-            raise KBNotFoundError(f"KB '{kb_name}' not found")
+        kb = self.config.require_kb(kb_name, db=self.db)  # the one resolver (#952)
 
         if not GitService.is_git_repo(kb.path):
             raise PyriteError(f"KB '{kb_name}' is not in a git repository")
@@ -356,9 +350,7 @@ class ExportService:
         """
         from .git_service import GitService
 
-        kb = self.config.get_kb(kb_name)
-        if not kb:
-            raise KBNotFoundError(f"KB '{kb_name}' not found")
+        kb = self.config.require_kb(kb_name, db=self.db)  # the one resolver (#952)
 
         if not GitService.is_git_repo(kb.path):
             raise PyriteError(f"KB '{kb_name}' is not in a git repository")

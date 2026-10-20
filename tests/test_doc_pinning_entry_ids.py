@@ -87,7 +87,12 @@ def test_following_the_doc_pins_every_file_with_one_added_line(tmp_path):
 
     def git(*args: str) -> str:
         return subprocess.run(
-            ["git", *args], cwd=kb, env=env, check=True, capture_output=True
+            ["git", *args],
+            cwd=kb,
+            env=env,
+            check=True,
+            capture_output=True,
+            timeout=120,
         ).stdout.decode()
 
     git("init", "-q")
@@ -99,7 +104,12 @@ def test_following_the_doc_pins_every_file_with_one_added_line(tmp_path):
     assert len(blocks) >= 5
     for expected, body in blocks:
         run = subprocess.run(
-            ["bash", "-e", "-c", body], cwd=kb, env=env, capture_output=True, text=True
+            ["bash", "-e", "-c", body],
+            cwd=kb,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         assert run.returncode == expected, (body, run.stdout, run.stderr)
 

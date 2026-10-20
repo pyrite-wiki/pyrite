@@ -62,7 +62,12 @@ def _write(root: Path, rel: str, text: str = "") -> None:
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
     ).stdout
 
 
@@ -171,6 +176,7 @@ def _hook(
         capture_output=True,
         text=True,
         env={**os.environ, **hook_env, **env},
+        timeout=120,
     )
 
 
@@ -373,6 +379,7 @@ class TestOnlyThePushedTip:
             text=True,
             # Even with a remote named, as a stray export would leave it.
             env={**os.environ, "PRE_COMMIT_REMOTE_URL": GITHUB_URL},
+            timeout=120,
         )
         assert out.returncode == 0 and len(_pytest_calls()) == 1
         assert _gh_calls() == []
@@ -433,6 +440,7 @@ class TestNoNewBypass:
             [sys.executable, str(SCRIPT), "--root", str(repo), "--run", "-n", "2", "--full"],
             check=True,
             capture_output=True,
+            timeout=120,
         )
         assert len(_stamps(repo)) == 1
         out = _hook(repo)
@@ -483,6 +491,7 @@ class TestPreflight:
             [sys.executable, str(SCRIPT), "--root", str(repo), "--run", "-n", "2", "--full"],
             check=True,
             capture_output=True,
+            timeout=120,
         )
         out = _hook(repo, mode="--preflight")
         assert out.stdout.startswith("preflight: skip: ") and "already passed" in out.stdout

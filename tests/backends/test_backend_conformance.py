@@ -217,6 +217,65 @@ class TestTags:
 # =========================================================================
 
 
+class TestNonEmptyFilter:
+    """``non_empty`` (#200): leave out entries with no body and no summary.
+
+    Blank means nothing but space, tab, CR or LF (or NULL). The default
+    returns them; a summary without a body is not blank.
+    """
+
+    BLANK_BODIES = {
+        "empty": "",
+        "null": None,
+        "spaces": "   ",
+        "mixed": " \t\r\n \n\t",
+    }
+
+    def _populate(self, backend):
+        for name, body in self.BLANK_BODIES.items():
+            backend.upsert_entry(
+                _make_entry(f"blank-{name}", title="zebra crossing", body=body, summary="")
+            )
+        backend.upsert_entry(
+            _make_entry("blank-summary-ws", title="zebra crossing", body="", summary=" \t\r\n ")
+        )
+        backend.upsert_entry(
+            _make_entry("summary-only", title="zebra crossing", body="", summary="a real summary")
+        )
+        backend.upsert_entry(_make_entry("with-body", title="zebra crossing", body="some words"))
+
+    def test_keyword_leg_excludes_blank_and_keeps_the_rest(self, backend):
+        self._populate(backend)
+        got = {r["id"] for r in backend.search("zebra", non_empty=True)}
+        assert got == {"summary-only", "with-body"}
+
+    def test_keyword_leg_default_returns_them(self, backend):
+        self._populate(backend)
+        got = {r["id"] for r in backend.search("zebra")}
+        assert {f"blank-{n}" for n in self.BLANK_BODIES} | {"blank-summary-ws"} <= got
+
+    def test_limit_counts_only_qualifying_rows(self, backend):
+        self._populate(backend)
+        got = backend.search("zebra", non_empty=True, limit=2)
+        assert {r["id"] for r in got} == {"summary-only", "with-body"}
+
+    def test_semantic_leg(self, backend):
+        if not getattr(backend, "vec_available", False):
+            pytest.skip("vector search not available on this backend")
+        self._populate(backend)
+        vec = [0.05] * 384
+        for eid in [f"blank-{n}" for n in self.BLANK_BODIES] + [
+            "blank-summary-ws",
+            "summary-only",
+            "with-body",
+        ]:
+            backend.upsert_embedding(eid, "test", vec)
+        got = {r["id"] for r in backend.search_semantic(vec, limit=20, non_empty=True)}
+        assert got == {"summary-only", "with-body"}
+        everything = {r["id"] for r in backend.search_semantic(vec, limit=20)}
+        assert "blank-spaces" in everything
+
+
 class TestFullTextSearch:
     def test_search_basic(self, backend):
         backend.upsert_entry(_make_entry("e1", title="quantum computing advances"))
@@ -310,6 +369,79 @@ class TestGraph:
         backlinks = backend.get_backlinks("b", "test", readable_kbs=UNSCOPED)
         assert len(backlinks) == 1
         assert backlinks[0]["id"] == "a"
+
+    def test_backlink_relation_fields_match_contract(self, backend, monkeypatch):
+        """#622: Keep documented backlink relation fields consistent per backend."""
+        from pyrite.schema import provenance
+
+        backend.upsert_entry(_make_entry("target"))
+        backend.upsert_entry(
+            _make_entry(
+                "declared-source",
+                links=[{"target": "target", "relation": "supports"}],
+            )
+        )
+        backend.upsert_entry(
+            _make_entry(
+                "custom-source",
+                links=[{"target": "target", "relation": "informs"}],
+            )
+        )
+        # This type is still unknown when the link is indexed, so its stored
+        # inverse remains the fallback after the type is registered below.
+        backend.upsert_entry(
+            _make_entry(
+                "stale-source",
+                links=[{"target": "target", "relation": "transclusion"}],
+            )
+        )
+
+        declared_types = dict(provenance.get_all_relationship_types())
+        assert "transclusion" not in declared_types
+        monkeypatch.setattr(
+            provenance,
+            "get_all_relationship_types",
+            lambda: {
+                **declared_types,
+                "transclusion": {
+                    "inverse": "transcluded_by",
+                    "description": "Declared after the link was indexed",
+                },
+            },
+        )
+
+        expected = {
+            "declared-source": {
+                "forward_relation": "supports",
+                "relation": "supported_by",
+                "inverse_relation": "supported_by",
+            },
+            "custom-source": {
+                "forward_relation": "informs",
+                "relation": "related_to",
+                "inverse_relation": None,
+            },
+            "stale-source": {
+                "forward_relation": "transclusion",
+                "relation": "related_to",
+                "inverse_relation": "transcluded_by",
+            },
+        }
+
+        def relation_fields(rows):
+            return {
+                row["id"]: {
+                    field: row[field]
+                    for field in ("forward_relation", "relation", "inverse_relation")
+                }
+                for row in rows
+            }
+
+        backlinks = backend.get_backlinks("target", "test", readable_kbs=UNSCOPED)
+        assert relation_fields(backlinks) == expected
+
+        all_backlinks = backend.get_all_backlinks_for_kb("test")["target"]
+        assert relation_fields(all_backlinks) == expected
 
     def test_get_backlinks_empty(self, backend):
         self._setup_linked_entries(backend)
@@ -671,6 +803,81 @@ class TestMultiKB:
         backend.delete_entry("e1", "test")
         assert backend.get_entry("e1", "test") is None
         assert backend.get_entry("e1", "other") is not None
+
+
+class TestOneRowPerWrittenLink:
+    """The link rows a backend stores for an entry's ``links``: one per written
+    link, keyed by (target, KB, relation, written prefix) as stored text, the
+    same on SQLite's diff and Postgres's re-insert (#1009, #1022). The links
+    are given as the indexer passes them: the KB resolved, the prefix as
+    written beside it."""
+
+    @staticmethod
+    def _link(target, kb, prefix=None, relation="wikilink", note=""):
+        return {"target": target, "kb": kb, "prefix": prefix, "relation": relation, "note": note}
+
+    @staticmethod
+    def _outlinks(backend):
+        return sorted(
+            (r["id"], r["kb_name"], r["relation"])
+            for r in backend.get_outlinks("s", "test", readable_kbs=UNSCOPED)
+        )
+
+    @pytest.mark.control(
+        reason="the backend key always held the KB; the loss was at extraction (tested there)"
+    )
+    def test_one_id_in_two_kbs_is_two_backlinked_rows(self, backend_with_db):
+        backend, _ = backend_with_db
+        backend.upsert_entry(_make_entry("x", kb_name="test"))
+        backend.upsert_entry(_make_entry("x", kb_name="other"))
+        links = [self._link("x", "test", "test"), self._link("x", "other", "other")]
+        backend.upsert_entry(_make_entry("s", links=links))
+        for kb in ("test", "other"):
+            rows = backend.get_backlinks("x", kb, readable_kbs=UNSCOPED)
+            assert [(r["id"], r["kb_name"]) for r in rows] == [("s", "test")], kb
+
+    def test_two_prefixes_of_one_target_are_two_rows(self, backend_with_db):
+        backend, _ = backend_with_db
+        backend.upsert_entry(_make_entry("x", kb_name="other"))
+        links = [self._link("x", "other", "other"), self._link("x", "other", "o")]
+        backend.upsert_entry(_make_entry("s", links=links))
+        assert self._outlinks(backend) == [("x", "other", "wikilink")] * 2
+
+    def test_one_link_spelled_twice_is_one_row(self, backend_with_db):
+        """`2024` and `'2024'`, and `true` and `'1'`: one stored text, one row;
+        the first spelling's note is kept."""
+        backend, _ = backend_with_db
+        links = [
+            self._link(2024, "test", relation="related_to", note="first"),
+            self._link("2024", "test", relation="related_to", note="second"),
+            self._link(True, "test", relation="related_to"),
+            self._link("1", "test", relation="related_to"),
+        ]
+        backend.upsert_entry(_make_entry("s", links=links))
+        rows = backend.get_outlinks("s", "test", readable_kbs=UNSCOPED)
+        assert sorted((r["id"], r["note"]) for r in rows) == [("1", ""), ("2024", "first")]
+
+    def test_reindexing_the_same_links_changes_no_row(self, backend_with_db):
+        backend, _ = backend_with_db
+        links = [
+            self._link("x", "test"),
+            self._link("x", "test", "test"),
+            self._link("x", "other", "other"),
+            self._link("x", "test", relation="related_to"),
+        ]
+        backend.upsert_entry(_make_entry("s", links=links))
+        first = self._outlinks(backend)
+        assert len(first) == 4
+        backend.upsert_entry(_make_entry("s", links=links))
+        assert self._outlinks(backend) == first
+
+    def test_the_whole_index_graph_has_one_edge_per_pair(self, backend_with_db):
+        backend, _ = backend_with_db
+        backend.upsert_entry(_make_entry("x"))
+        links = [self._link("x", "test"), self._link("x", "test", relation="related_to")]
+        backend.upsert_entry(_make_entry("s", links=links))
+        graph = backend.get_graph_data(readable_kbs=UNSCOPED)
+        assert [(e["source_id"], e["target_id"]) for e in graph["edges"]] == [("s", "x")]
 
 
 # =========================================================================

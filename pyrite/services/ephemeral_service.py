@@ -51,6 +51,13 @@ class EphemeralKBService:
         """
         # The name becomes a directory under <workspace>/ephemeral/ and is
         # chosen by any write-role user, so it must be a plain name.
+        from ..exceptions import ConfigError
+        from .kb_names import refuse_reserved_kb_name
+
+        try:
+            refuse_reserved_kb_name(name)
+        except ConfigError as exc:
+            raise InvalidEphemeralKBNameError(str(exc)) from None
         if not is_plain_kb_name(name):
             raise InvalidEphemeralKBNameError(
                 f"Invalid ephemeral KB name: use {PLAIN_KB_NAME_RULE}"
@@ -178,9 +185,6 @@ class EphemeralKBService:
         self._remove_dir(kb)
         self.config.remove_kb(kb.name)
         announce_kb_policy_change(kb.name)
-        from .site_cache import drop_kb_site_pages
-
-        drop_kb_site_pages(self.config, self.db, kb.name)
 
     def force_expire_kb(self, name: str) -> bool:
         """Force-expire a specific ephemeral KB. Returns True if removed."""

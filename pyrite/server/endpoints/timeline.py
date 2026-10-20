@@ -48,6 +48,7 @@ def get_timeline(
     events = [
         TimelineEvent(
             id=r["id"],
+            kb_name=r["kb_name"],
             date=r["date"],
             title=r["title"],
             importance=r.get("importance", 5),

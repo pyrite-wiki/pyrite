@@ -9,12 +9,16 @@ tags:
 - conductor
 importance: 5
 kind: tech_debt
-status: proposed
+status: in_progress
 priority: high
 effort: M
 rank: 0
 github_issue: 168
 ---
+
+## Current hook contract
+
+The pre-push hook now uses `scripts/test-affected` (core plus affected tests, #356), not an unconditional full suite. [CONTRIBUTING](../../CONTRIBUTING.md#branches-hooks-and-pull-requests) owns the current flow. The full-suite history/proposal below does not describe the current hook; a suite-lock integration must retain the selector and its full-suite fallback.
 
 ## Problem
 
@@ -54,3 +58,7 @@ One wrapper, `scripts/suite.sh`, is the only way the full suite is started on a 
 **Model:** opus (a concurrency primitive whose failure mode is the machine; the stale-lock and self-deadlock regimes are where a plausible implementation is wrong). **heavy:** no for its tests; its one verification run of the real suite goes through the new wrapper and is the evidence for criterion 4. **Cold read:** yes — it changes the gate every push goes through. **Size:** M, ~250 lines (wrapper + helper ~90, tests ~120, config/docs ~40).
 
 **Out of scope:** Playwright under the lock, the skills/agent prompts, the conductor's load/memory refusal (the follow-on item `every-heavy-runner-takes-the-suite-lock-playwright-the-skills-and-the-conductor-health-step`); changing CI's `-n auto`; a job queue or daemon — a lock is enough; raising the WIP limit (the maintainer's call, after both items have landed and a week has run on them).
+
+## Re-scoped 2026-10-14 (feature/machine-wide-suite-lock)
+
+The groom predates #356: the pre-push hook and every instruction already run `scripts/test-affected --run`, with `-n 4` by default (`PYRITE_PUSH_WORKERS`). So there is no `scripts/suite.sh`; the lock (`scripts/heavy_lock.py`) is taken **inside** the heavy runners that exist: `test-affected --run` around its pytest call, `scripts/verify-red.sh`, and `scripts/e2e.sh`. Criterion 4 (a memory-derived `-n`) is not built: with one heavy run at a time, test-affected's fixed `-n 4` is the interim rule the divisor was meant to reproduce; reopen it only with a measured case where 4 is wrong. The holder record is written into the lock file itself, not a sidecar. Waiters queue on flocked tickets (`heavy.lock.queue/`) so they start in arrival order.

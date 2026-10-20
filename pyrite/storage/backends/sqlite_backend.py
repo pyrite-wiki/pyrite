@@ -15,7 +15,7 @@ import struct
 from typing import Any, ClassVar
 
 from ..models import Link
-from .base_backend import BaseBackend
+from .base_backend import BaseBackend, LinkKey, _link_rows
 from .capabilities import BackendCapability
 from .protocol import DEFAULT_MIN_SIMILARITY, SemanticRows, similarity_from
 
@@ -26,6 +26,15 @@ from .protocol import DEFAULT_MIN_SIMILARITY, SemanticRows, similarity_from
 #: query can still under-return when more matching candidates exist than the
 #: cap, or when distance culling removes candidates (#56, #194).
 _SQLITE_VEC_MAX_K = 4096
+
+
+# ``non_empty`` (#200): an entry has something to show when its body or its
+# summary holds a character other than space, tab, CR or LF. SQLite's TRIM
+# takes a one-space default, so the set is spelled out. No length threshold.
+NON_EMPTY_SQL = (
+    " AND (TRIM(COALESCE(e.body, ''), char(32, 9, 10, 13)) != ''"
+    " OR TRIM(COALESCE(e.summary, ''), char(32, 9, 10, 13)) != '')"
+)
 
 
 class SQLiteBackend(BaseBackend):
@@ -173,44 +182,34 @@ class SQLiteBackend(BaseBackend):
     # =====================================================================
 
     def _sync_links(self, entry_id: str, kb_name: str, links: list[dict[str, Any]]) -> None:
-        from ...schema import get_inverse_relation
-
-        # Build desired state as a dict keyed by (target_id, target_kb, relation)
-        desired: dict[tuple[str, str, str], dict[str, Any]] = {}
-        for link in links:
-            relation = link.get("relation", "related_to")
-            target_kb = link.get("kb", kb_name)
-            target_id = link.get("target", "")
-            key = (target_id, target_kb, relation)
-            desired[key] = {
-                "note": link.get("note", ""),
-                "inverse_relation": get_inverse_relation(relation),
-            }
+        # One row per written link, keyed by (target, kb, relation, prefix) as
+        # the TEXT the columns hold (`_link_rows`, #927, #1009).
+        desired = _link_rows(kb_name, links)
 
         # Load existing links from DB
         existing = self._session.query(Link).filter_by(source_id=entry_id, source_kb=kb_name).all()
 
-        existing_keys: dict[tuple[str, str, str], Link] = {}
+        existing_keys: dict[LinkKey, Link] = {}
         for row in existing:
-            key = (row.target_id, row.target_kb, row.relation)
-            existing_keys[key] = row
+            key = (row.target_id, row.target_kb, row.relation, row.target_prefix)
+            # First row wins the slot: a hand file can hold both `target: 2024`
+            # and `target: '2024'`, which are one key once stored, and the
+            # spares are deleted below rather than left to accumulate (#927).
+            existing_keys.setdefault(key, row)
 
-        # Delete links no longer in desired set
-        for key, row in existing_keys.items():
-            if key not in desired:
-                self._session.delete(row)
-
-        # Add new links and update changed ones
+        # Add new links and update changed ones, claiming one existing row each
+        claimed: set[int] = set()
         for key, attrs in desired.items():
             if key in existing_keys:
                 # Update note/inverse if changed
                 row = existing_keys[key]
+                claimed.add(id(row))
                 if row.note != attrs["note"] or row.inverse_relation != attrs["inverse_relation"]:
                     row.note = attrs["note"]
                     row.inverse_relation = attrs["inverse_relation"]
             else:
                 # Insert new link
-                target_id, target_kb, relation = key
+                target_id, target_kb, relation, target_prefix = key
                 self._session.add(
                     Link(
                         source_id=entry_id,
@@ -220,8 +219,20 @@ class SQLiteBackend(BaseBackend):
                         relation=relation,
                         inverse_relation=attrs["inverse_relation"],
                         note=attrs["note"],
+                        # The prefix as the file wrote it, beside the resolved KB (#980).
+                        target_prefix=target_prefix,
                     )
                 )
+
+        # Delete links no longer in desired set, and the spares behind a
+        # duplicated key. Iterating the rows rather than the keyed map is what
+        # makes a duplicate reachable at all: two rows sharing a key collapsed
+        # into one dict slot, so the other was never compared and never
+        # deleted, and every sync added another (#927).
+        for row in existing:
+            key = (row.target_id, row.target_kb, row.relation, row.target_prefix)
+            if key not in desired or id(row) not in claimed:
+                self._session.delete(row)
 
     # =====================================================================
     # Full-text search (FTS5)
@@ -243,6 +254,7 @@ class SQLiteBackend(BaseBackend):
         fips: str | None = None,
         state: str | None = None,
         status: str | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         sql = """
             SELECT
@@ -306,6 +318,8 @@ class SQLiteBackend(BaseBackend):
             keys = effective_status.derived_done_keys(self._session, kb_name, kb_names)
             sql += f" AND {effective_status.status_sql('e.', keys, params)} = ?"
             params.append(status)
+        if non_empty:
+            sql += NON_EMPTY_SQL
         sql += " ORDER BY rank LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         with self._raw_cursor() as cur:
@@ -411,6 +425,7 @@ class SQLiteBackend(BaseBackend):
         status: str | None = None,
         include_archived: bool = False,
         kb_names: set[str] | list[str] | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """KNN over ``vec_entry``, filtered by the same predicates as ``search``.
 
@@ -483,6 +498,7 @@ class SQLiteBackend(BaseBackend):
             status=status,
             include_archived=include_archived,
             kb_names=kb_names,
+            non_empty=non_empty,
         )
 
         # The KNN k-set is materialised in a CTE and its size carried on every
@@ -616,6 +632,7 @@ class SQLiteBackend(BaseBackend):
         status: str | None = None,
         include_archived: bool = False,
         kb_names: set[str] | list[str] | None = None,
+        non_empty: bool = False,
     ) -> tuple[str, list[Any], bool]:
         """Build the WHERE fragment shared by the semantic leg and ``search``.
 
@@ -683,6 +700,8 @@ class SQLiteBackend(BaseBackend):
             keys = effective_status.derived_done_keys(self._session, kb_name)
             sql += f" AND {effective_status.status_sql('e.', keys, params)} = ?"
             params.append(status)
+        if non_empty:
+            sql += NON_EMPTY_SQL
         selective = any(
             (
                 kb_name,
@@ -694,6 +713,7 @@ class SQLiteBackend(BaseBackend):
                 fips,
                 state,
                 status,
+                non_empty,
             )
         )
         return sql, params, selective

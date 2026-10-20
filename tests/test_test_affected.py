@@ -139,6 +139,23 @@ def repo(tmp_path: Path) -> Path:
         "tests/test_core_annotated.py": (
             "import pytest\n\npytestmark: list = [pytest.mark.core, pytest.mark.cli]\n"
         ),
+        "tests/test_guards.py": """
+            import pytest
+
+            @pytest.mark.guard
+            @pytest.mark.parametrize("p", ["a", "b"])
+            def test_scan_per_file(p):
+                pass
+
+            def test_not_a_guard():
+                pass
+
+            class TestScans:
+                @pytest.mark.guard
+                def test_scan(self):
+                    pass
+        """,
+        "extensions/foo/tests/test_ext.py": "def test_ext():\n    pass\n",
     }
     for rel, text in files.items():
         _write(tmp_path, rel, text)
@@ -358,6 +375,103 @@ class TestCore:
         assert not any(a.startswith("tests/test_core.py::") for a in args)
 
 
+class TestGuards:
+    """#1075: a guard scans test sources, so it runs whenever one changes."""
+
+    GUARDS = {
+        "tests/test_guards.py::test_scan_per_file",  # the whole function, not one case
+        "tests/test_guards.py::TestScans::test_scan",
+    }
+
+    def test_a_changed_test_selects_the_guards(self, repo):
+        sel = _select(repo, "tests/test_unrelated.py")
+        assert set(sel.guards) == self.GUARDS
+
+    def test_a_source_only_change_selects_no_guard(self, repo):
+        assert _select(repo, "pyrite/b.py").guards == []
+
+    def test_a_deleted_test_file_selects_the_guards(self, repo):
+        assert set(_select(repo, "tests/test_deleted_long_ago.py").guards) == self.GUARDS
+
+    def test_an_extension_test_change_selects_the_guards(self, repo):
+        assert set(_select(repo, "extensions/foo/tests/test_ext.py").guards) == self.GUARDS
+
+    def test_a_changed_non_test_helper_in_a_test_root_selects_the_guards(self, repo):
+        assert set(_select(repo, "tests/helpers.py", helper_threshold=5).guards) == self.GUARDS
+
+    def test_guards_are_run_and_listed(self, repo):
+        args = ta.pytest_args(_select(repo, "tests/test_unrelated.py"), workers=4)
+        assert self.GUARDS <= set(args)
+
+    def test_a_guard_in_a_selected_file_is_not_run_twice(self, repo):
+        args = ta.pytest_args(_select(repo, "tests/test_guards.py"), workers=4)
+        assert "tests/test_guards.py" in args
+        assert not any(a.startswith("tests/test_guards.py::") for a in args)
+
+    def test_explain_says_why(self, repo):
+        out = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--root",
+                str(repo),
+                "--explain",
+                "--files",
+                "tests/test_unrelated.py",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert "guard (a test path changed: tests/test_unrelated.py)" in out.stdout
+
+    def test_list_names_the_guards_for_a_changed_test(self, repo):
+        out = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--root",
+                str(repo),
+                "--list",
+                "--files",
+                "tests/test_unrelated.py",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert self.GUARDS <= set(out.stdout.split())
+
+
+class TestThisRepositoryGuards:
+    # The guards, pinned by file (#1075). A scan of test sources that loses its
+    # mark silently stops running before a push; add a guard here on purpose.
+    GUARDS_IN = {
+        "tests/test_experimental_surface.py",
+        "tests/test_tests_drive_the_surface_not_the_mock.py",
+        "tests/test_test_rules.py",
+        "tests/test_cli_help_assertions_are_plain.py",
+        "tests/test_production_wiring_guard.py",
+    }
+
+    def test_the_acceptance_command_lists_the_guards(self):
+        root = SCRIPT.parent.parent
+        sel = ta.select(root, ["tests/test_llm_rubric_evaluator.py"])
+        assert {g.split("::")[0] for g in sel.guards} >= self.GUARDS_IN
+
+    def test_every_guard_file_is_in_the_contributing_table(self):
+        root = SCRIPT.parent.parent
+        table = (root / "CONTRIBUTING.md").read_text()
+        guard_files = {g.split("::")[0] for g in ta.Graph(root).guards}
+        assert guard_files == self.GUARDS_IN | {"tests/test_changelog_fragments.py"}
+        missing = sorted(f for f in guard_files if f not in table)
+        assert not missing, f"add a row to the Guards table in CONTRIBUTING.md: {missing}"
+
+    def test_a_source_change_lists_none(self):
+        root = SCRIPT.parent.parent
+        assert ta.select(root, ["pyrite/storage/database.py"]).guards == []
+
+
 class TestPytestArgs:
     def test_selected_run_uses_n_workers(self, repo):
         sel = _select(repo, "pyrite/b.py")
@@ -376,7 +490,12 @@ class TestPytestArgs:
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
     ).stdout
 
 
@@ -441,6 +560,7 @@ class TestBaseFallback:
             [sys.executable, str(SCRIPT), "--root", str(repo), "--list", "--committed"],
             capture_output=True,
             text=True,
+            timeout=120,
         )
         assert out.returncode == 0, out.stderr
         assert "tests/test_b.py" in out.stdout.split()
@@ -471,6 +591,7 @@ class TestPushedRange:
             capture_output=True,
             text=True,
             env={**os.environ, **env},
+            timeout=120,
         )
 
     def test_selects_the_pushed_range_not_the_working_tree(self, pushed):
@@ -506,6 +627,7 @@ class TestNoBase:
             [sys.executable, str(SCRIPT), "--root", str(repo), "--run", "--dry-run"],
             capture_output=True,
             text=True,
+            timeout=120,
         )
         assert out.returncode != 0
         assert "Traceback" not in out.stderr
@@ -518,6 +640,7 @@ class TestCLI:
             [sys.executable, str(SCRIPT), "--root", str(repo), *args],
             capture_output=True,
             text=True,
+            timeout=120,
         )
 
     def test_list_prints_selected_paths(self, repo):
@@ -637,6 +760,10 @@ class TestThisRepository:
         "tests/test_entry_lifecycle.py",
         # the KB service
         "tests/test_services.py::TestKBService",
+        # authentication, including refusal and session verification
+        "tests/test_auth_service.py::TestLogin::test_login_success",
+        "tests/test_auth_service.py::TestLogin::test_login_wrong_password",
+        "tests/test_auth_service.py::TestSessions::test_verify_session_valid",
         # auth / read scoping, and every entry point passing the policy (ADR-0037 §5)
         "tests/test_read_scoping_is_structural.py",
         "tests/test_every_entry_point_passes_the_policy.py",
@@ -650,6 +777,8 @@ class TestThisRepository:
         "tests/test_cli_commands.py::TestTyperListCommand",
         "tests/test_cli_commands.py::TestTyperGetCommand",
         "tests/test_cli_commands.py::TestTyperCreateCommand",
+        "tests/test_cli_commands.py::test_index_sync_verify_finds_same_size_edit_with_restored_mtime",
+        "tests/test_cli_commands.py::test_index_sync_verify_rejects_background_mode",
         "tests/test_cli_commands.py::TestTopLevelHelpAdvertisesOrient",
     }
 

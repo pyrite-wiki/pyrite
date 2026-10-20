@@ -8,11 +8,6 @@ tags:
 - agents
 - dx
 - architecture
-metadata:
-  kind: enhancement
-  status: completed
-  priority: high
-  effort: l
 kind: enhancement
 status: done
 priority: high

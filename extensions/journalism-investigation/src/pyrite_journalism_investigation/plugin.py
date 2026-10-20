@@ -4,6 +4,7 @@ import logging
 import secrets
 from typing import Any, ClassVar
 
+from pyrite.exceptions import public_text
 from pyrite.plugins.capabilities import Capability
 
 from .entry_types import (
@@ -33,6 +34,9 @@ from .utils import parse_meta
 from .validators import validate_investigation_entry
 
 logger = logging.getLogger(__name__)
+# Under `pyrite`, where configure_logging puts the handler: a record on this
+# module's own logger would fall to the last-resort handler (#848).
+_masked_log = logging.getLogger("pyrite.ext.journalism_investigation")
 
 _EXPERIMENTAL_NOTICE = "EXPERIMENTAL: Unsupported until the 0.28 alpha plugin/API contract."
 
@@ -47,11 +51,7 @@ def _safe_error(e: Exception) -> str:
     path, a driver's own text. public_message, when set, is what every
     other transport already shows; the real detail still reaches the log.
     """
-    public_message = getattr(e, "public_message", None)
-    if public_message is not None:
-        logger.warning("%s", e)
-        return public_message
-    return str(e)
+    return public_text(e, log=_masked_log)
 
 
 # Prefix for the fresh guard name used when a scoped caller may not read the KB
@@ -174,10 +174,27 @@ class JournalismInvestigationPlugin:
         }
 
     def get_relationship_types(self) -> dict[str, dict]:
-        # Note: member_of/has_member, funded_by/funds, investigated/investigated_by
-        # are already registered by the cascade plugin. We only register types
-        # that are new to journalism-investigation.
+        # member_of/has_member and funded_by/funds are the relations
+        # `enrich_connection_links` writes for `membership` and `funding`;
+        # declared here so `kb schema show` lists them and their inverse is
+        # known (they came from the cascade extension until #953 deleted it).
         return {
+            "member_of": {
+                "inverse": "has_member",
+                "description": "Person is a member of an organization",
+            },
+            "has_member": {
+                "inverse": "member_of",
+                "description": "Organization has a member",
+            },
+            "funded_by": {
+                "inverse": "funds",
+                "description": "Entity is funded by another entity",
+            },
+            "funds": {
+                "inverse": "funded_by",
+                "description": "Entity funds another entity",
+            },
             "owns": {
                 "inverse": "owned_by",
                 "description": "Entity owns an asset or organization",
@@ -892,11 +909,18 @@ class JournalismInvestigationPlugin:
         """Get DB from injected context, falling back to self-bootstrap."""
         if self.ctx is not None:
             return self.ctx.db, False
-        from pyrite.config import load_config
         from pyrite.storage.database import PyriteDB
 
-        config = load_config()
-        return PyriteDB(config.settings.index_path), True
+        return PyriteDB(self._get_config().settings.index_path), True
+
+    def _get_config(self):
+        """The server's config from the injected context; the process's own
+        only when there is no context (the CLI). See the software-kb plugin."""
+        if self.ctx is not None:
+            return self.ctx.config
+        from pyrite.config import load_config
+
+        return load_config()
 
     # =========================================================================
     # Read-tier MCP tool handlers — delegate to pure query functions
@@ -1300,13 +1324,32 @@ class JournalismInvestigationPlugin:
 
     def _mcp_investigation_start(self, args: dict[str, Any]) -> dict[str, Any]:
         """Create a new investigation."""
+        from pyrite.exceptions import KBNotFoundError, KBReadOnlyError, PyriteError
+        from pyrite.utils.errors import public_text
+
         from .investigation_setup import create_investigation
 
         db, should_close = self._get_db()
         try:
+            kb_name = self._resolve_kb(args)
+            # The KB through the server's config (#952): `create_investigation`
+            # inserts the entry row itself, so the read-only rule is applied
+            # here, before it, the way KBService applies it to every write.
+            # A KB that does not exist is left to `create_investigation`'s
+            # own answer: the chokepoint has already refused a *named* one,
+            # so this is the plugin's default KB, and its hint says so.
+            try:
+                kb = self._get_config().require_kb(kb_name, db=db)
+            except KBNotFoundError:
+                kb = None
+            except PyriteError as e:
+                return {"error": public_text(e), "error_code": e.error_code}
+            if kb is not None and kb.read_only:
+                e = KBReadOnlyError(f"KB is read-only: {kb_name}")
+                return {"error": public_text(e), "error_code": e.error_code}
             return create_investigation(
                 db=db,
-                kb_name=self._resolve_kb(args),
+                kb_name=kb_name,
                 title=args.get("title", ""),
                 scope=args.get("scope", ""),
                 key_questions=args.get("key_questions"),

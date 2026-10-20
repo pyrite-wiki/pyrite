@@ -35,11 +35,11 @@ test.describe('Entries Page', () => {
 	test('lists the seeded people, events, and notes by their known ids', async ({ page }) => {
 		await page.goto('/entries');
 		const [first, ...rest] = [...SEEDED_PEOPLE, ...SEEDED_EVENTS, ...SEEDED_NOTES];
-		await expect(page.locator(`a[href="/entries/${first.id}"]`)).toBeVisible({
+		await expect(page.locator(`a[href="/entries/${first.id}?kb=${E2E_KB}"]`)).toBeVisible({
 			timeout: COLD_ROUTE_TIMEOUT
 		});
 		for (const entry of rest) {
-			await expect(page.locator(`a[href="/entries/${entry.id}"]`)).toBeVisible();
+			await expect(page.locator(`a[href="/entries/${entry.id}?kb=${E2E_KB}"]`)).toBeVisible();
 		}
 	});
 
@@ -160,7 +160,7 @@ test.describe('New Entry Page', () => {
 			// same rationale as COLD_ROUTE_TIMEOUT above.
 			await page.getByRole('button', { name: 'Create' }).click();
 
-			await expect(page).toHaveURL(new RegExp(`/entries/${id}$`), { timeout: COLD_ROUTE_TIMEOUT });
+			await expect(page).toHaveURL(new RegExp(`/entries/${id}\\?kb=${E2E_KB}$`), { timeout: COLD_ROUTE_TIMEOUT });
 			await expect(page.getByRole('heading', { name: title, level: 1 })).toBeVisible();
 		} finally {
 			await deleteEntry(request, id);

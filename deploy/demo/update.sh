@@ -23,14 +23,6 @@ git pull
 cd ~/pyrite
 docker compose -f deploy/demo/docker-compose.yml up -d --build
 
-# One-time step for demos seeded before /site became public-KB-only: list KBs
-# with no default_role (they would drop off /site). To publish them:
-#   docker compose -f deploy/demo/docker-compose.yml exec pyrite \
-#     python /app/deploy/demo/public-kbs.py /data/config.yaml --apply
-# then restart and re-render the site (POST /api/site/render).
-docker compose -f deploy/demo/docker-compose.yml exec -T pyrite \
-    python /app/deploy/demo/public-kbs.py /data/config.yaml || true
-
 echo "Updated and restarted."
 docker compose -f deploy/demo/docker-compose.yml ps
 docker compose -f deploy/demo/docker-compose.yml exec pyrite pyrite --version 2>/dev/null || true

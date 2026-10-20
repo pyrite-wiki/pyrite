@@ -202,7 +202,7 @@ class LLMService:
         if mod is None:
             raise MissingOptionalDependencyError(
                 "The 'anthropic' package is required for the Anthropic provider. "
-                "Install it with: pip install 'pyrite[ai]'"
+                "Install it with: pip install anthropic"
             )
         kwargs: dict[str, Any] = {"api_key": self._settings.ai_api_key}
         if self._settings.ai_api_base:
@@ -403,7 +403,7 @@ class LLMService:
         if mod is None:
             raise MissingOptionalDependencyError(
                 "The 'openai' package is required for the OpenAI/OpenRouter/Ollama provider. "
-                "Install it with: pip install 'pyrite[ai]'"
+                "Install it with: pip install openai"
             )
         kwargs: dict[str, Any] = {"api_key": self._settings.ai_api_key or "no-key"}
         base_url = self._resolve_base_url()

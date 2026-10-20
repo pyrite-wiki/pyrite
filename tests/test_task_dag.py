@@ -141,6 +141,9 @@ class TestCriticalPath:
         result = svc.critical_path("dep-c", "test")
         assert result == []
 
+    # Without the cycle guard (`dep_id in active` in critical_path) the walk
+    # never ends; the per-test deadline turns that hang into a failure in 20 s.
+    @pytest.mark.timeout(20)
     def test_handles_cycle_gracefully(self, dag_env):
         """If a cycle exists in dependencies, should not infinite loop."""
         svc = dag_env["svc"]

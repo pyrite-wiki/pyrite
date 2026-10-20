@@ -30,6 +30,7 @@ import threading
 
 import pytest
 import yaml
+from sqlalchemy import event, text as sql_text
 from typer.testing import CliRunner
 
 from pyrite.config import AuthConfig, KBConfig, PyriteConfig, Settings
@@ -37,6 +38,7 @@ from pyrite.exceptions import UndeclaredTypeError, ValidationError
 from pyrite.schema.core_types import CORE_TYPES
 from pyrite.server.mcp_server import PyriteMCPServer
 from pyrite.services.access_policy import AccessPolicy, Principal
+from pyrite.services.kb_resolver import HOW_TO_LIST_KBS
 from pyrite.services.auth_service import AuthService
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
@@ -44,9 +46,10 @@ from tests.auth_seed import seed_user
 
 WRITE_SIDE_KEYS = ("ai_instructions", "evaluation_rubric", "guidelines", "goals")
 ABSENT = "no-such-kb-at-all"
-#: What the dispatcher's refusal says to do next: one string, for an absent and
-#: an unreadable name alike, and no KB name in it (round 1, item 4).
-SCOPED_REFUSAL_HINT = "Call kb_orient with no kb_name to list the KBs you can read."
+#: What the refusal says to do next when nothing is near: one string, for an
+#: absent and an unreadable name alike, and no KB name in it (round 1, item 4;
+#: the one resolver's wording for every surface, #952).
+SCOPED_REFUSAL_HINT = HOW_TO_LIST_KBS
 
 
 def _presets() -> dict[str, dict]:
@@ -303,8 +306,8 @@ class TestABadNameIsKBNotFound:
         out = one_kb.mcp("kb_orient", {"kb_name": "nope"})
         assert out["error_code"] == "KB_NOT_FOUND", out
         assert out["retryable"] is False
-        assert out["legacy_error_code"] == "OPERATION_FAILED", (
-            "the code orient reported before this release, kept one release (ADR-0037)"
+        assert out["legacy_error_code"] == "NOT_FOUND", (
+            "one refusal for every caller: the dispatcher's, not orient's own (#952)"
         )
 
     def test_mcp_scoped_caller_over_the_http_wiring(self, scoped):
@@ -354,11 +357,19 @@ class TestUnreadableAndAbsentAreOneAnswer:
         diverged = []
         for tool in sorted(server.tools):
             for key in ("kb_name", "kb"):
+                # One rate-limit bucket per probe pair. Under the default
+                # client the loop's several hundred read-tier calls spend
+                # the 100/minute budget partway through, and every pair
+                # after that compared two RATE_LIMITED answers instead of
+                # the refusals -- equal only while both rounded to the same
+                # retry-after tenth, which a slow run (CI's coverage job)
+                # broke on `sw_epics`.
+                caller = {"client_kind": "user", "client_id": f"probe-{tool}-{key}"}
                 a = server._dispatch_tool(
-                    tool, {key: PRIVATE}, readable_kbs=scoped.peer, writable_kbs=set()
+                    tool, {key: PRIVATE}, readable_kbs=scoped.peer, writable_kbs=set(), **caller
                 )
                 b = server._dispatch_tool(
-                    tool, {key: ABSENT}, readable_kbs=scoped.peer, writable_kbs=set()
+                    tool, {key: ABSENT}, readable_kbs=scoped.peer, writable_kbs=set(), **caller
                 )
                 if not self._same(a, b, PRIVATE, ABSENT):
                     diverged.append((tool, key, a, b))
@@ -371,6 +382,7 @@ class TestUnreadableAndAbsentAreOneAnswer:
             "error_code": "KB_NOT_FOUND",
             "retryable": False,
             "suggestion": SCOPED_REFUSAL_HINT,
+            "did_you_mean": [],
             "legacy_error_code": "NOT_FOUND",
         }
 
@@ -476,7 +488,7 @@ class TestOrientWithNoNameIsTheFirstCall:
         server, interleaved callers would see each other's KBs."""
         server = scoped.server()
         seen: dict[str, set[frozenset]] = {"peer": set(), "all": set()}
-        start = threading.Barrier(2)
+        start = threading.Barrier(2, timeout=30)
 
         def run(label, readable):
             start.wait(timeout=10)
@@ -763,7 +775,8 @@ class TestTheScopedRefusalSaysWhatToDoNext:
         absent = scoped.mcp("kb_orient", {"kb_name": ABSENT}, readable=scoped.peer)
         assert refused["suggestion"] == absent["suggestion"] == SCOPED_REFUSAL_HINT
         assert PRIVATE not in json.dumps(refused).replace(f"KB '{PRIVATE}' not found", "")
-        assert "did_you_mean" not in refused and "did_you_mean" not in absent
+        # Near matches come only from the readable set; here there are none.
+        assert refused["did_you_mean"] == absent["did_you_mean"] == []
 
     def test_every_tool_refuses_with_the_hint(self, scoped):
         server = scoped.server("admin")
@@ -833,3 +846,55 @@ class TestAPluginCannotOverwriteTheDetailMarkers:
         assert out["detail"] == "brief"
         assert out["detail_note"].startswith("brief omits")
         assert out["board"] == 1
+
+
+def test_no_name_overview_is_bounded_paginated_and_uses_bounded_queries(make_world):
+    world = make_world([(f"kb-{i:03d}", None) for i in range(60)])
+    server = world.server()
+    engine = server.db.session.get_bind()
+    statements = []
+
+    def record_statement(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record_statement)
+    try:
+        first = world.mcp("kb_orient")
+    finally:
+        event.remove(engine, "before_cursor_execute", record_statement)
+
+    selects = [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]
+    assert len(selects) <= 3
+    assert len(first["knowledge_bases"]) == 50
+    assert first["limit"] == 50
+    assert first["offset"] == 0
+    assert first["has_more"] is True
+
+    second = world.mcp("kb_orient", {"limit": 50, "offset": 50})
+    assert len(second["knowledge_bases"]) == 10
+    assert second["offset"] == 50
+    assert second["has_more"] is False
+    scoped = world.mcp("kb_orient", {"limit": 1}, readable={"kb-059"})
+    assert [kb["name"] for kb in scoped["knowledge_bases"]] == ["kb-059"]
+    assert scoped["has_more"] is False
+    assert {kb["name"] for kb in first["knowledge_bases"]}.isdisjoint(
+        kb["name"] for kb in second["knowledge_bases"]
+    )
+
+
+def test_no_name_overview_matches_kb_list_registry_type_and_count(make_world):
+    world = make_world([("notes", None)])
+    world.svc.create_entry("notes", "first", "First", "note", "hello")
+    world.mcp("kb_list")
+    server = world.server()
+    server.db.session.execute(
+        sql_text("UPDATE kb SET kb_type = :kb_type, entry_count = :entry_count WHERE name = :name"),
+        {"kb_type": "project", "entry_count": 17, "name": "notes"},
+    )
+    server.db.session.commit()
+
+    listed = world.mcp("kb_list")["knowledge_bases"][0]
+    oriented = world.mcp("kb_orient")["knowledge_bases"][0]
+
+    assert oriented["type"] == listed["type"] == "project"
+    assert oriented["entry_count"] == listed["entry_count"] == 1

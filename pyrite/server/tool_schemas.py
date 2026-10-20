@@ -254,7 +254,7 @@ READ_TOOLS = {
         },
     },
     "kb_orient": {
-        "description": "Use this first. With no kb_name it lists the KBs you can read. With kb_name it returns a one-shot summary of that KB: description, entry counts by type, top tags, recent changes, and the schema of the types the KB accepts. Pass detail='brief' for a read session: it omits the write-side schema blocks (ai_instructions, evaluation_rubric, guidelines, goals), which kb_schema returns when you need to write. brief keeps relationship_types, for following links.",
+        "description": "Use this first. With no kb_name it lists up to 50 KBs you can read (maximum 100 per page); pass offset to continue when has_more is true. With kb_name it returns a one-shot summary of that KB: description, entry counts by type, top tags, recent changes, and the schema of the types the KB accepts. Pass detail='brief' for a read session: it omits the write-side schema blocks (ai_instructions, evaluation_rubric, guidelines, goals), which kb_schema returns when you need to write. brief keeps relationship_types, for following links.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -272,6 +272,17 @@ READ_TOOLS = {
                     "type": ["string", "null"],
                     "enum": ["brief", "full", None],
                     "description": "full (default; null is the same): everything. brief: omits ai_instructions, evaluation_rubric, guidelines and goals.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Maximum KBs in the no-name overview (default 50).",
+                },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "KB offset for the no-name overview; use with has_more to page.",
                 },
             },
         },
@@ -652,7 +663,7 @@ READ_TOOLS = {
         },
     },
     "kb_batch_suggest": {
-        "description": "Batch-compare all entries between two KBs to find potential cross-KB links. For each entry in source_kb, finds similar entries in target_kb. Deduplicates bidirectional matches.",
+        "description": "Batch-compare all entries between two KBs to find potential cross-KB links. For each entry in source_kb, finds similar entries in target_kb. Deduplicates bidirectional matches. Entries with no body and no summary are left out of the targets unless include_empty is true.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -677,12 +688,16 @@ READ_TOOLS = {
                     "type": "boolean",
                     "description": "Exclude already-linked pairs (default: true)",
                 },
+                "include_empty": {
+                    "type": "boolean",
+                    "description": "Also return entries with no body and no summary (default: false, they are left out)",
+                },
             },
             "required": ["source_kb", "target_kb"],
         },
     },
     "kb_discover_neighbors": {
-        "description": "Find related entries across all KBs, including the source KB, unless target_kb limits the search. Excludes the source entry and, by default, already-linked entries.",
+        "description": "Find related entries across all KBs, including the source KB, unless target_kb limits the search. Excludes the source entry and, by default, already-linked entries. Entries with no body and no summary are left out unless include_empty is true.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -710,6 +725,10 @@ READ_TOOLS = {
                 "exclude_linked": {
                     "type": "boolean",
                     "description": "Exclude entries that already have a link to the source (default: true)",
+                },
+                "include_empty": {
+                    "type": "boolean",
+                    "description": "Also return entries with no body and no summary (default: false, they are left out)",
                 },
             },
             "required": ["entry_id", "kb_name"],
@@ -831,7 +850,7 @@ WRITE_TOOLS = {
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Replacement tags (overwrites existing)",
+                    "description": "Replaces the whole tag list; to add or drop one tag use `append`/`remove`",
                 },
                 "participants": {
                     "type": "array",
@@ -840,7 +859,7 @@ WRITE_TOOLS = {
                 },
                 "metadata": {
                     "type": "object",
-                    "description": "Additional/extension fields to update",
+                    "description": "Fields by name (a key here is the field of that name, ADR-0051); a managed field is refused",
                 },
                 "status": {
                     "type": "string",
@@ -849,6 +868,19 @@ WRITE_TOOLS = {
                 "date": {"type": "string", "description": "Date (YYYY-MM-DD)"},
                 "location": {"type": "string", "description": "Location/venue"},
                 "summary": {"type": "string", "description": "Short summary or subtitle"},
+                "append": {
+                    "type": "object",
+                    "description": 'Add one item to a list field without sending the list: {field: item}; a list value appends each item. Links: {"links": {"target": "id", "relation": "related_to"}}. The other items keep their bytes.',
+                },
+                "remove": {
+                    "type": "object",
+                    "description": "Remove one item equal to the value from a list field: {field: item}; a list value removes each item.",
+                },
+                "unset": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Remove these keys from the frontmatter, with their own lines. Sending null as a field's value sets it to null; it does not remove the key.",
+                },
                 "validate": {
                     "type": "boolean",
                     "description": "Run QA validation after save and return issues. Also runs automatically if KB has qa_on_write: true in kb.yaml.",
@@ -1034,7 +1066,7 @@ WRITE_TOOLS = {
         },
     },
     "kb_qa_assess": {
-        "description": "Run QA assessment on an entry or entire KB. Creates qa_assessment entries recording results. Optionally creates tasks for failures.",
+        "description": "Run QA assessment on an entry or entire KB. Creates qa_assessment entries recording results; a tier that did not run records nothing (an entry is refused with EVALUATION_FAILED, a KB run lists the entry under `failed`). Optionally creates tasks for failures; tasks it could not create are returned under `task_failed` / `tasks_failed`.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1048,7 +1080,13 @@ WRITE_TOOLS = {
                 },
                 "tier": {
                     "type": "integer",
-                    "description": "Assessment tier: 1=structural (default)",
+                    "minimum": 1,
+                    "maximum": 2,
+                    "description": (
+                        "Assessment tier: 1=structural (default); 2=structural plus the "
+                        "model-judged rubric, refused with AI_NOT_CONFIGURED when no model "
+                        "is configured. Any other value is refused with INVALID_TIER."
+                    ),
                 },
                 "max_age_hours": {
                     "type": "integer",

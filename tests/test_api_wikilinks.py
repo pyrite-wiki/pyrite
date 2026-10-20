@@ -80,9 +80,11 @@ class TestEntryTitles:
         data = response.json()
         assert len(data["entries"]) == 5
 
+    def test_a_kb_that_does_not_exist_is_refused(self, client):
+        """A KB filter naming no KB is `KB_NOT_FOUND`, not an empty list (#952)."""
         response = client.get("/api/entries/titles?kb=nonexistent")
-        data = response.json()
-        assert len(data["entries"]) == 0
+        assert response.status_code == 404
+        assert response.json()["detail"]["code"] == "KB_NOT_FOUND"
 
     def test_search_filter(self, client):
         """Should filter by search query matching title."""
@@ -167,6 +169,8 @@ class TestEntryResolve:
         data = response.json()
         assert data["resolved"] is True
 
+    def test_resolve_in_a_kb_that_does_not_exist_is_refused(self, client):
+        """A KB filter naming no KB is `KB_NOT_FOUND`, not `resolved: false` (#952)."""
         response = client.get("/api/entries/resolve?target=john-doe&kb=other-kb")
-        data = response.json()
-        assert data["resolved"] is False
+        assert response.status_code == 404
+        assert response.json()["detail"]["code"] == "KB_NOT_FOUND"

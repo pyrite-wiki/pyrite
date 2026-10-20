@@ -18,7 +18,7 @@ read: admin (index sync/jobs/usage/site-render), KB CRUD (create, delete,
 reindex, gc, ephemeral), permissions/default-role, publish/commit/push,
 settings, and user roles. Excluded from this file's own scope: pure
 public/static routes with no access decision to characterize at all
-(`/health`, `/robots.txt`, `/viewer*`, `/branding/*`, `/site/*`, `/auth/
+(`/health`, `/branding/*`, `/auth/
 login`+`register`+`logout` -- these authenticate or serve statically,
 they do not decide access to an existing resource) and the GitHub OAuth
 dance (`/auth/github/*`), whose "access decision" is entirely about a
@@ -85,7 +85,6 @@ _ACCESS_DECIDING_ROUTES: tuple[tuple[str, str, dict], ...] = (
     ("GET", "/api/index/jobs", {}),
     ("GET", f"/api/index/jobs/{_DISPOSABLE_JOB_ID}", {}),
     ("GET", "/api/admin/usage", {}),
-    ("POST", "/api/site/render", {}),
     # -- KB CRUD: requires_tier("admin"), targets a KB that does not exist -
     ("POST", "/api/kbs", {"json": {"name": _DISPOSABLE_NAME, "kb_type": "generic"}}),
     ("PUT", f"/api/kbs/{_DISPOSABLE_NAME}", {"json": {"default_role": "read"}}),

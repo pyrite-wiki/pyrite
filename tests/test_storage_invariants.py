@@ -485,8 +485,8 @@ def test_i4_delete_by_filename_removes_another_entry():
     _run("I4", [NO_ID_BETA_AT_ALPHA, ("delete", {"id": "alpha"})])
 
 
-@_violates("I6", "#488", "update moves a KB-root file into the type's folder")
-def test_i6_update_moves_a_root_file():
+def test_i6_update_does_not_move_a_root_file():
+    """#488, fixed by #955: an update never moves a file (ADR-0042 decision 12)."""
     steps = [("ext_write", {"name": "alpha.md", "id": "gamma", "t": "Alpha"})]
     _run("I6", [*steps, ("update", {"id": "gamma", "what": "title"})])
 
@@ -536,7 +536,7 @@ def _git(cwd: Path, *args: str) -> None:
     # No user or system git config: hooks, signing or a template must not
     # change what these tests see.
     env |= {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, env=env)
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, env=env, timeout=120)
 
 
 @pytest.fixture

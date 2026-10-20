@@ -164,7 +164,12 @@ class TestGetters:
 
 def _git(cwd, *args):
     return subprocess.run(
-        ["git", *args], cwd=str(cwd), capture_output=True, text=True, check=True
+        ["git", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
     ).stdout.strip()
 
 

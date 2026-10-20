@@ -50,6 +50,7 @@ def _init_git_repo(path: Path) -> None:
         capture_output=True,
         check=True,
         env=env,
+        timeout=120,
     )
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
@@ -57,6 +58,7 @@ def _init_git_repo(path: Path) -> None:
         capture_output=True,
         check=True,
         env=env,
+        timeout=120,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
@@ -64,16 +66,20 @@ def _init_git_repo(path: Path) -> None:
         capture_output=True,
         check=True,
         env=env,
+        timeout=120,
     )
     # Create initial commit
     (path / "README.md").write_text("# Test KB\n")
-    subprocess.run(["git", "add", "."], cwd=str(path), capture_output=True, check=True, env=env)
+    subprocess.run(
+        ["git", "add", "."], cwd=str(path), capture_output=True, check=True, env=env, timeout=120
+    )
     subprocess.run(
         ["git", "commit", "-m", "Initial commit"],
         cwd=str(path),
         capture_output=True,
         check=True,
         env=env,
+        timeout=120,
     )
 
 
@@ -127,9 +133,15 @@ class TestGitServiceEnvIsolation:
 
         (wt_path / "kb" / "temp.md").write_text("temp\n")
         env = _clean_git_env()
-        subprocess.run(["git", "add", "."], cwd=str(wt_path), capture_output=True, env=env)
         subprocess.run(
-            ["git", "commit", "-m", "temp"], cwd=str(wt_path), capture_output=True, env=env
+            ["git", "add", "."], cwd=str(wt_path), capture_output=True, env=env, timeout=120
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "temp"],
+            cwd=str(wt_path),
+            capture_output=True,
+            env=env,
+            timeout=120,
         )
 
         result = svc.reset_to_main("test-kb", user_id=1)
@@ -227,13 +239,18 @@ class TestGitServiceWorktree:
         GitService.worktree_add(repo, wt_path, "user/alice")
         (wt_path / "alice.md").write_text("# Alice's entry\n")
         subprocess.run(
-            ["git", "add", "."], cwd=str(wt_path), capture_output=True, env=_clean_git_env()
+            ["git", "add", "."],
+            cwd=str(wt_path),
+            capture_output=True,
+            env=_clean_git_env(),
+            timeout=120,
         )
         subprocess.run(
             ["git", "commit", "-m", "Alice's change"],
             cwd=str(wt_path),
             capture_output=True,
             env=_clean_git_env(),
+            timeout=120,
         )
 
         # Merge into main
@@ -253,25 +270,35 @@ class TestGitServiceWorktree:
         # Change README on alice's branch
         (wt_path / "README.md").write_text("# Alice's version\n")
         subprocess.run(
-            ["git", "add", "."], cwd=str(wt_path), capture_output=True, env=_clean_git_env()
+            ["git", "add", "."],
+            cwd=str(wt_path),
+            capture_output=True,
+            env=_clean_git_env(),
+            timeout=120,
         )
         subprocess.run(
             ["git", "commit", "-m", "Alice changes README"],
             cwd=str(wt_path),
             capture_output=True,
             env=_clean_git_env(),
+            timeout=120,
         )
 
         # Change README on main
         (repo / "README.md").write_text("# Main's version\n")
         subprocess.run(
-            ["git", "add", "."], cwd=str(repo), capture_output=True, env=_clean_git_env()
+            ["git", "add", "."],
+            cwd=str(repo),
+            capture_output=True,
+            env=_clean_git_env(),
+            timeout=120,
         )
         subprocess.run(
             ["git", "commit", "-m", "Main changes README"],
             cwd=str(repo),
             capture_output=True,
             env=_clean_git_env(),
+            timeout=120,
         )
 
         # Merge should fail
@@ -288,13 +315,18 @@ class TestGitServiceWorktree:
         GitService.worktree_add(repo, wt_path, "user/alice")
         (wt_path / "new-entry.md").write_text("# New entry\n")
         subprocess.run(
-            ["git", "add", "."], cwd=str(wt_path), capture_output=True, env=_clean_git_env()
+            ["git", "add", "."],
+            cwd=str(wt_path),
+            capture_output=True,
+            env=_clean_git_env(),
+            timeout=120,
         )
         subprocess.run(
             ["git", "commit", "-m", "Add entry"],
             cwd=str(wt_path),
             capture_output=True,
             env=_clean_git_env(),
+            timeout=120,
         )
 
         success, diff = GitService.diff_branches(repo, "main", "user/alice")
@@ -323,13 +355,18 @@ class TestWorktreeService:
             "---\nid: test-entry\ntitle: Test\ntype: note\n---\nBody\n"
         )
         subprocess.run(
-            ["git", "add", "."], cwd=str(repo), capture_output=True, env=_clean_git_env()
+            ["git", "add", "."],
+            cwd=str(repo),
+            capture_output=True,
+            env=_clean_git_env(),
+            timeout=120,
         )
         subprocess.run(
             ["git", "commit", "-m", "Add KB"],
             cwd=str(repo),
             capture_output=True,
             env=_clean_git_env(),
+            timeout=120,
         )
 
         config = _make_config(kb_dir, "test-kb")
@@ -429,13 +466,18 @@ class TestWorktreeService:
             "---\nid: alice-entry\ntitle: Alice Entry\ntype: note\n---\nAlice wrote this\n"
         )
         subprocess.run(
-            ["git", "add", "."], cwd=str(wt_path), capture_output=True, env=_clean_git_env()
+            ["git", "add", "."],
+            cwd=str(wt_path),
+            capture_output=True,
+            env=_clean_git_env(),
+            timeout=120,
         )
         subprocess.run(
             ["git", "commit", "-m", "Alice's entry"],
             cwd=str(wt_path),
             capture_output=True,
             env=_clean_git_env(),
+            timeout=120,
         )
 
         success, msg = svc.merge("test-kb", user_id=1)
@@ -455,13 +497,18 @@ class TestWorktreeService:
         # Make a change
         (wt_path / "kb" / "temp.md").write_text("temp\n")
         subprocess.run(
-            ["git", "add", "."], cwd=str(wt_path), capture_output=True, env=_clean_git_env()
+            ["git", "add", "."],
+            cwd=str(wt_path),
+            capture_output=True,
+            env=_clean_git_env(),
+            timeout=120,
         )
         subprocess.run(
             ["git", "commit", "-m", "temp"],
             cwd=str(wt_path),
             capture_output=True,
             env=_clean_git_env(),
+            timeout=120,
         )
 
         # Reset

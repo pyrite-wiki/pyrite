@@ -25,7 +25,7 @@ We will acknowledge receipt within 48 hours. For the supported configurations be
 
 Pyrite's supported security boundary today is **one operator**: you, your agents (with the MCP read/write/admin tiers), and people you trust with everything on the instance.
 
-Running Pyrite for people who should not see each other's data — accounts with per-KB permissions, anonymous readers, the public `/site`, a shared server on the internet — is **experimental**. Those features exist and are being hardened release by release, and there are known open issues in how access between users and KBs is enforced. Until this notice is removed:
+Running Pyrite for people who should not see each other's data — accounts with per-KB permissions, anonymous readers, a shared server on the internet — is **experimental**. Those features exist and are being hardened release by release, and there are known open issues in how access between users and KBs is enforced. Until this notice is removed:
 
 - Treat every KB on a shared instance as readable by every user of that instance.
 - Keep genuinely private KBs on a separate instance, or local.

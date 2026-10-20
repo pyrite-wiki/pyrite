@@ -6,11 +6,6 @@ tags:
 - community
 - dogfooding
 - feature
-metadata:
-  kind: feature
-  priority: low
-  effort: M
-  status: deferred
 kind: feature
 priority: low
 effort: M

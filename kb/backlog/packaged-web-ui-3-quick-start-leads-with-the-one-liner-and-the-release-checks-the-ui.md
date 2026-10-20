@@ -31,7 +31,7 @@ Third of three themes split from [[installable-from-github-with-a-working-web-ui
 
 **Regimes:** `npm` absent on the releaser's machine (release.py refuses before touching anything, naming the requirement); `build_static.sh` fails half-way (no partial `pyrite/static/` is staged — the #140 cold read's "aborted run" class); a rerun after an aborted release where `pyrite/static/` is already fresh (no-op, not an error); the UI check when the port is taken (free-port pattern from `tests/e2e/`); the README one-liner's tag — it must not hardcode a version the docs-facts test will then have to chase (use the placeholder form the parent uses, or derive it).
 
-**Touches** — existing: `scripts/release.py`, `tests/test_release_script.py`, `.claude/skills/pyrite-conductor/release-runbook.md`, `README.md`, `docs/getting-started.md`, `.github/workflows/post-tag.yml` (if present), the parent item.
+**Touches** — existing: `scripts/release.py`, `tests/test_release_script.py`, the maintainer's release runbook (outside this repo), `README.md`, `docs/getting-started.md`, `.github/workflows/post-tag.yml` (if present), the parent item.
 
 **Sequence:** after theme 2; after #140 merges; after the changelog-fragments theme (both edit `scripts/release.py` and its test); before the docs-facts theme and the README reposition (all edit `README.md` — this one first because it changes the facts the others assert and frame).
 

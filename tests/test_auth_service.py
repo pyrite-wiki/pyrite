@@ -63,6 +63,7 @@ class TestRegister:
 
 
 class TestLogin:
+    @pytest.mark.core
     def test_login_success(self, auth_env):
         service, _ = auth_env
         service.register("alice", "password123")
@@ -70,6 +71,7 @@ class TestLogin:
         assert user["username"] == "alice"
         assert len(token) > 20
 
+    @pytest.mark.core
     def test_login_wrong_password(self, auth_env):
         service, _ = auth_env
         service.register("alice", "password123")
@@ -83,6 +85,7 @@ class TestLogin:
 
 
 class TestSessions:
+    @pytest.mark.core
     def test_verify_session_valid(self, auth_env):
         service, _ = auth_env
         service.register("alice", "password123")
@@ -304,3 +307,24 @@ class TestOAuthStateStore:
         data = service_b.verify_oauth_state(state, binding)
         assert data is not None
         assert data["flow"] == "login"
+
+
+class TestPasswordHashCost:
+    @pytest.mark.production_bcrypt_cost
+    def test_stored_hash_uses_production_cost_12(self, auth_env):
+        """The suite hashes at cost 4 (root conftest); this test opts out and
+        pins what production writes. Changing the production cost fails it;
+        removing the conftest patch does not."""
+        service, db = auth_env
+        assert service._hash_password("pw").startswith("$2b$12$")
+        service.create_user("carol", "carolpass123", role="read")
+        row = db.execute_sql(
+            "SELECT password_hash FROM local_user WHERE username = :u", {"u": "carol"}
+        )[0]
+        assert row["password_hash"].startswith("$2b$12$")
+
+    def test_suite_default_is_cheap_and_still_verifies(self, auth_env):
+        """Guard for the conftest patch itself: cost 4, and login still works."""
+        service, db = auth_env
+        assert service._hash_password("pw").startswith("$2b$04$")
+        assert service.login("root", "rootpass123") is not None

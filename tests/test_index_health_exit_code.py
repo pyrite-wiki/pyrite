@@ -206,3 +206,144 @@ class TestUnreadableAndOrphanedEntries:
         assert data["checks"]["orphaned_entries"] == []
         assert data["status"] == "unhealthy"
         assert result.exit_code == 1
+
+
+def _make_generic_kb_with_collection(tmp_path):
+    """A KB with a folder collection and two notes, indexed."""
+    kb_path = tmp_path / "coll"
+    (kb_path / "things").mkdir(parents=True)
+    (kb_path / "things" / "__collection.yaml").write_text("title: Things\n", encoding="utf-8")
+    for note_id in ("a", "b"):
+        (kb_path / f"{note_id}.md").write_text(
+            f"---\nid: {note_id}\ntype: note\ntitle: Note {note_id}\n---\nBody {note_id}\n",
+            encoding="utf-8",
+        )
+    config = PyriteConfig(
+        knowledge_bases=[KBConfig(name="coll", path=kb_path, kb_type=KBType.GENERIC)],
+        settings=Settings(index_path=tmp_path / "coll.db"),
+    )
+    db = PyriteDB(config.settings.index_path)
+    IndexManager(db, config).index_all()
+    db.close()
+    return config, kb_path
+
+
+def _run_admin(config):
+    from unittest.mock import patch
+
+    from pyrite.admin_cli import app as admin_app
+
+    with (
+        patch("pyrite.admin_cli.load_config", return_value=config),
+        patch("pyrite.cli.context.load_config", return_value=config),
+    ):
+        return runner.invoke(admin_app, ["index", "health"])
+
+
+class TestOrphanCheckWalksSyncsFiles:
+    @pytest.mark.control(
+        reason="pins the property: the orphan check reads the file set sync indexes; "
+        "the collection row is the case a Markdown-only walk gets wrong"
+    )
+    def test_healthy_kb_with_a_folder_collection_has_no_orphans(self, tmp_path):
+        config, _ = _make_generic_kb_with_collection(tmp_path)
+        db = PyriteDB(config.settings.index_path)
+        try:
+            ids = {row["id"] for row in db.execute_sql("SELECT id FROM entry")}
+        finally:
+            db.close()
+        assert "collection-things" in ids  # the row a Markdown-only walk would call orphaned
+
+        result = _run(config, "--format", "json")
+        data = json.loads(result.stdout)
+
+        assert data["orphaned_entries"] == []
+        assert data["unreadable_files"] == []
+        assert data["status"] == "healthy"
+        assert result.exit_code == 0
+
+
+class TestOrphanAloneIsUnhealthy:
+    @staticmethod
+    def _leave_a_row_behind(config):
+        """A second index row for a file that now holds another, indexed id."""
+        db = PyriteDB(config.settings.index_path)
+        try:
+            cols = [r[1] for r in db._raw_conn.execute("PRAGMA table_info(entry)")]
+            select = ", ".join("'ghost'" if c == "id" else c for c in cols)
+            db._raw_conn.execute(
+                f"INSERT INTO entry ({', '.join(cols)}) SELECT {select} "
+                "FROM entry WHERE id = 'a' AND kb_name = 'coll'"
+            )
+            db._raw_conn.commit()
+        finally:
+            db.close()
+
+    def test_an_orphan_alone_makes_both_commands_unhealthy(self, tmp_path):
+        config, kb_path = _make_generic_kb_with_collection(tmp_path)
+        self._leave_a_row_behind(config)
+
+        result = _run(config, "--format", "json")
+        data = json.loads(result.stdout)
+
+        assert [row["id"] for row in data["orphaned_entries"]] == ["ghost"]
+        for other in ("missing_files", "unindexed_files", "stale_entries", "duplicates"):
+            assert data["checks"][other] == [], other
+        assert data["unreadable_files"] == []
+        assert data["status"] == "unhealthy"
+        assert result.exit_code == 1
+
+        admin = _run_admin(config)
+        assert admin.exit_code == 1, admin.output
+        assert "Orphaned index entries: 1" in admin.output
+
+
+class TestAdminHealthCountsUnreadableFiles:
+    def test_pyrite_admin_does_not_call_an_unreadable_file_healthy(self, tmp_path):
+        config, kb_path = _make_generic_kb_with_collection(tmp_path)
+        (kb_path / "a.md").write_bytes(b"\xff")
+
+        admin = _run_admin(config)
+
+        assert admin.exit_code == 1, admin.output
+        assert "Index is healthy" not in admin.output
+        assert "Unreadable files: 1" in admin.output
+
+
+class TestFilesAreClassifiedByHowTheyFail:
+    def test_collection_file_that_cannot_be_decoded_is_unreadable(self, tmp_path):
+        config, kb_path = _make_generic_kb_with_collection(tmp_path)
+        collection = kb_path / "things" / "__collection.yaml"
+        collection.write_bytes(b"\xff")
+
+        data = json.loads(_run(config, "--format", "json").stdout)
+
+        assert [
+            (r["path"], "UnicodeDecodeError" in r["error"]) for r in data["unreadable_files"]
+        ] == [(str(collection), True)]
+        assert data["malformed_frontmatter"] == []
+
+    def test_collection_file_that_reads_but_does_not_parse_is_malformed(self, tmp_path):
+        config, kb_path = _make_generic_kb_with_collection(tmp_path)
+        collection = kb_path / "things" / "__collection.yaml"
+        collection.write_text("a: [unclosed\n", encoding="utf-8")
+
+        data = json.loads(_run(config, "--format", "json").stdout)
+
+        assert [r["path"] for r in data["malformed_frontmatter"]] == [str(collection)]
+        assert data["unreadable_files"] == []
+
+
+class TestIdEditedToAnotherFilesId:
+    def test_old_row_is_orphaned_with_no_replacement_id_and_the_clash_is_a_duplicate(
+        self, tmp_path
+    ):
+        config, kb_path = _make_generic_kb_with_collection(tmp_path)
+        a = kb_path / "a.md"
+        a.write_text(a.read_text(encoding="utf-8").replace("id: a", "id: b", 1), encoding="utf-8")
+
+        data = json.loads(_run(config, "--format", "json").stdout)
+
+        assert data["orphaned_entries"] == [{"kb": "coll", "id": "a", "path": str(a)}]
+        assert [d["id"] for d in data["duplicates"]] == ["b"]
+        assert data["status"] == "unhealthy"

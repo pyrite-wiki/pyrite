@@ -27,7 +27,9 @@ A command prints its result and nothing else by default; `-v` or `-vv` (or `PYRI
 **A repo-local `.pyrite/config.yaml` (3) is not trusted.** It may have come with
 a cloned or downloaded tree, so Pyrite reads only what stays inside that tree:
 `knowledge_bases` whose paths resolve inside it (keys `name`, `path`,
-`kb_type`, `description`, `read_only`, `shortname`, and `default_role` only
+`kb_type`, `description`, `read_only`, `shortname` (the prefix of a
+cross-KB wikilink, `[[short:id]]`, and nothing else: `-k`, REST `kb` and MCP
+`kb_name` take the full name), and `default_role` only
 when it is `none`), and `settings.index_path` (inside it), `auto_embed`,
 `search_mode` and `summary_length`. (`workspace_path` is never read from any
 `config.yaml`.) KBs registered in that tree's index are held to the same rule:
@@ -117,7 +119,7 @@ a copy of `config.yaml` to restore from.
 | Variable | Default | Meaning |
 |---|---|---|
 | `PYRITE_HOST` | `127.0.0.1` | Bind address. Containers need `0.0.0.0`. |
-| `PYRITE_PORT` | `8088` | Port |
+| `PYRITE_PORT` | `8088` | Port. When unset, `PORT` is used (platforms such as Railway and Heroku set it). |
 | `PYRITE_CORS_ORIGINS` | localhost dev ports | Comma-separated allowed origins |
 | `PYRITE_PUBLISHED_ON_LOOPBACK` | unset | Set to exactly `true` by the bundled `docker-compose.yml`, which publishes the port on `127.0.0.1`. Silences the startup warning for a credential-free wildcard bind, only inside a container and only with auth off. True only while the published address is loopback: remove it when you change `ports:` (including in a `docker-compose.override.yml`). Do not set it by hand elsewhere; outside a container it has no effect |
 | `PYRITE_ALLOWED_HOSTS` | unset | Comma-separated extra hostnames a credential-free server answers (see below) |
@@ -165,7 +167,7 @@ the browser less:
   the CLI, `curl` and agents, are not affected, unless a browser's
   `Sec-Fetch-Site` header says the request came from another site.
 
-These rules cover the whole app, including `/mcp`, `/ws` and `/site`. If you serve a
+These rules cover the whole app, including `/mcp` and `/ws`. If you serve a
 credential-free instance under another name, such as a LAN hostname or a reverse
 proxy's public name, add that name to `allowed_hosts`. If the web UI is served
 from another origin, add the origin to `cors_origins`:
@@ -253,12 +255,12 @@ without a `default_role`. Changing a user's role does not change this; an
 admin grants or removes it explicitly, for now only through the role API
 (`"global_access": true|false` in `PUT /auth/users/{id}/role`; `GET
 /auth/users` shows each user's value). Users inserted by the
-`deploy/*/create-user.py` scripts get public-KB access only until an admin
-grants it. Migration v26 marks every user that existed before it with global
+`deploy/*/create-user.py` scripts (since replaced by `pyrite-admin user
+create`) get public-KB access only until an admin grants it. Migration v26 marks every user that existed before it with global
 access; its rollback is a no-op, so rolling back and migrating up again grants
 global access to every user present at that time, self-registered ones
 included. To share a KB with every signed-in user,
-set its `default_role` to `read` (which also puts it on the public site, below),
+set its `default_role` to `read` (which also opens it to anonymous readers, below),
 or grant it per user.
 
 Per-KB access: each KB in `config.yaml` may carry `default_role: read` (public
@@ -267,23 +269,23 @@ Grants are managed over the REST API by an admin
 (`GET`/`POST /api/kbs/{name}/permissions`) or in the web UI's KB settings; there
 is no CLI command for them yet.
 
-**`default_role: read` also publishes the KB to anyone, signed in or not.**
-Such a KB is on the pre-rendered public site (`/site`, rendered with
-`POST /api/site/render`), in `/site/sitemap.xml` and in `/sitemap.xml`,
-whatever the auth settings are. A KB with `default_role` unset, `write` or
-`none` is never rendered to `/site`, and `/site` refuses its pages even if an
-older cache still holds them. To take a KB off the public site, change its
-`default_role` and re-render; purge any CDN in front of `/site`.
+**`default_role: read` also opens the KB to anyone, signed in or not.**
+Such a KB is readable by an anonymous visitor over REST and the web app,
+whatever the auth settings are. An instance has no crawlable surface: the
+built-in `/site` renderer, its sitemap and `/robots.txt` were removed in
+#953. To make a KB crawlable, build a static site from its files with Hugo
+or Astro and deploy that on its own.
 
-### The public site's Content-Security-Policy
+### The web app's Content-Security-Policy
 
-`/site` pages are served with a strict policy (`script-src 'self'`, no inline
-scripts). If a reverse proxy injects a script into those pages, such as an
-analytics snippet, the browser blocks it until you allow it:
+The web app's pages are served with a strict policy (`script-src 'self'` plus
+the build's own bootstrap hash, no other inline scripts). If a reverse proxy
+injects a script into those pages, such as an analytics snippet, the browser
+blocks it until you allow it:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PYRITE_SITE_CSP_EXTRA` | unset | Extra sources in CSP syntax, appended to the built-in `/site` policy. Sources go on the directive with the same name; a directive the policy lacks is added. A malformed directive is ignored and logged. |
+| `PYRITE_SITE_CSP_EXTRA` | unset | Extra sources in CSP syntax, appended to the built-in policy. Sources go on the directive with the same name; a directive the policy lacks is added. A malformed directive is ignored and logged. |
 
 ```yaml
 settings:
@@ -301,8 +303,8 @@ Limits on what the setting can do:
 - `object-src` and `base-uri` cannot be extended. A directive that tries is
   ignored, and a warning is logged.
 - Adding `'unsafe-inline'`, `'unsafe-eval'` or `*` to `script-src` or
-  `default-src` is applied, but logs a warning (on the first `/site` request), because it lets
-  script in KB content run on `/site`.
+  `default-src` is applied, but logs a warning (on the first request), because it lets
+  script in KB content run in the app.
 - A directive with no value, such as `upgrade-insecure-requests`, is added
   as is.
 - A malformed directive is ignored and logged. That includes a bad name and
@@ -320,10 +322,10 @@ Limits on what the setting can do:
 `config.yaml` also lists `embedding_model` (default `all-MiniLM-L6-v2`, ~90 MB,
 downloaded on first use).
 
-**The Postgres backend is experimental in 0.25.x.** It has no migration for
+**The Postgres backend is experimental.** It has no migration for
 columns added after alembic revision 006, so an existing Postgres database may
 not upgrade between releases
-([#718](https://github.com/pyrite-wiki/pyrite/issues/718)). Nothing in 0.25.x
+([#718](https://github.com/pyrite-wiki/pyrite/issues/718)). Nothing
 reads the `search_backend` and `database_url` keys yet: the index is always
 SQLite, and only the test suite builds a Postgres backend. If code does
 construct it, Pyrite says so once per process, on stderr and in the server log
@@ -359,11 +361,21 @@ Continue a truncated body with `kb_read_body` (offset-based); see
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PYRITE_AI_PROVIDER` | unset | `openai` or `anthropic` |
+| `PYRITE_AI_PROVIDER` | unset (`stub`) | `openai`, `anthropic`, `gemini`, `openrouter`, `ollama`, `local`, `stub` or `none`. `stub` and `none` turn AI off. `openai`, `gemini`, `openrouter`, `ollama` and `local` speak the OpenAI API. |
 | `PYRITE_AI_MODEL` | provider default | Model name |
+| `OPENAI_API_BASE` | unset | Base URL for an OpenAI-compatible provider. Same as `settings.ai_api_base` in `config.yaml`, which wins when set. `gemini` defaults to Google's endpoint and `ollama` to `http://localhost:11434/v1`. |
 
-API keys for providers are the providers' own variables (`OPENAI_API_KEY`,
-`ANTHROPIC_API_KEY`); Pyrite is bring-your-own-key.
+API keys are the providers' own variables: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`
+and `GEMINI_API_KEY`. Pyrite is bring-your-own-key. It uses the first of those
+three that is set, whatever the provider, so set only the one you need. `ollama`
+needs no key.
+
+## Output
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PYRITE_FORMAT` | `json` | Default for `--format`: `json`, `yaml` or `rich`. Only commands whose `--format` help names `PYRITE_FORMAT` read it (for example `create`, `link` and the `task` commands); `pyrite search` and `pyrite kb list` ignore it. An explicit `--format` wins. See [json-contracts.md](json-contracts.md). |
+| `PYRITE_SEARCH_FIELDS` | lean default | Comma-separated fields for `pyrite search` rows. `*` returns every field. `--fields` wins. |
 
 ## Plugins
 
@@ -374,7 +386,7 @@ API keys for providers are the providers' own variables (`OPENAI_API_KEY`,
 ## Seeing the effective configuration
 
 ```bash
-pyrite-admin config show    # merged config with secrets masked
+pyrite-admin config show    # merged config with secrets masked (index path included)
 pyrite kb list              # registered KBs and their paths
-curl localhost:8088/health  # server: index path, embedding readiness
+curl localhost:8088/health  # server liveness; embeddings.ready when PYRITE_PREWARM_EMBEDDINGS is on
 ```

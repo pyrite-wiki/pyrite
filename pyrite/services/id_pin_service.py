@@ -38,6 +38,7 @@ from ..config import KBConfig, PyriteConfig
 from ..exceptions import ValidationError
 from ..models.core_types import explicit_entry_id, id_text, read_entry_id
 from ..storage.repository import KBRepository
+from ..utils.file_lock import NotInGitRepository, file_lock
 from ..utils.frontmatter import Frontmatter, describe, load_frontmatter, split_frontmatter
 
 logger = logging.getLogger(__name__)
@@ -240,6 +241,19 @@ def _write_pin(root: Path, path: Path, planned_original: bytes, new_text: str) -
         os.close(dir_fd)
 
 
+def _write_pin_locked(root: Path, path: Path, planned_original: bytes, new_text: str) -> None:
+    """``_write_pin`` under the entry's momentary lock (ADR-0042 decision 10;
+    #955, B6 P4), so a pin and an update of one file cannot interleave: the
+    pin's own compare-before-replace then decides, as before. A KB outside
+    git has no lock directory and is written without one (D1 (b)); any other
+    lock-directory fault is a refusal the caller reports."""
+    try:
+        with file_lock(path):
+            _write_pin(root, path, planned_original, new_text)
+    except NotInGitRepository:
+        _write_pin(root, path, planned_original, new_text)
+
+
 def _check_unchanged(dir_fd: int, name: str, planned_original: bytes) -> None:
     try:
         fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
@@ -349,9 +363,11 @@ def scan(kb_config: KBConfig) -> IdScan:
             result.skipped.append({"path": rel, "reason": "no YAML frontmatter"})
             continue
         meta = parsed[0]
-        current = repo.id_of_file(path)
+        current, why = repo.read_id(path)
         if current is None:
-            result.skipped.append({"path": rel, "reason": "Pyrite cannot read an id from it"})
+            result.skipped.append(
+                {"path": rel, "reason": why or "Pyrite cannot read an id from it"}
+            )
             continue
         explicit = id_text(meta.get("id")) is not None
         if not explicit:
@@ -487,7 +503,7 @@ def apply(found: IdScan, the_plan: dict[str, Any]) -> dict[str, Any]:
     for item in the_plan["pinned"]:
         try:
             path, original, new_text = _prepared(found, item)
-            _write_pin(found.root, path, original, new_text)
+            _write_pin_locked(found.root, path, original, new_text)
         except (PinRefusedError, OSError, UnicodeDecodeError) as e:
             the_plan["skipped"].append({"path": item["path"], "reason": str(e)})
             continue
@@ -517,7 +533,8 @@ def check(found: IdScan, the_plan: dict[str, Any]) -> dict[str, Any]:
 def find_kb_without_writes(kb_name: str) -> KBConfig | None:
     """The KB named ``kb_name``, found the way every command finds it
     (config.yaml, then the KBs ``pyrite kb add`` registered in the index),
-    without creating or changing a file.
+    without creating or changing a file; ``KBNotFoundError`` from the one
+    resolver when it is not a KB (an unknown name, a shortname).
 
     ``cli_context`` cannot be used for this: it creates the config directory,
     opens the index (creating ``index.db`` and its ``-wal``/``-shm`` files,
@@ -535,9 +552,15 @@ def find_kb_without_writes(kb_name: str) -> KBConfig | None:
     """
     config = pyrite_config.load_config(create_dir=False)
     kb = config.get_kb(kb_name)
+    if kb is None:
+        kb = _registered_kb(config, kb_name)
     if kb is not None:
         return kb
-    return _registered_kb(config, kb_name)
+    # Not a KB: the one refusal (#952), with the shortname rule and the hint.
+    from .access_policy import UNSCOPED
+    from .kb_resolver import resolve_kb
+
+    return resolve_kb(config, kb_name, readable_kbs=UNSCOPED)
 
 
 def _registered_kb(config: PyriteConfig, kb_name: str) -> KBConfig | None:
@@ -550,7 +573,9 @@ def _registered_kb(config: PyriteConfig, kb_name: str) -> KBConfig | None:
         try:
             rows = conn.execute(
                 "SELECT name, path, kb_type, description, default_role "
-                "FROM kb WHERE source = 'user' AND name = ?",
+                # A row with no source is a user row, as the registry, the
+                # resolver and merge_registered_kbs read it.
+                "FROM kb WHERE (source = 'user' OR source IS NULL) AND name = ?",
                 (kb_name,),
             ).fetchall()
         finally:

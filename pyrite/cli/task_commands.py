@@ -27,17 +27,25 @@ from .output import LEGACY_FORMAT_SHORT, OUTPUT_FORMAT
 task_app = typer.Typer(help="Task management commands")
 
 
-def _get_service() -> tuple[TaskService, PyriteDB]:
+def _get_service(*kbs: object) -> tuple[TaskService, PyriteDB]:
     """Create TaskService and return (service, db) for cleanup.
 
     Goes through the shared loader so KBs registered in the database
     (``kb create``, ``kb add``) are merged into the config first. Reading the
     YAML config directly made those KBs invisible here: ``kb list`` showed
-    them, and ``task create -k <kb>`` answered KB_NOT_FOUND (#245).
+    them, and ``task create -k <kb>`` answered KB_NOT_FOUND (#245). Every KB
+    the command named (``kbs``) is resolved here, before the body runs
+    (#952, #924); None names no KB.
     """
-    from .context import get_config_and_db
+    from .context import get_config_and_db, require_kb
 
     config, db = get_config_and_db()
+    try:
+        for kb in kbs:
+            require_kb(config, kb, db=db)
+    except BaseException:
+        db.close()
+        raise
     return TaskService(config, db), db
 
 
@@ -66,6 +74,18 @@ _FIELD_CREATE_ENTRY_COLLISION: frozenset[str] = frozenset(
     {"kb_name", "entry_id", "entry_type", "allow_undeclared"}
 )
 
+#: `--field` keys `task create` owns or builds another way: the id comes from
+#: the title, and a task's links and sources are made with `link` (which
+#: checks the target) -- `--field links=[{"target": "ghost"}]` created a task
+#: already linked to a target that does not exist. Not a managed-field list:
+#: what Pyrite or the task manages is refused by `KBService.create` (#1010).
+_FIELD_CREATE_OWNED_HINT: dict[str, str] = {
+    "id": "`task create` sets the id from the title.",
+    "links": "add links after creating, with `pyrite link`.",
+    "sources": "add sources after creating, with `pyrite update --append sources=...`.",
+}
+_FIELD_CREATE_OWNED: frozenset[str] = frozenset(_FIELD_CREATE_OWNED_HINT)
+
 #: `--field` keys refused because a freshly created entry can never actually
 #: carry them, the #407 symptom recurring on `create` (round-2 cold read):
 #: `type` is frontmatter-only -- `build_entry` always writes the caller's
@@ -93,25 +113,16 @@ def _parse_task_create_fields(
     - a key that already has its own option;
     - `status` (task lifecycle is `task update --status`, not a free-form
       field);
-    - a `TaskEntry.managed_fields` key -- `create` does not run `update`'s
-      managed-field refusal, so without this an agent could forge the audit
-      trail (`status_change_log`, `evidence`, `agent_context`,
-      `assigned_at`) at creation instead of only failing to set it later;
-    - every service-level `KBService._MANAGED_FIELDS` key (`id`, `kb_name`,
-      `file_path`, `links`, `sources`, `provenance`, `extra_frontmatter`) --
-      `update` already refuses these on every entry type, not just tasks;
-      `create` didn't, so `--field links=[{"target": "ghost"}]` created a
-      task already linked to a target that doesn't exist, bypassing the
-      dangling-target check `add_link` applies everywhere else (round-1
-      cold read);
     - a key colliding with `create_entry`'s own call signature or control
       parameters (`_FIELD_CREATE_ENTRY_COLLISION`);
     - `type`, `created_at` and `updated_at` -- a freshly created entry can
       never actually carry them (`_FIELD_CREATE_NEVER_TAKES_EFFECT`), the
       #407 symptom recurring on `create` (round-2 cold read).
+
+    A field Pyrite or the task manages (the audit trail, `file_path`, ...) is
+    not refused here: `KBService.create` refuses it for every surface
+    (#1010), so the rule has one home.
     """
-    from ..models.task import TaskEntry
-    from ..services.kb_service import _MANAGED_FIELDS
     from .entry_commands import _field_type_for, _parse_field_value
 
     fields: dict[str, Any] = {}
@@ -128,15 +139,8 @@ def _parse_task_create_fields(
                 "--field status=... is refused: a new task is always created open; "
                 "use `task update --status` to change it."
             )
-        if k in TaskEntry.managed_fields:
-            raise ValidationError(
-                f"--field {k}=... is refused: Pyrite maintains this field as part of "
-                f"the task's audit trail."
-            )
-        if k in _MANAGED_FIELDS:
-            raise ValidationError(
-                f"--field {k}=... is refused: Pyrite maintains this field; `update` refuses it too."
-            )
+        if k in _FIELD_CREATE_OWNED:
+            raise ValidationError(f"--field {k}=... is refused: " + _FIELD_CREATE_OWNED_HINT[k])
         if k in _FIELD_CREATE_ENTRY_COLLISION:
             raise ValidationError(
                 f"--field {k}=... is refused: this name collides with a parameter "
@@ -190,7 +194,7 @@ def task_create(
             "A task title is required: `pyrite task create <title> ...` or `--title <title>`."
         )
 
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         fields = _parse_task_create_fields(field, config=svc.config, kb_name=kb_name)
         result = svc.create_task(
@@ -269,7 +273,7 @@ def task_list(
     priority: int | None = typer.Option(None, "--priority", help="Filter by priority"),
 ) -> Outcome:
     """List tasks with optional filters."""
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         items = svc.list_tasks(
             kb_name=kb_name,
@@ -337,7 +341,7 @@ def _render_task(console, result: dict) -> None:
 
 def _task_get_impl(task_id: str, kb_name: str | None) -> Outcome:
     """Shared implementation for `task get` and the deprecated `task status`."""
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         task = svc.get_task(task_id, kb_name, readable_kbs=UNSCOPED)
         if not task:
@@ -437,7 +441,7 @@ def task_update(
             "--comment or --by."
         )
 
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         result = svc.update_task(task_id, kb_name, **updates)
     finally:
@@ -462,7 +466,7 @@ def task_claim(
     legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Atomically claim an open task."""
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         result = svc.claim_task(task_id, kb_name, assignee)
     finally:
@@ -500,7 +504,7 @@ def task_reset(
     For tasks whose worker crashed or aged out: returns the task to `open` so it
     can be re-dispatched, clears the assignee, and appends a work-log entry.
     """
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         result = svc.reset_task(task_id, kb_name, reason=reason, operator=operator)
     finally:
@@ -532,7 +536,7 @@ def task_decompose(
 ) -> Outcome:
     """Decompose a parent task into child tasks."""
     children = [{"title": t} for t in child]
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         results = svc.decompose_task(parent_id, kb_name, children)
         output = {
@@ -563,7 +567,7 @@ def task_migrate_relaxed_mode(
     Tier A r1175 — provides a migration path so existing tasks don't
     fail validation the next time their status changes. Idempotent.
     """
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         result = svc.migrate_relaxed_mode(kb_name, dry_run=dry_run)
     finally:
@@ -594,7 +598,7 @@ def task_checkpoint(
     legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Log a checkpoint on a task."""
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         result = svc.checkpoint_task(
             task_id=task_id,

@@ -7,8 +7,6 @@ tags:
 - mcp
 - agents
 importance: 5
-metadata:
-  status: in_progress
 status: done
 priority: medium
 rank: 0

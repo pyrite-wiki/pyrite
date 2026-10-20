@@ -31,7 +31,7 @@ from pyrite.utils.yaml import load_yaml
 
 runner = CliRunner()
 
-DESK_SCHEMA_PATH = Path(__file__).resolve().parents[1] / "docs" / "desk-schema.yaml"
+DESK_SCHEMA_PATH = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "desk-schema.yaml"
 
 
 def _task_frontmatter(config: PyriteConfig, kb_name: str, entry_id: str, subdir: str) -> dict:
@@ -42,9 +42,8 @@ def _task_frontmatter(config: PyriteConfig, kb_name: str, entry_id: str, subdir:
 
 @pytest.fixture
 def desk_env(tmp_path):
-    """A KB initialised from the real `docs/desk-schema.yaml`, the schema the
-    conductor-desk recipe actually uses -- required fields `project` and
-    `kind` on `task`."""
+    """A KB initialised from `tests/fixtures/desk-schema.yaml`, a task schema with
+    required fields `project` and `kind` on `task`."""
     desk_path = tmp_path / "desk"
     (desk_path / "tasks").mkdir(parents=True)
     (desk_path / "kb.yaml").write_text(DESK_SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -127,9 +126,9 @@ def test_task_create_with_field_creates_the_task(desk_env):
 
 @pytest.mark.cli
 def test_conductor_desk_recipe_creates_a_task_in_one_step(desk_env):
-    """`docs/conductor-desk.md`'s one-step recipe: title, --priority, --body,
+    """The one-step recipe: title, --priority, --body,
     --tags and the desk schema's required --field project/kind, all on one
-    `task create` call, against the real desk schema."""
+    `task create` call, against the desk schema fixture."""
     result = runner.invoke(
         app,
         [

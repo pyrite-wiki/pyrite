@@ -37,8 +37,10 @@ from tests.characterization.surfaces import (
     non_apiroute_transport_routes,
 )
 
-PINNED_REST_TOTAL_ROUTE_COUNT = 143
-PINNED_MCP_TOTAL_TOOL_COUNT = 112
+PINNED_REST_TOTAL_ROUTE_COUNT = (
+    132  # 143 until #953 removed the /site, /viewer, SEO and render routes
+)
+PINNED_MCP_TOTAL_TOOL_COUNT = 106  # 112 until #953 deleted cascade's six tools
 
 
 def _all_rest_routes(app) -> set[tuple[str, str]]:
@@ -128,9 +130,9 @@ def test_exclusion_counts_are_pinned():
     excluded, or a new one arrived, and a reviewer should see that as a
     diff to a constant, not discover it by reading a diff to a dict.
     """
-    assert REST_ACCESS_EXCLUSIONS_COUNT == len(REST_ACCESS_EXCLUSIONS) == 69, (
+    assert REST_ACCESS_EXCLUSIONS_COUNT == len(REST_ACCESS_EXCLUSIONS) == 58, (
         f"REST_ACCESS_EXCLUSIONS now has {len(REST_ACCESS_EXCLUSIONS)} entries, "
-        f"pinned at 69 -- update this assert deliberately, with a reason, rather "
+        f"pinned at 58 (69 until #953) -- update this assert deliberately, with a reason, rather "
         f"than letting it drift."
     )
     # 6 -> 5: social_reputation filters by the readable set now (it sums

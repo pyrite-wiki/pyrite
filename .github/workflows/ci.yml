@@ -4,7 +4,9 @@ on:
   push:
     branches: [main, dev]
   pull_request:
-    branches: [main, dev]
+    # arch/**: integration branches of a time-boxed architecture sprint (#952,
+    # #953, #955); their PRs need the same checks before they land on dev.
+    branches: [main, dev, 'arch/**']
   # GitHub's merge queue. Without this trigger the queue cannot be enabled at
   # all: a queued PR waits on the required check (`gate`) and a workflow that
   # does not run on merge_group never produces one (#273). The queue is what
@@ -206,6 +208,9 @@ jobs:
     needs: changes
     if: (needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main') && needs.changes.outputs.queue_passed != 'true'
     runs-on: ubuntu-latest
+    # A hung test must not hold a runner for the 6 h default (tests-t1): pytest-timeout
+    # bounds each test; this bounds the job.
+    timeout-minutes: 45
     strategy:
       # A red shard must not cancel its siblings: every leg records its
       # timings, and `gate` fails on any red leg regardless.
@@ -303,7 +308,7 @@ jobs:
           # Extensions are separate distributions, covered by NO pyrite extra.
           # Without this loop 37 test modules fail at collection with
           # ModuleNotFoundError (pyrite_journalism_investigation,
-          # pyrite_cascade, pyrite_encyclopedia). With [all] plus this loop the
+          # pyrite_encyclopedia). With [all] plus this loop the
           # matrix job collects the full suite, which is why the old
           # `test-optional-deps` job (same install, 3.12 only) was removed as a
           # pure duplicate.
@@ -340,8 +345,10 @@ jobs:
       # only ran as a local commit-msg hook, so outside contributors' PRs
       # (which never run local hooks) could land a `fix:` commit with zero
       # test lines -- all three outside PRs so far did exactly that. `push`
-      # events have no PR to diff against (base.sha is unset there), so this
-      # only runs on pull_request; fetch-depth: 0 above makes base.sha walkable.
+      # events have no PR to diff against, so this only runs on pull_request;
+      # fetch-depth: 0 above makes the range walkable. HEAD is the PR's merge
+      # commit, HEAD^1 the base tip now: base.sha (the tip when the PR last
+      # synced) would put every PR merged since into this range (#1074).
       # --range walks each commit individually (not the range's cumulative
       # diff), so an earlier offending commit isn't hidden by a later,
       # unrelated commit that happens to touch tests/.
@@ -349,7 +356,7 @@ jobs:
         if: github.event_name == 'pull_request' && matrix.shard == 1
         run: >-
           python scripts/check_fix_commit_has_tests.py --range
-          ${{ github.event.pull_request.base.sha }} ${{ github.sha }}
+          HEAD^1 HEAD
 
       # Advisory, never blocking (#278). #173 merged with its entry appended to
       # CHANGELOG.md under the already-released 0.24.3 heading, so the
@@ -461,6 +468,7 @@ jobs:
     needs: changes
     if: (needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main') && needs.changes.outputs.queue_passed != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         python-version: ${{ fromJSON((github.event_name == 'pull_request' && needs.changes.outputs.infra != 'true') && '["3.12"]' || '["3.11", "3.12", "3.13"]') }}
@@ -591,6 +599,8 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # HEAD^1 of the PR merge ref is the base commit
 
       - uses: actions/setup-python@v5
         with:
@@ -612,8 +622,40 @@ jobs:
             fi
           done
 
-      - name: Type check with mypy
-        run: mypy pyrite/ --ignore-missing-imports
+      # Red means this change ADDED type errors (#885, #1084): mypy runs on the
+      # change and on its BASE commit, and the ratchet compares them per file.
+      # The base is HEAD^1 of a PR's merge ref, the pre-push SHA of a push to
+      # dev, the queue's base SHA in the merge queue. Comparing with the base
+      # rather than `.mypy-baseline.json` is what keeps the answer true: the
+      # file drifted above dev once (the architecture sprint merged with this
+      # job red because it is advisory) and every PR then read red for errors
+      # it did not add. The file stays the fallback when there is no base
+      # commit (a manual dispatch, a first push) and is lowered with
+      # `--update`. The mypy exit code is ignored on purpose; the ratchet
+      # decides (and exits 2 if either run never finished, so a crash cannot
+      # read as zero errors).
+      - name: Type check with mypy (ratchet)
+        env:
+          EVENT: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          mypy pyrite/ --ignore-missing-imports > mypy.out || true
+          case "$EVENT" in
+            pull_request) base="$(git rev-parse HEAD^1)" ;;
+            push) base="$PUSH_BEFORE" ;;
+            merge_group) base="$QUEUE_BASE" ;;
+            *) base="" ;;
+          esac
+          if [ -n "${base//0/}" ] && { git cat-file -e "$base^{commit}" 2>/dev/null \
+              || git fetch --depth=1 origin "$base"; }; then
+            git worktree add --detach "$RUNNER_TEMP/mypy-base" "$base"
+            (cd "$RUNNER_TEMP/mypy-base" && mypy pyrite/ --ignore-missing-imports > "$GITHUB_WORKSPACE/mypy-base.out" || true)
+            python scripts/mypy_ratchet.py mypy.out --base mypy-base.out
+          else
+            echo "no base commit for a '$EVENT' run: comparing with .mypy-baseline.json"
+            python scripts/mypy_ratchet.py mypy.out
+          fi
 
   # ===========================================================================
   # Coverage: its own job so the matrix stays the fast gate. Not a required
@@ -626,6 +668,9 @@ jobs:
     needs: changes
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    # A hung test must not hold a runner for the 6 h default (tests-t1): pytest-timeout
+    # bounds each test; this bounds the job.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -870,16 +915,22 @@ jobs:
   # summary; `test-evidence.json` (verdict counts plus the test job's diff
   # coverage) is the measurement for the gating decision.
   #
-  # A SIGNAL, NOT A GATE: absent from `gate`'s needs and not a required check;
-  # it fails only when the check itself could not run. It waits for `test`
-  # (for the diff coverage) but runs whatever `test` concluded.
+  # ADVISORY (#1074): not in `gate`'s needs, and CI does not pass --enforce-fix
+  # (a local flag), so its verdict never blocks a merge. Gating waits for #1104's
+  # claim model. It grades against the merge commit's first parent (HEAD^1: the
+  # base tip now, so PRs merged since this one was opened are not graded as its
+  # own). The job goes red only for a control marker the PR adds at module or
+  # class level, or when the check itself could not run (exit 2); neither blocks.
+  # It waits for `test` (for the diff coverage) but runs whatever `test` concluded.
+  # It runs on pull_request only: it is skipped in the merge queue (merge_group).
   # ===========================================================================
   verify-red:
     needs: [changes, test, shard-report]
     if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
-    # Two pytest runs of at most --timeout each, plus setup.
-    timeout-minutes: 20
+    # Three subprocesses: a collect-only run of the base's test files (capped at
+    # 60 s), then two pytest runs of at most --timeout each, plus setup.
+    timeout-minutes: 22
     permissions:
       contents: read
     steps:
@@ -917,9 +968,12 @@ jobs:
       - name: Run the new tests with and without the change
         env:
           HF_HUB_OFFLINE: "1"
+          # An env var, not interpolated into the script: a title is untrusted.
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: >-
           python scripts/verify_red_ci.py --timeout 420
-          --base "${{ github.event.pull_request.base.sha }}"
+          --base "HEAD^1"
+          --title "$PR_TITLE"
           --pr "${{ github.event.pull_request.number }}"
           --head-sha "${{ github.event.pull_request.head.sha }}"
           --diff-cover-json diff-cover.json

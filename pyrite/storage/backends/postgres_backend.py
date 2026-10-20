@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from ...exceptions import StorageError
 from ..models import Link
-from .base_backend import BaseBackend
+from .base_backend import BaseBackend, _link_rows
 from .capabilities import BackendCapability
 from .protocol import DEFAULT_MIN_SIMILARITY, similarity_from
 
@@ -41,6 +41,13 @@ _EXPERIMENTAL_NOTICE = (
 )
 _experimental_notice_shown = False
 _experimental_notice_lock = threading.Lock()
+
+# ``non_empty`` (#200), the same predicate as SQLite's: a body or a summary
+# with a character other than space, tab, CR or LF.
+NON_EMPTY_SQL = (
+    " AND (btrim(COALESCE(e.body, ''), chr(32) || chr(9) || chr(10) || chr(13)) != ''"
+    " OR btrim(COALESCE(e.summary, ''), chr(32) || chr(9) || chr(10) || chr(13)) != '')"
+)
 
 
 def _logging_reaches_stderr() -> bool:
@@ -155,6 +162,9 @@ def ensure_schema(engine) -> None:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         conn.execute(text("ALTER TABLE entry ADD COLUMN IF NOT EXISTS fts_vector tsvector"))
         conn.execute(text("ALTER TABLE entry ADD COLUMN IF NOT EXISTS embedding vector(384)"))
+        # The link's `kb:` prefix as written (#980): create_all never alters an
+        # existing table, so a database from before it gets the column here.
+        conn.execute(text("ALTER TABLE link ADD COLUMN IF NOT EXISTS target_prefix TEXT"))
         # GIN index for FTS
         conn.execute(
             text("CREATE INDEX IF NOT EXISTS idx_entry_fts ON entry USING gin(fts_vector)")
@@ -303,22 +313,22 @@ class PostgresBackend(BaseBackend):
     # =====================================================================
 
     def _sync_links(self, entry_id: str, kb_name: str, links: list[dict[str, Any]]) -> None:
+        # The same rows as SQLite's diff, one per written link (`_link_rows`,
+        # #1009), written by delete and re-insert.
         self._session.query(Link).filter_by(source_id=entry_id, source_kb=kb_name).delete()
-        for link in links:
-            from ...schema import get_inverse_relation
-
-            relation = link.get("relation", "related_to")
-            inverse = get_inverse_relation(relation)
-            target_kb = link.get("kb", kb_name)
+        for (target_id, target_kb, relation, target_prefix), attrs in _link_rows(
+            kb_name, links
+        ).items():
             self._session.add(
                 Link(
                     source_id=entry_id,
                     source_kb=kb_name,
-                    target_id=link.get("target"),
+                    target_id=target_id,
                     target_kb=target_kb,
                     relation=relation,
-                    inverse_relation=inverse,
-                    note=link.get("note", ""),
+                    inverse_relation=attrs["inverse_relation"],
+                    note=attrs["note"],
+                    target_prefix=target_prefix,
                 )
             )
 
@@ -342,6 +352,7 @@ class PostgresBackend(BaseBackend):
         fips: str | None = None,
         state: str | None = None,
         status: str | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         # Build the tsquery — plainto_tsquery handles user input safely
         sql = """
@@ -414,6 +425,8 @@ class PostgresBackend(BaseBackend):
             keys = effective_status.derived_done_keys(self._session, kb_name)
             sql += f" AND {effective_status.status_sql('e.', keys, params)} = :status"
             params["status"] = status
+        if non_empty:
+            sql += NON_EMPTY_SQL
 
         sql += " ORDER BY rank DESC LIMIT :limit OFFSET :offset"
         params["limit"] = limit
@@ -503,6 +516,7 @@ class PostgresBackend(BaseBackend):
         status: str | None = None,
         include_archived: bool = False,
         kb_names: set[str] | list[str] | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """KNN over pgvector, honouring the same filters as ``search`` (#56).
 
@@ -575,6 +589,8 @@ class PostgresBackend(BaseBackend):
             keys = effective_status.derived_done_keys(self._session, kb_name)
             sql += f" AND {effective_status.status_sql('e.', keys, params)} = :status"
             params["status"] = status
+        if non_empty:
+            sql += NON_EMPTY_SQL
         # The similarity floor belongs in the WHERE, not in a Python filter
         # after the fact: applied post-LIMIT it culls rows the LIMIT already
         # paid for and under-returns, where sqlite escalates its k instead. One

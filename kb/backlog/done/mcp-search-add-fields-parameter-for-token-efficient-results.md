@@ -7,11 +7,6 @@ tags:
 - search
 - agents
 - dx
-metadata:
-  kind: enhancement
-  status: completed
-  priority: high
-  effort: m
 kind: enhancement
 status: done
 priority: high

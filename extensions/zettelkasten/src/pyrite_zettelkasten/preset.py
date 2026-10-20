@@ -1,5 +1,9 @@
 """Zettelkasten KB preset definition."""
 
+import copy
+
+from pyrite.models.task import TASK_KB_PRESET
+
 ZETTELKASTEN_PRESET = {
     "name": "my-zettelkasten",
     "description": "Personal knowledge garden",
@@ -16,6 +20,9 @@ ZETTELKASTEN_PRESET = {
             "optional": ["author", "page_refs"],
             "subdirectory": "literature/",
         },
+        # #860: the task type lives in one place (pyrite.models.task); take a
+        # deepcopy so this preset and the built-in template share no mutable dict.
+        "task": copy.deepcopy(TASK_KB_PRESET["types"]["task"]),
     },
     "policies": {
         "private": True,
@@ -32,5 +39,5 @@ ZETTELKASTEN_PRESET = {
             },
         ],
     },
-    "directories": ["zettels", "literature"],
+    "directories": ["zettels", "literature", "tasks"],
 }

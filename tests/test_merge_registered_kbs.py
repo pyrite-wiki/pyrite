@@ -48,6 +48,24 @@ def db_with_user_kb():
 
 
 class TestMergeRegisteredKBs:
+    def test_a_row_with_no_source_is_a_user_row(self, db_with_user_kb):
+        """A `kb` row whose `source` is NULL (written before the column had a
+        default, or by hand) is a user row everywhere: the registry reads it
+        as `source or "user"` and the resolver finds it, so the merge that
+        gives a CLI its registry-only KBs must take it too (#965 round 2)."""
+        db = db_with_user_kb["db"]
+        config = db_with_user_kb["config"]
+        kb_path = db_with_user_kb["kb_path"].parent / "unsourced-kb"
+        kb_path.mkdir()
+        db._raw_conn.execute(
+            "INSERT INTO kb (name, kb_type, path, source) VALUES (?, ?, ?, NULL)",
+            ("unsourced-kb", "generic", str(kb_path)),
+        )
+        db._raw_conn.commit()
+
+        assert db.merge_registered_kbs(config) == 2
+        assert config.get_kb("unsourced-kb") is not None
+
     def test_merges_db_registered_kb_into_config(self, db_with_user_kb):
         db = db_with_user_kb["db"]
         config = db_with_user_kb["config"]
@@ -59,7 +77,7 @@ class TestMergeRegisteredKBs:
 
     def test_merges_default_role_from_db(self, db_with_user_kb):
         """default_role is a real DB column (per-KB public/private access
-        control, e.g. sitemap_service.py's "is this KB public" signal) but
+        control: the access policy's anonymous rule reads it) but
         the raw SQL SELECT here never fetched it, so a DB-registered KB's
         default_role was silently dropped on every merge -- a KB added via
         `pyrite kb add` with default_role='read' could never appear in the

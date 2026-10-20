@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { entryHref } from '$lib/utils/entry-href';
 	import KBSwitcher from '$lib/components/common/KBSwitcher.svelte';
 	import ThemeToggle from '$lib/components/common/ThemeToggle.svelte';
 	import StarredSidebar from '$lib/components/StarredSidebar.svelte';
@@ -179,17 +180,17 @@
 	</div>
 
 	<!-- Recent Entries -->
-	{#if entryStore.recentIds.length > 0}
+	{#if entryStore.recent.length > 0}
 		<div class="border-t border-zinc-200 px-3 py-2 dark:border-zinc-800">
 			<p class="mb-1 text-xs font-medium uppercase tracking-wider text-zinc-500">Recent</p>
-			{#each entryStore.recentIds.slice(0, 5) as id}
+			{#each entryStore.recent.slice(0, 5) as item (`${item.kb}:${item.id}`)}
 				<a
-					href="/entries/{id}"
+					href={entryHref(item.id, item.kb)}
 					onclick={handleNavClick}
 					class="block truncate rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800"
-				title={id}
+				title={item.id}
 			>
-					{entryStore.recentTitles[id] ?? id}
+					{item.title}
 				</a>
 			{/each}
 		</div>

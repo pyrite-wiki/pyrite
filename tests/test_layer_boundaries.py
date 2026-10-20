@@ -2,8 +2,7 @@
 
 REST and the other server routes (`pyrite/server`), MCP
 (`pyrite/server/mcp_server.py`), the CLIs (`pyrite/cli`,
-`pyrite/admin_cli.py`, `pyrite/read_cli.py`) and the Streamlit UI
-(`pyrite/ui`) are *surfaces*. ADR-0031 makes the API the product surface;
+`pyrite/admin_cli.py`, `pyrite/read_cli.py`) are *surfaces*. ADR-0031 makes the API the product surface;
 that holds only if behaviour lives in one layer, so a surface asks a service
 and the service asks storage.
 
@@ -140,13 +139,8 @@ COMPOSITION_ROOTS: dict[tuple[str, str], tuple[int, str]] = {
         1,
         "the return annotation of _get_service, the task commands' get_config_and_db wrapper",
     ),
-    ("pyrite/ui/data.py::<module>", "PyriteDB"): (1, "the Streamlit UI's composition root"),
-    ("pyrite/ui/data.py::_get_db", "PyriteDB"): (
-        1,
-        "the UI's cached DB; _get_kb_service is built on it",
-    ),
 }
-COMPOSITION_ROOTS_SIZE = 38  # a new root is a design decision: raise it only with one
+COMPOSITION_ROOTS_SIZE = 36  # a new root is a design decision: raise it only with one
 
 # -- Not yet moved: (function, rule) -> (count, why and where it moves) --------
 
@@ -171,8 +165,8 @@ ALLOWLIST: dict[tuple[str, str], tuple[int, str]] = {
     ("pyrite/server/endpoints/admin.py::get_stats", "storage"): (1, _INDEX),
     ("pyrite/server/endpoints/admin.py::sync_index", "storage"): (1, _INDEX),
     ("pyrite/server/endpoints/admin.py::sync_index", ".db"): (
-        2,
-        "hands index_mgr.db to _drain_embed_queue and SiteCacheService; " + _FOLLOW,
+        1,
+        "hands index_mgr.db to _drain_embed_queue; " + _FOLLOW,
     ),
     ("pyrite/server/worktree_resolver.py::<module>", "PyriteDB"): (
         1,
@@ -187,10 +181,6 @@ ALLOWLIST: dict[tuple[str, str], tuple[int, str]] = {
         1,
         "WorktreeDB; " + _FOLLOW,
     ),
-    ("pyrite/admin_cli.py::index_build", "storage"): (2, _INDEX),
-    ("pyrite/admin_cli.py::index_sync", "storage"): (2, _INDEX),
-    ("pyrite/admin_cli.py::index_stats", "storage"): (2, _INDEX),
-    ("pyrite/admin_cli.py::index_health", "storage"): (2, _INDEX),
     ("pyrite/cli/index_commands.py::index_build", "storage"): (2, _INDEX),
     ("pyrite/cli/index_commands.py::index_build", "db."): (1, "db.vec_available; " + _FOLLOW),
     ("pyrite/cli/index_commands.py::index_sync", "storage"): (2, _INDEX),
@@ -199,15 +189,6 @@ ALLOWLIST: dict[tuple[str, str], tuple[int, str]] = {
     ("pyrite/cli/index_commands.py::index_health", "storage"): (2, _INDEX),
     ("pyrite/cli/index_commands.py::index_embed", "storage"): (2, _INDEX + " (is_empty, #380)"),
     ("pyrite/cli/index_commands.py::index_embed", "db."): (1, "db.vec_available; " + _FOLLOW),
-    ("pyrite/cli/init_command.py::init_kb", "storage"): (2, _INDEX),
-    ("pyrite/cli/schema_commands.py::schema_migrate", "storage"): (2, "KBRepository; " + _FOLLOW),
-    ("pyrite/cli/search_commands.py::<module>", "storage"): (1, "KBRepository; " + _FOLLOW),
-    ("pyrite/cli/search_commands.py::_search_files", "storage"): (1, "KBRepository; " + _FOLLOW),
-    ("pyrite/cli/search_commands.py::_warn_if_stale", "storage"): (2, _INDEX),
-    ("pyrite/cli/search_commands.py::register_search_command.search", "storage"): (
-        2,
-        _INDEX + " (is_empty / index_all, #380)",
-    ),
     ("pyrite/cli/db_commands.py::<module>", "sqlite3"): (
         1,
         "backup/restore of the index file; " + _FOLLOW,
@@ -218,12 +199,11 @@ ALLOWLIST: dict[tuple[str, str], tuple[int, str]] = {
         "sqlite3 integrity check; " + _FOLLOW,
     ),
 }
-ALLOWLIST_SIZE = 33  # lower it with every entry removed; never raise it
+ALLOWLIST_SIZE = 23  # lower it with every entry removed; never raise it
 
 SURFACES = (
     "pyrite/server/",
     "pyrite/cli/",
-    "pyrite/ui/",
     "pyrite/admin_cli.py",
     "pyrite/read_cli.py",
 )

@@ -52,7 +52,7 @@ For something to read it against, there are 26 more, mostly written about the th
 git clone https://github.com/pyrite-wiki/pyrite-kb-demo.git
 ```
 
-Tell Pyrite where all of them are. Use `--format rich` here: in the default format this command lists what it found and registers nothing ([#660](https://github.com/pyrite-wiki/pyrite/issues/660)).
+Tell Pyrite where all of them are. Use `--format rich` here to see a table and registration summary; `--add` also registers KBs in the default JSON format and the other output formats.
 
 ```bash
 pyrite kb discover pyrite-kb-demo --add --format rich
@@ -153,10 +153,10 @@ pyrite search "write read path identity" -k pyrite --fields id,title
 **Ask Claude:**
 
 ```text
-Pyrite's development process is written down in skills under ./pyrite/.claude/skills, a hidden folder, so search it by name. What is the Andon cord in Pyrite's own development process, and where does the idea come from? Cite the file and the entry ids.
+What is the Andon cord in Pyrite's own development process, and where does the idea come from? Cite the entry ids.
 ```
 
-Tell it where to look, as above. This answer lives in a skill file, not in a KB entry, and in a hidden folder; an agent that is not told will often search past it and report that Pyrite has no such thing. (Ours missed it on one of two tries before we named the folder, and found it on both after.) A good answer cites the section "The Andon cord" in `pyrite/.claude/skills/pyrite-conductor/SKILL.md` for the rule (anyone can stop the loop by opening an issue labelled `andon`) and `andon` in the `tps` KB for where the idea comes from.
+A good answer cites the process map `map-development-process-and-releases` for the rule (anyone can stop the work when it churns, by commenting on the ticket with the evidence) and `andon` in the `tps` KB for where the idea comes from.
 
 ```bash
 pyrite search "andon" -k tps --fields id,title
@@ -165,8 +165,10 @@ pyrite search "andon" -k tps --fields id,title
 <!-- runner: expect-ids tps:andon -->
 
 ```bash
-grep -n "Andon cord" pyrite/.claude/skills/pyrite-conductor/SKILL.md
+pyrite search "Andon cord" -k pyrite --fields id,title
 ```
+
+<!-- runner: expect-ids pyrite:map-development-process-and-releases -->
 
 #### 4. What did Pyrite take from Goldratt?
 

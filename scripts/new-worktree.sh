@@ -61,7 +61,8 @@ e2e ports: $wt_dir/.pyrite/e2e-ports  (this worktree's Playwright ports; cat it 
   cd "$wt_dir"
   ... work, commit ...
   git push -u origin "$branch"
-  gh pr create --base dev --fill && gh pr merge --auto --rebase
+  gh pr create --base dev --draft --fill   # from a fork add: --repo pyrite-wiki/pyrite
+  # review and merge are the maintainer's: do not arm auto-merge
   # if another PR merges first the PR goes BEHIND: gh pr update-branch --rebase
 
 When merged (the branch is deleted on GitHub automatically):

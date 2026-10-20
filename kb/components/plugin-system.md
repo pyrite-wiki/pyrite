@@ -16,12 +16,15 @@ Lazy-loaded plugin system using Python entry points for discovery and a structur
 - `protocol.py` — `PyritePlugin` @runtime_checkable protocol (20 methods)
 - `registry.py` — `PluginRegistry` singleton, lazy discovery via `importlib.metadata.entry_points(group="pyrite.plugins")`
 - `context.py` — `PluginContext` dataclass injected into plugins via `set_context()`
+- `capabilities.py` — the `Capability` enum (schema, storage, surface, domain, context) a plugin declares in `capabilities`
+- `removed.py` — extensions Pyrite once shipped and deleted, and the KB types they owned, so a stale `kb_type` gets a plain message
+- `scoping.py` — `kb_scope_clause`: the one rule that narrows a plugin tool's optional KB parameter to the caller's readable KBs
 
 ## Plugin Lifecycle
 
 1. `get_registry()` triggers lazy discovery of entry points
 2. Each plugin class is instantiated and `set_context()` injects shared config/db
-3. Registry exposes `get_all_*()` aggregation methods per capability axis
+3. Registry exposes `get_all_*()` aggregation methods per capability axis, and skips each method whose `Capability` the plugin did not declare (`_METHOD_CAPABILITIES` in `registry.py`)
 4. Dict capabilities warn on key collisions, list capabilities extend, dict-of-list merge by key
 5. `get_hooks_for_kb()`/`get_validators_for_kb()` filter hooks/validators by KB type for domain-scoped plugins — pure lookups, not runners
 
@@ -45,6 +48,10 @@ Lazy-loaded plugin system using Python entry points for discovery and a structur
   closed (the write is refused, same as a raising hook); a dropped `after_*`
   hook only warns. `PluginRegistry.run_hooks`/`run_hooks_for_kb` (which used
   to run hooks directly) are gone.
+
+## Hooks and writes
+
+A `before_save` hook may refuse a write by raising. On update its changes are ignored (ADR-0042 decision 4); only create keeps them. An `after_save` hook never writes another entry.
 
 ## Capabilities
 

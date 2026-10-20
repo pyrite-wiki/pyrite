@@ -1,6 +1,9 @@
 """Tests for named rubric checkers — explicit binding between rubric items and checkers."""
 
 import json
+import os
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -92,10 +95,33 @@ class TestParameterizedCheckers:
         assert result["rule"] == "rubric_violation"
         assert "role" in result["message"]
 
-    def test_has_field_no_params(self):
+    @pytest.mark.parametrize(
+        ("checker", "key", "empty"),
+        [
+            (check_has_field, "field", ""),
+            (check_has_any_field, "fields", []),
+            (check_body_has_section, "heading", ""),
+            (check_body_has_pattern, "pattern", ""),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "regime", ["no_params", "empty_params", "missing_key", "null", "empty"]
+    )
+    def test_required_params(self, checker, key, empty, regime):
+        params = {
+            "no_params": None,
+            "empty_params": {},
+            "missing_key": {"rubric_text": "A configured check"},
+            "null": {key: None},
+            "empty": {key: empty},
+        }[regime]
         entry = _make_entry_dict()
-        result = check_has_field(entry, None, None)
-        assert result is None  # No params = no check
+        with pytest.raises(ValueError, match=key):
+            checker(entry, None, params)
+
+    def test_body_has_pattern_invalid_regex(self):
+        with pytest.raises(ValueError, match=r"invalid regex.*Sources"):
+            check_body_has_pattern(_make_entry_dict(), None, {"pattern": "Sources?:("})
 
     def test_has_any_field_first_present(self):
         entry = _make_entry_dict(metadata=json.dumps({"url": "https://example.com"}))
@@ -134,6 +160,19 @@ class TestParameterizedCheckers:
         result = check_body_has_pattern(entry, None, {"pattern": r"Sources?:"})
         assert result is not None
 
+    @pytest.mark.control(
+        reason="Valid headings and regex retain case-insensitive multiline matching"
+    )
+    @pytest.mark.parametrize(
+        ("checker", "params", "body"),
+        [
+            (check_body_has_section, {"heading": "Problem (today)"}, "Intro\n## problem (today)\n"),
+            (check_body_has_pattern, {"pattern": r"^Sources?:"}, "Intro\nsources: field notes\n"),
+        ],
+    )
+    def test_body_matching_preserved(self, checker, params, body):
+        assert checker(_make_entry_dict(body=body), None, params) is None
+
     def test_body_has_code_block_present(self):
         entry = _make_entry_dict(body="```python\nprint('hi')\n```")
         result = check_body_has_code_block(entry, None)
@@ -150,6 +189,71 @@ class TestParameterizedCheckers:
         result = check_has_field(entry, None, {"field": "role", "rubric_text": "Person has a role"})
         assert result is not None
         assert result["rubric_item"] == "Person has a role"
+
+
+def test_cli_reports_misconfigured_checkers(tmp_path):
+    """An unusable kb.yaml item is reported beside normal results, through the real CLI."""
+    kb = tmp_path / "kb"
+    kb.mkdir()
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "config.yaml").write_text(
+        json.dumps(
+            {
+                "knowledge_bases": [{"name": "test-kb", "path": str(kb), "kb_type": "generic"}],
+                "settings": {"auto_embed": False},
+            }
+        )
+    )
+    (kb / "kb.yaml").write_text(
+        "name: test-kb\nevaluation_rubric:\n"
+        "  - {text: Has a Why section, checker: body_has_section}\n"
+        '  - {text: Has a source line, checker: body_has_pattern, params: {pattern: "Sources?:("}}\n'
+        "  - {text: Has a Problem section, checker: body_has_section, params: {heading: Problem}}\n"
+        '  - {text: Has a valid source line, checker: body_has_pattern, params: {pattern: "Sources?:"}}\n'
+    )
+    (kb / "a.md").write_text(
+        "---\nid: a\ntype: note\ntitle: Harbour survey\ntags: [survey]\n---\n"
+        "A stub note.\nSources: field notes\n"
+    )
+    before = {path.name: path.read_bytes() for path in kb.iterdir()}
+    env = {key: value for key, value in os.environ.items() if not key.startswith("PYRITE_")}
+    env.update(PYRITE_DATA_DIR=str(config), PYRITE_AUTO_EMBED="false")
+
+    def cli(*args):
+        result = subprocess.run(
+            [sys.executable, "-c", "from pyrite.cli import main; main()", *args],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        return result.stdout
+
+    cli("index", "sync")
+    result = json.loads(cli("qa", "validate", "test-kb", "--entry", "a", "--format", "json"))
+    failed = [issue for issue in result["issues"] if issue["rule"] == "checker_failed"]
+    assert len(failed) == 2, result
+    for issue, checker, detail, item in zip(
+        failed,
+        ["body_has_section", "body_has_pattern"],
+        ["heading", "Sources?:("],
+        ["Has a Why section", "Has a source line"],
+        strict=True,
+    ):
+        assert issue["entry_id"] == "a"
+        assert issue["kb_name"] == "test-kb"
+        assert issue["severity"] == "warning"
+        assert issue["field"] == "evaluation_rubric"
+        assert checker in issue["message"]
+        assert detail in issue["message"]
+        assert item in issue["message"]
+        assert "ValueError" in issue["message"]
+    violations = [issue for issue in result["issues"] if issue["rule"] == "rubric_violation"]
+    assert [issue["rubric_item"] for issue in violations] == ["Has a Problem section"]
+    assert before == {path.name: path.read_bytes() for path in kb.iterdir()}
 
 
 # =========================================================================

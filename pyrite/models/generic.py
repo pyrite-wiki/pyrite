@@ -72,6 +72,14 @@ class GenericEntry(Entry):
     # `_nested_metadata_keys`.
     _raw_metadata: Any = field(default=_NO_RAW_METADATA, init=False, repr=False, compare=False)
 
+    # The nested value of a key the source spells twice (`rank: 1` and
+    # `metadata: {rank: 2}`): the model reads the top-level spelling (Andon
+    # #994, decision A) and a save must lose nothing (#1001, decision 4), so
+    # the nested value is kept here and written back under `metadata:`.
+    _shadowed_nested: dict[str, Any] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
+
     @property
     def entry_type(self) -> str:
         return self._entry_type
@@ -90,9 +98,12 @@ class GenericEntry(Entry):
         # the promotion loop used to do -- silently deleted a caller's value on
         # the create path. Everything else is promoted to the top level.
         nested = {k: v for k, v in self.metadata.items() if k in self._nested_metadata_keys}
+        # A key the source spelled twice keeps its nested value nested and
+        # its top-level value promoted: a save loses nothing (decision 4).
+        nested.update(self._shadowed_nested)
         promoted: dict[str, Any] = {}
         for key, value in self.metadata.items():
-            if key in nested:
+            if key in nested and key not in self._shadowed_nested:
                 continue
             if key in meta:
                 nested[key] = value
@@ -132,8 +143,11 @@ class GenericEntry(Entry):
 
         # Collect unknown frontmatter keys into metadata
         extra_metadata = {k: v for k, v in meta.items() if k not in _KNOWN_KEYS}
-        # Merge: explicit metadata wins over inferred
-        kw["metadata"] = {**extra_metadata, **explicit_metadata}
+        # Merge: `metadata.k` is a second spelling of field `k` (Andon #994,
+        # decision A), so on a collision the field's own name wins, as it does
+        # for a declared field. The double spelling is reported by `index
+        # health` and `qa validate`; an update of that field is refused.
+        kw["metadata"] = {**explicit_metadata, **extra_metadata}
 
         kw["lifecycle"] = meta.get("lifecycle", "active")
         kw["_entry_type"] = meta.get("type", "note")
@@ -142,7 +156,10 @@ class GenericEntry(Entry):
         # to_frontmatter puts exactly them back nested and promotes the rest
         # (#149). Set after construction: it is private bookkeeping, not a field
         # the YAML layer should fill (mirrors Entry's `_absent_default_keys`).
-        entry._nested_metadata_keys = frozenset(explicit_metadata)
+        entry._nested_metadata_keys = frozenset(
+            k for k in explicit_metadata if k not in extra_metadata
+        )
+        entry._shadowed_nested = {k: v for k, v in explicit_metadata.items() if k in extra_metadata}
         if "metadata" in meta and not isinstance(raw_metadata, Mapping):
             # Not modelling it as `self.metadata` must not mean losing it:
             # `metadata` is in `_BASE_CONSUMED_KEYS`, so

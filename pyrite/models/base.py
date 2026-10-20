@@ -16,7 +16,7 @@ from typing import Any, ClassVar
 
 from ..schema import Link, Provenance, Source
 from ..utils.frontmatter import require_frontmatter
-from ..utils.yaml import dump_yaml, load_yaml
+from ..utils.yaml import load_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -158,11 +158,12 @@ def capture_extra_frontmatter(entry: "Entry", meta: dict[str, Any]) -> None:
     entry._unparsed_timestamp_keys = frozenset(
         k for k in _TIMESTAMP_KEYS if k in meta and _timestamp_instant(meta[k]) is None
     )
-    # Keep the mapping as ruamel parsed it, for style on the way back out.
-    # Stored by reference, not copied: copying is what mangled anchors and
-    # merge keys, and the write path only ever READS this. Two entries loaded
-    # from one `meta` dict therefore share it -- safe while it stays read-only,
-    # so do not mutate it here or in _restyle_like_source.
+    # Keep the mapping as ruamel parsed it: the write path reads it to know
+    # which keys the file carried (`_frontmatter_for_file`, the timestamp
+    # bookkeeping). Stored by reference, not copied: copying is what mangled
+    # anchors and merge keys, and nothing ever writes to it. Two entries
+    # loaded from one `meta` dict therefore share it -- safe while it stays
+    # read-only, so do not mutate it here.
     entry._source_frontmatter = meta
     try:
         emitted = entry.to_frontmatter()
@@ -219,36 +220,15 @@ def _plain(value: Any) -> Any:
     return value
 
 
-def _keep_sequence_style(old: Any, new: Any) -> Any:
-    """Return ``new``, rendered in ``old``'s sequence style where that applies.
-
-    A list whose contents changed still wants the brackets it had:
-    `tags: [a, b]` edited to three tags should stay on one line rather than
-    becoming a four-line block list.
-    """
-    if not isinstance(new, list) or isinstance(new, str):
-        return new
-    try:
-        from ruamel.yaml.comments import CommentedSeq
-
-        if isinstance(old, CommentedSeq) and old.fa.flow_style():
-            seq = CommentedSeq(new)
-            seq.fa.set_flow_style()
-            return seq
-    except Exception:  # style is a nicety; never fail a save for it
-        logger.debug("could not carry sequence style", exc_info=True)
-    return new
-
-
 def _timestamp_instant(value: Any) -> datetime | None:
     """``value`` as a UTC instant, or ``None`` when it is not one.
 
     Two callers ask different questions of the same answer: whether a source
-    node parses at all (``capture_extra_frontmatter``) and whether a freshly
-    built value still means the same instant as the source node
-    (``_timestamp_same_instant``). ``None``, ``''`` and ``Jan 15 2026`` are not
-    instants. A bare ``date`` is midnight UTC and a naive ``datetime`` is read
-    as UTC, both matching ``parse_datetime``.
+    node parses at all (``capture_extra_frontmatter``) and whether a file's
+    ``updated_at`` is an instant the write path may stamp
+    (``storage.entry_writer.updated_at_stamp``). ``None``, ``''`` and
+    ``Jan 15 2026`` are not instants. A bare ``date`` is midnight UTC and a
+    naive ``datetime`` is read as UTC, both matching ``parse_datetime``.
     """
     value = _plain(value)
     if isinstance(value, datetime):
@@ -262,81 +242,6 @@ def _timestamp_instant(value: Any) -> datetime | None:
             return None
         return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
     return None
-
-
-def _timestamp_same_instant(old: Any, new: Any) -> bool:
-    """True when ``new`` re-serialises the same instant as the raw ``old``
-    source node, so the source node (and its style) can be kept.
-
-    ``#151`` normalises a bare YAML date to a ``datetime`` on load, and the
-    write path hands ruamel a ``datetime`` back, so the plain equality check
-    in ``_restyle_like_source`` no longer sees them as "unchanged" and would
-    replace `created_at: 2026-01-15` with a full timestamp. Comparing the
-    parsed instants instead keeps the original node whenever the value still
-    means what the file said; a genuinely changed timestamp (a refreshed
-    `updated_at`, say) still falls through and is written in the new form.
-    Naive values are read as UTC, matching ``parse_datetime``.
-
-    Only timestamps take this path -- see the ``key in _TIMESTAMP_KEYS``
-    guard in ``_restyle_like_source``. Applying it to every key would let an
-    edit of a title from `"2026-01-15"` to `"2026-01-15T00:00:00Z"` keep the
-    old node: the CLI would report success and the file would never change.
-    """
-    parsed_old = _timestamp_instant(old)
-    parsed_new = _timestamp_instant(new)
-    return parsed_old is not None and parsed_new is not None and parsed_old == parsed_new
-
-
-def _restyle_like_source(meta: dict[str, Any], source: Any) -> dict[str, Any]:
-    """Re-emit ``meta`` in ``source``'s key order and YAML style.
-
-    ``meta`` is a freshly built plain dict: correct in content, but it has lost
-    the key order, quoting and flow/block style that ruamel preserved when the
-    file was read. Writing it as-is turns a one-field update into a diff that
-    touches every line, which is how the #46 frontmatter corruption stayed
-    invisible in review.
-
-    For each key ``source`` had and ``meta`` still has, the source node is
-    reused *by reference* when the value is unchanged (keeping `tags: [a, b]`
-    inline, `"2026-07-03"` quoted, and any anchor or merge key intact) and
-    replaced when it is not. Keys dropped from ``meta`` are dropped here too,
-    and keys ``meta`` added are appended in its own order. With no source -- a
-    newly created entry -- ``meta`` is returned untouched.
-    """
-    if not isinstance(source, Mapping):
-        return meta
-
-    try:
-        from ruamel.yaml.comments import CommentedMap
-
-        restyled: Any = CommentedMap()
-    except Exception:  # no ruamel: order still helps, style is a nicety
-        logger.debug("restyle: ruamel CommentedMap unavailable", exc_info=True)
-        restyled = {}
-
-    # Source order first, then whatever `meta` added, in its own order.
-    #
-    # Unchanged values are carried over BY REFERENCE, never copied. An earlier
-    # version deep-copied the whole source mapping to inherit its style, which
-    # also resolved YAML anchors and merge keys: `<<: *anch` came back as a
-    # literal `<<:` key whose value was the merged mapping, and the merged keys
-    # were then emitted a second time as siblings -- a duplicate key in a file
-    # that had none. Referencing the original node keeps its anchor, alias,
-    # merge and comment attachments exactly as ruamel parsed them.
-    for key, old in source.items():
-        if key not in meta:
-            continue
-        new = meta[key]
-        unchanged = _plain(old) == _plain(new) or (
-            key in _TIMESTAMP_KEYS and _timestamp_same_instant(old, new)
-        )
-        restyled[key] = old if unchanged else _keep_sequence_style(old, new)
-
-    for key, value in meta.items():
-        if key not in restyled:
-            restyled[key] = value
-
-    return restyled
 
 
 @dataclass
@@ -467,6 +372,20 @@ class Entry(ABC):
     # restyling the whole block (#46). Never read as data -- only as style.
     _source_frontmatter: Any = field(default=None, init=False, repr=False, compare=False)
 
+    # The declared fields a create holds in model attributes, ``{file key:
+    # attribute}`` (#86): set by ``KBService._prepare`` from the type's schema
+    # for an entry built from a request, empty for one loaded from a file.
+    # ``_frontmatter_for_file`` writes each one the class's ``to_frontmatter``
+    # leaves out when empty (``if self.kind:``), so a new file carries every
+    # declared field at the value the entry was validated and indexed with.
+    # It belongs to this object: a before_save hook that returns a different
+    # entry (``dataclasses.replace``) drops it, and the model-held empties then
+    # leave the file and the index row together, never one of them. Shipped
+    # hooks return the entry they were given.
+    _create_fields: dict[str, str] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
+
     # DEPRECATED (#697, ADR-0045 decision 8): a bare set of alias names has no
     # target. Declare `field_aliases: {alias: target}` in the type's schema
     # (core metadata, a plugin's get_type_metadata(), or kb.yaml) instead; see
@@ -510,16 +429,37 @@ class Entry(ABC):
         from ..schema import generate_entry_id
         from ..utils.parse import safe_int
 
+        title = raw_title = meta.get("title", "")
+        # A YAML title that is a scalar (2024, true, 1.5, a date) is stored as
+        # the string it prints as, so the derived id, the stored title and
+        # `get` agree (#704) instead of the id saying "true" while the row
+        # holds SQLite's reading of the raw bool. A title that is a mapping,
+        # a sequence or NaN is refused with a named reason: the file cannot be
+        # indexed (#711), so it stays skipped by the ids and index paths and
+        # `ids missing` lists it as skipped. This fires before the explicit-id check
+        # so an `id:` line cannot smuggle an unindexable title into the index.
+        if isinstance(title, (list, tuple, dict)):
+            kind = "a mapping" if isinstance(title, dict) else "a list"
+            raise TypeError(f"title must be a string, got {kind}")
+        if isinstance(title, float) and title != title:  # NaN
+            raise TypeError("title must be a string, got NaN")
+        if isinstance(title, bool):
+            title = "true" if title else "false"
+        elif title is not None and not isinstance(title, str):
+            title = str(title)
         entry_id = meta.get("id", "")
         if not entry_id:
-            entry_id = generate_entry_id(meta.get("title", ""))
+            # From the raw value: a falsy scalar (`0`, `false`, `0.0`) derives
+            # the empty-title id it always had, so an upgrade moves no id. Its
+            # stored title is still the stringified value (#704).
+            entry_id = generate_entry_id(raw_title)
 
         prov_data = meta.get("provenance")
         provenance = Provenance.from_dict(prov_data) if prov_data else None
 
         return {
             "id": entry_id,
-            "title": meta.get("title", ""),
+            "title": title,
             "body": body,
             "summary": meta.get("summary", ""),
             "importance": safe_int(meta.get("importance"), 5),
@@ -577,12 +517,10 @@ class Entry(ABC):
         # them, and neither must a newly created entry (#46).
         #
         # Emitted as a datetime (second precision), not as an isoformat()
-        # string: ruamel writes a str *quoted* and keeps the microseconds,
-        # while a datetime becomes a plain YAML timestamp -- the shape such
-        # files already use. A value the source file already had is restored
-        # to its original node (and therefore its original style) by
-        # _restyle_like_source, so this only decides the shape of a *changed*
-        # value.
+        # string: `apply` writes a datetime as a plain YAML timestamp -- the
+        # shape such files already use -- and a str quoted. A key the file
+        # already holds keeps its own bytes (an update names only what it
+        # changes), so this only decides the shape of a *new* value.
         if self._source_frontmatter is not None:
             for ts_key in _TIMESTAMP_KEYS:
                 if ts_key not in self._absent_default_keys:
@@ -651,7 +589,7 @@ class Entry(ABC):
         the drop this branch fixes (#173 review). Those keys get the raw
         source node back, so the restyle keeps it verbatim.
         """
-        meta = self.to_frontmatter()
+        meta = self.declared_frontmatter()
         if self._source_frontmatter is not None:
             for ts_key in self._unparsed_timestamp_keys:
                 if ts_key in meta and ts_key in self._source_frontmatter:
@@ -674,6 +612,32 @@ class Entry(ABC):
             if not (k in absent and k in pristine and _plain(pristine[k]) == _plain(v))
         }
 
+    def declared_frontmatter(self) -> dict[str, Any]:
+        """``to_frontmatter()`` plus each ``_create_fields`` entry it does not
+        spell (by name, alias or under ``metadata:``), at its attribute's
+        value: the empty value the class leaves out (#86).
+
+        The one field set of a new entry: the file (``_frontmatter_for_file``),
+        the index row (``IndexManager``) and a create's validation
+        (``KBService._validated_fields``) all read it, so the entry a create
+        validates and indexes is the one it writes. For an entry loaded from
+        a file ``_create_fields`` is empty and this is ``to_frontmatter()``.
+        """
+        meta = self.to_frontmatter()
+        if not self._create_fields:
+            return meta
+        from ..schema.field_aliases import spellings_of
+
+        nested = meta.get("metadata")
+        nested = nested if isinstance(nested, Mapping) else {}
+        for key, attribute in self._create_fields.items():
+            if not any(
+                path[-1] in (nested if len(path) > 1 else meta)
+                for path in spellings_of(type(self), self.entry_type, key)
+            ):
+                meta[key] = getattr(self, attribute)
+        return meta
+
     def unrepresented_frontmatter(self) -> dict[str, Any]:
         """The file's keys whose value this entry's model does not reproduce.
 
@@ -687,16 +651,6 @@ class Entry(ABC):
         if not isinstance(source, Mapping):
             return {}
         return {k: source[k] for k in (self._unrepresented_keys or {}) if k in source}
-
-    def to_markdown(self) -> str:
-        """Convert to markdown string with YAML frontmatter."""
-        meta = _restyle_like_source(self._frontmatter_for_file(), self._source_frontmatter)
-        yaml_front = dump_yaml(meta)
-        # Exactly one trailing newline: the loader strips the body anyway, and a
-        # body that already ended in newlines produced a blank last line that
-        # failed the end-of-file hook on every freshly created entry.
-        body = self.body.rstrip("\n")
-        return f"---\n{yaml_front}\n---\n" + (f"\n{body}\n" if body else "")
 
     @classmethod
     def from_markdown(cls, text: str) -> "Entry":
@@ -717,10 +671,17 @@ class Entry(ABC):
         meta = load_yaml(split.text)
         body = split.body
 
-        entry = cls.from_frontmatter(meta, body)
+        # The same lift `entry_from_frontmatter` makes (#1025): a field the
+        # file spells only under `metadata:` is read as if spelled at the
+        # top level; the class reads the view, the bookkeeping keeps the raw
+        # mapping. The type name is the file's; the class decides the fields.
+        from ..schema.field_aliases import read_view
+
+        view = read_view(meta, cls, str(meta.get("type") or ""))
+        entry = cls.from_frontmatter(view, body)
         # Restore lifecycle from frontmatter (base field, not in subclass constructors)
         if entry is not None:
-            entry.lifecycle = meta.get("lifecycle", "active")
+            entry.lifecycle = view.get("lifecycle", "active")
             capture_extra_frontmatter(entry, meta)
         return entry
 
@@ -731,113 +692,6 @@ class Entry(ABC):
         entry = cls.from_markdown(text)
         entry.file_path = path
         return entry
-
-    @staticmethod
-    def _publish_exclusive(tmp: str, path: Path) -> None:
-        """Publish ``tmp`` to ``path``, refusing if ``path`` already exists.
-
-        Tries, in order, the first mechanism this filesystem supports:
-
-        1. ``os.link`` -- atomic, and leaves ``tmp`` a second name for the
-           same inode, unlinked below once ``path`` is published.
-        2. ``os.link`` raises ``OSError`` other than ``FileExistsError`` on a
-           filesystem with no hard-link support (FAT/exFAT, some SMB/FUSE
-           mounts) -- every create would fail there, not just a colliding
-           one (#391 cold read round 3). Fall back to claiming the NAME
-           exclusively (``O_CREAT | O_EXCL``, which every filesystem that
-           can create files at all supports), then ``os.replace`` the
-           already-fully-written temp file over it: the claim is what is
-           exclusive, and the replace that follows only ever targets a path
-           this call itself just created, so it cannot overwrite a
-           concurrent winner.
-        3. If ``O_EXCL`` itself is unsupported (not ``FileExistsError``),
-           there is no atomic mechanism left on this filesystem: fall back
-           to an ordinary ``os.replace``, guarded only by the write
-           pipeline's own ``exists()`` check, same as before this method
-           existed.
-
-        Raises ``FileExistsError`` whenever any step finds ``path`` already
-        taken; never silently overwrites it. Always consumes ``tmp`` --
-        either as the second name ``os.link`` gave it (unlinked here so only
-        ``path`` remains), or by moving it via ``os.replace`` -- so the
-        caller never has its own cleanup to do on a successful return.
-        """
-        import os
-
-        try:
-            os.link(tmp, path)
-            os.unlink(tmp)
-            return
-        except FileExistsError:
-            raise
-        except OSError:
-            pass
-
-        try:
-            os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-        except FileExistsError:
-            raise
-        except OSError:
-            pass
-
-        os.replace(tmp, path)
-
-    def save(self, path: Path | None = None, *, exclusive: bool = False) -> Path:
-        """Save entry to file.
-
-        Args:
-            path: Target path; defaults to ``self.file_path``.
-            exclusive: ``True`` publishes exclusively (see
-                :meth:`_publish_exclusive`) instead of with ``os.replace`` --
-                it raises ``FileExistsError`` if ``path`` already exists,
-                instead of silently overwriting it. For the create path only
-                (#391 cold read round 2): the write-pipeline's own
-                `resolved_path.exists()` check and this publish step are two
-                different moments, so two truly concurrent creates can both
-                pass the check before either publishes. This closes that
-                window at the one place a filesystem call can enforce it
-                atomically; it does not replace the check (which gives the
-                friendlier error message and DB-index-consistency path in
-                the common, non-racing case).
-        """
-        if path is None:
-            path = self.file_path
-        if path is None:
-            raise ValueError("No path specified and no file_path set")
-
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Atomic replace: agents race on the same file (claim vs reset, claim
-        # vs claim) and a plain write_text lets a concurrent load() read a
-        # truncated file. Temp file in the same directory so the rename is
-        # atomic on POSIX and Windows; a failed write leaves the old file intact.
-        import os
-        import tempfile
-
-        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(self.to_markdown())
-            # mkstemp gives 0600; keep the existing file's mode, or what a
-            # plain write would have produced under the current umask.
-            try:
-                mode = os.stat(path).st_mode & 0o777
-            except FileNotFoundError:
-                umask = os.umask(0)
-                os.umask(umask)
-                mode = 0o666 & ~umask
-            os.chmod(tmp, mode)
-            if exclusive:
-                self._publish_exclusive(tmp, path)
-            else:
-                os.replace(tmp, path)
-        except BaseException:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
-        self.file_path = path
-        return path
 
     def add_link(self, target: str, relation: str, note: str = "", kb: str = "") -> None:
         """Add a link to another entry."""
@@ -854,6 +708,19 @@ class Entry(ABC):
             errors.append("Entry must have an ID")
         if not self.title:
             errors.append("Entry must have a title")
+        elif isinstance(self.title, (list, tuple, dict)) or (
+            isinstance(self.title, float) and self.title != self.title
+        ):
+            # A scalar title is stringified when the file is loaded (#704);
+            # a collection or NaN title cannot be indexed at all and is
+            # reported by `pyrite qa` (#711). Both checks say the same thing.
+            if isinstance(self.title, dict):
+                kind = "a mapping"
+            elif not isinstance(self.title, (list, tuple)):
+                kind = "NaN"
+            else:
+                kind = "a list"
+            errors.append(f"Entry title must be a string, got {kind} (#711)")
         return errors
 
     def __repr__(self) -> str:

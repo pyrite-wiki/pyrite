@@ -21,7 +21,7 @@
 #
 # The commit stage must stay fast because pre-commit stashes EVERY unstaged edit
 # in the working tree while commit hooks run. Several sessions share this tree
-# (see CLAUDE.md, "Multi-Session Git Hazard"); a multi-minute commit hook makes
+# (see CONTRIBUTING.md, "Branches, hooks and pull requests"); a multi-minute commit hook makes
 # other sessions' edits disappear for minutes, and one session's untracked RED
 # test blocks everyone's commits. tests/test_dev_process_config.py pins this
 # layout -- change both together.
@@ -87,7 +87,19 @@ repos:
         stages: [pre-commit]
       - id: pyrite-schema-validate
         name: Validate KB entries
-        entry: bash -c 'P=.venv/bin/pyrite; [ -x "$P" ] || P=pyrite; exec "$P" schema validate --changed'
+        # Prefer this worktree's venv. A bare name is only acceptable when it
+        # is an executable file: with no venv, PATH (or a shell that searches
+        # `.`) resolves `pyrite` to this checkout's `./pyrite` package
+        # directory, and exec then fails with "Is a directory" (exit 126,
+        # #664). Say what is missing instead of executing that path.
+        entry: >-
+          bash -c 'P=.venv/bin/pyrite; if [ ! -x "$P" ] || [ -d "$P" ]; then
+          P=$(command -v pyrite || true); fi; if [ -z "$P" ] || [ ! -f "$P" ] ||
+          [ ! -x "$P" ]; then echo "pyrite-schema-validate: no pyrite executable
+          found in .venv or on PATH. The ./pyrite path in this checkout is the
+          package, not the CLI. Create a venv with scripts/new-worktree.sh, or
+          install pyrite so the pyrite command is an executable." >&2; exit 1; fi; exec
+          "$P" schema validate --changed'
         language: system
         pass_filenames: false
         stages: [pre-commit]

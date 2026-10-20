@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { entryHref } from '$lib/utils/entry-href';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api/client';
 	import type { SearchResult } from '$lib/api/types';
@@ -54,9 +55,9 @@
 		doSearch(query);
 	}
 
-	function navigate(id: string) {
+	function navigate(id: string, kb?: string) {
 		hide();
-		goto(`/entries/${encodeURIComponent(id)}`);
+		goto(entryHref(id, kb));
 	}
 
 	function onKeydown(e: KeyboardEvent) {
@@ -68,7 +69,7 @@
 			selectedIndex = Math.max(selectedIndex - 1, 0);
 		} else if (e.key === 'Enter' && results.length > 0) {
 			e.preventDefault();
-			navigate(results[selectedIndex].id);
+			navigate(results[selectedIndex].id, results[selectedIndex].kb_name);
 		} else if (e.key === 'Escape') {
 			e.preventDefault();
 			hide();
@@ -140,7 +141,7 @@
 							role="option"
 							aria-selected={i === selectedIndex}
 							class="flex cursor-pointer items-center gap-3 px-4 py-2 text-sm transition-colors {i === selectedIndex ? 'bg-blue-50 text-blue-900 dark:bg-blue-900/30 dark:text-blue-200' : 'text-zinc-700 hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-800'}"
-							onclick={() => navigate(result.id)}
+							onclick={() => navigate(result.id, result.kb_name)}
 							onmouseenter={() => (selectedIndex = i)}
 							data-testid="quick-switcher-result"
 						>

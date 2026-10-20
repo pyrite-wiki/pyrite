@@ -429,9 +429,13 @@ This amends ADR-0038 (below). The rest follows:
   Untouched bare `yes`/`no` stay as written (narrows #568 to bytes Pyrite
   emits).
 - **A key is written where the operation names it.** Update never moves a key
-  into `metadata:`. A path `metadata.x` is a nested key like any other. Where
-  *create* places an undeclared key stays as today until #178 and #447 are
-  decided.
+  into `metadata:`. **`metadata` is not a field** (amended by
+  [[adr-0051]], 2026-10-19): `metadata.k` is a second spelling of field `k`,
+  one level only, the same as an alias; a field has one spelling per file, a
+  file that spells a field twice is reported and an update of that field is
+  refused, and a path whose field would be `metadata` is refused at any depth.
+  Where *create* places an undeclared key stays as today until #178 and #447
+  are decided.
 - **An alias resolves to the key the file uses.** A set of `actors` on a file
   that carries `participants:` writes `participants:`. A file carrying both is
   refused and reported. Spike 2 confirmed the rule on real files (95 appends
@@ -658,7 +662,11 @@ claim and task services, and plugins' commands. `software-kb`'s
 `cli.py:704-714` and cascade's `migration.py` write entry files with
 `write_text` and regex today; they are converted (cascade is deleted). A
 plugin writes entry files only through `ctx.kb_service` (ADR-0040), and so is
-bound by decisions 1 to 11. ADR-0041 and this ADR say the same thing.
+bound by decisions 1 to 11. ADR-0041 and this ADR say the same thing. Git is
+out of this decision's scope: an operation that moves the working tree between
+commits (`git merge`, `git pull`, a worktree's `reset --hard`) replaces entry
+files wholesale as git, not as a Pyrite write, and what Pyrite writes between
+commits is what this path covers (#978 review).
 
 **The root-file move (#488) is a fix in this decision.** Today every update of
 a root-level file whose type has `subdirectory: ""` and a `file_pattern` moves
@@ -853,26 +861,28 @@ Text.
 +  relation: related
 ```
 
-**A save does not add what a hook used to add.** A `timeline_event` in a KB
-with the journalism derivations installed.
+**A save does not add what a hook used to add.** A `membership` in a
+journalism-investigation KB, whose plugin links a connection to the entries
+it names. (Until #953 deleted the cascade extension this example was a
+`timeline_event` with `actors`; the connection hook is the same divergence.)
 
 ```file
 ---
-id: hearing
-title: The hearing
-type: timeline_event
-date: 2026-01-01
-actors: ["[[jane-doe]]"]
+id: jane-at-acme
+title: Jane at Acme
+type: membership
+person: "[[jane-doe]]"
+organization: "[[acme]]"
 ---
 
 Text.
 ```
 ```update
-{"set": {"title": "The hearing, postponed"}}
+{"set": {"title": "Jane at Acme, renewed"}}
 ```
 ```diff
--title: The hearing
-+title: The hearing, postponed
+-title: Jane at Acme
++title: Jane at Acme, renewed
 ```
 
 **Two writers on different keys both survive** (`concurrent`: two processes

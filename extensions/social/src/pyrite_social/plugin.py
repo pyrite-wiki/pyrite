@@ -4,6 +4,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, ClassVar
 
+from pyrite.exceptions import PyriteError, public_text
 from pyrite.plugins.capabilities import Capability
 from pyrite.plugins.scoping import kb_scope_clause
 
@@ -18,6 +19,9 @@ from .tables import SOCIAL_TABLES
 from .validators import validate_social
 
 logger = logging.getLogger(__name__)
+# Under `pyrite`, where configure_logging puts the handler: a record on this
+# module's own logger would fall to the last-resort handler (#848).
+_masked_log = logging.getLogger("pyrite.ext.social")
 
 
 class SocialPlugin:
@@ -174,11 +178,18 @@ class SocialPlugin:
         """Get DB from injected context, falling back to self-bootstrap."""
         if self.ctx is not None:
             return self.ctx.db, False  # db, should_close
-        from pyrite.config import load_config
         from pyrite.storage.database import PyriteDB
 
-        config = load_config()
-        return PyriteDB(config.settings.index_path), True
+        return PyriteDB(self._get_config().settings.index_path), True
+
+    def _get_config(self):
+        """The server's config from the injected context; the process's own
+        only when there is no context (the CLI). See the software-kb plugin."""
+        if self.ctx is not None:
+            return self.ctx.config
+        from pyrite.config import load_config
+
+        return load_config()
 
     def _mcp_top(
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
@@ -358,20 +369,16 @@ class SocialPlugin:
         `error_code`. Now goes through `KBService.create_entry`, the same
         pipeline `software-kb`'s `_mcp_create_backlog_item` uses.
         """
-        from pyrite.exceptions import PyriteError
         from pyrite.services.kb_service import KBService
 
         db, should_close = self._get_db()
-        config = self.ctx.config if self.ctx else None
-        if config is None:
-            from pyrite.config import load_config
-
-            config = load_config()
+        config = self._get_config()
 
         kb_name = args["kb_name"]
-        kb_config = config.get_kb(kb_name)
-        if not kb_config:
-            return {"error": f"KB '{kb_name}' not found", "error_code": "KB_NOT_FOUND"}
+        try:
+            kb_config = config.require_kb(kb_name)  # the one resolver (#952)
+        except PyriteError as e:
+            return {"error": public_text(e), "error_code": e.error_code}
 
         try:
             svc = KBService(config, db)
@@ -397,12 +404,7 @@ class SocialPlugin:
             # a real path, a driver's own text. public_message, when set, is
             # what every other transport already shows; the real detail
             # still reaches the log (ADR-0037 theme 2 round 2, item 1).
-            public_message = getattr(e, "public_message", None)
-            if public_message is not None:
-                logger.warning("%s", e)
-                message = public_message
-            else:
-                message = str(e)
+            message = public_text(e, log=_masked_log)
             return {"error": message, "error_code": code}
         finally:
             if should_close:

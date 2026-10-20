@@ -962,6 +962,11 @@ def step_preconditions(ctx: Context) -> None:
         ctx.runner.note(
             f"CHANGELOG has `## [{ctx.version}] - {date.today().isoformat()}` with content"
         )
+    # Asked unconditionally, as before: the notes are read out of the CHANGELOG
+    # section, and `_print_notes` stays silent when there is no section to read,
+    # so a missing section is still named once, by the check above (#889). Every
+    # other changelog-check failure leaves a section to read, and printing those
+    # notes before the cut is what the rehearsal is for.
     ctx.attempt(lambda: _print_notes(ctx))
 
     # Resolve the repository here, inside the step, so a bad `origin` reads as
@@ -1001,6 +1006,17 @@ def _print_notes(ctx: Context) -> None:
     # to happen is the push, and "the release notes are wrong" is a reason to
     # stop. Fragments make this the only place the assembled section can be
     # read before the tag -- CHANGELOG.md does not contain it yet.
+    #
+    # No section, no notes: `check_changelog` has already named the missing
+    # section, and saying it again here would count one problem twice (#889).
+    # Every other changelog-check failure leaves a section to read -- undated,
+    # dated for another day, or empty -- and those notes still print, because
+    # reading them before the cut is the rehearsal's main purpose.
+    try:
+        _section_span(_read_changelog(ctx.repo), ctx.version)
+    except ReleaseError:
+        return
+
     fragments = collect_fragments(ctx.repo)
     notes = release_notes_for(ctx.repo, ctx.version)
     ctx.runner.note(

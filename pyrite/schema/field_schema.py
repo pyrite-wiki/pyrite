@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -121,6 +122,21 @@ class FieldSchema:
             options_conflict=conflict,
         )
 
+    def empty_value(self) -> Any:
+        """What a create writes for this field when the caller sent nothing
+        (#86): the declared ``default`` when there is one; else ``''`` for text
+        and select, ``[]`` for a list, a multi-select or tags, and null for the
+        rest (a number, date, datetime, checkbox, reference or mapping), whose
+        ``''`` would load as a value of the wrong type. The enum check reads
+        all three as "no value" (``enum_check``)."""
+        if self.default is not None:
+            return copy.deepcopy(self.default)
+        if self.field_type in ("text", "select"):
+            return ""
+        if self.field_type in ("list", "multi-select", "tags"):
+            return []
+        return None
+
     def allowed_values(self) -> list[Any]:
         """The declared enum for this field: ``options`` (or ``values``), else
         ``items.options`` (or ``items.values``) for a list; empty when none."""
@@ -235,7 +251,7 @@ class TypeSchema:
         (returns ``None``), the recorded #391 acceptance: a placeholder is a
         convenience, not a requirement the caller must satisfy field by
         field. A placeholder using anything but a plain field name (`{0}`,
-        `{title.upper}`, a non-data attribute like `{save}`), a format spec
+        `{title.upper}`, a non-data attribute like `{load}`), a format spec
         the value cannot satisfy (e.g. ``:04d`` on a string), a NUL byte, or
         a resolved filename longer than ~200 bytes all raise
         :class:`~pyrite.exceptions.ValidationError` instead -- these are
@@ -298,7 +314,7 @@ class TypeSchema:
                 value = meta[field_name]
             elif hasattr(entry, field_name):
                 # A plain identifier that resolves to something on the
-                # entry that is NOT a data field -- a method (`{save}`), a
+                # entry that is NOT a data field -- a method (`{load}`), a
                 # property, whatever -- puts that object's repr in the
                 # filename if we let `.format()` touch it. That is a
                 # pattern bug, refused, not an ordinarily-missing field.

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { entryHref } from '$lib/utils/entry-href';
 	import TagBadge from '$lib/components/common/TagBadge.svelte';
 	import type { EntryResponse } from '$lib/api/types';
 	import { goto } from '$app/navigation';
@@ -34,7 +35,7 @@
 </script>
 
 <a
-	href="/entries/{entry.id}"
+	href={entryHref(entry.id, entry.kb_name)}
 	class="block rounded-lg border border-zinc-200 p-5 transition-colors hover:border-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
 	style="border-left: 3px solid {borderColor}"
 >

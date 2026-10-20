@@ -50,7 +50,7 @@ PUBLIC, PRIVATE = "public-kb", "private-kb"
 # exist. A refusal must be byte-identical to it: a caller must not be able to
 # tell "you may not read this" from "there is no such KB", or `/mcp` becomes
 # an oracle for the existence of private KBs. Both come from the dispatcher's
-# `_kb_not_found`: a scoped caller never reaches a handler with a name outside
+# `_kb_refusal` (the one resolver, #952): a scoped caller never reaches a handler with a name outside
 # its readable set. The code is the contract's `KB_NOT_FOUND` since 0.25.7
 # (#66), with the old `NOT_FOUND` carried one release.
 def _absent_kb_payload(kb_name):
@@ -58,7 +58,8 @@ def _absent_kb_payload(kb_name):
         "error": f"KB '{kb_name}' not found",
         "error_code": "KB_NOT_FOUND",
         "retryable": False,
-        "suggestion": "Call kb_orient with no kb_name to list the KBs you can read.",
+        "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "did_you_mean": [],
         "legacy_error_code": "NOT_FOUND",
     }
 
@@ -214,7 +215,8 @@ class TestPeerCannotReachPrivateKBOverMCP:
         # order, so omitting it was itself a way to reach private content.
         out = _call(env, "peer", "kb_get", {"entry_id": "secret-note"})
         assert "zebra behind the wall" not in json.dumps(out)
-        assert out.get("error_code") == "NOT_FOUND"
+        assert out.get("error_code") == "ENTRY_NOT_FOUND"
+        assert out.get("legacy_error_code") == "NOT_FOUND"
 
     def test_kb_list_entries_on_a_private_kb(self, env):
         out = _call(env, "peer", "kb_list_entries", {"kb_name": PRIVATE})
@@ -554,8 +556,8 @@ class TestOmittingTheKBNameIsNotAWayIn:
     def test_a_tool_that_cannot_filter_is_refused_not_served(self, env):
         """Fail closed, against a set of tools that is deliberately shrinking.
 
-        The six extensions have all landed (#223): social, zettelkasten,
-        encyclopedia, cascade, software-kb and journalism-investigation read
+        The extensions have all landed (#223): social, zettelkasten,
+        encyclopedia, software-kb and journalism-investigation read
         through the readable set now. The example here comes from the tools
         that keep the fail-closed listing -- journalism-investigation's
         write-path tools, which take no readable set (a caller who may write

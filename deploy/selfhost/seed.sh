@@ -16,8 +16,8 @@ cp -r /seed/pyrite-kb "$DATA_DIR/pyrite-kb"
 
 # Register and index the KB
 pyrite kb add "$DATA_DIR/pyrite-kb" --name pyrite
-pyrite index build pyrite --force
-pyrite index embed pyrite
+pyrite index build -k pyrite --force
+pyrite index embed -k pyrite
 
 touch "$DATA_DIR/.seeded"
 echo "Pyrite KB seeded successfully."

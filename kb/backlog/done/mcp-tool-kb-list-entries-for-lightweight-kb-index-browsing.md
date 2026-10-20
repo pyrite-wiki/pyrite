@@ -7,11 +7,6 @@ tags:
 - agents
 - dx
 - feature
-metadata:
-  kind: feature
-  status: completed
-  priority: high
-  effort: m
 kind: feature
 status: done
 priority: high

@@ -347,3 +347,125 @@ ejects those without running anything. Three contributor PRs needed a
 maintainer-side rebase in one day; after the change, zero. That decision
 should be written into this ADR properly rather than left as a repo setting
 nobody reading here would know about.
+
+---
+
+## Proposed amendment: who may merge where (proposed 2026-10-14, not yet decided)
+
+Status of this section: `proposed`. Nothing here is in force until the
+maintainer accepts it. It was drafted after a contributor asked for a path to
+maintainer responsibilities
+([discussion #755](https://github.com/pyrite-wiki/pyrite/discussions/755)) and
+the maintainer said he wanted help with reviews, onboarding, landing pull
+requests and larger tickets, and was considering a role that may merge to
+`dev` but not to `main`.
+
+### What is true today (read from the repository on 2026-10-14)
+
+- One collaborator has any permission on the repository: the maintainer.
+- The `dev` ruleset requires a pull request, the required checks and the merge
+  queue. It requires **zero** approving reviews. Review is a convention (the
+  maintainer and the conductor's cold read), not a rule.
+- `main` moves only by fast-forward to a commit that CI verified on `dev`
+  (decision 3). Nothing is reviewed between `dev` and `main`: **whatever
+  merges to `dev` is the next release.**
+- The `v*` tag ruleset forbids changing or deleting a release tag. It does not
+  restrict who may create one.
+- `publish.yml` is `workflow_dispatch` only and runs in the `pypi` environment.
+
+So "let `dev` be more open than `main`" does not hold as the repository is
+built. A person who can merge to `dev` decides what ships, unless a rule
+keeps some review with the maintainers at the `dev` merge itself.
+
+### The proposal
+
+**Four roles.** They use GitHub's base permissions, because the organisation's
+plan has no custom roles.
+
+| Role | GitHub permission | May do |
+|---|---|---|
+| Contributor | none (works from a fork) | open pull requests and issues |
+| Reviewer | Triage | label and triage issues, review pull requests, help new contributors; their approval is advice and does not satisfy a required review |
+| Committer | Write | approve and merge pull requests to `dev`, under the rules below |
+| Maintainer | Maintain or Admin | everything a committer may do, plus review of the owned paths, moving `main`, tags, releases, settings |
+
+**Rules that make the committer role safe.** All four are needed; the first
+two are ruleset changes, the third is a file, the fourth is settings.
+
+1. **Two people on every merge to `dev`.** One approving review from someone
+   with Write who is not the author, and approval of the last push. Nobody
+   merges their own work unreviewed, the maintainer included.
+2. **Maintainers own the paths where a mistake is expensive.** A `CODEOWNERS`
+   file names the maintainers for: the auth code, `pyrite/storage/`,
+   `pyrite/server/`, `pyrite/schema/`, `.github/`, `scripts/release.py`,
+   `scripts/verified_commit.py`, `scripts/test-affected`,
+   `.pre-commit-config.yaml`, `kb/adrs/` and `CODEOWNERS` itself. The `dev`
+   ruleset requires a code owner's review. These are the paths the conductor
+   already treats as cold-read triggers. This is what makes `main` stricter
+   than `dev` in practice: a committer can land a CLI fix or a docs change on
+   their own review of someone else's work; a change to storage or to the
+   release machinery needs a maintainer.
+3. **A public shape is still the maintainer's.** A new or changed CLI flag,
+   REST field, MCP argument or file format cannot be named by path. It stays a
+   review rule: a committer who sees one asks a maintainer before approving.
+4. **The release surfaces are closed to Write.** Only maintainers may create a
+   `v*` tag (tag ruleset: restrict creation), run `publish.yml` (the `pypi`
+   environment requires a maintainer's approval), or move `main`. Before the
+   first committer is added, check which secrets a branch pushed inside the
+   repository can read in CI, since a fork's pull request reads none.
+
+**How someone moves up.** No fixed counts; evidence the maintainer can read.
+
+- *Contributor to reviewer:* several merged pull requests, and follow-through
+  on review comments on their own open ones.
+- *Reviewer to committer:* a few weeks of reviews on other people's pull
+  requests that say what the change does, what it could break, and whether its
+  tests would fail without it; at least one larger groomed ticket carried from
+  claim to merge; a named person accountable for the account.
+- *Committer to maintainer:* by invitation.
+
+A role is removed without ceremony after a long silence, and returned on
+request.
+
+**Accounts that are operated by an agent.** Contributions written with AI
+assistance are welcome and are disclosed with the `Co-authored-by` trailer
+(CONTRIBUTING). A reviewer or committer role is held by a person. An approval
+is that person's statement that they read the change; an agent may prepare the
+review, and the person is answerable for it.
+
+### What changes in the rest of this ADR if accepted
+
+- Decision 1 ("`dev` only receives green, current work") gains "and reviewed
+  by a second person".
+- "Governance: BDFL" stands. Roles are granted and removed by the maintainer.
+- The conductor's delegation (land its own themes on `dev`; merge qualifying
+  outside pull requests) needs restating, because rule 1 would stop the
+  maintainer's own account merging on the conductor's review alone. See the
+  first open question.
+
+### Open questions for the maintainer
+
+1. **Does the two-person rule bind the maintainer's own pull requests?** Today
+   the loop lands its themes through the maintainer's account on checks plus a
+   cold read by an agent. Options: (a) a bypass for maintainers, so rule 1
+   binds committers only; (b) no bypass, and a committer or second maintainer
+   approves the loop's pull requests, which is the review help being asked
+   for but puts a person in the path of every merge; (c) a bypass only until
+   there are two committers. Recommended: (c).
+2. **Reviewer first, or straight to committer for a proven contributor?**
+   Recommended: reviewer first for everyone, so the evidence is reviews of
+   other people's work, which merged pull requests do not show.
+3. **Is `kb/adrs/` a maintainer path?** It is in the list above because
+   accepting an ADR is kept by the maintainer. Drafting one is not, so a
+   `proposed` ADR could land on a committer's review. Recommended: keep it
+   owned; the cost is one maintainer review per ADR.
+4. **Where the roles are written down.** Recommended: a short "Roles" section
+   in CONTRIBUTING pointing here, and `CODEOWNERS` as the list of record for
+   the owned paths.
+
+### Not proposed
+
+- A review step between `dev` and `main`. It would undo the point of decision
+  3, that `main` is a commit CI already verified, and it would move the
+  maintainer's reading to release day, when it is most expensive.
+- Opening `dev` to direct pushes for anyone.

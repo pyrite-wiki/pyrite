@@ -18,7 +18,7 @@ from ..utils.frontmatter import (
     describe,
     split_frontmatter,
 )
-from .context import cli_context, get_config_with_registered_kbs
+from .context import cli_context, get_config_with_registered_kbs, require_kb
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -199,8 +199,11 @@ def validate_entry(
             )
 
     # Protocol field type checks
+    from ..schema.enum_check import is_empty
+
     for field_name, expected_type in _PROTOCOL_FIELD_TYPES.items():
-        if field_name in fm and fm[field_name] is not None:
+        # An empty value (None, "", []) is no value (`is_empty`, #86).
+        if field_name in fm and not is_empty(fm[field_name]):
             value = fm[field_name]
             if not isinstance(value, expected_type):
                 errors.append(
@@ -238,9 +241,11 @@ def detect_id_collisions(
     for file_path, fm in entries:
         entry_id = fm.get("id", "")
         if not entry_id:
-            title = fm.get("title", "")
-            if title:
-                entry_id = generate_entry_id(title)
+            try:
+                entry_id = generate_entry_id(fm.get("title", ""))
+            except TypeError:
+                # a list, mapping or NaN title: no id to collide (#711)
+                entry_id = ""
         if entry_id:
             entry_type = fm.get("type", "unknown")
             id_map[entry_id].append((file_path, entry_type))
@@ -285,7 +290,7 @@ def schema_diff(
     entry_type: str = typer.Option(None, "--type", "-t", help="Filter by entry type"),
 ):
     """Show schema types with version and field annotations."""
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format="rich") as (config, db, svc):
         kb_config = config.get_kb(kb_name)
         if not kb_config:
             cli_error(
@@ -343,11 +348,15 @@ def schema_migrate(
 ):
     """Migrate entries to current schema version.
 
-    Loads and re-saves all entries, applying any pending migrations.
+    ``SchemaService.migrate_entries`` does the work: each entry whose
+    ``_schema_version`` is behind its type's gets the registered migration
+    chain's difference written onto the file's own bytes (#955, B6 P4).
+    A file that could not be read, judged or written is an error, logged
+    here, and counts as neither checked nor migrated.
     """
-    from ..storage.repository import KBRepository
+    from ..services.schema_service import SchemaService
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format="rich") as (config, db, svc):
         kb_config = config.get_kb(kb_name)
         if not kb_config:
             cli_error(
@@ -356,38 +365,14 @@ def schema_migrate(
                 suggestion="run `pyrite kb list` to see available knowledge bases",
             )
 
-        repo = KBRepository(kb_config)
-        checked = 0
-        migrated = 0
-        errors = 0
-
-        for file_path in repo.list_files():
-            try:
-                entry = repo._load_entry(file_path)
-                if entry_type and entry.entry_type != entry_type:
-                    continue
-
-                # Check if version changed (migration happened on load)
-                type_schema = kb_config.kb_schema.get_type_schema(entry.entry_type)
-                needs_save = (
-                    type_schema
-                    and type_schema.version > 0
-                    and entry._schema_version != type_schema.version
-                )
-
-                if needs_save and not dry_run:
-                    entry._schema_version = type_schema.version
-                    entry.kb_name = kb_name
-                    entry.file_path = file_path
-                    entry.save(file_path)
-                # Counted after the save: a file that failed to save was neither
-                # checked nor migrated, whatever the summary used to say.
-                checked += 1
-                if needs_save:
-                    migrated += 1
-            except Exception as e:
-                errors += 1
-                logger.warning("Migration error for %s: %s", file_path, e)
+        result = SchemaService(config).migrate_entries(
+            kb_name, entry_type=entry_type, dry_run=dry_run
+        )
+        for failure in result["errors"]:
+            logger.warning("Migration error for %s: %s", failure["path"], failure["error"])
+        checked = result["checked"]
+        migrated = result["migrated"]
+        errors = len(result["errors"])
 
         label = "[dim](dry run)[/dim] " if dry_run else ""
         console.print(f"\n{label}[bold]Migration results for '{kb_name}':[/bold]")
@@ -397,6 +382,9 @@ def schema_migrate(
             console.print(f"  [red]Errors: {errors}[/red] (files left as they were)")
         elif migrated == 0:
             console.print("  [green]All entries are up to date.[/green]")
+        if migrated and not dry_run:
+            # The files were written, not re-indexed (#978 review).
+            console.print("[dim]Run `pyrite index sync` to update the index.[/dim]")
         exit_unless_whole(errors, checked)
 
 
@@ -485,6 +473,7 @@ def schema_validate(
     config = load_config()
     if kb_name:
         config = get_config_with_registered_kbs(config, name=kb_name)
+        require_kb(config, kb_name, output_format="rich")
     schema = None
 
     # Resolve files to validate

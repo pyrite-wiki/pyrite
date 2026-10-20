@@ -12,7 +12,13 @@ import time
 from enum import StrEnum
 from typing import Any
 
-from ..exceptions import QuerySyntaxError, QueryTooLongError, StorageBusyError, StorageError
+from ..exceptions import (
+    QuerySyntaxError,
+    QueryTooLongError,
+    StorageBusyError,
+    StorageError,
+    ValidationError,
+)
 from ..storage.database import PyriteDB
 
 logger = logging.getLogger(__name__)
@@ -203,6 +209,19 @@ class SearchMode(StrEnum):
     KEYWORD = "keyword"
     SEMANTIC = "semantic"
     HYBRID = "hybrid"
+
+
+#: The valid search modes. An unknown mode is refused with a
+#: ``ValidationError`` naming these, never silently answered as keyword
+#: (#917).
+VALID_SEARCH_MODES = ("keyword", "semantic", "hybrid")
+
+
+def _validate_search_mode(mode: str | SearchMode) -> None:
+    if mode not in VALID_SEARCH_MODES:
+        raise ValidationError(
+            f"Unknown search mode: {mode!r}. Valid modes: {', '.join(VALID_SEARCH_MODES)}."
+        )
 
 
 #: How an agent reads the verdict. The sentence in ``SearchService.search``'s
@@ -615,6 +634,7 @@ class SearchService:
         kb_names: set[str] | list[str] | None = None,
         warnings: list[str] | None = None,
         semantic_query: str | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Search across entries.
@@ -643,6 +663,11 @@ class SearchService:
                 applied on every leg that ran. Never populated on the happy
                 path; a caller that ignores it still gets correctly filtered
                 results, just without knowing a leg was dropped.
+            non_empty: Leave out entries whose body and summary are both blank
+                after trimming whitespace (#200). Applied inside each leg's own
+                query, so ``limit`` rows come back when that many qualify. Off
+                by default: search itself hides nothing; link discovery turns
+                it on.
             semantic_query: The text the semantic leg embeds, when it should
                 differ from ``query``. A feature that derives an OR query from
                 a title or a message passes the query as ``query`` and the
@@ -741,6 +766,12 @@ class SearchService:
             check_query_length(semantic_query)
         semantic_text = query if semantic_query is None else semantic_query
 
+        # Validate `mode` up front: an unknown mode is a caller mistake and
+        # must be refused, not silently answered as keyword (#917). The
+        # caller's actual input reaches this function on every surface (CLI,
+        # REST, MCP), so one check here covers all of them.
+        _validate_search_mode(mode)
+
         # Validate `limit` once, here, rather than letting whatever arithmetic
         # reaches it first decide the error. `limit=None` used to surface as a
         # bare TypeError from `limit * 3` deep inside the hybrid leg -- and,
@@ -752,12 +783,9 @@ class SearchService:
         if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
             raise ValueError(f"limit must be a positive integer, got {limit!r}")
 
-        # Normalize mode
+        # Normalize mode (already validated above, so SearchMode(...) cannot fail)
         if isinstance(mode, str):
-            try:
-                mode = SearchMode(mode)
-            except ValueError:
-                mode = SearchMode.KEYWORD
+            mode = SearchMode(mode)
 
         # Normalize "All KBs" to None
         if kb_name == "All KBs":
@@ -796,6 +824,7 @@ class SearchService:
                         state=state,
                         status=status,
                         include_archived=include_archived,
+                        non_empty=non_empty,
                     ),
                     warnings=warnings,
                     trace=skip,
@@ -828,6 +857,7 @@ class SearchService:
                     include_archived=include_archived,
                     kb_names=kb_names,
                     signal=signal,
+                    non_empty=non_empty,
                 )
                 results = self._restrict(results, kb_names, limit)
             else:
@@ -851,6 +881,7 @@ class SearchService:
                         fips=fips,
                         state=state,
                         status=status,
+                        non_empty=non_empty,
                     )
 
                 def _hits(q: str, page: list[dict[str, Any]] | None = None) -> bool:
@@ -1176,6 +1207,7 @@ class SearchService:
         state: str | None = None,
         status: str | None = None,
         include_archived: bool = False,
+        non_empty: bool = False,
     ) -> dict[str, Any]:
         """The one filter set every leg receives (#56).
 
@@ -1193,6 +1225,7 @@ class SearchService:
             "state": state,
             "status": status,
             "include_archived": include_archived,
+            "non_empty": non_empty,
         }
 
     def _index_has_entries(
@@ -1251,6 +1284,7 @@ class SearchService:
         include_archived: bool = False,
         kb_names: set[str] | list[str] | None = None,
         signal: dict[str, Any] | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Hybrid search using Reciprocal Rank Fusion (RRF).
@@ -1285,6 +1319,7 @@ class SearchService:
                 state=state,
                 status=status,
                 include_archived=include_archived,
+                non_empty=non_empty,
             )
 
         keyword_results = _keyword(kw_query, fetch_size)
@@ -1313,6 +1348,7 @@ class SearchService:
                 state=state,
                 status=status,
                 include_archived=include_archived,
+                non_empty=non_empty,
             ),
             warnings=warnings,
             keyword_leg_ran=True,

@@ -74,8 +74,6 @@ world through the same identities.
 from __future__ import annotations
 
 import hashlib
-import os
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -83,12 +81,13 @@ from typing import Any
 from starlette.testclient import TestClient
 
 from pyrite.config import AuthConfig, KBConfig, PyriteConfig, Settings
-from pyrite.server.api import create_app, get_config, get_db, kbs_for_user_at_tier
+from pyrite.server.api import get_index_worker, kbs_for_user_at_tier
 from pyrite.server.mcp_server import PyriteMCPServer
 from pyrite.services.auth_service import AuthService
 from pyrite.services.index_worker import IndexWorker
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
+from tests import _world
 from tests.auth_seed import SESSION_COOKIE, seed_user, sign_in
 
 READABLE = "readable-kb"
@@ -146,11 +145,10 @@ class World:
     index_worker: IndexWorker
     mcp_server: PyriteMCPServer
     principals: dict[str, Principal]
+    base: _world.World  # owns the config dir, the app, its lifespan and teardown
 
     def close(self) -> None:
-        self.index_worker.wait_for_idle(timeout=10)
-        self.mcp_server.close()
-        self.db.close()
+        self.base.close()
 
     def resolve_readable_writable(self, principal: Principal) -> tuple[set | None, set | None]:
         """The (readable_kbs, writable_kbs) the REAL server would resolve
@@ -242,91 +240,19 @@ class World:
         get_registry().set_context(PluginContext(config=self.config, db=self.db))
         return self.mcp_server._dispatch_tool(name, arguments, **kwargs)
 
-    def release_idle_connections(self) -> None:
-        """Close and clear this world's DB's per-thread fallback SQLAlchemy
-        sessions, releasing their pooled connections without disposing the
-        engine (unlike `db.close()`, which the run isn't done with yet).
 
-        Found while building this harness, not part of the theme: REST's
-        `get_db` override (this world's, and the same pattern
-        `tests/test_api_tiers.py::_build_client` and every other
-        `TestClient`-based test uses) hands every request the bare shared
-        `PyriteDB`, bypassing `request_handle()`'s per-request session that
-        closes on teardown (`pyrite/storage/connection.py`). Each distinct
-        thread FastAPI's anyio threadpool uses to serve a sync `def` handler
-        then falls into `PyriteDB.session`'s per-thread **fallback** branch,
-        which opens a session -- and holds its pooled connection -- for the
-        life of that thread, not that request. `HANDLER_CONCURRENCY_LIMIT`
-        (40) plus `_MAX_OVERFLOW` (20) covers ordinary test traffic; this
-        harness's ~3,600 REST+MCP calls exhausts it, and the request that
-        finds the pool empty hangs forever (`sqlalchemy.util.queue.Queue.get`
-        with no timeout) rather than erroring -- confirmed with
-        `faulthandler` mid-hang while building this harness. Calling this
-        before every REST call (MCP's direct `_dispatch_tool`
-        calls run on one thread and do not hit this) keeps the pool's
-        headroom ahead of the leak. The leak itself is pre-existing
-        infrastructure, out of this theme's scope; reported, not fixed here.
-        """
-        with self.db._fallback_lock:
-            sessions, self.db._fallback_sessions = self.db._fallback_sessions, []
-        for session in sessions:
-            try:
-                session.close()
-            except Exception:  # pragma: no cover - defensive, mirrors PyriteDB.close
-                pass
-
-
-def _create_app_with_empty_static(config, tmpdir: Path):
-    """`create_app(config=config)`, with static/SPA mounting pointed at an
-    always-empty directory (#504 round 2).
-
-    `create_app` mounts `/_app` (a StaticFiles Mount), `GET /favicon.ico`
-    and the `GET /{path:path}` SPA fallback (both real APIRoutes) whenever
-    `web/dist/index.html` exists on disk -- which it does on the main
-    checkout, and on any contributor's tree after `npm run build`. Building
-    this harness's world with a bare `create_app(config=config)` made the
-    completeness tests' pass/fail depend on that build artifact rather than
-    on the route table this harness actually characterizes: with a built
-    `web/dist` present, `test_every_rest_route_is_covered` and
-    `test_rest_total_route_count_is_pinned` failed on the two new APIRoutes,
-    and `test_every_transport_route_is_covered` failed on the new `/_app`
-    Mount -- three false reds with no code change, on the exact tree a
-    contributor who just ran the frontend build would have.
-
-    `create_app` already supports pointing static mounting elsewhere via the
-    `PYRITE_STATIC_DIR` env var (for containerised deploys where the
-    package is installed as a site-package and the relative `web/dist` path
-    would not resolve) -- reused here rather than adding a second lever, so
-    there is exactly one way `create_app` decides where static assets live.
-    Pointed at a `tmpdir` subdirectory this harness itself created and never
-    populates with an `index.html`, so `mount_static`'s own `if not
-    index_html.exists(): return` guard makes it a no-op regardless of
-    whether the real repo's `web/dist` exists, was just built, or was
-    deleted -- `test_every_transport_route_is_covered` and
-    `test_every_rest_route_is_covered` now see the identical route table
-    either way.
-    """
-    empty_dist = tmpdir / "empty-static-dir"
-    empty_dist.mkdir(exist_ok=True)
-    prior = os.environ.get("PYRITE_STATIC_DIR")
-    os.environ["PYRITE_STATIC_DIR"] = str(empty_dist)
-    try:
-        return create_app(config=config)
-    finally:
-        # create_app reads the env var once, synchronously, during this
-        # call -- restore it immediately so no other code in this process
-        # (a differently-configured create_app() call, a parallel test)
-        # ever observes this world's override.
-        if prior is None:
-            os.environ.pop("PYRITE_STATIC_DIR", None)
-        else:
-            os.environ["PYRITE_STATIC_DIR"] = prior
-
-
-def build_world(tmp_path_factory, *, label: str = "adr0037-characterization") -> World:
+def build_world(
+    tmp_path_factory,
+    *,
+    label: str = "adr0037-characterization",
+    shortnames: dict[str, str] | None = None,
+) -> World:
+    """`shortnames` gives KBs a shortname (`tests/test_kb_walk.py`); the
+    goldens are recorded with none, and `GET /api/kbs` lists them."""
     tmpdir = Path(tmp_path_factory.mktemp(label))
     for name in (READABLE, PRIVATE, READ_ONLY, NO_DEFAULT_ROLE):
         (tmpdir / name).mkdir()
+    short = shortnames or {}
 
     keys = [
         {"key_hash": _hash_key(READ_KEY), "role": "read", "label": "characterization-read"},
@@ -335,16 +261,34 @@ def build_world(tmp_path_factory, *, label: str = "adr0037-characterization") ->
     ]
     config = PyriteConfig(
         knowledge_bases=[
-            KBConfig(name=READABLE, path=tmpdir / READABLE, kb_type="generic", default_role="read"),
-            KBConfig(name=PRIVATE, path=tmpdir / PRIVATE, kb_type="generic", default_role="none"),
+            KBConfig(
+                name=READABLE,
+                path=tmpdir / READABLE,
+                kb_type="generic",
+                default_role="read",
+                shortname=short.get(READABLE),
+            ),
+            KBConfig(
+                name=PRIVATE,
+                path=tmpdir / PRIVATE,
+                kb_type="generic",
+                default_role="none",
+                shortname=short.get(PRIVATE),
+            ),
             KBConfig(
                 name=READ_ONLY,
                 path=tmpdir / READ_ONLY,
                 kb_type="generic",
                 default_role="read",
                 read_only=True,
+                shortname=short.get(READ_ONLY),
             ),
-            KBConfig(name=NO_DEFAULT_ROLE, path=tmpdir / NO_DEFAULT_ROLE, kb_type="generic"),
+            KBConfig(
+                name=NO_DEFAULT_ROLE,
+                path=tmpdir / NO_DEFAULT_ROLE,
+                kb_type="generic",
+                shortname=short.get(NO_DEFAULT_ROLE),
+            ),
         ],
         settings=Settings(
             index_path=tmpdir / "index.db",
@@ -353,15 +297,14 @@ def build_world(tmp_path_factory, *, label: str = "adr0037-characterization") ->
         ),
     )
 
-    app = _create_app_with_empty_static(config, tmpdir)
-    db = PyriteDB(config.settings.index_path)
-    app.dependency_overrides[get_config] = lambda: config
-    app.dependency_overrides[get_db] = lambda: db
-    index_worker = IndexWorker(db, config)
-
-    from pyrite.server.api import get_index_worker
-
-    app.dependency_overrides[get_index_worker] = lambda: index_worker
+    # The production wiring (#1077): config.yaml read back by load_config,
+    # create_app with no dependency overrides, the lifespan running, and the
+    # world owning teardown. This harness used to override get_db with a bare
+    # PyriteDB, which leaked a pooled connection per request until the pool ran
+    # out (see tests/_world.py); `release_idle_connections()` worked around it.
+    base = _world.build_world(tmpdir, config=config)
+    config, app, db, client = base.config, base.app, base.db, base.client
+    index_worker = app.dependency_overrides[get_index_worker]()
 
     kb_service = KBService(config, db)
     kb_service.create_entry(
@@ -391,8 +334,6 @@ def build_world(tmp_path_factory, *, label: str = "adr0037-characterization") ->
         "note",
         "a zebra of no fixed abode",
     )
-
-    client = TestClient(app)
 
     # anonymous's readable/writable sets: computed the same way REST resolves
     # them (`kbs_for_user_at_tier(..., user_id=None, role=None, ...)`), not
@@ -477,7 +418,7 @@ def build_world(tmp_path_factory, *, label: str = "adr0037-characterization") ->
         "granted_user", "characterization-granted-user", "password456", granted_row["id"]
     )
 
-    mcp_server = PyriteMCPServer(config=config, tier="admin")
+    mcp_server = base.mcp(tier="admin")
 
     return World(
         tmpdir=tmpdir,
@@ -488,4 +429,5 @@ def build_world(tmp_path_factory, *, label: str = "adr0037-characterization") ->
         index_worker=index_worker,
         mcp_server=mcp_server,
         principals=principals,
+        base=base,
     )

@@ -278,6 +278,7 @@ def index_kb(data_dir: Path, kb_dir: Path | None = None) -> None:
         check=True,
         capture_output=True,
         text=True,
+        timeout=120,
     )
 
 

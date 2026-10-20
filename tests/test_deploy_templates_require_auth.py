@@ -53,7 +53,12 @@ def _railway_env(command: str, env: dict) -> str:
     probe = command.replace("pyrite-server", "printenv PYRITE_AUTH_ENABLED")
     base = {k: v for k, v in os.environ.items() if k != "PYRITE_AUTH_ENABLED"}
     out = subprocess.run(
-        shlex.split(probe), env={**base, **env}, capture_output=True, text=True, check=True
+        shlex.split(probe),
+        env={**base, **env},
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
     )
     return out.stdout.strip()
 

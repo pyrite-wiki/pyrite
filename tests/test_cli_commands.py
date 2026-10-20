@@ -111,6 +111,47 @@ class TestTyperListCommand:
 @pytest.mark.cli
 @pytest.mark.core
 class TestTyperGetCommand:
+    @pytest.mark.parametrize("output_format", ["json", "rich"])
+    def test_get_unscoped_duplicate_id_reports_all_kbs(self, cli_env, output_format):
+        entry = EventEntry.create(date="2025-01-10", title="Test Event 0", body="Other KB")
+        KBRepository(cli_env["config"].get_kb("test-research")).save(entry)
+        db = PyriteDB(cli_env["config"].settings.index_path)
+        IndexManager(db, cli_env["config"]).index_all()
+        db.close()
+
+        with _patch_config(cli_env):
+            result = runner.invoke(app, ["get", entry.id, "--format", output_format])
+
+        assert result.exit_code == 1
+        if output_format == "json":
+            payload = json.loads(result.output)
+            assert payload["error_code"] == "AMBIGUOUS"
+            assert payload["candidate_kbs"] == ["test-events", "test-research"]
+            assert "test-events" in payload["error"]
+            assert "test-research" in payload["error"]
+            assert "-k" in payload["suggestion"]
+        else:
+            assert "AMBIGUOUS" in result.output
+            assert "test-events" in result.output
+            assert "test-research" in result.output
+
+        with _patch_config(cli_env):
+            selected = runner.invoke(
+                app, ["get", entry.id, "-k", "test-research", "--format", "json"]
+            )
+        assert selected.exit_code == 0
+        assert json.loads(selected.output)["kb_name"] == "test-research"
+
+    @pytest.mark.control(reason="Existing unique and missing unscoped reads must stay unchanged")
+    def test_get_unscoped_unique_and_missing(self, cli_env):
+        with _patch_config(cli_env):
+            found = runner.invoke(app, ["get", "2025-01-10--test-event-0", "--format", "json"])
+            missing = runner.invoke(app, ["get", "missing-id", "--format", "json"])
+        assert found.exit_code == 0
+        assert json.loads(found.output)["kb_name"] == "test-events"
+        assert missing.exit_code == 1
+        assert json.loads(missing.output)["error_code"] == "NOT_FOUND"
+
     def test_get_entry_found(self, cli_env):
         with _patch_config(cli_env):
             result = runner.invoke(app, ["get", "2025-01-10--test-event-0", "--kb", "test-events"])
@@ -736,7 +777,7 @@ class TestMcpCommandTier:
 
         #229 found the next fix (core dict counts: 29/11/8) had drifted the
         same way: it omitted 41+ plugin tools (sw_*, investigation_*,
-        cascade_*, ...) registered dynamically per tier
+        ...) registered dynamically per tier
         (`PyriteMCPServer._register_plugin_tools`), understating the real
         read-tier total by 2.4x (29 claimed vs. 70 actual). The help text
         now counts core + plugin tools per tier, the same way
@@ -771,3 +812,54 @@ class TestMcpCommandTier:
         assert str(admin_additions) in result.output, (
             f"expected live admin-tier addition count ({admin_additions}) in --help output"
         )
+
+
+@pytest.mark.cli
+@pytest.mark.core
+def test_index_sync_verify_finds_same_size_edit_with_restored_mtime(cli_env):
+    """A same-size edit with its mtime restored is invisible to a plain sync;
+    `--verify` reads the bytes and finds it. Real KB, real index, real command."""
+    import os
+
+    target = next(
+        f for f in cli_env["events_kb"].path.rglob("*.md") if "Test Event 0" in f.read_text()
+    )
+    before = target.stat()
+    original = target.read_bytes()
+    marker = b"title: Test Event "
+    offset = original.index(marker) + len(marker)
+    changed = original[:offset] + b"X" + original[offset + 1 :]
+    assert len(changed) == len(original)
+    target.write_bytes(changed)
+    os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert target.stat().st_mtime_ns == before.st_mtime_ns
+
+    def indexed_title():
+        db = PyriteDB(cli_env["config"].settings.index_path)
+        try:
+            row = db._raw_conn.execute(
+                "SELECT title FROM entry WHERE file_path = ?", (str(target),)
+            ).fetchone()
+        finally:
+            db.close()
+        return row[0]
+
+    with _patch_config(cli_env):
+        plain_sync = runner.invoke(app, ["index", "sync", "--no-embed"])
+        assert plain_sync.exit_code == 0, plain_sync.output
+        assert "Updated: 0" in plain(plain_sync.output)
+        assert indexed_title() == "Test Event 0"
+
+        verified = runner.invoke(app, ["index", "sync", "--verify", "--no-embed"])
+        assert verified.exit_code == 0, verified.output
+        assert "Updated: 1" in plain(verified.output)
+        assert indexed_title() == "Test Event X"
+
+
+@pytest.mark.cli
+@pytest.mark.core
+def test_index_sync_verify_rejects_background_mode():
+    result = runner.invoke(app, ["index", "sync", "--verify", "--background"])
+
+    assert result.exit_code == 2
+    assert "cannot be combined with --background" in plain(result.output)

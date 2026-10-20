@@ -18,7 +18,7 @@
 	import { registerShortcut } from '$lib/utils/keyboard';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import { UNTITLED_ROUTES } from './brand-title-routes';
 
@@ -47,9 +47,6 @@
 				goto('/');
 				return;
 			}
-
-			kbStore.load();
-			starredStore.load();
 		});
 
 		// WebSocket for multi-tab awareness. Opened (and reopened) by the
@@ -57,7 +54,11 @@
 		const unregisterWS = wsClient.onEvent((event) => {
 			if (event.type === 'entry_updated' || event.type === 'entry_deleted') {
 				// If viewing the changed entry, auto-reload
-				if (entryStore.current && entryStore.current.id === event.entry_id) {
+				if (
+					entryStore.current &&
+					entryStore.current.id === event.entry_id &&
+					(!event.kb_name || entryStore.current.kb_name === event.kb_name)
+				) {
 					if (event.type === 'entry_updated') {
 						entryStore.loadEntry(event.entry_id, event.kb_name);
 						uiStore.toast(`"${event.entry_id}" was updated in another tab`, 'info');
@@ -119,6 +120,21 @@
 	// anonymous reader is admitted) means no socket at all.
 	$effect(() => {
 		wsClient.follow(authStore.socketIdentity);
+	});
+
+	// A client-side login does not remount this layout. Load the readable
+	// session's data when auth is ready, and once again if its identity changes.
+	// Route changes and reactive reads inside load() must not trigger reloads.
+	let loadedIdentity: string | null = null;
+	$effect(() => {
+		const identity = authStore.socketIdentity;
+		if (identity === loadedIdentity) return;
+		loadedIdentity = identity;
+		if (identity === null) return;
+		untrack(() => {
+			void kbStore.load();
+			void starredStore.load();
+		});
 	});
 
 	// Push the brand color into the DOM as it loads.

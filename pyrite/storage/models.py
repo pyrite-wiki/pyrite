@@ -79,6 +79,10 @@ class Entry(Base):
 
     # Extension fields (JSON) — attribute named extra_data to avoid SQLAlchemy reserved 'metadata'
     extra_data = Column("metadata", Text, default="{}")
+    # The entry's `aliases` as a JSON list, its own column (#1001, decision
+    # 5): a read spells a field where the file does, so a top-level
+    # `aliases:` is never carried under the row's `metadata`.
+    aliases = Column(Text)
 
     # Timestamps
     created_at = Column(String)
@@ -152,6 +156,10 @@ class Link(Base):
     source_kb = Column(String, nullable=False)
     target_id = Column(String, nullable=False)
     target_kb = Column(String, nullable=False)
+    #: The link's ``kb:`` prefix as the file wrote it (a name or a shortname),
+    #: beside the KB name it resolved to; NULL when the file named no KB or
+    #: the row predates v28. A row can be checked against the file (#980).
+    target_prefix = Column(String)
     relation = Column(String, nullable=False)
     inverse_relation = Column(String, nullable=False)
     note = Column(Text)

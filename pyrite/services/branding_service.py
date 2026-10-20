@@ -30,11 +30,10 @@ DEFAULT_FOOTER_CREDIT_URL = "https://pyrite.wiki"
 
 # Module-level, keyed on the resolved branding.yaml path, each holding at
 # most one ((mtime_ns, size), message) pair (#445 delta cold read): every
-# request to an anonymous route (/sitemap.xml, /robots.txt,
-# /config/branding) that hits a broken branding.yaml builds its own
-# BrandingService (seo_endpoints.py has no per-request caching the way
-# branding_endpoints.py's _service_cache does), so without this, a stuck
-# operator typo logs a full traceback on every single page load. Keyed on
+# request to an anonymous route (/config/branding, and the MCP prompt and
+# README footer that read the brand) that hits a broken branding.yaml
+# builds its own BrandingService, so without this, a stuck operator typo
+# logs a full traceback on every single page load. Keyed on
 # (mtime, size), not just the path, so a fixed file is re-read and
 # re-logged on its next real failure instead of staying silent forever --
 # and keyed per-path (not a single shared slot) so two different branding
@@ -239,11 +238,11 @@ class BrandingService:
 
         # Every scalar field BrandingConfig exposes must be a string (or
         # absent) -- a list or number reads fine as far as .get() is
-        # concerned, but silently breaks the field's contract: site_url: [x]
-        # reaches SitemapService as a list where f-string interpolation
-        # expects str, and name: [x] serializes through to_public_dict() as
-        # a JSON array where every consumer (the web branding store, the
-        # <title> tag, the MCP prompt) expects text (#445 delta cold read).
+        # concerned, but silently breaks the field's contract: name: [x]
+        # serializes through to_public_dict() as a JSON array where every
+        # consumer (the web branding store, the <title> tag, the MCP prompt)
+        # expects text, and site_url: [x] reaches the web app's canonical
+        # URL the same way (#445 delta cold read).
         string_fields = {
             "name": data.get("name"),
             "tagline": data.get("tagline"),

@@ -130,12 +130,18 @@ def build_entry(
             _extra_meta[k] = v
 
     # The REST body and the web form send every non-standard field inside
-    # `metadata`. Lift the alias keys out of it so they land top-level too. An
-    # explicit top-level argument wins, unless it is an empty default (REST
-    # sends `participants: []` when the client gave none).
+    # `metadata`. `metadata.k` is a second spelling of field `k` (Andon #994,
+    # decision A), so a declared field or an alias sent there lands at its
+    # own top-level key, where the class reads it; nesting it left the field's
+    # default at the top level and the caller's value under `metadata:`, a
+    # file spelling the field twice (a stored-query collection read as a
+    # folder once the row stopped letting the bag override the model). An
+    # undeclared key keeps its nested placement (#178, #447). An explicit
+    # top-level argument wins, unless it is an empty default (REST sends
+    # `participants: []` when the client gave none).
     if isinstance(fm.get("metadata"), dict):
         bag = fm["metadata"]
-        lifted = {mk: mv for mk, mv in bag.items() if mk in _alias_keys}
+        lifted = {mk: mv for mk, mv in bag.items() if mk in _fm_keys}
         for mk, mv in lifted.items():
             if not fm.get(mk):
                 fm[mk] = mv

@@ -8,6 +8,7 @@ import {
 	seedAuthWorld
 } from './e2e/auth-setup';
 import { E2E_BACKEND_PORT, E2E_ENV, E2E_VITE_PORT, seedE2EWorld } from './e2e/global-setup';
+import { playwrightWorkers } from './e2e/workers';
 
 // Build the seeded world NOW, while this config module is evaluated — not from
 // Playwright's `globalSetup` hook, which runs after `webServer` has already
@@ -42,7 +43,8 @@ export default defineConfig({
 	// A flake must be visible, not absorbed. Retries hid the fact that the suite
 	// had no test-data contract; they only made the job three times slower.
 	retries: 0,
-	workers: process.env.CI ? 1 : undefined,
+	// PW_WORKERS locally (else Playwright's default), 1 in CI: see e2e/workers.ts.
+	workers: playwrightWorkers(process.env),
 	reporter: 'list',
 	use: {
 		baseURL: `http://localhost:${E2E_VITE_PORT}`,

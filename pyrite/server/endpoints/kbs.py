@@ -3,7 +3,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from ...config import PyriteConfig
 from ...exceptions import InvalidGitRefError, KBNotFoundError
 from ...services.access_policy import KB, Action, AnyKB, ReadScope
 from ...services.auth_service import AuthService
@@ -12,7 +11,6 @@ from ...services.kb_registry_service import KBRegistryService
 from ...services.kb_service import KBService
 from ..api import (
     get_auth_service,
-    get_config,
     get_export_service,
     get_kb_registry,
     get_kb_service,
@@ -116,14 +114,13 @@ def kb_health(
 def get_kb_schema(
     kb_name: str,
     request: Request,
-    config: PyriteConfig = Depends(get_config),
+    svc: KBService = Depends(get_kb_service),
 ):
     """Get the schema for a knowledge base including type metadata."""
-    kb_config = config.get_kb(kb_name)
-    if not kb_config:
-        raise HTTPException(
-            status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{kb_name}' not found"}
-        )
+    # Through the service, so a KB `pyrite kb add` registered after the
+    # config was loaded -- which `authorize` above accepted -- is found
+    # here too, not 404 from a second, narrower lookup (#952).
+    kb_config = svc.require_kb(kb_name)
 
     schema = kb_config.kb_schema
     return schema.to_agent_schema()

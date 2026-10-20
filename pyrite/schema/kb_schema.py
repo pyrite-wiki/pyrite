@@ -8,13 +8,27 @@ from typing import Any
 from pyrite.utils.yaml import load_yaml_file
 
 from .core_types import CORE_TYPES, SYSTEM_INTENT, resolve_type_metadata
-from .enum_check import enum_findings
+from .enum_check import enum_findings, is_empty
 from .field_schema import EndpointSpec, FieldSchema, TypeSchema, _validate_field_value
 from .provenance import get_all_relationship_types
 from .reserved import RESERVED_FIELD_NAMES
 from .validators import validate_date
 
 logger = logging.getLogger(__name__)
+
+
+def _core_field_type(spelled: str) -> str:
+    """A ``CORE_TYPES`` field's Python spelling as a ``FieldSchema`` type:
+    ``int`` a number, ``list[...]`` a list, ``dict`` ``object`` (no kb.yaml
+    type spells a mapping; its empty value is null), anything else (``str``,
+    an enum such as ``EventStatus``) text."""
+    if spelled == "int":
+        return "number"
+    if spelled.startswith("list"):
+        return "list"
+    if spelled == "dict":
+        return "object"
+    return "text"
 
 
 @dataclass
@@ -123,6 +137,42 @@ class KBSchema:
                 subdirectory=core["subdirectory"],
             )
         return None
+
+    def type_fields(self, entry_type: str) -> dict[str, FieldSchema]:
+        """The fields a type's schema declares, ``{name: FieldSchema}``, merged
+        core < plugin < kb.yaml (#86, #232).
+
+        The declaration is the schema, never the model class: ``CORE_TYPES``'s
+        ``fields``, the plugins' ``get_field_schemas()``, then this KB's
+        ``fields``, each layer replacing a name the one below declared. A name
+        kb.yaml lists in ``optional`` or ``required`` without a definition adds
+        a text field, unless a lower layer already typed it. A reserved name
+        (a base Entry field: ``title``, ``tags``, ``metadata``...) is left out
+        of every layer, as ``from_dict`` leaves it out of ``fields``: it is not
+        a field a type declares. A type's managed fields are not removed here;
+        the create leaves them out itself (``KBService._with_declared_fields``).
+        """
+        fields: dict[str, FieldSchema] = {
+            name: FieldSchema(name=name, field_type=_core_field_type(spelled))
+            for name, spelled in CORE_TYPES.get(entry_type, {}).get("fields", {}).items()
+        }
+        try:
+            from ..plugins import get_registry
+
+            plugin_fields = get_registry().get_all_field_schemas().get(entry_type, {})
+        except Exception:
+            logger.warning("Failed to load plugin field schemas for %s", entry_type, exc_info=True)
+            plugin_fields = {}
+        for name, data in plugin_fields.items():
+            if isinstance(data, dict):
+                fields[name] = FieldSchema.from_dict(name, data)
+        kb_type = self.types.get(entry_type)
+        if kb_type is not None:
+            fields.update(kb_type.fields)
+            for name in [*kb_type.optional, *kb_type.required]:
+                if isinstance(name, str):
+                    fields.setdefault(name, FieldSchema(name=name))
+        return {name: f for name, f in fields.items() if name not in RESERVED_FIELD_NAMES}
 
     def get_subdirectory(self, entry_type: str) -> str:
         """Get the subdirectory for an entry type."""
@@ -324,8 +374,12 @@ class KBSchema:
                     )
                     continue
 
-                # Skip validation if field not present (optional)
-                if field_name not in fields:
+                # Skip validation if field not present (optional). An empty
+                # value (None, "", []) is no value, as the enum check reads it
+                # (`is_empty`): a create writes a declared field it was not
+                # sent empty, at the schema's empty or the model's, and that
+                # is not a type error whatever the declared type (#86).
+                if field_name not in fields or is_empty(fields[field_name]):
                     continue
 
                 value = fields[field_name]
@@ -364,7 +418,7 @@ class KBSchema:
         # Check validation rules
         for rule in self.validation.get("rules", []):
             field_name = rule.get("field")
-            if field_name not in fields:
+            if field_name not in fields or is_empty(fields[field_name]):
                 continue
 
             value = fields[field_name]

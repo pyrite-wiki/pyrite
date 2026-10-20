@@ -4,7 +4,7 @@ Embedding Service for Semantic Search
 Provides vector embeddings via sentence-transformers and sqlite-vec for
 semantic similarity search across knowledge base entries.
 
-Requires optional dependencies: pip install pyrite[semantic]
+Requires the optional semantic extra; remedies use the current source install.
 """
 
 import json
@@ -18,6 +18,7 @@ from typing import Any
 
 from ..storage.backends.protocol import DEFAULT_MIN_SIMILARITY
 from ..storage.database import PyriteDB
+from ..utils.install_hints import extra_install_command
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ def semantic_unavailable(
         return (
             "extra_missing",
             "sentence-transformers is not installed",
-            "install with `pip install pyrite[semantic]`",
+            f"install with `{extra_install_command('semantic')}`",
         )
     if vec_available:
         return None
@@ -91,7 +92,7 @@ def semantic_unavailable(
         return (
             "sqlite_vec_missing",
             "the sqlite-vec package is not installed",
-            "install with `pip install pyrite[semantic]`",
+            f"install with `{extra_install_command('semantic')}`",
         )
     if vec_load_error is not None:
         cause = (
@@ -593,6 +594,7 @@ class EmbeddingService:
         status: str | None = None,
         include_archived: bool = False,
         kb_names: set[str] | list[str] | None = None,
+        non_empty: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Search for semantically similar entries using vector KNN.
@@ -612,6 +614,8 @@ class EmbeddingService:
                 hybrid result violate it. ``include_archived`` is the default
                 exclusion rather than a value filter, and holds on both legs
                 for the same reason.
+            non_empty: leave out entries whose body and summary are both blank
+                (#200); applied inside the KNN like the others.
 
         Returns list of entry dicts with ``similarity`` (cosine, 3 places, the
         same on every backend), ``snippet``, and ``distance`` (backend-specific:
@@ -636,6 +640,7 @@ class EmbeddingService:
             state=state,
             status=status,
             include_archived=include_archived,
+            non_empty=non_empty,
         )
 
         # Add relevance-aware snippets to results

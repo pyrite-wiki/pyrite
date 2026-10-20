@@ -176,7 +176,6 @@ ALLOWLIST: dict[tuple[str, str], str] = {
     ("GET", "/api/index/jobs"): "part 2: admin.py",
     ("GET", "/api/index/jobs/{job_id}"): "part 2: admin.py",
     ("POST", "/api/index/sync"): "part 2: admin.py",
-    ("POST", "/api/site/render"): "part 2: admin.py",
     ("POST", "/api/kbs"): "part 2: admin.py -- KB registration, admin tier",
     ("PUT", "/api/kbs/{name}"): "part 2: admin.py",
     ("DELETE", "/api/kbs/{name}"): "part 2: admin.py",

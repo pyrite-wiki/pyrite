@@ -31,6 +31,11 @@ def config_with_kb(tmp_path, tmp_kb_path):
     kb = KBConfig(name="test-kb", path=tmp_kb_path, kb_type="research", description="Test KB")
     config.knowledge_bases = [kb]
     config.get_kb.side_effect = lambda name: kb if name == "test-kb" else None
+    # DB-only KBs must resolve to real scalar fields, not a MagicMock that
+    # can accidentally reach SQL bindings when health queries their types.
+    config.kb_config_from_registry_row.side_effect = PyriteConfig(
+        settings=config.settings
+    ).kb_config_from_registry_row
     return config
 
 
@@ -111,6 +116,88 @@ class TestAddKB:
 
         with pytest.raises(ConfigError, match="already exists"):
             registry.add_kb(name="test-kb", path="/tmp/whatever")
+
+
+def _core_kb_presets():
+    """Every KB preset a bare core registry offers, so the tests below hold
+    for whatever is installed rather than for a hand-picked type."""
+    from pyrite.plugins.registry import PluginRegistry
+
+    return sorted(PluginRegistry().get_all_kb_presets())
+
+
+def _tree(root: Path) -> dict[str, bytes | None]:
+    """Every path under root, with file bytes (None for a directory).
+
+    Registering a KB that is already set up must leave this identical, which a
+    list of names alone would not prove: a rewritten file with the same path
+    would slip through.
+    """
+    snapshot = {}
+    for path in sorted(root.rglob("*")):
+        snapshot[path.relative_to(root).as_posix()] = path.read_bytes() if path.is_file() else None
+    return snapshot
+
+
+@pytest.mark.parametrize("kb_type", _core_kb_presets())
+class TestAddExistingKBIsNotScaffolded:
+    """`kb add` on a directory that already has a kb.yaml registers it and
+    writes nothing inside it (#945). Before the fix every preset materialized
+    its directories and _templates/ into a KB the user had built by hand."""
+
+    def _existing_kb(self, tmp_path: Path, name: str) -> Path:
+        kb_dir = tmp_path / name
+        (kb_dir / "notes").mkdir(parents=True)
+        (kb_dir / "kb.yaml").write_text(f"name: {name}\nkb_type: research\n", encoding="utf-8")
+        (kb_dir / "notes" / "a.md").write_text("---\ntitle: A\n---\nBody\n", encoding="utf-8")
+        return kb_dir
+
+    def test_writes_nothing_inside_the_kb(self, registry, tmp_path, kb_type):
+        kb_dir = self._existing_kb(tmp_path, f"have-{kb_type}")
+        before = _tree(kb_dir)
+
+        result = registry.add_kb(name=kb_dir.name, path=str(kb_dir), kb_type=kb_type)
+
+        assert _tree(kb_dir) == before
+        assert result["name"] == kb_dir.name
+        assert result["source"] == "user"
+
+    def test_keeps_files_it_would_have_written(self, registry, tmp_path, kb_type):
+        """The preset's own artifacts, already present and hand-edited, keep
+        their bytes: no _templates/ rewrite, no directory churn."""
+        from pyrite.plugins.registry import PluginRegistry
+
+        preset = PluginRegistry().get_all_kb_presets()[kb_type]
+        kb_dir = self._existing_kb(tmp_path, f"have-files-{kb_type}")
+        for dirname in preset.get("directories", []):
+            (kb_dir / dirname).mkdir(exist_ok=True)
+        templates = kb_dir / "_templates"
+        templates.mkdir(exist_ok=True)
+        for type_name in preset.get("types", {}):
+            (templates / f"{type_name}.md").write_text("hand written\n", encoding="utf-8")
+        before = _tree(kb_dir)
+
+        registry.add_kb(name=kb_dir.name, path=str(kb_dir), kb_type=kb_type)
+
+        assert _tree(kb_dir) == before
+
+    def test_a_kb_without_kb_yaml_still_scaffolds(self, registry, tmp_path, kb_type):
+        """Unchanged: a directory that is not a KB yet is still created from
+        the preset, because that is what `kb add` is for."""
+        from pyrite.plugins.registry import PluginRegistry
+
+        preset = PluginRegistry().get_all_kb_presets()[kb_type]
+        kb_dir = tmp_path / f"fresh-{kb_type}"
+        kb_dir.mkdir()
+
+        registry.add_kb(name=kb_dir.name, path=str(kb_dir), kb_type=kb_type)
+
+        assert (kb_dir / "kb.yaml").exists()
+        for dirname in preset.get("directories", []):
+            assert (kb_dir / dirname).is_dir()
+        assert (kb_dir / "_templates").is_dir()
+        for type_name in preset.get("types", {}):
+            assert (kb_dir / "_templates" / f"{type_name}.md").is_file()
 
 
 class TestRemoveKB:
@@ -260,6 +347,7 @@ class TestHealthKB:
         result = registry.health_kb("missing-kb")
         assert result["path_exists"] is False
         assert result["healthy"] is False
+        assert result["type_name_drift"] == []
 
     def test_health_missing_kb_raises(self, registry):
         """health_kb on a missing KB raises KBNotFoundError."""

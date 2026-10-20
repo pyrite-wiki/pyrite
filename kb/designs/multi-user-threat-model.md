@@ -65,7 +65,7 @@ must say which modes its questions apply to.
 | **M2 Auth, closed** | auth on, `anonymous_tier` unset, registration off or invite-only | sessions, keys | the full policy |
 | **M3 Auth, open** | auth on, `allow_registration: true`, `require_invite_code: false` | anyone can become a registered user | the full policy, with "registered user" as a hostile principal |
 | **M4 Auth, anonymous tier** | `anonymous_tier: read` or `write` | the anonymous visitor holds a rung | the full policy, with the anonymous tier as the floor |
-| **Local process** | CLI, `pyrite mcp` (stdio), `pyrite-admin`, Streamlit `ui/data.py` | `Principal.local()`, the operator | the OS account and the filesystem |
+| **Local process** | CLI, `pyrite mcp` (stdio), `pyrite-admin` | `Principal.local()`, the operator | the OS account and the filesystem |
 
 **P-M1.** A mode is never inferred from partial configuration in the
 permissive direction. For example, "auth on with no keys configured" must
@@ -101,7 +101,7 @@ without being a principal at all.
 
 | # | Principal | ADR-0037 `Principal` | Should reach | Must not reach |
 |---|---|---|---|---|
-| **U0** | Anonymous visitor | `anonymous(tier)` | public KBs (`default_role: read`), `/site`, the public entry points; with `anonymous_tier`, that rung on KBs whose default allows it | any private KB (S1, S2); any S4 or S5 |
+| **U0** | Anonymous visitor | `anonymous(tier)` | public KBs (`default_role: read`), the public entry points; with `anonymous_tier`, that rung on KBs whose default allows it | any private KB (S1, S2); any S4 or S5 |
 | **U1** | Registered user, no grant | `user(row)`, global role | what the global role and each KB's `default_role` give; their own profile, keys and tokens (`SELF`) | other users' `SELF`; private KBs with no grant |
 | **U2** | User with a read grant on KB *k* | `user` | read *k* | write *k*; anything on another private KB |
 | **U3** | User with a write grant on *k* | `user` | read and write *k* | KB-admin actions on *k*; writes to any other KB, including through a body, row id or bulk item that names another KB |
@@ -137,12 +137,12 @@ directory. No server or suite was run.
 |---|---|---|
 | REST under `/api` | 111 operations | `pyrite/server/endpoints/*.py` (22 modules) |
 | REST `/auth/*` | 19 | `auth_endpoints.py` |
-| Anonymous-by-design REST | 14 | `static.py` (9: `/site*`, `/viewer*`, `robots.txt`), `seo_endpoints.py` (2), `branding_endpoints.py` (2), `api.py` `/health` (1) |
-| **REST total** (`rest_operations()`) | **144** | |
+| Anonymous-by-design REST | 3 (14 until #953 removed `/site*`, `/viewer*`, `/sitemap.xml` and `/robots.txt`) | `branding_endpoints.py` (2), `api.py` `/health` (1) |
+| **REST total** (`rest_operations()`) | **133** (144 before #953) | |
 | MCP tools (`mcp_tools()`, admin tier) | **112**: read tier 72, write tier +31, admin tier +9 | core `mcp_server.py` 48; extensions 64 (software-kb 23, journalism-investigation 22, encyclopedia 6, cascade 6, social 5, zettelkasten 2) |
 | `NON_ROUTE_ENTRY_POINTS` | 2 | `/mcp` (a Mount: `GET /mcp/sse`, `POST /mcp/messages/`, `GET /mcp/info`), `/ws` |
 | Other app routes, **not in the inventory** | 4 | FastAPI's `/openapi.json`, `/docs`, `/docs/oauth2-redirect`, `/redoc` |
-| Local entry points | 4 console scripts, plus 1 UI | `pyrite`, `pyrite-read`, `pyrite-admin`, `pyrite-server`; `pyrite mcp` (stdio); `pyrite/ui/data.py` |
+| Local entry points | 4 console scripts | `pyrite`, `pyrite-read`, `pyrite-admin`, `pyrite-server`; `pyrite mcp` (stdio) |
 | Outbound request sites | 7 modules | `services/clipper.py`, `services/url_checker.py`, `services/git_service.py`, `services/llm_service.py`, `services/oauth_providers.py`, `github_auth.py`, `server/endpoints/repos.py` |
 | Subprocess sites | 8 modules | `services/{git_service,kb_service,version_service,worktree_service}.py`, `storage/document_manager.py`, `cli/{__init__,extension_commands,schema_commands}.py` |
 | In-process execution of KB-adjacent code | plugin hooks (`hook_runner.py`), validators, templates (`template_service.py`, `endpoints/templates.py`, `site_cache.py`) | |
@@ -297,21 +297,22 @@ Attacker goals: G-read, G-exist, G-persist.
   titles in the payload.
 - **P-W3.** Socket lifetime follows ADR-0036.
 
-#### B6. The anonymous render surfaces: `/site*`, `/viewer*`, `/sitemap.xml`, `/robots.txt`, `/branding/*`, `/config/branding`, `/health`; U0
+#### B6. The anonymous render surfaces: `/branding/*`, `/config/branding`, `/health` (and, until #953 removed them, `/site*`, `/viewer*`, `/sitemap.xml`, `/robots.txt`); U0
 
 Attacker goals: G-read, G-exist, G-escape (reading files through a path).
 
-- **P-S1, public only.** Every anonymous render includes only
-  `public_kb_names()` (`services/public_kbs.py`, the one rule). That covers
-  pages, the search index, the sitemap, link targets, backlinks and titles
-  resolved from private KBs. A private KB's name, entry titles or counts
-  never appear, even as a dangling link.
+- **P-S1, public only.** Every anonymous answer includes only what the
+  access policy gives the anonymous principal (`kb_role`, step 5 of
+  `services/access_policy.py`, the one rule; `services/public_kbs.py` was
+  the renderer's copy and went with it in #953). That covers link targets,
+  backlinks and titles resolved from private KBs. A private KB's name,
+  entry titles or counts never appear, even as a dangling link.
 - **P-S2, contained paths.** Every served path resolves inside its root:
-  the site cache, the static dir, or the branding dir. That holds after
-  normalisation, encoding, symlinks and case folding.
-- **P-S3, a cache refreshes on the right events.** A KB that stops being
-  public, or an entry deleted from a public KB, leaves the anonymous
-  surfaces by the next render. Who may trigger a render is P-R7.
+  the static dir or the branding dir. That holds after normalisation,
+  encoding, symlinks and case folding.
+- **P-S3, no stale anonymous copy.** Nothing anonymous is served from a
+  cache rendered under an earlier policy (the `/site` cache this property
+  governed is gone; it stays as the rule for any future one).
 - **P-S4, no configuration leaks.** `/config/branding` and `/health` expose
   nothing a U0 should not know: paths, versions beyond what the operator
   chose, KB names, or whether auth or keys are configured beyond what the
@@ -323,8 +324,8 @@ Attacker goals: G-impersonate, G-cred, G-write (through a victim's
 session).
 
 - **P-B1, stored content never executes.** Content written by one principal
-  cannot run script in another principal's browser, in the web app's
-  origin, or in `/site`. That covers entry bodies (markdown and HTML),
+  cannot run script in another principal's browser or in the web app's
+  origin. That covers entry bodies (markdown and HTML),
   titles, tags, field values, template output, collection names, KB names,
   branding assets and SVG. Pages are served with a CSP (`site_csp_extra`
   only relaxes it by operator choice).
@@ -536,27 +537,27 @@ Every brief shares these rules:
   fetch, or a write outside its root. Also: a network principal that
   obtains `local`.
 
-### A4. `/ws`, `/site` and the anonymous render surfaces (B5, B6, B7's P-B1)
+### A4. `/ws` and the anonymous render surfaces (B5, B6, B7's P-B1)
 
 - **Scope.**
-  - `server/websocket.py`, `server/static.py`, `services/site_cache.py`,
-    `services/public_kbs.py`, `services/sitemap_service.py`,
-    `server/seo_endpoints.py`, `server/branding_endpoints.py` and
-    `services/branding_service.py`.
-  - `server/static_search_page.py` and `server/templates/`.
+  - `server/websocket.py`, `server/static.py`,
+    `server/branding_endpoints.py` and `services/branding_service.py`
+    (`services/site_cache.py`, `services/public_kbs.py`,
+    `services/sitemap_service.py`, `server/seo_endpoints.py`,
+    `server/static_search_page.py` and `server/templates/` were removed
+    by #953).
   - The FastAPI documentation routes, and the inventory note in §4.1.
   - The web UI's rendering of entry content (`web/src/`: the markdown
     renderer, and every `{@html}`).
 - **Properties.** P-W1–P-W3, P-S1–P-S4, P-B1, P-B2.
 - **Questions, in order.**
-  1. Does every anonymous render draw only on `public_kb_names()`,
-     including derived data: backlinks, resolved titles, the search index
-     and the sitemap (P-S1)?
-  2. Path containment in `static.py`, `site_cache.py` and the branding
-     routes (P-S2).
+  1. Does every anonymous answer draw only on what the access policy
+     gives the anonymous principal, including derived data: backlinks and
+     resolved titles (P-S1)?
+  2. Path containment in `static.py` and the branding routes (P-S2).
   3. Can content stored by one principal run script in another's
-     browser, in the app or in `/site` (P-B1)? The web UI's markdown and
-     HTML sanitisation, and the CSP.
+     browser, in the app (P-B1)? The web UI's markdown and HTML
+     sanitisation, and the CSP.
   4. `/ws` payload scoping, handshake authentication and lifetime
      (P-W1–P-W3).
   5. Should the documentation routes be public, and does anything
@@ -594,7 +595,7 @@ Every brief shares these rules:
 
 - **Scope.**
   - `services/export_service.py`, `services/template_service.py`,
-    `services/site_cache.py`, `services/kb_service.py`, and the storage
+    `services/kb_service.py` (`services/site_cache.py` was removed by #953), and the storage
     layer (`storage/document_manager.py`, `find_file`).
   - A collection's `folder_path` (`endpoints/collections.py`), and
     `entries/import`.
@@ -683,7 +684,7 @@ refusal is a bug.
 | `alpha` | none (private) | alice's private notes |
 | `beta` | none (private) | bob's private notes |
 | `shared` | none (private) | a collaboration KB |
-| `public` | `read` | public notes (the control for U0 and `/site`) |
+| `public` | `read` | public notes (the control for U0) |
 
 **Canaries.** Every entry's title, body, one tag and one field carries the
 token `<KB>-CANARY-<n>` (for example `ALPHA-CANARY-3`), so that a leak is
@@ -704,14 +705,14 @@ seed, not attack steps.
 | **alice** | U4 on `alpha`, U3 on `shared` | a session, plus a user API key for `/mcp` | admin on `alpha`; write on `shared` | read, write and manage grants on `alpha`; read and write on `shared`; read on `public` | anything in `beta`; grants on `shared`; instance administration |
 | **bob** | U4 on `beta`, U2 on `shared` | invite registration; a session and an API key | admin on `beta`; read on `shared` | read, write and manage grants on `beta`; read `shared`; read `public` | **any write to `shared`**; anything in `alpha`; instance administration |
 | **mallory** | U1, no grant | open registration; a session and an API key | none | read `public`; her own `SELF` | anything in `alpha`, `beta` or `shared`, including their existence (P-R5); anything of anyone else's `SELF` |
-| **anon** | U0 | none | none | `public`; `/site` showing `public` only | the three private KBs, including their names, in any form |
+| **anon** | U0 | none | none | `public` only | the three private KBs, including their names, in any form |
 | **opkey** | U6 read key | `X-API-Key` | read, instance-wide | read on every KB (unscoped, by design) | any write, admin or capability action |
 
 ### 7.4 Scenarios L1 must cover
 
 These are coverage goals, not steps. Each run covers the persona's row
-across the UI and the four network surfaces (REST, `/mcp` SSE, `/ws`,
-`/site`), for reads and writes.
+across the UI and the three network surfaces (REST, `/mcp` SSE, `/ws`;
+`/site` was removed by #953), for reads and writes.
 
 - **Revocation (P-A2, P-M4, P-W3).** Mid-session, root revokes bob's grant
   on `shared`, and later logs mallory out everywhere. Each persona's open

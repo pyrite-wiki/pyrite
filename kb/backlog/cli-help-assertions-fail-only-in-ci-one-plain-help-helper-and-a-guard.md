@@ -47,7 +47,7 @@ a `--help` test without mentioning it.
   journalism-investigation `--json` tests whose output Rich colours, which
   is a product bug (#321), not a test bug. Fixing #321 first shrinks the
   guard's blast radius.
-- The good-first-issue groom standard (pyrite-conductor SKILL.md, groom lane)
+- The good-first-issue groom standard (the maintainer's groom procedure, outside this repo)
   and CONTRIBUTING's testing section name the helper when an issue asks for a
   `--help` test.
 

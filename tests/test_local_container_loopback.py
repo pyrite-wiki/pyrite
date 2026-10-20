@@ -193,7 +193,12 @@ class TestEntryPoints:
         if ack:
             env[ACK] = "true"
         return subprocess.run(
-            [sys.executable, "-c", code], env=env, capture_output=True, text=True, cwd=tmp_path
+            [sys.executable, "-c", code],
+            env=env,
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+            timeout=120,
         )
 
     def test_pyrite_server_wildcard_warns_on_stderr(self, tmp_path):

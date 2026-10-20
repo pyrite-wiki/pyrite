@@ -8,10 +8,13 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from pyrite.cli.context import require_kb
 from pyrite.cli.output import output_format_choice
 from pyrite.config import load_config
 from pyrite.services.access_policy import UNSCOPED
 from pyrite.storage.database import PyriteDB
+
+from .adr_listing import adr_relations, adr_sort_key, format_adr_relations
 
 sw_app = typer.Typer(help="Software KB commands (ADRs, backlog, standards, components)")
 console = Console()
@@ -99,6 +102,7 @@ def sw_adrs(
 
     effective_limit = DEFAULT_LIST_LIMIT if limit is None else (None if limit <= 0 else limit)
     config = load_config()
+    require_kb(config, kb_name, output_format=fmt)
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -110,6 +114,8 @@ def sw_adrs(
                 for r in rows
                 if (r.get("status") or r["_meta"].get("status", "proposed")) == status
             ]
+
+        rows.sort(key=adr_sort_key)
 
         # Bound AFTER filtering, never before (#233): limiting first would cut
         # the list before the filter and return the wrong page.
@@ -126,10 +132,13 @@ def sw_adrs(
             _json_output(
                 [
                     {
+                        "id": r["id"],
+                        "kb_name": r["kb_name"],
                         "adr_number": r["_meta"].get("adr_number", ""),
                         "title": r["title"],
                         "status": r.get("status") or r["_meta"].get("status", "proposed"),
                         "date": r.get("date") or r["_meta"].get("date", ""),
+                        "relations": adr_relations(db, r, readable_kbs=None),
                     }
                     for r in rows
                 ]
@@ -137,19 +146,26 @@ def sw_adrs(
             return
 
         table = Table(title="Architecture Decision Records")
+        table.add_column("KB", style="dim")
+        table.add_column("ID", style="dim")
         table.add_column("#", style="cyan", justify="right")
         table.add_column("Title")
         table.add_column("Status", style="yellow")
         table.add_column("Date", style="dim")
+        table.add_column("Relations")
 
         for row in rows:
             meta = row["_meta"]
             num = str(meta.get("adr_number", ""))
+            relations = adr_relations(db, row, readable_kbs=None)
             table.add_row(
+                row["kb_name"],
+                row["id"],
                 num,
                 row["title"],
                 row.get("status") or meta.get("status", "proposed"),
                 row.get("date") or meta.get("date", ""),
+                format_adr_relations(relations),
             )
 
         console.print(table)
@@ -183,6 +199,7 @@ def sw_new_adr(
 
     config = load_config()
 
+    require_kb(config, kb_name, output_format="rich")
     # Resolve the KB up front: with none resolved, refuse -- do NOT fall back
     # to writing into the cwd, where the ADR is never indexed and the
     # numbering query (scoped to KBs) would never see it again.
@@ -228,6 +245,7 @@ def sw_new_adr(
                 title,
                 "adr",
                 body,
+                owns=frozenset({"adr_number"}),  # the owner sets its own number
                 adr_number=next_num,
                 status=status,
                 date=today,
@@ -282,6 +300,7 @@ def sw_backlog(
     Defaults to the 50 highest-sorted items; pass --limit/--offset to page
     through the rest, or --limit 0 for the full, unbounded list.
     """
+    require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import DEFAULT_LIST_LIMIT, SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -382,6 +401,7 @@ def sw_epics(
     ),
 ):
     """List epics with subtask progress."""
+    require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -433,6 +453,7 @@ def sw_epic_detail(
     ),
 ):
     """Show an epic's subtasks grouped by status."""
+    require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -472,6 +493,7 @@ def sw_prioritize(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
 ):
     """Set explicit rank ordering for backlog items."""
+    require_kb(load_config(), kb_name, output_format="rich")
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -525,6 +547,7 @@ def sw_standards(
 
     effective_limit = DEFAULT_LIST_LIMIT if limit is None else (None if limit <= 0 else limit)
     config = load_config()
+    require_kb(config, kb_name, output_format=fmt)
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -589,6 +612,7 @@ def sw_validations(
 ):
     """List programmatic validations (automated checks)."""
     config = load_config()
+    require_kb(config, kb_name, output_format=fmt)
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -646,6 +670,7 @@ def sw_conventions(
 ):
     """List development conventions (judgment-based guidance)."""
     config = load_config()
+    require_kb(config, kb_name, output_format=fmt)
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -692,10 +717,16 @@ def sw_migrate_standards(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name to scope migration"),
 ):
     """Migrate type:standard entries to programmatic_validation or development_convention."""
-    import re
     from pathlib import Path
 
+    from pyrite.storage.entry_writer import FileChanged, move_entry_text, publish_entry_text
+    from pyrite.storage.file_operations import FrontmatterSpan, Set, Unset, apply
+    from pyrite.utils.frontmatter import Frontmatter, describe, split_frontmatter
+    from pyrite.utils.yaml import load_yaml
+
     config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -739,7 +770,6 @@ def sw_migrate_standards(
                 skipped += 1
                 continue
 
-            content = path.read_text()
             meta = row["_meta"]
             enforced = bool(meta.get("enforced", False))
 
@@ -750,27 +780,50 @@ def sw_migrate_standards(
                 new_type = "development_convention"
                 new_dir_name = "conventions"
 
-            # Replace type field in frontmatter
-            content = re.sub(
-                r"^type:\s*standard\s*$", f"type: {new_type}", content, flags=re.MULTILINE
-            )
+            # Two operations on the file's own bytes (#955, B6 P4): the type
+            # set, `enforced` unset; a comment beside either, the other keys
+            # and the file's line endings stay as written.
+            raw = path.read_bytes()
+            text = raw.decode("utf-8")
+            split = split_frontmatter(text)
+            if not isinstance(split, Frontmatter):
+                console.print(f"  [red]Skip[/red] {row['title']}: {describe(split)}")
+                skipped += 1
+                continue
+            values = load_yaml(split.text)
+            ops: list[Any] = [Set("type", new_type)]
+            if isinstance(values, dict) and "enforced" in values:
+                ops.append(Unset("enforced"))
+            span = FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
+            new_text, _report = apply(text, ops, span)
 
-            # Remove enforced field
-            content = re.sub(
-                r"^enforced:\s*(true|false)\s*\n", "", content, flags=re.MULTILINE | re.IGNORECASE
-            )
-
-            # Write back
-            path.write_text(content)
-
-            # Move file to new subdirectory if parent is standards/
+            # Move file to new subdirectory if parent is standards/: one move
+            # under one lock for both paths, the new file published (never
+            # over something already there) and the old one removed only
+            # while it still holds the bytes read above (#978 review, item
+            # 3); otherwise replaced in place, against those bytes.
             if path.parent.name == "standards":
                 new_dir = path.parent.parent / new_dir_name
                 new_dir.mkdir(parents=True, exist_ok=True)
                 new_path = new_dir / path.name
-                path.rename(new_path)
+                try:
+                    move_entry_text(path, raw, new_path, new_text)
+                except FileExistsError:
+                    console.print(f"  [red]Skip[/red] {row['title']}: {new_path} already exists")
+                    skipped += 1
+                    continue
+                except FileChanged:
+                    console.print(f"  [red]Skip[/red] {row['title']}: {path} changed; run again")
+                    skipped += 1
+                    continue
                 console.print(f"  [green]Migrated[/green] {row['title']} -> {new_path}")
             else:
+                try:
+                    publish_entry_text(path, new_text, expect=raw)
+                except FileChanged:
+                    console.print(f"  [red]Skip[/red] {row['title']}: {path} changed; run again")
+                    skipped += 1
+                    continue
                 console.print(f"  [green]Migrated[/green] {row['title']} (type updated in place)")
 
             migrated += 1
@@ -798,6 +851,7 @@ def sw_milestones(
 ):
     """List milestones with completion progress."""
     config = load_config()
+    require_kb(config, kb_name, output_format=fmt)
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -882,6 +936,8 @@ def sw_board_cmd(
     from .board import load_board_config
 
     config = load_config()
+
+    require_kb(config, kb_name, output_format=fmt)
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -961,6 +1017,7 @@ def sw_review_queue(
 ):
     """View items in review status, sorted by wait time."""
     config = load_config()
+    require_kb(config, kb_name, output_format=fmt)
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -1028,6 +1085,8 @@ def sw_claim(
     from .workflows import BACKLOG_WORKFLOW, can_transition, get_allowed_transitions
 
     config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -1081,6 +1140,8 @@ def sw_submit(
     from .workflows import BACKLOG_WORKFLOW, can_transition
 
     config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -1141,6 +1202,8 @@ def sw_transition(
     )
 
     config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -1204,6 +1267,7 @@ def sw_pull_next(
     ),
 ):
     """Recommend the next work item based on priority and WIP limits."""
+    require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -1246,6 +1310,7 @@ def sw_review_cmd(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
 ):
     """Record a review outcome for an item in review status."""
+    require_kb(load_config(), kb_name, output_format="rich")
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -1278,6 +1343,7 @@ def sw_log_cmd(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
 ):
     """Log a work session for a backlog item."""
+    require_kb(load_config(), kb_name, output_format="rich")
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -1325,6 +1391,7 @@ def sw_components(
 
     effective_limit = DEFAULT_LIST_LIMIT if limit is None else (None if limit <= 0 else limit)
     config = load_config()
+    require_kb(config, kb_name, output_format=fmt)
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -1390,6 +1457,7 @@ def sw_check_ready(
     ),
 ):
     """Check Definition of Ready for a backlog item without claiming it."""
+    require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -1432,6 +1500,7 @@ def sw_refine_cmd(
     ),
 ):
     """Scan backlog for DoR gaps, sorted by priority."""
+    require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
@@ -1493,6 +1562,7 @@ def sw_context_for_item(
     ),
 ):
     """Assemble full context bundle for a backlog item: linked ADRs, components, validations, conventions, reviews, work logs, dependencies."""
+    require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()

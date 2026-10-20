@@ -1,5 +1,9 @@
 """Software KB preset definition."""
 
+import copy
+
+from pyrite.models.task import TASK_KB_PRESET
+
 from .entry_types import (
     ADR_STATUSES,
     BACKLOG_EFFORTS,
@@ -76,6 +80,9 @@ SOFTWARE_KB_PRESET = {
             "optional": ["status"],
             "subdirectory": "milestones/",
         },
+        # #860: the task type lives in one place (pyrite.models.task); take a
+        # deepcopy so this preset and the built-in template share no mutable dict.
+        "task": copy.deepcopy(TASK_KB_PRESET["types"]["task"]),
     },
     "policies": {
         "team_owned": True,
@@ -99,6 +106,7 @@ SOFTWARE_KB_PRESET = {
         "backlog",
         "runbooks",
         "milestones",
+        "tasks",
     ],
     "default_board": {
         "lanes": [

@@ -58,7 +58,7 @@ has not cleared for that head.
 ## Acceptance
 
 - The routine is scheduled once a day, and its prompt lives in the repo:
-  `.claude/` or `scripts/`, named in pyrite-conductor's outside-PR section.
+  `scripts/` (or in the maintainer's loop, outside this repo).
 - **Stage 1:** for each new outside PR, a private verdict naming every
   executable file the diff touches, each marked clear or held. Planted-payload
   check before go-live: a test diff that adds an outbound request to

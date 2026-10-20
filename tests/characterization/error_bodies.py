@@ -47,6 +47,9 @@ from pyrite.server.mcp_server import _refusal
 # plain message; a few need required extra fields (see their __init__
 # signatures) -- built with the smallest valid value.
 _BUILDERS: dict[str, Any] = {
+    "AmbiguousEntryError": lambda: exc_module.AmbiguousEntryError(
+        "characterization-entry", candidate_kbs=["kb-a", "kb-b"]
+    ),
     "UndeclaredTypeError": lambda: exc_module.UndeclaredTypeError(
         "type 'x' is not declared", declared_types=["note", "event"]
     ),
@@ -61,6 +64,9 @@ _BUILDERS: dict[str, Any] = {
     ),
     "ConfigFileUnreadableError": lambda: exc_module.ConfigFileUnreadableError(
         "config file unreadable", config_file="/config.yaml"
+    ),
+    "EvaluationFailedError": lambda: exc_module.EvaluationFailedError(
+        "characterization-entry", "the model's reply was not JSON"
     ),
 }
 

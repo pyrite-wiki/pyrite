@@ -1,11 +1,14 @@
 """Zettelkasten CLI commands."""
 
 import logging
+from collections.abc import Iterator
+from typing import Any
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
+from pyrite.cli.context import require_kb
 from pyrite.config import load_config
 from pyrite.services.access_policy import UNSCOPED
 from pyrite.storage.database import PyriteDB
@@ -13,6 +16,20 @@ from pyrite.storage.database import PyriteDB
 zettel_app = typer.Typer(help="Zettelkasten knowledge management")
 console = Console()
 logger = logging.getLogger(__name__)
+
+
+def _iter_zettels(db: PyriteDB, kb_name: str | None) -> Iterator[dict[str, Any]]:
+    """List every zettel: '*' is not a valid FTS5 query, nor is one page enough."""
+    page_size = 500
+    offset = 0
+    while True:
+        entries = db.list_entries(
+            kb_name=kb_name, entry_type="zettel", limit=page_size, offset=offset
+        )
+        yield from entries
+        if len(entries) < page_size:
+            return
+        offset += len(entries)
 
 
 @zettel_app.command("new")
@@ -39,6 +56,7 @@ def zettel_new(
 
     config = load_config()
 
+    require_kb(config, kb_name, output_format="rich")
     # Find target KB
     kb_config = None
     if kb_name:
@@ -100,18 +118,12 @@ def zettel_inbox(
 ):
     """List fleeting notes not yet fully processed (not at 'connect' stage)."""
     config = load_config()
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
-        results = db.search("*", limit=500)
         fleeting = []
-        for r in results:
-            if r.get("entry_type") != "zettel":
-                if kb_name and r.get("kb_name") != kb_name:
-                    continue
-                continue
-            if kb_name and r.get("kb_name") != kb_name:
-                continue
+        for r in _iter_zettels(db, kb_name):
             # Check metadata for zettel_type and processing_stage
             meta = r.get("metadata") or {}
             if isinstance(meta, str):
@@ -122,7 +134,7 @@ def zettel_inbox(
                 except (json.JSONDecodeError, TypeError):
                     meta = {}
             zt = meta.get("zettel_type", r.get("zettel_type", ""))
-            stage = meta.get("processing_stage", r.get("processing_stage", ""))
+            stage = meta.get("processing_stage", r.get("processing_stage", "capture"))
             if zt == "fleeting" and stage != "connect":
                 fleeting.append({**r, "processing_stage": stage})
 
@@ -155,6 +167,7 @@ def zettel_orphans(
 ):
     """Find notes with no incoming or outgoing links."""
     config = load_config()
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -190,18 +203,14 @@ def zettel_maturity(
 ):
     """Show maturity distribution of zettels."""
     config = load_config()
+    require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
-        results = db.search("*", limit=1000)
         counts = {"seed": 0, "sapling": 0, "evergreen": 0, "unknown": 0}
         total = 0
 
-        for r in results:
-            if r.get("entry_type") != "zettel":
-                continue
-            if kb_name and r.get("kb_name") != kb_name:
-                continue
+        for r in _iter_zettels(db, kb_name):
             meta = r.get("metadata") or {}
             if isinstance(meta, str):
                 import json

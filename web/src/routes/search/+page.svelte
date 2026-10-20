@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { entryHref } from '$lib/utils/entry-href';
 	import Topbar from '$lib/components/layout/Topbar.svelte';
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import TagBadge from '$lib/components/common/TagBadge.svelte';
@@ -382,7 +383,7 @@
 			<div class="space-y-2">
 				{#each searchStore.results as result (`${result.kb_name}:${result.id}`)}
 					<a
-						href="/entries/{encodeURIComponent(result.id)}"
+						href={entryHref(result.id, result.kb_name)}
 						class="block rounded-lg border border-zinc-200 bg-white p-4 transition-colors hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-800/50 dark:hover:border-zinc-500"
 						style="border-left: 3px solid {typeColor(result.entry_type)}"
 					>

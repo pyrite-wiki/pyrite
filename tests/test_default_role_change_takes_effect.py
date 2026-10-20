@@ -1,18 +1,17 @@
 """A KB's `default_role` has one source of truth, applied on the next request.
 
 `PUT /api/kbs/{name}/default-role` wrote the registry row, but the access
-policy and `public_kb_names` read the in-memory config first, and the
+policy read the in-memory config first, and the
 config's cache of registry KBs (`PyriteConfig._db_kb_cache`) was filled once
-and never refreshed. A KB an admin closed stayed readable by anonymous REST,
-`/site` and the sitemaps until a restart. For a KB defined in config.yaml the
-endpoint reported success and changed nothing, ever.
+and never refreshed. A KB an admin closed stayed readable by anonymous REST
+(and, until #953 removed it, the public `/site`) until a restart. For a KB
+defined in config.yaml the endpoint reported success and changed nothing, ever.
 
 The properties pinned here (kb/designs/multi-user-threat-model.md P-S1, P-S3,
 P-M1, P-F6):
 
 - a change through the endpoint takes effect on the next request on every
-  surface -- anonymous REST, the MCP scope, `/site`, `/site/sitemap.xml`,
-  the live `/sitemap.xml`, and the `/site` landing page;
+  surface -- anonymous REST and the MCP scope;
 - an endpoint that cannot apply a change (a config.yaml KB) refuses it;
 - every registry write path (default-role, add, update, remove) leaves the
   config's view of the KB equal to the row.
@@ -28,7 +27,6 @@ from fastapi.testclient import TestClient
 from pyrite.config import AuthConfig, KBConfig, PyriteConfig, Settings
 from pyrite.server.api import create_app
 from pyrite.services.kb_registry_service import KBRegistryService
-from pyrite.services.public_kbs import public_kb_names
 from pyrite.storage.database import PyriteDB
 
 USER_KB = "open-kb"  # registered in the index, not in config.yaml
@@ -37,6 +35,17 @@ ENTRY = "doc-1"
 BODY = "OCELOT-BODY-TEXT"
 KEY = "operator-key"
 ADMIN = {"X-API-Key": KEY}
+
+
+def _anonymous_reads(config, name: str, anonymous_tier: str = "read") -> bool:
+    """What the access policy gives an anonymous visitor on `name`: the one
+    rule (`kb_role`, step 5) every anonymous surface resolves through."""
+    from pyrite.services.access_policy import kb_role
+
+    kb = config.get_kb(name)
+    if kb is None:
+        return False
+    return kb_role(None, None, lambda: None, kb.default_role, anonymous_tier) is not None
 
 
 def _entry(eid: str, kb: str) -> dict:
@@ -56,8 +65,6 @@ def _entry(eid: str, kb: str) -> dict:
 
 @pytest.fixture
 def world(tmp_path, monkeypatch):
-    # /site serves from $PYRITE_DATA_DIR/site-cache; the renderer writes to
-    # <index dir>/site-cache. Point both at tmp_path, as the containers do.
     monkeypatch.setenv("PYRITE_DATA_DIR", str(tmp_path))
     (tmp_path / USER_KB).mkdir()
     (tmp_path / YAML_KB).mkdir()
@@ -91,11 +98,6 @@ def world(tmp_path, monkeypatch):
         state_db.close()
 
 
-def _render(client):
-    r = client.post("/api/site/render", headers=ADMIN)
-    assert r.status_code == 200, r.text
-
-
 def _set_role(client, kb, role):
     return client.put(f"/api/kbs/{kb}/default-role", json={"role": role}, headers=ADMIN)
 
@@ -111,11 +113,7 @@ class TestClosingARegistryKB:
         reason="the precondition the other tests start from; true before and after"
     )
     def test_open_before_the_change(self, world):
-        c = world["client"]
-        _render(c)
-        assert _anon_rest(c).status_code == 200
-        assert c.get(f"/site/{USER_KB}/{ENTRY}").status_code == 200
-        assert f"/site/{USER_KB}/{ENTRY}" in c.get("/site/sitemap.xml").text
+        assert _anon_rest(world["client"]).status_code == 200
 
     def test_anonymous_rest_is_404_after_the_change(self, world):
         c = world["client"]
@@ -124,48 +122,6 @@ class TestClosingARegistryKB:
         r = _anon_rest(c)
         assert r.status_code == 404, r.text
         assert BODY not in r.text
-
-    def test_site_page_is_404_after_the_change(self, world):
-        c = world["client"]
-        _render(c)
-        assert _set_role(c, USER_KB, "none").status_code == 200
-        r = c.get(f"/site/{USER_KB}/{ENTRY}")
-        assert r.status_code == 404
-        assert BODY not in r.text
-        assert c.get(f"/site/{USER_KB}").status_code == 404
-
-    def test_site_sitemap_drops_the_kb_after_the_change(self, world):
-        c = world["client"]
-        _render(c)
-        assert _set_role(c, USER_KB, "none").status_code == 200
-        assert USER_KB not in c.get("/site/sitemap.xml").text
-
-    def test_live_sitemap_drops_the_kb_after_the_change(self, world):
-        c = world["client"]
-        assert _set_role(c, USER_KB, "none").status_code == 200
-        assert USER_KB not in c.get("/sitemap.xml").text
-
-    def test_landing_page_drops_the_kb_after_the_change(self, world):
-        """A6-F6: the pre-rendered landing kept the de-publicised KB's card."""
-        c = world["client"]
-        _render(c)
-        assert USER_KB in c.get("/site").text
-        assert _set_role(c, USER_KB, "none").status_code == 200
-        r = c.get("/site")
-        assert USER_KB not in r.text
-        assert "user kb description" not in r.text
-        # Re-rendered without it, not merely withheld: the site stays up.
-        assert r.headers["X-Pyrite-Cache"] == "HIT"
-        assert YAML_KB in r.text
-
-    def test_the_closed_kbs_cached_pages_leave_the_disk(self, world):
-        """P-F6: a closed KB's pages do not stay at rest in the site cache."""
-        c = world["client"]
-        _render(c)
-        cache = world["tmp"] / "site-cache"
-        assert (cache / USER_KB / f"{ENTRY}.html").is_file()
-        assert _set_role(c, USER_KB, "none").status_code == 200
-        assert not (cache / USER_KB).exists()
 
     def test_mcp_scope_drops_the_kb_after_the_change(self, world):
         """`/mcp` resolves a connection's readable set with
@@ -200,68 +156,11 @@ class TestClosingARegistryKB:
 
 
 class TestRemovingARegistryKB:
-    def test_its_site_pages_leave_the_disk_and_the_landing(self, world):
+    def test_anonymous_rest_loses_it_at_once(self, world):
         c = world["client"]
-        _render(c)
-        cache = world["tmp"] / "site-cache"
-        assert (cache / USER_KB).is_dir()
+        assert _anon_rest(c).status_code == 200
         assert c.delete(f"/api/kbs/{USER_KB}", headers=ADMIN).status_code == 200
-        assert not (cache / USER_KB).exists()
-        assert USER_KB not in c.get("/site").text
         assert _anon_rest(c).status_code == 404
-
-
-class TestALandingRenderedUnderAnOlderPolicy:
-    """A landing that lists a KB not public now is never served as it is,
-    whatever path closed the KB -- here config.yaml edited and the server
-    restarted, which no endpoint sees (A6-F6). Nor does the site go dark:
-    the landing is rendered again on the request that finds it stale."""
-
-    def test_a_kb_closed_outside_the_endpoint_leaves_the_landing(self, world):
-        c = world["client"]
-        _render(c)
-        assert YAML_KB in c.get("/site").text
-        world["config"].get_kb(YAML_KB).default_role = "none"
-        r = c.get("/site")
-        assert YAML_KB not in r.text
-        assert r.headers["X-Pyrite-Cache"] == "HIT"
-        assert USER_KB in r.text
-
-    def test_a_cache_from_before_the_manifest_is_rendered_not_darkened(self, world):
-        """Upgrading: a landing rendered by an earlier version carries no
-        manifest. The first visit renders it; the site stays up."""
-        c = world["client"]
-        _render(c)
-        manifest = world["tmp"] / "site-cache" / ".landing-kbs.json"
-        manifest.unlink()
-        r = c.get("/site")
-        assert r.headers["X-Pyrite-Cache"] == "HIT"
-        assert USER_KB in r.text and YAML_KB in r.text
-        assert manifest.is_file()
-
-    def test_a_landing_that_cannot_be_rendered_again_is_withheld(self, world, monkeypatch):
-        """Fail closed: if the re-render fails, the stale page is not served."""
-        from pyrite.services.site_cache import SiteCacheService
-
-        c = world["client"]
-        _render(c)
-        world["config"].get_kb(YAML_KB).default_role = "none"
-
-        def broken(self, *a, **k):
-            raise OSError("read-only cache")
-
-        monkeypatch.setattr(SiteCacheService, "_render_landing", broken)
-        r = c.get("/site")
-        assert YAML_KB not in r.text
-        assert r.headers["X-Pyrite-Cache"] == "MISS"
-
-    @pytest.mark.control(reason="a current landing was always served")
-    def test_a_current_landing_is_served(self, world):
-        c = world["client"]
-        _render(c)
-        r = c.get("/site")
-        assert r.headers["X-Pyrite-Cache"] == "HIT"
-        assert USER_KB in r.text and YAML_KB in r.text
 
 
 class TestOpeningARegistryKB:
@@ -271,7 +170,7 @@ class TestOpeningARegistryKB:
         assert _anon_rest(c).status_code == 404
         assert _set_role(c, USER_KB, "read").status_code == 200
         assert _anon_rest(c).status_code == 200
-        assert USER_KB in public_kb_names(world["config"])
+        assert _anonymous_reads(world["config"], USER_KB)
 
 
 class TestAConfigYamlKB:
@@ -321,10 +220,10 @@ class TestEveryRegistryWriteRefreshesTheConfigView:
         registry.add_kb("k", str(tmp / "k"))
         registry.update_kb("k", default_role="read")
         assert config.get_kb("k").default_role == "read"
-        assert public_kb_names(config) == ["k"]
+        assert _anonymous_reads(config, "k")
         registry.update_kb("k", default_role="none")
         assert config.get_kb("k").default_role == "none"
-        assert public_kb_names(config) == []
+        assert not _anonymous_reads(config, "k")
 
     def test_metadata_update_is_visible(self, reg):
         registry, config, tmp = reg
@@ -340,7 +239,7 @@ class TestEveryRegistryWriteRefreshesTheConfigView:
         registry.remove_kb("k")
         assert config.get_kb("k") is None
         assert "k" not in [kb.name for kb in config.all_kbs()]
-        assert public_kb_names(config) == []
+        assert not _anonymous_reads(config, "k")
 
     def test_a_row_the_loader_now_refuses_is_not_kept_in_its_old_form(self, reg):
         """The refresh re-reads through the one registry loader; a row it
@@ -352,7 +251,7 @@ class TestEveryRegistryWriteRefreshesTheConfigView:
         (tmp / "k").rmdir()
         (tmp / "k").symlink_to(tmp / "k")  # a loop: unresolvable
         registry.update_kb("k", default_role="none")
-        assert "k" not in public_kb_names(config)
+        assert not _anonymous_reads(config, "k")
         assert config.get_kb("k") is None
 
     @pytest.mark.control(
@@ -365,4 +264,5 @@ class TestEveryRegistryWriteRefreshesTheConfigView:
         registry.update_kb("k", default_role="read")
         registry.remove_kb("k")
         registry.add_kb("k", str(tmp / "k2"))
-        assert public_kb_names(config) == []
+        assert config.get_kb("k").default_role is None
+        assert not _anonymous_reads(config, "k", anonymous_tier=None)

@@ -23,6 +23,7 @@ import pytest
 from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
+from pyrite.storage.repository import new_entry_text
 from pyrite.utils.yaml import load_yaml
 
 # Keys that are model internals, never frontmatter. If any of these appear in
@@ -369,6 +370,9 @@ class TestAlwaysWrittenDefaultsStillWork:
         assert after.get("rank") == 0
         assert set(after) == expected, f"the update also invented {sorted(set(after) - expected)}"
 
+    @pytest.mark.control(
+        reason="a rewritten test of a property that already held; its old form used the model's emitter (Entry.save/to_markdown), gone since #955 P4"
+    )
     def test_assigning_the_attribute_directly_also_counts_as_explicit(self):
         """update_entry is not the only caller: REST, MCP and the software-kb
         reorder reach the model differently. The signal has to live on the
@@ -377,14 +381,15 @@ class TestAlwaysWrittenDefaultsStillWork:
 
         note = NoteEntry(id="t", title="T")
         note._absent_default_keys = frozenset({"importance"})  # as a load would
-        # Checked at the file boundary: `to_frontmatter` deliberately keeps
+        # Checked at the file boundary (`new_entry_text`, what a create writes
+        # from `_frontmatter_for_file`): `to_frontmatter` deliberately keeps
         # reporting the real value so the index can see it; only the file drops
         # a default the source never carried.
-        assert "importance" not in _read_frontmatter_text(note.to_markdown())
+        assert "importance" not in _read_frontmatter_text(new_entry_text(note))
 
         note.importance = 5  # explicit assignment, value equal to the default
 
-        assert _read_frontmatter_text(note.to_markdown()).get("importance") == 5
+        assert _read_frontmatter_text(new_entry_text(note)).get("importance") == 5
 
     def test_an_untouched_default_key_is_still_not_invented(self, swkb_env):
         """The #46 guarantee restated: assigning ANOTHER field must not drag
@@ -512,20 +517,18 @@ class TestValuesAreComparedByTypeNotTruthiness:
     vice versa) as 'unchanged' and silently keeps the old one -- the same
     'write reports success and does nothing' shape as the importance bug.
 
-    Like the anchor class, this does not fail on the merge base, because the
-    comparison it guards is part of the restyle this branch introduces -- there
-    is nothing there to get wrong. It is a real guard nonetheless: deleting the
-    bool tagging from `_plain` makes it fail with `assert 1 is True`, verified
-    rather than assumed."""
+    The comparison is `apply`'s (ADR-0042 decision 3, `file_operations`):
+    a bool set over an equal int is a change and is written."""
 
+    @pytest.mark.control(
+        reason="a rewritten test of a property that already held; its old form used the model's emitter (Entry.save/to_markdown), gone since #955 P4"
+    )
     def test_bool_replacing_an_equal_int_is_written(self, swkb_env):
         path = swkb_env["note_file"]
         text = path.read_text(encoding="utf-8").replace("tags: [alpha]", "flag: 1\ntags: [alpha]")
         path.write_text(text, encoding="utf-8")
 
-        entry = swkb_env["service"].update_entry("sample-note", "swkb", tags=["t"])
-        entry.extra_frontmatter["flag"] = True
-        entry.save()
+        swkb_env["service"].update_entry("sample-note", "swkb", flag=True)
 
         assert _read_frontmatter(path)["flag"] is True
 
@@ -559,13 +562,18 @@ class TestNoRegisteredTypeInventsFrontmatter:
         assert len(types) > 20, f"only {len(types)} types registered; the sweep proves nothing"
         assert "backlog_item" in types and "adr" in types
 
+    @pytest.mark.control(
+        reason="a rewritten test of a property that already held; its old form used the model's emitter (Entry.save/to_markdown), gone since #955 P4"
+    )
     def test_a_minimal_entry_of_any_type_round_trips_without_gaining_keys(self, swkb_env):
-        """Load a file holding only id/title/type, save it, gain nothing.
+        """Load a file holding only id/title/type, write it as a create would,
+        gain nothing.
 
-        Driven through `to_markdown` -- the real file-write path -- rather than
-        `to_frontmatter`, because those two deliberately differ: the index and
-        the renderers must still see the entry's real field values, and only
-        the file must be kept as the author wrote it.
+        Driven through `new_entry_text` -- what a create writes, from
+        `_frontmatter_for_file` -- rather than `to_frontmatter`, because those
+        two deliberately differ: the index and the renderers must still see
+        the entry's real field values, and only the file must be kept as the
+        author wrote it.
         """
         from pyrite.models.base import capture_extra_frontmatter
 
@@ -575,7 +583,7 @@ class TestNoRegisteredTypeInventsFrontmatter:
             try:
                 entry = cls.from_frontmatter(dict(meta), body="Body.")
                 capture_extra_frontmatter(entry, dict(meta))
-                written = _read_frontmatter_text(entry.to_markdown())
+                written = _read_frontmatter_text(new_entry_text(entry))
             except Exception as exc:  # a type that cannot round trip at all
                 offenders[type_name] = f"raised {type(exc).__name__}: {exc}"
                 continue
@@ -588,6 +596,9 @@ class TestNoRegisteredTypeInventsFrontmatter:
             f"never had -- the #46 corruption: {offenders}"
         )
 
+    @pytest.mark.control(
+        reason="a rewritten test of a property that already held; its old form used the model's emitter (Entry.save/to_markdown), gone since #955 P4"
+    )
     def test_the_pristine_probe_is_not_shared_into_any_entry(self, swkb_env):
         """The cached probe is per-class and shared; nothing may mutate it.
 
@@ -607,9 +618,9 @@ class TestNoRegisteredTypeInventsFrontmatter:
         meta = {"id": "probe", "title": "Probe", "type": "backlog_item"}
         entry = cls.from_frontmatter(dict(meta), body="b")
         capture_extra_frontmatter(entry, dict(meta))
-        entry.to_markdown()
+        new_entry_text(entry)
         entry.status = "done"
-        entry.to_markdown()
+        new_entry_text(entry)
 
         assert _pristine_frontmatter(cls) == snapshot
         # And no value object is shared between the probe and a live entry.
@@ -635,13 +646,16 @@ class TestNoRegisteredTypeInventsFrontmatter:
             f"update invented {sorted(set(after) - set(before) - {'tags'})}"
         )
 
+    @pytest.mark.control(
+        reason="a rewritten test of a property that already held; its old form used the model's emitter (Entry.save/to_markdown), gone since #955 P4"
+    )
     def test_the_index_still_sees_the_fields_the_file_omits(self, swkb_env):
         """The other half of the trade, stated so it cannot be quietly lost.
 
         Suppression is a property of the FILE, not of the entry. `sw backlog`
         filters on the `status` and `priority` the index holds, so an entry
         loaded from a file without those keys must still report its defaults
-        to `to_frontmatter` -- only `to_markdown` drops them.
+        to `to_frontmatter` -- only the file (`new_entry_text`) drops them.
         """
         from pyrite.models.base import capture_extra_frontmatter
         from pyrite.models.core_types import get_entry_class
@@ -653,9 +667,12 @@ class TestNoRegisteredTypeInventsFrontmatter:
 
         assert entry.to_frontmatter()["status"] == "proposed"
         assert entry.to_frontmatter()["priority"] == "medium"
-        assert "status" not in _read_frontmatter_text(entry.to_markdown())
-        assert "priority" not in _read_frontmatter_text(entry.to_markdown())
+        assert "status" not in _read_frontmatter_text(new_entry_text(entry))
+        assert "priority" not in _read_frontmatter_text(new_entry_text(entry))
 
+    @pytest.mark.control(
+        reason="a rewritten test of a property that already held; its old form used the model's emitter (Entry.save/to_markdown), gone since #955 P4"
+    )
     def test_an_explicit_assignment_still_reaches_the_file(self, swkb_env):
         """The `__setattr__` rule, checked on a type other than the two the
         original fix guarded by hand -- the suppression is now central, so the
@@ -667,11 +684,11 @@ class TestNoRegisteredTypeInventsFrontmatter:
         cls = get_entry_class("adr")
         entry = cls.from_frontmatter(dict(meta), body="b")
         capture_extra_frontmatter(entry, dict(meta))
-        assert "status" not in _read_frontmatter_text(entry.to_markdown())
+        assert "status" not in _read_frontmatter_text(new_entry_text(entry))
 
         entry.status = "proposed"  # explicit, and equal to the default
 
-        assert _read_frontmatter_text(entry.to_markdown())["status"] == "proposed"
+        assert _read_frontmatter_text(new_entry_text(entry))["status"] == "proposed"
 
 
 class TestLoadDoesNotCaptureInternalsAsExtras:
@@ -773,18 +790,23 @@ class TestRepositorySaveDoesNotInventTimestamps:
         kb_path.mkdir(parents=True, exist_ok=True)
         return KBRepository(KBConfig(name=name, path=kb_path)), kb_path
 
+    @pytest.mark.control(
+        reason="a rewritten test of a property that already held; its old form used the model's emitter (Entry.save/to_markdown), gone since #955 P4"
+    )
     def test_a_file_without_timestamps_does_not_gain_them_on_save(self, tmp_path):
+        """``repo.save`` over an existing file is the model's whole-file
+        overwrite (a create's text, kept for fixtures and ``repo.save(entry)``
+        callers; no service path writes an existing entry this way since
+        #955 P4), so its bytes are a create's. The #151 property is the keys:
+        a timestamp the file never carried is not invented."""
         repo, kb_path = self._repo(tmp_path)
         path = kb_path / "no-ts.md"
         path.write_text(KB_NO_TIMESTAMPS, encoding="utf-8")
-        before = path.read_text(encoding="utf-8")
 
         entry = repo.load_entry_from_file(path)
         assert entry.updated_at is not None  # stamped in memory regardless
         out = repo.save(entry)
 
-        after = out.read_text(encoding="utf-8")
-        assert after == before, "the repository save rewrote a file it had no reason to change"
         assert set(_read_frontmatter(out)) == {"id", "type", "title"}, (
             f"the repository save invented {sorted(set(_read_frontmatter(out)) - {'id', 'type', 'title'})}"
         )
@@ -909,10 +931,10 @@ def test_a_string_created_at_is_coerced_like_updated_at(swkb_env):
 def test_a_refreshed_updated_at_is_written_unquoted_without_microseconds(swkb_env):
     """#173 review: pin the file shape of the refreshed stamp.
 
-    The value has to reach ruamel as a `datetime` so it is written as a plain
-    YAML timestamp -- `updated_at: 2026-… 05:06:07+00:00` -- rather than a
-    quoted `isoformat()` string carrying microseconds. Nothing pinned that
-    shape before this test.
+    A refreshed stamp is a plain YAML timestamp, never a quoted string
+    carrying microseconds. #971 fix round 1: in the file's own spelling, so a
+    bare `2020-01-02T00:00:00+00:00` is refreshed with its `T` and its offset
+    (the house `YYYY-MM-DD HH:MM:SS+00:00` was written over it before).
     """
     path = swkb_env["note_file"]
     path.write_text(
@@ -927,9 +949,10 @@ def test_a_refreshed_updated_at_is_written_unquoted_without_microseconds(swkb_en
 
     text = path.read_text(encoding="utf-8")
     line = next(l for l in text.splitlines() if l.startswith("updated_at:"))
-    assert re.fullmatch(r"updated_at: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\+00:00", line), (
+    assert re.fullmatch(r"updated_at: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00", line), (
         f"refreshed updated_at has the wrong shape: {line!r}"
     )
+    assert line != "updated_at: 2020-01-02T00:00:00+00:00", "the stamp did not move"
 
 
 ADR_WITH_BARE_DATE = """---
@@ -1000,40 +1023,56 @@ UNPARSEABLE_CREATED_AT_NODES = {
 }
 
 
+@pytest.mark.control(
+    reason="a rewritten test of a property that already held; its old form used the model's emitter (Entry.save/to_markdown), gone since #955 P4"
+)
 @pytest.mark.parametrize("shape", sorted(UNPARSEABLE_CREATED_AT_NODES))
 def test_a_created_at_that_does_not_parse_is_kept_verbatim(tmp_path, shape):
-    """#173 review: `created_at:` null / `''` / `Jan 15 2026` survive a no-op
-    round trip byte for byte.
+    """#173 review: `created_at:` null / `''` / `Jan 15 2026` survive an update
+    of another key byte for byte.
 
-    `parse_datetime` falls back to "now" for all three, and the write path
-    emitted that fallback -- replacing a value the file already had with a
-    wrong one, which is worse than the drop this branch fixes. The rule is: a
-    source node that did not parse is kept verbatim.
+    `parse_datetime` falls back to "now" for all three, and the model's
+    emitter used to write that fallback -- replacing a value the file already
+    had with a wrong one. Since #955 an update names only the key it changes
+    (ADR-0042 decision 1), so a node the loader could not parse is never
+    touched; and `updated_at` is stamped only where the file carries it.
     """
-    from pyrite.storage.repository import KBRepository
+    from pyrite.services.kb_service import KBService
+    from pyrite.storage.database import PyriteDB
+    from pyrite.storage.index import IndexManager
 
-    kb_path = tmp_path / f"unparseable-created-at-{shape}"
+    name = f"unparseable-created-at-{shape}"
+    kb_path = tmp_path / name
     kb_path.mkdir(parents=True)
     path = kb_path / "created-at.md"
+    node = UNPARSEABLE_CREATED_AT_NODES[shape]
     text = (
         "---\n"
         "id: unparseable-created-at\n"
         "type: note\n"
         "title: A created_at the loader cannot parse\n"
-        f"{UNPARSEABLE_CREATED_AT_NODES[shape]}"
+        f"{node}"
         "---\n"
         "\n"
         "Body.\n"
     )
     path.write_text(text, encoding="utf-8")
-    repo = KBRepository(KBConfig(name=f"unparseable-created-at-{shape}", path=kb_path))
+    config = PyriteConfig(
+        knowledge_bases=[KBConfig(name=name, path=kb_path)],
+        settings=Settings(index_path=tmp_path / f"{name}.db", auto_embed=False),
+    )
+    db = PyriteDB(config.settings.index_path)
+    try:
+        IndexManager(db, config).index_all()
+        svc = KBService(config, db)
+        assert svc.get_entry("unparseable-created-at", name, readable_kbs=None)
+        svc.update("unparseable-created-at", name, {"title": "Renamed"})
+    finally:
+        db.close()
 
-    entry = repo.load_entry_from_file(path)
-    assert entry.created_at is not None  # the in-memory fallback still happens
-    out = repo.save(entry)
-
-    assert out.read_text(encoding="utf-8") == text, (
-        "the write path replaced an unparseable created_at node with its parse fallback"
+    after = path.read_text(encoding="utf-8")
+    assert after == text.replace("A created_at the loader cannot parse", "Renamed"), (
+        "the write path touched an unparseable created_at node it was not asked to change"
     )
 
 
@@ -1071,9 +1110,15 @@ def test_an_explicit_created_at_assignment_still_reaches_the_file(tmp_path):
     )
 
 
+@pytest.mark.control(
+    reason="a property that held before #978; its old form re-saved through the whole-file save, which decision 4 made a create, so it writes the model's text as a new file now"
+)
 def test_repository_save_preserves_body_line_matching_frontmatter_key(tmp_path):
-    """A body line can look like frontmatter without being duplicate metadata."""
-    from pyrite.storage.repository import KBRepository
+    """A body line can look like frontmatter without being duplicate metadata.
+    A save over an existing entry is refused since #978 (decision 4), so the
+    model's text is written as the new file it is and read back."""
+    from pyrite.storage.entry_writer import create_entry_text
+    from pyrite.storage.repository import KBRepository, new_entry_text
 
     kb_path = tmp_path / "body-line"
     events_path = kb_path / "events"
@@ -1087,7 +1132,8 @@ def test_repository_save_preserves_body_line_matching_frontmatter_key(tmp_path):
     repo = KBRepository(KBConfig(name="body-line", path=kb_path))
 
     entry = repo.load_entry_from_file(path)
-    saved_path = repo.save(entry, keep_filename=True)
+    saved_path = events_path / "body-first-line-copy.md"
+    create_entry_text(saved_path, new_entry_text(entry))
     saved_entry = repo.load_entry_from_file(saved_path)
 
     assert saved_entry.body == body

@@ -375,15 +375,17 @@ def reconcile_env():
         from pyrite.models.generic import GenericEntry
 
         adr_repo = KBRepository(kb)
+        # A file's name is fixed at creation (#391): this ADR's came from an
+        # earlier title. A save over an existing entry is refused since #978
+        # (decision 4), so the entry is created once, at that kept filename.
         adr = GenericEntry(
             _entry_type="adr",
             id="adr-9",
-            title="Original Title",
+            title="Keep Pattern",
             body="",
             metadata={"adr_number": 9},
         )
-        adr_repo.save(adr)
-        adr.title = "Keep Pattern"
+        adr.file_path = kb_path / "adrs" / "0009-original-title.md"
         adr_repo.save(adr, keep_filename=True, touch_updated_at=False)
 
         # Static subdirectories preserve deliberate placement; reconcile must

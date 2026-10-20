@@ -9,6 +9,8 @@ from .entry_types import LiteratureNoteEntry, ZettelEntry
 from .preset import ZETTELKASTEN_PRESET
 from .validators import validate_zettel
 
+MAX_GRAPH_DEPTH = 3
+
 
 class ZettelkastenPlugin:
     """Zettelkasten plugin for pyrite.
@@ -91,7 +93,9 @@ class ZettelkastenPlugin:
                         },
                         "depth": {
                             "type": "integer",
-                            "description": "Link traversal depth (default 1)",
+                            "description": f"Link traversal depth (default 1, maximum {MAX_GRAPH_DEPTH})",
+                            "minimum": 1,
+                            "maximum": MAX_GRAPH_DEPTH,
                         },
                     },
                     "required": ["entry_id", "kb_name"],
@@ -200,11 +204,17 @@ class ZettelkastenPlugin:
         private source is dropped and a private target reads as a missing
         one (P-R4, P-R5).
         """
-        db, should_close = self._get_db()
         entry_id = args["entry_id"]
         kb_name = args["kb_name"]
         depth = args.get("depth", 1)
+        if (
+            isinstance(depth, bool)
+            or not isinstance(depth, int)
+            or not 1 <= depth <= MAX_GRAPH_DEPTH
+        ):
+            return {"error": f"depth must be between 1 and {MAX_GRAPH_DEPTH}"}
 
+        db, should_close = self._get_db()
         try:
             entry = db.get_entry(entry_id, kb_name)
             if not entry:
@@ -219,17 +229,50 @@ class ZettelkastenPlugin:
                 "backlinks": backlinks,
             }
 
-            # If depth > 1, get neighbors' links too
             if depth > 1:
                 neighbor_links = {}
-                for link in outlinks + backlinks:
-                    nid = link.get("target_id") or link.get("source_id", "")
-                    nkb = link.get("target_kb") or link.get("source_kb", kb_name)
-                    if nid and nid != entry_id:
-                        neighbor_links[nid] = {
-                            "outlinks": db.get_outlinks(nid, nkb, readable_kbs=readable_kbs),
-                            "backlinks": db.get_backlinks(nid, nkb, readable_kbs=readable_kbs),
-                        }
+                visited = {(kb_name, entry_id)}
+                frontier = [(kb_name, outlinks, backlinks)]
+
+                for neighbor_depth in range(1, depth):
+                    next_frontier = []
+                    for current_kb, current_outlinks, current_backlinks in frontier:
+                        for link in current_outlinks + current_backlinks:
+                            neighbor_id = link.get("id")
+                            neighbor_kb = link.get("kb_name") or current_kb
+                            identity = (neighbor_kb, neighbor_id)
+                            if (
+                                not neighbor_id
+                                or identity in visited
+                                or link.get("entry_type") is None
+                                or (readable_kbs is not None and neighbor_kb not in readable_kbs)
+                            ):
+                                continue
+
+                            visited.add(identity)
+                            neighbor_outlinks = db.get_outlinks(
+                                neighbor_id, neighbor_kb, readable_kbs=readable_kbs
+                            )
+                            neighbor_backlinks = db.get_backlinks(
+                                neighbor_id, neighbor_kb, readable_kbs=readable_kbs
+                            )
+                            key = (
+                                neighbor_id
+                                if neighbor_kb == kb_name
+                                else f"{neighbor_kb}:{neighbor_id}"
+                            )
+                            neighbor_links[key] = {
+                                "id": neighbor_id,
+                                "kb_name": neighbor_kb,
+                                "depth": neighbor_depth,
+                                "outlinks": neighbor_outlinks,
+                                "backlinks": neighbor_backlinks,
+                            }
+                            next_frontier.append(
+                                (neighbor_kb, neighbor_outlinks, neighbor_backlinks)
+                            )
+                    frontier = next_frontier
+
                 graph["neighbors"] = neighbor_links
 
             return graph

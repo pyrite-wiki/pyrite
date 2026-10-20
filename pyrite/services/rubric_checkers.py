@@ -2,6 +2,8 @@
 
 Each checker receives an entry dict, optional KBSchema, and optional params dict.
 Checkers are matched by name via the NAMED_CHECKERS registry.
+Parameterized checkers raise ValueError for missing or empty required parameters
+and invalid regex patterns, so QA reports that the check could not run.
 """
 
 from __future__ import annotations
@@ -177,8 +179,8 @@ def check_has_field(
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Check that a specific metadata field is present. Params: {field: "role"}."""
-    if not params or "field" not in params:
-        return None
+    if not params or not params.get("field"):
+        raise ValueError("has_field requires a non-empty 'field' parameter")
     field_name = params["field"]
     meta_dict = _parse_metadata(entry)
     if meta_dict.get(field_name):
@@ -200,8 +202,8 @@ def check_has_any_field(
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Check that at least one of several metadata fields is present. Params: {fields: ["url", "author"]}."""
-    if not params or "fields" not in params:
-        return None
+    if not params or not params.get("fields"):
+        raise ValueError("has_any_field requires a non-empty 'fields' parameter")
     field_names = params["fields"]
     meta_dict = _parse_metadata(entry)
     for fn in field_names:
@@ -224,8 +226,8 @@ def check_body_has_section(
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Check that body contains a markdown heading. Params: {heading: "Problem"}."""
-    if not params or "heading" not in params:
-        return None
+    if not params or not params.get("heading"):
+        raise ValueError("body_has_section requires a non-empty 'heading' parameter")
     heading = params["heading"]
     body = entry.get("body", "") or ""
     pattern = re.compile(rf"^##\s+{re.escape(heading)}", re.IGNORECASE | re.MULTILINE)
@@ -248,13 +250,15 @@ def check_body_has_pattern(
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Check that body matches a regex pattern. Params: {pattern: "Sources?:"}."""
-    if not params or "pattern" not in params:
-        return None
+    if not params or not params.get("pattern"):
+        raise ValueError("body_has_pattern requires a non-empty 'pattern' parameter")
     body = entry.get("body", "") or ""
     try:
         compiled = re.compile(params["pattern"], re.IGNORECASE | re.MULTILINE)
-    except re.error:
-        return None
+    except re.error as exc:
+        raise ValueError(
+            f"body_has_pattern has invalid regex {params['pattern']!r}: {exc}"
+        ) from exc
     if compiled.search(body):
         return None
     return {

@@ -62,7 +62,7 @@ Two kinds, per placement.
 
 Counts of commands and tools were taken on 2026-10-02 from the CLI's own Typer
 app and from `PyriteMCPServer(tier=...)` (read 72, write 103, admin 112, with
-all six extensions installed).
+all five extensions installed).
 
 ## 1. The core: files, index, search
 
@@ -93,7 +93,7 @@ all six extensions installed).
 | `repo` (8), `auth` (5), `extension` (4), `export` (2), `collections` (2), `protocol` (2) | experimental | `repo` 5, `auth` 3, `extension` 2, `export` 1, `collections` none found, `protocol` none found | not covered |
 | `sw` (23) | experimental (the in-tree reference extension; Pyrite's own process runs on it) | software-kb's 311 tests, through its own Typer app | not covered; `pyrite sw` is absent on the README's tag install |
 | `investigation` (18), `social` (4), `wiki` (4), `zettel` (4) | experimental | the extensions' own tests (435, 50, 64, 48) | `investigation`'s write tools fail under the real MCP server (#94, #92, #93) |
-| `cascade` (5) | unsupported (to be deleted, ADR-0040 decision 2) | cascade's 136 tests | not covered |
+| `cascade` (5) | removed (#953, 2026-10; ADR-0040 decision 2) | none | not covered |
 
 ## 3. MCP
 
@@ -107,11 +107,11 @@ admin (112).
 | QA and index status: `kb_qa_status`, `kb_qa_validate`, `kb_qa_assess`, `kb_index_job_status`; `kb_bulk_create` | 3 / 2 / 0 | experimental | named in tests; not covered |
 | Tasks: `task_*` | 6 / 5 / 0 = 11 | experimental | `tests/test_task_*`; Pyrite's own process runs on them |
 | Administration: `kb_commit`, `kb_push`, `kb_index_sync`, `kb_manage`, `kb_registry_add`, `_health`, `_reindex`, `_remove` | 0 / 0 / 8 | experimental (the operator's, ADR-0043) | the audit saw `kb_push` and `kb_registry_remove` in the admin tier |
-| Vocabulary tools in core files: `list_edge_types`, `solidarity_infrastructure_types`, `solidarity_timeline` | 3 / 0 / 0 | experimental (cascade-shaped; follow cascade's deletion) | `tests/test_mcp_list_edge_types.py` |
+| Vocabulary tools in core files: `list_edge_types` (`solidarity_*` went with cascade, #953) | 1 / 0 / 0 | experimental | `tests/test_mcp_list_edge_types.py` |
 | journalism-investigation (`investigation_*`) | 14 / 8 / 0 = 22 | experimental, marked (#644) | write tools fail under the real server (#94, #92, #93) |
 | software-kb (`sw_*`) | 15 / 8 / 0 = 23 | experimental (reference extension) | 311 extension tests |
 | social, wiki, zettelkasten | 3 / 2 / 0; 3 / 2 / 1; 2 / 0 / 0 = 5, 6, 2 | experimental | extension tests |
-| cascade (`cascade_*`) | 4 / 0 / 0 | unsupported | 136 extension tests |
+| cascade (`cascade_*`) | removed (#953) | | |
 | MCP prompts (4) and resources | | experimental | `tests/test_mcp_prompts.py`, `tests/test_mcp_resources_session.py` |
 
 The stdio server is the operator's (ADR-0043); `--tier` is a tool filter for
@@ -124,10 +124,10 @@ that process, not authorization.
 | REST: 135 operations (111 under `/api`, 19 under `/auth`; measured 2026-09-25) in 24 endpoint modules | experimental. The web UI is its client | `tests/test_api_*`, the characterization goldens, `tests/e2e/test_rest_flow.py`. Not covered by the audit beyond `GET`s |
 | Web UI, single-user parts: entry browse and edit, search, graph, timeline, tags, daily, QA | experimental (**question 2**) | 11 Playwright specs in `web/e2e`; the audit built it from a clone: it needs `npm run build`, and is not in the tag install. Open: "New collection" returns 500 (#480), no delete in the UI (#117), light mode unreadable (#12), "which KB am I in" (#10) |
 | Web UI, multi-user parts: login, register, changes, merge queue, settings for accounts | experimental | the multi-user issue cluster (#544, #517, #518, #516, #539, #540, #521, #565, #404, #572) belongs to 0.26 |
-| `/site` static HTML cache and the sitemap (the built-in site generator, [[adr-0023]]) | experimental (decided by the maintainer, 2026-10-02: publishing is an export; the built-in site is not part of the supported alpha) | `tests/test_site_*` and the site-cache tests |
+| `/site` static HTML cache and the sitemap (the built-in site generator, [[adr-0023]]) | removed (#953, 2026-10; publishing is an export) | none |
 | AI endpoints (`/api/ai/*`, bring your own key) | experimental | `tests/test_ai_endpoints.py` |
 | Live updates (`/ws`) | experimental | `tests/test_websocket_*` |
-| Streamlit (`ui_streamlit.py`, `pyrite/ui`) | unsupported | root-level clutter in the audit |
+| Streamlit (`pyrite/ui`) | removed (#953, 2026-10) | the SvelteKit web app is the UI |
 
 ## 5. Backends, extensions, deployment
 
@@ -138,7 +138,7 @@ that process, not authorization.
 | Extensions: software-kb | experimental, in tree (the reference) | 311 tests |
 | Extensions: journalism-investigation | experimental, marked (#644) | 435 tests; the write tools fail under the real MCP server |
 | Extensions: social, encyclopedia, zettelkasten | experimental | 50, 64, 48 tests; zettelkasten is also a `pyrite init` preset |
-| Extensions: cascade | unsupported (deleted) | 136 tests |
+| Extensions: cascade | removed (#953, 2026-10) | none |
 | Local use: CLI plus stdio MCP | **supported** | the audit's Run A and Run B |
 | `pyrite serve`, local web | experimental | see section 4 |
 | Docker (`docker compose up`), one-click deploy (Render, Railway, Fly) | experimental | not covered by this audit's list; no Docker image is published |
@@ -150,7 +150,7 @@ that process, not authorization.
 
 | | Supported | Experimental | Unsupported |
 |---|---|---|---|
-| CLI top-level commands (43) | 22 (`init`, `search`, `get`, `create`, `add`, `update`, `delete`, `rename`, `link`, `list-entries`, `batch-read`, `orient`, `recent`, `timeline`, `tags`, `backlinks`, `ci`, `list`, `config`, `mcp`, `import`, `readme`) and the groups `kb`, `index`, `links`, `qa`, `schema`, `db` = 28 | `mcp-setup`, `serve`, `task`, `repo`, `auth`, `extension`, `export`, `collections`, `protocol`, `sw`, `investigation`, `social`, `wiki`, `zettel` = 14 | `cascade` = 1 |
+| CLI top-level commands (43) | 22 (`init`, `search`, `get`, `create`, `add`, `update`, `delete`, `rename`, `link`, `list-entries`, `batch-read`, `orient`, `recent`, `timeline`, `tags`, `backlinks`, `ci`, `list`, `config`, `mcp`, `import`, `readme`) and the groups `kb`, `index`, `links`, `qa`, `schema`, `db` = 28 | `mcp-setup`, `serve`, `task`, `repo`, `auth`, `extension`, `export`, `collections`, `protocol`, `sw`, `investigation`, `social`, `wiki`, `zettel` = 14 | `cascade` = 1 (removed, #953) |
 | MCP tools (112) | 15 | 93 | 4 |
 
 (The CLI row counts top-level entries: 28 + 14 + 1 = 43. The MCP row:

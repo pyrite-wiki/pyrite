@@ -231,6 +231,11 @@ class PluginRegistry:
     def __init__(self):
         self._plugins: dict[str, PyritePlugin] = {}
         self._discovered = False
+        # (plugin name, method, exception) for every aggregate call a plugin
+        # raised from. The "pyrite" logger has a NullHandler, so the logger.error
+        # alone is invisible in the CLI (#900); callers that can show the user
+        # (pyrite.cli) read this.
+        self.aggregate_failures: list[tuple[str, str, Exception]] = []
         # Signature-conformance is checked once per plugin (coordinator
         # blocker 3, #379 follow-up: "checked at registration" wasn't true --
         # the filter re-ran, and re-warned, on every call). Keyed by plugin
@@ -288,10 +293,20 @@ class PluginRegistry:
             logger.warning("Plugin discovery failed: %s", e)
 
         self._discovered = True
+        self._aliases_changed()
+
+    @staticmethod
+    def _aliases_changed() -> None:
+        """A plugin arrived: a type's aliases, and so its declared fields, may
+        have changed (``schema.field_aliases.declared_fields`` caches them)."""
+        from ..schema.field_aliases import clear_declared_fields_cache
+
+        clear_declared_fields_cache()
 
     def register(self, plugin: PyritePlugin) -> None:
         """Manually register a plugin (for testing or programmatic use)."""
         self._plugins[plugin.name] = plugin
+        self._aliases_changed()
         # A re-register (e.g. a test replacing a plugin instance under the
         # same name) must not serve a stale conformance result computed from
         # the previous instance's validators/hooks.
@@ -498,6 +513,7 @@ class PluginRegistry:
                     method_name,
                     e,
                 )
+                self.aggregate_failures.append((plugin.name, method_name, e))
                 continue
             if not items:
                 continue
@@ -923,10 +939,10 @@ class PluginRegistry:
         the factory (it must be able to build any declared type) but wrong
         for type *resolution*, where picking the first subclass of a core
         type out of a globally-merged dict makes the answer depend on
-        site-packages enumeration order. Concretely: both cascade's `actor`
-        and social's `user_profile` subclass PersonEntry, so `person`
-        resolved to whichever plugin happened to be discovered first --
-        `actor` on one machine, `user_profile` on another, for the same code.
+        site-packages enumeration order. Concretely: two plugins' PersonEntry
+        subclasses (the former cascade `actor` and social's `user_profile`)
+        made `person` resolve to whichever plugin happened to be discovered
+        first -- `actor` on one machine, `user_profile` on another, for the same code.
         See plugin-type-resolution-scoping.
         """
         return self._aggregate_dict_for_kb("get_entry_types", kb_type)

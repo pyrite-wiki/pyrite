@@ -61,6 +61,7 @@ def test_kb_service_schema_to_agent_logs_warning(caplog):
     kb_config.kb_schema.to_agent_schema.side_effect = Exception("schema error")
     kb_config.guidelines = {}
     svc.config.get_kb.return_value = kb_config
+    svc.config.require_kb.return_value = kb_config
 
     svc.db.count_entries.return_value = 0
     svc.db.get_type_distribution.return_value = []

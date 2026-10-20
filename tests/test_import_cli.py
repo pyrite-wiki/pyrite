@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from tests.cli_help import plain
+
 from pyrite.cli import app
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.formats.importers.yaml_importer import import_yaml
@@ -178,6 +180,18 @@ class TestImportCommand:
             assert result.exit_code == 0
             assert "Created" in result.output
 
+    def test_import_auto_detect_markdown(self, import_env):
+        markdown_file = import_env["tmpdir"] / "import.md"
+        markdown_file.write_text(
+            "---\nid: auto-detect-md\ntitle: Auto Detect Markdown\ntype: note\n---\nBody.\n"
+        )
+
+        with _patch_config(import_env):
+            result = runner.invoke(app, ["import", str(markdown_file), "--kb", "test-kb"])
+
+        assert result.exit_code == 0, result.output
+        assert "Imported 1 entries" in result.output
+
     def test_import_file_not_found(self, import_env):
         with _patch_config(import_env):
             result = runner.invoke(app, ["import", "/nonexistent/file.json", "--kb", "test-kb"])
@@ -192,6 +206,7 @@ class TestImportCommand:
             result = runner.invoke(app, ["import", str(txt_file), "--kb", "test-kb"])
             assert result.exit_code == 1
             assert "Cannot detect format" in result.output
+            assert "--format markdown" in plain(result.output)
 
     def test_import_partial_failure(self, import_env):
         # Entry without title should fail

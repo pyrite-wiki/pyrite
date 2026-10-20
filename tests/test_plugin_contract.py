@@ -280,21 +280,14 @@ def _installed_plugin_names() -> set[str]:
 
 
 class TestExtensionValidatorsFireThroughSchema:
-    """Acceptance criteria 2 & 3 (#376): a cascade `actor` with no title, and
-    the equivalent journalism-investigation case, must yield a validation
-    error through `KBSchema.validate_entry` -- not a swallowed TypeError.
+    """Acceptance criteria 2 & 3 (#376): a journalism-investigation `asset`
+    with no asset_type must yield a validation error through
+    `KBSchema.validate_entry` -- not a swallowed TypeError. (The cascade
+    `actor` case went with the cascade extension, #953.)
 
     Skips cleanly (not a failure) when the specific extension under test
     isn't installed in this environment -- these tests are inherently about
     that extension's validator, not "some installed plugin"."""
-
-    def test_cascade_actor_with_no_title_yields_error(self):
-        if "cascade" not in _installed_plugin_names():
-            pytest.skip("cascade extension not installed in this environment")
-        schema = KBSchema(name="test-cascade", kb_type="cascade-research")
-        result = schema.validate_entry("actor", {}, {"kb_type": "cascade-research"})
-        assert result["valid"] is False
-        assert any(e.get("field") == "title" for e in result["errors"])
 
     def test_journalism_asset_with_no_asset_type_yields_error(self):
         if "journalism_investigation" not in _installed_plugin_names():
@@ -411,26 +404,26 @@ class TestValidateWritePrefersMessage:
     """Coordinator should-fix 4: KBService._validate_write (~207) built its
     error string from field/rule/expected/got and ignored `message` when a
     validator supplied one. A validator whose item has no `rule` (like
-    cascade's importance-range check, `{"field": "importance", "message":
-    "Importance must be 1-10, got: 99"}`) fell into the generic
+    journalism-investigation's importance-range check, `{"field": "importance",
+    "message": "Importance must be 1-10, got: 99"}`) fell into the generic
     `f"{field}: {rule} (expected {expected}, got {got!r})"` branch, which
     with rule/expected/got all absent renders literally as
     "importance: (expected None, got None)" -- losing the validator's actual
     message. `message`, when present, must be preferred."""
 
-    def test_cascade_importance_error_message_is_not_lost(self, tmp_path):
-        if "cascade" not in _installed_plugin_names():
-            pytest.skip("cascade extension not installed in this environment")
+    def test_importance_error_message_is_not_lost(self, tmp_path):
+        if "journalism_investigation" not in _installed_plugin_names():
+            pytest.skip("journalism-investigation extension not installed in this environment")
 
         from pyrite.config import KBConfig, PyriteConfig, Settings
         from pyrite.exceptions import SchemaViolationError
         from pyrite.services.kb_service import KBService
         from pyrite.storage.database import PyriteDB
 
-        kb_path = tmp_path / "cascade-kb"
+        kb_path = tmp_path / "ji-kb"
         kb_path.mkdir()
-        (kb_path / "actors").mkdir()
-        kb_config = KBConfig(name="test-cascade", path=kb_path, kb_type="cascade-research")
+        (kb_path / "entities").mkdir()
+        kb_config = KBConfig(name="test-ji", path=kb_path, kb_type="journalism-investigation")
         config = PyriteConfig(
             knowledge_bases=[kb_config], settings=Settings(index_path=tmp_path / "index.db")
         )
@@ -439,10 +432,10 @@ class TestValidateWritePrefersMessage:
         try:
             with pytest.raises(SchemaViolationError) as exc_info:
                 svc.create_entry(
-                    "test-cascade",
-                    "bad-actor",
-                    "A Real Actor",
-                    "actor",
+                    "test-ji",
+                    "bad-person",
+                    "A Real Person",
+                    "person",
                     allow_undeclared=True,
                     importance=99,
                 )
@@ -455,10 +448,11 @@ class TestValidateWritePrefersMessage:
             db.close()
 
 
-class TestCascadeTaskUpdateNoTracebackNoSilentSkip:
-    """#48's extra criterion: `pyrite task update` against a cascade-type KB
-    must not print a traceback, and a validator error must give a non-zero
-    exit (not exit 0 while silently skipping validation).
+class TestPluginKBTaskUpdateNoTracebackNoSilentSkip:
+    """#48's extra criterion: `pyrite task update` against a KB whose type a
+    plugin validates must not print a traceback, and a validator error must
+    give a non-zero exit (not exit 0 while silently skipping validation).
+    Run against journalism-investigation since #953 deleted cascade.
 
     #48's exact repro was `pyrite task update <task-id> -k cascade-research
     --priority 7`: the cascade validator (1-arg, wrong contract) raised
@@ -469,21 +463,21 @@ class TestCascadeTaskUpdateNoTracebackNoSilentSkip:
     `except (PyriteError, ValueError)` handler catches and turns into a
     non-zero `typer.Exit(1)` with a clean message, no traceback)."""
 
-    def _cascade_env(self, tmp_path):
+    def _plugin_env(self, tmp_path):
         from pathlib import Path
 
         from pyrite.config import KBConfig, PyriteConfig, Settings
         from pyrite.services.task_service import TaskService
         from pyrite.storage.database import PyriteDB
 
-        tasks_path = Path(tmp_path) / "cascade-kb"
+        tasks_path = Path(tmp_path) / "ji-kb"
         tasks_path.mkdir()
         (tasks_path / "tasks").mkdir()
 
         kb_config = KBConfig(
-            name="test-cascade",
+            name="test-ji",
             path=tasks_path,
-            kb_type="cascade-research",
+            kb_type="journalism-investigation",
             description="Test",
         )
         config = PyriteConfig(
@@ -491,23 +485,23 @@ class TestCascadeTaskUpdateNoTracebackNoSilentSkip:
             settings=Settings(index_path=Path(tmp_path) / "index.db"),
         )
         db = PyriteDB(config.settings.index_path)
-        db.register_kb("test-cascade", "cascade-research", str(tasks_path), "Test")
+        db.register_kb("test-ji", "journalism-investigation", str(tasks_path), "Test")
         svc = TaskService(config, db)
         return svc, db
 
     def test_benign_task_update_no_traceback_log(self, tmp_path, caplog):
-        """A task entry (not one the cascade validator has an opinion on)
+        """A task entry (not one the plugin validator has an opinion on)
         updates cleanly: no traceback in the log, at any level."""
         import logging
 
-        if "cascade" not in _installed_plugin_names():
-            pytest.skip("cascade extension not installed in this environment")
+        if "journalism_investigation" not in _installed_plugin_names():
+            pytest.skip("journalism-investigation extension not installed in this environment")
 
-        svc, db = self._cascade_env(tmp_path)
+        svc, db = self._plugin_env(tmp_path)
         try:
-            svc.create_task(kb_name="test-cascade", title="Do the thing")
+            svc.create_task(kb_name="test-ji", title="Do the thing")
             with caplog.at_level(logging.WARNING):
-                result = svc.update_task("do-the-thing", "test-cascade", priority=7)
+                result = svc.update_task("do-the-thing", "test-ji", priority=7)
             assert result.get("priority") == 7 or "priority" in str(result)
             tracebacks = [r for r in caplog.records if r.exc_info is not None]
             assert tracebacks == [], (
@@ -517,32 +511,32 @@ class TestCascadeTaskUpdateNoTracebackNoSilentSkip:
         finally:
             db.close()
 
-    def test_cascade_validator_error_is_non_zero_not_silent(self, tmp_path):
-        """A real cascade-specific validation error (importance out of the
-        1-10 range -- a rule only the cascade validator enforces, isolating
+    def test_plugin_validator_error_is_non_zero_not_silent(self, tmp_path):
+        """A real plugin-specific validation error (importance out of the
+        1-10 range -- a rule only the plugin validator enforces, isolating
         it from create_entry's own generic title/date checks) raises
         SchemaViolationError -- the exception the CLI's task commands catch
         and turn into a non-zero exit -- rather than being silently
         swallowed by a signature-mismatch fallback."""
-        if "cascade" not in _installed_plugin_names():
-            pytest.skip("cascade extension not installed in this environment")
+        if "journalism_investigation" not in _installed_plugin_names():
+            pytest.skip("journalism-investigation extension not installed in this environment")
 
         from pyrite.exceptions import PyriteError, SchemaViolationError
 
-        svc, db = self._cascade_env(tmp_path)
+        svc, db = self._plugin_env(tmp_path)
         try:
             with pytest.raises(SchemaViolationError) as exc_info:
                 svc.kb_svc.create_entry(
-                    "test-cascade",
-                    "bad-actor",
-                    "A Real Actor",
-                    "actor",
+                    "test-ji",
+                    "bad-person",
+                    "A Real Person",
+                    "person",
                     allow_undeclared=True,
                     importance=99,
                 )
             assert isinstance(exc_info.value, PyriteError)  # what task_commands.py catches
             assert any(e.get("field") == "importance" for e in exc_info.value.errors), (
-                f"expected a cascade importance-range error, got: {exc_info.value.errors}"
+                f"expected an importance-range error, got: {exc_info.value.errors}"
             )
         finally:
             db.close()

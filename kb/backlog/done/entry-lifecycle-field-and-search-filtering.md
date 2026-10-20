@@ -7,10 +7,7 @@ tags:
 - qa
 - search
 metadata:
-  kind: feature
   priority: medium
-  effort: S
-  status: completed
 kind: feature
 status: done
 effort: S

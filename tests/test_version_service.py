@@ -17,28 +17,41 @@ def version_setup(tmp_path):
     kb_path.mkdir()
 
     # Init git repo
-    subprocess.run(["git", "init"], cwd=str(kb_path), capture_output=True)
+    subprocess.run(["git", "init"], cwd=str(kb_path), capture_output=True, timeout=120)
     subprocess.run(
-        ["git", "config", "user.email", "test@test.com"], cwd=str(kb_path), capture_output=True
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=str(kb_path),
+        capture_output=True,
+        timeout=120,
     )
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(kb_path), capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.name", "Test"], cwd=str(kb_path), capture_output=True, timeout=120
+    )
 
     # Write and commit an entry
     entry_file = kb_path / "entry-1.md"
     entry_file.write_text("---\nid: entry-1\ntitle: V1\ntype: note\n---\n\nVersion 1")
-    subprocess.run(["git", "add", "."], cwd=str(kb_path), capture_output=True)
-    subprocess.run(["git", "commit", "-m", "v1"], cwd=str(kb_path), capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=str(kb_path), capture_output=True, timeout=120)
+    subprocess.run(
+        ["git", "commit", "-m", "v1"], cwd=str(kb_path), capture_output=True, timeout=120
+    )
 
     # Get commit hash
     result = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=str(kb_path), capture_output=True, text=True
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(kb_path),
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     commit1 = result.stdout.strip()
 
     # Update and commit again
     entry_file.write_text("---\nid: entry-1\ntitle: V2\ntype: note\n---\n\nVersion 2")
-    subprocess.run(["git", "add", "."], cwd=str(kb_path), capture_output=True)
-    subprocess.run(["git", "commit", "-m", "v2"], cwd=str(kb_path), capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=str(kb_path), capture_output=True, timeout=120)
+    subprocess.run(
+        ["git", "commit", "-m", "v2"], cwd=str(kb_path), capture_output=True, timeout=120
+    )
 
     config = PyriteConfig(
         knowledge_bases=[KBConfig(name="test-kb", path=kb_path)],
@@ -147,7 +160,9 @@ class TestCommitHashValidation:
         monkeypatch.setattr(subprocess, "run", _spy)
         # An abbreviated id: the read must use the peeled full commit id.
         assert svc.get_entry_at_version("entry-1", "test-kb", commit1[:7]) is not None
-        show = [a for a in seen if a[:2] == ["git", "show"]]
+        from pyrite.services.git_service import READ_BLOB_ARGV
+
+        show = [a for a in seen if tuple(a[: len(READ_BLOB_ARGV)]) == READ_BLOB_ARGV]
         assert len(show) == 1, seen
         argv = show[0]
         assert argv.index("--end-of-options") == len(argv) - 2
@@ -163,7 +178,12 @@ class TestCommitHashValidation:
 
 def _git(kb_path, *args):
     return subprocess.run(
-        ["git", *args], cwd=str(kb_path), capture_output=True, text=True, check=True
+        ["git", *args],
+        cwd=str(kb_path),
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
     ).stdout.strip()
 
 
@@ -321,24 +341,34 @@ class TestSubdirectoryKB:
     def subdir_setup(self, tmp_path):
         repo_root = tmp_path / "repo"
         repo_root.mkdir()
-        subprocess.run(["git", "init"], cwd=str(repo_root), capture_output=True)
+        subprocess.run(["git", "init"], cwd=str(repo_root), capture_output=True, timeout=120)
         subprocess.run(
             ["git", "config", "user.email", "test@test.com"],
             cwd=str(repo_root),
             capture_output=True,
+            timeout=120,
         )
         subprocess.run(
-            ["git", "config", "user.name", "Test"], cwd=str(repo_root), capture_output=True
+            ["git", "config", "user.name", "Test"],
+            cwd=str(repo_root),
+            capture_output=True,
+            timeout=120,
         )
 
         kb_path = repo_root / "sub" / "kb"
         kb_path.mkdir(parents=True)
         entry_file = kb_path / "entry-1.md"
         entry_file.write_text("---\nid: entry-1\ntitle: V1\ntype: note\n---\n\nVersion 1")
-        subprocess.run(["git", "add", "."], cwd=str(repo_root), capture_output=True)
-        subprocess.run(["git", "commit", "-m", "v1"], cwd=str(repo_root), capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=str(repo_root), capture_output=True, timeout=120)
+        subprocess.run(
+            ["git", "commit", "-m", "v1"], cwd=str(repo_root), capture_output=True, timeout=120
+        )
         result = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=str(repo_root), capture_output=True, text=True
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         commit1 = result.stdout.strip()
 
@@ -391,20 +421,26 @@ class TestRecordCommit:
         before #432, where nothing wrote a version row."""
         kb_path = tmp_path / "test-kb"
         kb_path.mkdir()
-        subprocess.run(["git", "init"], cwd=str(kb_path), capture_output=True)
+        subprocess.run(["git", "init"], cwd=str(kb_path), capture_output=True, timeout=120)
         subprocess.run(
             ["git", "config", "user.email", "test@test.com"],
             cwd=str(kb_path),
             capture_output=True,
+            timeout=120,
         )
         subprocess.run(
-            ["git", "config", "user.name", "Test"], cwd=str(kb_path), capture_output=True
+            ["git", "config", "user.name", "Test"],
+            cwd=str(kb_path),
+            capture_output=True,
+            timeout=120,
         )
 
         entry_file = kb_path / "a.md"
         entry_file.write_text("---\nid: entry-1\ntitle: V1\ntype: note\n---\n\nVersion 1")
-        subprocess.run(["git", "add", "."], cwd=str(kb_path), capture_output=True)
-        subprocess.run(["git", "commit", "-m", "v1"], cwd=str(kb_path), capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=str(kb_path), capture_output=True, timeout=120)
+        subprocess.run(
+            ["git", "commit", "-m", "v1"], cwd=str(kb_path), capture_output=True, timeout=120
+        )
         commit1 = _git(kb_path, "rev-parse", "HEAD")
 
         config = PyriteConfig(

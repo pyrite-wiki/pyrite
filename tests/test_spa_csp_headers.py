@@ -189,3 +189,90 @@ class TestSpaCspHonoursBuildHash:
         assert not any("hash" in rec.message.lower() for rec in caplog.records), [
             rec.message for rec in caplog.records
         ]
+
+
+class TestCspExtraSetting:
+    EXTRA = "script-src https://plausible.io 'sha256-abc='; connect-src https://plausible.io"
+
+    def test_setting_loads_from_yaml_and_env(self, monkeypatch):
+        from pyrite.config import PyriteConfig, Settings, _apply_env_overrides
+
+        cfg = PyriteConfig.from_dict({"settings": {"site_csp_extra": self.EXTRA}})
+        assert cfg.settings.site_csp_extra == self.EXTRA
+        assert cfg.to_dict()["settings"]["site_csp_extra"] == self.EXTRA
+        monkeypatch.setenv("PYRITE_SITE_CSP_EXTRA", "connect-src https://x.example")
+        _apply_env_overrides(cfg)
+        assert cfg.settings.site_csp_extra == "connect-src https://x.example"
+        assert Settings(index_path="x").site_csp_extra == ""
+
+    def test_demo_caddyfile_hash_matches_its_injected_script(self):
+        """The Caddyfile comment tells the operator which hash to allow;
+        it must be the hash of the inline script the proxy injects."""
+        import base64
+        import hashlib
+        import re
+        from pathlib import Path
+
+        caddy = (Path(__file__).resolve().parent.parent / "deploy/demo/Caddyfile").read_text()
+        inline = re.search(r"<script>(.*?)</script>", caddy).group(1)
+        digest = base64.b64encode(hashlib.sha256(inline.encode()).digest()).decode()
+        assert f"'sha256-{digest}'" in caddy
+
+
+class TestCspExtraGuardrails:
+    """`site_csp_extra` can widen the policy, but not where widening defeats it.
+    (Moved from the `/site` tests when #953 removed the renderer; the policy
+    is the web app's.)"""
+
+    @staticmethod
+    def _build(extra):
+        from pyrite.server.static import build_site_csp
+
+        build_site_csp.cache_clear()  # warnings are logged once per value
+        csp = build_site_csp(extra)
+        return {d.split()[0]: d.split()[1:] for d in csp.split(";") if d.strip()}
+
+    @pytest.mark.parametrize("directive", ["object-src", "base-uri"])
+    def test_object_src_and_base_uri_cannot_be_extended(self, directive, caplog):
+        with caplog.at_level("WARNING", logger="pyrite.server.static"):
+            d = self._build(f"{directive} https://evil.example")
+        assert "https://evil.example" not in d[directive]
+        assert d[directive] == (["'none'"] if directive == "object-src" else ["'self'"])
+        assert directive in caplog.text
+
+    @pytest.mark.parametrize("directive", ["script-src", "default-src"])
+    @pytest.mark.parametrize("source", ["'unsafe-inline'", "'unsafe-eval'", "*"])
+    def test_weakening_script_sources_is_warned(self, directive, source, caplog):
+        with caplog.at_level("WARNING", logger="pyrite.server.static"):
+            d = self._build(f"{directive} {source}")
+        assert source in d[directive]  # the operator's call, but loudly
+        assert source in caplog.text
+        assert directive in caplog.text
+
+    def test_ordinary_source_is_not_warned(self, caplog):
+        with caplog.at_level("WARNING", logger="pyrite.server.static"):
+            self._build("script-src https://plausible.io")
+        assert caplog.text == ""
+
+    @pytest.mark.parametrize("directive", ["upgrade-insecure-requests", "block-all-mixed-content"])
+    def test_valueless_directive_is_accepted(self, directive, caplog):
+        with caplog.at_level("WARNING", logger="pyrite.server.static"):
+            d = self._build(f"{directive}; connect-src https://x.example")
+        assert d[directive] == []
+        assert d["connect-src"] == ["'self'", "https://x.example"]
+        assert "malformed" not in caplog.text
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "script-src https://a.example\r\nX-Evil: 1",
+            "script-src https://a.example, default-src *",
+            "Script_Src https://a.example",
+        ],
+    )
+    def test_malformed_extra_is_ignored(self, tmp_path, bad):
+        with _make_client(tmp_path, "<html><body>spa</body></html>", site_csp_extra=bad) as c:
+            r = c.get("/")
+        assert r.status_code == 200
+        assert "a.example" not in r.headers["content-security-policy"]
+        assert "x-evil" not in r.headers

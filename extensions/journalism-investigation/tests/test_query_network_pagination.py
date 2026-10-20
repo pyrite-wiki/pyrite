@@ -1,7 +1,7 @@
 """`query_network` pages both directions and says what it truncated (#63).
 
 On a hub node the old response carried every outlink and backlink at once
-(~18k tokens for one cascade node). `limit`/`offset` now apply to each
+(~18k tokens for one hub node of a large timeline KB). `limit`/`offset` now apply to each
 direction, and the response carries the true totals plus `truncated` so a
 caller can tell what it did not see.
 """

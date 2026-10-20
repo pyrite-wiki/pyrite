@@ -11,6 +11,7 @@ from pyrite.models.base import Entry
 from pyrite.models.core_types import NoteEntry, entry_from_frontmatter
 from pyrite.models.generic import GenericEntry
 from pyrite.schema import FieldSchema, KBSchema, TypeSchema
+from pyrite.storage.repository import new_entry_text
 
 
 # =========================================================================
@@ -137,9 +138,12 @@ class TestValidateSinceVersion:
 
 
 class TestEntrySchemaVersion:
+    @pytest.mark.control(
+        reason="a rewritten test of a property that already held; its old form used the model's emitter (Entry.save/to_markdown), gone since #955 P4"
+    )
     def test_roundtrip(self):
         entry = NoteEntry(id="test-1", title="Test", _schema_version=3)
-        md = entry.to_markdown()
+        md = new_entry_text(entry)
         parsed = NoteEntry.from_markdown(md)
         assert parsed._schema_version == 3
 
@@ -309,6 +313,9 @@ class TestRepositoryMigration:
         content = path.read_text()
         assert "_schema_version: 3" in content
 
+    @pytest.mark.control(
+        reason="a property that held before #978; its old form re-saved through the whole-file save, which decision 4 made a create, so it writes the model's text as new files now"
+    )
     def test_migrate_idempotent(self, tmp_path):
         """Load+save twice, same result."""
         from pyrite.config import KBConfig
@@ -330,13 +337,20 @@ class TestRepositoryMigration:
         config = KBConfig(name="test", path=kb_dir)
         repo = KBRepository(config)
 
-        entry1 = repo.load("idem-test")
-        repo.save(entry1, subdir="notes")
-        content1 = entry_file.read_text()
+        # A save over the existing file is refused since #978 (decision 4);
+        # the model's text is written as a new file each time and read back.
+        from pyrite.storage.entry_writer import create_entry_text
+        from pyrite.storage.repository import new_entry_text
 
-        entry2 = repo.load("idem-test")
-        repo.save(entry2, subdir="notes")
-        content2 = entry_file.read_text()
+        entry1 = repo.load("idem-test")
+        copy1 = notes_dir / "idem-copy-1.md"
+        create_entry_text(copy1, new_entry_text(entry1))
+        content1 = copy1.read_text()
+
+        entry2 = repo.load_entry_from_file(copy1)
+        copy2 = notes_dir / "idem-copy-2.md"
+        create_entry_text(copy2, new_entry_text(entry2))
+        content2 = copy2.read_text()
 
         # Core frontmatter should be the same (timestamps may differ)
         assert "_schema_version: 2" in content1

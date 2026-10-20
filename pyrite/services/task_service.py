@@ -7,8 +7,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from ..config import PyriteConfig
-from ..exceptions import EntryNotFoundError, KBNotFoundError, ValidationError
-from ..models.task import coerce_task_priority
+from ..exceptions import (
+    AmbiguousEntryError,
+    EntryNotFoundError,
+    ValidationError,
+)
+from ..models.task import TASK_RESOLVED_STATUSES, coerce_task_priority
 from ..models.task_completion import derive_completion, no_derived
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
@@ -68,10 +72,10 @@ class TaskService:
         allows for ``task`` beyond the parameters above (#397) -- e.g. the
         desk schema's ``project``/``kind``, without which a KB requiring
         them refuses every task this command tries to create. The CLI and
-        MCP are responsible for refusing a key that already has its own
-        parameter or that `TaskEntry.managed_fields` reserves; this method
-        does not re-check that, so an in-process caller passing `fields`
-        directly is trusted the way `create_entry`'s own `**kwargs` is.
+        MCP refuse a key that already has its own parameter. A field the
+        task manages (`TaskEntry.managed_fields`: the audit trail) or Pyrite
+        manages is refused here too, at every spelling, by `KBService.create`
+        (#1010); a caller cannot set it through `fields`.
 
         Returns:
             Dict with created=True and entry details.
@@ -133,6 +137,7 @@ class TaskService:
 
         # Capture the prior status so we can record the transition.
         old_status = ""
+        audit: dict[str, Any] | None = None
         if comment and "status" in updates:
             from ..storage.repository import KBRepository
 
@@ -142,19 +147,26 @@ class TaskService:
                 old_status = getattr(existing, "status", "") if existing else ""
                 new_status = updates["status"]
                 if old_status != new_status:
-                    log = list(getattr(existing, "status_change_log", []) or [])
-                    log.append(
-                        {
-                            "date": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                            "from": old_status,
-                            "to": new_status,
-                            "by": by or "operator",
-                            "comment": comment,
-                        }
-                    )
-                    updates["status_change_log"] = log
+                    audit = {
+                        "date": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "from": old_status,
+                        "to": new_status,
+                        "by": by or "operator",
+                        "comment": comment,
+                    }
 
-        entry = self.kb_svc.update_entry(task_id, kb_name, **updates)
+        if audit is not None:
+            # The audit entry is appended as one item; the earlier entries and
+            # every other key keep their bytes (ADR-0042 decision 1; #955 P3b).
+            from ..storage.file_operations import Append, ReplaceBody, Set
+
+            ops: list[Any] = [Set(k, v) for k, v in updates.items() if k != "body"]
+            if "body" in updates:
+                ops.append(ReplaceBody(updates["body"]))
+            ops.append(Append("status_change_log", audit))
+            entry = self.kb_svc.apply_operations(task_id, kb_name, ops).entry
+        else:
+            entry = self.kb_svc.update_entry(task_id, kb_name, **updates)
         return {
             "updated": True,
             "task_id": entry.id,
@@ -189,11 +201,7 @@ class TaskService:
         """
         from ..models.task import resolve_workflow_for_type
 
-        kb_config = self.config.get_kb(kb_name)
-        if kb_config is None:
-            from ..exceptions import KBNotFoundError
-
-            raise KBNotFoundError(f"KB not found: {kb_name}")
+        kb_config = self.config.require_kb(kb_name, db=self.db)
 
         kb_schema = getattr(kb_config, "kb_schema", None)
 
@@ -256,9 +264,12 @@ class TaskService:
         read path for both makes that divergence structurally impossible.
 
         ``readable_kbs`` (required; ``UNSCOPED`` for none) bounds the lookup:
-        without ``kb_name`` it takes the first match among the readable KBs
+        without ``kb_name`` (or with a blank one) it reads the readable KBs
         only, so a task in a KB the caller cannot read neither answers nor
-        hides a readable task with the same id (P-R5).
+        hides a readable task with the same id (P-R5). A task id held by more
+        than one readable KB is refused with ``AmbiguousEntryError`` (#528),
+        never answered by whichever row SQLite returns first; the candidates
+        are listed in config order, readable KBs only.
         """
         sql = (
             "SELECT id, title, kb_name, status, assignee, priority, metadata "
@@ -272,11 +283,15 @@ class TaskService:
         scope = kb_names_clause("kb_name", readable_kbs, params)
         if scope:
             sql += f" AND {scope}"
-        sql += " LIMIT 1"
 
         rows = self._query(sql, params)
         if not rows:
             return None
+        if len(rows) > 1:
+            held = {row["kb_name"] for row in rows}
+            order = [kb.name for kb in self.config.all_kbs()]
+            candidates = [n for n in order if n in held] + sorted(held - set(order))
+            raise AmbiguousEntryError(task_id, candidates)
         return rows[0]
 
     def derived_completion(self, kb_name: str) -> dict[str, dict[str, Any]]:
@@ -407,6 +422,7 @@ class TaskService:
                 except Exception:
                     continue
                 if entry:
+                    # A declared field of a task (#1025), read at its own name.
                     t["parked_awaiting"] = (entry.get("parked_awaiting") or "").strip()
 
         return tasks
@@ -500,9 +516,7 @@ class TaskService:
         """
         from ..storage.repository import KBRepository
 
-        kb_config = self.config.get_kb(kb_name)
-        if not kb_config:
-            raise KBNotFoundError(f"KB not found: {kb_name}")
+        kb_config = self.config.require_kb(kb_name, db=self.db)
 
         repo = KBRepository(kb_config)
         entry = repo.load(task_id)
@@ -577,9 +591,7 @@ class TaskService:
         """Append a timestamped checkpoint to a task."""
         from ..storage.repository import KBRepository
 
-        kb_config = self.config.get_kb(kb_name)
-        if not kb_config:
-            raise KBNotFoundError(f"KB not found: {kb_name}")
+        kb_config = self.config.require_kb(kb_name, db=self.db)
 
         repo = KBRepository(kb_config)
         entry = repo.load(task_id)
@@ -692,17 +704,19 @@ class TaskService:
         parent_meta = _parse_metadata(parent.get("metadata") or {})
         parent_evidence = parent_meta.get("evidence", []) or parent.get("evidence", []) or []
 
-        # Merge without duplicates
-        new_evidence = list(set(parent_evidence) | set(child_evidence))
-        if len(new_evidence) == len(parent_evidence):
+        # Only what the parent lacks, each appended as one item in the
+        # child's order; the parent's own items keep their bytes (#955 P3b).
+        from ..storage.file_operations import Append
+
+        missing = [e for e in dict.fromkeys(child_evidence) if e not in parent_evidence]
+        if not missing:
             return None  # Nothing new to add
 
-        self.kb_svc.update_entry(parent_id, kb_name, evidence=new_evidence)
-        added = len(new_evidence) - len(parent_evidence)
+        self.kb_svc.apply_operations(parent_id, kb_name, [Append("evidence", e) for e in missing])
         return {
             "parent_id": parent_id,
-            "evidence_added": added,
-            "total_evidence": len(new_evidence),
+            "evidence_added": len(missing),
+            "total_evidence": len(parent_evidence) + len(missing),
         }
 
     def list_entries_needing_qa(self, kb_name: str | None = None) -> list[dict[str, Any]]:
@@ -745,8 +759,11 @@ class TaskService:
         evidence = meta.get("evidence", []) or task.get("evidence", []) or []
 
         if assessment_id not in evidence:
+            from ..storage.file_operations import Append
+
             evidence.append(assessment_id)
-            self.kb_svc.update_entry(task_id, kb_name, evidence=evidence)
+            # One appended item; the other items keep their bytes (#955 P3b).
+            self.kb_svc.apply_operations(task_id, kb_name, [Append("evidence", assessment_id)])
 
         return {
             "linked": True,
@@ -831,83 +848,131 @@ class TaskService:
         return result
 
     def get_blocked_by(self, task_id: str, kb_name: str) -> list[dict[str, Any]]:
-        """Get transitive dependency chain — all tasks blocking this one."""
+        """Get unresolved tasks in the transitive dependency chain."""
+        derived = self.derived_completion(kb_name)
+        root = self.get_task(task_id, kb_name, readable_kbs=UNSCOPED)
+        if not root or _effective_status(task_id, derived) in TASK_RESOLVED_STATUSES:
+            return []
+
         result: list[dict[str, Any]] = []
-        visited: set[str] = set()
+        visited = {task_id}
+        stack = [(root, iter(_task_dependency_ids(root)))]
 
-        def _collect_deps(tid: str) -> None:
-            if tid in visited:
-                return
-            visited.add(tid)
+        # Explicit iterator frames preserve the recursive pre-order while
+        # keeping both the call stack and dependency queries bounded by depth.
+        while stack:
+            current, dependencies = stack[-1]
+            try:
+                dep_id = next(dependencies)
+            except StopIteration:
+                stack.pop()
+                continue
 
-            task = self.get_task(tid, kb_name, readable_kbs=UNSCOPED)
-            if not task:
-                return
+            if dep_id in visited:
+                continue
+            visited.add(dep_id)
+            dep = self.get_task(dep_id, kb_name, readable_kbs=UNSCOPED)
+            if not dep or _effective_status(dep_id, derived) in TASK_RESOLVED_STATUSES:
+                continue
 
-            meta = _parse_metadata(task.get("metadata") or {})
-            deps = meta.get("dependencies", []) or task.get("dependencies", []) or []
+            result.append(_task_dependency_summary(dep, derived))
+            stack.append((dep, iter(_task_dependency_ids(dep))))
 
-            for dep_id in deps:
-                if dep_id in visited:
-                    continue
-                dep = self.get_task(dep_id, kb_name, readable_kbs=UNSCOPED)
-                if dep:
-                    result.append(
-                        {
-                            "id": dep["id"],
-                            "title": dep.get("title", ""),
-                            "status": dep.get("status", ""),
-                            "entry_type": dep.get("entry_type", "task"),
-                        }
-                    )
-                    _collect_deps(dep_id)
-
-        _collect_deps(task_id)
         return result
 
     def critical_path(self, task_id: str, kb_name: str) -> list[dict[str, Any]]:
-        """Find the longest chain of unresolved dependencies (critical path).
+        """Find the longest chain of unresolved dependencies iteratively.
 
-        Returns the ordered list of tasks in the longest blocking chain.
-        Handles cycles gracefully via visited set.
+        Returns dependency tasks in order, excluding resolved tasks. A
+        post-order DFS with memoization preserves the longest path through a
+        shared DAG, while active-path detection bounds cycles.
         """
-        visited: set[str] = set()
+        derived = self.derived_completion(kb_name)
+        root = self.get_task(task_id, kb_name, readable_kbs=UNSCOPED)
+        if not root or _effective_status(task_id, derived) in TASK_RESOLVED_STATUSES:
+            return []
 
-        def _longest_chain(tid: str) -> list[dict[str, Any]]:
-            if tid in visited:
-                return []
-            visited.add(tid)
+        tasks = {task_id: root}
+        dependencies_by_task = {task_id: _task_dependency_ids(root)}
+        longest_length: dict[str, int] = {}
+        next_dependency: dict[str, str | None] = {}
+        active = {task_id}
+        frames = [(task_id, iter(dependencies_by_task[task_id]))]
 
-            task = self.get_task(tid, kb_name, readable_kbs=UNSCOPED)
-            if not task:
-                return []
+        while frames:
+            current_id, dependencies = frames[-1]
+            try:
+                dep_id = next(dependencies)
+            except StopIteration:
+                best_id = None
+                best_length = 0
+                for candidate_id in dependencies_by_task[current_id]:
+                    if (
+                        candidate_id not in longest_length
+                        or _effective_status(candidate_id, derived) in TASK_RESOLVED_STATUSES
+                    ):
+                        continue
+                    candidate_length = 1 + longest_length[candidate_id]
+                    if candidate_length > best_length:
+                        best_id = candidate_id
+                        best_length = candidate_length
+                longest_length[current_id] = best_length
+                next_dependency[current_id] = best_id
+                active.remove(current_id)
+                frames.pop()
+                continue
 
-            meta = _parse_metadata(task.get("metadata") or {})
-            deps = meta.get("dependencies", []) or task.get("dependencies", []) or []
+            if (
+                dep_id in active
+                or dep_id in longest_length
+                or _effective_status(dep_id, derived) in TASK_RESOLVED_STATUSES
+            ):
+                continue
 
-            if not deps:
-                return []
+            dep = self.get_task(dep_id, kb_name, readable_kbs=UNSCOPED)
+            if not dep:
+                continue
+            tasks[dep_id] = dep
+            dependencies_by_task[dep_id] = _task_dependency_ids(dep)
+            active.add(dep_id)
+            frames.append((dep_id, iter(dependencies_by_task[dep_id])))
 
-            best_chain: list[dict[str, Any]] = []
-            for dep_id in deps:
-                dep = self.get_task(dep_id, kb_name, readable_kbs=UNSCOPED)
-                if not dep:
-                    continue
-                sub_chain = _longest_chain(dep_id)
-                candidate = [
-                    {
-                        "id": dep["id"],
-                        "title": dep.get("title", ""),
-                        "status": dep.get("status", ""),
-                        "entry_type": dep.get("entry_type", "task"),
-                    }
-                ] + sub_chain
-                if len(candidate) > len(best_chain):
-                    best_chain = candidate
+        result: list[dict[str, Any]] = []
+        next_id = next_dependency[task_id]
+        while next_id is not None:
+            result.append(_task_dependency_summary(tasks[next_id], derived))
+            next_id = next_dependency[next_id]
+        return result
 
-            return best_chain
 
-        return _longest_chain(task_id)
+def _task_dependency_ids(task: dict[str, Any]) -> list[str]:
+    """Return a task's dependency IDs in their stored order."""
+    metadata = _parse_metadata(task.get("metadata") or {})
+    dependencies = metadata.get("dependencies") or task.get("dependencies") or []
+    if isinstance(dependencies, str):
+        return [dependencies] if dependencies else []
+    if not isinstance(dependencies, list | tuple):
+        return []
+    return [dependency for dependency in dependencies if isinstance(dependency, str)]
+
+
+def _effective_status(task_id: str, derived: dict[str, dict[str, Any]]) -> str:
+    """Return the status task readers should use for dependency decisions."""
+    return str((derived.get(task_id) or no_derived()).get("effective_status", "open"))
+
+
+def _task_dependency_summary(
+    task: dict[str, Any], derived: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """Build the read-only row returned by dependency tools."""
+    task_id = task["id"]
+    return {
+        "id": task_id,
+        "title": task.get("title", ""),
+        "status": task.get("status", ""),
+        "entry_type": task.get("entry_type", "task"),
+        "derived": derived.get(task_id) or no_derived(),
+    }
 
 
 def _parse_metadata(raw) -> dict[str, Any]:

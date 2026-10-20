@@ -27,11 +27,13 @@ Three kinds of test live here, each entering at the command line:
 from __future__ import annotations
 
 import ast
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 import textwrap
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
@@ -322,10 +324,22 @@ def inproc(tmp_path):
     db = PyriteDB(tmp_path / "index.db")
     IndexManager(db, config).index_all()
     db.close()
-    with (
-        patch("pyrite.cli.load_config", return_value=config),
-        patch("pyrite.cli.context.load_config", return_value=config),
-    ):
+    # Every CLI module loads the config under its own name and resolves the
+    # KB it was given against it (#952); an extension's commands included.
+    modules = ["pyrite.cli", "pyrite.cli.context"] + [
+        f"{ext}.cli"
+        for ext in (
+            "pyrite_journalism_investigation",
+            "pyrite_software_kb",
+            "pyrite_zettelkasten",
+            "pyrite_encyclopedia",
+            "pyrite_social",
+        )
+        if importlib.util.find_spec(ext) is not None
+    ]
+    with ExitStack() as stack:
+        for module in modules:
+            stack.enter_context(patch(f"{module}.load_config", return_value=config))
         yield {"config": config, "tmp": tmp_path, "kb": kb_path}
 
 
@@ -447,7 +461,9 @@ class _Venv:
 
         self.root = root
         venv = root / "venv"
-        subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, capture_output=True)
+        subprocess.run(
+            [sys.executable, "-m", "venv", str(venv)], check=True, capture_output=True, timeout=120
+        )
         self.python = venv / "bin" / "python"
         site_dir = next(venv.glob("lib/python*/site-packages"))
         # pyrite's dependencies (and setuptools, for the offline editable build).
@@ -590,8 +606,10 @@ class TestBacklinksOfALinkedToMissingPage:
             out = cli.run(entry, "backlinks", "ghost-page", "-k", "demo", "--format", "json")
             assert out.returncode == 0, out.stdout + out.stderr
             payload = json.loads(out.stdout)
-            assert payload["total"] == 1, payload
-            assert payload["entries"][0]["id"] == "linker"
+            # Two links, two rows (#1009): the frontmatter item and the body
+            # wikilink, each its own backlink.
+            assert payload["total"] == 2, payload
+            assert [e["id"] for e in payload["entries"]] == ["linker", "linker"]
 
 
 class TestBatchRead:
@@ -613,7 +631,7 @@ class TestKbCommit:
             ["config", "user.email", "t@example.invalid"],
             ["config", "user.name", "T"],
         ):
-            subprocess.run(["git", *args], cwd=cli.kb, check=True, capture_output=True)
+            subprocess.run(["git", *args], cwd=cli.kb, check=True, capture_output=True, timeout=120)
 
     def test_a_hook_that_rejects_the_commit_is_a_failure(self, cli):
         self._git(cli)
@@ -935,7 +953,6 @@ SAFE = {
     "pyrite auth github-login": "one credential store; failure raises",
     "pyrite auth github-logout": "one credential store; failure raises",
     "pyrite auth github-setup": "one credential store; failure raises",
-    "pyrite cascade backfill-ji": "single backfill pass; scans clean",
     "pyrite ci": "exits non-zero on the checks' own result",
     "pyrite db backup": "one file copy; failure raises",
     "pyrite db restore": "one file copy; failure raises",
@@ -1022,10 +1039,6 @@ SAFE = {
 READ_ONLY = [
     "pyrite auth status",
     "pyrite auth whoami",
-    "pyrite cascade audit-compat",
-    "pyrite cascade export",
-    "pyrite cascade extract-actors",
-    "pyrite cascade suggest-aliases",
     "pyrite collections list",
     "pyrite collections query",
     "pyrite config",
@@ -1525,6 +1538,8 @@ def _renderers(tree: ast.AST) -> set[str]:
 
 SCANNED = [
     *sorted((REPO / "pyrite" / "cli").glob("*.py")),
+    # Code a CLI command delegates to, whose handlers decide its exit status.
+    REPO / "pyrite" / "services" / "file_search.py",
     REPO / "pyrite" / "read_cli.py",
     REPO / "pyrite" / "admin_cli.py",
     *sorted((REPO / "extensions").glob("*/src/*/cli*.py")),
@@ -1572,6 +1587,10 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
     ("extensions/social/src/pyrite_social/cli.py", "social_top"): (
         "safe",
         "bad metadata reads as empty",
+    ),
+    ("extensions/software-kb/src/pyrite_software_kb/cli.py", "sw_migrate_standards"): (
+        "fixed",
+        "TestJournalismAndSoftwareResults",
     ),
     ("extensions/software-kb/src/pyrite_software_kb/cli.py", "_query_entries"): (
         "safe",
@@ -1686,6 +1705,10 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "a class that cannot be inspected is skipped; failures counted exit 1",
     ),
     ("pyrite/cli/protocol_commands.py", "protocol_list"): ("safe", "registry fallback"),
+    ("pyrite/cli/schema_commands.py", "detect_id_collisions"): (
+        "safe",
+        "a title that derives no id (list, mapping, NaN) has nothing to collide; qa reports it (#711)",
+    ),
     ("pyrite/cli/schema_commands.py", "_get_git_changed_md_files"): (
         "safe",
         "no git means no changed-file filter",
@@ -1694,12 +1717,11 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "safe",
         "appends to the errors list the command exits on",
     ),
-    ("pyrite/cli/schema_commands.py", "schema_migrate"): ("fixed", "TestSchemaMigrate"),
     ("pyrite/cli/schema_commands.py", "schema_validate"): (
         "safe",
         "path outside the KB is skipped",
     ),
-    ("pyrite/cli/search_commands.py", "_search_files"): ("fixed", "TestSearchFiles"),
+    ("pyrite/services/file_search.py", "search_kb_files"): ("fixed", "TestSearchFiles"),
     ("pyrite/cli/search_commands.py", "_warn_if_stale"): ("safe", "a probe for a warning"),
     ("pyrite/cli/task_commands.py", "_task_get_impl"): ("safe", "bad metadata reads as empty"),
 }
@@ -1743,11 +1765,25 @@ PRINTS: dict[tuple[str, str], tuple[str, str]] = {
         "index health exits 1 when unhealthy, in its caller",
     ),
     ("pyrite/cli/kb_commands.py", "kb_gc"): ("safe", "'red' is colour: each removal is reported"),
+    ("pyrite/cli/kb_commands.py", "kb_health"): (
+        "safe",
+        "a report: a kb.yaml that fails to load is a finding, not a failed effect",
+    ),
     ("pyrite/cli/kb_commands.py", "kb_validate"): (
         "safe",
         "exits 1 on structural errors, 2 on drift",
     ),
     ("pyrite/cli/protocol_commands.py", "protocol_check"): ("safe", "exits 1 when a check fails"),
+    ("pyrite/cli/qa_commands.py", "qa_assess"): (
+        "left",
+        "#795: a KB run lists entries not assessed and tasks not created; the exit "
+        "for a partial result is ADR-0046 slice 6",
+    ),
+    ("pyrite/cli/qa_commands.py", "qa_fix"): (
+        "left",
+        "#795/#788: the report lists fixes whose write failed under Failed; the exit "
+        "for a partial result is ADR-0046 slice 6",
+    ),
     ("pyrite/cli/qa_commands.py", "qa_check_urls"): (
         "safe",
         "broken URLs are the report the command exists to give, as qa validate's findings are",

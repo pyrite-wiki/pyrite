@@ -43,7 +43,7 @@ def generate_event_id(date: str, title: str) -> str:
 _ID_MAX_LEN = 80
 
 
-def generate_entry_id(title: str) -> str:
+def generate_entry_id(title: Any) -> str:
     """Generate an entry id (and therefore a filename stem) from a title.
 
     Always non-empty, always matches ``^[a-z0-9][a-z0-9-]{0,79}$``:
@@ -55,16 +55,40 @@ def generate_entry_id(title: str) -> str:
       than an empty id and a confusing "Entry must have an ID";
     - the slug is capped at 80 characters, cut at a word boundary, so the
       filename always fits.
+    - a non-string YAML scalar title (``title: 1e3``, ``title: 2024``,
+      ``title: true``) is stringified before slugging (#704), so the file
+      is indexed instead of silently skipped. The id comes from the value
+      YAML parsed, not the source text, so spellings that parse equal
+      (``1.10`` and ``1.1``, ``1e3`` and ``1000.0``, ``.inf`` and ``-.inf`` both ``inf``) collide; ``ids missing``
+      reports the collision. A title that is a mapping, a sequence or NaN
+      raises ``TypeError`` with a named reason (#711): the ids and index
+      paths skip such a file with that reason.
 
-    Plain ASCII titles produce exactly what they always did, so existing ids
-    do not change. Every place that turns a title into a filename must use
+    Plain ASCII string titles produce exactly what they always did. A title
+    YAML reads as a falsy scalar (``false``, ``0``, ``0.0``, ``-0``) keeps the
+    ``entry-da39a3ee`` empty-title id it had before #704, so upgrading moves
+    no id and breaks no link; the limit is that two such files share that id,
+    which ``ids missing`` reports as a collision. Every place that turns a title into a filename must use
     this function (the ``sw new-adr`` CLI and MCP tool once let ``/`` and
     ``:`` through).
     """
     import hashlib
+    import math
     import unicodedata
 
-    text = unicodedata.normalize("NFKD", title or "")
+    if isinstance(title, (list, tuple, dict)):
+        raise TypeError(f"cannot derive an id: title is a {type(title).__name__}")
+    if isinstance(title, float) and math.isnan(title):
+        raise TypeError("cannot derive an id: title is NaN")
+    if not title:
+        # None, "" and falsy scalars (0, False, 0.0) all slug as the empty
+        # title, as they did before #704, so no existing id moves.
+        title_str = ""
+    elif isinstance(title, str):
+        title_str = title
+    else:
+        title_str = str(title)
+    text = unicodedata.normalize("NFKD", title_str or "")
     text = "".join(c for c in text if not unicodedata.combining(c))
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     if len(slug) > _ID_MAX_LEN:
@@ -72,6 +96,6 @@ def generate_entry_id(title: str) -> str:
         slug = head.rsplit("-", 1)[0] if "-" in head else head
         slug = slug.strip("-")
     if not slug:
-        digest = hashlib.sha1((title or "").encode("utf-8")).hexdigest()[:8]
+        digest = hashlib.sha1((title_str or "").encode("utf-8")).hexdigest()[:8]
         slug = f"entry-{digest}"
     return slug

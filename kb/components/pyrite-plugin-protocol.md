@@ -33,7 +33,7 @@ The single extension point for all domain-specific capabilities. A `@runtime_che
 
 **Configuration**
 
-- `get_kb_presets()` — preset configs for `kb init --preset`
+- `get_kb_presets()` — preset configs, used by `pyrite init --template <name>`
 - `set_context(ctx)` — receive shared config/db from the plugin registry at startup
 
 ## Implementors
@@ -42,10 +42,9 @@ All extension plugins implement this protocol:
 
 - `software-kb` — components, ADRs, backlog, standards
 - `zettelkasten` — atomic notes, literature notes
-- `social` — posts, threads, profiles
+- `social` — writeups, user profiles
 - `encyclopedia` — articles, stubs
 - `journalism-investigation` — sources, claims, entities, connections
-- `cascade` — capture events, snapshots, diffs
 
 ## Consumers
 

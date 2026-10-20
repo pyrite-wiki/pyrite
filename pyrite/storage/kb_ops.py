@@ -136,7 +136,9 @@ class KBOpsMixin:
             rows = self.session.execute(
                 text(
                     "SELECT name, path, kb_type, description, default_role "
-                    "FROM kb WHERE source = 'user'"
+                    # A row with no source is a user row, as the registry
+                    # and the resolver read it (`source or "user"`).
+                    "FROM kb WHERE source = 'user' OR source IS NULL"
                 )
             ).fetchall()
             # End the read transaction: a session left inside one blocks WAL

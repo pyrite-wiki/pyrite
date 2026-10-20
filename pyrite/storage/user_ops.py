@@ -6,15 +6,22 @@ Uses ORM session for all writes.
 """
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func
+from sqlalchemy.orm import Session
 
 from .models import EntryVersion, Repo, User, WorkspaceRepo
 
 
 class UserOpsMixin:
     """User management, repo registration, workspace, and entry versions."""
+
+    if TYPE_CHECKING:
+        # Supplied by ConnectionMixin in PyriteDB; declared here so the mixin
+        # type-checks on its own. Typing only, nothing exists at runtime.
+        @property
+        def session(self) -> Session: ...
 
     # =========================================================================
     # Users
@@ -290,6 +297,23 @@ class UserOpsMixin:
         elif file_path is not None and existing.file_path is None:
             existing.file_path = file_path
             self.session.commit()
+
+    def list_entry_version_rows(self, entry_id: str, kb_name: str) -> list[tuple[str, str | None]]:
+        """Every (commit_hash, file_path) row recorded for this entry, unpaged."""
+        rows = (
+            self.session.query(EntryVersion.commit_hash, EntryVersion.file_path)
+            .filter_by(entry_id=entry_id, kb_name=kb_name)
+            .all()
+        )
+        return [(h, p) for h, p in rows]
+
+    def delete_entry_version(self, entry_id: str, kb_name: str, commit_hash: str) -> None:
+        """Delete one derived version row (attribution does this only for a
+        row the version read would refuse, #453)."""
+        self.session.query(EntryVersion).filter_by(
+            entry_id=entry_id, kb_name=kb_name, commit_hash=commit_hash
+        ).delete(synchronize_session=False)
+        self.session.commit()
 
     def get_entry_versions(
         self, entry_id: str, kb_name: str, limit: int = 50

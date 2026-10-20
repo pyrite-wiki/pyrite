@@ -223,13 +223,15 @@ def test_an_explicit_update_of_a_kept_key_still_lands(tmp_path, value):
 
 
 @pytest.mark.control(
-    reason="an in-place change always reached the file; this pins that the "
-    "kept-source rule notices a field changed without an assignment"
+    reason="only the docstring changed in #975 fix round 1 (it said `links: [alpha]` for the "
+    "block form it builds); the behaviour it pins held before"
 )
-def test_an_in_place_change_of_a_kept_key_still_lands(tmp_path):
-    """`links: [alpha]` is kept as written until something changes the list;
-    `add_link` appends to it in place, without assigning the attribute, and
-    that change must still reach the file."""
+def test_a_link_added_to_a_kept_shorthand_list_leaves_the_shorthand_as_written(tmp_path):
+    """A bare item, `links:` then `- alpha`, is a shorthand the model reads
+    lossily (`alpha` is a target with the default relation). `add_link` used
+    to re-emit the whole list in the model's shape (`- target: alpha`); since
+    #955 (B6 P4) it appends one item and the shorthand keeps its bytes, and
+    the model still reads both links."""
     text = "---\nid: d\ntitle: D\ntype: note\nlinks:\n- alpha\n---\n\nBody.\n"
     other = "---\nid: beta\ntitle: Beta\ntype: note\n---\n\nBody.\n"
     config, kb_path = _env(tmp_path, {"notes/d.md": text, "notes/beta.md": other})
@@ -238,7 +240,8 @@ def test_an_in_place_change_of_a_kept_key_still_lands(tmp_path):
 
     saved = KBRepository(config.get_kb(KB)).load("d")
     assert [link.target for link in saved.links] == ["alpha", "beta"]
-    assert "- alpha" not in (kb_path / "notes" / "d.md").read_text(encoding="utf-8")
+    after = (kb_path / "notes" / "d.md").read_text(encoding="utf-8")
+    assert "links:\n- alpha\n- target: beta\n" in after, after
 
 
 @pytest.mark.control(
@@ -260,28 +263,6 @@ def test_a_legacy_alias_key_is_not_written_back_beside_its_canonical_key(tmp_pat
     fm = load_yaml((kb_path / "events" / "e.md").read_text(encoding="utf-8").split("---")[1])
     assert fm["title"] == "E2"
     assert not ("participants" in fm and "actors" in fm), fm
-
-
-@pytest.mark.control(
-    reason="a `body:`/`file_path:` frontmatter key (the #87 fold) was always "
-    "dropped on save (#150's cleanup); this pins that it still is"
-)
-def test_a_folded_body_key_is_still_dropped(tmp_path):
-    """`body` and `file_path` are entry attributes, never frontmatter. A file
-    that carries them as keys is the #87 corruption, which a save cleans up;
-    keeping unrepresented keys must not undo that."""
-    text = (
-        "---\nid: d\ntitle: D\ntype: draft\ndraft_status: brief\n"
-        "body: a stale folded copy\nfile_path: /somewhere/d.md\n---\n\nBody.\n"
-    )
-    config, kb_path = _env(tmp_path, {"d.md": text})
-
-    _with_service(config, lambda svc: svc.update("d", KB, {"draft_status": "ready"}))
-
-    after = (kb_path / "d.md").read_text(encoding="utf-8")
-    assert "draft_status: ready" in after
-    assert "stale folded copy" not in after
-    assert "file_path:" not in after
 
 
 def test_unrepresented_frontmatter_names_only_what_the_model_cannot_write(tmp_path):

@@ -109,11 +109,23 @@ class ApiClient {
 		if (typeof detail === 'string') {
 			message = detail;
 		} else if (detail && typeof detail === 'object') {
-			message = (detail as { hint?: string; message?: string }).hint ?? (detail as { message?: string }).message ?? JSON.stringify(detail);
+			// The message names what was refused (the KB, the entry); the hint
+			// says what to do about it. Both, in that order: a hint alone
+			// ("list the KBs you can read") hides which name was wrong.
+			const { hint, message: msg } = detail as { hint?: string; message?: string };
+			message = msg && hint ? `${msg}. ${hint}` : (msg ?? hint ?? JSON.stringify(detail));
 		} else {
 			message = error.message ?? res.statusText;
 		}
-		throw new ApiError(res.status, message);
+		const structured =
+			detail && typeof detail === 'object'
+				? (detail as { code?: unknown; candidate_kbs?: unknown })
+				: {};
+		const code = typeof structured.code === 'string' ? structured.code : undefined;
+		const candidateKbs = Array.isArray(structured.candidate_kbs)
+			? structured.candidate_kbs.filter((k): k is string => typeof k === 'string')
+			: undefined;
+		throw new ApiError(res.status, message, code, candidateKbs);
 	}
 
 	private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -448,10 +460,6 @@ class ApiClient {
 
 	async getIndexJobs(): Promise<IndexJobsResponse> {
 		return this.request('/api/index/jobs');
-	}
-
-	async renderSiteCache(): Promise<{ rendered: boolean; kbs: number; entries: number; errors: number }> {
-		return this.request('/api/site/render', { method: 'POST' });
 	}
 
 	// Starred Entries
@@ -939,11 +947,17 @@ class ApiClient {
 export class ApiError extends Error {
 	status: number;
 	detail: string;
+	/** The refusal's machine code (`AMBIGUOUS`, `NOT_FOUND`, ...), when the server sent one. */
+	code?: string;
+	/** For `AMBIGUOUS`: every readable KB that holds the id (#528). */
+	candidateKbs?: string[];
 
-	constructor(status: number, detail: string) {
+	constructor(status: number, detail: string, code?: string, candidateKbs?: string[]) {
 		super(`API Error ${status}: ${detail}`);
 		this.status = status;
 		this.detail = detail;
+		this.code = code;
+		this.candidateKbs = candidateKbs;
 	}
 }
 

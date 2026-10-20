@@ -7,11 +7,6 @@ tags:
 - agents
 - dx
 - schema
-metadata:
-  kind: improvement
-  status: completed
-  priority: medium
-  effort: m
 kind: improvement
 status: done
 priority: medium

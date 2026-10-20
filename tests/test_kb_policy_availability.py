@@ -1,14 +1,11 @@
 """The default_role fix never costs availability.
 
 The access properties (tests/test_default_role_change_takes_effect.py) must
-not turn into a dark public site or a blocked admin:
+not turn into a blocked admin:
 
-- removing a KB by any path keeps the `/site` landing served;
 - an admin can change the role of any KB the server manages itself (a
   registry KB, an ephemeral one, a repo-subscribed one); only a KB an
   operator wrote by hand into config.yaml is refused, naming that file;
-- an unrendered public entry answers `/site` exactly as a private or a
-  missing one does;
 - a registry update never leaves a window where the KB is missing, nor
   mutates the lookup `all_kbs()` iterates.
 """
@@ -24,14 +21,23 @@ from pyrite import config as config_module
 from pyrite.config import AuthConfig, KBConfig, PyriteConfig, Settings
 from pyrite.server.api import create_app
 from pyrite.services.kb_registry_service import KBRegistryService
-from pyrite.services.public_kbs import public_kb_names
-from pyrite.services.site_cache import SiteCacheService
 from pyrite.storage.database import PyriteDB
 from tests.auth_seed import app_db
 
 KEY = "operator-key"
 ADMIN = {"X-API-Key": KEY}
 YAML_KB, REPO_KB, EPH_KB = "yaml-kb", "repo-kb", "eph-kb"
+
+
+def _anonymous_reads(config, name: str, anonymous_tier: str = "read") -> bool:
+    """What the access policy gives an anonymous visitor on `name`: the one
+    rule (`kb_role`, step 5) every anonymous surface resolves through."""
+    from pyrite.services.access_policy import kb_role
+
+    kb = config.get_kb(name)
+    if kb is None:
+        return False
+    return kb_role(None, None, lambda: None, kb.default_role, anonymous_tier) is not None
 
 
 def _entry(eid: str, kb: str, title: str = "") -> dict:
@@ -120,7 +126,7 @@ class TestServerManagedKBsAreEditable:
         r = _set_role(world["client"], "typed", "read")
         assert r.status_code == 409, r.text
         assert config_file.read_bytes() == before
-        assert "typed" not in public_kb_names(world["config"])
+        assert world["config"].get_kb("typed").default_role is None
 
     def test_a_hand_written_ephemeral_key_outside_the_root_is_the_operators(self, world, tmp_path):
         (tmp_path / "eph-typed").mkdir()
@@ -137,7 +143,7 @@ class TestServerManagedKBsAreEditable:
         r = _set_role(world["client"], REPO_KB, "none")
         assert r.status_code == 200, r.text
         assert world["config"].get_kb(REPO_KB).default_role == "none"
-        assert REPO_KB not in public_kb_names(world["config"])
+        assert not _anonymous_reads(world["config"], REPO_KB)
         saved = config_module.load_config()
         assert saved.get_kb(REPO_KB).default_role == "none"
 
@@ -147,7 +153,7 @@ class TestServerManagedKBsAreEditable:
         EphemeralKBService(world["config"], app_db(world["app"])).create_ephemeral_kb(EPH_KB)
         r = _set_role(world["client"], EPH_KB, "read")
         assert r.status_code == 200, r.text
-        assert EPH_KB in public_kb_names(world["config"])
+        assert _anonymous_reads(world["config"], EPH_KB)
         assert config_module.load_config().get_kb(EPH_KB).default_role == "read"
 
     def test_a_refused_save_changes_nothing(self, world, monkeypatch):
@@ -196,97 +202,6 @@ class TestARefusedSaveOnALongLivedSession:
                 registry.update_kb("r", default_role="read")
             db.session.commit()
             assert registry.registered_default_role("r") is None
-
-
-class TestRemovingAKBKeepsTheLandingUp:
-    """Every removal path drops the KB's pages and re-renders the landing,
-    so the manifest never names a KB that is gone."""
-
-    def _render_with(self, world, kb):
-        db = app_db(world["app"])
-        db.upsert_entry(_entry("doc", kb))
-        SiteCacheService(world["config"], db).render_all()
-        cache = world["tmp"] / "site-cache"
-        assert (cache / kb).is_dir()
-        return cache
-
-    def _assert_landing_up_without(self, world, cache, kb):
-        import json
-
-        public = set(public_kb_names(world["config"]))
-        assert not (cache / kb).exists()
-        listed = json.loads((cache / ".landing-kbs.json").read_text())  # LANDING_MANIFEST
-        assert kb not in listed
-        assert set(listed) <= public
-        r = world["client"].get("/site")
-        assert r.headers["X-Pyrite-Cache"] == "HIT"
-        assert YAML_KB in r.text
-
-    def test_expiring_a_public_ephemeral_kb(self, world):
-        from pyrite.services.ephemeral_service import EphemeralKBService
-
-        svc = EphemeralKBService(world["config"], app_db(world["app"]))
-        svc.create_ephemeral_kb(EPH_KB, default_role="read")
-        cache = self._render_with(world, EPH_KB)
-        assert svc.force_expire_kb(EPH_KB) is True
-        self._assert_landing_up_without(world, cache, EPH_KB)
-
-    def test_unsubscribing_a_public_repo_kb(self, world):
-        from unittest.mock import patch
-
-        from pyrite.services.repo_service import RepoService
-
-        db = app_db(world["app"])
-        db.add_workspace_repo(db.get_local_user()["id"], world["repo"]["id"])
-        cache = self._render_with(world, REPO_KB)
-        with patch("pyrite.services.repo_service.save_config"):
-            assert RepoService(world["config"], db).unsubscribe("org/x")["success"] is True
-        self._assert_landing_up_without(world, cache, REPO_KB)
-
-
-class TestOnDemandRendering:
-    def test_never_renders_where_site_does_not_serve_from(self, world, monkeypatch, tmp_path):
-        """/site serves $PYRITE_DATA_DIR/site-cache; the renderer writes
-        beside the index. When they differ, a stale landing is withheld, not
-        rendered into a directory nobody serves."""
-        served = tmp_path / "served"
-        (served / "site-cache").mkdir(parents=True)
-        (served / "site-cache" / "index.html").write_text("<html>old landing</html>")
-        monkeypatch.setenv("PYRITE_DATA_DIR", str(served))
-        app = create_app(config=world["config"])
-        r = TestClient(app).get("/site")
-        assert r.headers["X-Pyrite-Cache"] == "MISS"
-        assert not (world["tmp"] / "site-cache").exists()
-
-
-class TestAnUnrenderedPublicEntry:
-    def test_answers_exactly_as_a_private_or_missing_entry(self, world):
-        c = world["client"]
-        db = app_db(world["app"])
-        db.register_kb(
-            "closed-kb", "generic", str(world["tmp"]), source="user", default_role="none"
-        )
-        db.upsert_entry(_entry("rendered", YAML_KB))
-        db.upsert_entry(_entry("secret", "closed-kb"))
-        SiteCacheService(world["config"], db).render_all()
-        db.upsert_entry(_entry("not-yet", YAML_KB))  # public, never rendered
-
-        answers = [
-            c.get(f"/site/{YAML_KB}/not-yet"),
-            c.get(f"/site/{YAML_KB}/no-such-entry"),
-            c.get("/site/closed-kb/secret"),
-            c.get("/site/no-such-kb/x"),
-        ]
-        assert [r.status_code for r in answers] == [404] * 4
-        assert len({r.text for r in answers}) == 1
-        assert c.get(f"/site/{YAML_KB}/rendered").status_code == 200
-
-    def test_in_a_public_kb_never_rendered_at_all(self, world):
-        c = world["client"]
-        app_db(world["app"]).upsert_entry(_entry("not-yet", YAML_KB))
-        r = c.get(f"/site/{YAML_KB}/not-yet")
-        assert r.status_code == 404
-        assert r.text == c.get("/site/no-such-kb/x").text
 
 
 class TestNoGapDuringARegistryUpdate:
@@ -370,140 +285,6 @@ class TestAKBChangeIsSerialised:
         saved = config_module.load_config().get_kb(REPO_KB).default_role
         assert config.get_kb(REPO_KB).default_role == "read"
         assert saved == "read", "the file kept a value memory and the row rolled back from"
-
-
-class TestOneRenderPerStalePage:
-    """A stale landing costs one render, however many visitors find it, and
-    a failing render is not retried on every anonymous GET."""
-
-    @pytest.fixture
-    def stale(self, world):
-        db = app_db(world["app"])
-        db.upsert_entry(_entry("doc", YAML_KB))
-        SiteCacheService(world["config"], db).render_all()
-        (world["tmp"] / "site-cache" / ".landing-kbs.json").unlink()  # stale: no manifest
-        return world
-
-    def test_concurrent_visitors_produce_one_render(self, stale, monkeypatch):
-        import time
-
-        import anyio
-        import httpx
-
-        calls = []
-        real = SiteCacheService.render_landing
-
-        def slow(self):
-            calls.append(1)
-            time.sleep(0.3)
-            return real(self)
-
-        monkeypatch.setattr(SiteCacheService, "render_landing", slow)
-        app = stale["app"]
-
-        async def visit_all():
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://testserver"
-            ) as http:
-                results = []
-
-                async def one():
-                    results.append(await http.get("/site"))
-
-                async with anyio.create_task_group() as tg:
-                    for _ in range(8):
-                        tg.start_soon(one)
-                return results
-
-        with TestClient(app) as c:
-            results = c.portal.call(visit_all)
-        assert len(calls) == 1
-        assert {r.status_code for r in results} == {200}
-        assert app.state.site_refresh.renders == 1
-
-    def test_the_render_re_checks_freshness_under_the_lock(self, stale):
-        refresher = stale["app"].state.site_refresh
-        served = stale["tmp"] / "site-cache"
-        refresher.refresh(served, "landing", None)
-        refresher.refresh(served, "landing", None)  # saw it stale too; it is fresh now
-        assert refresher.renders == 1
-
-    def test_a_failing_render_is_not_retried_on_every_visit(self, stale, monkeypatch):
-        def broken(self):
-            raise OSError("disk full")
-
-        monkeypatch.setattr(SiteCacheService, "render_landing", broken)
-        refresher = stale["app"].state.site_refresh
-        for _ in range(5):
-            assert stale["client"].get("/site").headers["X-Pyrite-Cache"] == "MISS"
-        assert refresher.renders == 1
-
-        refresher.backoff_seconds = 0.0  # the backoff has passed
-        stale["client"].get("/site")
-        assert refresher.renders == 2
-
-    def test_a_visitor_during_a_render_is_answered_without_waiting(self, stale):
-        import threading
-
-        refresher = stale["app"].state.site_refresh
-        answers = []
-        with refresher.lock:  # a render is running
-            t = threading.Thread(target=lambda: answers.append(stale["client"].get("/site")))
-            t.start()
-            t.join(10)
-            assert not t.is_alive(), "the visitor waited for the render"
-        assert answers[0].headers["X-Pyrite-Cache"] == "MISS"
-        assert refresher.renders == 0
-
-
-class TestRefresherGuards:
-    @pytest.fixture
-    def refresher(self, world):
-        db = app_db(world["app"])
-        db.upsert_entry(_entry("doc", YAML_KB))
-        SiteCacheService(world["config"], db).render_all()
-        return world["app"].state.site_refresh, world["tmp"] / "site-cache"
-
-    def test_a_stale_kb_index_is_rendered_once(self, refresher):
-        r, served = refresher
-        (served / YAML_KB / ".index-stale").touch()
-        r.refresh(served, "kb_index", YAML_KB)
-        r.refresh(served, "kb_index", YAML_KB)
-        assert r.renders == 1
-
-    def test_refresh_never_waits_for_a_running_render(self, refresher):
-        import threading
-
-        r, served = refresher
-        (served / ".landing-kbs.json").unlink()
-        done = threading.Event()
-        with r.lock:
-            t = threading.Thread(target=lambda: (r.refresh(served, "landing", None), done.set()))
-            t.start()
-            assert done.wait(10), "refresh waited for the lock"
-        assert r.renders == 0
-
-    def test_may_try_is_false_while_a_render_runs(self, refresher):
-        r, _ = refresher
-        with r.lock:
-            assert r.may_try("landing", None) is False
-        assert r.may_try("landing", None) is True
-
-    def test_a_queued_visitor_does_not_retry_a_render_that_just_failed(
-        self, refresher, monkeypatch
-    ):
-        """Visitors already past `may_try` when the render failed must not
-        each render again."""
-        r, served = refresher
-        (served / ".landing-kbs.json").unlink()
-
-        def broken(self):
-            raise OSError("disk full")
-
-        monkeypatch.setattr(SiteCacheService, "render_landing", broken)
-        r.refresh(served, "landing", None)
-        r.refresh(served, "landing", None)
-        assert r.renders == 1
 
 
 class TestSaveEvidenceAndSequencing:

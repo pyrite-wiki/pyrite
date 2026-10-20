@@ -60,7 +60,11 @@ def test_mcp_info_is_404_not_the_spa_when_mcp_is_unmounted(stub_dist, monkeypatc
     monkeypatch.setattr(sdk_sse.SseServerTransport, "__init__", init_without_owners)
 
     with tempfile.TemporaryDirectory() as d:
-        os.environ.setdefault("PYRITE_DATA_DIR", d)
+        # monkeypatch, not os.environ: a direct setdefault keeps PYRITE_DATA_DIR
+        # set for later tests in the same xdist worker, and _apply_env_overrides
+        # then points their load_config() at this deleted temp dir's empty
+        # index.db (#896).
+        monkeypatch.setenv("PYRITE_DATA_DIR", d)
         with TestClient(create_app()) as client:
             for method, path in (("GET", "/mcp/info"), ("POST", "/mcp/messages/")):
                 resp = client.request(method, path)
@@ -212,9 +216,10 @@ def test_real_routes_under_the_reserved_prefixes_still_win(tmp_path, monkeypatch
 
 
 # Paths that only START with a name the SPA fallback used to refuse. On `dev` the
-# fallback answered 404 for any path beginning "docs", "redoc", "openapi.json",
-# "health", "site" or "viewer" (a string prefix, not a path segment), so a
-# sibling like /docs-old or /healthz never reached the SPA shell. Kept as-is.
+# fallback answered 404 for any path beginning "docs", "redoc", "openapi.json"
+# or "health" (a string prefix, not a path segment), so a sibling like
+# /docs-old or /healthz never reached the SPA shell. Kept as-is. ("site" and
+# "viewer" left the list with the /site renderer, #953.)
 _OLD_FALLBACK_REFUSALS = (
     "/docs-old",
     "/docs/nope",
@@ -222,11 +227,6 @@ _OLD_FALLBACK_REFUSALS = (
     "/openapi.json.bak",
     "/healthz",
     "/health/nope",
-    "/sitemap-old",
-    "/siteX",
-    "/site/unknown",
-    "/viewerX",
-    "/viewer/x",
 )
 
 
@@ -290,3 +290,36 @@ def test_with_no_web_build_unknown_paths_answer_exactly_as_on_dev(tmp_path, monk
             assert resp.status_code == 404, (method, path)
             assert resp.headers["content-type"] == "application/json", (method, path)
             assert resp.json() == {"detail": "Not Found"}, (method, path)
+
+
+_REMOVED_SERVER_PATHS = (
+    "/robots.txt",
+    "/sitemap.xml",
+    "/site",
+    "/site/kb/x",
+    "/viewer",
+    "/viewer/x",
+)
+
+
+@pytest.mark.parametrize("path", _REMOVED_SERVER_PATHS)
+def test_removed_server_paths_are_404_not_the_spa_shell(stub_dist, path):
+    """#953 removed the /site renderer, its sitemap and robots, and /viewer.
+    With a dist mounted the SPA fallback must not answer them with the app's
+    HTML: a crawler reading robots.txt or sitemap.xml must get a 404, not a
+    page, and an old /site link is gone, not silently the app."""
+    with TestClient(create_app()) as client:
+        r = client.get(path)
+    assert r.status_code == 404, (path, r.status_code, r.text[:80])
+    assert "stub spa" not in r.text
+
+
+def test_a_robots_txt_the_build_ships_is_still_served(stub_dist):
+    """SvelteKit's `static/robots.txt` lands in the dist as a real file; the
+    404 is for the removed server route, not for a file the build provides."""
+    (stub_dist / "robots.txt").write_text("User-agent: *\nAllow: /\n")
+    with TestClient(create_app()) as client:
+        r = client.get("/robots.txt")
+    assert r.status_code == 200
+    assert r.text.startswith("User-agent: *")
+    assert r.headers["x-content-type-options"] == "nosniff"

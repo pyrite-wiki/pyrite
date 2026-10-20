@@ -1,1 +1,1 @@
-Index health now reports unreadable files and IDs replaced in place, and marks either finding unhealthy instead of silently passing.
+`index health` now reports files it cannot read (`unreadable_files`) and index rows whose id no file holds any more (`orphaned_entries`), and marks either unhealthy instead of silently passing; `pyrite-admin index health` counts both.

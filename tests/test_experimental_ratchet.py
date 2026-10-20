@@ -480,3 +480,138 @@ class TestEveryKindOfNewsIsFiledOnDev:
         proc, calls = fake_gh({**_result(), "incomplete": "timed out"}, open_issues, views)
         (comment,) = [c for c in calls if c[:2] == ["issue", "comment"]]
         assert comment[2] == "5" and "abc1234" in _body(comment)
+
+
+@pytest.mark.parametrize("location", ["body", "comment"])
+@pytest.mark.parametrize("test_name", ["test_x", "test_x[a-b]"])
+def test_bare_file_collection_failure_is_new_while_named_node_stays_filed(
+    tmp_path, gh_env, location, test_name
+):
+    """Issue #961: a file reference must not hide a new collection failure."""
+    file = "tests/test_a.py"
+    node = f"{file}::{test_name}"
+    text = f"Experimental tests in `{file}` newly failing:\n- `{node}`\n- `docs/example.py`"
+    issue = {
+        "number": 42,
+        "title": f"experimental-broken: {file}",
+        "body": text if location == "body" else "",
+        "comments": [{"body": text}] if location == "comment" else [],
+    }
+    junit = _junit(
+        tmp_path,
+        _case("", "tests.test_a", file, "error"),
+        _case("tests.test_a", test_name, file, "failed"),
+    )
+    known = _known(tmp_path, "# none")
+    output = tmp_path / "result.json"
+    make_env, calls = gh_env
+    proc = _run(
+        "check",
+        "--junit",
+        str(junit),
+        "--known",
+        str(known),
+        "--open-issues",
+        "--run-exit",
+        "1",
+        "--result-json",
+        str(output),
+        env=make_env(open_issues=[issue]),
+    )
+    result = json.loads(output.read_text())
+    assert proc.returncode == 1, proc.stdout
+    assert result["new"] == [file]
+    assert result["filed"] == {node: 42}
+    assert all(call[:2] == ["issue", "list"] for call in calls())
+
+
+@pytest.mark.control(reason="Unchanged prose and full-node cases guard existing behavior.")
+@pytest.mark.parametrize("location", ["body", "comment"])
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Experimental tests in `tests/test_a.py` newly failing", {}),
+        ("See `tests/test_a.py::test_x` for context", {}),
+        ("- `tests/test_a.py::test_x`", {"tests/test_a.py::test_x": 42}),
+        ("- `tests/test_a.py`", {"tests/test_a.py": 42}),
+        (
+            "- `tests/test_a.py::TestA::test_x[a b::c#d]`",
+            {"tests/test_a.py::TestA::test_x[a b::c#d]": 42},
+        ),
+    ],
+)
+def test_only_explicit_bullets_name_filed_failures(monkeypatch, location, text, expected):
+    issue = {
+        "number": 42,
+        "title": "experimental-broken: tests/test_a.py",
+        "body": text if location == "body" else "",
+        "comments": [{"body": text}] if location == "comment" else [],
+    }
+    monkeypatch.setattr(ratchet, "_gh", lambda args: json.dumps([issue]))
+    assert ratchet.open_issue_tests() == expected
+
+
+@pytest.mark.control(reason="Full test-node round trips must remain idempotent.")
+@pytest.mark.parametrize("existing_issue", [False, True])
+@pytest.mark.parametrize("test_name", [None, "test_x", "test_x[a b::c#d]"])
+def test_filed_failure_round_trip_is_not_news_on_repeated_runs(
+    tmp_path, gh_env, existing_issue, test_name
+):
+    """Read the actual filing body/comment back, then repeat without writes."""
+    file = "tests/test_a.py"
+    node = file if test_name is None else f"{file}::{test_name}"
+    junit = _junit(
+        tmp_path,
+        _case(
+            "" if test_name is None else "tests.test_a",
+            "tests.test_a" if test_name is None else test_name,
+            file,
+            "error" if test_name is None else "failed",
+        ),
+    )
+    known = _known(tmp_path, "# none")
+    output = tmp_path / "result.json"
+    make_env, calls = gh_env
+    check_args = (
+        "check", "--junit", str(junit), "--known", str(known), "--open-issues",
+        "--run-exit", "1", "--result-json", str(output),
+    )  # fmt: skip
+    proc = _run(*check_args, env=make_env())
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert json.loads(output.read_text())["new"] == [node]
+
+    issue = {
+        "number": 42,
+        "title": f"experimental-broken: {file}",
+        "body": (
+            f"Experimental tests in `{file}` newly failing:\n- `{file}::test_old`"
+            if existing_issue
+            else ""
+        ),
+        "comments": [],
+    }
+    filing_args = (
+        "file-issues", "--result-json", str(output), "--sha", "abc1234",
+        "--run-url", "https://github.com/o/r/actions/runs/1",
+    )  # fmt: skip
+    proc = _run(
+        *filing_args,
+        env=make_env([issue], {"42": issue}) if existing_issue else make_env(),
+    )
+    assert proc.returncode == 0, proc.stderr
+    (filing,) = [c for c in calls() if c[:2] in (["issue", "create"], ["issue", "comment"])]
+    if existing_issue:
+        issue["comments"] = [{"body": _body(filing)}]
+    else:
+        issue["body"] = _body(filing)
+
+    for _ in range(2):
+        before = len(calls())
+        proc = _run(*check_args, env=make_env([issue]))
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        result = json.loads(output.read_text())
+        assert result["new"] == []
+        assert result["filed"] == {node: 42}
+        proc = _run(*filing_args, env=make_env([issue], {"42": issue}))
+        assert proc.returncode == 0, proc.stderr
+        assert [c[:2] for c in calls()[before:]] == [["issue", "list"]]

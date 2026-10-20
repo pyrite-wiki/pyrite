@@ -101,23 +101,28 @@ def test_index_entry_without_file_save(setup):
 
 
 def test_save_entry_idempotent(setup):
-    """Calling save_entry twice doesn't fail — second call updates."""
+    """A second ``save_entry`` of an entry that exists is refused, and the
+    file and its row keep the first version: the model's whole-file text
+    reaches no existing entry (#978, the maintainer's decision 4). An
+    entry is changed through ``KBService.apply_operations``."""
+    from pyrite.exceptions import EntryExistsError
+
     doc_mgr = setup["doc_mgr"]
     kb = setup["kb"]
     db = setup["db"]
 
     entry = build_entry("note", entry_id="idem-test", title="Version 1", body="v1")
-    doc_mgr.save_entry(entry, "test", kb)
+    file_path = doc_mgr.save_entry(entry, "test", kb)
+    before = file_path.read_bytes()
 
     entry.title = "Version 2"
     entry.body = "v2"
-    file_path = doc_mgr.save_entry(entry, "test", kb)
+    with pytest.raises(EntryExistsError):
+        doc_mgr.save_entry(entry, "test", kb)
 
-    assert file_path.exists()
-    assert "Version 2" in file_path.read_text()
-
+    assert file_path.read_bytes() == before
     row = db.get_entry("idem-test", "test")
-    assert row["title"] == "Version 2"
+    assert row["title"] == "Version 1"
 
 
 # --- File movement on template path change ---
@@ -195,7 +200,11 @@ def test_save_entry_moves_file_on_field_change(template_setup):
 
 
 def test_save_entry_no_move_when_path_unchanged(template_setup):
-    """When the resolved path hasn't changed, no move occurs."""
+    """When the resolved path hasn't changed, a second save is a save over
+    an existing entry: refused (#978, decision 4), the file where it was and
+    nothing else written."""
+    from pyrite.exceptions import EntryExistsError
+
     doc_mgr = template_setup["doc_mgr"]
     kb = template_setup["kb"]
 
@@ -205,12 +214,16 @@ def test_save_entry_no_move_when_path_unchanged(template_setup):
 
     # Save again with same status
     entry.title = "Stay Test Updated"
-    second_path = doc_mgr.save_entry(entry, "test", kb)
+    with pytest.raises(EntryExistsError):
+        doc_mgr.save_entry(entry, "test", kb)
 
-    assert first_path == second_path
-    assert second_path.exists()
+    assert first_path.exists()
+    assert [p.name for p in kb.path.rglob("*.md")] == ["stay-test.md"]
 
 
+@pytest.mark.control(
+    reason="a property that held before #978; its old form re-saved through the whole-file save, which decision 4 made a create, so it updates through KBService.update now"
+)
 def test_save_entry_preserves_deliberate_subdir_on_update(setup):
     """Updating an entry that lives in a non-default subdirectory must keep it
     there, not relocate it to the type-default subdir.
@@ -219,9 +232,9 @@ def test_save_entry_preserves_deliberate_subdir_on_update(setup):
     backlog item done used to move kb/backlog/<id>.md to the generic default
     (kb/notes/), deleting the original.
     """
+    from pyrite.services.kb_service import KBService
     from pyrite.storage.repository import KBRepository
 
-    doc_mgr = setup["doc_mgr"]
     kb = setup["kb"]
     kb_path = setup["kb_path"]
 
@@ -232,13 +245,16 @@ def test_save_entry_preserves_deliberate_subdir_on_update(setup):
     assert placed_path == kb_path / "backlog" / "done" / "placed-note.md"
     assert placed_path.exists()
 
-    # Now update a field via the save_entry (update) path.
-    entry.title = "Placed Updated"
-    new_path = doc_mgr.save_entry(entry, "test", kb)
+    # Now update a field through the update that exists (the whole-file
+    # save reaches no existing entry since #978, decision 4).
+    setup["doc_mgr"]._index_mgr.index_all()
+    KBService(setup["config"], setup["db"]).update(
+        "placed-note", "test", {"title": "Placed Updated"}
+    )
 
     # It must stay in backlog/done, not move to the type default.
-    assert new_path == placed_path, f"file should stay put, moved to {new_path}"
-    assert new_path.exists()
-    assert "Placed Updated" in new_path.read_text()
+    assert placed_path.exists()
+    assert "Placed Updated" in placed_path.read_text()
     # No stray copy at the type default / root.
     assert not (kb_path / "placed-note.md").exists()
+    assert [p.name for p in kb_path.rglob("*.md")] == ["placed-note.md"]

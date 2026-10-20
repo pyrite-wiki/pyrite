@@ -7,6 +7,7 @@
 import { Node, mergeAttributes } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
+import { entryHref } from '$lib/utils/entry-href';
 
 export interface WikilinkOptions {
 	onSearch?: (query: string) => Promise<Array<{ id: string; title: string }>>;
@@ -100,7 +101,8 @@ export const Wikilink = Node.create<WikilinkOptions>({
 						if (target) {
 							const id = (target as HTMLElement).dataset.wikilink;
 							if (id) {
-								window.location.href = `/entries/${encodeURIComponent(id)}`;
+								const kb = (target as HTMLElement).dataset.wikilinkKb || undefined;
+								window.location.href = entryHref(id, kb);
 								return true;
 							}
 						}

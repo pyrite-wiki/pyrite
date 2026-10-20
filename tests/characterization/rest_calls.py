@@ -90,34 +90,37 @@ def _entry_for(kb: str) -> str:
 
 
 _disposable_cache: dict[tuple[str, str], str] = {}
-_disposable_grantee_id: int | None = None
+_DISPOSABLE_GRANTEE = "characterization-disposable-grantee"
 
 
 def _disposable_grantee(world: World) -> int:
     """A local user id that exists ONLY to be the target of a permission
     grant/revoke call -- never one of `world.py`'s own principals (see
-    `POST /api/kbs/{name}/permissions`'s spec for why). Created once,
-    idempotently, and cached at module scope for the life of the process."""
-    global _disposable_grantee_id
-    if _disposable_grantee_id is not None:
-        return _disposable_grantee_id
+    `POST /api/kbs/{name}/permissions`'s spec for why). Created in THIS
+    world's database if it is not there yet, and looked up there every time.
+
+    Not cached at module scope: one xdist worker runs more than one module
+    that builds a world (`test_rest_matrix`, then `test_kb_walk`), and an id
+    cached from the first world names a row the second world's database
+    never had -- the grant then fails its foreign key ("FOREIGN KEY
+    constraint failed" on `kb_permission.user_id`, CI's shard 2 only, since
+    the local run put the two modules on different workers)."""
+    rows = world.db.execute_sql(
+        "SELECT id FROM local_user WHERE username = :u", {"u": _DISPOSABLE_GRANTEE}
+    )
+    if rows:
+        return rows[0]["id"]
     from pyrite.services.auth_service import AuthService
 
     auth_service = AuthService(world.db, world.config.settings.auth)
     try:
-        row = auth_service.create_user(
-            "characterization-disposable-grantee", "password123", role="read"
-        )
-        _disposable_grantee_id = row["id"]
+        return auth_service.create_user(_DISPOSABLE_GRANTEE, "password123", role="read")["id"]
     except ValueError:
-        # Already exists (a re-run within the same process, or a
-        # concurrent xdist worker created it first) -- look it up instead.
+        # A concurrent xdist worker on the same database created it first.
         rows = world.db.execute_sql(
-            "SELECT id FROM local_user WHERE username = :u",
-            {"u": "characterization-disposable-grantee"},
+            "SELECT id FROM local_user WHERE username = :u", {"u": _DISPOSABLE_GRANTEE}
         )
-        _disposable_grantee_id = rows[0]["id"]
-    return _disposable_grantee_id
+        return rows[0]["id"]
 
 
 def _writable_target(world: World, kb: str, call_key: str) -> str:

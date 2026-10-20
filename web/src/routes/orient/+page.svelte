@@ -4,6 +4,7 @@
 	import { kbStore } from '$lib/stores/kbs.svelte';
 	import { typeColor } from '$lib/constants';
 	import { page } from '$app/stores';
+	import { entryHref } from '$lib/utils/entry-href';
 	import { onMount } from 'svelte';
 	import type { KBOrientResponse } from '$lib/api/types';
 
@@ -147,7 +148,7 @@
 					<div class="space-y-1">
 						{#each orient.recent as entry}
 							<a
-								href="/entries/{entry.id}"
+								href={entryHref(entry.id, orient.kb)}
 								class="flex items-center justify-between rounded-lg px-3 py-2 transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"
 							>
 								<div class="flex items-center gap-3">

@@ -38,6 +38,7 @@ from pyrite.cli import app
 from pyrite.exceptions import ValidationError
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models.factory import build_entry
+from pyrite.storage.repository import new_entry_text
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
@@ -232,6 +233,9 @@ CREATE_SURFACES = ["build_entry", "service", "cli", "mcp", "rest_metadata", "res
     ("surface", "entry_type", "name", "value", "comma", "expected"),
     _cells(CREATE_ROWS, CREATE_SURFACES, _DEV_WORKED_CREATE),
 )
+@pytest.mark.control(
+    reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+)
 def test_create_lands_the_name_in_its_file_key(
     tmp_path, surface, entry_type, name, value, comma, expected
 ):
@@ -242,7 +246,7 @@ def test_create_lands_the_name_in_its_file_key(
 
     if surface == "build_entry":
         kwargs = {k: v for k, v in spec.items() if k not in ("entry_type", "title")}
-        text = build_entry(entry_type, title="N", **kwargs).to_markdown()
+        text = new_entry_text(build_entry(entry_type, title="N", **kwargs))
         _assert_lands(_frontmatter(text), expected, f"{surface}:{name}")
         return
     if surface == "service":
@@ -446,7 +450,7 @@ def _conflict_create(tmp_path, surface, pair, equal):
             entry = build_entry(entry_type, title="N", **kwargs, **{alias: value, target: second})
         except ValidationError as e:
             return config, kb, str(e), None
-        return config, kb, None, _frontmatter(entry.to_markdown())
+        return config, kb, None, _frontmatter(new_entry_text(entry))
     if surface in ("service", "service_mixed"):
         if surface == "service":
             spec.update({alias: value, target: second})
@@ -747,14 +751,17 @@ def test_rest_create_forwards_only_what_the_client_sent(tmp_path):
             assert list(kb.rglob("n.md")) == []
 
 
+@pytest.mark.control(
+    reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+)
 @pytest.mark.parametrize("pair", PAIRS, ids=PAIR_IDS)
 def test_the_same_spelling_twice_with_equal_values_is_accepted(tmp_path, pair):
     entry_type, _alias, target, value, _other, expected = pair
     extra = {"date": "2025-01-02"} if entry_type == "event" else {}
     fm = _frontmatter(
-        build_entry(
-            entry_type, title="N", **extra, **{target: value}, metadata={target: value}
-        ).to_markdown()
+        new_entry_text(
+            build_entry(entry_type, title="N", **extra, **{target: value}, metadata={target: value})
+        )
     )
     _assert_lands(fm, expected, "same-spelling-twice")
 

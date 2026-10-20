@@ -239,7 +239,7 @@ ADRs.
 ## Part 2. By ADR
 
 Standing is the audit's ([[adr-audit-2026-10]]), updated for the acceptances of
-2026-10-03.
+2026-10-03. Rows from ADR-0046 on take it from the ADR's own text.
 P1 to P9 are the principles in [[design]]. *supports* = the ADR states the
 principle or something it follows from; *amends* = it changes or is changed by
 it; *predates* = it states the idea before the principle existed.
@@ -268,7 +268,7 @@ it; *predates* = it states the idea before the principle existed.
 | [[adr-0020]] | Kanban entity model | 2026-03-08 | current | Milestone is an entry; lanes are config; the review queue is a computed view. | Classify before modelling: authored, configured, or computed. | predates P4, P7 |
 | [[adr-0021]] | Definition of ready / done gates | 2026-03-09 | current | Gates in `board.yaml`, evaluated at claim and transition; warn by default. | Judgment criteria always pass, so they are guidance; gates inform before they block. | supports P8 |
 | [[adr-0022]] | Typed relationship entries (edge-entities) | 2026-03-09 | current | Relationships that carry data are entries; derived backlinks live in the index only; all endpoints required; a deleted endpoint leaves a broken reference. | First written derive-don't-write: saving an edge must not rewrite two other files. | predates P4; supports P3 |
-| [[adr-0023]] | Static HTML site cache | 2026-03-25 | current; predates ADR-0043 decision 8 | Python-rendered static HTML under `/site/`, rebuilt on index sync. | Two designs were tried and rejected (Quartz export; SvelteKit SSR needing Node). | supports P4; tension with "not a site generator" |
+| [[adr-0023]] | Static HTML site cache | 2026-03-25 | deprecated; removed by #953 | Python-rendered static HTML under `/site/`, rebuilt on index sync. | Two designs were tried and rejected (Quartz export; SvelteKit SSR needing Node). | supports P4; tension with "not a site generator" |
 | [[adr-0024]] | Git worktree collaboration model | 2026-03-30 | contradicted; amended by 0029; replacement ADR-0044 (proposed) | Worktree per user, branch `user/{name}`, in-app merge queue; V1: every KB readable by every authenticated user. | A long-lived branch per user shares one checkout between sessions; "no per-KB permissions in V1" aged out when grants arrived. | P7, P8; superseded in part by ADR-0043 (accepted) |
 | [[adr-0025]] | Release workflow | 2026-04-01 | current, amended by 0032 | `dev` integrates, `main` releases, tags ship; deployment tiers. | A gate the owner can bypass is a convention; one required interpreter missed an environment-dependent bug; two copies of a version drift. | supports P9 |
 | [[adr-0026]] | FIPS and state as promoted columns | 2026-04-10 | current | Promote two frontmatter fields to indexed columns and thread them through search. | The promoted-column pattern ([[adr-0017]]) makes a new filter a mechanical change. | supports P4 |
@@ -291,6 +291,12 @@ it; *predates* = it states the idea before the principle existed.
 | ADR-0043 | Two planes: entries by grant, everything else the operator's | 2026-10-02 | accepted 2026-10-03 | Entries by per-KB grant; the operator's plane for the rest; identity injected by the dispatcher; no anonymous MCP. | Ownership inside the KB lets its writers grant themselves; a per-KB owner role had one use. | states P7, P8; amends [[adr-0037]], [[adr-0006]], [[adr-0004]] |
 | ADR-0044 | Internal pull requests | 2026-10-02 | proposed | A user's write lands in a change set (a git ref); a merge is `merge-tree` plus fast-forward; one landing rule. | Mirror [[adr-0032]] for users; measure git first; reading main while writing a stale copy gave two texts. | supports P7, P8; replaces [[adr-0024]] |
 | ADR-0045 | Types and protocols are the extension interface; serialisation is not | 2026-10-02 | accepted 2026-10-03 | A protocol is a data contract, derived information, explicit operations and refusals; rollup, unblock and evidence are derived; aliases and migrations live in the schema. | Two accepted ADRs disagree on structural versus nominal; 37 extension classes are structure plus serialisation. | states P4, P6; amends [[adr-0014]], [[adr-0040]] |
+| ADR-0046 | A CLI command returns its outcome; one point renders it and sets the exit code | 2026-10-08 | accepted 2026-10-10; amendments of 2026-10-10, 2026-10-13 and 2026-10-15 accepted | A command returns an `Outcome` (done, partial, nothing); a refusal is raised; `PyriteCLIGroup.invoke` alone renders it and sets the exit code (else `NO_OUTCOME`); a usage error is a JSON refusal, exit 2. | 111 `raise typer.Exit` sites and hand-kept tables of 195 commands held the exit-code rule call site by call site, and could not see a failure printed as JSON with exit 0. | states P8; amends [[adr-0037]], [[adr-0040]] |
+| ADR-0047 | Claims are content; verifiers are callers | 2026-10-08 | proposed | `verifiable` is a protocol over `claims` and `corrections`; the verification level is derived, never written; Pyrite runs no model; verdicts are applied in the write path; each claim rule is one function. | A fact-check run refuted 27% of 469 findings for about 30M tokens, and Pyrite had no notion of a claim. | supports P4, P6, P8; builds on ADR-0042, ADR-0045, ADR-0046 |
+| ADR-0048 | A KB declares its text conventions in kb.yaml | 2026-10-15 | accepted 2026-10-15 | A `text:` block in `kb.yaml`; none means today's defaults; it governs only bytes Pyrite creates; `qa` reports files that differ; a `qa fix` rule repairs only when asked. | A one-field update rewrote a BOM, CRLF file as LF without the BOM; nothing said what a KB expects, so each writer guessed. | states P2, P3, P7; builds on ADR-0042 |
+| ADR-0049 | The URL names the KB: scope, address and link meaning, each decided once | 2026-10-15 | accepted 2026-10-15 | Scope lives only in `/kb/<name>/`; an address is `/kb/<kb>/entries/<id>`; one server rule maps wikilink text to (kb, id), a bare target meaning the host KB; the host KB comes from the address. | 18 web files read scope in six ways, and two cold reads of #912 each found the property failing on a new surface. | states P8; related [[adr-0038]] |
+| ADR-0050 | Entry points configure logging; the app factory and the library never do | 2026-10-15 | accepted 2026-10-15 | Only the process's entry point configures logging, once; everything logs under `pyrite`; `pyrite.server.api:app` becomes a lazy entry point. | Under `uvicorn pyrite.server.api:app` no entry point ran, so a WARNING printed nothing and a 500's cause was lost. | supports P8 |
+| ADR-0051 | metadata is not a field: metadata.k is a second spelling of field k | 2026-10-17 | accepted 2026-10-19; amendment of 2026-10-20 marked proposed (#1025, PR #1039) | `metadata.k` is a second spelling of `k`, one level only; one spelling per file, a double spelling reported and its update refused; one enforcement point (`field_at`, `spelling_in`). | A hand list of path forms let the fourth form through, the third round the invariant failed; this repo's KB held 13 doubly spelled entries (47 fields). | supports P5, P8; amends ADR-0042 (accepted) |
 
 ## Part 3. Contradictions and gaps
 
@@ -383,6 +389,6 @@ have not caught up with it; the proposed ADRs named would close most of them.
 - **"Built first for one operator working locally":** ADR-0041 decision 7
   (accepted). [[adr-0007]] and [[adr-0031]] (withdrawn) describe several surfaces
   and audiences.
-- **"Not a site generator. Publishing is an export":** contradicted by accepted
-  [[adr-0023]], which ships a rendered static site; ADR-0043 decision 8
-  (proposed) gives it a job under the policy.
+- **"Not a site generator. Publishing is an export":** [[adr-0023]] shipped a
+  rendered static site; #953 removed it and the ADR is deprecated. A KB is
+  published by a Hugo or Astro site built from its files.

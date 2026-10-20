@@ -8,9 +8,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "test": "vitest run && playwright test",
+    "test": "vitest run && ../scripts/e2e.sh",
     "test:unit": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "../scripts/e2e.sh"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

@@ -34,7 +34,13 @@ KB = "notes"
 
 def _git(cwd: Path, *args: str) -> str:
     r = subprocess.run(
-        ["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True, env=_git_env()
+        ["git", *args],
+        cwd=str(cwd),
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_git_env(),
+        timeout=120,
     )
     return r.stdout
 

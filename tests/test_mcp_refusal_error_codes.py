@@ -200,3 +200,33 @@ class TestValidationSubclassesUnaffected:
         out = _refusal(EntryExistsError("already exists"))
         assert out["error_code"] == "ENTRY_EXISTS"
         assert "legacy_error_code" not in out
+
+
+class TestKbUpdatesOwnOldCode:
+    """``kb_update``'s old handler answered every failure it did not name
+    with ``UPDATE_FAILED`` (its ``except PyriteError`` catch-all), so that,
+    not the module-wide ``REQUEST_REFUSED`` fallback, is the legacy code it
+    carries for a storage fault and for a write that lost the race for its
+    file (#990, the #992 merge review). The storage fault is driven through
+    ``_dispatch_tool`` with a real hard link in
+    ``test_update_walks_every_surface.py``; the race itself (a file that
+    keeps changing under the update) cannot be timed by a test, so the lost
+    race is pinned here, on the one helper both branches of ``_kb_update``
+    answer through."""
+
+    def test_a_lost_race(self):
+        from pyrite.exceptions import ConflictError
+        from pyrite.server.mcp_server import _with_old_kb_update_code
+
+        out = _with_old_kb_update_code(_refusal(ConflictError("the file kept changing")))
+        assert out["error_code"] == "CONFLICT"
+        assert out["legacy_error_code"] == "UPDATE_FAILED"
+        assert out["retryable"] is True
+
+    def test_a_storage_fault(self):
+        from pyrite.server.mcp_server import _with_old_kb_update_code
+
+        out = _with_old_kb_update_code(_refusal(StorageError("disk gone")))
+        assert out["error_code"] == "STORAGE_ERROR"
+        assert out["legacy_error_code"] == "UPDATE_FAILED"
+        assert out["retryable"] is False
