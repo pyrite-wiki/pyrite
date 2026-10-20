@@ -67,9 +67,10 @@ NOT_ECHOED = frozenset({"id", "type", "links", "sources"})
 #: the file itself violates its type's schema, so the validated result is
 #: refused and nothing is written (the property still holds). Named exactly,
 #: so the set changes only on purpose; fix the entry and remove it here.
-KNOWN_REFUSED: dict[str, str] = {
-    "adr-0003": "superseded_by: required_when_superseded",
-}
+#: Empty since #676 (ADR-0042 decision 8): adr-0003's missing `superseded_by`
+#: is a violation already on disk, which an echo that does not touch it
+#: gets as a warning, not a refusal.
+KNOWN_REFUSED: dict[str, str] = {}
 
 
 def _copy_kb_to(tmp_path: Path, source: Path) -> Path:
