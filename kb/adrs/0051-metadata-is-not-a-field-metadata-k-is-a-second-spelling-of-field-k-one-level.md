@@ -235,7 +235,15 @@ REST), search and health.
   `schema migrate` diffs a migration's result against the file.
 - **A double spelling** is left to the model (the top-level spelling wins,
   decision 3) and to `index health`; the lift skips the field, and the
-  read keeps the reported second value under `metadata`.
+  read keeps the reported second value under `metadata`: a read never
+  loses a value the file holds, so a bag key leaves `metadata` only when
+  the read carries the field at its own name with the same value.
+- **Every key the read returns reaches every surface** (REST `GET`, MCP
+  `kb_get`, the CLI's JSON) with the same value. REST's `EntryResponse`
+  declares the stable core and passes every other key through; its fixed
+  field list dropped a lifted field with no slot (a task's `status_reason`,
+  a backlog item's `rank`, `provenance`). A parametrised test compares the
+  three surfaces for one entry of every registered type.
 - A declared field a class never reads from its frontmatter at any
   spelling (protocol mixin fields a class took but did not wire up: a
   person's `location`, an event's `start_date`) has nothing to lift; the

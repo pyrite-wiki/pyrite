@@ -283,10 +283,19 @@ field never appears under the read's `metadata`, which holds only keys the
 type does not declare (a backlog item's `rank` reads at `rank`, never at
 `metadata.rank`; a task's `evidence`, `status_reason` and `parked_awaiting`
 likewise). A key the type does not declare is not lifted: it reads under
-`metadata` only. An echo of a read back through REST `PUT` or MCP
-`kb_update`, with a key added or a field edited, is written. The index row
-(`db.get_entry`, `db.list_entries`, the shape the plugins read) keeps its
-whole `metadata` bag. `aliases` is its own row column, so a file with a
+`metadata` only. A read never loses a value the file holds: a file that
+spells a field twice reads the top-level value at the field's name and
+keeps the nested value under `metadata` (where `index health` reports the
+double spelling), and a declared field a type's class does not read from
+its frontmatter keeps its `metadata` spelling. **Every key the read returns
+reaches every surface** with the same value: REST `GET /api/entries/{id}`
+(`EntryResponse` declares the stable core and passes every other key of the
+read through; a fixed field list used to drop a lifted field), MCP `kb_get`
+and `pyrite get --format json`. An echo of a read back through REST `PUT` or
+MCP `kb_update`, with a key added or a field edited, is written; a `metadata`
+key the file did not hold lands at the top level of the file (decision 6).
+The index row (`db.get_entry`, `db.list_entries`, the shape the plugins
+read) keeps its whole `metadata` bag. `aliases` is its own row column, so a file with a
 top-level `aliases:` reads it at the top level and never under `metadata`,
 and wikilink resolution by alias reads that column (and the bag, for a file
 that nests it). `index health` lists each
