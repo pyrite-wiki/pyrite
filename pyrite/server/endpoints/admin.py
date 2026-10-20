@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
-from ...exceptions import ConfigError, KBNotFoundError, KBProtectedError
+from ...exceptions import ConfigError, KBNotFoundError, KBProtectedError, ValidationError
 from ...services.access_policy import ROLES, AccessPolicy, Action, AnyKB, ReadScope
 from ...services.auth_service import AuthService
 from ...services.embedding_worker import EmbeddingWorker
@@ -228,10 +228,13 @@ def update_kb(
     _resolve_named_kb(request, policy, name)
     try:
         updates = body.model_dump(exclude_unset=True) if body is not None else {}
-        # The registry column is NOT NULL. Clearing a type removes the
-        # specialized type by restoring the same generic default as creation.
+        # A KB always has a type (the registry column is NOT NULL). Refuse
+        # before writing, so the rest of the same request is not applied.
         if "kb_type" in updates and updates["kb_type"] is None:
-            updates["kb_type"] = "generic"
+            raise ValidationError(
+                "kb_type cannot be cleared: a KB always has a type. "
+                "Omit kb_type to keep it, or send the type to change it to."
+            )
         result = registry.update_kb(name, **updates)
     except KBNotFoundError:
         raise HTTPException(

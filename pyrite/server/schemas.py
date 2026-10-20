@@ -40,7 +40,7 @@ class KBListResponse(BaseModel):
 
 
 class KBMetadataUpdateRequest(BaseModel):
-    """Omitted fields stay unchanged; null clears description or resets type to generic."""
+    """Omitted fields stay unchanged; ``description: null`` clears it; ``kb_type: null`` is refused."""
 
     description: str | None = None
     kb_type: str | None = None
