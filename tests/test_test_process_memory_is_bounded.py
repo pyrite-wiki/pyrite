@@ -13,6 +13,7 @@ registers a hook wrapper that asserts once every other teardown impl has run.
 """
 
 import gc
+import time
 import weakref
 
 import pytest
@@ -34,7 +35,8 @@ def clear_fastapi_caches(request):
 
 
 def _who_holds(target, depth=8):
-    """A shortest chain of referrers from `target` to a module or class namespace.
+    """A shortest chain of referrers from `target` to a module or class namespace,
+    or to a live frame of another file (a running thread or generator).
 
     Only read when the canary fails, so CI says what kept an app alive instead
     of only that one was.
@@ -47,15 +49,36 @@ def _who_holds(target, depth=8):
         skip.add(id(level))
         for obj, path in level:
             for ref in gc.get_referrers(obj):
-                if id(ref) in seen or id(ref) in skip or type(ref).__name__ == "frame":
+                if id(ref) in seen or id(ref) in skip:
                     continue
                 seen.add(id(ref))
+                if type(ref).__name__ == "frame":
+                    if ref.f_code.co_filename == __file__:
+                        continue
+                    where = f"{ref.f_code.co_filename.rsplit('/', 1)[-1]}:{ref.f_lineno}"
+                    return " <- ".join([*path, f"frame {ref.f_code.co_name} {where}"])
                 if isinstance(ref, dict) and "__name__" in ref:
                     return " <- ".join([*path, f"namespace {ref['__name__']}"])
                 step = [*path, str(getattr(ref, "__name__", None) or type(ref).__name__)[:60]]
                 nxt.append((ref, step))
         level = nxt[:300]
-    return f"no module or class namespace within {depth} hops"
+    return f"no module, class or frame within {depth} hops"
+
+
+def _collect_until_freed(refs, seconds=5.0):
+    """gc until every weakref is dead or `seconds` pass; the apps still alive.
+
+    A background thread of an app (an index worker, a sync) can still be
+    winding down when teardown ends on a slow runner; a cache entry never
+    lets go, so waiting does not hide the leak this guards.
+    """
+    deadline = time.monotonic() + seconds
+    while True:
+        gc.collect()
+        alive = [app for ref in refs if (app := ref()) is not None]
+        if not alive or time.monotonic() >= deadline:
+            return alive
+        time.sleep(0.1)
 
 
 def test_fastapi_caches_are_found(clear_fastapi_caches):
@@ -81,8 +104,7 @@ def test_apps_a_test_builds_are_freed_after_its_teardown(request, make_client):
         def pytest_runtest_teardown(self, item, nextitem):
             result = yield
             if item is request.node:
-                gc.collect()
-                alive = [app for ref in built if (app := ref()) is not None]
+                alive = _collect_until_freed(built)
                 assert not alive, (
                     f"{len(alive)} of the {APPS_BUILT} FastAPI apps this test built are "
                     "still alive after its teardown: something caches their closures "
