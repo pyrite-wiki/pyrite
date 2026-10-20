@@ -16,6 +16,7 @@ from ..exceptions import (
     KBDefinedInConfigError,
     KBNotFoundError,
     KBProtectedError,
+    ValidationError,
 )
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
@@ -24,8 +25,17 @@ from .credential_events import announce_kb_policy_change
 logger = logging.getLogger(__name__)
 
 
+KB_TYPE_REQUIRED = (
+    "kb_type cannot be cleared: a KB always has a type. "
+    "Omit kb_type to keep it, or send the type to change it to."
+)
+
+
 class KBRegistryService:
     """Unified KB registry backed by the DB kb table."""
+
+    #: The row fields `update_kb` changes.
+    UPDATABLE_FIELDS = frozenset({"description", "kb_type", "default_role"})
 
     def __init__(self, config: PyriteConfig, db: PyriteDB, index_mgr: IndexManager | None = None):
         # `index_mgr` is needed only by the operations that index (add, reindex,
@@ -398,6 +408,20 @@ class KBRegistryService:
         from ..config import CONFIG_WRITE_LOCK, current_config_file, save_config
         from ..storage.models import KB
 
+        # Refuse before anything is written, so none of the request is applied.
+        # A key outside `UPDATABLE_FIELDS` is a caller's typo, never dropped
+        # silently; a KB always has a type, so `kb_type` is never null or blank.
+        unknown = sorted(set(updates) - self.UPDATABLE_FIELDS)
+        if unknown:
+            raise ValidationError(
+                f"Unknown KB field(s) {', '.join(repr(k) for k in unknown)}: "
+                f"accepted fields are {', '.join(sorted(self.UPDATABLE_FIELDS))}"
+            )
+        if "kb_type" in updates and not (
+            isinstance(updates["kb_type"], str) and updates["kb_type"].strip()
+        ):
+            raise ValidationError(KB_TYPE_REQUIRED)
+
         kb = self.db.session.get(KB, name)
         if not kb:
             raise KBNotFoundError(f"KB '{name}' not found")
@@ -408,7 +432,6 @@ class KBRegistryService:
                 f"KB '{name}' is defined by hand in {current_config_file().name}, which sets "
                 "its default_role. Change default_role there and restart the server."
             )
-        allowed = {"description", "kb_type", "default_role"}
         if "default_role" in updates and (
             self.config.confined_default_role(updates["default_role"]) != updates["default_role"]
         ):
@@ -424,8 +447,7 @@ class KBRegistryService:
         # change to the file while it may still be rolled back.
         with CONFIG_WRITE_LOCK:
             for key, value in updates.items():
-                if key in allowed:
-                    setattr(kb, key, value)
+                setattr(kb, key, value)
             if "default_role" in updates and written is not None:
                 # The server's own config.yaml entry is this KB's policy:
                 # rewrite it first, so a refused save leaves neither changed.

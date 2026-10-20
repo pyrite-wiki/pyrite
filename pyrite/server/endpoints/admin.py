@@ -2,8 +2,10 @@
 
 import logging
 from collections.abc import Callable
+from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from pydantic import ValidationError as PydanticValidationError
 
 from ...exceptions import ConfigError, KBNotFoundError, KBProtectedError, ValidationError
 from ...services.access_policy import ROLES, AccessPolicy, Action, AnyKB, ReadScope
@@ -215,26 +217,45 @@ def create_kb(
     return {"created": True, **result}
 
 
+def _parse_kb_metadata_update(body: Any) -> dict[str, Any]:
+    """The fields a ``PUT /kbs/{name}`` body sets (and only those), or a
+    ``VALIDATION_FAILED`` refusal naming what is wrong: an unknown key, a value
+    of the wrong type, or a body that is not an object. Validated here, from
+    the raw body, so the refusal has the documented shape rather than FastAPI's
+    list. The ``kb_type`` null/blank rule is the registry's."""
+    if body is None:
+        return {}
+    try:
+        return KBMetadataUpdateRequest.model_validate(body, strict=True).model_dump(
+            exclude_unset=True
+        )
+    except PydanticValidationError as e:
+        problems = []
+        for err in e.errors():
+            field = ".".join(str(p) for p in err["loc"]) or "body"
+            if err["type"] == "extra_forbidden":
+                problems.append(f"unknown field '{field}'")
+            else:
+                problems.append(f"'{field}': {err['msg']}")
+        raise ValidationError(
+            "Invalid KB update: " + "; ".join(problems) + ". Accepted fields are description "
+            "and kb_type; default_role is set at PUT /api/kbs/{name}/default-role."
+        ) from None
+
+
 @router.put("/kbs/{name}", dependencies=[Depends(requires_tier("admin"))])
 @limiter.limit("30/minute")
 def update_kb(
     request: Request,
     name: str,
-    body: KBMetadataUpdateRequest | None = None,
+    body: Any = Body(None),
     registry: KBRegistryService = Depends(get_kb_registry),
     policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Update a knowledge base's metadata."""
     _resolve_named_kb(request, policy, name)
+    updates = _parse_kb_metadata_update(body)
     try:
-        updates = body.model_dump(exclude_unset=True) if body is not None else {}
-        # A KB always has a type (the registry column is NOT NULL). Refuse
-        # before writing, so the rest of the same request is not applied.
-        if "kb_type" in updates and updates["kb_type"] is None:
-            raise ValidationError(
-                "kb_type cannot be cleared: a KB always has a type. "
-                "Omit kb_type to keep it, or send the type to change it to."
-            )
         result = registry.update_kb(name, **updates)
     except KBNotFoundError:
         raise HTTPException(

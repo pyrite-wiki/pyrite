@@ -40,7 +40,16 @@ class KBListResponse(BaseModel):
 
 
 class KBMetadataUpdateRequest(BaseModel):
-    """Omitted fields stay unchanged; ``description: null`` clears it; ``kb_type: null`` is refused."""
+    """Body of ``PUT /api/kbs/{name}``.
+
+    Omitted fields stay unchanged; ``description: null`` clears it;
+    ``kb_type`` is a non-blank string or omitted (``null`` is refused by the
+    registry). A key this route does not take is refused, not dropped:
+    ``default_role`` has its own route. The route validates the raw body with
+    this model so a refusal is ``VALIDATION_FAILED``, not FastAPI's list.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     description: str | None = None
     kb_type: str | None = None
