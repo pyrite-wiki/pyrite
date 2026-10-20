@@ -2,8 +2,11 @@
 
 ``apply(text, ops, span)`` applies field operations (set, append, remove,
 unset, replace the body, add a sub-key) to the file's own text and returns the
-new text and a report. It is a pure function. It touches no file and is not
-wired to any write path yet (B6 phase P3 does that).
+new text and a report. It is a pure function. It touches no file. The
+update path calls it (``KBService._update`` → ``apply`` →
+``entry_writer.publish_entry_text``), so does a create's text
+(``repository.new_entry_text``, ``apply`` onto a skeleton), and so do rename,
+``schema migrate`` and the extensions' migrations.
 
 **The model: a value-level patch.** Pyrite patches a file the way git does,
 but at the level of the values it knows the types of. The result of ``apply``

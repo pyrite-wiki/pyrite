@@ -19,8 +19,11 @@ other module in ``pyrite/`` or an extension writes an entry file's bytes,
 except the writers it lists, and that list only shrinks. Since #955 P4 the
 model has no ``save`` and no emitter: a create's text is built by
 ``repository.new_entry_text`` (``apply`` onto a skeleton) and published by
-``create_entry_text``; rename, ``schema migrate``, ``ids pin`` and the
-extensions' migrations send operations and publish here.
+``create_entry_text``; rename, ``schema migrate`` and the extensions'
+migrations send operations and publish here. ``ids pin`` is the one writer
+still outside: it keeps its own no-follow write
+(``id_pin_service._rename``), pinned by that test's
+``ENTRY_FILE_WRITERS_NOT_YET_CONVERTED``.
 """
 
 from __future__ import annotations
