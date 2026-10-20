@@ -10,6 +10,7 @@ guides solve a task; references describe contracts; explanations describe why.
 
 ## Operators
 
+- [Web UI](web-ui.md) — how-to: how do I sign in, enable AI features, and get a non-admin's changes merged?
 - [Configuration](configuration.md) — reference: which config keys and environment variables control my installation?
 - [Upgrading](upgrading.md) — how-to: how do I upgrade Pyrite, and what stops working when I do?
 - [Pinning entry IDs](pinning-entry-ids.md) — how-to: how do I pin the identity of files before upgrading?
@@ -18,6 +19,7 @@ guides solve a task; references describe contracts; explanations describe why.
 ## Agent and API integrators
 
 - [JSON contracts](json-contracts.md) — reference: what result and error shapes do CLI, MCP, and REST return?
+- [REST API](rest-api.md) — how-to: how do I authenticate to the REST API and find its reference?
 - [Agent write path](agent-write-path.md) — how-to: how does an agent request a safe entry change?
 - [OpenAI / Codex MCP integration](openai-mcp-integration.md) — how-to: how do I connect an OpenAI-compatible client?
 - [Gemini CLI MCP integration](gemini-mcp-integration.md) — how-to: how do I connect Gemini CLI?

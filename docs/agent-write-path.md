@@ -206,8 +206,10 @@ codes, what each means and what to do are one table:
 [Write refusals](json-contracts.md#write-refusals-create-import-update).
 Two things this page adds:
 
-- All are `retryable: false`: retrying the same request unchanged fails the
-  same way. Change the request.
+- All are `retryable: false` except `CONFLICT` and `STORAGE_ERROR` on a locked
+  database (`retryable: true`): for `CONFLICT`, re-read the entry, then repeat
+  the update. For every other code, retrying the same request unchanged fails
+  the same way. Change the request.
 - A CLI write command prints a refusal as JSON by default
   (`{"error", "error_code", ...}`), or as `ERROR [CODE]: message` under
   `--format rich`; branch on exit code `1` and read `error_code`. (`delete`,
@@ -239,4 +241,4 @@ triggers a new finding, is still refused (ADR-0042 decision 8).
   [Write success shapes](json-contracts.md#write-success-shapes).
 - Truncated bodies: never write back a body marked `body_truncated`; see
   [Writing a body back](json-contracts.md#writing-a-body-back).
-- #303 (open) is the decision that would make CLI output format one rule.
+- CLI output format is one rule, decided in #303: see [`--format` defaults](json-contracts.md#--format-defaults). Modules not yet migrated are listed in `tests/legacy_commands/`.
