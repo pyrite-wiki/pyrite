@@ -79,7 +79,12 @@ _FIELD_CREATE_ENTRY_COLLISION: frozenset[str] = frozenset(
 #: checks the target) -- `--field links=[{"target": "ghost"}]` created a task
 #: already linked to a target that does not exist. Not a managed-field list:
 #: what Pyrite or the task manages is refused by `KBService.create` (#1010).
-_FIELD_CREATE_OWNED: frozenset[str] = frozenset({"id", "links", "sources"})
+_FIELD_CREATE_OWNED_HINT: dict[str, str] = {
+    "id": "`task create` sets the id from the title.",
+    "links": "add links after creating, with `pyrite link`.",
+    "sources": "add sources after creating, with `pyrite update --append sources=...`.",
+}
+_FIELD_CREATE_OWNED: frozenset[str] = frozenset(_FIELD_CREATE_OWNED_HINT)
 
 #: `--field` keys refused because a freshly created entry can never actually
 #: carry them, the #407 symptom recurring on `create` (round-2 cold read):
@@ -135,10 +140,7 @@ def _parse_task_create_fields(
                 "use `task update --status` to change it."
             )
         if k in _FIELD_CREATE_OWNED:
-            raise ValidationError(
-                f"--field {k}=... is refused: `task create` sets the id from the title; "
-                "add links with `pyrite link`."
-            )
+            raise ValidationError(f"--field {k}=... is refused: " + _FIELD_CREATE_OWNED_HINT[k])
         if k in _FIELD_CREATE_ENTRY_COLLISION:
             raise ValidationError(
                 f"--field {k}=... is refused: this name collides with a parameter "

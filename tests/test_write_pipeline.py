@@ -786,7 +786,14 @@ def test_create_refuses_a_resolved_path_collision_between_different_ids(software
     try:
         svc = KBService(software_env["config"], db)
         first = svc.create_entry(
-            "sw", "adr-a", "Same Title", "adr", "ORIGINAL", adr_number=5, status="proposed"
+            "sw",
+            "adr-a",
+            "Same Title",
+            "adr",
+            "ORIGINAL",
+            owns=frozenset({"adr_number"}),
+            adr_number=5,
+            status="proposed",
         )
         expected_file = software_env["kb_path"] / "adrs" / "0005-same-title.md"
         assert expected_file.exists(), expected_file
@@ -795,7 +802,14 @@ def test_create_refuses_a_resolved_path_collision_between_different_ids(software
 
         with pytest.raises(EntryExistsError):
             svc.create_entry(
-                "sw", "adr-b", "Same Title", "adr", "REPLACED", adr_number=5, status="proposed"
+                "sw",
+                "adr-b",
+                "Same Title",
+                "adr",
+                "REPLACED",
+                owns=frozenset({"adr_number"}),
+                adr_number=5,
+                status="proposed",
             )
 
         assert expected_file.read_bytes() == original, "the first ADR's file must be untouched"
@@ -866,7 +880,15 @@ def test_create_write_is_exclusive_against_a_true_toctou_race(software_env):
     try:
         svc = KBService(software_env["config"], db)
         with pytest.raises(EntryExistsError):
-            svc.create_entry("sw", "adr-loser", "Race", "adr", "LOSER", adr_number=5)
+            svc.create_entry(
+                "sw",
+                "adr-loser",
+                "Race",
+                "adr",
+                "LOSER",
+                owns=frozenset({"adr_number"}),
+                adr_number=5,
+            )
 
         assert winner_file.exists()
         assert "WINNER" in winner_file.read_text(), (
@@ -891,7 +913,14 @@ def test_update_keeps_the_existing_filename_for_a_file_pattern_type(software_env
     try:
         svc = KBService(software_env["config"], db)
         svc.create_entry(
-            "sw", "adr-x", "Original Title", "adr", "body", adr_number=9, status="proposed"
+            "sw",
+            "adr-x",
+            "Original Title",
+            "adr",
+            "body",
+            owns=frozenset({"adr_number"}),
+            adr_number=9,
+            status="proposed",
         )
         original_file = software_env["kb_path"] / "adrs" / "0009-original-title.md"
         assert original_file.exists(), original_file
@@ -930,7 +959,16 @@ def test_rename_an_adr_keeps_its_file_and_survives_index_verification(software_e
     db = PyriteDB(software_env["db_path"])
     try:
         svc = KBService(software_env["config"], db)
-        svc.create_entry("sw", "adr-x", "Keep Me", "adr", "body", adr_number=9, status="proposed")
+        svc.create_entry(
+            "sw",
+            "adr-x",
+            "Keep Me",
+            "adr",
+            "body",
+            owns=frozenset({"adr_number"}),
+            adr_number=9,
+            status="proposed",
+        )
         original_file = software_env["kb_path"] / "adrs" / "0009-keep-me.md"
         assert original_file.exists(), original_file
 
@@ -1333,3 +1371,30 @@ def test_a_declared_field_named_entry_is_still_written(env, mcp):
     )
     assert res.get("updated"), res
     assert "label: mine" in _file(env, eid).read_text()
+    # The boundary: a value that has an `id` is still the field's value; only
+    # a key a read alone carries (entry_type, file_path, an index column) makes it
+    # an envelope.
+    res = mcp._dispatch_tool(
+        "kb_update", {"kb_name": KB, "entry_id": eid, "entry": {"id": "ref-7", "label": "b"}}
+    )
+    assert res.get("updated"), res
+    assert "ref-7" in _file(env, eid).read_text()
+    before = _file(env, eid).read_bytes()
+    res = mcp._dispatch_tool(
+        "kb_update",
+        {"kb_name": KB, "entry_id": eid, "entry": {"id": eid, "entry_type": "note", "label": "c"}},
+    )
+    assert not res.get("updated"), res
+    assert _file(env, eid).read_bytes() == before
+
+
+def test_add_file_adopts_a_hand_written_files_managed_values(env):
+    """The documented exception: `pyrite add FILE` takes a file's own values
+    (here a provenance block); it is not a request that sets them."""
+    src = env["tmp_path"] / "mine.md"
+    src.write_text(
+        "---\nid: mine\ntitle: Mine\ntype: person\nprovenance:\n  source: hand\n---\n\nb\n"
+    )
+    result = _cli(env, ["add", str(src), "-k", KB, "--allow-undeclared"])
+    assert result.exit_code == 0, result.output
+    assert "provenance" in _file(env, "mine").read_text()

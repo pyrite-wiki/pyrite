@@ -167,9 +167,9 @@ Every entry write — REST `POST /api/entries`, `PUT`/`PATCH
 `kb_update`, `kb_bulk_create`; CLI `pyrite create`, `pyrite update`,
 `pyrite add`, `pyrite import` — goes through one pipeline in `KBService`,
 so the same entry is refused with the same `error_code` on every surface.
-`kb_update` takes the entry's fields, not `kb_get`'s envelope: send
-`result["entry"]`'s fields at the top level. An `entry` key holding a read
-result is refused and the file is left untouched (#1024).
+`pyrite add FILE` is the one exception to "a request cannot set a managed
+field": it adopts a hand-written file's own values (an ADR keeps its
+`adr_number`, a task its audit trail), which are not a request (#1010).
 
 This is the one table of codes an agent meets while writing; the
 how-to (`docs/agent-write-path.md`) links here instead of repeating it. Each row
@@ -183,7 +183,7 @@ is reproduced by a command in "Reproduce the codes" below, which CI runs.
 | `UNDECLARED_TYPE` | the KB's `kb.yaml` declares types and this is not one of them. Core types (`note`, `person`, …) are **not** exempt. Override with `allow_undeclared` (MCP, REST body or import query) / `--allow-undeclared` (CLI). The error carries `declared_types` on MCP and REST. | Use a declared type (`pyrite kb schema show <kb>`), or pass the override. |
 | `ENTRY_EXISTS` | the id (given, or derived from the title) already exists. Create never replaces; use update. REST answers `409`. | `update` it, or choose another title or id. |
 | `SCHEMA_VIOLATION` | the KB schema or a plugin validator rejected a field: enum, required, range, format. A kb.yaml enum (`options:`/`values:`, list `items:`, rule `enum:`) is refused when `validation.enforce_enums` is on (the default); every other kb.yaml finding when `validation.enforce` is on. The message names the field, the value and the allowed list (`kind: 'chore' is not one of [...]`). An update that leaves an off-list value as it was is not refused (see **Warnings**). | Re-read the message: it names the field and the allowed values. |
-| `VALIDATION_FAILED` | anything else the entry model refuses (an event without a date, a missing title), a `managed_fields` key in an update, and the ADR-0034 truncated-body refusal below. Unchanged by ADR-0037 theme 2 (2026-09-25): REST, MCP and the CLI already agreed on this code, so no `legacy_error_code`. | Fix the named field. For a truncated body, reassemble it with `kb_read_body` and retry without the marker. |
+| `VALIDATION_FAILED` | anything else the entry model refuses (an event without a date, a missing title), a `managed_fields` key in an update, a field Pyrite or the type manages on a create at any spelling (`status_change_log`, `adr_number`, `file_path`, ...: top level, dotted `metadata.k`, under `metadata`, or an alias; #1010), an `entry` key holding a whole `kb_get` envelope sent to `kb_update` or REST `PUT` (send `result["entry"]`'s fields at the top level; the file is left untouched; #1024), and the ADR-0034 truncated-body refusal below. Unchanged by ADR-0037 theme 2 (2026-09-25): REST, MCP and the CLI already agreed on this code, so no `legacy_error_code`. | Fix the named field. For a truncated body, reassemble it with `kb_read_body` and retry without the marker. |
 | `QUERY_SYNTAX` | (`search`, not a write, but what an agent hits right after a failed write) a token containing `-`, `:` or `.` used beside `AND`/`OR`/`NOT` or a quote, unquoted. | Quote the token yourself: `"bar-baz"`. |
 
 All are `retryable: false`. REST reports them as
@@ -216,15 +216,18 @@ each `kb_bulk_create` result as `warnings`, REST `POST`/`PUT`/`PATCH
 /api/entries` as `warnings: []` in the response body, and CLI `pyrite
 update` and `pyrite task create --format json` as `warnings` in their JSON
 (omitted when empty), and `pyrite create` / `pyrite import` as `Warning:`
-lines. An update whose
-entry already holds an off-list enum value it does not change -- compared
-by value, so an echoed read counts; per element for a list-valued field;
-never for a type error -- succeeds and
-reports that value here (`severity: "warning"`, `note: "value already on
-disk; ..."`) rather than being refused (#47, #555). This covers a plugin
-validator's `rule: "enum"` too. Changing the field to another off-list
-value, or adding an off-list list element, is still refused; create is
-always strict.
+lines. An update is refused only for a violation it causes (ADR-0042
+decision 8, #676): a schema violation already in the file -- an off-list
+enum value, a multi-select holding a scalar, a number out of range, a
+missing required field -- in a field the request does not change (compared
+by value, so an echoed read counts; per element for a list-valued enum)
+succeeds and is returned here as `{"field", "rule", "severity": "warning",
+"note": "..already on disk.."}` rather than refused (#47, #555). This covers
+a plugin validator's finding that names a `field`. Changing the field to
+another bad value, adding an off-list list element, or a change that
+triggers a new finding is still refused; create is always strict. **Limit:**
+a plugin validator finding with no `field` cannot be matched to a request
+key, so it still refuses an unrelated update.
 
 **`index health` → `off_list_values`.** One row per off-list value of a
 declared enum: `{kb, id, type, field, value, allowed, origin, severity}`.

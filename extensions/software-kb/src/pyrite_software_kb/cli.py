@@ -245,6 +245,7 @@ def sw_new_adr(
                 title,
                 "adr",
                 body,
+                owns=frozenset({"adr_number"}),  # the owner sets its own number
                 adr_number=next_num,
                 status=status,
                 date=today,

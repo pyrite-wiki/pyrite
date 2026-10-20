@@ -1132,7 +1132,7 @@ class KBService:
         resolve_type: bool = True,
         pending_ids: set[str] | None = None,
         pending_paths: set[Path] | None = None,
-        restrict: bool = True,
+        owns: frozenset[str] = frozenset(),
     ) -> tuple[Entry, list[dict[str, Any]]]:
         """Decide whether ``spec`` is a valid new entry; build it if so.
 
@@ -1156,10 +1156,10 @@ class KBService:
         filename comes from FIELDS, not the id, so two different ids can
         collide on the same path (#391 cold read).
 
-        ``restrict`` (a caller's spec, the default) refuses a field Pyrite or
-        the type manages, at any spelling (#1010); ``restrict=False`` is the
-        in-process owner that sets its own field (``sw new-adr``'s
-        ``adr_number``), as :meth:`update_entry` is to :meth:`update`.
+        A caller's spec never sets a field Pyrite or the type manages, at any
+        spelling (#1010). ``owns`` names the managed fields an in-process
+        owner sets itself (``sw new-adr``'s ``adr_number``); only those are
+        exempt, and only on that call.
         """
         from ..schema import generate_entry_id
 
@@ -1196,8 +1196,7 @@ class KBService:
         if resolve_type:
             entry_type = self._resolve_entry_type(entry_type, kb_config.kb_type)
         if builder is None:
-            if restrict:
-                self._refuse_managed_on_create(entry_type, kb_config, fields)
+            self._refuse_managed_on_create(entry_type, kb_config, fields, owns)
             entry = build_entry(entry_type, entry_id=entry_id, title=title, body=body, **fields)
         else:
             entry = builder(entry_type, entry_id, title, body, fields)
@@ -1260,7 +1259,7 @@ class KBService:
         embed: bool = True,
         builder: Callable[[str, str, str, str, dict[str, Any]], Entry] | None = None,
         resolve_type: bool = True,
-        restrict: bool = True,
+        owns: frozenset[str] = frozenset(),
     ) -> WriteResult:
         """The one create pipeline: :meth:`_prepare`, then hooks, save, index, embed."""
         entry, warnings = self._prepare(
@@ -1270,7 +1269,7 @@ class KBService:
             allow_undeclared=allow_undeclared,
             builder=builder,
             resolve_type=resolve_type,
-            restrict=restrict,
+            owns=owns,
         )
         ctx = hook_ctx or self._hook_ctx(kb_name, kb_config, "create")
         entry = self._run_hooks("before_save", entry, ctx)
@@ -1304,7 +1303,7 @@ class KBService:
         spec: dict[str, Any],
         *,
         allow_undeclared: bool = True,
-        restrict: bool = True,
+        owns: frozenset[str] = frozenset(),
     ) -> WriteResult:
         """Create one entry from a spec, returning the entry and its warnings.
 
@@ -1320,7 +1319,7 @@ class KBService:
         """
         kb_config = self._writable_kb(kb_name)
         return self._prepare_and_save(
-            kb_name, kb_config, spec, allow_undeclared=allow_undeclared, restrict=restrict
+            kb_name, kb_config, spec, allow_undeclared=allow_undeclared, owns=owns
         )
 
     def create_entry(
@@ -1332,6 +1331,7 @@ class KBService:
         body: str = "",
         *,
         allow_undeclared: bool = True,
+        owns: frozenset[str] = frozenset(),
         **kwargs,
     ) -> Entry:
         """
@@ -1344,6 +1344,9 @@ class KBService:
             entry_type: Type (event, person, organization, note, topic, etc.)
             body: Markdown body content
             allow_undeclared: False applies the undeclared-type refusal
+            owns: managed fields this in-process caller sets itself (``sw
+                new-adr``: ``{"adr_number"}``); every other managed field,
+                at any spelling, is refused as on every surface (#1010)
             **kwargs: Additional fields (date, importance, tags, etc.)
 
         Returns:
@@ -1355,9 +1358,7 @@ class KBService:
             ValidationError: (or a subclass) if the pipeline refuses the entry
         """
         spec = {**kwargs, "id": entry_id, "title": title, "entry_type": entry_type, "body": body}
-        # The in-process form: its caller owns the fields it passes (a
-        # backlog item's ids, an ADR's number), so no managed-field refusal.
-        return self.create(kb_name, spec, allow_undeclared=allow_undeclared, restrict=False).entry
+        return self.create(kb_name, spec, allow_undeclared=allow_undeclared, owns=owns).entry
 
     def bulk_create_entries(
         self,
@@ -1624,12 +1625,14 @@ class KBService:
         # undeclared key holding the read, which an update would write into
         # the file (#1024). Refused, not unwrapped: the caller sends the
         # entry's own fields (ADR-0042 decision 9, fail closed). An `entry`
-        # mapping with no read-result key is a declared field's value.
+        # mapping with no read-result key is a declared field's value; `id`
+        # alone is not one (a declared field's value may have an `id`), but
+        # `entry_type`, `file_path` or an index column is.
         envelope = fields.get("metadata")
         wrapped = fields.get("entry")
         if wrapped is None and isinstance(envelope, dict):
             wrapped = envelope.get("entry")  # REST's only spelling of it
-        if isinstance(wrapped, dict) and not _READ_RESULT_MARKERS.isdisjoint(wrapped):
+        if isinstance(wrapped, dict) and not (_READ_RESULT_MARKERS - {"id"}).isdisjoint(wrapped):
             raise ValidationError(
                 "Cannot update: `entry` holds a whole read result (the envelope `kb_get` "
                 "answers with). Send the entry's fields at the top level instead: "
@@ -1933,31 +1936,42 @@ class KBService:
         )
 
     def _refuse_managed_on_create(
-        self, entry_type: str, kb_config: KBConfig, fields: dict[str, Any]
+        self,
+        entry_type: str,
+        kb_config: KBConfig,
+        fields: dict[str, Any],
+        owns: frozenset[str] = frozenset(),
     ) -> None:
-        """A create refuses a field Pyrite or the type manages, at any
-        spelling (#1010; #1001 decision 6): the top-level key, an alias of
-        it, and the ``metadata`` envelope's second spelling (Andon #994,
+        """A create refuses a field Pyrite or the type manages, at every
+        spelling ADR-0051 treats as the same field (#1010; #1001 decision 6):
+        the top-level key, a dotted top-level key (``metadata.evidence``), an
+        alias, and the ``metadata`` envelope's second spelling (Andon #994,
         decision A) are one field, resolved by ``field_at``. One message
         naming the field, on every surface. ``links`` and ``sources`` are a
         new entry's own content and stay creatable. A key the build would
         drop (``file_path``, ``provenance``, ``extra_frontmatter``) is
         managed, so it is refused here and never silently dropped (ADR-0042
-        decision 3). The top-level ``id`` and title are popped before this runs;
-        ``id`` in the envelope is refused."""
+        decision 3). ``owns`` exempts the managed fields an in-process owner
+        sets itself, and only those. The top-level ``id`` and title are
+        popped before this runs; ``id`` in the envelope is refused."""
         from ..models.core_types import get_entry_class
         from ..schema.field_aliases import NotAFieldError, field_at, path_segments
 
         cls = get_entry_class(entry_type)
-        managed = self._field_sets(entry_type, kb_config)[2] - _ITEM_LISTS
+        managed = self._field_sets(entry_type, kb_config)[2] - _ITEM_LISTS - owns
         envelope = fields.get("metadata")
-        keyed: list[tuple[str, tuple[str, ...], bool]] = [
-            (k, (k,), False) for k in fields if isinstance(k, str) and k != "metadata"
-        ]
+        keyed: list[tuple[str, tuple[Any, ...], bool]] = []
+        for k in fields:
+            if not isinstance(k, str) or k == "metadata":
+                continue
+            try:
+                keyed.append((k, path_segments(k), False))
+            except ValueError:
+                continue  # a key no parser reads is a literal custom key
         if isinstance(envelope, dict):
-            keyed += [
-                (k, ("metadata", *path_segments(k)), True) for k in envelope if isinstance(k, str)
-            ]
+            for k in envelope:
+                if isinstance(k, str):
+                    keyed.append((k, ("metadata", *path_segments(k)), True))
         for key, path, in_envelope in keyed:
             try:
                 field, _rest = field_at(cls, entry_type, path)
