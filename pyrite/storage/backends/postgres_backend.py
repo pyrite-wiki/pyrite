@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from ...exceptions import StorageError
 from ..models import Link
-from .base_backend import BaseBackend
+from .base_backend import BaseBackend, _link_rows
 from .capabilities import BackendCapability
 from .protocol import DEFAULT_MIN_SIMILARITY, similarity_from
 
@@ -313,23 +313,22 @@ class PostgresBackend(BaseBackend):
     # =====================================================================
 
     def _sync_links(self, entry_id: str, kb_name: str, links: list[dict[str, Any]]) -> None:
+        # The same rows as SQLite's diff, one per written link (`_link_rows`,
+        # #1009), written by delete and re-insert.
         self._session.query(Link).filter_by(source_id=entry_id, source_kb=kb_name).delete()
-        for link in links:
-            from ...schema import get_inverse_relation
-
-            relation = link.get("relation", "related_to")
-            inverse = get_inverse_relation(relation)
-            target_kb = link.get("kb", kb_name)
+        for (target_id, target_kb, relation, target_prefix), attrs in _link_rows(
+            kb_name, links
+        ).items():
             self._session.add(
                 Link(
                     source_id=entry_id,
                     source_kb=kb_name,
-                    target_id=link.get("target"),
+                    target_id=target_id,
                     target_kb=target_kb,
                     relation=relation,
-                    inverse_relation=inverse,
-                    note=link.get("note", ""),
-                    target_prefix=link.get("prefix"),
+                    inverse_relation=attrs["inverse_relation"],
+                    note=attrs["note"],
+                    target_prefix=target_prefix,
                 )
             )
 

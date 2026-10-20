@@ -40,7 +40,7 @@ from ..exceptions import (
 )
 from ..models import Entry
 from ..models.base import _timestamp_instant
-from ..models.core_types import id_text
+from ..models.core_types import as_stored_text, id_text
 from ..models.factory import build_entry
 from ..plugins.context import PluginContext
 from ..schema import Link, Source
@@ -298,10 +298,12 @@ def check_link_spec(
 
 
 def _same_target(existing: Any, target: str) -> bool:
-    """The duplicate key's target comparison: as text, so a hand file's
-    ``target: 2024`` (an int) and a typed ``"2024"`` are one link, as they are
-    one row in the index (fix round 2)."""
-    return str(existing) == str(target)
+    """The duplicate key's target comparison: as the text the index stores
+    (``as_stored_text``, the conversion the link sync keys on), so a hand
+    file's ``target: 2024`` and a typed ``"2024"`` are one link, and so are
+    ``target: true`` and ``"1"``, as they are one row in the index. ``str()``
+    spelled ``true`` as ``'True'`` and wrote a second item (#1022)."""
+    return bool(as_stored_text(existing) == as_stored_text(target))
 
 
 @dataclass

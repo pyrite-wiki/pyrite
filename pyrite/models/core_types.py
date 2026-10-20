@@ -462,6 +462,25 @@ def id_text(value: Any) -> str | None:
     return str(value)
 
 
+def as_stored_text(value: Any) -> Any:
+    """A link field as the TEXT its index column holds: the one conversion
+    the link sync key, the link rows and the write path's duplicate check
+    share, so a link the write path calls "already there" is the row the
+    index holds (#1022). A scalar is ``id_text``, the text an entry id is
+    stored as, so ``target: true`` is ``'1'`` and resolves to ``id: true``,
+    and a ruamel timestamp ``2024-01-01T10:00:00`` is spelled with a space
+    as its entry's id is (``str()`` kept the ``T``, a broken link).
+
+    ``None`` and collections pass through unchanged, because both are refused
+    by the write rather than stored: a ``target:`` that YAML read as null, and
+    a ``relation:`` or ``kb:`` that is a list or a mapping. Stringifying either
+    would make it storable, which is the opposite of what the index already
+    does with them. ``""`` stays ``""`` (a missing key is storable)."""
+    if value is None or isinstance(value, (str, list, tuple, dict)):
+        return value
+    return id_text(value)
+
+
 def read_entry_id(
     text: str, migrate: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 ) -> str | None:

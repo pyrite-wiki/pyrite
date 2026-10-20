@@ -15,7 +15,7 @@ import struct
 from typing import Any, ClassVar
 
 from ..models import Link
-from .base_backend import BaseBackend
+from .base_backend import BaseBackend, LinkKey, _link_rows
 from .capabilities import BackendCapability
 from .protocol import DEFAULT_MIN_SIMILARITY, SemanticRows, similarity_from
 
@@ -26,37 +26,6 @@ from .protocol import DEFAULT_MIN_SIMILARITY, SemanticRows, similarity_from
 #: query can still under-return when more matching candidates exist than the
 #: cap, or when distance culling removes candidates (#56, #194).
 _SQLITE_VEC_MAX_K = 4096
-
-
-def _as_stored_text(value: Any) -> Any:
-    """A link field as the TEXT its column holds, for keying the sync diff.
-
-    A hand file's link fields are whatever YAML read: ``target: 2024`` and
-    ``relation: true`` are an int and a bool, while the columns are TEXT. The
-    raw value therefore never matched the stored row, so a re-index deleted
-    and re-inserted it on every pass, and two spellings that store alike
-    (``2024`` and ``'2024'``) never collapsed into one link (#927).
-
-    The text is not always what the driver would have bound -- a datetime
-    binds with ``T``, ``1e20`` as ``1.0e+20``, ``inf`` as ``Inf``. That does not
-    matter here: the insert binds this converted value, so the text written is
-    the text compared. What has to hold is that both sides of the diff come
-    from the same call, and they do.
-
-    ``None`` and collections pass through unchanged, because both are refused by
-    the write rather than stored: a ``target:`` that YAML read as null, and a
-    ``relation:`` or ``kb:`` that is a list or a mapping. Stringifying either
-    would make it storable, which is the opposite of what the index already
-    does with them.
-
-    Same rule as ``index._as_text``; duplicated rather than imported because a
-    backend must not depend on the index manager above it.
-    """
-    if value is None or isinstance(value, (list, tuple, dict)):
-        return value
-    if isinstance(value, bool):
-        return str(int(value))
-    return value if isinstance(value, str) else str(value)
 
 
 # ``non_empty`` (#200): an entry has something to show when its body or its
@@ -213,34 +182,16 @@ class SQLiteBackend(BaseBackend):
     # =====================================================================
 
     def _sync_links(self, entry_id: str, kb_name: str, links: list[dict[str, Any]]) -> None:
-        from ...schema import get_inverse_relation
-
-        # Build desired state as a dict keyed by (target_id, target_kb, relation).
-        # Every part of the key is keyed as the TEXT its column holds, and the
-        # note with it: `target: 2024` has to meet the row an earlier sync
-        # stored for it, and `relation: true` and `kb: 2024` churned the same
-        # way (#927). An explicit null stays None, so the refusals the index
-        # already gave it are unchanged; a *missing* key is "" and stays
-        # storable.
-        desired: dict[tuple[str, str, str], dict[str, Any]] = {}
-        for link in links:
-            relation = _as_stored_text(link.get("relation", "related_to"))
-            target_kb = _as_stored_text(link.get("kb", kb_name))
-            target_id = _as_stored_text(link.get("target", ""))
-            key = (target_id, target_kb, relation)
-            desired[key] = {
-                "note": _as_stored_text(link.get("note", "")),
-                "inverse_relation": get_inverse_relation(relation),
-                # The prefix as the file wrote it, beside the resolved KB (#980).
-                "target_prefix": link.get("prefix"),
-            }
+        # One row per written link, keyed by (target, kb, relation, prefix) as
+        # the TEXT the columns hold (`_link_rows`, #927, #1009).
+        desired = _link_rows(kb_name, links)
 
         # Load existing links from DB
         existing = self._session.query(Link).filter_by(source_id=entry_id, source_kb=kb_name).all()
 
-        existing_keys: dict[tuple[str, str, str], Link] = {}
+        existing_keys: dict[LinkKey, Link] = {}
         for row in existing:
-            key = (row.target_id, row.target_kb, row.relation)
+            key = (row.target_id, row.target_kb, row.relation, row.target_prefix)
             # First row wins the slot: a hand file can hold both `target: 2024`
             # and `target: '2024'`, which are one key once stored, and the
             # spares are deleted below rather than left to accumulate (#927).
@@ -253,17 +204,12 @@ class SQLiteBackend(BaseBackend):
                 # Update note/inverse if changed
                 row = existing_keys[key]
                 claimed.add(id(row))
-                if (
-                    row.note != attrs["note"]
-                    or row.inverse_relation != attrs["inverse_relation"]
-                    or row.target_prefix != attrs["target_prefix"]
-                ):
+                if row.note != attrs["note"] or row.inverse_relation != attrs["inverse_relation"]:
                     row.note = attrs["note"]
                     row.inverse_relation = attrs["inverse_relation"]
-                    row.target_prefix = attrs["target_prefix"]
             else:
                 # Insert new link
-                target_id, target_kb, relation = key
+                target_id, target_kb, relation, target_prefix = key
                 self._session.add(
                     Link(
                         source_id=entry_id,
@@ -273,7 +219,8 @@ class SQLiteBackend(BaseBackend):
                         relation=relation,
                         inverse_relation=attrs["inverse_relation"],
                         note=attrs["note"],
-                        target_prefix=attrs["target_prefix"],
+                        # The prefix as the file wrote it, beside the resolved KB (#980).
+                        target_prefix=target_prefix,
                     )
                 )
 
@@ -283,7 +230,7 @@ class SQLiteBackend(BaseBackend):
         # into one dict slot, so the other was never compared and never
         # deleted, and every sync added another (#927).
         for row in existing:
-            key = (row.target_id, row.target_kb, row.relation)
+            key = (row.target_id, row.target_kb, row.relation, row.target_prefix)
             if key not in desired or id(row) not in claimed:
                 self._session.delete(row)
 

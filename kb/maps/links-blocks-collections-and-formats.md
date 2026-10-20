@@ -31,6 +31,11 @@ relationship an entry?", "what formats does Pyrite emit?". Layer 2 under
    files; no save rewrites another entry's frontmatter. **decided**
    [[adr-0022]]; the save hooks that write links today are replaced by
    derivation in ADR-0042 and ADR-0045 (**decided**).
+   The index holds one link row per link the file writes, keyed by the
+   target as the text an id is stored as, the resolved KB, the relation and
+   the prefix as written: `[[ka:x]] [[kb:x]]` are two rows (two entries),
+   `[[ops:x]] [[ops-kb:x]]` are two rows that `index health` checks apart,
+   and a repeated `[[x]]` is one (#1009, #1022).
 3. A relationship that carries data (an ownership with a percentage, a board
    membership with a term) is an edge-entity entry: two or more declared
    endpoints, all required, optional type constraints; provisional claims are

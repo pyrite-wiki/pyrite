@@ -931,6 +931,15 @@ inverse. When the two disagree, `inverse_relation` is the current one.
 The table output (`pyrite-read backlinks`, `pyrite backlinks --format rich`)
 shows `relation` as "Relation" and `forward_relation` as "Written as".
 
+There is one row per link the source writes, not one per source (#1009). Two
+links are one row only when they have the same target (as the text the index
+stores an id as), the same resolved KB, the same relation and the same
+`kb:` prefix as written. So a source that links an entry with `[[ops:x]]`
+and `[[ops-kb:x]]`, or with a frontmatter `links:` item and a body `[[x]]`,
+appears twice in that entry's `backlinks`, once per link; `[[x]]` written
+twice, or `[[x]]` and `[[x#Heading]]`, is one row (the heading is not part of
+the key). `![[x]]` is one row, relation `transclusion`.
+
 `outlinks` rows carry one field, `relation`, which is the forward relation.
 
 ## Body truncation

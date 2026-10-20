@@ -416,7 +416,12 @@ class TestAShortnameLinkIsIndexedUnderTheFullName:
         rows = db.execute_sql(
             "SELECT target_prefix, target_kb FROM link WHERE source_id = 'note'", {}
         )
-        assert {(r["target_prefix"], r["target_kb"]) for r in rows} == {("ops", "ops-kb")}
+        # One row per written link (#1009): the shortname spellings and the
+        # full-name spelling are rows of their own.
+        assert {(r["target_prefix"], r["target_kb"]) for r in rows} == {
+            ("ops", "ops-kb"),
+            ("ops-kb", "ops-kb"),
+        }
 
     def test_a_frontmatter_link_kb_is_resolved_and_kept(self, tmp_path):
         """`links: [{target, kb: ops}]` in frontmatter is a KB field in link
@@ -479,20 +484,28 @@ class TestAShortnameLinkIsIndexedUnderTheFullName:
         )
         after_sync = IndexManager(db, renamed)
         after_sync.sync_kb(renamed.knowledge_bases[0])
+        # One row per written link (#1009): `[[ops:runbook]]`, `![[ops:runbook]]`
+        # and the `references` item write `ops`, `[[ops-kb:runbook]]` the full
+        # name; all four resolved to `ops-kb` when indexed.
         rows = db.execute_sql("SELECT target_kb FROM link WHERE source_id = 'note'", {})
-        assert [r["target_kb"] for r in rows] == ["ops-kb"]  # the unchanged file was not re-read
+        assert [r["target_kb"] for r in rows] == ["ops-kb"] * 4  # the file was not re-read
         health = after_sync.check_health()
-        assert health["links_stale_kb"] == 1
+        assert health["links_stale_kb"] == 3
         assert health["broken_links"] == 0
 
         after_sync.reconcile_kb(renamed.knowledge_bases[0], force=True)
         rows = db.execute_sql(
-            "SELECT target_prefix, target_kb FROM link WHERE source_id = 'note'", {}
+            "SELECT relation, target_prefix, target_kb FROM link WHERE source_id = 'note'", {}
         )
-        assert [(r["target_prefix"], r["target_kb"]) for r in rows] == [("ops", "ops")]
+        assert sorted((r["relation"], r["target_prefix"], r["target_kb"]) for r in rows) == [
+            ("references", "ops", "ops"),
+            ("transclusion", "ops", "ops"),
+            ("wikilink", "ops", "ops"),
+            ("wikilink", "ops-kb", "ops-kb"),
+        ]
         health = after_sync.check_health()
         assert health["links_stale_kb"] == 0
-        assert health["broken_links"] == 1
+        assert health["broken_links"] == 3
 
     def test_a_link_to_no_kb_is_broken_not_stale(self, tmp_path):
         """`[[nowhere:x]]` names no KB: it is a broken link, and a rebuild
