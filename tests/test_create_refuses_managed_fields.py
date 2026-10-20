@@ -355,10 +355,10 @@ def _import_grid():
     cells = []
     for path in IMPORT_PATHS:
         for etype, field in CELLS:
+            if field == "id":
+                continue  # the entry's identity is kept by an import, not dropped
             for label, extra in _forms(etype, field):
                 marks = []
-                if field == "id" and label.startswith("dotted:"):
-                    marks.append(pytest.mark.control(reason="metadata.id was already refused"))
                 cells.append(
                     pytest.param(
                         path, etype, field, extra, id=f"{path}|{etype}.{field}|{label}", marks=marks
@@ -373,9 +373,6 @@ def test_an_import_path_drops_a_managed_field_and_reports_it(env, path, etype, f
     title = f"Imp{n}"
     ok, text = IMPORT_PATHS[path](env, etype, extra, title)
     written = list(env["kb_path"].rglob(f"imp{n}.md"))
-    if field == "id":
-        # `id` is the entry's identity, not droppable: the envelope spelling is refused.
-        return
     assert ok and len(written) == 1, text
     assert field in text, text  # named under ignored
     # The sent value is not in the file (an ADR's model writes its own default

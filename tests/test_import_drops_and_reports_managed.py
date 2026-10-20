@@ -89,6 +89,7 @@ def _frontmatter_keys(env) -> dict[str, set[str]]:
     return out
 
 
+@pytest.mark.control(reason="guards the fixture: the export carries the keys the decision names")
 def test_the_export_really_carries_the_keys_the_decision_names(env):
     records = json.loads(_export(env))["entries"]
     carried = set().union(*(r.keys() for r in records))
