@@ -588,6 +588,47 @@ def test_a_double_quoted_scalar_stays_double_quoted():
     ]
 
 
+@pytest.mark.parametrize(
+    ("line", "value", "expected"),
+    [
+        # An empty string can only be written quoted: its quotes were forced,
+        # not chosen, so a value filling it follows the plain rule (#86: a
+        # create writes `kind: ""` for a declared field left empty).
+        ('kind: ""', "bug", "kind: bug"),
+        ("kind: ''", "bug", "kind: bug"),
+        # The comment stays at its column, so the gap before it narrows to fit.
+        ('kind: ""  # fill me', "bug", "kind: bug # fill me"),
+        # ... and the plain rule still quotes what YAML would misread.
+        ("kind: ''", "yes", 'kind: "yes"'),
+        pytest.param(
+            'kind: ""',
+            "a: b",
+            'kind: "a: b"',
+            marks=pytest.mark.control(reason="quoted before #86 too: the plain rule's own case"),
+        ),
+        # A non-empty quoted scalar was quoted by its author: it stays quoted.
+        pytest.param(
+            'kind: "feature"',
+            "bug",
+            'kind: "bug"',
+            marks=pytest.mark.control(reason="a non-empty quoted scalar stayed quoted before #86"),
+        ),
+        pytest.param(
+            "kind: 'feature'",
+            "bug",
+            "kind: 'bug'",
+            marks=pytest.mark.control(reason="a non-empty quoted scalar stayed quoted before #86"),
+        ),
+    ],
+)
+def test_an_empty_quoted_scalar_is_filled_unstyled(line, value, expected):
+    text = f"---\nid: x\n{line}\n---\n"
+    after, _ = run(text, Set("kind", value))
+    assert after.splitlines()[2] == expected
+    parsed = load_frontmatter(after)
+    assert parsed is not None and parsed[0]["kind"] == value
+
+
 def test_a_new_key_goes_last_with_the_files_line_ending():
     after, _ = run(SHAPES["crlf"], Set("status", "draft"))
     assert after.endswith(

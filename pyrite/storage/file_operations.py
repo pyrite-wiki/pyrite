@@ -1890,7 +1890,12 @@ def _block_body_range(doc: _Doc, node: ScalarNode) -> tuple[int, int]:
 
 def _replace_scalar(doc: _Doc, node: ScalarNode, new: Any, flow: bool) -> list:
     if not _is_block_scalar(node):
-        return _scalar_edit(doc, node, _emit_scalar(new, node.style, node.tag, flow), flow)
+        # An empty string can only be spelled quoted (`""`, `''`): its quotes
+        # were forced, not the author's choice, so the value filling it
+        # follows the plain rule (#86: a create writes a declared field left
+        # empty as `""`). A non-empty quoted scalar keeps its quotes.
+        style = None if node.style in ("'", '"') and node.value == "" else node.style
+        return _scalar_edit(doc, node, _emit_scalar(new, style, node.tag, flow), flow)
     body_start, body_end = _block_body_range(doc, node)
     header = (doc.s(node), _header_end(doc, node))
     if isinstance(new, str):
