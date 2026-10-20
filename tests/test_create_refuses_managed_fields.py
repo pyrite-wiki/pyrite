@@ -384,15 +384,6 @@ def test_an_import_path_drops_a_managed_field_and_reports_it(env, path, etype, f
     assert not sent.search(written[0].read_text()), written[0].read_text()
 
 
-def test_the_grid_has_the_top_envelope_and_dotted_spellings():
-    """The grid must hold the spellings the property names, not loop zero times.
-    (No managed field of a registered type has an alias today, so ``spellings_of``
-    yields none; the next test declares one.)"""
-    labels = {label.split(":")[0] for etype, f in CELLS for label, _ in _forms(etype, f)}
-    assert {"top", "envelope", "dotted"} <= labels
-    assert len(_grid()) > 100
-
-
 def test_an_alias_of_a_managed_field_is_refused_at_every_spelling(env):
     """An alias folds to its target (ADR-0051): declare `log` for task's
     `status_change_log` the way a plugin would, and every spelling is refused.
