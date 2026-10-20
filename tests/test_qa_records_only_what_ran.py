@@ -977,6 +977,7 @@ def test_ci_with_only_a_registered_kb_finds_what_qa_validate_finds(tmp_path):
     assert len(ci_kb["issues"]) == len(validated["issues"]), (body, validated)
 
 
+@pytest.mark.control(reason="a config.yaml KB was already validated; the fix must keep it so")
 def test_ci_with_a_configured_kb_validates_it(tmp_path):
     config = _required_world(tmp_path)
     code, body = _cli(config, ["ci", "--severity", "error", "--format", "json"])
