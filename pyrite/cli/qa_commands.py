@@ -740,8 +740,8 @@ def qa_stale(
     }
 
     formatted = _format_output(data, output_format)
-    if formatted:
-        console.print(formatted)
+    if formatted is not None:
+        typer.echo(formatted)
         return
 
     if not results:
@@ -795,8 +795,8 @@ def qa_compact(
     }
 
     formatted = _format_output(data, output_format)
-    if formatted:
-        console.print(formatted)
+    if formatted is not None:
+        typer.echo(formatted)
         return
 
     if not results:
@@ -847,7 +847,9 @@ def qa_check_urls(
     """
     from pathlib import Path
 
+    from ..exceptions import PyriteError
     from ..services.url_checker import URLChecker
+    from ..utils.errors import cli_error_from
 
     cache_path = Path(cache_file) if cache_file else None
     if output_format != "json":
@@ -855,9 +857,12 @@ def qa_check_urls(
     # cli_context() closes the database on exit, so collect_urls (the only
     # step that reads it) must run inside the block. The HTTP checks below
     # use no database and run after it.
-    with cli_context(kbs=(kb_name,), output_format=output_format) as (_config, db, _svc):
-        checker = URLChecker(db, cache_path=cache_path)
-        url_entries = checker.collect_urls(kb_name)
+    try:
+        with cli_context(kbs=(kb_name,), output_format=output_format) as (_config, db, _svc):
+            checker = URLChecker(db, cache_path=cache_path)
+            url_entries = checker.collect_urls(kb_name)
+    except PyriteError as exc:
+        cli_error_from(exc, output_format)
 
     if not url_entries and output_format != "json":
         console.print("[green]No source URLs found.[/green]")

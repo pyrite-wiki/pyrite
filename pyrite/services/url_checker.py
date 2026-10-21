@@ -6,11 +6,17 @@ to avoid rechecking unchanged URLs.
 
 import json
 import logging
+import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from sqlalchemy.exc import SQLAlchemyError
+
+from ..exceptions import StorageError
+from .search_service import storage_error_from
 
 logger = logging.getLogger(__name__)
 
@@ -76,36 +82,37 @@ class URLChecker:
         filters = [None] if entry_types is None else entry_types
         url_entries: dict[str, list[str]] = defaultdict(list)
 
-        for etype in filters:
-            offset = 0
-            while True:
-                try:
+        try:
+            for etype in filters:
+                offset = 0
+                while True:
                     results = self.db.list_entries(
                         kb_name=kb_name, entry_type=etype, limit=10000, offset=offset
                     )
-                except Exception:
-                    break
 
-                for r in results:
-                    entry_id = r.get("id", "")
-                    # list_entries doesn't include sources; fetch full entry
-                    full = self.db.get_entry(entry_id, kb_name)
-                    if not full:
-                        continue
-                    sources = full.get("sources") or []
+                    for r in results:
+                        entry_id = r.get("id", "")
+                        # list_entries doesn't include sources; fetch full entry
+                        full = self.db.get_entry(entry_id, kb_name)
+                        if not full:
+                            continue
+                        sources = full.get("sources") or []
 
-                    for src in sources:
-                        url = ""
-                        if isinstance(src, dict):
-                            url = src.get("url", "")
-                        elif isinstance(src, str):
-                            url = src
-                        if url and url.startswith("http"):
-                            url_entries[url].append(entry_id)
+                        for src in sources:
+                            url = ""
+                            if isinstance(src, dict):
+                                url = src.get("url", "")
+                            elif isinstance(src, str):
+                                url = src
+                            if url and url.startswith("http"):
+                                url_entries[url].append(entry_id)
 
-                if len(results) < 10000:
-                    break
-                offset += len(results)
+                    if len(results) < 10000:
+                        break
+                    offset += len(results)
+        except (SQLAlchemyError, sqlite3.Error, StorageError) as exc:
+            logger.error("URL collection failed: %s", exc, exc_info=True)
+            raise storage_error_from(getattr(exc, "orig", exc), "URL collection failed") from exc
 
         return dict(url_entries)
 
