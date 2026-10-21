@@ -178,11 +178,14 @@ def open_index_for_validation(
     The returned database belongs to the caller, which must close it. If
     opening or checking the index fails, the returned config is freshly loaded
     from YAML so partially merged DB-only KBs cannot leak into validation.
-    File-system errors while checking KB contents still propagate.
+    File-system errors while checking KB contents still propagate. A
+    ``StorageError`` (a corrupt or truncated index, #922) propagates too: the
+    caller is a check command, and a check that cannot be made is a refusal
+    (exit 1, ``STORAGE_ERROR``), not a clean verdict from the YAML alone.
     """
     try:
         config, db = get_config_and_db(config)
-    except (OSError, sqlite3.Error, SQLAlchemyError, StorageError) as exc:
+    except (OSError, sqlite3.Error, SQLAlchemyError) as exc:
         logger.warning(
             "Could not read index database %s while validating KBs; "
             "using YAML config without content-drift checks: %s",
@@ -193,7 +196,7 @@ def open_index_for_validation(
 
     try:
         health = IndexManager(db, config).check_health()
-    except (sqlite3.Error, SQLAlchemyError, StorageError) as exc:
+    except (sqlite3.Error, SQLAlchemyError) as exc:
         logger.warning(
             "Could not read index database %s while validating KBs; "
             "using YAML config without content-drift checks: %s",

@@ -69,6 +69,48 @@ CORRUPT_INDEX_SUGGESTION = (
 )
 
 
+def index_file_problem(db_path: Path) -> str | None:
+    """Why the index file at ``db_path`` is unreadable, judged from its header, or None.
+
+    SQLite opens a file cut short without complaint: it trusts the page count in
+    its header, and no read of a table notices the lost tail. So the file is
+    checked against that count here, the one place the rule lives (the opener
+    and ``db backup`` both call it). The count is only believed when it is
+    current and the main file is the whole database:
+
+    * a non-empty ``-wal`` means the main file may lawfully lag the count (a
+      checkpoint in progress, or a crash in the middle of one): the pages are
+      in the WAL;
+    * offset 92 (version-valid-for) must equal offset 24 (change counter), or
+      SQLite itself ignores the count at offset 28 and uses the file size.
+
+    A zero-byte file is an empty database. A directory or a file that is not
+    SQLite is refused whatever the WAL says.
+    """
+    if not db_path.exists():
+        return None
+    size = db_path.stat().st_size
+    if size == 0:
+        return None
+    with db_path.open("rb") as fh:
+        header = fh.read(100)
+    if len(header) < 100 or not header.startswith(b"SQLite format 3\x00"):
+        return "file is not a database"
+    raw_page_size = int.from_bytes(header[16:18], "big")
+    page_size = 65536 if raw_page_size == 1 else raw_page_size
+    if page_size < 512:
+        return "database disk image is malformed"
+    wal = db_path.with_name(db_path.name + "-wal")
+    if wal.exists() and wal.stat().st_size > 0:
+        return None
+    if header[92:96] != header[24:28]:
+        return None
+    in_header_pages = int.from_bytes(header[28:32], "big")
+    if size % page_size != 0 or (in_header_pages > 0 and size < page_size * in_header_pages):
+        return "database disk image is malformed"
+    return None
+
+
 class ConnectionMixin:
     """Database connection, extensions, migrations, and plugin table creation."""
 
@@ -80,22 +122,9 @@ class ConnectionMixin:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             if self.db_path.is_dir():
                 raise IsADirectoryError(f"Index path is a directory: {self.db_path}")
-            if self.db_path.exists():
-                size = self.db_path.stat().st_size
-                if size > 0:
-                    with self.db_path.open("rb") as fh:
-                        header = fh.read(100)
-                    if len(header) < 100 or not header.startswith(b"SQLite format 3\x00"):
-                        raise sqlite3.DatabaseError("file is not a database")
-                    raw_page_size = int.from_bytes(header[16:18], "big")
-                    page_size = 65536 if raw_page_size == 1 else raw_page_size
-                    in_header_pages = int.from_bytes(header[28:32], "big")
-                    if (
-                        page_size < 512
-                        or size % page_size != 0
-                        or (in_header_pages > 0 and size < page_size * in_header_pages)
-                    ):
-                        raise sqlite3.DatabaseError("database disk image is malformed")
+            problem = index_file_problem(self.db_path)
+            if problem:
+                raise sqlite3.DatabaseError(problem)
 
             # Create SQLAlchemy engine.
             #

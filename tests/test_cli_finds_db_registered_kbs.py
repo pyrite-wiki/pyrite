@@ -95,26 +95,27 @@ def test_kb_validate_without_name_includes_db_registered_kbs(registered_kb):
     assert [kb["name"] for kb in payload["kbs"]] == ["registry-only"]
 
 
-def test_kb_validate_uses_yaml_config_when_index_database_is_unreadable(registered_kb, caplog):
+def test_kb_validate_refuses_when_index_database_is_corrupt(registered_kb):
+    """A check command that cannot make its check exits 1 (json-contracts, "Check
+    commands"; #922): a corrupt index is a refusal, not a clean verdict from
+    the YAML alone. The file is left as it was."""
     _write_yaml_kb_config(registered_kb)
     index_db = registered_kb["data_dir"] / "index.db"
     corrupt_bytes = b"not a sqlite database"
     index_db.write_bytes(corrupt_bytes)
 
-    with caplog.at_level("WARNING", logger="pyrite.cli.context"):
-        result = runner.invoke(app, ["kb", "validate", "--format", "json"])
+    result = runner.invoke(app, ["kb", "validate", "--format", "json"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
     payload = json.loads(result.stdout)
-    assert [kb["name"] for kb in payload["kbs"]] == ["yaml-only"]
-    assert payload["drift_checked"] is False
-    assert "using YAML config" in caplog.text
-    assert "without content-drift checks" in caplog.text
+    assert payload["error_code"] == "STORAGE_ERROR"
+    assert "pyrite index build" in payload["suggestion"]
+    assert "kbs" not in payload
     assert index_db.read_bytes() == corrupt_bytes
 
     rich_result = runner.invoke(app, ["kb", "validate", "--format", "rich"])
-    assert rich_result.exit_code == 0, rich_result.output
-    assert "Content-drift checks were skipped" in rich_result.output
+    assert rich_result.exit_code == 1, rich_result.output
+    assert "STORAGE_ERROR" in rich_result.output
 
 
 def test_kb_validate_does_not_report_file_read_errors_as_database_errors(

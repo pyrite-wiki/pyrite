@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 
 from ..exceptions import StorageError
-from ..storage.connection import CORRUPT_INDEX_SUGGESTION
+from ..storage.connection import CORRUPT_INDEX_SUGGESTION, index_file_problem
 
 
 def backup_index(db_path: Path, output_path: Path) -> None:
@@ -18,18 +18,11 @@ def backup_index(db_path: Path, output_path: Path) -> None:
     try:
         source_conn = sqlite3.connect(str(db_path))
         dest_conn = sqlite3.connect(str(output_path))
-        # A file cut short opens and copies without error: SQLite trusts the
-        # page count in its header, and no read of a table notices the lost
-        # tail. Check the file against that count, then run SQLite's own check.
-        # With a live -wal the main file can lawfully lag the count.
-        wal = db_path.with_name(db_path.name + "-wal")
-        if not wal.exists() or wal.stat().st_size == 0:
-            pages = source_conn.execute("PRAGMA page_count").fetchone()[0]
-            page_size = source_conn.execute("PRAGMA page_size").fetchone()[0]
-            if db_path.stat().st_size < pages * page_size:
-                raise sqlite3.DatabaseError(
-                    f"file is {db_path.stat().st_size} bytes, header says {pages * page_size}"
-                )
+        # The same header rule the opener applies (a WAL or a stale count
+        # exempts the file), then SQLite's own check.
+        problem = index_file_problem(db_path)
+        if problem:
+            raise sqlite3.DatabaseError(problem)
         verdict = source_conn.execute("PRAGMA integrity_check").fetchone()
         if verdict is None or verdict[0] != "ok":
             raise sqlite3.DatabaseError(

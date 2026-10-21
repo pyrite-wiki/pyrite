@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import ast
 import json
+import shutil
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -49,6 +51,10 @@ COMMANDS = [
     ["task", "list", "-k", "t"],
     ["qa", "validate", "t"],
     ["ci"],
+    # A check command exits 1 when the check cannot be made (json-contracts,
+    # "Check commands"); it does not warn and answer 0 from the YAML alone.
+    ["kb", "validate"],
+    ["kb", "validate", "t"],
     # `db backup` opens the index with sqlite3 itself, not through PyriteDB.
     ["db", "backup"],
 ]
@@ -150,6 +156,114 @@ class TestCommandsRefuseCorruptIndex:
         result = runner.invoke(app, argv)
 
         _assert_clean_storage_refusal(result)
+
+
+def _healthy_index(path: Path) -> None:
+    PyriteDB(path).close()
+
+
+def _wal_ahead_index(directory: Path) -> Path:
+    """A healthy WAL-mode index whose page 1 is ahead of its main file.
+
+    A checkpoint wrote page 1 (with the new page count) and stopped before it
+    grew the file, or the process died there. Plain sqlite3 reads every row
+    and ``integrity_check`` says ``ok``: the pages are in the ``-wal``.
+    """
+    base = directory / "base.db"
+    _healthy_index(base)
+    live = sqlite3.connect(base)
+    live.execute("PRAGMA journal_mode=WAL")
+    live.execute("PRAGMA wal_autocheckpoint=0")
+    live.execute("CREATE TABLE filler (v BLOB)")
+    live.executemany("INSERT INTO filler VALUES (?)", [(b"x" * 3000,)] * 200)
+    live.commit()
+    index = directory / "index.db"
+    shutil.copyfile(base, index)
+    wal = Path(f"{index}-wal")
+    shutil.copyfile(f"{base}-wal", wal)
+    live.close()
+
+    frames = wal.read_bytes()
+    page_size = int.from_bytes(frames[8:12], "big")
+    page_one = None
+    for at in range(32, len(frames) - page_size - 23, page_size + 24):
+        if int.from_bytes(frames[at : at + 4], "big") == 1:
+            page_one = frames[at + 24 : at + 24 + page_size]
+    assert page_one is not None, "the WAL holds no page 1 frame"
+    with index.open("r+b") as fh:
+        fh.write(page_one)
+    header = index.read_bytes()[:100]
+    assert wal.stat().st_size > 0
+    assert index.stat().st_size < int.from_bytes(header[28:32], "big") * page_size
+    assert header[92:96] == header[24:28], "the header count must be current for this state"
+    return index
+
+
+def _stale_header_count_index(index: Path) -> None:
+    """A healthy index whose header page count is not current.
+
+    Offset 92 (version-valid-for) differs from offset 24 (change counter), so
+    SQLite ignores the count at offset 28 and uses the file size.
+    """
+    _healthy_index(index)
+    raw = bytearray(index.read_bytes())
+    pages = len(raw) // int.from_bytes(raw[16:18], "big")
+    raw[28:32] = (pages + 7).to_bytes(4, "big")
+    raw[92:96] = ((int.from_bytes(raw[24:28], "big") + 1) & 0xFFFFFFFF).to_bytes(4, "big")
+    index.write_bytes(bytes(raw))
+
+
+def _plain_sqlite_calls_it_healthy(index: Path, workdir: Path) -> None:
+    copy = workdir / "probe-copy.db"
+    shutil.copyfile(index, copy)
+    if Path(f"{index}-wal").exists():
+        shutil.copyfile(f"{index}-wal", f"{copy}-wal")
+    conn = sqlite3.connect(copy)
+    try:
+        assert conn.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
+    finally:
+        conn.close()
+
+
+class TestHealthyIndexIsNeverRefused:
+    """A refusal tells the user to rebuild; it must not fire on a healthy index."""
+
+    @pytest.fixture(params=["wal-ahead", "stale-header-count"])
+    def healthy_state(self, request, tmp_path: Path) -> Path:
+        directory = tmp_path / "state"
+        directory.mkdir()
+        if request.param == "wal-ahead":
+            index = _wal_ahead_index(directory)
+        else:
+            index = directory / "index.db"
+            _stale_header_count_index(index)
+        _plain_sqlite_calls_it_healthy(index, tmp_path)
+        return index
+
+    def test_pyritedb_opens_it(self, healthy_state: Path):
+        PyriteDB(healthy_state).close()
+
+    def test_db_backup_copies_it(self, scratch_home: dict[str, Path], healthy_state: Path):
+        shutil.copyfile(healthy_state, scratch_home["index_db"])
+        wal = Path(f"{healthy_state}-wal")
+        if wal.exists():
+            shutil.copyfile(wal, f"{scratch_home['index_db']}-wal")
+
+        result = runner.invoke(app, ["db", "backup"])
+
+        assert result.exit_code == 0, result.output
+        assert "Backup created" in result.output
+
+    def test_a_command_reads_through_it(self, scratch_home: dict[str, Path], healthy_state: Path):
+        shutil.copyfile(healthy_state, scratch_home["index_db"])
+        wal = Path(f"{healthy_state}-wal")
+        if wal.exists():
+            shutil.copyfile(wal, f"{scratch_home['index_db']}-wal")
+
+        result = runner.invoke(app, ["get", "hi", "-k", "t"])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["id"] == "hi"
 
 
 class TestZeroByteIndexKeepsWorking:

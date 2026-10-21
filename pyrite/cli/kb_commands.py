@@ -270,7 +270,8 @@ def kb_validate(
     mismatches). Results are filtered per-KB when a specific KB name is
     given.
 
-    Exit code: 0 clean, 1 if any KB has structural errors, 2 if only
+    Exit code: 0 clean, 1 if any KB has structural errors or the index is
+    corrupt (STORAGE_ERROR: the check cannot be made), 2 if only
     content-drift warnings. Suitable for CI gating — `pyrite kb validate
     && deploy` blocks on structural errors; scripts that want to gate on
     drift too can check for exit code 2.
