@@ -274,21 +274,26 @@ class TestTheMatrixNarrowsWhereItShould:
     the way GitHub would and checks the interpreter list that comes out.
     """
 
-    #: (event_name, infra_output) -> the interpreters that should run.
+    #: (event_name, infra_output, queue_passed) -> the interpreters that run.
     #: A merge group forces every classifier output to 'true' (fail closed),
-    #: so `infra != 'true'` cannot narrow it -- the event must be named. Only
-    #: `pull_request` (non-infra) is narrow; merge_group runs the full matrix
-    #: (#400).
+    #: so `infra != 'true'` cannot narrow it -- the event must be named. A
+    #: pull request (non-infra) runs 3.12; a merge group runs 3.13 (narrowed
+    #: on 2026-10-21, maintainer, after queue timeouts); the push to dev that
+    #: follows a passed queue runs the other two. Anything else runs all three.
+    ALL = ["3.11", "3.12", "3.13"]
     CASES = [
-        ("pull_request", "false", ["3.12"]),
-        ("pull_request", "true", ["3.11", "3.12", "3.13"]),  # #133 exception
-        ("merge_group", "true", ["3.11", "3.12", "3.13"]),  # #400
-        ("push", "true", ["3.11", "3.12", "3.13"]),
-        ("workflow_dispatch", "false", ["3.11", "3.12", "3.13"]),
+        ("pull_request", "false", "false", ["3.12"]),
+        ("pull_request", "true", "false", ALL),  # #133 exception
+        ("merge_group", "true", "false", ["3.13"]),
+        ("push", "true", "true", ["3.11", "3.12"]),  # after a passed queue run
+        ("push", "true", "false", ALL),  # no queue run: a direct push, a failed run
+        ("workflow_dispatch", "false", "false", ALL),
     ]
 
     @staticmethod
-    def _evaluate(expression: str, event: str, infra: str) -> list[str]:
+    def _evaluate(
+        expression: str, event: str, infra: str, queue_passed: str = "false"
+    ) -> list[str]:
         """Evaluate the `fromJSON(...)` matrix expression for one event."""
         inner = expression.strip()
         assert inner.startswith("${{") and inner.endswith("}}"), inner
@@ -301,37 +306,35 @@ class TestTheMatrixNarrowsWhereItShould:
             .replace("||", " or ")
             .replace("github.event_name", repr(event))
             .replace("needs.changes.outputs.infra", repr(infra))
+            .replace("needs.changes.outputs.queue_passed", repr(queue_passed))
         )
-        # GitHub's `a && b || c` is Python's, and both JSON arrays are
-        # truthy literals, so the expression evaluates directly.
+        # GitHub's `a && b || c` is Python's, and every JSON array is a
+        # truthy literal, so the expression evaluates directly.
         return json.loads(eval(python))  # noqa: S307 - a literal from our own repo
 
-    @pytest.mark.parametrize(("event", "infra", "expected"), CASES)
-    def test_the_matrix_for_each_event(self, ci, event, infra, expected):
-        expression = str(ci["jobs"]["test"]["strategy"]["matrix"]["python-version"])
-        assert self._evaluate(expression, event, infra) == expected
+    @pytest.mark.parametrize("job", ["test", "collect"])
+    @pytest.mark.parametrize(("event", "infra", "queue_passed", "expected"), CASES)
+    def test_the_matrix_for_each_event(self, ci, job, event, infra, queue_passed, expected):
+        expression = str(ci["jobs"][job]["strategy"]["matrix"]["python-version"])
+        assert self._evaluate(expression, event, infra, queue_passed) == expected
 
-    def test_a_queued_group_pays_for_the_full_matrix(self, ci):
-        # #400: a merge group runs the exact commit about to land on `dev`.
-        # #388 passed PR CI and a narrow merge queue on 3.12, then reddened
-        # dev's post-merge matrix on 3.13 and blocked a release cut for about
-        # an hour. The queue costs runner minutes, not wall time (the legs
-        # run in parallel), to catch that before the merge instead of after.
+    def test_the_queue_and_the_dev_push_test_each_interpreter_once(self, ci):
+        # Each commit is tested once on every interpreter: the queue runs what
+        # the push to dev then skips, and the push runs the rest. #388 broke
+        # on 3.13, so 3.13 is the one the queue keeps; a 3.11/3.12-only
+        # failure now reddens dev after the merge (the #400 trade-off).
         expression = str(ci["jobs"]["test"]["strategy"]["matrix"]["python-version"])
-        assert self._evaluate(expression, "merge_group", "true") == ["3.11", "3.12", "3.13"]
-        assert self._evaluate(expression, "push", "true") == ["3.11", "3.12", "3.13"]
+        queue = self._evaluate(expression, "merge_group", "true")
+        push = self._evaluate(expression, "push", "true", "true")
+        assert not set(queue) & set(push), (queue, push)
+        assert sorted(queue + push) == self.ALL, (queue, push)
 
-    @pytest.mark.control(reason="pins an invariant that already holds; red if the queue narrows")
-    @pytest.mark.parametrize("push_infra", ["true", "false"])
-    def test_the_queue_runs_everything_the_dev_push_would(self, ci, push_infra):
-        # The push to dev skips `test` and `frontend` when a merge_group run
-        # passed the same SHA (ci.yml, the `queue` step). That is sound only
-        # while the queue runs at least what the push would have: the same
-        # interpreters, and no step the push runs that the queue skips.
-        expression = str(ci["jobs"]["test"]["strategy"]["matrix"]["python-version"])
-        queue = set(self._evaluate(expression, "merge_group", "true"))
-        push = set(self._evaluate(expression, "push", push_infra))
-        assert queue >= push, (queue, push)
+    @pytest.mark.control(
+        reason="pins an invariant that already holds; red if a step skips the push"
+    )
+    def test_no_test_or_frontend_step_is_skipped_by_event(self, ci):
+        # The push to dev relies on the queue's `frontend` and on its own
+        # `test` legs; neither may hide a step behind the event name.
         for job in ("test", "frontend"):
             for step in ci["jobs"][job]["steps"]:
                 cond = str(step.get("if", "")).replace('"', "'")

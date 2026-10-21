@@ -1173,10 +1173,10 @@ class TestRunningTheTestsDoc:
 class TestDevPushReusesTheMergeQueuesPass:
     """Each commit is tested once (maintainer, 2026-09-25).
 
-    The merge queue runs the full matrix and the frontend on the exact commit
-    that then lands on dev -- its head_sha is the push's SHA. The push to dev
-    used to run both again on that same commit. Now a successful merge_group
-    run for the SHA skips them on the push; smoke still runs (the queue does
+    The merge queue runs the frontend and `test` on 3.13 on the exact commit
+    that then lands on dev -- its head_sha is the push's SHA. A successful
+    merge_group run for the SHA skips the frontend on the push and narrows
+    `test` to 3.11 and 3.12 (2026-10-21); smoke still runs (the queue does
     not run it), and main and workflow_dispatch never skip.
     """
 
@@ -1210,12 +1210,19 @@ class TestDevPushReusesTheMergeQueuesPass:
         assert "event=merge_group" in run and "head_sha=$GITHUB_SHA" in run
         assert '.conclusion == \\"success\\"' in run
 
-    @pytest.mark.parametrize("name", ["test", "frontend"])
-    def test_test_and_frontend_skip_when_the_queue_passed(self, ci, name):
-        cond = str(ci["jobs"][name]["if"])
+    def test_frontend_skips_when_the_queue_passed(self, ci):
+        cond = str(ci["jobs"]["frontend"]["if"])
         assert "needs.changes.outputs.queue_passed != 'true'" in cond, cond
         # The skip is ANDed onto the existing condition, never ORed.
         assert cond.startswith("(") and ") && needs.changes.outputs.queue_passed" in cond, cond
+
+    @pytest.mark.parametrize("name", ["test", "collect"])
+    def test_test_runs_the_interpreters_the_queue_did_not(self, ci, name):
+        # Since 2026-10-21 the queue runs 3.13 only, so the push to dev is
+        # where 3.11 and 3.12 run: `test` and `collect` no longer skip on a
+        # passed queue; their matrix narrows instead
+        # (tests/test_ci_workflow_triggers.py, TestTheMatrixNarrowsWhereItShould).
+        assert "queue_passed" not in str(ci["jobs"][name]["if"]), name
 
     @pytest.mark.control(reason="pins that the skip stays off jobs that never had it")
     @pytest.mark.parametrize("name", ["smoke", "kb", "gate"])

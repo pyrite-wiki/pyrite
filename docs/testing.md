@@ -235,7 +235,8 @@ merge.
   from it. Security properties are never experimental; that file lists them
   and `tests/test_experimental_surface.py` checks both lists against a real
   collection.
-- **The gate**: the `test` job (and the merge queue's full matrix) runs
+- **The gate**: the `test` job (3.12 on a pull request, 3.13 in the merge
+  queue, 3.11 and 3.12 on the push to `dev` that follows) runs
   `-m "not slow and not e2e and not experimental"`. `gate` needs `test`, not
   `experimental`.
 - **The ratchet**: `experimental` runs `-m "experimental and not slow and not

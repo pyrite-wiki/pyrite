@@ -120,8 +120,10 @@ jobs:
       # concluded 11-26 s before the push run started). Running `test` and
       # `frontend` again on the push re-tested code with exactly those tests
       # already passed against it. So on a push to dev, a successful
-      # merge_group run of this workflow for this SHA skips both; `smoke` runs
-      # (the queue does not), and `gate` reads the skips as it always has.
+      # merge_group run of this workflow for this SHA skips `frontend`, and
+      # `test` runs only the interpreters the queue did not (3.11, 3.12; see
+      # the `test` matrix); `smoke` runs (the queue does not), and `gate`
+      # reads the skips as it always has.
       # Anything else -- no queue run, one still running, a failed one, an API
       # error, a direct push -- runs everything as before. main and
       # workflow_dispatch never skip: the step does not run for them.
@@ -206,7 +208,7 @@ jobs:
 
   test:
     needs: changes
-    if: (needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main') && needs.changes.outputs.queue_passed != 'true'
+    if: needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # A hung test must not hold a runner for the 6 h default (tests-t1): pytest-timeout
     # bounds each test; this bounds the job.
@@ -239,7 +241,16 @@ jobs:
         # the exact commit that is about to land, so as of #400 it pays for
         # the full matrix: queue runner minutes, not wall time, since the
         # legs run in parallel. Only `pull_request` stays narrow.
-        python-version: ${{ fromJSON((github.event_name == 'pull_request' && needs.changes.outputs.infra != 'true') && '["3.12"]' || '["3.11", "3.12", "3.13"]') }}
+        #
+        # Narrowed again on 2026-10-21 (maintainer): a GitHub Actions slowdown
+        # starved the queue, a 21-job group could not finish inside the
+        # 2400 s check timeout, and each timeout rebuilt every group behind it.
+        # The queue now runs 3.13 only (the interpreter #388 broke on), and the
+        # push to dev that follows runs 3.11 and 3.12 on the same commit, so
+        # each commit is still tested once on every interpreter. The cost is
+        # the #400 risk: a 3.11/3.12-only failure now reddens dev after the
+        # merge instead of blocking it.
+        python-version: ${{ fromJSON((github.event_name == 'pull_request' && needs.changes.outputs.infra != 'true') && '["3.12"]' || github.event_name == 'merge_group' && '["3.13"]' || needs.changes.outputs.queue_passed == 'true' && '["3.11", "3.12"]' || '["3.11", "3.12", "3.13"]') }}
         # Shards (tests Q2): the suite doubled (3,939 -> 8,143 test defs, Sep 10
         # -> Oct 14) and `test (3.12)` went 13 -> 18-20 min with it. Each
         # interpreter's run is split into 3 parallel legs by pytest-split,
@@ -466,12 +477,12 @@ jobs:
   # ===========================================================================
   collect:
     needs: changes
-    if: (needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main') && needs.changes.outputs.queue_passed != 'true'
+    if: needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       matrix:
-        python-version: ${{ fromJSON((github.event_name == 'pull_request' && needs.changes.outputs.infra != 'true') && '["3.12"]' || '["3.11", "3.12", "3.13"]') }}
+        python-version: ${{ fromJSON((github.event_name == 'pull_request' && needs.changes.outputs.infra != 'true') && '["3.12"]' || github.event_name == 'merge_group' && '["3.13"]' || needs.changes.outputs.queue_passed == 'true' && '["3.11", "3.12"]' || '["3.11", "3.12", "3.13"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -540,7 +551,7 @@ jobs:
         run: python scripts/check_shard_union.py balance reports >> "$GITHUB_STEP_SUMMARY" || true
       - name: Merge the durations
         if: ${{ !cancelled() }}
-        run: python scripts/merge_test_durations.py --old .test_durations.gz --out test_durations.gz reports/junit-test-3.12-*/.test_durations || true
+        run: python scripts/merge_test_durations.py --old .test_durations.gz --out test_durations.gz reports/junit-test-*/.test_durations || true
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:

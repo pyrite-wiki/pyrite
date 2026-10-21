@@ -379,8 +379,8 @@ come from GitHub Actions, and conclude `success` (`skipped` does not count)
 in every workflow run that tested the SHA.
 
 What that is evidence of: CI accepted the commit. Every job `gate` needs
-succeeded or was skipped by CI's change classifier: the full matrix in the
-merge queue, one interpreter (with `test` skipped on a docs-only change) on
+succeeded or was skipped by CI's change classifier: Python 3.13 in the
+merge queue and 3.11 and 3.12 on the push to `dev` that follows, one interpreter (with `test` skipped on a docs-only change) on
 a pull request. It does not say a particular selection of tests ran. So
 `PYRITE_PUSH_FULL=1` still runs the full suite, `PYRITE_PUSH_EXPERIMENTAL=1`
 still runs (`gate` does not need the experimental job), and `--force` or
