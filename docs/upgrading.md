@@ -272,7 +272,7 @@ The reference row is [`KB_NOT_FOUND`](json-contracts.md#write-refusals-create-im
   every entry too, and a missing or broken checker binding is reported instead
   of passing silently. A KB whose declared checks were never run across all its
   entries can start failing `pyrite ci` with no change to its files: run
-  `pyrite qa validate -k <kb>` to see the findings before you upgrade CI (#1143).
+  `pyrite qa validate <kb>` to see the findings before you upgrade CI (#1143).
 - **An unknown `--mode` is refused.** `pyrite search --mode zzz` and `links
   discover|batch-suggest --mode zzz` used to search as keyword and exit `0`.
   They exit `1` with `VALIDATION_FAILED` (REST: `400`); the valid modes are
