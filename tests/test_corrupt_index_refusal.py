@@ -209,8 +209,9 @@ ALLOWED_INDEX_OPENERS = {
     "pyrite/storage/backends/postgres_backend.py::create_postgres_engine": (
         "Postgres backend engine factory, not the SQLite index"
     ),
-    "pyrite/cli/db_commands.py::db_backup": (
-        "sqlite3 backup API copies between source and backup file"
+    "pyrite/services/index_backup.py::backup_index": (
+        "sqlite3 backup API copies between source and backup file; refuses a "
+        "corrupt index itself with StorageError (db backup rows of COMMANDS)"
     ),
     "pyrite/cli/db_commands.py::db_restore": (
         "validates the user-supplied backup file before copying it into place"

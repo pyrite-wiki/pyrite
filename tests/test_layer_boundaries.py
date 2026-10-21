@@ -193,13 +193,12 @@ ALLOWLIST: dict[tuple[str, str], tuple[int, str]] = {
         1,
         "backup/restore of the index file; " + _FOLLOW,
     ),
-    ("pyrite/cli/db_commands.py::db_backup", "sqlite3"): (2, "sqlite3 backup API; " + _FOLLOW),
     ("pyrite/cli/db_commands.py::db_restore", "sqlite3"): (
         2,
         "sqlite3 integrity check; " + _FOLLOW,
     ),
 }
-ALLOWLIST_SIZE = 23  # lower it with every entry removed; never raise it
+ALLOWLIST_SIZE = 22  # lower it with every entry removed; never raise it
 
 SURFACES = (
     "pyrite/server/",
