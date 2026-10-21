@@ -53,6 +53,10 @@ class PinRefusedError(Exception):
     """One file cannot take the pin as a single added line; the reason."""
 
 
+class PinMetadataRefusedError(PinRefusedError):
+    """Pin cannot preserve the original file's owner or group."""
+
+
 @dataclass
 class IdScan:
     """What ``scan`` found in one KB. Paths are KB-relative, POSIX."""
@@ -209,8 +213,10 @@ def _write_pin(root: Path, path: Path, planned_original: bytes, new_text: str) -
     Not ``atomic_write_text``: it resolves the path with ``realpath`` and
     writes a multiply-linked file in place, both of which follow a link.
 
-    Known limit, no lock removes it: an edit that lands between the byte
-    re-read and the rename is overwritten by the pinned text.
+    Known limits, no lock removes them: an edit that lands between the byte
+    re-read and the rename is overwritten by the pinned text. A hard link
+    added in that window keeps the old inode and bytes. Replacing the inode
+    does not carry extended attributes or ACLs; add the id by hand to retain them.
     """
     if not (os.rename in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW")):
         raise PinRefusedError("this platform cannot write without following links")
@@ -285,8 +291,16 @@ def _replace_through(dir_fd: int, name: str, data: bytes) -> None:
     try:
         try:
             os.fchmod(fd, stat.S_IMODE(st.st_mode))
-            if (st.st_uid, st.st_gid) != (os.getuid(), os.getgid()):
-                os.fchown(fd, st.st_uid, st.st_gid)
+            from ..utils.atomic_write import file_owner_matches
+
+            if not file_owner_matches(fd, st):
+                try:
+                    os.fchown(fd, st.st_uid, st.st_gid)
+                except (OSError, AttributeError) as e:
+                    raise PinMetadataRefusedError(
+                        f"cannot preserve owner {st.st_uid} and group {st.st_gid}; "
+                        "ask the owner to pin it, or add the id by hand"
+                    ) from e
             view = memoryview(data)
             while view:
                 view = view[os.write(fd, view) :]
@@ -505,7 +519,10 @@ def apply(found: IdScan, the_plan: dict[str, Any]) -> dict[str, Any]:
             path, original, new_text = _prepared(found, item)
             _write_pin_locked(found.root, path, original, new_text)
         except (PinRefusedError, OSError, UnicodeDecodeError) as e:
-            the_plan["skipped"].append({"path": item["path"], "reason": str(e)})
+            if isinstance(e, PinMetadataRefusedError):
+                the_plan["refused"].append({**item, "reason": str(e)})
+            else:
+                the_plan["skipped"].append({"path": item["path"], "reason": str(e)})
             continue
         done.append(item)
     the_plan["pinned"] = done

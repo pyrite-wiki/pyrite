@@ -171,11 +171,14 @@ def ids_pin(
             was = f"  (renamed; was {item['renamed_from']})" if "renamed_from" in item else ""
             typer.echo(f"  {verb} {item['path']}  ->  id: {item['id']}{was}")
         for group in result["refused"]:
-            typer.echo(
-                f"  refused: {len(group['claimants'])} files hold id '{group['id']}'; "
-                f"nothing written for them. Keep one, --rename the others: "
-                + ", ".join(group["unrenamed"])
-            )
+            if "claimants" in group:
+                typer.echo(
+                    f"  refused: {len(group['claimants'])} files hold id '{group['id']}'; "
+                    f"nothing written for them. Keep one, --rename the others: "
+                    + ", ".join(group["unrenamed"])
+                )
+            else:
+                typer.echo(f"  refused {group['path']}: {group['reason']}")
         for row in result["skipped"]:
             typer.echo(f"  skipped {row['path']}: {row['reason']}")
         if result["synced"]:

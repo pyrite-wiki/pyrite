@@ -19,7 +19,8 @@ pull requests" and "Running the tests"; this file does not restate it.
   read": a sub-agent moved the file.
 - **Wrong place?** If you are on `dev` in the main checkout with uncommitted
   work, make a worktree (`scripts/new-worktree.sh <branch>`) and move the work
-  there (`git stash`, then `git stash pop`).
+  there using the [named stash handoff](CONTRIBUTING.md#moving-work-to-a-worktree).
+  The stash stack is shared: a no-op push must never pop another branch's stash.
 - **Cloud sessions:** `.claude/settings.json` runs a SessionStart hook
   (`scripts/cloud-session-start.sh`); see CONTRIBUTING, "Developing in Claude
   Code on the web".

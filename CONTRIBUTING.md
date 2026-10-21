@@ -103,6 +103,32 @@ checkout's `kb/`, syncs the index, installs the git hooks, puts `.venv/bin` on
   `fix/*` or `feature/*` if you create one yourself. One session is one
   checkout, so there is no worktree to make.
 
+## Moving work to a worktree
+
+Every worktree of a clone shares the same stash stack. A clean checkout's
+`git stash push` creates no entry: a subsequent bare `git stash pop` would
+apply and remove somebody else's stash (#1063). Use a unique handoff marker
+and the matching commit object, never the current top of the stack:
+
+```bash
+# Replace both placeholders; the token must be unique to THIS handoff.
+git stash push --include-untracked -m "handoff-<branch>-<unique-token>"
+git stash list --format='%H %gs'
+# Record the hash of the entry containing that exact marker.
+# If there is no matching entry (nothing was stashed), do not apply anything.
+scripts/new-worktree.sh <branch>
+git -C <new-worktree-path> stash apply --index <recorded-stash-hash>
+```
+
+`apply --index` restores staged changes too and keeps the stash for recovery.
+An interleaved push in another worktree cannot change which commit the
+recorded hash names. On a conflict, resolve it in the destination and keep the
+stash until the files and staging are verified. For later cleanup, inspect
+`git stash list` again and drop only the entry with that marker; its numeric
+`stash@{N}` position may have moved. Do not pop or clear the shared stack.
+`--include-untracked` includes untracked files, but not ignored files; copy
+any needed ignored file explicitly after checking its contents.
+
 ## Code Standards
 
 ### Style

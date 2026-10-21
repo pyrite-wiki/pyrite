@@ -91,6 +91,9 @@ default):
 `ids missing` gives `missing` (`path`, `id`, `status`), `collisions` (`id`,
 `claimants` with `path` and `explicit`) and `skipped` (`path`, `reason`);
 `ids pin` gives `pinned`, `refused`, `skipped`, `dry_run` and `synced`.
+Rows in `refused` are either collision groups (`id`, `claimants`) or
+individual write refusals (`path`, `reason`), including metadata preservation
+failures. Inspect the row's keys before reading the corresponding fields.
 Branch on the exit code: `0` done, `3` files are left (the output says which
 and why), `1` an error such as an unknown KB or an invalid `--rename`, in
 which case nothing was written.
@@ -111,3 +114,14 @@ which case nothing was written.
   them could change a file outside the KB.
 - Write an id a file no longer holds. A file edited after the command read it
   is left as you left it; run the command again.
+
+## File metadata and race limits
+
+Pin preserves the file's mode, owner and group, or refuses with the group
+number and a remedy. It replaces the inode: **extended attributes** (such
+as Finder tags) and **ACLs** are not carried. Add the id by hand if those
+must be retained.
+
+There is a final window between the byte re-read and the rename. An edit
+in that window can be overwritten; a **hard link** added then retains the
+old inode and bytes. Existing hard links are refused before writing.

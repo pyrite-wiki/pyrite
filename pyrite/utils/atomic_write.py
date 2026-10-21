@@ -144,12 +144,17 @@ def _write_in_place(target: Path, data: bytes, why: str) -> None:
         os.fsync(f.fileno())
 
 
+def file_owner_matches(fd: int, original: os.stat_result) -> bool:
+    """Whether the temporary inode already has the original owner and group."""
+    mine = os.fstat(fd)
+    return (mine.st_uid, mine.st_gid) == (original.st_uid, original.st_gid)
+
+
 def _owner_restored(tmp: str, fd: int, original: os.stat_result) -> bool:
     """Give the temp file the original owner. False when that is not possible."""
     if not hasattr(os, "chown"):
         return True
-    mine = os.fstat(fd)
-    if os.geteuid() != 0 and (mine.st_uid, mine.st_gid) == (original.st_uid, original.st_gid):
+    if os.geteuid() != 0 and file_owner_matches(fd, original):
         return True
     try:
         os.chown(tmp, original.st_uid, original.st_gid)

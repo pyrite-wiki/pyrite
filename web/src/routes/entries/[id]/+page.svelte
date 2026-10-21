@@ -23,6 +23,8 @@
 	import { onMount, untrack } from 'svelte';
 	import { parseWikilinks } from '$lib/editor/wikilink-utils';
 	import SkeletonLoader from '$lib/components/common/SkeletonLoader.svelte';
+	import DeleteEntryButton from '$lib/components/entry/DeleteEntryButton.svelte';
+	import { goto } from '$app/navigation';
 
 	const canEdit = $derived(
 		!authStore.authConfig.enabled || authStore.isAuthenticated
@@ -303,6 +305,23 @@
 											{editing ? 'View' : 'Edit'}
 										</button>
 										{/if}
+									{#if canEdit && !editing}
+										<DeleteEntryButton
+											entryId={entryStore.current?.id ?? ''}
+											kbName={entryStore.current?.kb_name ?? ''}
+											entryTitle={entryStore.current?.title ?? ''}
+											onDeleted={(deletedFrom) => {
+												// The KB the delete request named, not a re-read of the
+												// store afterwards: land back in the KB the reader
+												// deleted from, not in whatever the list defaults to.
+												goto(
+													deletedFrom
+														? `/entries?kb=${encodeURIComponent(deletedFrom)}`
+														: '/entries'
+												);
+											}}
+										/>
+									{/if}
 										{#if editing}
 											<button
 												onclick={() => uiStore.toggleEditorMode()}
