@@ -29,10 +29,28 @@ COMMANDS = [
     ["get", "hi", "-k", "t"],
     ["backlinks", "hi", "-k", "t"],
     ["search", "hi"],
+    # #1123 made an unknown --mode a refusal; a corrupt index must still win
+    # over the mode, and every real mode must refuse the same way.
+    ["search", "hi", "--mode", "keyword"],
+    ["search", "hi", "--mode", "semantic"],
+    ["search", "hi", "--mode", "hybrid"],
+    ["search", "hi", "--mode", "bogus"],
     ["create", "--title", "hi", "-k", "t"],
     ["index", "sync"],
     ["index", "build"],
     ["index", "health"],
+    ["index", "stats"],
+    ["list-entries", "-k", "t"],
+    ["recent", "-k", "t"],
+    ["tags", "-k", "t"],
+    ["orient", "-k", "t"],
+    ["batch-read", "t:hi"],
+    ["links", "check", "-k", "t"],
+    ["task", "list", "-k", "t"],
+    ["qa", "validate", "t"],
+    ["ci"],
+    # `db backup` opens the index with sqlite3 itself, not through PyriteDB.
+    ["db", "backup"],
 ]
 
 
@@ -96,7 +114,7 @@ def _assert_clean_storage_refusal(result) -> dict:
 
 
 class TestCommandsRefuseCorruptIndex:
-    @pytest.mark.parametrize("argv", COMMANDS, ids=lambda a: " ".join(a[:2]))
+    @pytest.mark.parametrize("argv", COMMANDS, ids=" ".join)
     def test_garbage_index_exits_1_with_storage_error_json(
         self, scratch_home: dict[str, Path], argv: list[str]
     ):
@@ -107,7 +125,7 @@ class TestCommandsRefuseCorruptIndex:
         _assert_clean_storage_refusal(result)
 
     @pytest.mark.parametrize("cut", [10, 64, 512, 4096, -100])
-    @pytest.mark.parametrize("argv", COMMANDS, ids=lambda a: " ".join(a[:2]))
+    @pytest.mark.parametrize("argv", COMMANDS, ids=" ".join)
     def test_truncated_real_index_exits_1_with_storage_error_json(
         self, scratch_home: dict[str, Path], argv: list[str], cut: int
     ):
@@ -123,7 +141,7 @@ class TestCommandsRefuseCorruptIndex:
 
         _assert_clean_storage_refusal(result)
 
-    @pytest.mark.parametrize("argv", COMMANDS, ids=lambda a: " ".join(a[:2]))
+    @pytest.mark.parametrize("argv", COMMANDS, ids=" ".join)
     def test_directory_at_index_path_exits_1_with_storage_error_json(
         self, scratch_home: dict[str, Path], argv: list[str]
     ):

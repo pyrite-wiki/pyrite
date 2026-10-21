@@ -63,7 +63,7 @@ sqlite3.register_adapter(datetime, lambda dt: dt.isoformat())
 sqlite3.register_adapter(date, lambda d: d.isoformat())
 sqlite3.register_converter("timestamp", lambda b: datetime.fromisoformat(b.decode()))
 
-_CORRUPT_INDEX_SUGGESTION = (
+CORRUPT_INDEX_SUGGESTION = (
     "Remove or move the unreadable index file and run `pyrite index build` "
     "to rebuild the index from markdown files."
 )
@@ -173,7 +173,7 @@ class ConnectionMixin:
                 except Exception:
                     pass
             err = StorageError(f"Cannot open index database at {self.db_path}: {exc}")
-            err.suggestion = _CORRUPT_INDEX_SUGGESTION
+            err.suggestion = CORRUPT_INDEX_SUGGESTION
             raise err from exc
 
         # Instantiate the search backend.
