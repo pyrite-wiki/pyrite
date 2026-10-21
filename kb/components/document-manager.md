@@ -16,7 +16,9 @@ tags:
 
 Write-path coordination for KB entries. Consolidates the save-register-index pattern into a single class, completing the ODM abstraction layer.
 
-## Pattern
+## Pattern (a create)
+
+This is the pipeline of a create only. An update, a link and a rename do not go through `DocumentManager.save_entry`; see Consumers.
 
 ```
 KBRepository.save() → PyriteDB.register_kb() → IndexManager.index_entry()
@@ -24,7 +26,7 @@ KBRepository.save() → PyriteDB.register_kb() → IndexManager.index_entry()
 
 ## Key Methods
 
-- `save_entry(entry, kb_name, kb_config)` — save to disk, register KB, index
+- `save_entry(entry, kb_name, kb_config)` — the create path only: create the file (`KBRepository.save` refuses an existing target), register KB, index
 - `delete_entry(entry_id, kb_name, kb_config)` — delete from disk and index
 - `index_entry(entry, kb_name, file_path)` — re-index from existing file
 
