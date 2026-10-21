@@ -686,6 +686,77 @@ def test_a_flow_mapping_item_copies_its_neighbours_quoting():
     )
 
 
+def test_a_key_the_neighbour_lacks_takes_the_emitters_default():
+    """The groom's acceptance: `note` is not a key of the item beside it, so there
+    is nothing to copy; `target` still copies its neighbour's double quotes."""
+    before = '---\nid: x\nlinks:\n  - target: "foo"\n---\n'
+    after, _ = run(before, Append("links", {"target": "bar", "note": "n"}))
+
+    assert '  - target: "bar"\n    note: n\n' in after
+    assert _diff(before, after) == ['+  - target: "bar"\n', "+    note: n\n"]
+    parsed = load_frontmatter(after)
+    assert parsed is not None
+    assert parsed[0]["links"] == [{"target": "foo"}, {"target": "bar", "note": "n"}]
+
+
+@pytest.mark.control(
+    reason="passes before the change too (the emitter always quoted a misreading value); "
+    "pins that copying a bare neighbour's spelling never un-quotes one"
+)
+@pytest.mark.parametrize("value", ["yes", "1.0", "null", "true", "2026-01-01"])
+def test_a_bare_neighbour_beside_a_value_that_would_misread_is_quoted(value):
+    """The groom's acceptance: a bare neighbour's spelling is copied only where it
+    reads back as the value. A bare `yes` is a bool, `1.0` a float, `null` None."""
+    before = "---\nid: x\nlinks:\n  - target: foo\n---\n"
+    after, _ = run(before, Append("links", {"target": value}))
+
+    parsed = load_frontmatter(after)
+    assert parsed is not None
+    assert parsed[0]["links"] == [{"target": "foo"}, {"target": value}], after
+    assert f"  - target: {value}\n" not in after, after  # not the bare spelling
+
+
+def test_an_update_that_inserts_into_a_block_list_copies_the_neighbours_quoting():
+    """Through `_edit_seq` (a Set of the whole list), not `_append`."""
+    before = '---\nid: x\nlinks:\n  - target: "foo"\n    relation: "related_to"\n---\n'
+    new = [
+        {"target": "foo", "relation": "related_to"},
+        {"target": "bar", "relation": "related_to"},
+    ]
+    after, report = run(before, Set("links", new))
+
+    assert report.widened == (), "this edit has a narrow form"
+    assert _diff(before, after) == ['+  - target: "bar"\n', '+    relation: "related_to"\n']
+
+
+def test_an_update_that_inserts_into_a_flow_list_of_mappings_copies_the_quoting():
+    before = '---\nid: x\nlinks: [{target: "foo", relation: related_to}]\n---\n'
+    new = [
+        {"target": "foo", "relation": "related_to"},
+        {"target": "bar", "relation": "related_to"},
+    ]
+    after, report = run(before, Set("links", new))
+
+    assert report.widened == ()
+    assert (
+        'links: [{target: "foo", relation: related_to}, {target: "bar", relation: related_to}]'
+        in after
+    )
+
+
+def test_a_widened_list_insert_copies_the_neighbours_quoting_too(monkeypatch):
+    """The widen path (`_widen_seq`) rebuilds the list item-wise when the narrow
+    edit fails its post-check. It spells the new item like the narrow path does."""
+    from pyrite.storage import file_operations as fo
+
+    monkeypatch.setattr(fo, "_narrow_edits", lambda doc, op: None)
+    before = '---\nid: x\nlinks:\n  - target: "foo"\n    relation: "related_to"\n---\n'
+    after, report = run(before, Append("links", {"target": "bar", "relation": "related_to"}))
+
+    assert report.widened == ("links",)
+    assert _diff(before, after) == ['+  - target: "bar"\n', '+    relation: "related_to"\n']
+
+
 def test_an_append_takes_each_lists_own_indent():
     before = SHAPES["mixed-list-indent"]
     after, _ = run(before, Append("tags", "c"), Append("aliases", "z"))

@@ -2321,15 +2321,17 @@ def _widen_seq(doc: _Doc, node: SequenceNode, old: list, new: list, conv) -> lis
     region_start = _item_range(doc, node, 0)[0]
     dash_col, content_col = _item_cols(doc, node, 0)
 
-    def emit(values: list) -> str:
+    def emit(values: list, ref: int) -> str:
+        # the item the new ones go beside, as `_edit_seq` spells them (#1023)
+        style = _style_tree(items[ref])
         return "".join(
-            x + eol for v in values for x in _emit_item_lines(v, dash_col, content_col, None, conv)
+            x + eol for v in values for x in _emit_item_lines(v, dash_col, content_col, style, conv)
         )
 
     plan = _plan(old, new)
     if plan is None:
         end = _item_range(doc, node, len(items) - 1)[1]
-        return [(region_start, end, emit(new))]
+        return [(region_start, end, emit(new, 0))]
     replaces, deletes, inserts, first_kept = plan
     after = dict(inserts)
     chunks: list[str] = []
@@ -2339,13 +2341,13 @@ def _widen_seq(doc: _Doc, node: SequenceNode, old: list, new: list, conv) -> lis
         chunks.append(text[prev:start])  # the lines between items stay
         prev = end
         if i == first_kept and None in after:
-            chunks.append(emit([new[j] for j in after[None]]))
+            chunks.append(emit([new[j] for j in after[None]], first_kept))
         if i in replaces:
-            chunks.append(emit([new[replaces[i]]]))
+            chunks.append(emit([new[replaces[i]]], i))
         elif i not in deletes:
             chunks.append(text[start:end])
         if i in after:
-            chunks.append(emit([new[j] for j in after[i]]))
+            chunks.append(emit([new[j] for j in after[i]], i))
     return [(region_start, prev, "".join(chunks))]
 
 
