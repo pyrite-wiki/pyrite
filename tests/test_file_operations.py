@@ -641,6 +641,51 @@ def test_a_flow_list_append_copies_its_neighbours_quoting():
     assert 'tags: ["hugo", "notes", "go"]\n' in after
 
 
+def _spell(style, text):
+    """A scalar spelled in one of the styles a neighbour's item can carry."""
+    if style == '"':
+        return f'"{text}"'
+    if style == "'":
+        return f"'{text}'"
+    return text
+
+
+@pytest.mark.parametrize(
+    ("target_style", "relation_style"),
+    [("", ""), ('"', '"'), ("'", "'"), ('"', "")],
+    ids=["bare", "double", "single", "mixed"],
+)
+def test_a_block_item_copies_its_neighbours_quoting(target_style, relation_style):
+    """ADR-0042 decision 2: an appended item spells its scalars as the item
+    beside it spells the same kind of scalar, where that spelling reads back
+    as the value (#1023). `[bare]` is the control: it passed before too."""
+    before = (
+        "---\nid: x\nlinks:\n"
+        f"  - target: {_spell(target_style, 'foo')}\n"
+        f"    relation: {_spell(relation_style, 'related_to')}\n"
+        "---\n"
+    )
+    after, _ = run(before, Append("links", {"target": "bar", "relation": "related_to"}))
+
+    assert f"  - target: {_spell(target_style, 'bar')}\n" in after
+    assert f"    relation: {_spell(relation_style, 'related_to')}\n" in after
+    parsed = load_frontmatter(after)
+    assert parsed is not None
+    assert parsed[0]["links"] == [
+        {"target": "foo", "relation": "related_to"},
+        {"target": "bar", "relation": "related_to"},
+    ]
+
+
+def test_a_flow_mapping_item_copies_its_neighbours_quoting():
+    before = '---\nid: x\nlinks: [{target: "foo", relation: related_to}]\n---\n'
+    after, _ = run(before, Append("links", {"target": "bar", "relation": "related_to"}))
+    assert (
+        'links: [{target: "foo", relation: related_to}, {target: "bar", relation: related_to}]'
+        in after
+    )
+
+
 def test_an_append_takes_each_lists_own_indent():
     before = SHAPES["mixed-list-indent"]
     after, _ = run(before, Append("tags", "c"), Append("aliases", "z"))
