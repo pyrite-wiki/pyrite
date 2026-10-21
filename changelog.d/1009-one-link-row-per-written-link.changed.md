@@ -13,4 +13,7 @@
   The web backlinks panel and the `backlinks` table list a source once with
   each of its links' relations, and the graph draws one edge per pair of
   entries. Two spellings of one link (`2024` and `'2024'`) keep the first
-  one's note.
+  one's note. The overlay backend keeps them apart too: one source's
+  `[[ops:x]]` and `[[ops-kb:x]]` are two backlinks and two outlinks, and
+  backlink and outlink rows carry the written `prefix` so a merge can tell them
+  apart (#1062).

@@ -9,9 +9,13 @@
   `create_entry(..., owns=frozenset({...}))` (`sw new-adr` names `adr_number`).
   An import (`pyrite import`, `POST /api/entries/import`) drops the keys an
   export carries about the index and location (`kb_name`, `file_path`,
-  `indexed_at`, `content_hash`, `outlinks`, `backlinks`, ...) and a type's
+  `indexed_at`, `content_hash`, `created_at`, `updated_at`, `outlinks`,
+  `backlinks`, ...) and a type's
   managed fields, and names every dropped key under `ignored` for its entry,
-  so an export imports into another KB and nothing is dropped silently.
+  so an export imports into another KB and nothing is dropped silently
+  (#1091; a create stamps new timestamps). The `Ignored:` label prints without
+  Rich markup tags shown as literal text, and the key list is escaped as data
+  (#1096).
   `pyrite add FILE` still adopts a hand-written file's own values (pending the
   maintainer's explicit OK). REST `POST /api/entries` refuses only the
   `metadata` spelling: its body model ignores a managed field sent as a
