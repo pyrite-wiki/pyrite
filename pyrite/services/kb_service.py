@@ -2562,11 +2562,9 @@ class KBService:
             the write; a link another writer appends between that read and
             the publish is not re-checked, and both items land (Q2: the
             publish re-applies on ``FileChanged`` and the last writer wins; a
-            duplicate pair is what the check tolerates on a replay). The
-            file must spell ``links`` at the top level: an item appended at
-            ``metadata.links`` would be read by nothing (not indexed, not
-            seen by this check: the reader's gap, #1025), so that spelling is
-            refused with the reason (``_resolve_operation``).
+            duplicate pair is what the check tolerates on a replay). A file
+            that spells ``links`` only under ``metadata:`` gets the item
+            appended there, where the reader now reads it (#1025).
         """
         # A malformed request is refused before anything is loaded or written
         # (#846); every link writer passes through this one check.
