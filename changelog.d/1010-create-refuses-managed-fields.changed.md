@@ -16,7 +16,6 @@
   (#1091; a create stamps new timestamps). The `Ignored:` label prints without
   Rich markup tags shown as literal text, and the key list is escaped as data
   (#1096).
-  `pyrite add FILE` still adopts a hand-written file's own values (pending the
-  maintainer's explicit OK). REST `POST /api/entries` refuses only the
+  `pyrite add FILE` still adopts a hand-written file's own values. REST `POST /api/entries` refuses only the
   `metadata` spelling: its body model ignores a managed field sent as a
-  top-level key (200, nothing written); a follow-up makes it refuse.
+  top-level key (200, nothing written).

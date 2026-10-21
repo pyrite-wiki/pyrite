@@ -1,1 +1,0 @@
-- `verify-red` now identifies tests-only, inert-only, mixed, and empty changes instead of calling all of them "no code change". Grading rules and JSON evidence are unchanged (#671).
