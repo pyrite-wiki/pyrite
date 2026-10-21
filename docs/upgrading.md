@@ -70,10 +70,11 @@ pyrite index health | grep '"status"'
   "status": "healthy",
 ```
 
-You are done with this step when `status` is `healthy`. A `warning` names its
-cause in one of the keys of `index health`. Four are new in this release;
-each has a paragraph in [JSON contracts](json-contracts.md) (named `index
-health` → the key), which says what it means and what to do:
+You are done with this step when `status` is `healthy`. Anything else names
+its cause in a key of `index health`. The **`index health` keys** table in
+[JSON contracts](json-contracts.md) lists every key, whether it makes the status
+a `warning` or `unhealthy` (exit `1`), and what to do. Count nothing by hand; read
+that table. The keys this release added include:
 
 - `links_stale_kb`: a count of links a rebuild would point at a different KB.
   Step 3 makes one. `pyrite index build` clears it.
@@ -83,6 +84,40 @@ health` → the key), which says what it means and what to do:
   Fix the file by hand.
 - `removed_extensions`: a KB still using the deleted cascade extension. Step 4
   covers it.
+- `unreadable_files` and `orphaned_entries`: these two are **failures**, not
+  warnings. They make the status `unhealthy` and the exit code `1`.
+
+**An unreadable file now fails the check.** On 0.25.8 a file with an encoding
+or permission failure was listed under `malformed_frontmatter`, a warning with
+exit `0`. It is now in `unreadable_files`, so a script that ran `pyrite index
+health` and ignored a warning starts to fail. The fix is to repair the file
+(its bytes, or its permissions), then `pyrite index sync`; see the **`index
+health` file findings** paragraph of [JSON contracts](json-contracts.md).
+*Demonstration on the scratch KBs: do not run on your own.*
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: "status": "unhealthy" -->
+```bash
+printf -- '---\nid: bad\ntitle: Bad\ntype: note\n---\n\xff\xfe not UTF-8\n' > my-kb/notes/bad.md
+set -o pipefail
+pyrite index health 2>/dev/null | grep -m1 '"status"'
+```
+
+```text
+  "status": "unhealthy",
+```
+
+Remove the file and the index is `healthy` again:
+
+<!-- expect-text: "status": "healthy" -->
+```bash
+rm my-kb/notes/bad.md
+pyrite index health | grep '"status"'
+```
+
+```text
+  "status": "healthy",
+```
 
 ### 3. Use the KB's full name, not its shortname
 
@@ -205,3 +240,132 @@ pyrite update twice -k my-kb -f status=x
   paragraph of [JSON contracts](json-contracts.md) lists both.
 - **`batch-read` and an unknown KB** differs by surface:
   [`batch-read` and a KB it cannot resolve](json-contracts.md#batch-read-and-a-kb-it-cannot-resolve).
+
+Beyond those, these changes turn a call that answered with exit `0` or a
+different shape into one that refuses or reads differently. They are grouped by
+who calls. Each bullet says what to do; the rule itself is in the page it links.
+
+#### Scripts and CI (CLI)
+
+- **An unknown KB is refused everywhere.** `tags`, `timeline`, `recent`,
+  `list-entries`, `task list`, `qa validate`, `index build|sync|embed`, `sw
+  backlog` and other commands used to answer an empty result with exit `0` for
+  a KB name that is not a KB. They now answer `KB_NOT_FOUND`, exit `1`. A script
+  that typed the name wrong now fails; fix the name. *Demonstration on the
+  scratch KBs: do not run on your own.*
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: KB_NOT_FOUND -->
+```bash
+pyrite tags -k no-such-kb
+```
+
+The reference row is [`KB_NOT_FOUND`](json-contracts.md#write-refusals-create-import-update).
+- **`pyrite ci` fails when it validated nothing.** With no KB in `config.yaml`
+  or the registry it exits `1` with `NO_KBS_TO_VALIDATE`; it used to print
+  `pass` and exit `0`. It also validates a KB added with `pyrite kb add`, and
+  reports an `index_out_of_date` error for one whose files the index does not
+  match (added and not yet indexed). Run `pyrite index sync -k <kb>` before
+  `ci`. The code is in the [Exit codes](json-contracts.md#exit-codes-cli) table.
+- **An unknown `--mode` is refused.** `pyrite search --mode zzz` and `links
+  discover|batch-suggest --mode zzz` used to search as keyword and exit `0`.
+  They exit `1` with `VALIDATION_FAILED` (REST: `400`); the valid modes are
+  `keyword`, `semantic` and `hybrid`. *Demonstration on the scratch KBs: do not
+  run on your own.*
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: Valid modes -->
+```bash
+pyrite search x -k my-kb --mode zzz
+```
+- **`index embed` exits `1` when nothing could be embedded.** If the model
+  cannot load, the entries stay owed an embedding and the command says so;
+  `pyrite index embed` retries them. [Getting started](getting-started.md)
+  describes the offline case.
+- **A FIFO, a device or an empty path is refused as an input file.**
+  `--body-file` and the other file options answer `VALIDATION_FAILED`, exit
+  `1`, before any work.
+- **Backlink and outlink counts change.** The index keeps one link row per link
+  a file writes, `![[x]]` is a `transclusion` rather than a `wikilink`, and a
+  row carries the `prefix` it was written with. Step 2's rebuild refreshes the
+  rows; a script that counts them will count more. See [Backlink
+  rows](json-contracts.md#backlink-rows).
+- **`pyrite extension install --verify`** prints its warnings on stderr in text
+  mode too, and exit `3` means the extension is installed but not verified
+  (verification failed, or it declares no `pyrite.plugins` entry point).
+
+#### Agents (MCP)
+
+- **`kb_read_body` and `kb_delete` answer a typed code.** A missing entry is
+  `ENTRY_NOT_FOUND` and a missing KB is `KB_NOT_FOUND`, as `kb_get` and
+  `kb_update` already did. The code the tool used to send stays in
+  `legacy_error_code` for one release. An agent that matched `NOT_FOUND`
+  should match the new code; see "MCP only, for one release" in [JSON
+  contracts](json-contracts.md#error-shape).
+- **A single-entry read puts a declared field at its own key.** `pyrite get`,
+  `kb_get` and REST `GET /api/entries/{id}` used to leave some declared fields
+  under `metadata`. A field the type declares (a task's `evidence` or
+  `status_reason`, a backlog item's `rank`) is now at the top level, and
+  `metadata` holds only keys the type does not declare. A client that read
+  `metadata.evidence` must read `evidence`. See the [Entry
+  envelope](json-contracts.md#entry-envelope).
+- **`zettel_graph` caps `depth` at 3** (`1` to `3`; anything else answers `{"error":
+  "depth must be between 1 and 3"}`), and keys a neighbour that lives in another
+  KB as `kb:id` instead of the bare id.
+
+#### REST clients
+
+- **`PUT /api/kbs/{name}` changes only what you send.** An omitted field is
+  left alone, `description: null` clears the description, and a key the route
+  does not take (a typo, or `default_role`) or a blank `kb_type` is refused with
+  `VALIDATION_FAILED` and nothing written. On a KB defined by hand in
+  `config.yaml`, a metadata edit answers `409` `KB_DEFINED_IN_CONFIG`; edit
+  `config.yaml` and restart instead.
+- **`POST /api/entries` refuses a managed field under `metadata`** (a task's
+  `status_change_log`, an ADR's `adr_number`, `file_path`) with
+  `VALIDATION_FAILED`. See the `VALIDATION_FAILED` row of [JSON
+  contracts](json-contracts.md#write-refusals-create-import-update).
+- **Invite codes need a session cookie.** `POST/GET /auth/invite-codes` and
+  `DELETE /auth/invite-codes/{code}` take a signed-in admin's `pyrite_session`
+  cookie and nothing else; an API key is refused with `401`. How to make a code
+  is in [Invite someone](web-ui.md#invite-someone).
+
+### 6. Edit your kb.yaml
+
+Two existing KBs need a `kb.yaml` edit; a new KB made by `pyrite init` already
+has it.
+
+- **A KB made from the `research`, `intellectual-biography` or `movement`
+  template:** under `types.person.optional`, rename `affiliation` to
+  `affiliations`. A create now writes every field the type declares, so until
+  you rename it each new `person` file carries both `affiliations: []` and
+  `affiliation: ""`.
+- **A KB made from the `software` or `zettelkasten` template:** declare the
+  `task` type and make a `tasks/` folder, or `pyrite task create` fails. Copy
+  the `task` entry from a KB that `pyrite init -t software` makes today
+  (`description`, `required: [title]`, `optional`, `subdirectory: tasks/`).
+
+### 7. For plugin authors
+
+- **`KBRepository.save` only creates.** An entry that already exists is refused
+  with `ENTRY_EXISTS`. Update through the service, which edits the file's own
+  text.
+- **`PyriteConfig.kb_name_for` and `get_kb_by_shortname` are gone.** The one
+  lookup is `readable_kb_named` in `pyrite/services/kb_resolver.py`, which takes
+  a full name only (step 3).
+- **A `before_save` hook can refuse an update but its changes no longer reach
+  the file.** The hook contract is in [Writing a
+  plugin](tutorials/plugin-writing.md).
+
+### 8. Still deprecated
+
+These still work in 0.26.0 and print a warning on stderr. Each will go in a
+later release.
+
+- **`-f` as `--format`** on the `task` commands. Use `--format`, or set
+  `PYRITE_FORMAT`.
+- **`pyrite export --format` (and `-f`).** Use `--target`; the only target
+  today is `notebooklm`.
+
+The table in [JSON contracts](json-contracts.md#format-defaults) says which
+commands take `--format`.

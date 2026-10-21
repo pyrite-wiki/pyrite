@@ -227,7 +227,8 @@ pyrite-admin user create alice --role admin     # prompts for the password
 ```
 
 `settings.auth.require_invite_code: true` makes registration need a code an
-admin created; the new user gets the code's role. GitHub sign-up obeys the same
+admin created; the new user gets the code's role. How an admin makes a code is in
+[Invite someone](web-ui.md#invite-someone). GitHub sign-up obeys the same
 switches: with registration off or needing an invite code, a first GitHub
 login creates an account only for a member of the provider's `allowed_orgs` or
 of an org in its `org_tier_map`. `pyrite serve` warns at startup when
