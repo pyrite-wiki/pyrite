@@ -87,15 +87,15 @@ The admin-tier MCP tools `kb_registry_health`, `kb_registry_reindex` and
 `kb_registry_remove` also bypass the resolver: an unknown KB answers
 `NOT_FOUND`, not `KB_NOT_FOUND` (#610).
 
-**MCP only, for one release: `legacy_error_code`.** Where a class's code
+**MCP only, removed in 0.27: `legacy_error_code`.** Where a class's code
 changed on MCP because REST's more specific code won (ADR-0037 theme 2:
 `ENTRY_NOT_FOUND`/`KB_NOT_FOUND` replacing `NOT_FOUND`, `KB_READ_ONLY`
 replacing `READ_ONLY`, `INVALID_FRONTMATTER` replacing `VALIDATION_FAILED`
 for `FrontmatterError` specifically, `CONFIG_CONFLICT`/`CONFIG_SAVE_REFUSED`
 replacing `CONFIG_ERROR`, `STORAGE_ERROR`/`PLUGIN_ERROR` replacing
 `REQUEST_REFUSED`, and others), the MCP tool response carries the *old*
-code one more release in `legacy_error_code`, alongside the new
-`error_code`. A class whose REST and MCP codes already agreed gets no
+code in `legacy_error_code` until 0.27, alongside the new
+`error_code` (use `error_code`). A class whose REST and MCP codes already agreed gets no
 `legacy_error_code` key at all — that includes the base `ValidationError`
 itself: its code is `VALIDATION_FAILED` on every transport, unchanged (see
 "Write refusals" below). The CLI has no transition field, and no CLI write
@@ -201,7 +201,7 @@ is reproduced by a command in "Reproduce the codes" below, which CI runs.
 | `error_code` | Meaning | What to do |
 |---|---|---|
 | `KB_NOT_FOUND` | the KB name is not registered, or, for a scoped caller, not readable (the same answer, byte for byte), or it is a KB's **shortname**: a shortname is link syntax only (`[[short:id]]`), and `-k`, REST `kb` and MCP `kb_name` take the full name (#952). One resolver answers every surface; the refusal carries `did_you_mean` (near matches drawn only from the KBs you can read; for a readable KB's shortname, its full name) and a `suggestion`/`hint`. A blank name names no KB and is never this code: a command that needs one answers `VALIDATION_FAILED`. The one exception is a blank REST path segment (`/api/kbs/%20/permissions`): a path that must name a KB and names none is `KB_NOT_FOUND`. Every CLI write command (`create`, `update`, `delete`, `link`) reports it. | Use a name from `did_you_mean`, or `pyrite orient` (`kb_orient`) with no KB to list the KBs you can read. |
-| `NOT_FOUND` | the entry id does not exist: CLI `get`, `update`, `delete`, `link`. Also a path you named as input (`--body-file`, `--schema-file`, `--alias-file`, `--file`, `import`'s and `add`'s file) that does not exist; a directory there is `VALIDATION_FAILED` (#923). `pyrite backlinks` and `pyrite-read backlinks` on an id that no entry has and nothing links to answer `ENTRY_NOT_FOUND` (the class's code, today; #610 settles the spelling). An id that is only linked to (`[[ghost-page]]`) is answered with its linking entries. MCP `kb_get` and `kb_update` answer `ENTRY_NOT_FOUND`, `retryable: false`, with `legacy_error_code` `NOT_FOUND` and `UPDATE_FAILED` respectively (see "MCP only, for one release" above, #761); `ENTRY_NOT_FOUND` is also the REST code for the class. | `pyrite search <term> -k <kb>` to find the id. |
+| `NOT_FOUND` | the entry id does not exist: CLI `get`, `update`, `delete`, `link`. Also a path you named as input (`--body-file`, `--schema-file`, `--alias-file`, `--file`, `import`'s and `add`'s file) that does not exist; a directory there is `VALIDATION_FAILED` (#923). `pyrite backlinks` and `pyrite-read backlinks` on an id that no entry has and nothing links to answer `ENTRY_NOT_FOUND` (the class's code, today; #610 settles the spelling). An id that is only linked to (`[[ghost-page]]`) is answered with its linking entries. MCP `kb_get` and `kb_update` answer `ENTRY_NOT_FOUND`, `retryable: false`, with `legacy_error_code` `NOT_FOUND` and `UPDATE_FAILED` respectively (see "MCP only, removed in 0.27" above, #761); `ENTRY_NOT_FOUND` is also the REST code for the class. | `pyrite search <term> -k <kb>` to find the id. |
 | `AMBIGUOUS` | the id was given without a KB (or with a blank `-k`) and more than one KB you can read holds it (see "`AMBIGUOUS`" above). The error lists them in `candidate_kbs`; REST answers `409`. | Repeat the command with `-k <kb>` (`kb` on REST, `kb_name` on MCP), one of `candidate_kbs`. |
 | `UNDECLARED_TYPE` | the KB's `kb.yaml` declares types and this is not one of them. Core types (`note`, `person`, …) are **not** exempt. Override with `allow_undeclared` (MCP, REST body or import query) / `--allow-undeclared` (CLI). The error carries `declared_types` on MCP and REST. | Use a declared type (`pyrite kb schema show <kb>`), or pass the override. |
 | `ENTRY_EXISTS` | the id (given, or derived from the title) already exists. Create never replaces; use update. REST answers `409`. | `update` it, or choose another title or id. |
@@ -1001,8 +1001,8 @@ full or found nothing strong, not that the KB lacks an answer: read
 Ordering fields are not scores. `rank` is a raw BM25 value and `rrf_score` is
 rank arithmetic (a few fixed values, whatever the query); neither compares
 across queries. `distance` is **backend-specific**: sqlite-vec's L2 distance on
-SQLite, pgvector's cosine distance on Postgres. It is kept for this release
-and then leaves the response; read `similarity`. On SQLite, candidates are the
+SQLite, pgvector's cosine distance on Postgres. It is removed in 0.27;
+read `similarity`. On SQLite, candidates are the
 L2-nearest vectors, then ordered by cosine: with a model that does not
 normalise its output, a long vector with a high cosine can be missed (the
 default model normalises). REST results carry

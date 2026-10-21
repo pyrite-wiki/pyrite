@@ -100,7 +100,7 @@ def _record_short_format(ctx: typer.Context, value: str | None) -> str | None:
         raise _two_answers()
     value = validate_shared_format(value)
     typer.echo(
-        f"Warning: -f is deprecated and will stop meaning --format in the next release; "
+        f"Warning: -f is deprecated and will stop meaning --format in 0.27; "
         f"use --format {value} (or set PYRITE_FORMAT).",
         err=True,
     )
@@ -122,8 +122,8 @@ OUTPUT_FORMAT = typer.Option(
     help="Output format: json (default), yaml, or rich for text. PYRITE_FORMAT sets the default.",
 )
 
-#: ``-f`` meant ``--format`` on the task commands. #303: it keeps working for one
-#: release, with a warning on stderr, then goes. Declared beside OUTPUT_FORMAT on
+#: ``-f`` meant ``--format`` on the task commands. #303: it keeps working until
+#: 0.27, with a warning on stderr, then goes. Declared beside OUTPUT_FORMAT on
 #: a command that had ``-f``; hidden from help.
 LEGACY_FORMAT_SHORT = typer.Option(None, "-f", hidden=True, callback=_record_short_format)
 
