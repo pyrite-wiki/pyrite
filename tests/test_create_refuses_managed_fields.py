@@ -585,9 +585,6 @@ def test_every_create_call_site_is_classified():
             assert name in PATHS or name in IMPORT_PATHS, (key, name)
 
 
-@pytest.mark.control(
-    reason="pins today's behaviour: the REST POST body model ignores extra keys; a follow-up makes it refuse"
-)
 def test_rest_post_refuses_a_managed_field_sent_as_a_top_level_key(env):
     """#1090: `CreateEntryRequest` refuses a key it does not know, naming it,
     instead of dropping it and answering 200. A managed field sent as a
@@ -625,6 +622,31 @@ def test_rest_post_refuses_a_key_it_does_not_know(env):
     assert detail["code"] == "VALIDATION_FAILED", detail
     assert "wibble" in detail["message"], detail
     assert not list(env["kb_path"].rglob("restunknown.md")), "refused, yet a file appeared"
+
+
+def test_rest_post_takes_the_web_forms_status_in_metadata_and_refuses_it_at_the_top_level(env):
+    """The web New Entry form's Status input (#1124 review): `status` is not a
+    key of the body model, so the form sends it in `metadata`. That shape is
+    created with the value written; the old top-level shape is refused, named."""
+    client, worker, db = _rest(env)
+    try:
+        ok = client.post(
+            "/api/entries",
+            json={"kb": KB, "title": "FormStatus", "metadata": {"status": "draft"}},
+        )
+        refused = client.post(
+            "/api/entries",
+            json={"kb": KB, "title": "FormStatusTop", "status": "draft"},
+        )
+    finally:
+        worker.wait_for_idle(timeout=10)
+        db.close()
+    assert ok.status_code == 200, ok.text
+    (written,) = env["kb_path"].rglob("formstatus.md")
+    assert "status: draft" in written.read_text()
+    assert refused.status_code == 400, refused.text
+    assert "status" in refused.json()["detail"]["message"]
+    assert not list(env["kb_path"].rglob("formstatustop.md"))
 
 
 def test_a_non_frozenset_owns_is_refused_not_a_type_error(env):

@@ -109,6 +109,30 @@ describe('New-entry page (#392 round 1)', () => {
 		expect(sent.allow_undeclared).toBeUndefined();
 	});
 
+	it('sends the Status input inside metadata, never as a top-level key the REST body refuses (#1090)', async () => {
+		mockApi.getTypeSchemas.mockResolvedValue({ types: declaredSchemas, declared });
+		mockApi.createEntry.mockResolvedValue({ id: 'new-1', kb_name: 'sw', file_path: '' });
+		render(NewEntryPage);
+
+		await waitFor(() => expect(screen.getByTestId('entry-type-select')).toBeInTheDocument());
+
+		await fireEvent.input(screen.getByPlaceholderText('Entry title...'), {
+			target: { value: 'My Entry' }
+		});
+		await fireEvent.click(screen.getAllByTestId('template-blank')[0]);
+		await fireEvent.change(screen.getByTestId('entry-type-select') as HTMLSelectElement, {
+			target: { value: 'adr' }
+		});
+		await fireEvent.input(screen.getByLabelText('Status'), { target: { value: ' accepted ' } });
+
+		await fireEvent.click(screen.getByText('Create').closest('button') as HTMLButtonElement);
+
+		await waitFor(() => expect(mockApi.createEntry).toHaveBeenCalled());
+		const sent = mockApi.createEntry.mock.calls[0][0];
+		expect(sent.metadata).toEqual({ status: 'accepted' });
+		expect(Object.keys(sent).sort()).toEqual(['body', 'entry_type', 'kb', 'metadata', 'title']);
+	});
+
 	it('a template naming an undeclared type does not set allow_undeclared; submitting unmodified surfaces the server refusal', async () => {
 		mockApi.getTypeSchemas.mockResolvedValue({ types: declaredSchemas, declared });
 		mockApi.renderTemplate.mockResolvedValue({ body: 'templated body', entry_type: 'note' });

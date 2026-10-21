@@ -4,3 +4,5 @@
   (`evidence`, `status_change_log`, `provenance`) can no longer vanish
   silently (#1090). The `metadata` envelope spelling is refused by the
   service, as before (#1010).
+  The web New Entry form now sends its Status input in `metadata`, so it is
+  not refused. Thanks to @ANO3457, whose #1124 this is.

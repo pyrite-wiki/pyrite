@@ -189,10 +189,14 @@ stands, pending the maintainer's explicit OK: `pyrite add FILE` adopts a
 hand-written file's own values (an ADR keeps its `adr_number`, a task its audit
 trail), which are not a request (#1010).
 
-REST `POST /api/entries` refuses the `metadata` envelope spelling; its body
-model ignores any other extra key, so a managed field sent as a top-level key
-there is silently dropped (200, created, nothing written). A follow-up makes
-it refuse.
+REST `POST /api/entries` refuses both spellings. The `metadata` envelope
+spelling of a managed field is refused by the service, as on every surface. A
+managed field sent as a top-level key, or any other top-level key the body
+model does not declare, is refused before the service with 400
+`VALIDATION_FAILED` naming the key(s) and listing what a create accepts; it is
+no longer dropped with `created: true` (#1090). A field the model has no
+top-level key for, such as the web New Entry form's Status, travels in
+`metadata`.
 
 This is the one table of codes an agent meets while writing; the
 how-to (`docs/agent-write-path.md`) links here instead of repeating it. Each row
