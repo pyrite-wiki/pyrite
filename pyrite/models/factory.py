@@ -8,6 +8,19 @@ from .core_types import get_entry_class
 from .generic import GenericEntry
 
 
+def _restore_lifecycle(entry: Entry, fm: dict) -> Entry:
+    """Give ``entry`` the ``lifecycle`` its frontmatter names.
+
+    ``lifecycle`` is a base field outside every subclass constructor, so a
+    subclass's ``from_frontmatter`` leaves it at "active"; only the loader
+    (``entry_from_frontmatter``) restored it from the file. A created or
+    imported entry is built here instead, and used to lose the key without a
+    word (#1097). One restore for both branches keeps the rule in one place.
+    """
+    entry.lifecycle = fm.get("lifecycle", "active")
+    return entry
+
+
 def build_entry(
     entry_type: str,
     *,
@@ -83,7 +96,7 @@ def build_entry(
             if k in _reserved or k == "metadata":
                 continue
             fm[k] = v
-        return GenericEntry.from_frontmatter(fm, body)
+        return _restore_lifecycle(GenericEntry.from_frontmatter(fm, body), fm)
 
     # Build frontmatter dict for from_frontmatter().
     # Known dataclass fields go as top-level keys; unknown kwargs are
@@ -152,4 +165,4 @@ def build_entry(
         existing = fm.get("metadata") or {}
         fm["metadata"] = {**existing, **_extra_meta}
 
-    return resolved_cls.from_frontmatter(fm, body)
+    return _restore_lifecycle(resolved_cls.from_frontmatter(fm, body), fm)
