@@ -18,10 +18,12 @@ A new test uses the world (``make_client``, ``rest_api_env``,
 This test walks the AST of every ``.py`` under ``tests/`` and
 ``extensions/*/tests`` and counts, per file:
 
-* ``get_db`` -- ``get_db`` (a bare name or ``x.get_db``) used as a key: in a
-  subscript assignment (``app.dependency_overrides[get_db] = ...``, or a
-  local overrides dict) or a dict literal (``dependency_overrides={get_db:
-  ...}``);
+* ``get_db`` -- ``get_db`` (a bare name or ``x.get_db``, or a name bound to
+  it by ``from X import get_db as Y``) used as a key: in a subscript
+  assignment (``app.dependency_overrides[get_db] = ...``, or a local
+  overrides dict), a dict literal (``dependency_overrides={get_db:
+  ...}``), or the key slot of ``monkeypatch.setitem(overrides, get_db,
+  ...)`` (only the key matters, as for the subscript form);
 * ``load_config`` -- a ``patch(...)`` / ``monkeypatch.setattr(...)`` whose
   target string ends in ``load_config``, or a ``patch.object`` /
   ``setattr`` / ``patch.multiple`` naming the attribute ``load_config``.
@@ -68,18 +70,41 @@ def _names_load_config(target: str | None) -> bool:
     return target is not None and (target == "load_config" or target.endswith(".load_config"))
 
 
+def _get_db_aliases(tree: ast.AST) -> set[str]:
+    """Names bound to ``get_db`` by ``from X import get_db as Y``, at any scope.
+
+    Only the binding matters, not the module: the subscript form already
+    counts ``get_db`` under any parent name.
+    """
+    aliases: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == "get_db" and alias.asname:
+                    aliases.add(alias.asname)
+    return aliases
+
+
 def count_sites(source: str) -> Counter:
     """The two kinds of site in one file's source."""
+    tree = ast.parse(source)
+    get_db_names = {"get_db"} | _get_db_aliases(tree)
     counts: Counter = Counter()
-    for node in ast.walk(ast.parse(source)):
+    for node in ast.walk(tree):
         if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store):
-            if _terminal(node.slice) == "get_db":
+            if _terminal(node.slice) in get_db_names:
                 counts["get_db"] += 1
         elif isinstance(node, ast.Dict):
             counts["get_db"] += sum(
-                1 for k in node.keys if k is not None and _terminal(k) == "get_db"
+                1 for k in node.keys if k is not None and _terminal(k) in get_db_names
             )
         elif isinstance(node, ast.Call):
+            if (
+                _terminal(node.func) == "setitem"
+                and len(node.args) >= 2
+                and _terminal(node.args[1]) in get_db_names
+            ):
+                counts["get_db"] += 1
             func = _terminal(node.func)
             args = node.args
             if (
@@ -171,6 +196,27 @@ def raised_lines(base: dict[tuple[str, str], int], now: dict[tuple[str, str], in
         ("overrides = {}\noverrides[get_db] = g", 1, 0),
         ("x = app.dependency_overrides[get_db]", 0, 0),  # a read, not an override
         ("app.dependency_overrides[get_config] = f", 0, 0),
+        # -- get_db under an alias, and the setitem spelling (#1235) --------
+        (
+            "from pyrite.server.api import get_db as real\napp.dependency_overrides[real] = f",
+            1,
+            0,
+        ),
+        (
+            "def test_x():\n    from pyrite.server.api import get_db as real\n"
+            "    app.dependency_overrides[real] = f",
+            1,
+            0,
+        ),
+        ("monkeypatch.setitem(app.dependency_overrides, get_db, f)", 1, 0),
+        ("monkeypatch.setitem(app.dependency_overrides, api.get_db, f)", 1, 0),
+        ("mp.setitem(app.dependency_overrides, get_db, f)", 1, 0),
+        ("pytest.MonkeyPatch().setitem(app.dependency_overrides, get_db, f)", 1, 0),
+        ("monkeypatch.setitem(overrides, get_db, f)", 1, 0),  # only the key matters
+        ("x = real", 0, 0),  # a name that is not a get_db alias
+        ("from m import get_db as real", 0, 0),  # an import is not an override
+        ("monkeypatch.setitem(d, other, f)", 0, 0),
+        ("monkeypatch.setitem(app.dependency_overrides, get_config, f)", 0, 0),
         ("del app.dependency_overrides[get_db]", 0, 0),
         ('with patch("pyrite.cli.context.load_config", return_value=c): pass', 0, 1),
         ('@patch("pyrite.cli.load_config")\ndef f(): pass', 0, 1),
