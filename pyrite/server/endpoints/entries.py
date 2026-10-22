@@ -776,7 +776,7 @@ def get_entry(
             return neg
         return JSONResponse(content=result)
 
-    neg = negotiate_response(request, result)
+    neg = negotiate_response(request, result, single_entry=True)
     if neg is not None:
         return neg
     return EntryResponse(**result)
