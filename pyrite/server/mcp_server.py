@@ -34,7 +34,7 @@ from ..exceptions import (
     public_text,
     refusal_fields,
 )
-from ..services.access_policy import ROLES, named_kb
+from ..services.access_policy import ROLES, Principal, named_kb
 from ..services.body_bounds import (
     MARKER_KEYS,
     BodyBounds,
@@ -45,6 +45,7 @@ from ..services.export_service import ExportService
 from ..services.graph_service import GraphService
 from ..services.kb_service import KBService, check_link_spec
 from ..services.read_shaping import project_fields
+from ..services.write_target import binding, current_target
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
 from .mcp_rate_limiter import MCPRateLimiter
@@ -146,6 +147,8 @@ _NEW_IN_THIS_THEME = frozenset(
         "AINotConfiguredError",
         "EvaluationFailedError",
         "KBUnreadableError",
+        # ADR-0044 §1 (2026-10-20): a refusal no surface raised before.
+        "LandingRefusedError",
     }
 )
 
@@ -319,6 +322,16 @@ MAX_RESOURCE_LIST_ENTRIES = 200
 #: dispatcher's gate skips them so that decision is made once, in the service
 #: (#378); it still covers every other write tool -- task tools and any plugin
 #: tool registered into the write or admin tier -- by construction.
+
+#: Write tools that make a database-only record beside their file write (a
+#: review verdict). A change set's index is discarded when it merges, so the
+#: record would be lost; and the file write comes first, so refusing when the
+#: record is reached would leave half a write. They are refused up front on a
+#: change-set landing (decided 2026-10-20). The change-set index refuses the
+#: same records (`overlay_backend._RECORDS_REFUSED`) for any tool not listed.
+_CHANGE_SET_UNSUPPORTED_TOOLS: dict[str, str] = {
+    "sw_review": "records a review verdict in the database",
+}
 _PIPELINE_WRITE_TOOLS = frozenset({"kb_create", "kb_update", "kb_bulk_create"})
 
 
@@ -491,6 +504,55 @@ class PyriteMCPServer:
         self.resource_templates = self._build_resource_templates()
 
     # =========================================================================
+    # Where this call writes (ADR-0044 §1)
+    # =========================================================================
+    #
+    # This instance is shared by every caller at its tier, so it holds the
+    # canonical config, index and services. While `_dispatch_tool` runs a
+    # write whose landing is a change set, the call's target is bound
+    # (`services.write_target.binding`) and these read it: a handler that
+    # writes with `self.svc` or `self.db` writes where the rule says.
+
+    @property
+    def config(self) -> PyriteConfig:
+        bound = current_target()
+        return bound.config if bound is not None else self._config
+
+    @config.setter
+    def config(self, value: PyriteConfig) -> None:
+        self._config = value
+
+    @property
+    def db(self) -> PyriteDB:
+        bound = current_target()
+        return bound.db if bound is not None else self._db
+
+    @db.setter
+    def db(self, value: PyriteDB) -> None:
+        self._db = value
+
+    @property
+    def svc(self) -> KBService:
+        bound = current_target()
+        if bound is None:
+            return self._svc
+        return bound.service("kb", KBService)
+
+    @svc.setter
+    def svc(self, value: KBService) -> None:
+        self._svc = value
+
+    def _per_target(self, name: str, build):
+        """A lazily built service: the instance's own, or the bound call's."""
+        bound = current_target()
+        if bound is not None:
+            return bound.service(name, build)
+        cache = self.__dict__.setdefault("_service_cache", {})
+        if name not in cache:
+            cache[name] = build(self._config, self._db)
+        return cache[name]
+
+    # =========================================================================
     # Tool registration by tier
     # =========================================================================
 
@@ -573,7 +635,7 @@ class PyriteMCPServer:
 
     @property
     def qa_svc(self):
-        if not hasattr(self, "_qa_svc_cache"):
+        def build(config, db):
             from ..services.llm_service import LLMService
             from ..services.llm_usage_service import LLMUsageService
             from ..services.qa_service import QAService
@@ -582,34 +644,30 @@ class PyriteMCPServer:
             # identity today (server-wide tier, not per-user auth), so
             # usage is recorded with user_id=None -- still gives platform-
             # key cost visibility even without per-user attribution.
-            usage_service = LLMUsageService(self.db)
-            llm_service = LLMService(self.config.settings, usage_service=usage_service)
-            self._qa_svc_cache = QAService(self.config, self.db, llm_service=llm_service)
-        return self._qa_svc_cache
+            # Usage is the instance's accounting, never a change set's row.
+            usage_service = LLMUsageService(self._db)
+            llm_service = LLMService(config.settings, usage_service=usage_service)
+            return QAService(config, db, llm_service=llm_service)
+
+        return self._per_target("qa", build)
 
     @property
     def task_svc(self):
-        if not hasattr(self, "_task_svc_cache"):
-            from ..services.task_service import TaskService
+        from ..services.task_service import TaskService
 
-            self._task_svc_cache = TaskService(self.config, self.db)
-        return self._task_svc_cache
+        return self._per_target("task", TaskService)
 
     @property
     def link_svc(self):
-        if not hasattr(self, "_link_svc_cache"):
-            from ..services.link_discovery_service import LinkDiscoveryService
+        from ..services.link_discovery_service import LinkDiscoveryService
 
-            self._link_svc_cache = LinkDiscoveryService(self.config, self.db)
-        return self._link_svc_cache
+        return self._per_target("link", LinkDiscoveryService)
 
     @property
     def search_svc(self):
-        if not hasattr(self, "_search_svc_cache"):
-            from ..services.search_service import SearchService
+        from ..services.search_service import SearchService
 
-            self._search_svc_cache = SearchService(self.db, settings=self.config.settings)
-        return self._search_svc_cache
+        return self._per_target("search", lambda c, d: SearchService(d, settings=c.settings))
 
     # =========================================================================
     # Read handlers
@@ -2503,6 +2561,51 @@ class PyriteMCPServer:
             return _refusal(e)
         return None
 
+    def _landing_target(
+        self, tool: str, named_kbs: list[str], principal: Principal | None
+    ) -> tuple[tuple | None, dict | None]:
+        """Where a write tool's call lands: `(target, None)` -- the target to
+        bind, None for canonical -- or `(None, refusal)`.
+
+        `principal` None is the local operator (stdio). One call lands in one
+        place: a call naming several KBs, one of which lands in a change set,
+        is refused. A change set that cannot be made is refused; nothing
+        falls back to the canonical files (ADR-0044 §1, L2).
+        """
+        from ..services.access_policy import Landing
+        from ..services.write_target import LandingRefusedError, write_target
+
+        who = principal if principal is not None else Principal.local()
+        landings = {kb: self._svc.lands_in(who, kb) for kb in named_kbs}
+        if any(landing is Landing.DENY for landing in landings.values()):
+            return None, _refusal(LandingRefusedError("This write has no place to land"))
+        moved = sorted(kb for kb, landing in landings.items() if landing is Landing.CHANGE_SET)
+        if not moved:
+            return None, None
+        if len(landings) > 1:
+            return None, _refusal(
+                LandingRefusedError(
+                    "This write names several knowledge bases and one of them lands in a "
+                    "change set; write to one knowledge base at a time"
+                )
+            )
+        if tool in _CHANGE_SET_UNSUPPORTED_TOOLS:
+            from ..exceptions import ChangeSetRecordRefusedError
+
+            return None, _refusal(
+                ChangeSetRecordRefusedError(
+                    f"{tool} {_CHANGE_SET_UNSUPPORTED_TOOLS[tool]}, which a change set "
+                    f"cannot carry through its merge, and KB '{moved[0]}' lands your writes "
+                    "in a change set. It is available to the operator, or after the change "
+                    "set merges."
+                )
+            )
+        try:
+            cache = self.__dict__.setdefault("_diff_cache", {})
+            return write_target(self._config, self._db, who, moved[0], diff_cache=cache), None
+        except LandingRefusedError as e:
+            return None, _refusal(e)
+
     def _dispatch_tool(
         self,
         name: str,
@@ -2512,6 +2615,7 @@ class PyriteMCPServer:
         client_kind: str | None = None,
         readable_kbs: set[str] | None = None,
         writable_kbs: set[str] | None = None,
+        principal: Principal | None = None,
     ) -> dict[str, Any]:
         """Execute a tool and return result.
 
@@ -2539,6 +2643,12 @@ class PyriteMCPServer:
         no writable set resolved is treated as able to write nowhere. A tool
         registered above the read tier runs only when every KB it names is
         writable, and never when it names none.
+
+        `principal` is who is calling, for the landing rule
+        (`AccessPolicy.lands_in`, ADR-0044 §1): a write tool runs only when
+        every KB it names lands canonical for this principal. None is the
+        local operator (stdio). A write that lands in a change set runs with
+        that target bound for this call (`services.write_target.binding`).
         """
         if name not in self.tools:
             return _error(
@@ -2619,6 +2729,16 @@ class PyriteMCPServer:
                         f"Insufficient permissions on KB '{kb_name}': requires 'write' tier",
                     )
 
+        # Where the write lands: asked of the one rule, for every write tool --
+        # core or plugin -- by its registered tier. A change-set landing is
+        # bound for this call only (`binding`, below): the handler's
+        # `self.svc`/`self.db`/`self.config` and the plugin context read it.
+        target = None
+        if self._tool_tiers.get(name, "read") != "read" and named_kbs:
+            target, refusal = self._landing_target(name, named_kbs, principal)
+            if refusal is not None:
+                return refusal
+
         # ADR-0034 rule 2: a truncated body is never valid input to a write.
         # kb_create, kb_update and kb_bulk_create get it from KBService's
         # write pipeline. For every other write tool -- task_create and any
@@ -2631,12 +2751,13 @@ class PyriteMCPServer:
 
         try:
             handler = self.tools[name]["handler"]
-            if takes_readable:
-                # A cross-KB handler: nothing was named to refuse, so it must
-                # filter instead. Only handlers that declare the keyword get
-                # it, so plugin handlers are called exactly as before.
-                return handler(arguments, readable_kbs=readable_kbs)
-            return handler(arguments)
+            with binding(target):
+                if takes_readable:
+                    # A cross-KB handler: nothing was named to refuse, so it
+                    # must filter instead. Only handlers that declare the
+                    # keyword get it, so plugin handlers are called as before.
+                    return handler(arguments, readable_kbs=readable_kbs)
+                return handler(arguments)
         except PyriteError as e:
             # A refused request, not a crash: the service said no for a reason
             # the caller can act on, and it is not logged as an exception --
@@ -2658,6 +2779,7 @@ class PyriteMCPServer:
         client_kind: str | None = None,
         readable_kbs: set[str] | None = None,
         writable_kbs: set[str] | None = None,
+        principal: Principal | None = None,
     ):
         """Build an mcp.server.Server wired to this instance's business logic.
 
@@ -2711,6 +2833,7 @@ class PyriteMCPServer:
         _client_kind = client_kind
         _readable_kbs = readable_kbs  # capture for closures -- per connection, never on self
         _writable_kbs = writable_kbs
+        _principal = principal
 
         @sdk.list_tools()
         async def _list_tools():
@@ -2732,6 +2855,7 @@ class PyriteMCPServer:
                 client_kind=_client_kind,
                 readable_kbs=_readable_kbs,
                 writable_kbs=_writable_kbs,
+                principal=_principal,
             )
             return [
                 TextContent(

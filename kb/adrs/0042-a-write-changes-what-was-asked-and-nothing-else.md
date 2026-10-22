@@ -579,6 +579,12 @@ optimistic plus the momentary lock".*
 - **A file missing at write time** is a conflict ("moved or deleted"), never
   recreated: only create creates a file.
 - The replace uses `pyrite/utils/atomic_write.py`, which follows symlinks.
+  Amended 2026-10-20: only to a target inside the KB root. Entry writes, moves
+  and removals are made by `KBFiles` (`pyrite/utils/kb_files.py`), which opens
+  each folder beneath the root without following a link (`dir_fd`, `O_NOFOLLOW`):
+  a path that resolves outside the root is refused (`OUTSIDE_KB_ROOT`), and so
+  is a file with more than one hard link, under git or not (A2), and a move of
+  a file that is itself a link.
 - The index row is built from the bytes written, with their hash, never from
   an in-memory entry.
 - **The claim** (`claim_entry`, `kb_service.py:2357-2392`) is a conditional

@@ -224,6 +224,8 @@ is reproduced by a command in "Reproduce the codes" below, which CI runs.
 | `VALIDATION_FAILED` | anything else the entry model refuses (an event without a date, a missing title), a `managed_fields` key in an update, a field Pyrite or the type manages on a create at any spelling (`status_change_log`, `adr_number`, `file_path`, ...: top level, dotted `metadata.k`, under `metadata`, or an alias of the field; REST `POST` refuses only the `metadata` spelling, see above; #1010), an `entry` key holding a whole `kb_get` envelope sent to `kb_update` or REST `PUT` (send `result["entry"]`'s fields at the top level; the file is left untouched; #1024), and the ADR-0034 truncated-body refusal below. Unchanged by ADR-0037 theme 2 (2026-09-25): REST, MCP and the CLI already agreed on this code, so no `legacy_error_code`. | Fix the named field. For a truncated body, reassemble it with `kb_read_body` and retry without the marker. |
 | `CONFLICT` | the file kept changing between the update's read and its replace, five tries in a row; nothing was written. REST answers `409`; MCP and the CLI use the shape above. | Re-read the entry, then repeat the update. |
 | `STORAGE_ERROR` | a storage fault on the write (REST `500`). The message is fixed text; the cause is in the server log. | Read `retryable`: `true` only for a locked database, so wait and repeat; `false` needs an administrator. |
+| `OUTSIDE_KB_ROOT` | a write to a KB entry whose path leaves the KB root: the entry file, or a folder on its path, is a symbolic link to somewhere outside the KB's folder, or a configured path (a type's `subdirectory`, a `file_pattern`) leads outside it. The writer opens each folder beneath the KB root without following a link, so a folder swapped for a link while the write runs is refused the same way. Every write refuses it before anything is written: `create`, `update` (including `qa fix`'s), `rename`, `delete`, `schema migrate`, the reconcile move, software-kb's `migrate-standards`. An update used to write through such a link to its target. A link whose target is inside the KB is still written through, and stays a link. The message names no path; the server log does. Two neighbours keep their codes: a write to a file with more than one hard link is `STORAGE_ERROR` (its other name may be outside the KB; the message names the KB-relative path only), in a KB under git or not, and a `rename` of an entry whose file is a symbolic link is `VALIDATION_FAILED` with the reason (the link's target is never removed). | Replace the link with the file or folder it points to, inside the KB, then retry. |
+| `LANDING_REFUSED` | a write with no place to land under the KB's `landing` (ADR-0044 §1): the KB is `landing: review` and the writer's change set cannot be made (no git repository, no user to own it), a write that names several KBs one of which lands in a change set, or a database-only record asked of a change set (a review verdict: `sw_review`, `POST`/`DELETE /api/reviews` on a `landing: review` KB), which the change set could not carry through its merge; that one is available to the operator, or after the merge. Nothing is written to the KB's files or its index, and a write never falls back to them. The refusals above come before the working copy is made, so none leaves a worktree or branch behind. Two refusals after it is made are possible in principle (its config or its index cannot be opened); they leave the new working copy, unused, at main's commit. | Write to one KB at a time, or ask the operator about the KB's landing. |
 | `QUERY_SYNTAX` | (`search`, not a write, but what an agent hits right after a failed write) a token containing `-`, `:` or `.` used beside `AND`/`OR`/`NOT` or a quote, unquoted. | Quote the token yourself: `"bar-baz"`. |
 
 All are `retryable: false` except `CONFLICT` (always `true`) and `STORAGE_ERROR`
@@ -233,6 +235,17 @@ with status `400` (`409` for `ENTRY_EXISTS`). REST `CONFLICT` is `409` with
 `{"detail": {"code", "message"}}`, no `retryable` key; treat it as retryable.
 `STORAGE_ERROR` is `500` and carries `retryable`. MCP and the CLI use the error
 shape above.
+
+**Whole-request refusals (REST).** Two refusals stop an import, or any
+request, before a record is read:
+
+| status | `code` | Meaning | What to do |
+|---|---|---|---|
+| `413` | `PAYLOAD_TOO_LARGE` | the request body is larger than `settings.max_request_body_bytes` (default 32 MiB; see `docs/configuration.md`, "Server"). Applies to every route, `/auth` and `/mcp` included. Answered as soon as the body passes the limit (at once when `Content-Length` declares it); nothing is written. | Send a smaller body: split the import into several files, or ask the operator to raise the limit. |
+| `400` | `PARSE_ERROR` | `POST /api/entries/import` could not read the file in the named format (not UTF-8, or not valid JSON, YAML, CSV or markdown frontmatter). The message is Pyrite's own and names the format; the parser's detail is in the server log, not the response. Nothing is written. | Check the file's encoding and format, or pass the right `format=`. |
+
+Both answer `{"detail": {"code", "message", "retryable": false}}`; the `413`
+adds a `hint`.
 
 **Per-item results.** `kb_bulk_create`, `POST /api/entries/import` and
 `pyrite import` refuse a bad item on its own and create its siblings;
@@ -708,6 +721,26 @@ pyrite create -k typed -t ticket --title "T1" -f kind=chore
 <!-- expect-text: "error_code": "VALIDATION_FAILED" -->
 ```bash
 pyrite create -k notes -t event --title "An event"
+```
+
+`OUTSIDE_KB_ROOT`, from an entry file that is a link to a file outside the KB; the file it points to keeps its bytes:
+
+<!-- expect-exit: 0 -->
+```bash
+printf -- '---\nid: away\ntype: note\ntitle: Away\n---\n\nKept.\n' > away.md
+ln -s ../away.md notes/away.md
+pyrite index sync
+```
+
+<!-- expect-exit: 1 -->
+<!-- expect-text: "error_code": "OUTSIDE_KB_ROOT" -->
+```bash
+pyrite update away -k notes --title x
+```
+
+<!-- expect-exit: 0 -->
+```bash
+grep -q '^title: Away$' away.md
 ```
 
 `QUERY_SYNTAX`, from `search`:

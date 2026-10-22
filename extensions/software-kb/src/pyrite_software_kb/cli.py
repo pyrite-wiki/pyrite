@@ -711,6 +711,14 @@ def sw_conventions(
         db.close()
 
 
+def _link_reason(e: Exception) -> str:
+    """Why a standard was not migrated, without a path."""
+    links = getattr(e, "links", None)
+    if links is not None:
+        return f"its file has {links} hard links; break the link, then run again"
+    return str(e)
+
+
 @sw_app.command("migrate-standards")
 def sw_migrate_standards(
     apply: bool = typer.Option(False, "--apply", help="Actually apply changes (default: dry run)"),
@@ -721,7 +729,9 @@ def sw_migrate_standards(
 
     from pyrite.storage.entry_writer import FileChanged, move_entry_text, publish_entry_text
     from pyrite.storage.file_operations import FrontmatterSpan, Set, Unset, apply
+    from pyrite.utils.atomic_write import HardLinked
     from pyrite.utils.frontmatter import Frontmatter, describe, split_frontmatter
+    from pyrite.utils.kb_files import KBFileIsLinkError, KBFileOutsideRootError
     from pyrite.utils.yaml import load_yaml
 
     config = load_config()
@@ -765,6 +775,12 @@ def sw_migrate_standards(
                 continue
 
             path = Path(file_path)
+            row_kb = config.get_kb(row.get("kb_name") or "")
+            if row_kb is None:
+                console.print(f"  [red]Skip[/red] {row['title']}: its KB is not registered")
+                skipped += 1
+                continue
+            root = row_kb.path
             if not path.exists():
                 console.print(f"  [red]Skip[/red] {row['title']}: file not found at {path}")
                 skipped += 1
@@ -804,10 +820,15 @@ def sw_migrate_standards(
             # 3); otherwise replaced in place, against those bytes.
             if path.parent.name == "standards":
                 new_dir = path.parent.parent / new_dir_name
-                new_dir.mkdir(parents=True, exist_ok=True)
                 new_path = new_dir / path.name
                 try:
-                    move_entry_text(path, raw, new_path, new_text)
+                    # The folder is made by the move, after its checks: a
+                    # refused move leaves the KB as it was.
+                    move_entry_text(path, raw, new_path, new_text, root=root)
+                except (KBFileOutsideRootError, KBFileIsLinkError, HardLinked) as e:
+                    console.print(f"  [red]Skip[/red] {row['title']}: {_link_reason(e)}")
+                    skipped += 1
+                    continue
                 except FileExistsError:
                     console.print(f"  [red]Skip[/red] {row['title']}: {new_path} already exists")
                     skipped += 1
@@ -819,7 +840,11 @@ def sw_migrate_standards(
                 console.print(f"  [green]Migrated[/green] {row['title']} -> {new_path}")
             else:
                 try:
-                    publish_entry_text(path, new_text, expect=raw)
+                    publish_entry_text(path, new_text, expect=raw, root=root)
+                except (KBFileOutsideRootError, HardLinked) as e:
+                    console.print(f"  [red]Skip[/red] {row['title']}: {_link_reason(e)}")
+                    skipped += 1
+                    continue
                 except FileChanged:
                     console.print(f"  [red]Skip[/red] {row['title']}: {path} changed; run again")
                     skipped += 1

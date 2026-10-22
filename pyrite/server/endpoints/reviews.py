@@ -3,10 +3,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from ...exceptions import LandingRefusedError
 from ...services.access_policy import KB, Action
 from ...services.review_service import ReviewService
 from ..api import (
     RowKB,
+    get_read_review_service,
     get_review_service,
     limiter,
     requires_kb_tier,
@@ -78,6 +80,8 @@ def create_review(
             result=body.result,
             details=body.details,
         )
+    except LandingRefusedError:
+        raise  # LANDING_REFUSED through the central handler, not a 404
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ReviewResponse(**review)
@@ -154,7 +158,9 @@ def _review_not_found(review_id: int) -> HTTPException:
     )
 
 
-def review_kb(review_id: int, review_svc: ReviewService = Depends(get_review_service)) -> RowKB:
+def review_kb(
+    review_id: int, review_svc: ReviewService = Depends(get_read_review_service)
+) -> RowKB:
     """The KB that owns review `review_id` -- the one a delete is checked on.
 
     The request names no KB, so the only honest KB to check is the row's own.
@@ -175,6 +181,8 @@ def review_kb(review_id: int, review_svc: ReviewService = Depends(get_review_ser
 def delete_review(
     request: Request,
     review_id: int,
+    # Built after the write guard recorded where this write lands, so a
+    # change-set target refuses (the guard's own lookup reads canonically).
     review_svc: ReviewService = Depends(get_review_service),
 ):
     """Delete a review. Authorised on the per-KB write role of the review's own KB."""

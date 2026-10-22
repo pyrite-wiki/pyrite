@@ -694,6 +694,7 @@ def test_the_overlay_reads_the_users_own_file_never_mains_in_its_place(tmp_path)
     import subprocess
 
     from pyrite.server.worktree_resolver import WorktreeResolver
+    from pyrite.services.write_target import change_set_target
     from tests.test_worktree_service import _clean_git_env, _init_git_repo
 
     repo = tmp_path / "repo"
@@ -714,7 +715,9 @@ def test_the_overlay_reads_the_users_own_file_never_mains_in_its_place(tmp_path)
     ann, bob = {"id": 7, "username": "ann"}, {"id": 8, "username": "bob"}
     try:
         resolver = WorktreeResolver(config, db, cache)
-        resolver.get_write_service(KB, ann).update(ENTRY, KB, {"body": "Ann's pending body."})
+        KBService(*change_set_target(config, db, 7, KB, diff_cache=cache, username="ann")).update(
+            ENTRY, KB, {"body": "Ann's pending body."}
+        )
         main_file.write_text(HAND_EDITED)  # main moves on by hand
 
         def read(user):

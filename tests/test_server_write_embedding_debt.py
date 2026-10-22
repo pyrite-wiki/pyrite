@@ -8,8 +8,8 @@ suite's autouse fixture neutralises write-time embedding here; that half is
 covered out of process in `tests/test_writes_never_block_on_embedding.py`.
 
 Every write service the app can build is checked, not just the DI default:
-`entries.py:735` swaps in `WorktreeResolver.get_write_service()`, which
-constructs its own `KBService`. #13's shape was exactly "one construction
+a change-set write builds its own `KBService` on
+`services.write_target`'s target (`get_kb_service` on a `landing: review` KB). #13's shape was exactly "one construction
 site was wired and the others were not", so a test that only exercises
 `get_kb_service` would re-create the bug in a new place.
 """
@@ -158,8 +158,9 @@ class TestEveryWriteServiceTheAppBuildsEnqueues:
     def test_the_resolvers_main_db_service_enqueues_too(self, tmp_path):
         """`WorktreeResolver` on the main DB -- an admin or unauthenticated write.
 
-        This deliberately says *main DB*, not `get_write_service`. An earlier
-        version of this test claimed to cover `get_write_service` while its
+        This deliberately says *main DB*, not the change-set target
+        (`services.write_target`). An earlier version of this test claimed to
+        cover the worktree write service while its
         body called `get_read_service`, which with `auth_user=None` hands back
         a plain `PyriteDB` -- so the one test aimed at the worktree path never
         constructed a `WorktreeDB` at all. The genuine worktree shape, where

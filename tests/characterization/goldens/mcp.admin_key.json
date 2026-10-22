@@ -87,13 +87,28 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_create_claim | admin_key | no-default-role-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "created": "characterization-title-investigation-create-claim-admin-key-no-default-role-kb",
+    "title": "characterization-title-investigation_create_claim-admin_key-no-default-role-kb",
+    "type": "claim",
+    "warnings": [
+      "Claim created with no evidence references \u2014 mark for follow-up"
+    ]
   },
   "investigation_create_claim | admin_key | private-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "created": "characterization-title-investigation-create-claim-admin-key-private-kb",
+    "title": "characterization-title-investigation_create_claim-admin_key-private-kb",
+    "type": "claim",
+    "warnings": [
+      "Claim created with no evidence references \u2014 mark for follow-up"
+    ]
   },
   "investigation_create_claim | admin_key | readable-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "created": "characterization-title-investigation-create-claim-admin-key-readable-kb",
+    "title": "characterization-title-investigation_create_claim-admin_key-readable-kb",
+    "type": "claim",
+    "warnings": [
+      "Claim created with no evidence references \u2014 mark for follow-up"
+    ]
   },
   "investigation_create_entity | admin_key | missing-kb": {
     "did_you_mean": [],
@@ -104,13 +119,19 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_create_entity | admin_key | no-default-role-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "created": "characterization-title-investigation-create-entity-admin-key-no-default-role-kb",
+    "title": "characterization-title-investigation_create_entity-admin_key-no-default-role-kb",
+    "type": "organization"
   },
   "investigation_create_entity | admin_key | private-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "created": "characterization-title-investigation-create-entity-admin-key-private-kb",
+    "title": "characterization-title-investigation_create_entity-admin_key-private-kb",
+    "type": "organization"
   },
   "investigation_create_entity | admin_key | readable-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "created": "characterization-title-investigation-create-entity-admin-key-readable-kb",
+    "title": "characterization-title-investigation_create_entity-admin_key-readable-kb",
+    "type": "organization"
   },
   "investigation_create_event | admin_key | missing-kb": {
     "did_you_mean": [],
@@ -121,13 +142,19 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_create_event | admin_key | no-default-role-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "created": "characterization-title-investigation-create-event-admin-key-no-default-role-kb",
+    "title": "characterization-title-investigation_create_event-admin_key-no-default-role-kb",
+    "type": "investigation_event"
   },
   "investigation_create_event | admin_key | private-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "created": "characterization-title-investigation-create-event-admin-key-private-kb",
+    "title": "characterization-title-investigation_create_event-admin_key-private-kb",
+    "type": "investigation_event"
   },
   "investigation_create_event | admin_key | readable-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "created": "characterization-title-investigation-create-event-admin-key-readable-kb",
+    "title": "characterization-title-investigation_create_event-admin_key-readable-kb",
+    "type": "investigation_event"
   },
   "investigation_entities | admin_key | missing-kb": {
     "did_you_mean": [],
@@ -264,13 +291,19 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_log_source | admin_key | no-default-role-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "created": "characterization-title-investigation-log-source-admin-key-no-default-role-kb",
+    "title": "characterization-title-investigation_log_source-admin_key-no-default-role-kb",
+    "type": "document_source"
   },
   "investigation_log_source | admin_key | private-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "created": "characterization-title-investigation-log-source-admin-key-private-kb",
+    "title": "characterization-title-investigation_log_source-admin_key-private-kb",
+    "type": "document_source"
   },
   "investigation_log_source | admin_key | readable-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "created": "characterization-title-investigation-log-source-admin-key-readable-kb",
+    "title": "characterization-title-investigation_log_source-admin_key-readable-kb",
+    "type": "document_source"
   },
   "investigation_money_flow | admin_key | missing-kb": {
     "did_you_mean": [],
@@ -407,13 +440,13 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_promote_claim | admin_key | no-default-role-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "error": "Claim not found: characterization-placeholder-id-investigation_promote_claim-admin_key-no-default-role-kb"
   },
   "investigation_promote_claim | admin_key | private-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "error": "Claim not found: characterization-placeholder-id-investigation_promote_claim-admin_key-private-kb"
   },
   "investigation_promote_claim | admin_key | readable-kb": {
-    "error": "No KB service available \u2014 write tools require a running server context"
+    "error": "Claim not found: characterization-placeholder-id-investigation_promote_claim-admin_key-readable-kb"
   },
   "investigation_qa_report | admin_key | missing-kb": {
     "did_you_mean": [],

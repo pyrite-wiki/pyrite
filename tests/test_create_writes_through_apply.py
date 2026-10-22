@@ -501,7 +501,7 @@ def test_concurrent_creates_outside_git_give_one_file_and_the_rest_refusals(tmp_
         def run(n: int, barrier=barrier, outcomes=outcomes) -> None:
             barrier.wait()
             try:
-                create_entry_text(target, f"writer {n}\n")
+                create_entry_text(target, f"writer {n}\n", root=(target).parent)
                 outcomes[n] = "wrote"
             except FileExistsError:
                 outcomes[n] = "refused"
@@ -543,7 +543,7 @@ def test_concurrent_creates_in_git_give_one_file_and_the_rest_refusals(tmp_path:
         def run(n: int, barrier=barrier, outcomes=outcomes) -> None:
             barrier.wait()
             try:
-                create_entry_text(target, f"writer {n}\n")
+                create_entry_text(target, f"writer {n}\n", root=(target).parent)
                 outcomes[n] = "wrote"
             except FileExistsError:
                 outcomes[n] = "refused"

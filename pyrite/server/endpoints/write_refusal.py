@@ -72,7 +72,12 @@ async def refuses_truncated_body(request: Request) -> None:
         return
     try:
         payload = await request.json()
-    except Exception:
+    except ValueError:
+        # Not JSON (JSONDecodeError, UnicodeDecodeError): nothing to inspect,
+        # and FastAPI's own parse refuses it. Only a parse error is let
+        # through: a read that failed -- the body limit stopping it
+        # (server/body_limit.py), a client that went away -- propagates, so
+        # the handler never runs on a body this guard did not see.
         return
 
     # PATCH writes one named field, so it is a body write only when that field

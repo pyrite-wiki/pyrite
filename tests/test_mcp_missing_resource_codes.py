@@ -121,7 +121,9 @@ def test_unrelated_update_failure_keeps_safe_message_and_retry_semantics(
 
     # The file write's OS edge, so the real update path runs up to it (the
     # rule in test_tests_drive_the_surface_not_the_mock.py).
-    monkeypatch.setattr("pyrite.utils.atomic_write.os.replace", fail)
+    # The one call that publishes an entry's replace (KBFiles, through the
+    # folder opened beneath the KB root).
+    monkeypatch.setattr("pyrite.utils.kb_files.os.rename", fail)
     result = _call(
         mcp_server,
         "kb_update",

@@ -113,10 +113,6 @@ EDGES: dict[str, str] = {
     "pyrite.services.url_checker.URLChecker._urlopen": (
         "one HEAD request via urlopen; needs the network, status mapping stays in check_url"
     ),
-    "pyrite.services.id_pin_service._rename": (
-        "one os.rename (fault injection: a real disk cannot be made to fail, or a link "
-        "swapped in right before the rename, on cue)"
-    ),
 }
 EDGE_ATTR_PREFIXES = ("_import_",)  # llm_service._import_anthropic / _import_openai
 
@@ -661,7 +657,6 @@ GIT = "from typer.testing import CliRunner\nfrom unittest.mock import patch\n"
         # string target, canonical module
         GIT + "patch('pyrite.services.git_service.GitService.fork_repo')\n",
         GIT + "patch('pyrite.services.git_service.GitService.add_remote')\n",
-        GIT + "patch('pyrite.services.id_pin_service._rename')\n",
         GIT + "patch('pyrite.services.embedding_service._load_model')\n",
         # a name one module imported from another resolves to where it is defined
         GIT + "patch('pyrite.services.repo_service.GitService.fork_repo')\n",
@@ -670,7 +665,6 @@ GIT = "from typer.testing import CliRunner\nfrom unittest.mock import patch\n"
         "patch.object(GitService, 'fork_repo')\n",
         GIT + "from pyrite.services.repo_service import GitService\n"
         "patch.object(GitService, 'add_remote')\n",
-        GIT + "import pyrite.services.id_pin_service as pin\npatch.object(pin, '_rename')\n",
         "from typer.testing import CliRunner\n"
         "from pyrite.services import git_service\n"
         "def t(monkeypatch):\n"

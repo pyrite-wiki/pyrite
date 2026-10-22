@@ -33,6 +33,7 @@ def config(tmp_path):
         create_entry_text(
             kb_path / f"n{i}.md",
             new_entry_text(NoteEntry(id=f"n{i}", title=f"Note {i}", body=f"body {i}")),
+            root=(kb_path / f"n{i}.md").parent,
         )
     (kb_path / "stuff.md").write_text(
         "---\nid: stuff\ntitle: Stuff\ntype: collection\nsource_type: query\n"

@@ -22,13 +22,13 @@ def test_a_create_outside_git_refuses_at_the_instant_of_publish(tmp_path: Path, 
     must still refuse: exclusivity comes from the filesystem call that
     publishes, not from a check before it."""
     from pyrite.storage import entry_writer
+    from pyrite.utils import kb_files
 
     target = tmp_path / "plain" / "entries" / "twice.md"
     target.parent.mkdir(parents=True)
     target.write_text("first\n", encoding="utf-8")
-    monkeypatch.setattr(entry_writer.Path, "exists", lambda self: False)
-    monkeypatch.setattr(entry_writer.os.path, "exists", lambda p: False)
+    monkeypatch.setattr(kb_files.Folder, "lstat", lambda self, name: None)
     with pytest.raises(FileExistsError):
-        entry_writer.create_entry_text(target, "second\n")
+        entry_writer.create_entry_text(target, "second\n", root=(target).parent)
     assert target.read_text(encoding="utf-8") == "first\n"
     assert sorted(p.name for p in target.parent.iterdir()) == ["twice.md"], "a temp file was left"

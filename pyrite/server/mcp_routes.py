@@ -56,16 +56,20 @@ def _resolve_bearer_auth(
     """
     policy = AccessPolicy(config, db)
     ctx = _resolve_credential(request, config, db, policy)
-    principal = (
-        Principal.user(ctx["user_id"], ctx["role"])
-        if ctx.get("user_id") is not None
-        else Principal.from_api_key(ctx["role"])
-    )
+    principal = _principal_of(ctx)
     ctx["readable_kbs"] = policy.read_scope(principal).as_set()
     # The KBs a write-tier tool may target: the same per-KB rule REST's
     # `requires_kb_tier("write")` applies, resolved once per connection.
     ctx["writable_kbs"] = policy.write_scope(principal).as_set()
     return ctx
+
+
+def _principal_of(ctx: dict[str, Any]) -> Principal:
+    """The policy's principal for a resolved ctx -- the same discrimination
+    `_resolve_bearer_auth` scopes by: a user id means a session user."""
+    if ctx.get("user_id") is not None:
+        return Principal.user(ctx["user_id"], ctx["role"])
+    return Principal.from_api_key(ctx["role"])
 
 
 def _session_ctx(user: dict, session: dict) -> dict[str, Any]:
@@ -377,6 +381,7 @@ def mount_mcp_routes(
             client_kind=user_ctx["principal_kind"],
             readable_kbs=readable,
             writable_kbs=writable,
+            principal=_principal_of(user_ctx),
         )
 
         request.scope["user"] = _session_owner(user_ctx)

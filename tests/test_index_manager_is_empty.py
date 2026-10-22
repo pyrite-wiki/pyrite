@@ -25,7 +25,11 @@ def test_is_empty_until_something_is_indexed(tmp_path):
     try:
         mgr = IndexManager(db, config)
         assert mgr.is_empty() is True
-        create_entry_text(kb / "n.md", new_entry_text(NoteEntry(id="n", title="N", body="b")))
+        create_entry_text(
+            kb / "n.md",
+            new_entry_text(NoteEntry(id="n", title="N", body="b")),
+            root=(kb / "n.md").parent,
+        )
         mgr.index_all()
         assert mgr.is_empty() is False
     finally:

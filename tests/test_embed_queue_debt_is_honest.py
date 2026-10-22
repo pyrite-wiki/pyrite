@@ -53,7 +53,7 @@ def _svc(tmp_path, **settings):
 
 
 def _worktree_db(main_cfg, main_db, diff_dir):
-    """The DB shape `WorktreeResolver.get_write_service` hands to a KBService.
+    """The DB shape `services.write_target` hands to a KBService for a change set.
 
     Writes go to a per-user *diff* database; `_raw_conn` -- where `embed_queue`
     lives -- is forwarded to main. Both sides must have the KB registered or
@@ -370,7 +370,7 @@ class TestAWriteNeverQueuesIntoADatabaseThatCannotSeeIt:
     def test_a_worktree_write_service_does_not_queue_into_mains_database(self, tmp_path):
         """The behaviour the guard buys, through a real `create_entry`.
 
-        Builds the exact DB shape `WorktreeResolver.get_write_service`
+        Builds the exact DB shape `services.write_target.change_set_target`
         produces -- a `WorktreeDB` whose writes go to a diff DB and whose
         `_raw_conn` is main's -- and asserts the write leaves no row in main's
         queue naming an entry main cannot see.

@@ -25,7 +25,6 @@ import hashlib
 import logging
 import os
 import re
-import secrets
 import sqlite3
 import stat
 from collections import defaultdict
@@ -38,8 +37,10 @@ from ..config import KBConfig, PyriteConfig
 from ..exceptions import ValidationError
 from ..models.core_types import explicit_entry_id, id_text, read_entry_id
 from ..storage.repository import KBRepository
-from ..utils.file_lock import NotInGitRepository, file_lock
+from ..utils.atomic_write import FileChanged, HardLinked
+from ..utils.file_lock import LockDirError
 from ..utils.frontmatter import Frontmatter, describe, load_frontmatter, split_frontmatter
+from ..utils.kb_files import KBFileOutsideRootError, KBFiles, KBFolderChanged, OwnerNotKeptError
 
 logger = logging.getLogger(__name__)
 
@@ -192,136 +193,75 @@ def _digest(data: bytes) -> str:
 def _write_pin(root: Path, path: Path, planned_original: bytes, new_text: str) -> None:
     """Write ``new_text`` over ``path`` without ever following a link.
 
-    Checked again at the last moment: the path is still a regular file
-    inside the KB, and its bytes are still the ones the pin was computed
-    from (an edit made in between wins: Pyrite is a guest). Then every
-    operation goes through a descriptor of the checked directory, never a
-    path that is resolved again:
+    Checked again at the last moment (``write_refusal``): the path is still a
+    regular file inside the KB, reached without a link, with one name. The
+    write is then ``KBFiles.write_bytes``, the one KB writer every entry write
+    uses: the folder is opened beneath the KB root ``O_NOFOLLOW`` at each step
+    (a folder swapped for a link after the check is refused, not written
+    into), the file is re-read ``O_NOFOLLOW`` through it and must still hold
+    the bytes the pin was computed from (an edit made in between wins: Pyrite
+    is a guest), and ``rename`` puts the temp file at the name, replacing a
+    link swapped in after the re-read rather than following it. The compare
+    and the rename run under the entry's momentary lock (ADR-0042 decision
+    10; #955, B6 P4) in a git work tree, without one outside it (D1 (b)).
 
-    - the directory is opened ``O_NOFOLLOW`` and must be the inode
-      ``write_refusal`` checked (``st_dev``/``st_ino``), so a parent swapped
-      for a link after the check is refused, not written into;
-    - the file is re-read ``O_NOFOLLOW`` through that directory (a link
-      swapped in fails with ``ELOOP``) and must still be a regular file with
-      one link and the planned bytes;
-    - the new text goes to a temp file created ``O_CREAT|O_EXCL|O_NOFOLLOW``
-      beside it, written and fsynced through its descriptor;
-    - ``rename`` puts it at the name: rename never follows its target, so a
-      link swapped in after the re-read is itself replaced, and the file it
-      pointed to is untouched.
-
-    Not ``atomic_write_text``: it resolves the path with ``realpath`` and
-    writes a multiply-linked file in place, both of which follow a link.
-
-    Known limits, no lock removes them: an edit that lands between the byte
-    re-read and the rename is overwritten by the pinned text. A hard link
-    added in that window keeps the old inode and bytes. Replacing the inode
-    does not carry extended attributes or ACLs; add the id by hand to retain them.
+    Known limits, no lock removes them: an edit by a writer that takes no
+    lock, landing between the byte re-read and the rename, is overwritten by
+    the pinned text. A hard link added in that window keeps the old inode and
+    bytes (an existing one is refused before writing). The file keeps its
+    mode, owner and group, or the pin is refused naming the group
+    (``PinMetadataRefusedError``, #831): it is never written in place.
+    Replacing the inode does not carry extended attributes or ACLs; add the
+    id by hand to retain them.
     """
     if not (os.rename in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW")):
         raise PinRefusedError("this platform cannot write without following links")
     # The folder as it is when checked: taken before write_refusal, so a
-    # folder swapped after the check is a different inode (or a link).
+    # folder replaced after the check is another inode (or a link).
     try:
-        expected_dir = os.lstat(path.parent)
+        checked = os.lstat(path.parent)
     except OSError as e:
         raise PinRefusedError(f"its folder cannot be inspected: {e.strerror or e}") from e
     refusal = write_refusal(root, path)
     if refusal:
         raise PinRefusedError(refusal)
     try:
-        dir_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        KBFiles(root).write_bytes(
+            path,
+            new_text.encode("utf-8"),
+            expect=planned_original,
+            expect_folder=(checked.st_dev, checked.st_ino),
+            in_place=False,
+        )
+    except OwnerNotKeptError as e:
+        raise PinMetadataRefusedError(
+            f"cannot preserve owner {e.uid} and group {e.gid}; "
+            "ask the owner to pin it, or add the id by hand"
+        ) from e
+    except KBFolderChanged as e:
+        raise PinRefusedError(
+            "its folder changed after it was checked; run the command again"
+        ) from e
+    except FileChanged as e:
+        raise PinRefusedError("the file changed after it was read; run the command again") from e
+    except KBFileOutsideRootError as e:
+        raise PinRefusedError(
+            "a link appeared on its path after it was checked, and pin writes without "
+            "following a link; run the command again"
+        ) from e
+    except HardLinked as e:
+        raise PinRefusedError(
+            f"has {e.links} hard links; pinning one name would split it from the others"
+        ) from e
+    except LockDirError:
+        raise
     except OSError as e:
-        raise PinRefusedError(f"cannot open its folder without following a link: {e}") from e
-    try:
-        here = os.fstat(dir_fd)
-        if (here.st_dev, here.st_ino) != (expected_dir.st_dev, expected_dir.st_ino):
-            raise PinRefusedError("its folder changed after it was checked; run the command again")
-        _check_unchanged(dir_fd, path.name, planned_original)
-        _replace_through(dir_fd, path.name, new_text.encode("utf-8"))
-        try:
-            os.fsync(dir_fd)
-        except OSError:  # a filesystem that refuses a directory fsync
-            pass
-    finally:
-        os.close(dir_fd)
+        raise PinRefusedError(f"could not be written: {e.strerror or e}") from e
 
 
 def _write_pin_locked(root: Path, path: Path, planned_original: bytes, new_text: str) -> None:
-    """``_write_pin`` under the entry's momentary lock (ADR-0042 decision 10;
-    #955, B6 P4), so a pin and an update of one file cannot interleave: the
-    pin's own compare-before-replace then decides, as before. A KB outside
-    git has no lock directory and is written without one (D1 (b)); any other
-    lock-directory fault is a refusal the caller reports."""
-    try:
-        with file_lock(path):
-            _write_pin(root, path, planned_original, new_text)
-    except NotInGitRepository:
-        _write_pin(root, path, planned_original, new_text)
-
-
-def _check_unchanged(dir_fd: int, name: str, planned_original: bytes) -> None:
-    try:
-        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
-    except OSError as e:
-        raise PinRefusedError(
-            f"cannot be read without following a link ({e.strerror or e}); run the command again"
-        ) from e
-    try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
-            raise PinRefusedError(
-                "is no longer a regular file with one name; run the command again"
-            )
-        chunks = []
-        while chunk := os.read(fd, 1 << 16):
-            chunks.append(chunk)
-    finally:
-        os.close(fd)
-    if b"".join(chunks) != planned_original:
-        raise PinRefusedError("the file changed after it was read; run the command again")
-
-
-def _replace_through(dir_fd: int, name: str, data: bytes) -> None:
-    """Create a temp file beside ``name`` and rename it over ``name``, both
-    through ``dir_fd``; the rename replaces whatever entry ``name`` is."""
-    st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-    tmp = f".{name}.{secrets.token_hex(8)}.tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
-    try:
-        try:
-            os.fchmod(fd, stat.S_IMODE(st.st_mode))
-            from ..utils.atomic_write import file_owner_matches
-
-            if not file_owner_matches(fd, st):
-                try:
-                    os.fchown(fd, st.st_uid, st.st_gid)
-                except (OSError, AttributeError) as e:
-                    raise PinMetadataRefusedError(
-                        f"cannot preserve owner {st.st_uid} and group {st.st_gid}; "
-                        "ask the owner to pin it, or add the id by hand"
-                    ) from e
-            view = memoryview(data)
-            while view:
-                view = view[os.write(fd, view) :]
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        _rename(dir_fd, tmp, name)
-    except BaseException as e:
-        try:
-            os.unlink(tmp, dir_fd=dir_fd)
-        except OSError:
-            pass
-        if isinstance(e, OSError):
-            raise PinRefusedError(f"could not be written: {e.strerror or e}") from e
-        raise
-
-
-def _rename(dir_fd: int, tmp: str, name: str) -> None:
-    """The one step that puts the pinned text at ``name`` (a seam: a test
-    swaps ``name`` for a link right before it)."""
-    os.rename(tmp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+    """``_write_pin``; the momentary lock is the writer's own (``KBFiles``)."""
+    _write_pin(root, path, planned_original, new_text)
 
 
 # --- scan ------------------------------------------------------------------

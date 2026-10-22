@@ -1043,20 +1043,20 @@ def test_a_dry_run_reports_a_file_swapped_for_a_link_after_the_scan(kb, monkeypa
 def test_a_link_swapped_in_at_the_rename_is_replaced_and_its_target_untouched(kb, monkeypatch):
     """The exact moment: after every check, right before the rename. The
     rename replaces the link itself; the file it pointed to keeps its bytes."""
-    from pyrite.services import id_pin_service
-
     root, config = kb
     _write(root, {"d.md": "---\ntitle: Delta\n---\nd\n"})
     outside = root.parent / "outside.md"
     outside.write_text("---\ntitle: Out\n---\nx\n")
-    real = id_pin_service._rename
+    from pyrite.utils import kb_files
 
-    def swap_then_rename(dir_fd, tmp, name):
+    real = kb_files.Folder.rename
+
+    def swap_then_rename(folder, tmp, name):
         (root / "d.md").unlink()
         os.symlink(outside, root / "d.md")
-        return real(dir_fd, tmp, name)
+        return real(folder, tmp, name)
 
-    monkeypatch.setattr(id_pin_service, "_rename", swap_then_rename)
+    monkeypatch.setattr(kb_files.Folder, "rename", swap_then_rename)
     result = _run(config, "ids", "pin", "-k", "notes")
     assert result.exit_code == 0, result.output
     assert outside.read_text() == "---\ntitle: Out\n---\nx\n"

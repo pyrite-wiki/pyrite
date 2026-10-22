@@ -39,6 +39,7 @@ def _config(tmp_path, *, indexed=True):
         create_entry_text(
             kb_path / f"n{i}.md",
             new_entry_text(NoteEntry(id=f"n{i}", title=f"Note {i}", body=f"body {i}")),
+            root=(kb_path / f"n{i}.md").parent,
         )
     config = PyriteConfig(
         knowledge_bases=[KBConfig(name="notes", path=kb_path, kb_type=KBType.GENERIC)],

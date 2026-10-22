@@ -344,12 +344,12 @@ class TestRepositoryMigration:
 
         entry1 = repo.load("idem-test")
         copy1 = notes_dir / "idem-copy-1.md"
-        create_entry_text(copy1, new_entry_text(entry1))
+        create_entry_text(copy1, new_entry_text(entry1), root=(copy1).parent)
         content1 = copy1.read_text()
 
         entry2 = repo.load_entry_from_file(copy1)
         copy2 = notes_dir / "idem-copy-2.md"
-        create_entry_text(copy2, new_entry_text(entry2))
+        create_entry_text(copy2, new_entry_text(entry2), root=(copy2).parent)
         content2 = copy2.read_text()
 
         # Core frontmatter should be the same (timestamps may differ)

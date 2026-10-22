@@ -45,9 +45,13 @@ THE_WRITE_FUNCTION: dict[tuple[str, str], str] = {
         "create_entry_text",
     ): "the one publish of a create or a templated move",
     (
-        "pyrite/storage/entry_writer.py",
-        "publish_exclusive",
-    ): "the exclusive publish outside git (os.link, else O_EXCL, then replace)",
+        "pyrite/utils/kb_files.py",
+        "Folder.rename",
+    ): "the publish of a replace, through the folder opened beneath the KB root",
+    (
+        "pyrite/utils/kb_files.py",
+        "Folder.link_exclusive",
+    ): "the exclusive publish of a create or a move (os.link, else O_EXCL, then rename)",
 }
 
 #: Callers of ``KBRepository.save``, whose bytes go through the write function
@@ -59,18 +63,15 @@ DELEGATES_TO_THE_WRITE_FUNCTION: dict[tuple[str, str], str] = {
         "pyrite/storage/document_manager.py",
         "DocumentManager.save_entry",
     ): "a create's call of KBRepository.save",
+    (
+        "pyrite/services/id_pin_service.py",
+        "_write_pin",
+    ): "ids pin: KBFiles.write_bytes, the entry writer's own write, with its compare",
 }
 
 #: Shrinks with each B6 phase (the spike on #730, §4 and §5).
-ENTRY_FILE_WRITERS_NOT_YET_CONVERTED: dict[tuple[str, str], str] = {
-    (
-        "pyrite/services/id_pin_service.py",
-        "_rename",
-    ): "ids pin: its own no-follow write (a link swapped in must not be followed), "
-    "under the momentary lock since P4; folds into entry_writer when atomic_write_text "
-    "stops following links",
-}
-ENTRY_FILE_WRITERS_NOT_YET_CONVERTED_SIZE = 1
+ENTRY_FILE_WRITERS_NOT_YET_CONVERTED: dict[tuple[str, str], str] = {}
+ENTRY_FILE_WRITERS_NOT_YET_CONVERTED_SIZE = 0
 
 NOT_AN_ENTRY_FILE: dict[tuple[str, str], str] = {
     (
@@ -86,6 +87,10 @@ NOT_AN_ENTRY_FILE: dict[tuple[str, str], str] = {
     ("pyrite/cli/extension_commands.py", "extension_init"): "an extension scaffold",
     ("pyrite/cli/mcp_setup_command.py", "_setup_file"): "an MCP client's config file",
     ("pyrite/utils/yaml.py", "dump_yaml_file"): "config and schema files (kb.yaml, config.yaml)",
+    (
+        "pyrite/services/schema_service.py",
+        "SchemaService._save_kb_yaml",
+    ): "a KB's kb.yaml, through KBFiles.write_bytes (inside the root, no link followed)",
 }
 
 

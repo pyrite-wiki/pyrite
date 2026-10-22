@@ -8,7 +8,7 @@ import json
 import logging
 from typing import Any
 
-from .utils import parse_meta
+from .utils import parse_meta, persist_entry
 
 logger = logging.getLogger(__name__)
 
@@ -360,8 +360,12 @@ def import_ftm(
     ftm_entities: list[dict],
     *,
     dry_run: bool = False,
+    kb_service: Any = None,
 ) -> dict:
     """Import a batch of FtM entities into a KB.
+
+    `kb_service` (MCP) writes each entry as a file through the KB service;
+    None (the CLI) writes the index alone -- see `utils.persist_entry`.
 
     Returns summary dict with counts and entry details.
     """
@@ -423,7 +427,7 @@ def import_ftm(
             }
             if "date" in pyrite_entry:
                 entry_data["date"] = pyrite_entry["date"]
-            db.upsert_entry(entry_data)
+            persist_entry(db, kb_service, entry_data)
             imported += 1
             entries.append(
                 {

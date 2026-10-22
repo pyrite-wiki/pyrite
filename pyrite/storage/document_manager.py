@@ -146,8 +146,14 @@ class DocumentManager:
         return None if str(parent) == "." else str(parent)
 
     def _remove_old_file(self, old_path: Path, kb_root: Path) -> None:
-        """Remove old file after a template-driven path change. Git-aware."""
+        """Remove old file after a template-driven path change. Git-aware.
+        Only a name inside ``kb_root`` is removed."""
         import subprocess
+
+        from ..utils.kb_files import KBFiles
+
+        files = KBFiles(kb_root)
+        files.require_removable(old_path)
 
         try:
             # Check if this is a git repo
@@ -165,9 +171,9 @@ class DocumentManager:
                     timeout=10,
                 )
             else:
-                old_path.unlink(missing_ok=True)
+                files.unlink(old_path)
         except Exception:
-            old_path.unlink(missing_ok=True)
+            files.unlink(old_path)
             logger.warning("Git-aware move failed, deleted old file directly", exc_info=True)
 
         # Clean up empty parent directories up to kb_root

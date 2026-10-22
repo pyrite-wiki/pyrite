@@ -699,3 +699,19 @@ def test_publishing_under_an_untrusted_config_is_409_over_http(world):
     state_db = getattr(app.state, "pyrite_db", None)
     if state_db is not None:
         state_db.close()
+
+
+def test_landing_from_an_untrusted_config_is_ignored_loudly(world, caplog):
+    """`landing` is the operator's (ADR-0044 §1, ADR-0039): an untrusted
+    repo-local config cannot set it, and saying so is its own warning, since
+    the KB then lands every write on its own files."""
+    home, tree = world
+    _write(
+        tree,
+        {"knowledge_bases": [{"name": "inside", "path": str(tree / "notes"), "landing": "review"}]},
+    )
+    with caplog.at_level(logging.WARNING, logger="pyrite.config"):
+        cfg = config_module.load_config()
+    (kb,) = cfg.knowledge_bases
+    assert kb.landing == "canonical"
+    assert "IGNORED knowledge_bases[inside].landing" in caplog.text

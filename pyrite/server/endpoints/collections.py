@@ -12,6 +12,7 @@ from ...utils.metadata import declared_over_bag, parse_metadata
 from ..api import (
     get_access_policy,
     get_kb_service,
+    get_read_kb_service,
     limiter,
     negotiate_response,
     requires_kb_tier,
@@ -282,7 +283,7 @@ def get_collection_entries(
 def preview_collection_query(
     request: Request,
     body: QueryPreviewRequest = Body(...),
-    svc: KBService = Depends(get_kb_service),
+    svc: KBService = Depends(get_read_kb_service),
     scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
     """Preview results for a collection query without saving.

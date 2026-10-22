@@ -1354,6 +1354,7 @@ class JournalismInvestigationPlugin:
                 scope=args.get("scope", ""),
                 key_questions=args.get("key_questions"),
                 initial_entities=args.get("initial_entities"),
+                kb_service=self._get_kb_service(),
             )
         finally:
             if should_close:
@@ -1384,6 +1385,7 @@ class JournalismInvestigationPlugin:
                 kb_name=kb_name,
                 edges=args.get("edges", []),
                 dry_run=args.get("dry_run", False),
+                kb_service=self._get_kb_service(),
             )
         finally:
             if should_close:
@@ -1447,6 +1449,7 @@ class JournalismInvestigationPlugin:
                 self._resolve_kb(args),
                 args.get("entities", []),
                 dry_run=args.get("dry_run", False),
+                kb_service=self._get_kb_service(),
             )
         finally:
             if should_close:

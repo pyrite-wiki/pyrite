@@ -4,8 +4,18 @@ Every write of an existing entry file ends here: ``KBService._update`` computes
 the new text with ``file_operations.apply`` and publishes it with
 ``publish_entry_text``, which compares the file with the bytes the change was
 computed on and replaces it under the momentary lock
-(``atomic_write_text(expect=...)``, the lock in the repository's git dir,
+(``KBFiles.write_bytes(expect=...)``, the lock in the repository's git dir,
 §10a A1).
+
+**Inside the KB root.** Every function here takes the KB's ``root``, and
+the write itself is ``KBFiles``' (``pyrite/utils/kb_files.py``): the folder
+is opened beneath the root without following a link and every step goes
+through its descriptor, so the path approved is the path written, even when
+a folder is swapped for a link meanwhile. A path that leaves the root is
+refused (``KBFileOutsideRootError``, ``OUTSIDE_KB_ROOT``); so is a write to a
+hard-linked file (``HardLinked``), in a KB under git or not, and a move of a
+file that is itself a link (``KBFileIsLinkError``). Nothing is written
+before the refusal.
 
 **A KB outside git (D1 (b), maintainer 2026-10-15).** There is no git dir to
 lock in, so the file is written with compare-before-replace and no lock: the
@@ -20,34 +30,32 @@ except the writers it lists, and that list only shrinks. Since #955 P4 the
 model has no ``save`` and no emitter: a create's text is built by
 ``repository.new_entry_text`` (``apply`` onto a skeleton) and published by
 ``create_entry_text``; rename, ``schema migrate`` and the extensions'
-migrations send operations and publish here. ``ids pin`` is the one writer
-still outside: it keeps its own no-follow write
-(``id_pin_service._rename``), pinned by that test's
-``ENTRY_FILE_WRITERS_NOT_YET_CONVERTED``.
+migrations send operations and publish here. ``ids pin`` publishes with
+``KBFiles.write_bytes``, the same write ``publish_entry_text`` makes, with
+its compare (``id_pin_service._write_pin``); that test's
+``ENTRY_FILE_WRITERS_NOT_YET_CONVERTED`` is empty.
 """
 
 from __future__ import annotations
 
-import errno
 import logging
 import os
 import re
-import secrets
 from datetime import UTC, datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 from ..models.base import _timestamp_instant
-from ..utils.atomic_write import ABSENT, FileChanged, _fsync_directory, atomic_write_text
-from ..utils.file_lock import LOCK_TIMEOUT, NotInGitRepository
+from ..utils.atomic_write import ABSENT, FileChanged
+from ..utils.file_lock import LOCK_TIMEOUT
+from ..utils.kb_files import KBFiles
 
 __all__ = [
     "FileChanged",
     "create_entry_text",
     "move_entry_text",
     "publish_entry_text",
-    "publish_exclusive",
     "raw_scalar",
+    "remove_entry_file",
     "updated_at_stamp",
 ]
 
@@ -136,76 +144,23 @@ def updated_at_stamp(old: Any, raw: str | None = None) -> Any:
     return text if isinstance(old, str) else TimestampText(text)
 
 
-def create_entry_text(path: str | os.PathLike[str], text: str) -> bool:
+def create_entry_text(
+    path: str | os.PathLike[str], text: str, *, root: str | os.PathLike[str]
+) -> bool:
     """Write ``text`` to a path that must not exist yet; return whether the
     write ran under the lock. Raises ``FileExistsError`` when something is
     already there. Used by a create and by the templated move, the one move
-    an update makes (ADR-0042 decisions 5 and 13).
+    an update makes (ADR-0042 decisions 5 and 13). ``path`` must resolve
+    inside the KB ``root`` (a dangling link to outside is refused).
 
-    In a git work tree the absence check and the publish run under the
-    momentary lock (``expect=ABSENT``). Outside one there is no lock (D1 (b)),
-    so the exclusivity comes from the filesystem call that publishes
-    (``publish_exclusive``: ``os.link``, else ``O_CREAT | O_EXCL``), never
-    from an ``exists()`` check before it: two creates racing on one path give
-    one file and one refusal in every KB kind (#391; the #974 cold read found
-    the check-then-replace form let both succeed).
+    The exclusivity comes from the call that publishes (a hard link, else
+    ``O_CREAT | O_EXCL``), under the momentary lock in a git work tree and
+    without one outside it (D1 (b)), never from an ``exists()`` check before
+    it: two creates racing on one path give one file and one refusal in every
+    KB kind (#391; the #974 cold read found the check-then-replace form let
+    both succeed).
     """
-    try:
-        atomic_write_text(path, text, expect=ABSENT)
-        return True
-    except NotInGitRepository:
-        _create_exclusive_unlocked(Path(path), text)
-        return False
-    except FileChanged as e:
-        raise FileExistsError(str(e.path)) from e
-
-
-def _create_exclusive_unlocked(target: Path, text: str) -> None:
-    """The no-lock create: the bytes go to a temp file beside ``target``
-    (fsynced, the mode a new file gets under the umask) and are published
-    with ``publish_exclusive``; the temp file is removed on any failure."""
-    target = Path(os.path.realpath(target))
-    tmp = _tmp_beside(target, text.encode("utf-8"))
-    try:
-        publish_exclusive(tmp, target)
-    except BaseException:
-        _remove(tmp)
-        raise
-    _fsync_directory(target.parent)
-
-
-def _tmp_beside(target: Path, data: bytes) -> str:
-    """``data`` in a new temp file beside ``target``, fsynced, with the mode a
-    new file gets under the umask; the caller publishes or removes it."""
-    tmp = str(target.parent / f".{target.name}.{secrets.token_hex(8)}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
-    try:
-        view = memoryview(data)
-        while view:
-            view = view[os.write(fd, view) :]
-        os.fsync(fd)
-    except BaseException:
-        os.close(fd)
-        _remove(tmp)
-        raise
-    os.close(fd)
-    return tmp
-
-
-def _remove(tmp: str) -> None:
-    try:
-        os.unlink(tmp)
-    except FileNotFoundError:
-        pass
-
-
-def _still_holds(src: Path, expect: bytes) -> None:
-    try:
-        on_disk: bytes | None = src.read_bytes()
-    except FileNotFoundError:
-        on_disk = None
-    if on_disk != expect:
-        raise FileChanged(src, on_disk)
+    return KBFiles(root).write_bytes(path, text.encode("utf-8"), expect=ABSENT)
 
 
 def move_entry_text(
@@ -214,6 +169,7 @@ def move_entry_text(
     dst: str | os.PathLike[str],
     text: str,
     *,
+    root: str | os.PathLike[str],
     lock_timeout: float = LOCK_TIMEOUT,
 ) -> bool:
     """Move an entry file: publish ``text`` at ``dst``, which must not exist,
@@ -228,159 +184,15 @@ def move_entry_text(
     publish and the removal run without a lock, in that order. A removal of
     ``src`` that fails after ``dst`` is published raises with both files in
     place.
+
+    Inside ``root`` only (``KBFiles.move_bytes``): a source that is a
+    symbolic link is refused, never followed to its target and removed
+    there; so is a hard-linked source, and either path leaving the root.
+    ``dst``'s folder is made after those checks, beneath the root.
     """
-    from ..utils.file_lock import file_lock
-
-    src_path = Path(os.path.realpath(src))
-    dst_path = Path(os.path.realpath(dst))
-    tmp = _tmp_beside(dst_path, text.encode("utf-8"))
-    try:
-        try:
-            with file_lock(src_path, dst_path, timeout=lock_timeout):
-                _still_holds(src_path, expect)
-                publish_exclusive(tmp, dst_path)
-                os.unlink(src_path)
-            locked = True
-        except NotInGitRepository:
-            _still_holds(src_path, expect)
-            publish_exclusive(tmp, dst_path)
-            os.unlink(src_path)
-            locked = False
-    except BaseException:
-        _remove(tmp)
-        raise
-    _fsync_directory(dst_path.parent)
-    if src_path.parent != dst_path.parent:
-        _fsync_directory(src_path.parent)
-    return locked
-
-
-def _names_the_same_file(tmp: str, path: Path) -> bool:
-    """Whether ``path`` now names the inode ``tmp`` holds: ``os.link`` created
-    the target but reported an error anyway (EIO, or EEXIST on an NFS
-    retransmit of a link that succeeded, #914)."""
-    try:
-        return os.path.samestat(os.stat(tmp), os.stat(path))
-    except OSError:
-        return False
-
-
-def _unlink_published(tmp: str, path: Path) -> None:
-    """Remove the temp name after a successful publish; one retry for a
-    transient sharing error, then a warning (a second hard link blocks
-    ``ids pin`` and keeps today's bytes past the next update, #752)."""
-    try:
-        os.unlink(tmp)
-    except OSError:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            logger.warning(
-                "published %s, but could not remove its temp name %s, a second "
-                "hard link to the same file; delete it by hand",
-                path,
-                tmp,
-                exc_info=True,
-            )
-
-
-def publish_exclusive(tmp: str, path: Path) -> None:
-    """Publish ``tmp`` to ``path``, refusing if ``path`` already exists.
-
-    The contract: publish exactly the new file at ``path`` and leave nothing
-    behind that the caller cannot name, or raise and leave ``path`` as it
-    was. Mechanisms, in order:
-
-    1. ``os.link(tmp, path)``: atomic, never exposes a partial file.
-       ``FileExistsError`` stops here. Any other error (no hard links on
-       FAT/exFAT, EACCES on some network shares, FUSE-specific errnos) goes
-       on to step 2, which is still exclusive (#391 round 3; #643 review: an
-       errno allow-list here failed every create on those). A link can
-       succeed and still raise -- EIO after the link was made, or EEXIST on
-       an NFS retransmit -- so either error first checks whether the target
-       now names ``tmp`` and treats that as the publish it is (#914).
-    2. ``os.open(path, O_CREAT | O_EXCL)`` claims the name, then
-       ``os.replace(tmp, path)`` fills it: the replace only targets a path
-       this call just created. If anything after the claim fails, the
-       placeholder is removed while it is still ours (#477).
-       ``FileExistsError`` stops here; so does any error other than
-       "unsupported" (ENOSPC, EDQUOT, EIO...), with ``path`` untouched.
-    3. Only if O_EXCL itself is unsupported (ENOTSUP, ENOSYS, EOPNOTSUPP): a
-       plain ``os.replace``, guarded only by the caller's own check.
-
-    ``tmp`` belongs to the caller until a mechanism consumes it: on success
-    it is gone (moved by ``os.replace``, or unlinked after step 1; if that
-    unlink fails twice the publish still succeeds and a warning names the
-    leftover); on a raise it is still there and the caller removes it. The
-    same mechanism ``Entry._publish_exclusive`` used for the model's save;
-    it lives here now, with the one publish of a create (C2, #974 cold read).
-    """
-    unsupported_errnos = {errno.ENOTSUP, errno.ENOSYS}
-    unsupported_errnos.add(getattr(errno, "EOPNOTSUPP", errno.ENOTSUP))
-
-    try:
-        os.link(tmp, path)
-    except FileExistsError:
-        # A link can be made and still raise: an NFS retransmit of a link
-        # that succeeded reports EEXIST on the retry. If the target now names
-        # our temp file, the publish happened (#914).
-        if _names_the_same_file(tmp, path):
-            _unlink_published(tmp, path)
-            return
-        raise
-    except OSError:
-        # Same on a generic error: EIO can be reported after the link was
-        # created (#914). Only when the target is not ours does the O_EXCL
-        # fallback run, which is still exclusive and re-raises real errors.
-        if _names_the_same_file(tmp, path):
-            _unlink_published(tmp, path)
-            return
-    else:
-        # Published. The cleanup sits outside the try above so an unlink
-        # error is never mistaken for a link failure.
-        _unlink_published(tmp, path)
-        return
-
-    try:
-        claim_fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        raise
-    except OSError as exc:
-        if exc.errno not in unsupported_errnos:
-            raise
-        # Neither atomic mechanism works here; the historical best effort.
-        os.replace(tmp, path)
-        return
-
-    # From here the placeholder at `path` is ours: everything up to a
-    # successful replace runs inside one cleanup scope (#643 review item 3).
-    claim_stat = None
-    try:
-        try:
-            claim_stat = os.fstat(claim_fd)
-        finally:
-            os.close(claim_fd)
-        os.replace(tmp, path)
-    except BaseException:
-        _remove_claim(path, claim_stat)
-        raise
-
-
-def _remove_claim(path: Path, claim_stat: Any) -> None:
-    """Remove the O_EXCL placeholder at ``path`` if it is still ours: while it
-    names the same file as ``claim_stat``, or (without one) while it is
-    empty, since no entry file ever is. Best effort; the caller is raising."""
-    try:
-        current = os.stat(path)
-        ours = (
-            os.path.samestat(claim_stat, current)
-            if claim_stat is not None
-            else current.st_size == 0
-        )
-        if ours:
-            os.unlink(path)
-    except OSError:
-        pass
+    return KBFiles(root).move_bytes(
+        src, expect, dst, text.encode("utf-8"), lock_timeout=lock_timeout
+    )
 
 
 def publish_entry_text(
@@ -388,10 +200,15 @@ def publish_entry_text(
     text: str,
     *,
     expect: bytes,
+    root: str | os.PathLike[str],
     lock_timeout: float = LOCK_TIMEOUT,
 ) -> bool:
     """Replace ``path`` with ``text`` if it still holds ``expect``; return whether
     the replace ran under the momentary lock.
+
+    ``path`` must resolve inside the KB ``root`` and have one link: a
+    hard-linked file is refused under git and outside it alike (outside it
+    the replace used to be written in place, through every name).
 
     Raises ``FileChanged`` (nothing written) when the file no longer holds
     ``expect``: the caller re-reads and re-applies. In a git work tree the
@@ -399,16 +216,17 @@ def publish_entry_text(
     ``lock_timeout`` seconds (``LockTimeout`` after that); outside one they
     run without it (D1 (b)) and the result is ``False``.
     """
-    try:
-        atomic_write_text(path, text, expect=expect, lock_timeout=lock_timeout)
-        return True
-    except NotInGitRepository:
-        target = Path(path)
-        try:
-            on_disk: bytes | None = target.read_bytes()
-        except FileNotFoundError:
-            on_disk = None
-        if on_disk != expect:
-            raise FileChanged(target, on_disk) from None
-        atomic_write_text(path, text)
-        return False
+    return KBFiles(root).write_bytes(
+        path, text.encode("utf-8"), expect=expect, lock_timeout=lock_timeout
+    )
+
+
+def remove_entry_file(
+    path: str | os.PathLike[str], *, root: str | os.PathLike[str], missing_ok: bool = True
+) -> None:
+    """Remove the entry file named ``path``: the name itself (a link is
+    removed as a link), only when it and the folder it is named in resolve
+    inside the KB ``root``, through the folder opened beneath the root
+    (``KBFiles.unlink``). A delete through a folder link to outside, or of a
+    link to a file outside, is refused before anything is removed."""
+    KBFiles(root).unlink(path, missing_ok=missing_ok)

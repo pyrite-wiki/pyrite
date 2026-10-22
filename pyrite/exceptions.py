@@ -270,6 +270,19 @@ class InvalidGitRefError(ValidationError):
     error_code = "INVALID_REF"
 
 
+class LandingRefusedError(ValidationError):
+    """A write with no place to land under its KB's `landing` (ADR-0044 §1):
+    refused, and nothing is written. Carries ``error_code`` ``LANDING_REFUSED``."""
+
+    error_code = "LANDING_REFUSED"
+
+
+class ChangeSetRecordRefusedError(LandingRefusedError):
+    """A database-only record (a review verdict, a raw SQL write) asked of a
+    change set. The change set's index is discarded when it merges, so the
+    record would be lost: refused, before anything is written."""
+
+
 class FrontmatterError(ValidationError):
     """Raised when YAML frontmatter is malformed or not a mapping.
 

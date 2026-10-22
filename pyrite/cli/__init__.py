@@ -1035,7 +1035,16 @@ def generate_readme_cmd(
                     suggestion="Run `pyrite kb list` to see available KBs.",
                 )
             readme_path = kb_config.path / "README.md"
-            readme_path.write_text(readme, encoding="utf-8")
+            from ..utils.errors import cli_error_from
+            from ..utils.kb_files import KBFiles
+
+            try:
+                # A README.md that is a link out of the KB is not written through.
+                KBFiles(readme_path.parent).write_bytes(readme_path, readme.encode("utf-8"))
+            except PyriteError as e:
+                cli_error_from(e)
+            except OSError as e:  # a hard-linked README.md (`HardLinked`)
+                cli_error(str(e), error_code="STORAGE_ERROR")
             console.print(f"[green]Written:[/green] {readme_path}")
         elif output:
             output.write_text(readme, encoding="utf-8")

@@ -551,7 +551,7 @@ class TestEntryRoundtrip:
             )
             original.add_source(title="Source", url="https://example.com")
 
-            create_entry_text(path, new_entry_text(original))
+            create_entry_text(path, new_entry_text(original), root=(path).parent)
             loaded = EventEntry.load(path)
 
             assert loaded.id == original.id
@@ -572,7 +572,7 @@ class TestEntryRoundtrip:
             original.tags = ["test", "actor"]
             original.research_status = ResearchStatus.DRAFT
 
-            create_entry_text(path, new_entry_text(original))
+            create_entry_text(path, new_entry_text(original), root=(path).parent)
             loaded = PersonEntry.load(path)
 
             assert loaded.id == original.id

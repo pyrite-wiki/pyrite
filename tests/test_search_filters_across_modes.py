@@ -610,7 +610,7 @@ def test_warnings_reach_the_mcp_response(svc_db, monkeypatch):
     from pyrite.server.mcp_server import PyriteMCPServer
 
     server = PyriteMCPServer.__new__(PyriteMCPServer)
-    server._search_svc_cache = SearchService(svc_db)
+    server._service_cache = {"search": SearchService(svc_db)}
 
     clean = server._kb_search({"query": "detention", "kb_name": "test-kb", "mode": "hybrid"})
     assert "warnings" not in clean, clean
@@ -641,6 +641,7 @@ def rest_client(svc_db):
     from pyrite.server.api import (
         create_app,
         get_kb_service,
+        get_read_kb_service,
         get_search_service,
     )
 
@@ -656,7 +657,10 @@ def rest_client(svc_db):
             # stub serves one KB and names it.
             return SimpleNamespace(name=name)
 
+    # The read-scope guard takes the read service (a read never asks the
+    # landing rule).
     app.dependency_overrides[get_kb_service] = lambda: _StubKBService()
+    app.dependency_overrides[get_read_kb_service] = lambda: _StubKBService()
     return TestClient(app)
 
 

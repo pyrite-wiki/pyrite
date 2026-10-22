@@ -34,6 +34,7 @@ from ..models.core_types import (
 )
 from ..schema import CORE_TYPES
 from ..utils.frontmatter import Frontmatter, split_frontmatter
+from ..utils.kb_files import KBFiles
 from ..utils.yaml import load_yaml, load_yaml_file
 from .entry_writer import (
     FileChanged,
@@ -41,6 +42,7 @@ from .entry_writer import (
     move_entry_text,
     publish_entry_text,
     raw_scalar,
+    remove_entry_file,
     updated_at_stamp,
 )
 
@@ -123,34 +125,34 @@ def _rewrite_wikilinks(text: str, old_id: str, new_id: str) -> _Rewrite:
 
 def _hard_link_fault(path: Path) -> str | None:
     """Why a compare-and-replace of ``path`` would be refused before any
-    linker is written: in a git work tree a file with more than one hard link
-    is refused (``HardLinked``: another name for the same inode would take
-    another lock); outside one the write is in place and the link is no
-    fault. None when the file can be published."""
-    from pyrite.utils.file_lock import LockDirError, lock_dir_for
-
+    linker is written: a file with more than one hard link is refused, in a
+    KB under git or not (``HardLinked``: another name for the same inode may
+    be outside the KB, and under git would take another lock). None
+    when the file can be published."""
     try:
         links = path.stat().st_nlink
     except OSError:
         return None
     if links <= 1:
         return None
-    try:
-        lock_dir_for(path)
-    except LockDirError:  # not in git (an in-place write), or a lock directory
-        return None  # the move of the entry itself will say so, before any linker
     return _hard_linked(links)
 
 
 def _hard_linked(links: int) -> str:
-    return f"it has {links} hard links; another name for the same inode would take another lock"
+    return (
+        f"it has {links} hard links; another name for the same file may be outside "
+        "the KB, and would take another lock"
+    )
 
 
 def _fault_reason(e: BaseException) -> str:
     from pyrite.utils.atomic_write import HardLinked
+    from pyrite.utils.kb_files import KBFileOutsideRootError
 
     if isinstance(e, HardLinked):
         return _hard_linked(e.links)
+    if isinstance(e, KBFileOutsideRootError):
+        return "it resolves outside the KB root, through a symbolic link"
     return f"{type(e).__name__}: {e}"
 
 
@@ -476,12 +478,11 @@ class KBRepository:
         """Return file_path, or raise if it resolves outside the KB root.
 
         Defence in depth behind _validate_entry_id: subdirectory templates and
-        `file_pattern` filenames are also built from entry data.
+        `file_pattern` filenames are also built from entry data. The decision
+        is ``KBFiles``' (``KBFileOutsideRootError``, ``OUTSIDE_KB_ROOT``), the
+        same one the entry writer makes again at the write.
         """
-        root = self.path.resolve()
-        resolved = file_path.resolve()
-        if resolved != root and root not in resolved.parents:
-            raise ValidationError(f"Refusing to write outside KB '{self.name}': {file_path}")
+        KBFiles(self.path).require(file_path)
         return file_path
 
     def _get_file_path(self, entry_id: str, subdir: str | None = None) -> Path:
@@ -875,7 +876,7 @@ class KBRepository:
         # one is refused with the file as it was, whatever `exclusive` says.
         text = new_entry_text(entry)
         try:
-            create_entry_text(file_path, text)
+            create_entry_text(file_path, text, root=self.path)
         except FileExistsError:
             raise EntryExistsError(
                 f"'{entry.id}' already exists in KB '{self.name}' at "
@@ -917,8 +918,12 @@ class KBRepository:
             raise KBReadOnlyError(f"KB '{self.name}' is read-only")
 
         files = self.files_to_delete(entry_id, indexed_path, holders)
+        # Every removal decided first: one that would leave the root refuses
+        # the delete before any file goes.
         for file_path in files:
-            file_path.unlink(missing_ok=True)
+            KBFiles(self.path).require_removable(file_path)
+        for file_path in files:
+            remove_entry_file(file_path, root=self.path)
         return bool(files)
 
     # ---------------------------------------------------------------
@@ -1081,21 +1086,20 @@ class KBRepository:
 
         if file_path.resolve() == src.resolve():
             try:
-                publish_entry_text(src, new_text, expect=raw)
+                publish_entry_text(src, new_text, expect=raw, root=self.path)
             except FileChanged as e:
                 raise ConflictError(
                     f"'{old_id}' in KB '{self.name}' changed while the rename ran; "
                     "nothing was written. Read it again and retry."
                 ) from e
         else:
-            file_path.parent.mkdir(parents=True, exist_ok=True)
             # One move: the new file published and the old one removed as
             # one write under one lock for both paths, the old file removed
             # only while it still holds the bytes read above (#978 review,
             # item 3). A target already taken, or a source that changed,
             # leaves both paths as they are.
             try:
-                move_entry_text(src, raw, file_path, new_text)
+                move_entry_text(src, raw, file_path, new_text, root=self.path)
             except FileExistsError:
                 raise ValidationError(
                     f"Cannot rename '{old_id}' to '{new_id}': target already exists "
@@ -1177,7 +1181,7 @@ class KBRepository:
         rename (#978 review, item 1; the delta review)."""
         for _attempt in range(_REWRITE_ATTEMPTS):
             try:
-                publish_entry_text(path, rewrite.text, expect=raw)
+                publish_entry_text(path, rewrite.text, expect=raw, root=self.path)
                 return _Published(rewrite.count, rewrite.partial, None)
             except FileChanged:
                 try:

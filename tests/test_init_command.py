@@ -149,13 +149,19 @@ class TestInitCommand:
         notes_dir = kb_path / "notes"
         notes_dir.mkdir(parents=True)
         create_entry_text(
-            notes_dir / "n1.md", new_entry_text(NoteEntry(id="n1", title="Note 1", body="body 1"))
+            notes_dir / "n1.md",
+            new_entry_text(NoteEntry(id="n1", title="Note 1", body="body 1")),
+            root=(notes_dir / "n1.md").parent,
         )
         create_entry_text(
-            notes_dir / "n2.md", new_entry_text(NoteEntry(id="n2", title="Note 2", body="body 2"))
+            notes_dir / "n2.md",
+            new_entry_text(NoteEntry(id="n2", title="Note 2", body="body 2")),
+            root=(notes_dir / "n2.md").parent,
         )
         create_entry_text(
-            notes_dir / "n3.md", new_entry_text(NoteEntry(id="n3", title="Note 3", body="body 3"))
+            notes_dir / "n3.md",
+            new_entry_text(NoteEntry(id="n3", title="Note 3", body="body 3")),
+            root=(notes_dir / "n3.md").parent,
         )
         config = init_env["config"]
 

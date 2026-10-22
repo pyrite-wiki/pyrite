@@ -514,6 +514,15 @@ CALL_SITES: dict[tuple[str, str], tuple[int, str]] = {
         "forward their own tool arguments through the same restricted create_entry)",
     ),
     (
+        "extensions/journalism-investigation/src/pyrite_journalism_investigation/utils.py",
+        "create_entry",
+    ): (
+        1,
+        "safe: persist_entry, the investigation tools' file write over MCP (bulk edges' "
+        "caller `fields` and FtM metadata go under `metadata`); create_entry refuses a "
+        "managed field at any spelling, metadata included (#1010), and owns nothing",
+    ),
+    (
         "extensions/journalism-investigation/src/pyrite_journalism_investigation/promote.py",
         "create",
     ): (

@@ -159,6 +159,7 @@ def test_the_overlay_takes_the_full_name_only(tmp_path):
     """The worktree resolver no longer maps a shortname: it is handed the
     full name the route resolved, and a shortname reaches no worktree."""
     from pyrite.server.worktree_resolver import WorktreeResolver
+    from pyrite.services.write_target import change_set_target
     from tests.test_get_reads_the_file import ENTRY, ORIGINAL, _index
     from tests.test_worktree_service import _clean_git_env, _init_git_repo
 
@@ -182,7 +183,9 @@ def test_the_overlay_takes_the_full_name_only(tmp_path):
     ann = {"id": 7, "username": "ann"}
     try:
         resolver = WorktreeResolver(config, db, cache)
-        resolver.get_write_service("demo", ann).update(ENTRY, "demo", {"body": "Ann's pending."})
+        KBService(
+            *change_set_target(config, db, 7, "demo", diff_cache=cache, username="ann")
+        ).update(ENTRY, "demo", {"body": "Ann's pending."})
         by_name = resolver.get_read_service("demo", ann).get_entry(ENTRY, "demo", readable_kbs=None)
         assert by_name["body"] == "Ann's pending."
         assert resolver.get_read_db("dm", ann) is db, "a shortname names no worktree"

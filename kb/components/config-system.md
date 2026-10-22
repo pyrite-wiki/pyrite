@@ -33,7 +33,7 @@ Dataclass for a single knowledge base. Fields include `name`, `path`, `kb_type` 
 Root configuration aggregating `knowledge_bases`, `repositories`, `subscriptions`, `github_auth`, and `settings`. Maintains internal `_kb_by_name` and `_repo_by_name` lookup dicts rebuilt on init. Methods: `get_kb()`, `list_kbs()`, `add_kb()`, `remove_kb()`, `get_repo()`, `add_repo()`, `remove_repo()`, `get_kbs_in_repo()`, `validate()`, `to_dict()`, `from_dict()`.
 
 ### `Settings`
-Global application settings: `default_editor`, `ai_provider`/`ai_model`/`ai_api_key`, `summary_length`, `enable_mcp`, `index_path`, `host`/`port`, `cors_origins`, `api_key`, rate limits, `embedding_model`/`embedding_dimensions`, `search_mode`, and `workspace_path`. Environment variables (`EDITOR`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_BASE`) serve as fallbacks.
+Global application settings: `default_editor`, `ai_provider`/`ai_model`/`ai_api_key`, `summary_length`, `enable_mcp`, `index_path`, `host`/`port`, `cors_origins`, `api_key`, rate limits, `max_request_body_bytes` (default 32 MiB, positive integer, refused at load otherwise), `embedding_model`/`embedding_dimensions`, `search_mode`, and `workspace_path`. Environment variables (`EDITOR`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_BASE`) serve as fallbacks.
 
 ### `Repository`
 Configuration for a git repository that may contain one or more KBs. Supports local and remote repos with authentication methods (`none`, `ssh`, `github_oauth`, `token`).

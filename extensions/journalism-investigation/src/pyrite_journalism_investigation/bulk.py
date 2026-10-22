@@ -7,9 +7,11 @@ efficient single-pass indexing.
 
 from typing import Any
 
+from pyrite.exceptions import PyriteError
 from pyrite.schema import generate_entry_id
+from pyrite.utils.errors import public_text
 
-from .utils import strip_wikilink
+from .utils import persist_entry, strip_wikilink
 
 # Required fields per edge type and their roles for title generation.
 EDGE_TYPES: dict[str, dict[str, Any]] = {
@@ -77,6 +79,7 @@ def create_edge_batch(
     edges: list[dict],
     *,
     dry_run: bool = False,
+    kb_service: Any = None,
 ) -> dict[str, Any]:
     """Create connection entries in batch.
 
@@ -143,15 +146,35 @@ def create_edge_batch(
         # Build metadata from all fields
         metadata = dict(fields)
 
-        db.upsert_entry(
-            {
-                "id": entry_id,
-                "kb_name": kb_name,
-                "title": title,
-                "entry_type": edge_type,
-                "metadata": metadata,
-            }
-        )
+        # Through the KB service over MCP (a file, landing by the rule);
+        # the index alone from the CLI (`utils.persist_entry`). An edge the
+        # write refuses is reported and the batch goes on: the edges before
+        # it are already written.
+        try:
+            persist_entry(
+                db,
+                kb_service,
+                {
+                    "id": entry_id,
+                    "kb_name": kb_name,
+                    "title": title,
+                    "entry_type": edge_type,
+                    "metadata": metadata,
+                },
+            )
+        except PyriteError as e:
+            error_count += 1
+            entries.append(
+                {
+                    "id": entry_id,
+                    "title": title,
+                    "type": edge_type,
+                    "status": "error",
+                    "errors": [public_text(e)],
+                    "error_code": e.error_code,
+                }
+            )
+            continue
 
         created += 1
         entries.append(

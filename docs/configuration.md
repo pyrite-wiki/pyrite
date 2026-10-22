@@ -124,6 +124,7 @@ a copy of `config.yaml` to restore from.
 | `PYRITE_PUBLISHED_ON_LOOPBACK` | unset | Set to exactly `true` by the bundled `docker-compose.yml`, which publishes the port on `127.0.0.1`. Silences the startup warning for a credential-free wildcard bind, only inside a container and only with auth off. True only while the published address is loopback: remove it when you change `ports:` (including in a `docker-compose.override.yml`). Do not set it by hand elsewhere; outside a container it has no effect |
 | `PYRITE_ALLOWED_HOSTS` | unset | Comma-separated extra hostnames a credential-free server answers (see below) |
 | `PYRITE_API_KEY` | unset | Single admin API key (legacy single-key mode). Prefer `api_keys` in `config.yaml` — hashed keys with a role each. |
+| `PYRITE_MAX_REQUEST_BODY_BYTES` | `33554432` (32 MiB) | The most bytes one request body may carry (`settings.max_request_body_bytes`), on every route: an import upload, a JSON body, an `/mcp` message. A larger body is answered `413` with `code: PAYLOAD_TOO_LARGE` as soon as it passes the limit, before the rest is read, and nothing is written. Must be a positive integer; anything else is refused when the config loads. Raise it if you import files larger than 32 MiB, or split the file. |
 
 `config.yaml`:
 
@@ -131,11 +132,34 @@ a copy of `config.yaml` to restore from.
 settings:
   host: 127.0.0.1
   port: 8088
+  max_request_body_bytes: 33554432   # 32 MiB, the default
   api_keys:
     - key_hash: "<sha256 of the key>"
       role: read          # read | write | admin
       label: "Reader"
 ```
+
+### Importing a large file (the request body limit)
+
+`POST /api/entries/import` (the web UI's import) sends the whole file in one
+request, so a file larger than `max_request_body_bytes` (32 MiB by default) is
+refused with `413 PAYLOAD_TOO_LARGE`. A big KB's JSON export can be larger. For
+a bulk import or a migration, either:
+
+- import from the command line instead: `pyrite import <file> -k <kb>` reads
+  the file directly and does not go through the server, so the limit does not
+  apply; or
+- raise the limit for the import and restart the server, then set it back:
+
+  ```yaml
+  settings:
+    max_request_body_bytes: 268435456   # 256 MiB, for the migration
+  ```
+
+  or `PYRITE_MAX_REQUEST_BODY_BYTES=268435456 pyrite serve`. The server holds
+  up to the limit in memory per request, so keep it no larger than the import
+  needs; or
+- split the file into several smaller ones and import each.
 
 ### Allowed hosts and origins (credential-free servers)
 
@@ -276,6 +300,41 @@ whatever the auth settings are. An instance has no crawlable surface: the
 built-in `/site` renderer, its sitemap and `/robots.txt` were removed in
 #953. To make a KB crawlable, build a static site from its files with Hugo
 or Astro and deploy that on its own.
+
+### Where a user's write lands (`landing`)
+
+Each KB in `config.yaml` may carry `landing` (ADR-0044):
+
+```yaml
+knowledge_bases:
+  - name: field-notes
+    path: ~/kbs/field-notes
+    landing: review      # canonical (the default) or review
+```
+
+| `landing` | A signed-in user's write | The operator's write |
+|---|---|---|
+| `canonical` (default) | lands on the KB's own files | lands on the KB's own files |
+| `review` | lands in that user's change set (today a per-user git worktree beside the repository, `.pyrite-worktrees/<user>`), reaching the KB's files only by review | lands on the KB's own files |
+
+- The operator is the CLI, stdio MCP, an operator API key and a signed-in
+  global admin. Everyone else is a user.
+- The rule is the same on every surface: every REST write route and every MCP
+  tool, core and plugin.
+- On a `review` KB a write that cannot reach a change set is refused with
+  `LANDING_REFUSED`, and nothing is written: for example, the KB is not in a
+  git repository, or the writer is the anonymous visitor (`anonymous_tier:
+  write`), who has no change set. It never falls back to the KB's own files.
+- Claims and task status follow the rule, so on a `review` KB a claim is the
+  claimer's own until it merges. Keep a KB where agents coordinate (tasks,
+  claims) `canonical`.
+- Only the operator's config file sets `landing`. `kb.yaml`, the index and an
+  untrusted repo-local config cannot: the last is ignored with a warning, and
+  that KB lands canonical. An ephemeral KB is always canonical. A value other
+  than `canonical` or `review`, an empty one included, stops the load.
+- Before 0.26.0 the four REST entry routes sent a non-admin's write to a
+  per-user worktree on every KB. An operator who relied on that sets
+  `landing: review` on those KBs.
 
 ### The web app's Content-Security-Policy
 

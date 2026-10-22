@@ -515,8 +515,10 @@ class TestIndexReconcile:
         source = kb_path / "tasks" / "active" / "my-task.md"
         destination = kb_path / "tasks" / "done" / "my-task.md"
 
-        def create_destination_after_precheck(_source, target):
-            Path(target).write_text("created by concurrent writer", encoding="utf-8")
+        def create_destination_after_precheck(*_args, **_kwargs):
+            # The move links by name through folder descriptors; the racer
+            # writes the destination by its path.
+            destination.write_text("created by concurrent writer", encoding="utf-8")
             raise FileExistsError("destination appeared after the existence check")
 
         with (
@@ -526,7 +528,7 @@ class TestIndexReconcile:
                 return_value=(reconcile_env["config"], reconcile_env["db"]),
             ),
             patch(
-                "pyrite.services.kb_service.os.link",
+                "pyrite.utils.kb_files.os.link",
                 side_effect=create_destination_after_precheck,
             ),
         ):

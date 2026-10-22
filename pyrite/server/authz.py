@@ -151,7 +151,7 @@ def authorize(action: Action, resource: type):
         _resolve_kb_names,
         _UnparseableBodyError,
         get_access_policy,
-        get_kb_service,
+        get_read_kb_service,
     )
 
     if resource is AnyKB:
@@ -166,7 +166,7 @@ def authorize(action: Action, resource: type):
     async def authorize_kb_read_named(
         request: Request,
         policy: AccessPolicy = Depends(get_access_policy),
-        svc: KBService = Depends(get_kb_service),
+        svc: KBService = Depends(get_read_kb_service),
     ) -> ReadScope:
         if get_principal(request) is None:
             raise not_authenticated()

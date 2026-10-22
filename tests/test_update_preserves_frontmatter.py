@@ -1133,7 +1133,7 @@ def test_repository_save_preserves_body_line_matching_frontmatter_key(tmp_path):
 
     entry = repo.load_entry_from_file(path)
     saved_path = events_path / "body-first-line-copy.md"
-    create_entry_text(saved_path, new_entry_text(entry))
+    create_entry_text(saved_path, new_entry_text(entry), root=(saved_path).parent)
     saved_entry = repo.load_entry_from_file(saved_path)
 
     assert saved_entry.body == body

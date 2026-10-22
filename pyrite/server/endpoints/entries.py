@@ -24,6 +24,7 @@ from ..api import (
     get_block_service,
     get_config,
     get_kb_service,
+    get_read_kb_service,
     get_worktree_resolver,
     limiter,
     negotiate_response,
@@ -330,7 +331,7 @@ def list_entry_titles(
 def resolve_batch(
     request: Request,
     req: ResolveBatchRequest,
-    svc: KBService = Depends(get_kb_service),
+    svc: KBService = Depends(get_read_kb_service),
     scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
     """Batch-resolve wikilink targets. Returns which targets exist.
@@ -346,7 +347,7 @@ def resolve_batch(
 def batch_read_entries(
     request: Request,
     body: dict,
-    svc: KBService = Depends(get_kb_service),
+    svc: KBService = Depends(get_read_kb_service),
     scope: ReadScope = Depends(authorize(Action.KB_READ, AnyKB)),
 ):
     """Batch-read multiple entries in one call."""
@@ -639,14 +640,34 @@ async def import_entries(
             status_code=400,
             detail={"code": "STREAM_NOT_SUPPORTED", "message": "stream applies to markdown only"},
         )
+    # The request body, file included, is already bounded by
+    # settings.max_request_body_bytes (server/body_limit.py): a larger upload
+    # is answered 413 before this handler runs past the form parse.
     content = await file.read()
     try:
         parsed = importer(content, stream=True) if stream else importer(content)
-    except Exception as e:
+    except Exception:
+        # The exception's text is the operator's, not the caller's: it can
+        # quote internals (paths, parser state). It goes to the log; the
+        # caller gets Pyrite's own message.
+        logger.warning(
+            "Import into %r: the uploaded %s file %r did not parse",
+            kb,
+            fmt,
+            file.filename,
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=400,
-            detail={"code": "PARSE_ERROR", "message": f"Failed to parse file: {e}"},
-        )
+            detail={
+                "code": "PARSE_ERROR",
+                "message": (
+                    f"The file could not be read as {fmt}. Check that it is UTF-8 "
+                    f"text in the {fmt} import format."
+                ),
+                "retryable": False,
+            },
+        ) from None
 
     # Every per-record decision (the ADR-0034 truncated-body refusal, the
     # declared type, an existing id, schema and plugin validation) is the
@@ -773,17 +794,8 @@ def create_entry(
     request: Request,
     req: CreateEntryRequest,
     svc: KBService = Depends(get_kb_service),
-    resolver=Depends(get_worktree_resolver),
 ):
     """Create a new entry."""
-    # Route writes through worktree for authenticated users
-    auth_user = getattr(request.state, "auth_user", None)
-    if auth_user and auth_user.get("role") != "admin":
-        try:
-            svc = resolver.get_write_service(req.kb, auth_user)
-        except ValueError:
-            pass  # KB not in a git repo — fall back to main
-
     if not svc.get_kb(req.kb):
         raise HTTPException(
             status_code=404,
@@ -849,17 +861,8 @@ def update_entry(
     entry_id: str,
     req: UpdateEntryRequest,
     svc: KBService = Depends(get_kb_service),
-    resolver=Depends(get_worktree_resolver),
 ):
     """Update an existing entry."""
-    # Route writes through worktree for authenticated users
-    auth_user = getattr(request.state, "auth_user", None)
-    if auth_user and auth_user.get("role") != "admin":
-        try:
-            svc = resolver.get_write_service(req.kb, auth_user)
-        except ValueError:
-            pass  # KB not in a git repo — fall back to main
-
     # `id` is not a field `UpdateEntryRequest` can carry (FastAPI drops an
     # unknown key before this handler sees it, Pydantic's default
     # extra="ignore"), so a client that reads an entry and PUTs it straight
@@ -944,16 +947,8 @@ def patch_entry_field(
     entry_id: str,
     body: PatchEntryRequest,
     svc: KBService = Depends(get_kb_service),
-    resolver=Depends(get_worktree_resolver),
 ):
     """Update a single field on an entry (used by kanban drag-drop)."""
-    auth_user = getattr(request.state, "auth_user", None)
-    if auth_user and auth_user.get("role") != "admin":
-        try:
-            svc = resolver.get_write_service(body.kb, auth_user)
-        except (ValueError, Exception):
-            logger.warning("Worktree routing failed for PATCH, falling back to main")
-
     updates = {body.field: body.value} if body.op == "set" else {}
     try:
         written = svc.update(
@@ -1002,17 +997,8 @@ def delete_entry(
     entry_id: str,
     kb: str = Query(..., description="KB name"),
     svc: KBService = Depends(get_kb_service),
-    resolver=Depends(get_worktree_resolver),
 ):
     """Delete an entry."""
-    # Route deletes through worktree for authenticated users
-    auth_user = getattr(request.state, "auth_user", None)
-    if auth_user and auth_user.get("role") != "admin":
-        try:
-            svc = resolver.get_write_service(kb, auth_user)
-        except ValueError:
-            pass  # KB not in a git repo — fall back to main
-
     try:
         deleted = svc.delete_entry(entry_id, kb)
     except EntryNotFoundError as e:

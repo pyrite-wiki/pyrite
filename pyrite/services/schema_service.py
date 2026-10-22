@@ -5,7 +5,7 @@ from typing import Any
 
 from pyrite.config import KBConfig, PyriteConfig
 from pyrite.exceptions import KBNotFoundError, ValidationError
-from pyrite.utils.yaml import dump_yaml_file, load_yaml_file
+from pyrite.utils.yaml import load_yaml_file
 
 
 def migration_operations(before: dict[str, Any], after: dict[str, Any]) -> list[Any]:
@@ -56,8 +56,13 @@ class SchemaService:
         return {}
 
     def _save_kb_yaml(self, kb: KBConfig, data: dict[str, Any]) -> None:
-        """Save kb.yaml and refresh in-memory config."""
-        dump_yaml_file(data, kb.kb_yaml_path)
+        """Save kb.yaml and refresh in-memory config. A kb.yaml that is a link
+        to a file outside the KB is refused, not written through
+        (``KBFileOutsideRootError``)."""
+        from pyrite.utils.kb_files import KBFiles
+        from pyrite.utils.yaml import dump_yaml_text
+
+        KBFiles(kb.path).write_bytes(kb.kb_yaml_path, dump_yaml_text(data).encode("utf-8"))
         kb.load_kb_yaml()
 
     def show_schema(self, kb_name: str) -> dict[str, Any]:
@@ -222,7 +227,7 @@ class SchemaService:
                     ops = migration_operations(before, after)
                     span = FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
                     new_text, _report = apply(text, ops, span)
-                    publish_entry_text(file_path, new_text, expect=raw)
+                    publish_entry_text(file_path, new_text, expect=raw, root=kb.path)
                 # Counted after the write: a file that failed to write was
                 # neither checked nor migrated.
                 checked += 1

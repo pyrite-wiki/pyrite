@@ -151,7 +151,7 @@ class TestCollectionRepository:
             # Create a sample note in the folder
             note = NoteEntry(id="test-note", title="Test Note", body="Hello")
             note_path = notes_dir / "test-note.md"
-            create_entry_text(note_path, new_entry_text(note))
+            create_entry_text(note_path, new_entry_text(note), root=(note_path).parent)
 
             kb_config = KBConfig(name="test-kb", path=kb_path, kb_type=KBType.GENERIC)
             repo = KBRepository(kb_config)
@@ -253,7 +253,11 @@ class TestCollectionService:
                     body=f"Content of note {i}",
                     tags=["test"],
                 )
-                create_entry_text(notes_dir / f"note-{i}.md", new_entry_text(note))
+                create_entry_text(
+                    notes_dir / f"note-{i}.md",
+                    new_entry_text(note),
+                    root=(notes_dir / f"note-{i}.md").parent,
+                )
 
             config = PyriteConfig(
                 knowledge_bases=[kb_config],
@@ -350,7 +354,11 @@ class TestCollectionAPI:
                     title=f"Note {i}",
                     body=f"Content {i}",
                 )
-                create_entry_text(notes_dir / f"note-{i}.md", new_entry_text(note))
+                create_entry_text(
+                    notes_dir / f"note-{i}.md",
+                    new_entry_text(note),
+                    root=(notes_dir / f"note-{i}.md").parent,
+                )
 
             empty_path = tmpdir / "empty-kb"
             empty_path.mkdir()

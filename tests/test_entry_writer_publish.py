@@ -28,8 +28,8 @@ from pyrite.storage.entry_writer import (
     FileChanged,
     create_entry_text,
     publish_entry_text,
-    publish_exclusive,
 )
+from pyrite.utils.kb_files import KBFiles
 
 TEXT = "---\nid: note\ntitle: t\n---\n\nb\n"
 
@@ -48,15 +48,15 @@ def folder(tmp_path: Path, request) -> Path:
 )
 def test_a_failed_write_leaves_previous_content_intact(folder: Path, monkeypatch):
     path = folder / "note.md"
-    create_entry_text(path, TEXT)
+    create_entry_text(path, TEXT, root=(path).parent)
     before = path.read_bytes()
 
-    def boom(src, dst):
+    def boom(*args, **kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr(os, "replace", boom)
+    monkeypatch.setattr(os, "rename", boom)  # the one call that publishes a replace
     with pytest.raises(OSError):
-        publish_entry_text(path, TEXT.replace("b\n", "second\n"), expect=before)
+        publish_entry_text(path, TEXT.replace("b\n", "second\n"), expect=before, root=(path).parent)
 
     assert path.read_bytes() == before, "a failed publish must not corrupt the file"
     assert sorted(p.name for p in folder.iterdir() if p.name != ".git") == ["note.md"], (
@@ -71,7 +71,7 @@ def test_a_new_files_mode_follows_the_umask(folder: Path):
     old = os.umask(0o022)
     try:
         path = folder / "note.md"
-        create_entry_text(path, TEXT)
+        create_entry_text(path, TEXT, root=(path).parent)
         assert oct(path.stat().st_mode & 0o777) == oct(0o644)
     finally:
         os.umask(old)
@@ -82,10 +82,12 @@ def test_a_new_files_mode_follows_the_umask(folder: Path):
 )
 def test_an_existing_files_mode_is_kept(folder: Path):
     path = folder / "note.md"
-    create_entry_text(path, TEXT)
+    create_entry_text(path, TEXT, root=(path).parent)
     os.chmod(path, 0o600)
 
-    publish_entry_text(path, TEXT.replace("b\n", "b2\n"), expect=path.read_bytes())
+    publish_entry_text(
+        path, TEXT.replace("b\n", "b2\n"), expect=path.read_bytes(), root=(path).parent
+    )
 
     assert oct(path.stat().st_mode & 0o777) == oct(0o600)
     assert path.read_text(encoding="utf-8").endswith("b2\n")
@@ -96,11 +98,11 @@ def test_an_existing_files_mode_is_kept(folder: Path):
 )
 def test_a_create_refuses_an_existing_target_and_leaves_it_as_it_was(folder: Path):
     path = folder / "note.md"
-    create_entry_text(path, TEXT)
+    create_entry_text(path, TEXT, root=(path).parent)
     before = path.read_bytes()
 
     with pytest.raises(FileExistsError):
-        create_entry_text(path, TEXT.replace("b\n", "REPLACED\n"))
+        create_entry_text(path, TEXT.replace("b\n", "REPLACED\n"), root=(path).parent)
 
     assert path.read_bytes() == before, "a create must never overwrite"
     assert sorted(p.name for p in folder.iterdir() if p.name != ".git") == ["note.md"]
@@ -111,13 +113,13 @@ def test_a_create_refuses_an_existing_target_and_leaves_it_as_it_was(folder: Pat
 )
 def test_a_publish_against_stale_bytes_writes_nothing(folder: Path):
     path = folder / "note.md"
-    create_entry_text(path, TEXT)
+    create_entry_text(path, TEXT, root=(path).parent)
     stale = path.read_bytes()
-    publish_entry_text(path, TEXT.replace("b\n", "first\n"), expect=stale)
+    publish_entry_text(path, TEXT.replace("b\n", "first\n"), expect=stale, root=(path).parent)
     current = path.read_bytes()
 
     with pytest.raises(FileChanged) as info:
-        publish_entry_text(path, TEXT.replace("b\n", "second\n"), expect=stale)
+        publish_entry_text(path, TEXT.replace("b\n", "second\n"), expect=stale, root=(path).parent)
 
     assert path.read_bytes() == current
     assert info.value.on_disk == current
@@ -127,6 +129,14 @@ def _tmp_with(target: Path, text: str = "new\n") -> str:
     tmp = target.parent / f".{target.name}.tmp"
     tmp.write_text(text, encoding="utf-8")
     return str(tmp)
+
+
+def publish_exclusive(tmp: str, target: Path) -> None:
+    """The exclusive publish of a create, ``Folder.link_exclusive`` (what
+    ``entry_writer.publish_exclusive`` was before every KB write went through
+    ``KBFiles``): ``tmp`` beside ``target`` gets ``target``'s name."""
+    with KBFiles(target.parent).folder(target, create=False) as (folder, name):
+        folder.link_exclusive(os.path.basename(tmp), folder, name)
 
 
 def test_a_link_that_was_made_but_reported_io_error_is_a_success(tmp_path: Path, monkeypatch):

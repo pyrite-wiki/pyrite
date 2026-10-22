@@ -42,6 +42,13 @@ class KBType(StrEnum):
     GENERIC = "generic"
 
 
+# Where a non-operator's write to a KB lands (ADR-0044 §1). `canonical`: on the
+# KB's own files, as every write does today. `review`: in that user's change
+# set, reaching the canonical files only by review. Set by the operator in the
+# config file only (ADR-0039 decision 1) -- never in kb.yaml, never by a surface.
+LANDINGS = ("canonical", "review")
+
+
 @dataclass
 class KBConfig:
     """Configuration for a single knowledge base."""
@@ -57,6 +64,7 @@ class KBConfig:
     ttl: int | None = None  # TTL in seconds for ephemeral KBs
     created_at_ts: float | None = None  # Creation timestamp for TTL calculation
     default_role: str | None = None  # None=use global role, "read"=public, "none"=private
+    landing: str = "canonical"  # one of LANDINGS; see AccessPolicy.lands_in
 
     # Repository reference (for multi-KB repos)
     repo: str | None = None  # Name of parent repo (if KB is inside a repo)
@@ -76,6 +84,16 @@ class KBConfig:
         if hasattr(self.kb_type, "value"):
             self.kb_type = self.kb_type.value
         self._schema_cache = None
+        # A misspelt landing must not quietly mean canonical: it fails at load.
+        if self.landing not in LANDINGS:
+            raise ConfigError(
+                f"KB '{self.name}': landing must be one of {', '.join(LANDINGS)}, "
+                f"not {self.landing!r}"
+            )
+        # An ephemeral KB has no history to hold a change set (ADR-0029): its
+        # writes land on its own files, always.
+        if self.ephemeral and self.landing != "canonical":
+            raise ConfigError(f"KB '{self.name}': an ephemeral KB's landing is canonical")
 
     @property
     def kb_yaml_path(self) -> Path:
@@ -339,6 +357,20 @@ class AuthConfig:
         self.anonymous_tier = normalize_anonymous_tier(self.anonymous_tier)
 
 
+DEFAULT_MAX_REQUEST_BODY_BYTES = 32 * 1024 * 1024  # 32 MiB
+
+
+def _positive_int(value: object, name: str) -> int:
+    """``value`` as a positive int, or a ValueError naming the setting."""
+    try:
+        number = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise ValueError(f"settings.{name} must be a positive integer, got {value!r}") from None
+    if isinstance(value, bool) or number <= 0 or str(number) != str(value).strip():
+        raise ValueError(f"settings.{name} must be a positive integer, got {value!r}")
+    return number
+
+
 @dataclass
 class Settings:
     """Global application settings."""
@@ -376,6 +408,11 @@ class Settings:
     rate_limit_read: str = "100/minute"
     rate_limit_write: str = "30/minute"
     rate_limit_admin: str = "10/minute"
+    # The most bytes any one request body may carry: an import upload, a JSON
+    # body, an /mcp call. One byte over is answered 413 PAYLOAD_TOO_LARGE before
+    # the rest is read (pyrite/server/body_limit.py). Env:
+    # PYRITE_MAX_REQUEST_BODY_BYTES
+    max_request_body_bytes: int = DEFAULT_MAX_REQUEST_BODY_BYTES
     mcp_rate_limit_exempt_local: bool = True
     embedding_model: str = "all-MiniLM-L6-v2"
     embedding_dimensions: int = 384
@@ -404,6 +441,9 @@ class Settings:
     )
 
     def __post_init__(self):
+        self.max_request_body_bytes = _positive_int(
+            self.max_request_body_bytes, "max_request_body_bytes"
+        )
         self.index_path = Path(self.index_path).expanduser().resolve()
         self.workspace_path = Path(self.workspace_path).expanduser().resolve()
         if self.branding_dir is not None:
@@ -795,6 +835,7 @@ class PyriteConfig:
                     **({"ttl": kb.ttl} if kb.ttl else {}),
                     **({"created_at_ts": kb.created_at_ts} if kb.created_at_ts else {}),
                     **({"default_role": kb.default_role} if kb.default_role is not None else {}),
+                    **({"landing": kb.landing} if kb.landing != "canonical" else {}),
                 }
                 for kb in self.knowledge_bases
             ],
@@ -890,6 +931,11 @@ class PyriteConfig:
             "rate_limit_read": self.settings.rate_limit_read,
             "rate_limit_write": self.settings.rate_limit_write,
             "rate_limit_admin": self.settings.rate_limit_admin,
+            **(
+                {"max_request_body_bytes": self.settings.max_request_body_bytes}
+                if self.settings.max_request_body_bytes != DEFAULT_MAX_REQUEST_BODY_BYTES
+                else {}
+            ),
             "mcp_rate_limit_exempt_local": self.settings.mcp_rate_limit_exempt_local,
             "embedding_model": self.settings.embedding_model,
             "embedding_dimensions": self.settings.embedding_dimensions,
@@ -918,6 +964,9 @@ class PyriteConfig:
                     ttl=kb_data.get("ttl"),
                     created_at_ts=kb_data.get("created_at_ts"),
                     default_role=kb_data.get("default_role"),
+                    # Present but empty or null fails at load, like a typo:
+                    # only an absent key means the default.
+                    landing=kb_data["landing"] if "landing" in kb_data else "canonical",
                 )
             )
             _repair_ephemeral_default_role(knowledge_bases[-1])
@@ -1034,6 +1083,9 @@ class PyriteConfig:
             rate_limit_read=settings_data.get("rate_limit_read", "100/minute"),
             rate_limit_write=settings_data.get("rate_limit_write", "30/minute"),
             rate_limit_admin=settings_data.get("rate_limit_admin", "10/minute"),
+            max_request_body_bytes=settings_data.get(
+                "max_request_body_bytes", DEFAULT_MAX_REQUEST_BODY_BYTES
+            ),
             mcp_rate_limit_exempt_local=settings_data.get("mcp_rate_limit_exempt_local", True),
             embedding_model=settings_data.get("embedding_model", "all-MiniLM-L6-v2"),
             embedding_dimensions=settings_data.get("embedding_dimensions", 384),
@@ -1208,6 +1260,8 @@ def _apply_env_overrides(config: PyriteConfig) -> None:
         config.settings.auto_embed = val.lower() in ("true", "1", "yes")
     if val := env("PYRITE_SITE_CSP_EXTRA"):
         config.settings.site_csp_extra = val
+    if val := env("PYRITE_MAX_REQUEST_BODY_BYTES"):
+        config.settings.max_request_body_bytes = _positive_int(val, "max_request_body_bytes")
 
     # When PYRITE_DATA_DIR is set, derive index_path and workspace_path from it
     data_dir = env("PYRITE_DATA_DIR")
@@ -1336,6 +1390,17 @@ def load_config(*, create_dir: bool = True) -> PyriteConfig:
             root = config_file.parent.parent.resolve()
             config._confine_root = root
             ignored += _contain_untrusted_paths(config, root)
+            for key in ignored:
+                if key.endswith(".landing"):
+                    # Loud on its own line: dropping `landing: review` sends
+                    # every user's write to that KB's own files.
+                    logger.warning(
+                        "IGNORED %s in the untrusted repo-local config %s: `landing` "
+                        "is the operator's to set. That KB lands every write on its "
+                        "own files (canonical), not in a change set for review.",
+                        key,
+                        config_file,
+                    )
             if ignored:
                 logger.warning(
                     "Ignoring %s from the untrusted repo-local config %s: a config "

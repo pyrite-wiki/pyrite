@@ -230,6 +230,26 @@ class Principal:
         return self.scoped and self.role != "admin"
 
 
+class Landing(StrEnum):
+    """Where a write lands (ADR-0044 §1): on the KB's own files, in the
+    writer's change set, or nowhere (refused)."""
+
+    CANONICAL = "canonical"
+    CHANGE_SET = "change_set"
+    DENY = "deny"
+
+
+def is_operator(principal: Principal | None) -> bool:
+    """The operator: the local process (CLI, stdio MCP), an operator API key
+    with no user identity, or a signed-in global admin (ADR-0044 §1, as
+    revised 2026-10-20). Its writes always land canonical."""
+    if principal is None:
+        return False
+    if principal.kind in ("local", "operator_key"):
+        return True
+    return principal.kind == "user" and principal.role == "admin"
+
+
 class Action(StrEnum):
     """A closed vocabulary of what a principal may ask to do (ADR-0037 §1)."""
 
@@ -563,6 +583,34 @@ class AccessPolicy:
             return ALLOW
 
         raise NotImplementedError(f"{resource!r} is not decided by the policy yet (ADR-0037 3c)")
+
+    def lands_in(self, principal: Principal | None, kb_name: str) -> Landing:
+        """Where `principal`'s write to `kb_name` lands: the one landing rule
+        (ADR-0044 §1). Every surface asks this; none decides for itself.
+
+        | Principal                     | `landing: canonical` | `landing: review` |
+        |-------------------------------|----------------------|-------------------|
+        | the operator (`is_operator`)  | Canonical            | Canonical         |
+        | a user with a write grant     | Canonical            | ChangeSet         |
+        | anonymous, granted a write    | Canonical            | Deny              |
+        | no write permission           | Deny                 | Deny              |
+
+        A KB not in the config file (registered in the index, ephemeral) is
+        `canonical`: `landing` is set only in the operator's file.
+        """
+        decision = self.authorize(principal, Action.KB_WRITE, KB(kb_name))
+        if principal is None or not decision.allowed:
+            return Landing.DENY
+        if is_operator(principal):
+            return Landing.CANONICAL
+        kb = self.resolve_kb_for(principal, kb_name)
+        if kb is None or getattr(kb, "landing", "canonical") != "review":
+            return Landing.CANONICAL
+        if principal.user_id is None:
+            # A change set belongs to a user. The anonymous visitor, even with
+            # an `anonymous_tier` that grants a write, has none to own one.
+            return Landing.DENY
+        return Landing.CHANGE_SET
 
     def require(self, principal: Principal | None, action: Action, resource: Resource) -> None:
         """`authorize`, raising on a denial: `KBNotFoundError` for NOT_FOUND

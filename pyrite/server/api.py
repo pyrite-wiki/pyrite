@@ -33,8 +33,10 @@ from ..services.access_policy import (
     ROLE_LEVELS,
     AccessPolicy,
     Action,
+    Landing,
     Principal,
     authorize_tier,
+    is_operator,
     named_kb,
     resolve_api_key_role,
 )
@@ -146,12 +148,49 @@ def get_index_worker() -> IndexWorker:
     return IndexWorker(db, config)
 
 
-def get_kb_service(
+_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _landed(request: Request, config: PyriteConfig, db: PyriteDB) -> tuple[PyriteConfig, PyriteDB]:
+    """The `(config, db)` this request writes with: the target
+    `requires_kb_tier("write")` recorded from the landing rule.
+
+    Fails closed. A write-method request whose route never asked the rule
+    (no `requires_kb_tier("write")`) is refused for any caller but the
+    operator, rather than handed the canonical files: a route that only reads
+    takes `get_read_kb_service` instead (ADR-0044 §1).
+    """
+    state = request.state
+    target = getattr(state, "write_target", None)
+    if target is not None:
+        return target
+    if getattr(state, "landing_asked", False) or request.method not in _WRITE_METHODS:
+        return config, db
+    if is_operator(get_principal(request)):
+        return config, db
+    from ..services.write_target import LandingRefusedError
+
+    raise LandingRefusedError("This route did not ask where its write lands; nothing was written")
+
+
+def get_read_kb_service(
     config: PyriteConfig = Depends(get_config),
     db: PyriteDB = Depends(get_db),
 ) -> KBService:
-    """Get or create KB service via DI."""
+    """The KB service for a route that only reads (a read by POST among them):
+    the instance's own config and index. A route that writes takes
+    `get_kb_service`, which is bound to where the write lands."""
     return KBService(config, db)
+
+
+def get_kb_service(
+    request: Request,
+    config: PyriteConfig = Depends(get_config),
+    db: PyriteDB = Depends(get_db),
+) -> KBService:
+    """The KB service for this request, bound to where its write lands
+    (ADR-0044 §1). No route decides that itself."""
+    return KBService(*_landed(request, config, db))
 
 
 def _drain_embed_queue(db: PyriteDB, *, label: str = "", model_name: str | None = None) -> int:
@@ -167,11 +206,12 @@ def _drain_embed_queue(db: PyriteDB, *, label: str = "", model_name: str | None 
 
 
 def get_task_service(
+    request: Request,
     config: PyriteConfig = Depends(get_config),
     db: PyriteDB = Depends(get_db),
 ) -> TaskService:
-    """Get or create TaskService via DI."""
-    return TaskService(config, db)
+    """The task service for this request, bound to where its write lands."""
+    return TaskService(*_landed(request, config, db))
 
 
 def get_worktree_resolver(
@@ -304,10 +344,22 @@ def get_ephemeral_service(
 
 
 def get_review_service(
+    request: Request,
     config: PyriteConfig = Depends(get_config),
     db: PyriteDB = Depends(get_db),
 ) -> ReviewService:
-    """Get ReviewService instance via DI."""
+    """The review service, bound to where the request's write lands: on a
+    change-set target a review record is refused (it is database-only, and
+    the change set's index is discarded at merge; ADR-0044 §1)."""
+    return ReviewService(*_landed(request, config, db))
+
+
+def get_read_review_service(
+    config: PyriteConfig = Depends(get_config),
+    db: PyriteDB = Depends(get_db),
+) -> ReviewService:
+    """The review service for a lookup that writes nothing (a write guard
+    finding a review's KB before it is authorised): the instance's own."""
     return ReviewService(config, db)
 
 
@@ -337,7 +389,7 @@ def get_link_discovery_service(
 
 def get_starred_service(
     db: PyriteDB = Depends(get_db),
-    kb_service: KBService = Depends(get_kb_service),
+    kb_service: KBService = Depends(get_read_kb_service),
 ) -> StarredService:
     """Get StarredService instance via DI."""
     return StarredService(db, kb_service)
@@ -905,6 +957,41 @@ async def _enforce_kb_tier(
     raise not_found
 
 
+async def _record_write_target(
+    request: Request, config: PyriteConfig, db: PyriteDB, kb_names
+) -> None:
+    """Ask the landing rule where this authorised write lands, once, and
+    record the target for the route's services (`get_kb_service`,
+    `get_task_service`). Every KB-file-writing REST route passes through
+    `requires_kb_tier("write")`, so this is REST's one point (ADR-0044 §1).
+
+    A canonical landing records nothing. A write that names several KBs, one
+    of them landing in a change set, is refused: one call lands in one place.
+    A change set that cannot be made is refused (`LandingRefusedError`); a
+    write never falls back to the canonical files.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from ..services.write_target import LandingRefusedError, write_target
+
+    request.state.landing_asked = True
+    principal = get_principal(request)
+    names = set(kb_names)
+    policy = AccessPolicy(config, db)
+    moved = sorted(n for n in names if policy.lands_in(principal, n) is not Landing.CANONICAL)
+    if not moved:
+        return
+    if len(names) > 1:
+        raise LandingRefusedError(
+            "This write names several knowledge bases and one of them lands in a change set; "
+            "write to one knowledge base at a time"
+        )
+    cache = getattr(request.app.state, "pyrite_diff_db_cache", None)
+    request.state.write_target = await run_in_threadpool(
+        write_target, config, db, principal, moved[0], diff_cache=cache
+    )
+
+
 def requires_kb_tier(tier: str, *, resolve_kb=None):
     """FastAPI dependency factory: enforce a minimum tier on the KB(s) a write changes.
 
@@ -956,6 +1043,8 @@ def requires_kb_tier(tier: str, *, resolve_kb=None):
             db: PyriteDB = Depends(get_db),
         ):
             await _enforce_kb_tier(request, config, db, row.kb_name, tier, row.not_found)
+            if tier == "write":
+                await _record_write_target(request, config, db, [row.kb_name])
 
         return _check_row_kb_tier
 
@@ -994,6 +1083,8 @@ def requires_kb_tier(tier: str, *, resolve_kb=None):
             # The name as the caller spelled it: the policy resolves it
             # (#952), so a shortname is refused with the full name suggested.
             await _enforce_kb_tier(request, config, db, kb_name, tier, None)
+        if tier == "write":
+            await _record_write_target(request, config, db, kb_names)
 
     return _check_kb_tier
 
@@ -1300,6 +1391,13 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
             # Bounded: shutdown never waits on the sweep for long.
             await asyncio.wait({sweep}, timeout=5)
         unbind_loop(application.state.pyrite_ws_loop)
+
+    # One bound on every request body (settings.max_request_body_bytes): added
+    # before CORS so a 413 still carries the CORS headers a browser needs to
+    # read it, and so it wraps every route, the /mcp mount and plugin routers.
+    from .body_limit import RequestBodyLimitMiddleware
+
+    application.add_middleware(RequestBodyLimitMiddleware, get_config=_app_get_config)
 
     # CORS — use configured origins; disable credentials with wildcard (spec compliance)
     origins = config.settings.cors_origins

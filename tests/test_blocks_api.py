@@ -36,7 +36,11 @@ class TestBlocksAPI:
                 body="# Introduction\nHello world\n\n## Details\nSome details here",
                 tags=["test"],
             )
-            create_entry_text(kb_path / "test-note.md", new_entry_text(note))
+            create_entry_text(
+                kb_path / "test-note.md",
+                new_entry_text(note),
+                root=(kb_path / "test-note.md").parent,
+            )
 
             kb_config = KBConfig(name="test-kb", path=kb_path, kb_type=KBType.GENERIC)
             config = PyriteConfig(

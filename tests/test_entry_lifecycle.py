@@ -132,7 +132,7 @@ class TestLifecycleField:
 
         # Save to file
         path = tmp_path / "test.md"
-        create_entry_text(path, new_entry_text(event))
+        create_entry_text(path, new_entry_text(event), root=(path).parent)
 
         # Reload and verify
         loaded = EventEntry.load(path)
@@ -154,7 +154,7 @@ class TestLifecycleField:
 
         # Save and reload
         path = tmp_path / "test_default.md"
-        create_entry_text(path, new_entry_text(event))
+        create_entry_text(path, new_entry_text(event), root=(path).parent)
         loaded = EventEntry.load(path)
         assert loaded.lifecycle == "active"
 

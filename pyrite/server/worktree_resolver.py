@@ -1,7 +1,9 @@
 """Request-scoped worktree resolution for per-user read/write routing.
 
-Provides WorktreeResolver as a FastAPI dependency that endpoints can use
-to get worktree-aware KBService and DB instances for authenticated users.
+Provides WorktreeResolver as a FastAPI dependency that read endpoints use to
+see a user's own pending edits through an overlay. Where a *write* lands is
+not decided here: that is the landing rule (`AccessPolicy.lands_in`) and its
+one factory, `services.write_target` (ADR-0044 §1).
 """
 
 from __future__ import annotations
@@ -21,8 +23,8 @@ logger = logging.getLogger(__name__)
 class WorktreeResolver:
     """Resolves worktree context for the current request user + KB.
 
-    Used by entry endpoints to route reads through an overlay (so users
-    see their own edits) and writes to the user's worktree.
+    Used by entry endpoints to route reads through an overlay, so users see
+    their own pending edits.
     """
 
     def __init__(
@@ -63,52 +65,6 @@ class WorktreeResolver:
         if not diff_db:
             return self._main_db
         return WorktreeDB(self._main_db, diff_db)
-
-    def get_write_context(
-        self, kb_name: str, auth_user: dict[str, Any]
-    ) -> tuple[PyriteConfig, PyriteDB]:
-        """Get config + DB handle for writing to user's worktree.
-
-        Creates the worktree on first write. Returns a modified config
-        where the KB path points to the worktree, and an overlay DB.
-        ``kb_name`` is the full name (#952).
-        """
-        import dataclasses
-
-        user_id = auth_user["id"]
-        username = auth_user.get("username", f"user-{user_id}")
-
-        # Ensure worktree exists (creates on first write)
-        self._wt_svc.ensure_worktree(kb_name, user_id, username)
-
-        # Get user's KB config (path points to worktree)
-        user_kb_config = self._wt_svc.get_user_kb_config(kb_name, user_id)
-        if not user_kb_config:
-            raise ValueError(f"Failed to create worktree config for KB '{kb_name}'")
-
-        # Build a modified PyriteConfig with the user's KB path
-        original_kbs = list(self._config.knowledge_bases)
-        patched_kbs = []
-        for kb in original_kbs:
-            if kb.name == kb_name:
-                patched_kbs.append(user_kb_config)
-            else:
-                patched_kbs.append(kb)
-        write_config = dataclasses.replace(self._config, knowledge_bases=patched_kbs)
-
-        # Get overlay DB
-        diff_db = self._get_diff_db(user_id, kb_name)
-        if diff_db:
-            write_db = WorktreeDB(self._main_db, diff_db)
-        else:
-            write_db = self._main_db
-
-        return write_config, write_db
-
-    def get_write_service(self, kb_name: str, auth_user: dict[str, Any]) -> KBService:
-        """Get a KBService configured for writing to the user's worktree."""
-        write_config, write_db = self.get_write_context(kb_name, auth_user)
-        return KBService(write_config, write_db)
 
     def get_read_service(self, kb_name: str, auth_user: dict[str, Any] | None) -> KBService:
         """Get a KBService configured for reading with overlay."""

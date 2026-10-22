@@ -43,7 +43,11 @@ class TestPatchEntryEndpoint:
                     body=f"Content {i}",
                     tags=["test"],
                 )
-                create_entry_text(notes_dir / f"note-{i}.md", new_entry_text(note))
+                create_entry_text(
+                    notes_dir / f"note-{i}.md",
+                    new_entry_text(note),
+                    root=(notes_dir / f"note-{i}.md").parent,
+                )
 
             config = PyriteConfig(
                 knowledge_bases=[kb_config],

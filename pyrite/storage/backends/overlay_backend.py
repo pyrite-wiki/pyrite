@@ -10,6 +10,7 @@ own pending edits overlaid on the shared main index.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .protocol import DEFAULT_MIN_SIMILARITY
@@ -515,6 +516,11 @@ class WorktreeDB:
     Behaves like a PyriteDB for KBService and other consumers.
     """
 
+    #: Writes through this handle land in a user's change set, not on main:
+    #: code that writes the shared index directly (a claim's compare-and-swap)
+    #: checks this instead of writing main (ADR-0044 §1).
+    is_change_set = True
+
     def __init__(self, main_db: Any, diff_db: Any):
         self._main = main_db
         self._diff = diff_db
@@ -587,6 +593,123 @@ class WorktreeDB:
         # Only close diff — main is shared
         self._diff.close()
 
-    # Everything else goes to main
+    # Everything else: classified, never forwarded by default (ADR-0044 §1).
+    #
+    # A write through this handle lands in the change set. Before 2026-10-20
+    # every method this class does not define went to main, so a change-set
+    # write that touched another table (``register_kb`` from every create and
+    # update) changed main for every reader. Now a name is forwarded only when
+    # it is listed: reads go to main, KB-scoped writes go to the diff index,
+    # instance-level writes are refused, and an unlisted name is an error, so a
+    # new PyriteDB method is classified before it can be used through here
+    # (tests/test_landing_rule.py walks PyriteDB and checks every name is).
     def __getattr__(self, name: str) -> Any:
-        return getattr(self._main, name)
+        if name in _READS_FROM_MAIN or name in _RAW_HANDLES:
+            return getattr(self._main, name)
+        if name in _READ_SQL_ONLY:
+            return self._read_only_sql(getattr(self._main, name), name)
+        if name in _WRITES_TO_DIFF:
+            return getattr(self._diff, name)
+        if name in _RECORDS_REFUSED:
+            return _refuse(name, _RECORDS_REFUSED[name])
+        if name in _WRITES_REFUSED:
+            return _refuse(name, "an instance-level write, which has no place in a change set")
+        raise AttributeError(
+            f"WorktreeDB does not know whether {name!r} writes: classify it in "
+            "overlay_backend.py before a change-set write uses it"
+        )
+
+    @staticmethod
+    def _read_only_sql(method: Any, name: str) -> Any:
+        """`execute_sql` runs whatever it is given, on main: here it runs a
+        read and refuses anything else."""
+
+        def guarded(sql: str, *args: Any, **kwargs: Any) -> Any:
+            if not _READ_SQL.match(sql):
+                return _refuse(name, "a SQL write, which a change set cannot carry")()
+            return method(sql, *args, **kwargs)
+
+        return guarded
+
+
+_READ_SQL = re.compile(r"^\s*(SELECT|WITH|PRAGMA|EXPLAIN)\b", re.IGNORECASE)
+
+
+def _refuse(name: str, why: str):
+    def refused(*args: Any, **kwargs: Any) -> Any:
+        from pyrite.exceptions import ChangeSetRecordRefusedError
+
+        raise ChangeSetRecordRefusedError(
+            f"{name} is {why}. It is available to the operator, or after the change set merges."
+        )
+
+    return refused
+
+
+#: Read-only: answered by the main index (the overlay methods above answer
+#: the entry reads that must see the change set). Each is scanned for writes
+#: by tests/test_landing_rule.py.
+_READS_FROM_MAIN = frozenset(
+    {
+        "_SORT_COLUMNS", "_VALID_FK_REF", "_VALID_SQL_DEFAULT", "_VALID_SQL_IDENTIFIER",
+        "_VALID_SQL_TYPE", "_repo_to_dict", "_review_to_dict", "_user_to_dict",
+        "_validate_identifier", "_version_to_dict", "count_entries_in_folder",
+        "entry_version_exists", "find_by_assignee", "find_by_location",
+        "find_by_status", "find_overdue", "get_all_backlinks_for_kb", "get_all_outlinks_for_kb",
+        "get_all_settings", "get_all_sources_for_kb", "get_contributors", "get_distinct_types",
+        "get_edge_endpoints", "get_edges_between", "get_edges_by_endpoint",
+        "get_entries_for_indexing", "get_entry_version_file_path", "get_entry_versions",
+        "get_global_counts", "get_graph_data", "get_kb_stats", "get_kbs_for_repo",
+        "get_latest_review", "get_migration_status", "get_most_linked",
+        "get_orphans", "get_refs_from", "get_refs_to", "get_related", "get_repo", "get_review",
+        "get_reviews", "get_schema_version", "get_setting", "get_tag_tree", "get_tags_as_dicts",
+        "get_timeline", "get_type_counts", "get_user", "get_workspace_repos",
+        "list_entries_in_folder", "list_entry_version_rows", "list_repos", "search_by_date_range",
+        "search_by_tag", "search_by_tag_prefix",
+    }
+)  # fmt: skip
+
+#: Runs the SQL it is given: forwarded to main for a read, refused otherwise.
+_READ_SQL_ONLY = frozenset({"execute_sql"})
+
+#: Handles onto main's connection and session: attributes, not writes. Reads
+#: go through them, and so do two known writers: a claim's compare-and-swap
+#: (which checks `is_change_set` and stays off main) and plugin side tables
+#: (social votes, encyclopedia reviews, software-kb gates), which still reach
+#: main -- a tracked follow-up, not covered by this classification.
+_RAW_HANDLES = frozenset(
+    {"db_path", "engine", "vec_load_error", "_fallback_lock", "_fallback_sessions", "_local",
+     "_raw_lock", "_sa_conn", "_session_factory", "conn", "_raw_cursor", "request_handle",
+     "session_scope", "_load_extensions"}
+)  # fmt: skip
+
+#: Writes a change-set write makes whose rows are rebuilt from files and git,
+#: so nothing is lost when the diff index is discarded at merge:
+#: - `register_kb`, `update_kb_indexed`: the diff index's own row for the KB
+#:   (path = the working copy); main's row is not the change set's to change.
+#: - `upsert_entry_version`, `delete_entry_version`: entry history indexed
+#:   from git commits, rebuilt from the merged history.
+_WRITES_TO_DIFF = frozenset(
+    {"register_kb", "update_kb_indexed", "upsert_entry_version", "delete_entry_version"}
+)  # fmt: skip
+
+#: Database-only records: no file behind them, so the merge, which discards the
+#: diff index, would lose them, and main is not the change set's to write.
+#: Refused from a change-set target (decided 2026-10-20); carrying them
+#: through a merge is a follow-up.
+_RECORDS_REFUSED = {
+    "create_review": "a database-only review record, which a change set cannot carry",
+    "delete_review": "a database-only review record, which a change set cannot carry",
+    "execute_write_sql": "a database-only SQL write, which a change set cannot carry",
+}
+
+#: Instance-level writes (settings, users, repositories, the KB registry's
+#: shape, schema and policy): no change-set write has a reason to make one.
+_WRITES_REFUSED = frozenset(
+    {"set_setting", "delete_setting", "upsert_user", "get_local_user", "insert_new_kb",
+     "unregister_kb", "update_kb_default_role", "merge_registered_kbs", "register_repo",
+     "add_workspace_repo", "delete_repo", "remove_workspace_repo", "link_kb_to_repo",
+     "set_repo_upstream", "update_repo_synced", "update_workspace_role", "transaction",
+     "_init_connection", "_run_migrations", "_create_plugin_tables",
+     "_create_table_from_def", "_record_private_policy"}
+)  # fmt: skip

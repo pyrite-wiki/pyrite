@@ -307,6 +307,15 @@ def load_yaml_file(path: str | Path) -> dict[str, Any]:
     return result if result is not None else {}
 
 
+def dump_yaml_text(data: Any) -> str:
+    """The text ``dump_yaml_file`` writes for ``data``, for a caller that
+    publishes it itself (a KB's kb.yaml goes through ``KBFiles``)."""
+    _quote_yaml11_ambiguous_strings(data)
+    stream = StringIO()
+    _dumper_for(data).dump(data, stream)
+    return stream.getvalue()
+
+
 def dump_yaml_file(data: Any, path: str | Path, *, atomic: bool = False) -> None:
     """Write a mapping to a YAML file, preserving style.
 

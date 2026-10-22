@@ -24,7 +24,7 @@ def blocks(tmp_path):
         title="N",
         body="# Intro\nHello world\n\n## Details\nSome details here",
     )
-    create_entry_text(kb_path / "n.md", new_entry_text(note))
+    create_entry_text(kb_path / "n.md", new_entry_text(note), root=(kb_path / "n.md").parent)
     config = PyriteConfig(
         knowledge_bases=[KBConfig(name="kb", path=kb_path, kb_type=KBType.GENERIC)],
         settings=Settings(index_path=tmp_path / "index.db"),

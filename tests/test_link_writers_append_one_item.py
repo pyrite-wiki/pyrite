@@ -476,7 +476,10 @@ def test_a_write_the_filesystem_refuses_names_its_reason_without_the_path(tmp_pa
         _service(config)
     shown = public_text(info.value)
     assert "hard link" in shown and str(tmp_path) not in shown, shown
-    assert str(path) in str(info.value), "the detail left the log's text too"
+    # The log's text names the file by its KB-relative path, never an
+    # absolute one (no refusal text names a path outside the KB's own).
+    assert path.relative_to(config.knowledge_bases[0].path).as_posix() in str(info.value)
+    assert str(tmp_path) not in str(info.value)
 
     config, path = _build(tmp_path / "lockdir")
     shutil.rmtree(config.knowledge_bases[0].path / ".git")

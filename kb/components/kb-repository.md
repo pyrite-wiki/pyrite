@@ -30,6 +30,10 @@ File-system layer for a single knowledge base. Reads and writes markdown files w
 - `_maybe_migrate(frontmatter)` — apply schema version migrations on load
 - `_infer_subdir(entry)` — determine target directory from schema/type rules
 
+## Inside the KB root
+
+Every write, move and removal of an entry file is made by `KBFiles` (`pyrite/utils/kb_files.py`), through the entry writer, which takes the KB's `root` as a required argument: the path is resolved once, each folder is opened beneath the root without following a link, and every later step goes through that folder's descriptor, so a folder swapped for a link meanwhile is refused. `ids pin` writes through the same code. A path that resolves outside the root, through a link to a file or to a folder, is refused with `OUTSIDE_KB_ROOT` before anything is written; so is a write or move of a file with more than one hard link (`HardLinked`, under git or not), and a move of a file that is itself a symbolic link (`rename` and `migrate-standards` refuse with the reason; the link's target is never removed). A link whose target is inside the KB is written through and stays a link. `delete` decides every removal before the first. Reads are not routed through `KBFiles` yet: a listing can still return a file reached through a link out; the write is what refuses it. The test grid is `tests/test_kb_writes_stay_inside_the_root.py`.
+
 ## Consumers
 
 - `KBService` — primary consumer for all read/write operations

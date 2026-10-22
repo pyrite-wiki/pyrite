@@ -734,7 +734,7 @@ def test_a_move_refuses_when_the_source_changed_since_it_was_read(tmp_path: Path
         raw = src.read_bytes()
         src.write_text("two\n", encoding="utf-8")  # edited after the read
         with pytest.raises(FileChanged):
-            move_entry_text(src, raw, dst, "moved\n")
+            move_entry_text(src, raw, dst, "moved\n", root=(src).parent)
         assert src.read_text(encoding="utf-8") == "two\n" and not dst.exists()
         assert sorted(p.name for p in (root / "notes").iterdir()) == ["a.md"], "a temp file stayed"
 
@@ -750,7 +750,9 @@ def test_a_move_holds_one_lock_for_both_paths(tmp_path: Path):
     dst = root / "notes" / "b.md"
     src.write_text("one\n", encoding="utf-8")
     raw = src.read_bytes()
-    worker = threading.Thread(target=lambda: move_entry_text(src, raw, dst, "moved\n"))
+    worker = threading.Thread(
+        target=lambda: move_entry_text(src, raw, dst, "moved\n", root=(src).parent)
+    )
 
     with file_lock(src, dst):
         worker.start()
