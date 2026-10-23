@@ -34,6 +34,7 @@ from ..exceptions import (
     public_text,
     refusal_fields,
 )
+from ..schema import filter_updated_since, parse_since
 from ..services.access_policy import ROLES, Principal, named_kb
 from ..services.body_bounds import (
     MARKER_KEYS,
@@ -1207,7 +1208,10 @@ class PyriteMCPServer:
         kb_name = args.get("kb_name")
         entry_type = args.get("entry_type")
         limit = min(args.get("limit", 20), 200)
-        since = args.get("since")
+        # A value that cannot be read is refused, never compared as a string
+        # and answered with an empty list (#1268). `since` is parsed here so
+        # the refusal names the parameter before any entries are fetched.
+        since = parse_since(args.get("since"))
         fields = args.get("fields")
 
         entries = self.svc.list_entries(
@@ -1219,9 +1223,9 @@ class PyriteMCPServer:
             limit=limit,
         )
 
-        # Post-filter by `since` if provided
-        if since:
-            entries = [e for e in entries if (e.get("updated_at") or "") >= since]
+        # Filter by the instant `since` names, the same way the CLI does.
+        if since is not None:
+            entries = filter_updated_since(entries, since)
 
         # Same unbounded-browse shape as kb_list_entries (ADR-0034 rule 3).
         entries = self.body_bounds.fill_budget(entries)

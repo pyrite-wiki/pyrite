@@ -25,8 +25,10 @@ from .provenance import (
 )
 from .reserved import RESERVED_FIELD_NAMES
 from .validators import (
+    filter_updated_since,
     generate_entry_id,
     generate_event_id,
+    parse_since,
     validate_date,
     validate_event_id,
     validate_importance,
@@ -49,10 +51,12 @@ __all__ = [
     "VerificationStatus",
     "_validate_field_value",
     "expand_subdirectory_template",
+    "filter_updated_since",
     "generate_entry_id",
     "generate_event_id",
     "get_all_relationship_types",
     "get_inverse_relation",
+    "parse_since",
     "resolve_type_metadata",
     "validate_date",
     "validate_event_id",

@@ -214,6 +214,11 @@ class ValidationError(PyriteError):
     error_code = "VALIDATION_FAILED"
     suggestion: str | None = None
 
+    def __init__(self, message: str, *, suggestion: str | None = None):
+        super().__init__(message)
+        if suggestion is not None:
+            self.suggestion = suggestion
+
 
 class UndeclaredTypeError(ValidationError):
     """A create named a type the KB's kb.yaml does not declare (#197).

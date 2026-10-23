@@ -10,7 +10,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from ..exceptions import PyriteError
+from ..exceptions import PyriteError, ValidationError
+from ..schema import filter_updated_since, parse_since
 from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_cli_fields, project_fields
 from .context import cli_context, require_kb
@@ -376,6 +377,17 @@ def register_browse_commands(app: typer.Typer) -> None:
     ):
         """Show recently changed entries."""
         with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
+            from ..utils.errors import cli_error_from
+
+            # A value that cannot be read is refused, as over MCP (#1268): an
+            # empty list for a value nobody parsed reads as "nothing changed".
+            try:
+                since_instant = parse_since(since)
+            except ValidationError as exc:
+                # `e` is this module's loop variable further down; binding the
+                # exception to it is a mypy error once the block ends (#1268).
+                cli_error_from(exc, output_format)
+
             entries = svc.list_entries(
                 kb_name=kb_name,
                 entry_type=entry_type,
@@ -384,8 +396,8 @@ def register_browse_commands(app: typer.Typer) -> None:
                 limit=min(limit, 200),
             )
 
-            if since:
-                entries = [e for e in entries if (e.get("updated_at") or "") >= since]
+            if since_instant is not None:
+                entries = filter_updated_since(entries, since_instant)
 
             # Apply field projection. One rule for every read surface (#193).
             fields_list = parse_cli_fields(fields)
