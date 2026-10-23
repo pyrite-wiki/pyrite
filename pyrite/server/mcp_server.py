@@ -389,6 +389,21 @@ NON_KB_CONTENT_TOOLS = frozenset(
 )
 
 
+def _located_ids(spec: dict[str, Any], arguments: dict[str, Any]) -> list[str]:
+    """The entry ids a `locates_entry` call names: each `id_args` value, a
+    string or a list of strings, with blanks and non-strings dropped."""
+    ids: list[str] = []
+    for arg in spec["id_args"]:
+        value = arguments.get(arg)
+        values = value if isinstance(value, list | tuple) else [value]
+        ids.extend(v for v in values if isinstance(v, str) and v.strip())
+    return ids
+
+
+def _no_id_message(spec: dict[str, Any]) -> str:
+    return f"Name an entry id in {' or '.join(spec['id_args'])}"
+
+
 def _kbs_named_in(arguments: dict[str, Any]) -> list[str]:
     """Every KB name the call names, under any of `KB_ARGUMENT_NAMES`.
 
@@ -2622,13 +2637,11 @@ class PyriteMCPServer:
         absent for a tool that takes any). Every id must be in the one KB.
         Raises ``PyriteError``; the caller renders the refusal.
         """
-        ids: list[str] = []
-        for arg in spec["id_args"]:
-            value = arguments.get(arg)
-            values = value if isinstance(value, list | tuple) else [value]
-            ids.extend(v for v in values if isinstance(v, str) and v.strip())
+        ids = _located_ids(spec, arguments)
         if not ids:
-            return arguments  # the handler's own validation names the missing id
+            # `_dispatch_tool` refuses this before any check; kept here so no
+            # caller of this method hands a handler an id it did not resolve.
+            raise ValidationError(_no_id_message(spec))
         kb = named_kb(arguments.get("kb_name"))
         for entry_id in ids:
             found = self.svc.locate(
@@ -2710,7 +2723,14 @@ class PyriteMCPServer:
         # it must not skip the lookup either. With `kb_name` named, the checks
         # run first (a caller who may not write there is told so, not "not
         # found") and the id is verified in that KB just before the handler.
+        #
+        # No handler is called with an id the dispatcher has not resolved: a
+        # call whose id arguments are all blank (missing, empty, whitespace)
+        # is refused here, before any check, whatever KB it names -- else the
+        # handler would choose a KB itself (a default KB, or '').
         spec = self.tools[name].get("locates_entry")
+        if spec and not _located_ids(spec, arguments):
+            return _refusal(ValidationError(_no_id_message(spec)))
         kb_name_named = named_kb(arguments.get("kb_name")) is not None
         if spec and not kb_name_named:
             try:

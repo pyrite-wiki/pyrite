@@ -4151,13 +4151,22 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_prioritize | write_key | no-default-role-kb": {
-    "error": "Provide either item_ids (batch) or item_id with after/before"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_prioritize-write_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_prioritize | write_key | private-kb": {
-    "error": "Provide either item_ids (batch) or item_id with after/before"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_prioritize-write_key-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_prioritize | write_key | readable-kb": {
-    "error": "Provide either item_ids (batch) or item_id with after/before"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_prioritize-write_key-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_pull_next | write_key | missing-kb": {
     "did_you_mean": [],

@@ -274,5 +274,15 @@ def build_arguments(
     tool is a write: see `_UNIQUE_PER_CALL`. Read-only tools ignore it."""
     if tool_name in _EXPLICIT:
         return _EXPLICIT[tool_name](world, kb, call_key)
-    schema = world.mcp_server.tools[tool_name]["inputSchema"]
-    return _generic_arguments(world, tool_name, kb, schema, call_key)
+    tool = world.mcp_server.tools[tool_name]
+    args = _generic_arguments(world, tool_name, kb, tool["inputSchema"], call_key)
+    # A `locates_entry` tool with every id argument blank is refused before
+    # any KB check (#1310), so a tool whose id is optional in its schema
+    # (sw_prioritize) gets one here, or the matrix would stop characterizing
+    # its KB scoping.
+    id_args = (tool.get("locates_entry") or {}).get("id_args", [])
+    if id_args and not any(args.get(a) for a in id_args):
+        is_list = tool["inputSchema"]["properties"].get(id_args[0], {}).get("type") == "array"
+        placeholder = f"characterization-placeholder-id-{call_key}"
+        args[id_args[0]] = [placeholder] if is_list else placeholder
+    return args

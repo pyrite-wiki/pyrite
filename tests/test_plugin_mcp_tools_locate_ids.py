@@ -569,3 +569,64 @@ def test_the_handler_acts_only_in_a_kb_the_checks_ran_on(server, monkeypatch, to
         assert "error" in result, result
         assert _files(server) == files, result
         assert _rows(server, case.table) == rows, result
+
+
+#: Every way an id argument names nothing: missing, empty, whitespace; for a
+#: list argument, empty or holding only blanks.
+_BLANK_IDS = {
+    "missing": lambda arg, is_list: None,
+    "empty": lambda arg, is_list: [] if is_list else "",
+    "spaces": lambda arg, is_list: ["", "  "] if is_list else "  ",
+}
+
+
+def _locating_tools(srv) -> dict[str, dict]:
+    """Every registered tool that declares ``locates_entry``, from the registry."""
+    return {name: tool for name, tool in srv.tools.items() if tool.get("locates_entry")}
+
+
+def test_a_call_with_every_id_blank_is_refused_before_anything_runs(server, monkeypatch):
+    """No handler is called with an id the dispatcher has not resolved: a
+    ``locates_entry`` call whose id arguments are all blank is VALIDATION_FAILED
+    (not retryable) before any KB check or handler, whether it names no KB, a
+    KB it may write, a KB it may only read, or no KB that exists, and for a
+    scoped caller and an unscoped one alike. Nothing is written in any KB.
+    Every such tool in the registry, not a list."""
+    srv = server["server"]
+    tools = _locating_tools(srv)
+    assert set(tools) == set(CASES), sorted(set(tools) ^ set(CASES))
+    reached: list[str] = []
+    for name, tool in tools.items():
+        monkeypatch.setitem(
+            tool, "handler", lambda args, _n=name, **kw: reached.append(_n) or {"ok": True}
+        )
+    files = _files(server)
+    rows = {t: _rows(server, c.table) for t, c in CASES.items() if c.table}
+
+    for name, tool in sorted(tools.items()):
+        props = tool["inputSchema"]["properties"]
+        others = CASES[name].args("x")
+        for shape, blank in _BLANK_IDS.items():
+            args = dict(others)
+            for arg in tool["locates_entry"]["id_args"]:
+                value = blank(arg, props.get(arg, {}).get("type") == "array")
+                if value is None:
+                    args.pop(arg, None)
+                else:
+                    args[arg] = value
+            for kb in (None, KB_A, KB_B, "no-such-kb-1310"):
+                for scope in ({}, {"readable_kbs": {KB_A, KB_B}, "writable_kbs": {KB_A}}):
+                    # A client per call: the rate limit runs first, by design,
+                    # and hundreds of calls from one client would hit it.
+                    result = srv._dispatch_tool(
+                        name,
+                        _with_kb(args, kb),
+                        client_id=f"blank-{name}-{shape}-{kb}-{bool(scope)}",
+                        **scope,
+                    )
+                    where = (name, shape, kb, bool(scope), result)
+                    assert result.get("error_code") == "VALIDATION_FAILED", where
+                    assert result.get("retryable") is False, where
+    assert reached == []
+    assert _files(server) == files
+    assert {t: _rows(server, c.table) for t, c in CASES.items() if c.table} == rows

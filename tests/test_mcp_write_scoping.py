@@ -258,8 +258,17 @@ def _tools_above_read(env) -> dict[str, str]:
 
 
 def _args_naming(tool_schema: dict, kb: str) -> dict:
+    """A call naming ``kb`` under every KB argument the tool takes. A tool that
+    declares ``locates_entry`` also gets an id in each id argument: one with
+    every id blank is refused VALIDATION_FAILED before any KB check (#1310),
+    which would hide the write check this walk is about. With ``kb_name``
+    named, the checks run before the id is looked up, so the id need not exist."""
     props = tool_schema.get("inputSchema", {}).get("properties", {})
-    return {p: ([kb] if p == "kb_names" else kb) for p in props if p in KB_ARGUMENT_NAMES}
+    args = {p: ([kb] if p == "kb_names" else kb) for p in props if p in KB_ARGUMENT_NAMES}
+    for arg in (tool_schema.get("locates_entry") or {}).get("id_args", []):
+        is_list = props.get(arg, {}).get("type") == "array"
+        args[arg] = ["write-scoping-id"] if is_list else "write-scoping-id"
+    return args
 
 
 # Tools that write nothing, named here so the reverse walk covers them even
