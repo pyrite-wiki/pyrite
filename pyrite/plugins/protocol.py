@@ -102,9 +102,16 @@ class PyritePlugin(Protocol):
         landing checks, so the handler always works in a checked KB. The
         handler reads ``args["kb_name"]``; it never resolves the id itself,
         never falls back to a default KB, and never works in
-        ``kb_name or ""``. With no ``kb_name`` the lookup reads the canonical
-        index: an id only in the caller's pending change set is found only
-        when the call names its KB.
+        ``kb_name or ""``. A call whose id arguments are all blank (missing,
+        empty, whitespace) is refused ``VALIDATION_FAILED`` before any check,
+        so the handler always receives a located id. ``kb_name`` is optional
+        in the registered schema whatever the plugin's ``required`` says (the
+        SDK validates arguments before the dispatcher). With no ``kb_name``
+        the lookup reads the canonical index: an id only in the caller's
+        pending change set is found only when the call names its KB. Only the
+        top-level ``id_args`` are located; an id nested in an object argument
+        (``investigation_promote_claim``'s ``endpoint_fields``) is not, and
+        must only be written in the located KB, never used to choose one.
         """
         ...
 

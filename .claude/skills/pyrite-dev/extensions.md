@@ -187,9 +187,19 @@ landing checks, so the handler always works in a checked KB.
   falls back to a default KB, and never works in `kb_name or ""`.
 - `kb_name` is the handler's KB. Another KB argument (`kb`, `target_kb`, ...)
   is checked but does not choose where the id is found.
+- A call whose id arguments are all blank (missing, empty, whitespace) is
+  refused `VALIDATION_FAILED` before any check: the handler never sees a call
+  without a located id, so it needs no fallback for one.
+- `kb_name` is registered as optional even if your schema lists it in
+  `required`: the MCP SDK validates arguments against the schema before the
+  dispatcher, and a required `kb_name` would refuse the call the lookup is for.
+  Leave it out of `required` anyway.
 - With no `kb_name`, the lookup reads the canonical index, so an id that
   exists only in the caller's pending change set is found only when the call
   names its KB.
+- Only the top-level `id_args` are located. An id nested in an object
+  argument (`investigation_promote_claim`'s `endpoint_fields`) is not; write it
+  only in the located KB, never use it to choose one.
 - `tests/test_plugin_mcp_tools_locate_ids.py` walks the registry and fails for
   a tool with an id argument (by name, or by a description such as "Item entry
   ID") and no `locates_entry`. Add a `Case` for your tool there.
