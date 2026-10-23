@@ -74,9 +74,7 @@ def test_get_csv_prints_tags_and_tricky_cells(cli_world, console_width):
 
 def test_get_csv_renders_nested_metadata_as_json(cli_world, console_width):
     world = cli_world()
-    text = (
-        f"---\nid: {ID}\ntype: note\ntitle: {TITLE}\nmetadata:\n  owner: me\n---\n\nhello\n"
-    )
+    text = f"---\nid: {ID}\ntype: note\ntitle: {TITLE}\nmetadata:\n  owner: me\n---\n\nhello\n"
     world.add_entry(KB, text)
     rows = _rows(_run(world, ["get", ID, "-k", KB, "--format", "csv"]))
     header, row = rows
