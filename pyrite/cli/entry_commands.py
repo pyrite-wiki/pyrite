@@ -264,7 +264,10 @@ def register_entry_commands(app: typer.Typer) -> None:
 
             formatted = _format_output(result, output_format, fields=fields_list, single_entry=True)
             if formatted is not None:
-                typer.echo(formatted)
+                # CSV already ends with a line terminator; a second newline from
+                # echo would leave a trailing blank record on stdout, which
+                # streaming CSV parsers read as an empty row (#1234).
+                typer.echo(formatted, nl=not formatted.endswith("\n"))
                 return
 
             if fields_list:
