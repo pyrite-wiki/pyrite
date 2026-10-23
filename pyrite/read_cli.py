@@ -122,10 +122,7 @@ def get_entry(
 
         formatted = _format_output(result, output_format)
         if formatted is not None:
-            # CSV already ends with a line terminator; a second newline from
-            # echo would leave a trailing blank record on stdout, which
-            # streaming CSV parsers read as an empty row (#1234).
-            typer.echo(formatted, nl=not formatted.endswith("\n"))
+            typer.echo(formatted)
             return
 
         console.print(f"\n[bold cyan]{result.get('title', '')}[/bold cyan]")
