@@ -1,1 +1,0 @@
-- **`pyrite links discover` and `links batch-suggest` refuse an unknown `--mode` (#867).** They used to answer as keyword with exit 0. The CLI now exits 1, MCP returns a refusal and REST answers 400 (maintainer decision 2026-10-17: REST validation errors answer 400 per `docs/json-contracts.md`), each naming the three valid modes (`keyword`, `semantic`, `hybrid`).

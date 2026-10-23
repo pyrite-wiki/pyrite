@@ -1,1 +1,0 @@
-- **CI job timeouts:** All jobs in `.github/workflows/ci.yml` now declare `timeout-minutes` (adding bounds to `changes`, `kb`, `shard-report`, `mypy`, `frontend`, `experimental-issues`, and `gate`) and `test_ci_jobs_have_a_job_timeout` prevents new unbounded jobs from running for GitHub's 6-hour default (#1154).

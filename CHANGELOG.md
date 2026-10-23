@@ -19,6 +19,428 @@ Your files, exactly. The index tells the truth: it keeps one link row per link a
 
 **Upgrade notes.** Run `pyrite index build` once after upgrading; link counts change (#979, #1009). A shortname is link syntax only: `-k`, REST `kb=` and MCP `kb_name=` refuse it with `KB_NOT_FOUND` and name the full KB in `did_you_mean` (#952). Removed (#953): the cascade extension (`pip uninstall pyrite-cascade`), the built-in public site and the Streamlit UI; the `deploy/*/create-user.py` scripts give way to `pyrite-admin user create` (#1066). Writes refuse more than they did: a path that leaves the KB root (`OUTSIDE_KB_ROOT`), a field Pyrite manages, an unknown REST key, one field at two spellings, a request body over `max_request_body_bytes` (`413`, default 32 MiB). A KB's new `landing` setting (`canonical` by default, or `review`) decides where a signed-in user's write lands. A single-entry read puts a declared field at its own key, not under `metadata` (#1025). `index health` exits 1 on files it cannot read (#593). `pyrite export --format`, task `-f`, MCP `legacy_error_code` and the search row `distance` key still work and now go in 0.27. Plugin authors: change an existing entry through `KBService.apply_operations`; `KBRepository.save` refuses one. Every change, with the steps in order, is in [Upgrade Pyrite](docs/upgrading.md#upgrading-from-0258-to-0260).
 
+### Added
+
+- **Add or remove one item, or remove a key, without sending the whole field (ADR-0042 decision 1; #955, B6 P3b).** `pyrite update --append tags=gamma`, `--remove tags=alpha` and `--unset extra`; MCP `kb_update` with `append`, `remove` (`{field: item}`; a list value means each item) and `unset` (a list of keys); REST `PATCH /api/entries/{id}` with `op: append | remove | unset` beside the default `set`. The other items keep their bytes: a hand-written link item keeps its spelling, its comment and its extra keys when a link is appended after it (the "appending to a list" example of *How Pyrite edits your files* now passes). `links` and `sources` take item operations on every surface, with an appended link checked as a link; a set of the whole list is still refused. A `null` value is written as `null`; removal is `unset`. `qa fix`'s link and tag repairs and a task's evidence and audit trail (`link_qa_assessment`, `aggregate_evidence_to_parent`, `task update --comment`) now send one operation each instead of a list read through Pyrite's model, so an item they did not name is never respelled.
+
+- **The entry page has a Delete button (#117).** The entry toolbar now offers Delete beside Edit (same visibility, hidden while editing). Confirming is a separate, deliberate step: it names the entry and the KB, and neither a double-click nor a second Enter can reach Confirm, because Delete stays disabled and focus moves to the inert prompt rather than to the Confirm button. The step is positioned outside the toolbar, so opening it does not reflow the row. Confirm cannot fire a second request once deleting, and a 404 is treated as already deleted. On success the reader lands back in the KB the delete request named (`/entries?kb=...`).
+
+### Changed
+
+- The index keeps one link row per link a file writes (#1009). It used to keep
+  the first link to each bare target id and drop the rest, so `[[ka:x]] and
+  [[kb:x]]` recorded only the link to `ka:x` (`backlinks x -k kb` was empty),
+  a second prefix of one target (`[[ops:x]] [[ops-kb:x]]`) was never checked
+  by `index health`, and a body `[[x]]` beside a frontmatter link to `x` was
+  lost. Two links are now one row only when they have the same target, KB,
+  relation and written prefix. **Backlink and outlink counts change**: a
+  source that links one entry in two ways is listed once per link in
+  `backlinks`, `get` outlinks, the graph, `links check` and the
+  `broken_links` count, and `![[x]]` is now stored as a `transclusion` rather
+  than a `wikilink`. Rebuild the index (`pyrite index build`) to see the new
+  rows for files that have not changed.
+  The web backlinks panel and the `backlinks` table list a source once with
+  each of its links' relations, and the graph draws one edge per pair of
+  entries. Two spellings of one link (`2024` and `'2024'`) keep the first
+  one's note. The overlay backend keeps them apart too: one source's
+  `[[ops:x]]` and `[[ops-kb:x]]` are two backlinks and two outlinks, and
+  backlink and outlink rows carry the written `prefix` so a merge can tell them
+  apart (#1062).
+
+- A create now refuses a field Pyrite or the type manages (a task's
+  `status_change_log`, `evidence`, `agent_context`, `assigned_at`; an ADR's
+  `adr_number`; `file_path`, `provenance`, `extra_frontmatter`) at every
+  spelling (top level, dotted `metadata.k`, under `metadata`; an alias of a
+  managed field is folded too, though none is registered today) on every
+  create path: MCP `kb_create`/`kb_bulk_create`, CLI `create -f`, `task create`
+  and the in-process `create_entry`, instead of writing or silently dropping it
+  (#1010). Two rules relax this. An in-process owner sets its own field with
+  `create_entry(..., owns=frozenset({...}))` (`sw new-adr` names `adr_number`).
+  An import (`pyrite import`, `POST /api/entries/import`) drops the keys an
+  export carries about the index and location (`kb_name`, `file_path`,
+  `indexed_at`, `content_hash`, `created_at`, `updated_at`, `outlinks`,
+  `backlinks`, ...) and a type's
+  managed fields, and names every dropped key under `ignored` for its entry,
+  so an export imports into another KB and nothing is dropped silently
+  (#1091; a create stamps new timestamps). The `Ignored:` label prints without
+  Rich markup tags shown as literal text, and the key list is escaped as data
+  (#1096).
+  `pyrite add FILE` still adopts a hand-written file's own values. REST `POST /api/entries` refuses only the
+  `metadata` spelling: its body model ignores a managed field sent as a
+  top-level key (200, nothing written).
+
+- An item appended to a list copies the quoting of the item beside it at
+  every level: `- target: "foo"` gets `- target: "bar"`, not a bare `bar`,
+  in block and flow style alike, for any key (an integer key included). A
+  neighbour's spelling is used only where it reads back as the value;
+  otherwise the emitter's own rule applies (#1023).
+  The same holds for an update that inserts an item into an existing list and
+  for the item-wise rebuild used when a narrow edit fails its post-check: a
+  new item is spelled like the item beside it (the flow rebuild too), and a
+  replaced item in that rebuild is spelled like the item it replaces.
+  Not copied, and unchanged: a list rewritten afresh because no old item is
+  kept, and a changed or new pair in the item-wise rebuild of a mapping, take
+  the emitter's own rule.
+  Thanks to @ANO3457, whose #1131 this is.
+
+- **The write pages describe the write path that exists (#1031).** `docs/how-pyrite-edits-your-files.md` no longer says an update re-renders the frontmatter: it names the two examples that still fail, shows what a create writes, and gives the `set`/`append`/`remove`/`unset` spelling per surface. `docs/agent-write-path.md` says an undeclared field is written at the top level of the file and has a runnable step for `--append`, `--remove` and `--unset`. MCP `kb_update`'s `tags` and `metadata` descriptions now say that `append`/`remove` add or drop one tag and that a key in `metadata` is the field of that name (ADR-0051).
+
+- **Storage performance:** `list_entries` batch-fetches tags in a single statement using `_get_tags_for_entries` instead of issuing per-row queries, eliminating N+1 tag lookups and reducing statement count from 51 to 2 for a standard 50-entry page (#1044).
+
+- **For contributors:** `verify-red` stays advisory (it is not in `gate` and never blocks a merge) but grades against the merge commit's first parent, so a PR merged since yours was opened is no longer graded as yours, and it names tests-only, inert-only, mixed and empty changes instead of calling all of them "no code change" (#1074, #671). The release dry run (`scripts/release.py <version>`) names and counts each distinct precondition failure once (#889). Thanks to @masyarakatai and @HarshRajSinghania.
+
+- **`zettel_graph` changes what it returns (#523).** `depth` is capped at 3:
+  `1`-`3` are accepted and anything else (0, negative, above 3, non-integer)
+  returns `{"error": "depth must be between 1 and 3"}` instead of being
+  accepted. Each entry under `neighbors` now carries `id`, `kb_name` and the
+  hop `depth` it was found at, and is keyed by the bare entry id when it is in
+  the KB you asked about and by `kb:id` when it lives in another KB. Callers
+  that looked up neighbours by id alone must use the `kb:id` key for
+  other-KB neighbours. Neighbours in KBs the caller cannot read are never
+  expanded.
+
+- **Frontmatter Pyrite cannot model is refused for writes and reported, with the line (#760).** A file whose frontmatter holds a tagged key (`!!str flag: 1`), a complex key (`? [a, b]`), a duplicate key, or whose root is not a block mapping (`- a`, one flow-style `{...}`) gets no write through Pyrite, body included: an update is refused with `VALIDATION_FAILED` and the reason, nothing written. Such a file is no longer invisible: `pyrite index health` lists them under `unmodellable_frontmatter` ("N file(s) whose frontmatter Pyrite cannot model", id, path, line and reason; a warning), and `pyrite qa validate` (the KB, or one entry) reports one `frontmatter_unmodellable` warning per file with the same id and line. One rule decides the refusal and the listing, so they name the same files for the same reason at the same line. Fix the key by hand.
+
+A create from fields (CLI `create`, MCP `kb_create`/`kb_bulk_create`, REST `POST /api/entries`, the web clipper, `pyrite import` of JSON, YAML or markdown) now writes every field the type's schema declares (`kb.yaml`, the core type's own, and a plugin's `get_field_schemas()` once a plugin declares one): a declared field the caller left out gets its `default`, else `""`, `[]` or `null` by field type, and is validated, given to hooks and indexed like a sent value. A new `person` carries `role` and `affiliations`; a `backlog_item` in a KB made with `pyrite init -t software` carries `kind`, `effort` and `assignee`. A declared field sent empty (`-f kind=`) is written empty instead of dropped or replaced by its default. An empty value (`""`, `[]`, `null`) is now no value to every optional schema check (field types, `validation.rules`, `schema validate`'s protocol types), on create, update, `qa validate` and `index health` alike; a `required` field still refuses it. `pyrite add` and updates add no keys. An update that fills an empty `""` writes the value plain (`kind: bug`, not `kind: "bug"`). The `research`, `intellectual-biography` and `movement` templates' `person` type now declares `affiliations`, the field the model reads, instead of the unread `affiliation`. **Upgrade:** in a KB made from one of those templates, rename `affiliation` to `affiliations` under `types.person.optional` in `kb.yaml`; otherwise each new person file carries both `affiliations: []` and `affiliation: ""` (#86).
+
+- **Breaking: a shortname is link syntax only.** `[[short:id]]` keeps working,
+  but `-k <shortname>`, REST `kb=<shortname>` (and `/api/kbs/<shortname>/...`)
+  and MCP `kb_name=<shortname>` are refused with `KB_NOT_FOUND`; the refusal
+  names the full name in `did_you_mean` when you can read that KB. Use the full
+  name. This reverses the REST shortname mapping 0.25.7 added (#912).
+  One resolver now answers "which KB" on every surface (#952): an unknown
+  name is refused everywhere, for an operator key and auth-disabled too (REST
+  and MCP used to let an unscoped caller's unknown `kb` through to a handler
+  that answered an empty result), the permissions and worktree routes
+  included; a KB you cannot read answers exactly like an unknown one; a KB
+  registered after a server started is found (#925); the refusal carries
+  `did_you_mean` (near matches from the KBs you can read) and one hint on
+  every surface, naming `kb_orient` (MCP) and `pyrite orient` (CLI). A blank
+  KB name names no KB (never "not found"); a command that needs one answers
+  `VALIDATION_FAILED`; a blank KB *path segment* is refused. REST's
+  `KB_NOT_FOUND` body is the central handler's (`retryable`, `hint`,
+  `did_you_mean`), and MCP's `legacy_error_code` for it is `NOT_FOUND` on
+  every tool, `kb_orient` included, except `kb_update` for an unscoped
+  caller (an operator key, auth off), whose call reached the old handler and
+  its own old code, `UPDATE_FAILED` (#761); a scoped caller was refused
+  before the handler, with `NOT_FOUND`, and still is. The admin-only KB routes (`PUT`/`DELETE
+  /api/kbs/{name}`, `reindex`, `default-role`, `publish`, `commit`, `push`)
+  answer the same refusal. A KB resolved from the index registry carries
+  every attribute of its config.yaml entry (`read_only`, `shortname`), and a
+  plugin's MCP handlers resolve through the server's config, so no write
+  surface lands a write in a read-only KB. The web resolves a `[[short:id]]`
+  prefix to the full name before building a link or calling the API (the
+  read view's embeds included), so shortname wikilinks keep working there,
+  and a link prefix is looked up among your readable KBs only, by full name
+  and then by shortname: a private KB that shares the shortname, or whose
+  full name is your KB's shortname, never changes the answer.
+  `PyriteConfig.kb_name_for` and `get_kb_by_shortname` are gone (they
+  mapped across every KB); the one lookup is
+  `services/kb_resolver.readable_kb_named`. A refused
+  `sw_create_backlog_item` carries `error_code`; a `kb` row with no `source`
+  is a user row for the CLI's registry merge, as it is for the resolver.
+
+- **A new entry's file is written by the same operations as an update (ADR-0042 decision 13; #955, B6 C2).** Every create (`pyrite create`, `add`, `import`, `task create`, MCP `kb_create`/`kb_bulk_create`, REST `POST /api/entries`, the extensions' creates) now builds the file as `---`, `id:`, `---`, the body, and one operation per key of the type's frontmatter in order, through the same writer an update uses, published only if nothing is at the path (two creates of one id still give one file and one refusal, inside and outside git; outside git the refusal comes from the publishing call itself, `os.link` or `O_EXCL`, not from an earlier existence check). The type decides which values a new file gets, never its bytes: no YAML emitter renders the document. Spelling changes in three places only: `id:` is always the first key; an id YAML would misread (`yes`, `123`, `2024-01-01`) is quoted, so it reads back as the id asked for; and every scalar that needs quoting is double-quoted (`date: "2024-02-03"`, an empty string `""`), where the old emitter wrote single quotes.
+
+- **A link is one appended item (#955, B6 P4).** `pyrite link`, `links bulk-create`, `create --link`, MCP `kb_link` and `KBService.add_link`/`add_links` append the new link to the file's `links:` list as one operation, through the same write every update uses: every other key, and every existing link item, keeps its bytes (a hand-written comment, a legacy `to:`/`type:` item, a `since:` key the model does not read), `updated_at` is stamped only where the file carries it, and the publish is compare-and-replace under the momentary lock, so two writers of one entry cannot lose each other's link. Before, the source entry was re-emitted from the model. A write the filesystem refuses (the lock directory cannot be used, the file is hard-linked) is a `STORAGE_ERROR` whose detail goes to the log, not to the client; a lock held too long is retryable.
+
+- **Every write of an entry file is operations on its own bytes (#955, B6 P4).** The last four whole-file writers now name what they change and leave the rest as written: `pyrite rename` sets the new `id:` (and stamps `updated_at` where the file carries it) and rewrites `[[old]]` wikilinks only where they are, in a body or a frontmatter value, keeping every comment and a CRLF file's line endings; `pyrite schema migrate` writes exactly what the migration changed (a key added, changed or dropped, and `_schema_version`) instead of re-emitting the entry, and now actually writes a migration's result rather than only stamping the version; `pyrite ids pin` takes the entry's momentary lock around its write, so a pin and an update of one file cannot interleave; software-kb's `migrate-standards` sets the type and unsets `enforced` whatever follows them on the line, keeps the file's line endings, and refuses to overwrite a file already at the new path. The model's own `save` and markdown emitter are gone: a create's text is built onto a skeleton, and a write that changed meanwhile is a `CONFLICT`. A `created_at` or `updated_at` sent back in another spelling of the same instant (a read's `2026-01-15` for a bare date) is the file's value and writes nothing. A rename either completes or changes nothing: the entry is moved first (a source that changed or a target already taken leaves every file as it was), then every linking file is rewritten; a linker the rename cannot patch (a hard-linked file, bytes that do not decode, a frontmatter that does not parse) is listed in `files_skipped` with the reason, one whose body was rewritten while a wikilink in a frontmatter that cannot be patched as values (it does not parse, or holds an anchor) still names the old id is listed in `files_partial`, neither is fatal, and `pyrite rename` shows both and exits `partial` (3) when either is non-empty; a `[[old]]` inside a YAML comment is a comment and is no longer rewritten. An id a YAML 1.1 reader takes for a boolean by the spec (`y`, `Y`, `n`, `N`) is written quoted by a create and a rename, as `ids pin` already wrote it. `pyrite schema migrate` stamps `_schema_version` only on a result it wrote: a migration that raises is an error in the result and the file keeps its bytes (it is tried again next time), a migration that changes its input in place is written whole, and the command says to run `pyrite index sync` afterwards. A move (rename to a new path, `migrate-standards` into its new folder) publishes the new file and removes the old one as one write under one lock for both paths, removing the old file only while it still holds the bytes read; a source that changed or a target already taken leaves both files as they are. The model's whole-file text reaches no existing entry: `KBRepository.save` writes a new entry only and refuses an existing one (`ENTRY_EXISTS`); an entry is changed through `KBService.apply_operations` alone.
+
+- **An update changes only the fields it names, byte for byte (ADR-0042; #955, B6 P3a; #178, #638, #640).** `pyrite update`, MCP `kb_update`, REST `PUT`/`PATCH /api/entries/{id}` and every in-process update (tasks, `qa fix`, `sw prioritize`) now apply the request as operations to the file's own text instead of re-rendering the whole frontmatter from Pyrite's model: a title edit changes the title's line and nothing else. Comments, key order, quoting, blank lines, list style, a BOM and CRLF line endings stay as written; an untouched bare `yes` is not re-quoted; an undeclared key is written at the top level where the request names it, never nested under `metadata:` (a key the file already holds under `metadata:` is edited there); a legacy link item keeps its spelling and its extra keys; an alias (`actors`/`participants`) is written under the spelling the file uses. `updated_at` is refreshed only where the file already carries it, in the file's own spelling (the `T` or space separator, a `Z`, an offset or none, the fraction's digits, a date-only value; a quoted string stays quoted and a bare timestamp bare), and never added; a timestamp the request sets (`created_at`, `updated_at`) is written as sent, and one that is no instant is refused. A field refused at the top level (`type`, `id`, `links`, `body`) is refused under `metadata` too, since an update writes such a key at the top level. A request that changes nothing writes nothing: the file's bytes and mtime are untouched and the result says `changed: false`. An update never moves a file (#488): only a file with an `id:` line whose type's folder is templated by a field moves, and an unpinned one reports `not_moved`. Two writers editing different fields at the same moment both land: the file is replaced only if it still holds the bytes the edit was computed on, under the momentary lock in the KB's git directory, and a changed file is re-read and re-applied, up to five times, then refused with `CONFLICT` (409 on REST). A KB outside a git repository is written with compare-before-replace and no lock, and the result says `locked: false`. A `before_save` hook may still refuse an update; what it sets on the entry no longer reaches the file. Frontmatter Pyrite cannot model (a tagged, complex or duplicate key, an anchor on the edited key) is refused with the reason and nothing written (#760); so is a result the index could not store. Dropping a stray `body:` key is no longer a side effect of an update (ADR-0042 decision 7).
+
+- **A timestamp a caller sends is written as sent, and accepted only when YAML reads it as one (#990, #991).** `created_at` and `updated_at`, and no other key (`date` is written as sent, #1027), take, on the CLI (`--field`) and REST, exactly what the loader reads back as a date or timestamp (MCP `kb_update` sets a top-level `created_at`/`updated_at` argument aside and lists it in `ignored`; inside the `metadata` envelope the same rule applies): `2026-10-02`, `2026-10-02T12:00:00Z`, `2026-10-02 12:00:00 +05:00`, `2026-10-02T12:00:00+5:30`, a fraction. Forms 0.25.8 accepted through `parse_datetime` and wrote as something else are refused now: `2026-10-02T12:00Z` and `2026-10-02 12:00` (no seconds), a week date (`2026-W40-1`), a compact date (`20261002`), an hour-only time, a one-digit month (`2026-1-5`), a compact offset (`+0530`), `yesterday`. The one exception is what an HTML `datetime-local` field sends, `2026-10-02T12:00`: it is accepted and written as `2026-10-02T12:00:00`. The `updated_at` stamp keeps every zone form the loader accepts, spacing included (`+5`, `+5:30`, `+0530`, `12:00:00 +05:00`, `12:00:00 Z`), and a fraction's digit count in a CRLF file; an in-process `date` is written as a date. A templated move whose target already holds a file is reported as `not_moved` with the KB-relative target (the update itself is written, at the file's own place), on the CLI's default output as in the machine formats, never as a raw error with an absolute path. `search_by_tag` matches a tag spelled as the file writes it (`2026-01-02 10:00:00`, `2024-01-01T10:00:00Z`) against the one spelling the index stores.
+
+- **`metadata` is not a field (#994, ADR-0051).** ADR-0051 amends ADR-0042 decision 6: `metadata.k`, in a file or a request, is a second spelling of field `k`, one level only, the same as an alias. Every update refusal (a managed field, `type`, `id`, `body` as a key, a link item's shape) is decided on the field a path denotes, whatever its spelling, depth or surface (service, MCP `kb_update`, REST `PATCH`/`PUT`, CLI `--field`/`--append`/`--remove`/`--unset`), and a request path is parsed once at the boundary, so a key such as `status_change_log[0]` or `metadata.id` inside the `metadata` envelope is the field it names. A request that names one field at two spellings with different values is refused (the #720 rule, extended from aliases to every spelling). Create refuses a managed field sent inside the `metadata` envelope, on REST `POST`, MCP `kb_create` and the service; a declared field or an alias sent there lands at its own key, for typed entries too (#1108, #1145). A file that spells a field twice is reported: `index health` gains `double_spellings` (`{kb, id, field, spellings}`, status `warning`) and `qa validate` the rule `field_spelled_twice`; an update of that field is refused until one spelling goes, and `qa fix` merges a pair whose values agree into the field's own top-level spelling. The model and the index row read such a file the same way (the field's own name first). `aliases` is its own index column: a read spells it where the file does (never under `metadata` for a top-level `aliases:`), and a wikilink resolves by a top-level alias.
+
+- **Four deprecations promised for "the next release" are now removed in 0.27.** Each still works in 0.26, and each warning now names 0.27: `pyrite export --format`/`-f` as an alias for `--target` (use `--target`); `-f` as a short form of `--format` on the task commands (use `--format`); the MCP tool responses' `legacy_error_code` (use `error_code`); and the `distance` key on search result rows (use `similarity`).
+
+**For plugin authors:** a `before_save` hook's changes no longer reach an
+update's file. Create still persists the returned entry, a known implementation
+gap, not a supported way to compute fields. Use hooks to refuse invalid writes;
+derive computed values at read or index time under `derived`. The authoritative
+lifecycle contract is `PyritePlugin.get_hooks` in `pyrite/plugins/protocol.py`.
+
+- **The merge queue tests on Python 3.13 only; the push to `dev` tests 3.11 and 3.12.**
+  Each commit is still tested once on every supported interpreter, but a merge
+  group is a third the size, so it finishes inside the queue's check timeout
+  when runners are scarce. A failure that shows only on 3.11 or 3.12 now turns
+  `dev` red after the merge instead of blocking it. Pull requests still test
+  on 3.12 (all three when they touch test infrastructure).
+
+The server now limits the size of a request body, an import upload included,
+to `settings.max_request_body_bytes` (default 32 MiB; environment variable
+`PYRITE_MAX_REQUEST_BODY_BYTES`). A larger request is answered `413` with
+`code: PAYLOAD_TOO_LARGE` and nothing is written; raise the setting or split
+the file to import more. An import file that cannot be read in its format now
+answers `400 PARSE_ERROR` with a message naming the format; the parser's
+detail goes to the server log.
+
+### Removed
+
+- **The cascade extension is gone (#953).** `extensions/cascade/` (the `cascade-research`, `cascade-timeline` and `cascade-solidarity` KB types; the `actor`, `cascade_org`, `cascade_event`, `timeline_event`, `theme`, `victim`, `statistic`, `mechanism`, `scene` and `solidarity_event` types; the `pyrite cascade` commands; the `cascade_*` and `solidarity_*` MCP tools) is deleted. The cascade public site moved to Hugo. Run `pip uninstall pyrite-cascade` in the environment that had it: nothing removes the stale entry point for you, and `pyrite extension list` keeps naming it until you do. A KB still registered with one of those KB types is still a KB: its files read and write as generic entries (a new entry lands at the KB root, since the preset subdirectories such as `events/` and `actors/` were the plugin's; declare `subdirectory:` per type in `kb.yaml` to keep them), and `pyrite orient -k <kb>` (`notices`) and `pyrite index health` (`removed_extensions`) say so in one sentence instead of leaving the types silently undeclared; a KB of any type that still holds `timeline_event`, `actor` or another cascade type gets the same sentence naming them. For investigative types, install journalism-investigation and set `kb_type: journalism-investigation`; the `member_of`/`has_member` and `funded_by`/`funds` relations that journalism-investigation's connection hook writes moved into that extension.
+
+- **The built-in public site is gone (#953).** `/site`, `/site/search`, `/site/sitemap.xml`, `/viewer`, the live `/sitemap.xml` and `/robots.txt`, `POST /api/site/render`, the `site_cache` field of `POST /api/index/sync?wait=true`, the web app's "Render Site" button and `SiteCacheService` are removed, with their templates and the `jinja2` dependency. An instance has no crawlable surface any more (the maintainer's decision on #953): readers use the web app behind `pyrite serve`, and the supported way to make a KB crawlable is a static site built from the KB's files with Hugo or Astro, deployed on its own. A `site-cache/` directory left under `PYRITE_DATA_DIR` by an older version is inert and can be deleted. `PYRITE_SITE_CSP_EXTRA` / `settings.site_csp_extra` stays: it extends the web app's Content-Security-Policy, which it already did.
+
+- **The Streamlit UI (`pyrite/ui`) is gone (#953).** It was never in an extra or a command, and the SvelteKit web app served by `pyrite serve` replaced it. Nothing in a KB or a config referred to it, so nothing to migrate; `pip uninstall streamlit` if you installed it only for Pyrite.
+
+### Fixed
+
+- An extension's command group is registered whichever module the process
+  imports first: `pyrite` mounts plugin CLI groups when the app is first used,
+  not while `pyrite.cli` is still importing (#1000, #1109).
+
+- The API documentation now shows the package version instead of always showing
+  `0.12.0` (#1005).
+
+- `pyrite link`, `add_link` and `add_links` compare a target with a hand
+  file's `links:` item as the text the index stores it, so `pyrite link src 1`
+  against `target: true` is a no-op instead of writing a second item (#1022),
+  and a file's `kb: ops` (a shortname) is the same link as `--target-kb ops-kb`.
+  A frontmatter link to a timestamp id (`target: 2024-01-01 10:00:00`) now
+  resolves to the entry with that id. The service-level tests are ported from
+  @slophisticated's #999.
+
+- `kb_update` (and REST `PUT`) refuse a whole `kb_get` envelope sent back as
+  `entry`, and leave the file untouched, instead of writing it into the entry
+  (#1024). Send the contents of `result["entry"]` at the top level.
+
+- **A field spelled only under `metadata:` is read (#1025, #51).** ADR-0051 made `metadata.k` a second spelling of field `k`, and every write already landed where the file spells the field; the reader now reads it there too. A file with `metadata: {importance: 8}` and no top-level `importance:` reads 8 in the model, the index row, `pyrite get`, MCP `kb_get`, REST `GET /api/entries/{id}` and search, so `update -f importance=8` then `get` agree; `metadata.links` is indexed as outgoing links and backlinks, and `pyrite link` appends there instead of refusing. The hand-written list of five keys lifted out of `metadata` (`rank`, `effort`, `kind`, `status_reason`, `parked_awaiting`) is replaced by one rule: every field the entry's type declares is read at its own name, and a key the type does not declare stays under `metadata` and is no longer lifted (`rank` on a type that has no such field). `parked_awaiting` is a declared field of a task, so task reads keep it at the top level. `provenance`, which no read carried, is read like every other field.
+- **A single-entry read spells each field once, at its own name (#1025).** In `pyrite get`, MCP `kb_get` and REST `GET /api/entries/{id}`, `metadata` now holds only keys the entry's type does not declare: a declared field the row keeps in its `metadata` bag (a task's `evidence`, `status_reason`, `dependencies`, `agent_context`, `status_change_log`, a backlog item's `rank`, an event's `actors`, `provenance`) appears at its own key and no longer under `metadata`. A client that read `metadata.evidence` or `metadata.status_reason` from a single-entry read must read the key at the top level. A read echoed back through REST `PUT` or MCP `kb_update`, with a key added or a field edited, is written as before. A file spelling a field twice keeps the nested value under `metadata` in the read; a field the file spells only under `metadata` leaves it whatever the index column made of the value (`metadata: {importance: '8'}` reads `importance: 8` once). REST `GET /api/entries/{id}` now carries every key the read returns, the same key set as MCP `kb_get` and the CLI (plus its `participants: []` default on a type without that field), for anonymous readers of a public KB too (its fixed field list dropped a field with no slot, so `status_reason`, `evidence`, `rank`, `provenance` and the like would have vanished from REST once they left `metadata`). The index row (`db.get_entry`, `db.list_entries`, the shape the plugins read) is unchanged.
+
+- **Every `--append` and `--remove` pair on `pyrite update` is applied, in order (#1035).** `pyrite update x -k kb --append tags=a --append tags=b` appended only `b`: the CLI kept one value per field and the last pair won. A field named twice now collects each item in the order given, for `--append` and `--remove` alike. As before, a request's appends are applied before its removes.
+
+- **A file whose frontmatter Pyrite cannot model is refused on `get` and `update` alike, on the CLI, MCP and REST (#1035, #760).** A tagged key, a complex key, a duplicate key or a root that is not a mapping answers `VALIDATION_FAILED` with the reason and `(line N)`, where `get` used to print a `TypeError` traceback (CLI, MCP `INTERNAL`, REST 500) and a duplicate key or non-mapping root answered `NOT_FOUND` (and `update` of a tagged or complex key answered `NO_OUTCOME` on the CLI). A read is refused only when the file has no readable fields: a flow-style root still reads, and a `!!set` value is a refusal, not a `TypeError`. A duplicate-key or non-mapping-root file is found by `<id>.md`; nothing is written.
+
+Scope `pyrite search -k X`'s staleness probe to X: it no longer walks or stats files of other KBs (#1041).
+
+- **Wikilinks with `%`, `_`, or backslashes in their titles now resolve only to literal title matches (#1054).**
+
+- The whole-index graph chooses its nodes by entry id *and* KB, as the
+  centered walk already did: with `ka/s` linking `[[x]]`, `kb:x` no longer
+  appears as an unlinked node and takes a slot of `limit` (#1058).
+
+Pages a 0.26.0 reader follows now work as written: the self-host setup creates its admin with `pyrite-admin user create` (the `deploy/*/create-user.py` scripts, which opened the wrong database, are removed), `deploy/selfhost/seed.sh` and `deploy/ink/seed.sh` pass the KB with `-k`, and the README, getting-started, configuration, upgrading, MCP client, JSON-contract and plugin-tutorial pages are corrected (#1066).
+
+- `POST /api/entries` refuses a top-level key its body does not know, naming it
+  with 400 `VALIDATION_FAILED`, instead of dropping it and answering
+  `created: true` with no warning: a managed field sent at the top level
+  (`evidence`, `status_change_log`, `provenance`) can no longer vanish
+  silently (#1090). The `metadata` envelope spelling is refused by the
+  service, as before (#1010).
+  The web New Entry form now sends its Status input in `metadata`, so it is
+  not refused. Thanks to @ANO3457, whose #1124 this is.
+
+- A create or import that asks for `lifecycle: archived` writes the key
+  instead of dropping it and answering as if the entry were active: the base
+  field is restored when the entry is built, as the loader already did for a
+  file (#1097). A file that never had the key still does not grow one.
+  This holds for `note`, `event`, `person` and a kb.yaml-only type, for a
+  `lifecycle` sent at the top level and for one sent inside `metadata` (the
+  REST shape), and a value `update --lifecycle` takes, a create takes too.
+  Thanks to @ANO3457, whose #1127 this is.
+
+- Resolve the config file path at call time in `pyrite config`, `pyrite-read config`, and `pyrite-admin config show` (#1100).
+
+- `embedding_service.is_available()` answers from the import system's finder
+  instead of importing sentence-transformers and torch: every CLI, server and
+  test path that asks saves about 300 MB of work per process. A package the
+  finder can see but whose import fails is now named at the first model load,
+  with the install line (#1101).
+
+﻿- Editing a KB's description or type through the API is refused when an
+  operator defined that KB by hand in `config.yaml`: the change used to answer
+  200 and revert on the next save or sync. Edit `config.yaml` and restart
+  (`KB_DEFINED_IN_CONFIG`, #1116).
+
+- **CI job timeouts:** All jobs in `.github/workflows/ci.yml` now declare `timeout-minutes` (adding bounds to `changes`, `kb`, `shard-report`, `mypy`, `frontend`, `experimental-issues`, and `gate`) and `test_ci_jobs_have_a_job_timeout` prevents new unbounded jobs from running for GitHub's 6-hour default (#1154).
+
+Report pending git changes relative to KB directory for sub-tree knowledge bases. Fixes #1223.
+
+Look entries up by id without parsing the whole KB: a miss in `create`'s exists check, `delete` and `update` now reads each file's raw text and parses only the files that could hold the id, and a create looks the id up once instead of twice (on 2,013 files, a create went from about 10 s to about 0.1 s). Files whose id comes from their title (no `id:` line) are still parsed on every miss, as is every file in a KB with schema migrations to apply. `get -k <kb>` of an id no index row or file name knows now finds a file renamed by hand before the next sync, as `create` already did; `get` with no KB named still looks only at files named like the id in each KB (#135).
+
+- **`zettel_graph` now honours `depth` (#523).** `depth: 2` or `3` used to
+  return only first-hop neighbour links; it now expands readable neighbours hop
+  by hop, visiting each entry once, so cycles do not repeat.
+
+- **`index health` reports files it cannot read, and index rows no file holds (#593, #1118, #1119, #1147).** `unreadable_files` lists a file it cannot read (including one in a folder the process cannot search) and a path `index sync` lists but cannot read: a dangling or looping symlink, or a non-regular file. `orphaned_entries` lists index rows whose id no file holds any more. Either marks the index unhealthy instead of silently passing. `pyrite-admin index health` and QA's index check use the same verdict as `pyrite index health`: duplicate ids, content changes and error-severity off-list values no longer read healthy there, and QA reports an index whose only defect is orphaned entries. **Behaviour change:** a file with an encoding or permission failure used to be listed under `malformed_frontmatter` (status warning, exit 0); it now moves to `unreadable_files` (status unhealthy, exit 1). Thanks to @sb123sb123, whose #629 this is.
+
+When the embedding model cannot be loaded, queued entries remain pending and do not consume retry attempts. The embed command reports one actionable recovery message. (#594, #1117) Thanks to @sb123sb123, whose #654 this is.
+
+QA stale and compact reports preserve machine-readable output without terminal wrapping or markup, including empty CSV results. URL checks report database failures in URL collection as structured errors instead of claiming no URLs exist, with database locks retaining retryable status. (#746, #1136) Thanks to @ANO3457, whose #746 this is.
+
+- An update is refused only for a violation it causes: a schema violation
+  already in the file (a multi-select holding a scalar, a number out of range, a
+  missing required field), in a field the request does not name, is now a
+  warning with the write's result instead of a `SCHEMA_VIOLATION`, on every
+  surface. A request that sets the field to another bad value, or triggers a new
+  finding, is still refused; create stays strict (#676, ADR-0042 decision 8).
+
+- **`pyrite qa validate` reports a file whose `title:` is a list, a mapping or NaN (`non_string_title`) (#711).** Such a title cannot be indexed, so the loader refuses it before an id can be derived; the check reads each file's own frontmatter and names the path to fix. A scalar title (`title: 2024`) is stringified at load and is not reported.
+
+- **Markdown import detects .md files automatically, and stream mode only splits when the next entry key is on the immediately following line (#756).** Edits that refuse malformed or unterminated YAML frontmatter now say why.
+
+- **`pyrite mcp-setup` names the real reason it cannot print a restore command (#841).** After a failed change, the report blamed env or other keys even when the previous entry held a NUL or was not an object. Thanks to @ANO3457, whose #926 this is. (#1114)
+
+- **`pyrite task create` now works in KBs made by `pyrite init -t software` or `-t zettelkasten` (#860).** Those templates now declare the `task` type (deepcopy of `TASK_KB_PRESET["types"]["task"]`, `subdirectory: tasks/`) and ship a `tasks/` directory. If you have an existing software or zettelkasten KB, add the `task` entry under `types:` in your `kb.yaml` (same shape as the preset: `description`, `required: [title]`, `optional`, `subdirectory: tasks/`) and create the `tasks/` directory.
+
+- **`pyrite links discover` and `links batch-suggest` refuse an unknown `--mode` (#867).** They used to answer as keyword with exit 0. The CLI now exits 1, MCP returns a refusal and REST answers 400 (maintainer decision 2026-10-17: REST validation errors answer 400 per `docs/json-contracts.md`), each naming the three valid modes (`keyword`, `semantic`, `hybrid`).
+
+- `pyrite index build --with-attribution --since <commit>` (and a `repo pull`
+  that reindexes) re-reads the changed files of a KB that lives in a repo
+  subdirectory again. `git diff --name-only` prints repo-root-relative paths,
+  so the KB's prefix is now stripped before a path is joined onto the KB, as
+  `get_file_log` already did (#898).
+
+- An exclusive save whose `os.link` created the target but reported an error
+  (EIO, or EEXIST on an NFS retransmit) now checks whether the target is the
+  temp file's inode and treats that as the publish it is, instead of raising
+  `FileExistsError` with the new file already at the target (#914).
+
+- **`pyrite search` refuses an unknown `--mode` (#917, #964, #1006, #1123).** It used to answer as keyword with exit 0. Now `SearchService.search` raises `ValidationError` naming the three valid modes (`keyword`, `semantic`, `hybrid`) before any leg runs: the CLI exits 1 in every format (the rich format used to answer a refused mode with a file search and exit 0), MCP answers `VALIDATION_FAILED`, and REST answers 400 (maintainer decision 2026-10-17: REST validation errors answer 400 per `docs/json-contracts.md`).
+
+- **A corrupt or truncated `index.db` now refuses with `STORAGE_ERROR` instead of a traceback (#922).**
+  Every CLI command that touches the index (`get`, `create`, `search` in every
+  mode, `backlinks`, `index sync`, `index build`, `index health`, `db backup`,
+  `kb validate`, and the rest) now exits `1` with a structured `STORAGE_ERROR`
+  refusal naming the index path and pointing to `pyrite index build` to
+  rebuild from the Markdown source of truth. A healthy index is never
+  refused: the page-count check is skipped while a non-empty `-wal` is
+  present (a checkpoint in progress) or when the header count is not current.
+  `kb validate` is a check command, so an unreadable index exits `1` rather
+  than answering `0` from the YAML alone.
+  Known limit: damage inside an interior page that the header check does not
+  see surfaces as a `sqlite3.DatabaseError` in the middle of a command; only
+  `search` maps it to `STORAGE_ERROR`, the others exit `1` with `NO_OUTCOME`.
+  Thanks to @aazminu, whose #1017 this is.
+
+- Every CLI command that takes a KB (`-k`/`--kb`, `--target-kb`, a positional
+  KB) refuses a name that is not a KB with `KB_NOT_FOUND`, exit 1, before
+  reading or writing anything (#924, #952). `tags`, `timeline`, `recent`,
+  `list-entries`, `task list`, `qa validate`, `qa checkers`, `index build|sync|embed`,
+  `pyrite-read tags`, `sw backlog` and the other extension commands answered an
+  empty result and exit 0; `get`, `update`, `delete` and the task commands
+  reported the entry, not the KB. A shortname there is refused with the full
+  name suggested. The check is one helper in `pyrite.cli.context`
+  (`require_kb` and `cli_context(kbs=...)`), and
+  `tests/test_kb_walk_cli.py` walks every command of `pyrite`, `pyrite-read` and
+  `pyrite-admin` to prove it.
+
+- **Re-indexing a hand file no longer rewrites its links on every pass (#927).**
+  A hand file's link fields are whatever YAML read — `target: 2024` is an
+  integer, `relation: true` a boolean — while the link index stores them as text.
+  The comparison keyed on the raw value, so it never matched the stored row: the
+  link was deleted and re-inserted every pass, and a file holding both
+  `target: 2024` and `target: '2024'` gained a duplicate row each time (2, 3, 4,
+  5...). The index now compares every part of a link the way SQLite stores it, so
+  a re-index matches the row it wrote last time, two spellings that store alike
+  collapse into one link (the first note wins, as it already did for identical
+  string targets), and a duplicate no longer leaves spares behind. A null field,
+  or one that is a list or a mapping, is still refused rather than stored. Thanks also to @slophisticated, whose #999 fixed the same issue in parallel.
+
+- **`kb add` no longer scaffolds a KB you already built (#945).** Registering a
+  directory that already has a `kb.yaml` left it alone, so a hand-maintained KB
+  gained `_templates/` and an empty directory per entry type the moment it was
+  registered with `--type`. Scaffolding still happens for a directory that is
+  not a KB yet.
+
+- **An entry carrying a YAML timestamp is indexed (#951).** An entry with `date: 2025-06-01T00:00:00+00:00` (an ADR, an event, a task's `start_date`, `end_date`, `due_date` or `assigned_at`), a source whose `date` is a timestamp, or a tag that reads as one, was skipped by `index build` and `index sync` with only a log warning, because the loader's timestamp type could not be bound to the index; the entry was invisible to `get`, search and lists. Every such value is now bound as text in the one form the index has always stored, `2025-06-01` or `2025-06-01T00:00:00+00:00`, whatever the file's spelling, so rows indexed before this fix still sort with the new ones; a tag spelled like a timestamp and a source's date are stored and read in that one form too, so an index built before the upgrade and one built after hold one tag, not two (#987). A read of the entry reports its own fields as the loader keeps the file's spelling (`2025-06-01T00:00:00+00:00` for a file spelled with `T`, `2025-06-01 00:00:00` for one spelled with a space; a `Z` reads back `+00:00`), not the index's; a value under `metadata:` is returned as the index's JSON spells it (`T`).
+
+`pyrite ci` now validates KBs added with `pyrite kb add`, as `qa validate` does, and never passes a KB it did not read. **Behaviour change:** `ci` with no KB in `config.yaml` or the registry now exits 1 with `NO_KBS_TO_VALIDATE` (it exited 0 and printed `pass`). `ci` and `qa validate` also report an `index_out_of_date` error for a KB whose files the index does not match (for example one added with `kb add` and not yet indexed), with the remedy `pyrite index sync -k <kb>` (#960).
+
+- **A model's `confidence` of `NaN`, infinity or a value outside 0 to 1 is
+  refused (#1055).** Tier 2 QA accepted it on a failed rubric item, and
+  `pyrite ci --format json` then wrote `NaN` or `Infinity`, which strict JSON
+  parsers reject. The entry is now `evaluation_failed` with the reason, as for
+  a confidence that is not a number.
+
+- A `[[short:id]]` link is indexed under the KB's full name, as ADR-0049 says
+  (#952, #979): the index used to store the prefix as written, so backlinks,
+  the graph, `index health` and `qa check-links` called every shortname link
+  broken while `resolve_entry` found it. A frontmatter `links:` item's `kb`
+  resolves the same way. The prefix as written is kept beside the resolved
+  name (`link.target_prefix`, index migration v28), and `index health` warns
+  with `links_stale_kb`: link rows that point at a different KB than their
+  file's prefix names now, so a rebuild would rewrite them. Two causes: a row
+  indexed before this change (still naming a shortname), or a shortname
+  renamed or added in config since the file was indexed (`index sync` does not
+  re-read an unchanged file). **Run `pyrite index build` after upgrading**, and
+  after changing a shortname; it re-reads every file and clears the count. A
+  prefix that names no KB is stored as written and counted in `broken_links`,
+  not `links_stale_kb`: a rebuild would write the same row.
+- `pyrite batch-read kb:id ...` resolves the KB in each spec before reading
+  anything (#952): an unknown KB or a shortname in any one spec refuses **the
+  whole call** with `KB_NOT_FOUND` (exit 1, the full name suggested), where it
+  used to read the other specs and list that one under `not_found`.
+
+- MCP `kb_read_body` and `kb_delete` answer a missing entry with
+  `ENTRY_NOT_FOUND` and a KB that does not exist with `KB_NOT_FOUND`, both
+  `retryable: false`, as `kb_get` and `kb_update` already do (#761). Their old
+  codes stay in `legacy_error_code` for one release: `NOT_FOUND` for
+  `kb_read_body`, which answered everything with it, and for `kb_delete`,
+  whose missing-KB refusal was already `NOT_FOUND`; `UPDATE_FAILED` continues
+  for an unscoped `kb_update` (#981, #984).
+
+Honor Accept quality weights and explicit q=0 exclusions, including JSON-first headers and media-type wildcards, instead of sending a representation the client rejected.
+
+- **`pyrite-admin repo fork` works again (#785).** It called a service method that no longer exists. It now forks and subscribes through the fork-and-subscribe service, names the forked repository, and exits 1 with `FORK_FAILED` when the fork fails. Thanks to @ANO3457, whose #800 this is. (#1112)
+
+Run remaining synchronous authentication endpoint database operations in FastAPI worker threads so SQLite write locks do not block unrelated requests. (#812)
+
+Checkout setup verifies core and every extension import from the selected worktree, including before reusing an install stamp.
+
+Core-written transclusion and references relations now declare their inverse names; legacy related is a related_to alias. Backlink queries report declared inverses immediately, without rewriting stored rows.
+
+Extension verification shares the runtime plugin loader, rejects nameless plugins, keeps diagnostic warnings off JSON stdout, moves text-mode verification warnings to stderr too, and documents exit 3 for missing entry points. (#803)
+
+- Declare typed return signature for `GitService.get_status` and resolve hook context typing (#1047).
+
+GraphView initializes once, uses the latest graph during asynchronous loading, and avoids creating an instance after unmount. (#802)
+
+- Investigation events loaded from `participants:` now expose the same people through `entry.actors`. Canonical `actors:` values still take precedence when both keys are present (#698).
+
+- The journalism-investigation MCP tools `investigation_create_entity`, `investigation_create_event`, `investigation_create_claim`, `investigation_log_source` and `investigation_promote_claim` create their entries again; over a server they answered "No KB service available" to every caller. `investigation_start`, `investigation_ftm_import` and `investigation_bulk_edges` called over MCP now write their entries as files, not as index rows only. `investigation_start` links an initial entity that already exists, or is listed twice, instead of failing after the investigation was written: the investigation's body gains an `## Initial Entities` section of `[[links]]`, and an existing entity of another type is linked as it is and reported (`requested_type`, `warning`); and `investigation_bulk_edges` reports a refused edge and goes on with the rest of the batch.
+
+Invite code management verifies the session cookie so admins can create, list and revoke codes; non-admin and anonymous callers remain refused. (#808)
+
+- **`PUT /api/kbs/{name}` no longer erases a KB's metadata field you did not send, and no longer drops what it cannot apply (#521).** Sending only `description` used to fail with a database error, and sending only `kb_type` wiped the description. An omitted field is now left unchanged and `description: null` clears the description. A `kb_type` that is `null` or blank, a key the route does not take (a typo, or `default_role`, which has its own route), a value of the wrong type, or a body that is not an object is refused with `VALIDATION_FAILED` and nothing is written; it used to be stored or silently ignored with `"updated": true`. Thanks to @ANO3457, whose #833 this is. (#1111)
+
+Whole-KB QA validation now runs the named deterministic rubric checkers from
+`kb.yaml`, as single-entry validation does. Missing and broken checker bindings
+are reported instead of silently passing; existing identical SQL findings are
+not repeated. This also applies to `ci`, MCP and REST callers of `validate_kb`.
+
+The uvicorn app entry point configures logging lazily, while imports and create_app leave embedding hosts unchanged.
+
+- CLI `NO_OUTCOME` errors report an exit code only for `SystemExit` or Click `Exit`; arbitrary exception attributes such as SQLAlchemy's documentation code are no longer mislabeled as exit codes (#1014). Thanks also to @HarshRajSinghania, whose #1016 picked up the same issue.
+
+Reading entries with YAML infinity in integer fields uses the existing invalid-value fallback instead of raising OverflowError and losing access to the entry. Source frontmatter is not rewritten.
+
+CLI input paths refuse empty, FIFO and device inputs before reading; init validates schema-file even when the KB already exists. (#1165)
+
+`ids pin` compares the temporary file's owner/group with the original, preserves them or names the group in its refusal, and documents extended attribute, ACL and final rename limits.
+
+- REST entry updates that change no file no longer broadcast `entry_updated`, avoiding unnecessary client refreshes (#1089).
+
+Task claim-release refusals now point to `pyrite task reset`, including a structured suggestion in CLI JSON and MCP errors. Transition rules and reset behavior are unchanged.
+
+URL QA treats malformed or unreadable cache data as cache misses, preserves valid sibling records, and refuses cached values with invalid field types instead of crashing or reporting false success.
+
+Retry source URL liveness checks with GET when a server refuses HEAD with 405 or 501; other HTTP errors remain broken sources and the response body is not downloaded.
+
+Wikilink resolution matches complete alias values instead of substrings or SQL
+wildcards. `Sync` no longer collides with `Sync Weekly`; top-level and legacy
+metadata alias spellings retain case-insensitive matching and read-scope checks.
+
+- YAML bulk import accepts its documented bare list of entries and treats an empty document as zero entries, without weakening the mapping requirement for entry frontmatter (#1216).
+
+### Security
+
+- Writes to a KB entry whose path leaves the KB root are refused, with the new code `OUTSIDE_KB_ROOT` and nothing written: an entry file, or a folder on its path, that is a symbolic link to somewhere outside the KB's folder, or a configured path that leads outside it. The writer opens each folder beneath the KB root without following a link, so a folder swapped for a link during a write is refused too, and `ids pin` writes through the same code. This covers create, update (and `qa fix`), rename, delete, `schema migrate`, the reconcile move and software-kb's `migrate-standards`. An update used to write through such a link to its target; it is now refused. A link whose target is inside the KB is still written through and stays a link.
+- A rename (and `migrate-standards`, and the reconcile move) of an entry whose file is a symbolic link is refused with the reason; the link's target is never removed. Replace the link with the file it points to, then rename.
+- A write to an entry file with more than one hard link is refused (`STORAGE_ERROR`, with the reason) in a KB outside git too, as it already was under git: outside git it used to be written in place, through every name. Removing one name of such a file is still allowed. Break the link (copy the file over itself) to write it.
+
+- A KB's `landing` setting in the config file (`canonical`, the default, or `review`) now decides where a signed-in user's write lands, the same way for every REST write route and every MCP tool, core and plugin. On a `review` KB the write lands in that user's change set or is refused (`LANDING_REFUSED`); it never reaches the KB's own files. On a `canonical` KB every authorised write lands on the KB's files, so the four entry routes no longer send a non-admin's write to a per-user worktree on their own. A signed-in global admin is the operator and always lands canonical. On a `review` KB, `sw_review` and `POST`/`DELETE /api/reviews` now answer `LANDING_REFUSED` for a non-operator, because a review verdict is a database record the change set cannot carry through its merge.
+
 ## [0.25.8] - 2026-10-16
 
 Commands say what they did, and refuse what they cannot do before acting. The write commands join the outcome contract (ADR-0046): one JSON result by default and an exit code that means it. A usage error is a JSON refusal with exit 2. A malformed request, an unknown `--format`, a directory or missing input file, or an id held by more than one KB is refused before anything is written. A single-entry read returns what the file holds now, not what the index last saw. Search rows are lean and every search says how strong its match is. Index health follows the KB's declared types and reports type-name drift.

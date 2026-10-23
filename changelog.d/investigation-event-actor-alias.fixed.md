@@ -1,1 +1,0 @@
-- Investigation events loaded from `participants:` now expose the same people through `entry.actors`. Canonical `actors:` values still take precedence when both keys are present (#698).

@@ -1,1 +1,0 @@
-- **Storage performance:** `list_entries` batch-fetches tags in a single statement using `_get_tags_for_entries` instead of issuing per-row queries, eliminating N+1 tag lookups and reducing statement count from 51 to 2 for a standard 50-entry page (#1044).

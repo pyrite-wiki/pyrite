@@ -1,1 +1,0 @@
-- **`pyrite qa validate` reports a file whose `title:` is a list, a mapping or NaN (`non_string_title`) (#711).** Such a title cannot be indexed, so the loader refuses it before an id can be derived; the check reads each file's own frontmatter and names the path to fix. A scalar title (`title: 2024`) is stringified at load and is not reported.

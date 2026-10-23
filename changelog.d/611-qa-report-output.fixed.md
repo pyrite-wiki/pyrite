@@ -1,1 +1,0 @@
-QA stale and compact reports preserve machine-readable output without terminal wrapping or markup, including empty CSV results. URL checks report database failures in URL collection as structured errors instead of claiming no URLs exist, with database locks retaining retryable status. (#746, #1136) Thanks to @ANO3457, whose #746 this is.

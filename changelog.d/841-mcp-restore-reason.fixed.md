@@ -1,1 +1,0 @@
-- **`pyrite mcp-setup` names the real reason it cannot print a restore command (#841).** After a failed change, the report blamed env or other keys even when the previous entry held a NUL or was not an object. Thanks to @ANO3457, whose #926 this is. (#1114)

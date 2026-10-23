@@ -1,1 +1,0 @@
-- REST entry updates that change no file no longer broadcast `entry_updated`, avoiding unnecessary client refreshes (#1089).

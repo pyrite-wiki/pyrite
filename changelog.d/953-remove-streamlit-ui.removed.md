@@ -1,1 +1,0 @@
-- **The Streamlit UI (`pyrite/ui`) is gone (#953).** It was never in an extra or a command, and the SvelteKit web app served by `pyrite serve` replaced it. Nothing in a KB or a config referred to it, so nothing to migrate; `pip uninstall streamlit` if you installed it only for Pyrite.
