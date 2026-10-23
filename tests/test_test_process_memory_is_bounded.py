@@ -10,12 +10,16 @@ apps before the caches evicted anything, and reached 4-5 GB.
 The repo-root ``conftest.py`` clears those caches after every test. The check
 has to run AFTER that teardown, and a fixture finalizes before it, so the test
 registers a hook wrapper that asserts once every other teardown impl has run.
+
+The apps are built in the test body, not through `make_client`: pytest keeps a
+test's fixture values in `item.funcargs` until after the whole teardown phase,
+so an app built by a fixture's factory is still reachable from the item when
+the wrapper looks (every app "alive", #1110). The test builds worlds itself,
+closes them, and keeps only weakrefs.
 """
 
 import gc
-import os
 import time
-import warnings
 import weakref
 
 import pytest
@@ -94,11 +98,31 @@ def test_fastapi_caches_are_found(clear_fastapi_caches):
     )
 
 
-def test_apps_a_test_builds_are_freed_after_its_teardown(request, make_client):
+def _build_and_drop_app(tmp_path, n):
+    """Build one world, hit it once, close it, and return a weakref to its app.
+
+    Nothing here is returned but the weakref, and this frame ends on return.
+    """
+    from pyrite.config import KBConfig
+    from tests._world import build_world
+
+    work_dir = tmp_path / f"client-{n}"
+    world = build_world(
+        work_dir, kbs=[KBConfig(name="test-kb", path=work_dir / "kb", kb_type="generic")]
+    )
+    try:
+        ref = weakref.ref(world.app)
+        assert world.client.get("/api/kbs").status_code == 200
+    finally:
+        world.close()
+    return ref
+
+
+def test_apps_a_test_builds_are_freed_after_its_teardown(request, tmp_path):
     # Counts weakrefs to the apps THIS test built, not every FastAPI in the
     # process: another module may hold one of its own apps in a module-level
     # cache (tests/test_every_entry_point_passes_the_policy._real_operations),
-    # which is not this test's leak and made the canary fail in CI (#1098).
+    # which is not this test's leak (#1098).
     built: list[weakref.ref] = []
 
     class _AfterRootTeardown:
@@ -107,28 +131,17 @@ def test_apps_a_test_builds_are_freed_after_its_teardown(request, make_client):
             result = yield
             if item is request.node:
                 alive = _collect_until_freed(built)
-                message = (
+                assert not alive, (
                     f"{len(alive)} of the {APPS_BUILT} FastAPI apps this test built are "
                     "still alive after its teardown: something caches their closures "
                     "(#1098; the root conftest should clear it). "
                     f"One is held by: {_who_holds(alive[0]) if alive else ''}"
                 )
-                if alive and os.environ.get("GITHUB_ACTIONS"):
-                    # xfail cannot cover a teardown error, so CI warns. On CI
-                    # Linux every app stays alive and no holder is found, yet
-                    # no local replay reproduces it (#1110). The hook is proven
-                    # locally; test_fastapi_caches_are_found still guards CI.
-                    warnings.warn(f"{message} See #1110.", stacklevel=1)
-                else:
-                    assert not alive, message
             return result
 
     plugin = _AfterRootTeardown()
     request.config.pluginmanager.register(plugin)
     request.addfinalizer(lambda: request.config.pluginmanager.unregister(plugin))
 
-    for _ in range(APPS_BUILT):
-        client, _config, _db = make_client()
-        built.append(weakref.ref(client.app))
-        assert client.get("/api/kbs").status_code == 200
-        del client, _config, _db
+    for n in range(APPS_BUILT):
+        built.append(_build_and_drop_app(tmp_path, n))
