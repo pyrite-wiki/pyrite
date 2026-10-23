@@ -12,7 +12,10 @@ functions spied or failed where the property is a syscall (fsync, chown, a
 crash between write and rename).
 """
 
-import grp
+try:
+    import grp
+except ModuleNotFoundError:
+    grp = None  # Windows
 import logging
 import os
 import stat

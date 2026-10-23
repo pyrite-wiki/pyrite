@@ -505,7 +505,7 @@ class TestALockThatCannotBeUsed:
         assert "Traceback" not in out.stderr
         assert not _started(log, "x")
 
-    @pytest.mark.skipif(os.geteuid() == 0, reason="root writes anywhere")
+    @pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0, reason="root writes anywhere")
     def test_an_unwritable_cache_is_a_clear_error(self, tmp_path, fake, log):
         cache = tmp_path / "cache"
         cache.mkdir()
