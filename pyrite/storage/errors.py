@@ -110,23 +110,36 @@ def storage_error_from(
     *,
     cls: type[StorageError] = StorageError,
     with_detail: bool = True,
+    suggestion: str | None = None,
+    disk_suggestion: str = DISK_SUGGESTION,
 ) -> StorageError:
     """The ``StorageError`` for a sqlite failure that is not the caller's query.
 
-    The one classifier: every site that turns a SQLite error (raw, wrapped by
-    SQLAlchemy, or the cause of a ``MigrationError``) into a ``StorageError``
-    calls it, and ``tests/test_index_schema_drift.py`` checks that the open,
-    migrate, repair and write paths do.
+    The one classifier: every ``except`` under ``pyrite/`` that turns a SQLite
+    error (raw, wrapped by SQLAlchemy, or the cause of a ``MigrationError``)
+    into a Pyrite error raises what this returns, and
+    ``tests/test_index_schema_drift.py::test_every_conversion_site_raises_the_classifier_result``
+    reads every module to hold that.
 
     A lock becomes ``StorageBusyError`` (retryable) with `BUSY_SUGGESTION`,
     whatever ``cls`` asks for. Anything else is ``cls`` (default
     ``StorageError``, not retryable): schema drift, a missing table, corruption.
     ``with_detail=False`` leaves the driver's text out of the message, for a
     class whose message is shown as is (``IndexSchemaRefusedError``).
+
+    ``suggestion`` is the caller's advice for what is left once a lock and a
+    disk fault are ruled out; a disk fault gets ``disk_suggestion`` instead
+    (default `DISK_SUGGESTION`, about the index file). The caller passes them
+    here rather than setting ``.suggestion`` afterwards, so no site can put its
+    own advice over a lock's or a disk's (the guard test forbids the
+    assignment in a handler).
     """
     root = driver_error(error)
     if _is_transient(root):
         err: StorageError = StorageBusyError(f"{what}: {root}")
         err.suggestion = BUSY_SUGGESTION
         return err
-    return cls(f"{what}: {root}" if with_detail else what)
+    err = cls(f"{what}: {root}" if with_detail else what)
+    if suggestion is not None:
+        err.suggestion = disk_suggestion if is_disk_fault(error) else suggestion
+    return err

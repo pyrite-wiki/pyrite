@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from ..exceptions import IndexSchemaRefusedError, StorageError
 from .backends.sqlite_backend import SQLiteBackend
-from .errors import DISK_SUGGESTION, INDEX_ONLY_STATE, is_disk_fault, storage_error_from
+from .errors import INDEX_ONLY_STATE, storage_error_from
 from .migrations import MigrationError
 from .models import Base
 from .schema_repair import MIGRATION_FAILED_SUGGESTION, repair_schema, schema_lock
@@ -203,9 +203,11 @@ class ConnectionMixin:
             def handle_db_error(exception_context: ExceptionContext) -> None:
                 orig = exception_context.original_exception
                 if is_index_corruption(orig):
-                    err = storage_error_from(orig, f"Database error at {index_path_for_errors}")
-                    err.suggestion = CORRUPT_INDEX_SUGGESTION
-                    raise err from orig
+                    raise storage_error_from(
+                        orig,
+                        f"Database error at {index_path_for_errors}",
+                        suggestion=CORRUPT_INDEX_SUGGESTION,
+                    ) from orig
 
             # Session factory. There is deliberately no long-lived *shared*
             # Session: one Session used by concurrent threads corrupts SQLAlchemy's
@@ -250,12 +252,13 @@ class ConnectionMixin:
             raise
         except (OSError, sqlite3.Error, SQLAlchemyError, MigrationError) as exc:
             self._dispose_after_failed_open()
-            err = storage_error_from(exc, f"Cannot open index database at {self.db_path}")
-            if err.suggestion is None:
-                # A disk fault is not fixed by a rebuild; what is left is a file
-                # SQLite cannot read (corruption, not a database, a directory).
-                err.suggestion = DISK_SUGGESTION if is_disk_fault(exc) else CORRUPT_INDEX_SUGGESTION
-            raise err from exc
+            # A disk fault is not fixed by a rebuild; what is left is a file
+            # SQLite cannot read (corruption, not a database, a directory).
+            raise storage_error_from(
+                exc,
+                f"Cannot open index database at {self.db_path}",
+                suggestion=CORRUPT_INDEX_SUGGESTION,
+            ) from exc
 
         # Instantiate the search backend.
         #
@@ -410,9 +413,9 @@ class ConnectionMixin:
             except sqlite3.DatabaseError as exc:
                 if not is_index_corruption(exc):
                     raise
-                err = storage_error_from(exc, f"Database error at {self.db_path}")
-                err.suggestion = CORRUPT_INDEX_SUGGESTION
-                raise err from exc
+                raise storage_error_from(
+                    exc, f"Database error at {self.db_path}", suggestion=CORRUPT_INDEX_SUGGESTION
+                ) from exc
             finally:
                 cursor.close()
 
@@ -505,19 +508,15 @@ class ConnectionMixin:
                 mgr.migrate()
             except MigrationError as exc:
                 logger.warning("Index migration failed: %s", exc)
-                err = storage_error_from(
+                raise storage_error_from(
                     exc,
                     f"Upgrading the index from schema version {from_version} to "
                     f"{CURRENT_VERSION} stopped at migration v{exc.version}; the steps "
                     "before it are kept.",
                     cls=IndexSchemaRefusedError,
                     with_detail=False,
-                )
-                if err.suggestion is None:
-                    err.suggestion = (
-                        DISK_SUGGESTION if is_disk_fault(exc) else MIGRATION_FAILED_SUGGESTION
-                    )
-                raise err from exc
+                    suggestion=MIGRATION_FAILED_SUGGESTION,
+                ) from exc
         # Create vec_entry table if sqlite-vec is available and table doesn't exist
         if self.vec_available:
             create_vec_table(self._raw_conn)

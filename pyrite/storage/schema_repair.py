@@ -89,7 +89,7 @@ from sqlalchemy.dialects import sqlite as sqlite_dialect
 from sqlalchemy.schema import CreateColumn, CreateIndex
 
 from ..exceptions import IndexSchemaRefusedError, StorageBusyError
-from .errors import DISK_SUGGESTION, INDEX_ONLY_STATE, is_disk_fault, storage_error_from
+from .errors import INDEX_ONLY_STATE, storage_error_from
 
 try:
     import fcntl
@@ -242,16 +242,14 @@ def repair_schema(
         # The driver's text is logged, not shown: it is not safe by
         # construction (IndexSchemaRefusedError's contract).
         logger.warning("Index schema repair failed adding %s: %s", ", ".join(added), exc)
-        failed = storage_error_from(
+        raise storage_error_from(
             exc,
             f"{describe_state(conn, version_at_open)} needs {', '.join(added)}, and adding "
             "them failed; nothing was changed.",
             cls=IndexSchemaRefusedError,
             with_detail=False,
-        )
-        if failed.suggestion is None:
-            failed.suggestion = DISK_SUGGESTION if is_disk_fault(exc) else REPAIR_FAILED_SUGGESTION
-        raise failed from exc
+            suggestion=REPAIR_FAILED_SUGGESTION,
+        ) from exc
     logger.info("Repaired the index schema: added %s", ", ".join(added))
     return added
 

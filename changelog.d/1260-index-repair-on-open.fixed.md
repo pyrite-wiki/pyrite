@@ -19,3 +19,10 @@
   else works, and it now says to run `pyrite db backup` first and names what a
   rebuild does not restore: KBs added with `pyrite kb add`, users, sessions,
   API keys, permissions, stars, reviews, settings and version history.
+- `pyrite db backup` no longer tells you to move a healthy index aside when the
+  fault is the backup's output path (a read-only directory or file, a full
+  disk, a file there that is not a database): it says the output path is at fault and
+  says the index was not changed. A locked index or output file is the
+  retryable `STORAGE_ERROR` that says to wait, where a lock on the output file
+  used to hang the command, and a failed backup no longer deletes a file that
+  was already at the output path.

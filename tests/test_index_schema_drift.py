@@ -913,79 +913,442 @@ def test_a_lock_is_retryable_and_never_told_to_rebuild(site, tmp_path, monkeypat
     assert "index build" not in suggestion, suggestion
 
 
-def _conversion_sites() -> dict[str, bool]:
-    """Each ``except`` in the four modules that catches a SQLite, SQLAlchemy or
-    migration error and raises something new, and whether it calls the
-    classifier (directly or through `_storage_error_for_write`)."""
+# ---------------------------------------------------------------------------
+# Round 2: the classifier guard reads every module under pyrite/ (#1260).
+#
+# Round 1's guard scanned four modules, keyed sites by function (so a second,
+# unclassified handler in a classified function hid behind the first) and
+# matched exception names as substrings (so `except DatabaseError` was not a
+# site). This one resolves each handler's caught names through the module's
+# imports and constants, judges each handler on its own, and requires every
+# error a database handler raises to be the classifier's result.
+# ---------------------------------------------------------------------------
+
+_PYRITE_ROOT = Path(__file__).resolve().parents[1] / "pyrite"
+
+#: Functions whose result is the classifier's: `storage_error_from` itself and
+#: wrappers that return what it returns (checked by source below).
+_CLASSIFIERS = {
+    "pyrite.storage.errors.storage_error_from",
+    "pyrite.storage.index._storage_error_for_write",
+}
+
+#: Calls that turn the fault into the user's error without raising one.
+_ERROR_EMITTERS = {"pyrite.utils.errors.cli_error"}
+
+
+class _Module:
+    """One module's AST, its imported names (alias -> qualified name) and its
+    module-level assignments, for resolving what an ``except`` catches."""
+
+    def __init__(self, name: str, path: Path):
+        import ast
+
+        self.name = name
+        self.path = path
+        self.tree = ast.parse(path.read_text(encoding="utf-8"))
+        package = name if path.name == "__init__.py" else name.rpartition(".")[0]
+        self.imports: dict[str, str] = {}
+        # Function-local imports count too: Pyrite imports lazily.
+        for node in ast.walk(self.tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.asname:
+                        self.imports[alias.asname] = alias.name
+                    else:
+                        top = alias.name.split(".")[0]
+                        self.imports[top] = top
+            elif isinstance(node, ast.ImportFrom):
+                source = node.module or ""
+                if node.level:
+                    base = package.split(".")[: len(package.split(".")) - (node.level - 1)]
+                    source = ".".join(base + ([source] if source else []))
+                for alias in node.names:
+                    self.imports[alias.asname or alias.name] = f"{source}.{alias.name}"
+        self.constants = {
+            node.targets[0].id: node.value
+            for node in self.tree.body
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        }
+
+
+_MODULES: dict[str, _Module | None] = {}
+
+
+def _module(name: str) -> _Module | None:
+    if name not in _MODULES:
+        base = _PYRITE_ROOT.parent.joinpath(*name.split("."))
+        found = [p for p in (base.with_suffix(".py"), base / "__init__.py") if p.is_file()]
+        _MODULES[name] = _Module(name, found[0]) if found else None
+    return _MODULES[name]
+
+
+def _module_name(path: Path) -> str:
+    parts = list(path.relative_to(_PYRITE_ROOT.parent).with_suffix("").parts)
+    return ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
+
+
+def _resolve(module: _Module, expr, depth: int = 0) -> set[str]:
+    """The qualified names ``expr`` may stand for: through ``import ... as``,
+    ``from ... import X as Y``, tuples, and module constants (here or in the
+    pyrite module a name was imported from)."""
     import ast
 
-    # `Exception` too: a broad handler that wraps a SQLite error is a site.
-    caught = (
-        "sqlite3",
-        "SQLAlchemyError",
-        "OperationalError",
-        "MigrationError",
-        "_DATABASE_FAULTS",
-        "Exception",
+    if depth > 8:
+        return {ast.unparse(expr)}
+    if isinstance(expr, ast.Tuple):
+        return set().union(*(_resolve(module, e, depth + 1) for e in expr.elts))
+    if isinstance(expr, ast.Name):
+        constant = module.constants.get(expr.id)
+        if isinstance(constant, ast.Tuple | ast.Name | ast.Attribute):
+            return _resolve(module, constant, depth + 1)
+        if expr.id in module.imports:
+            qualified = module.imports[expr.id]
+            owner, _, attr = qualified.rpartition(".")
+            source = _module(owner) if owner.startswith("pyrite") else None
+            if source is not None and source is not module:
+                return _resolve(source, ast.Name(id=attr), depth + 1)
+            return {qualified}
+        return {f"{module.name}.{expr.id}"}
+    if isinstance(expr, ast.Attribute):
+        return {f"{q}.{expr.attr}" for q in _resolve(module, expr.value, depth + 1)}
+    return {ast.unparse(expr)}
+
+
+def _is_database_fault(qualified: str) -> bool:
+    return (
+        qualified.startswith(("sqlite3.", "sqlalchemy."))
+        or qualified == "pyrite.storage.migrations.MigrationError"
     )
-    classifiers = {"storage_error_from", "_storage_error_for_write"}
-    root = Path(__file__).resolve().parents[1] / "pyrite" / "storage"
-    sites: dict[str, bool] = {}
-    for module in ("connection", "migrations", "schema_repair", "index"):
-        tree = ast.parse((root / f"{module}.py").read_text())
-        for func in ast.walk(tree):
-            if not isinstance(func, ast.FunctionDef | ast.AsyncFunctionDef):
+
+
+def _is_storage_error_class(qualified: str) -> bool:
+    """Does ``qualified`` name StorageError, a subclass, or MigrationError?"""
+    import importlib
+
+    from pyrite.storage.migrations import MigrationError
+
+    owner, _, attr = qualified.rpartition(".")
+    if not owner.startswith("pyrite"):
+        return False
+    try:
+        obj = getattr(importlib.import_module(owner), attr)
+    except (ImportError, AttributeError):
+        return False
+    return isinstance(obj, type) and issubclass(obj, StorageError | MigrationError)
+
+
+def _returns_storage_error(qualified: str) -> bool:
+    """Is ``qualified`` a pyrite function annotated to return a StorageError
+    (a factory such as ``kb_service._storage_error``)? A handler that raises
+    its result builds a storage error as surely as one that calls the class."""
+    import ast
+
+    owner, _, attr = qualified.rpartition(".")
+    module = _module(owner) if owner.startswith("pyrite") else None
+    if module is None:
+        return False
+    for node in module.tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == attr and node.returns is not None:
+            return any(_is_storage_error_class(q) for q in _resolve(module, node.returns))
+    return False
+
+
+def _handler_nodes(handler):
+    """The handler's own nodes, not those of a function defined inside it."""
+    import ast
+
+    stack = list(handler.body)
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda | ast.ClassDef):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def _callee(module: _Module, call) -> set[str]:
+    return _resolve(module, call.func)
+
+
+def _handler_findings(module: _Module, handler) -> tuple[bool, list[str]]:
+    """Is this handler a conversion site, and what in it bypasses the classifier?
+
+    A site is a handler that catches a database fault (resolved names), or one
+    of any type that raises a StorageError or MigrationError it built. In a
+    site, every ``raise X`` must re-raise the caught error or raise the
+    classifier's result (a call, or a name bound to one in the handler); no
+    ``cli_error`` may report the fault; and nothing may set ``.suggestion``,
+    which would put the site's advice over a lock's or a disk's.
+    """
+    import ast
+
+    caught = _resolve(module, handler.type) if handler.type is not None else {"BaseException"}
+    nodes = list(_handler_nodes(handler))
+    classified: set[str] = set()
+    for node in nodes:
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and _callee(module, node.value) & _CLASSIFIERS
+        ):
+            classified |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+
+    def builds_storage_error(exc) -> bool:
+        call = exc
+        if isinstance(exc, ast.Name):
+            bound = [
+                n.value
+                for n in nodes
+                if isinstance(n, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == exc.id for t in n.targets)
+            ]
+            call = bound[0] if bound else None
+        return isinstance(call, ast.Call) and any(
+            _is_storage_error_class(q) or _returns_storage_error(q) for q in _callee(module, call)
+        )
+
+    findings: list[str] = []
+    raises = [n for n in nodes if isinstance(n, ast.Raise) and n.exc is not None]
+    is_site = any(_is_database_fault(q) for q in caught) or any(
+        builds_storage_error(r.exc) for r in raises
+    )
+    if not is_site:
+        return False, []
+    for node in raises:
+        exc = node.exc
+        if isinstance(exc, ast.Name) and (exc.id == handler.name or exc.id in classified):
+            continue
+        if isinstance(exc, ast.Call) and _callee(module, exc) & _CLASSIFIERS:
+            continue
+        findings.append(f"raises {ast.unparse(exc)[:60]}")
+    for node in nodes:
+        if isinstance(node, ast.Call) and _callee(module, node) & _ERROR_EMITTERS:
+            findings.append(f"reports with {ast.unparse(node.func)}")
+        if isinstance(node, ast.Assign | ast.AugAssign):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, ast.Attribute) and target.attr == "suggestion":
+                    findings.append(f"sets {ast.unparse(target)} after the classifier")
+    return True, findings
+
+
+def _conversion_sites(root: Path = _PYRITE_ROOT) -> dict[str, list[str]]:
+    """Every conversion site under ``root``, keyed one handler at a time as
+    ``module:qualname:caught`` (with ``#n`` for a repeat in one function),
+    mapped to what in it bypasses the classifier."""
+    import ast
+
+    sites: dict[str, list[str]] = {}
+
+    def visit(module: _Module, node, scope: list[str]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                visit(module, child, [*scope, child.name])
                 continue
-            for handler in ast.walk(func):
-                if not isinstance(handler, ast.ExceptHandler) or handler.type is None:
-                    continue
-                if not any(name in ast.unparse(handler.type) for name in caught):
-                    continue
-                raises = [
-                    n for n in ast.walk(handler) if isinstance(n, ast.Raise) and n.exc is not None
-                ]
-                if not raises:
-                    continue  # re-raises, logs or returns: converts nothing
-                calls = {
-                    n.func.id if isinstance(n.func, ast.Name) else getattr(n.func, "attr", "")
-                    for n in ast.walk(handler)
-                    if isinstance(n, ast.Call)
-                }
-                sites[f"{module}.{func.name}"] = bool(calls & classifiers)
+            if isinstance(child, ast.ExceptHandler):
+                is_site, findings = _handler_findings(module, child)
+                if is_site:
+                    caught = ast.unparse(child.type) if child.type is not None else "<bare>"
+                    key = f"{module.name}:{'.'.join(scope) or '<module>'}:{caught}"
+                    n = 1
+                    while (unique := key if n == 1 else f"{key}#{n}") in sites:
+                        n += 1
+                    sites[unique] = findings
+            visit(module, child, scope)
+
+    for path in sorted(root.rglob("*.py")):
+        name = _module_name(path)
+        module = _module(name)
+        assert module is not None, path
+        visit(module, module.tree, [])
     return sites
 
 
-#: Conversion sites that raise something other than a StorageError, and why
-#: that is safe.
-NOT_STORAGE_ERRORS = {
-    # Wraps the SQLite error as MigrationError, keeping it as __cause__;
-    # connection._run_migrations converts it, through the classifier.
-    "migrations._apply_migration": "raises MigrationError for _run_migrations",
-    # MigrationManager.rollback, which no open path (and no command) calls.
-    "migrations._rollback_migration": "raises MigrationError; not on the open path",
+#: Conversion sites that report a database fault without the classifier, and
+#: why that is right. Keyed as `_conversion_sites` keys them; an entry that no
+#: longer matches a site with findings fails the test, so the list cannot rot.
+NOT_THE_CLASSIFIERS_JOB = {
+    "pyrite.storage.migrations:MigrationManager._apply_migration:Exception": (
+        "wraps the fault as MigrationError with it as __cause__; "
+        "connection._run_migrations, the one caller on the open path, classifies that"
+    ),
+    "pyrite.storage.migrations:MigrationManager._rollback_migration:Exception": (
+        "MigrationError for MigrationManager.rollback, which no open path and no command calls"
+    ),
+    "pyrite.services.search_service:SearchService._db_search:sqlite3.DatabaseError": (
+        "QuerySyntaxError only where _looks_like_query_syntax_error matches the "
+        "caller's query; every other fault raises storage_error_from"
+    ),
+    "pyrite.services.auth_service:AuthService._insert_local_user:IntegrityError": (
+        "ValueError for the UNIQUE username constraint: IntegrityError is SQLite's "
+        "constraint class, never a lock, a disk fault or corruption"
+    ),
+    "pyrite.cli.db_commands:db_restore:sqlite3.DatabaseError": (
+        "VALIDATION_FAILED for the backup file the user names, which is checked "
+        "before the index is touched; the index is not the file at fault"
+    ),
+    "pyrite.storage.backends.postgres_backend:PostgresBackend._exec:Exception": (
+        "the Postgres backend's row materialisation; storage_error_from classifies "
+        "SQLite's result codes only"
+    ),
+    # Faults that are not the database's: each builds its StorageError from a
+    # file lock or the filesystem, which the SQLite classifier cannot judge.
+    "pyrite.storage.schema_repair:schema_lock:BlockingIOError": (
+        "the schema lock file (fcntl) held past its timeout: StorageBusyError, "
+        "retryable, with its own wait advice"
+    ),
+    "pyrite.services.kb_service:KBService._update:LockTimeout": (
+        "the entry file's write lock (utils.file_lock): StorageBusyError, retryable"
+    ),
+    "pyrite.services.kb_service:KBService._update:OSError": (
+        "the markdown file's write (a hard link, the lock directory, the disk)"
+    ),
+    "pyrite.services.kb_service:KBService.rename_entry:LockTimeout": (
+        "the entry file's rename lock (utils.file_lock): StorageBusyError, retryable"
+    ),
+    "pyrite.services.kb_service:KBService.rename_entry:OSError": (
+        "the markdown file's rename (a hard link, the lock directory, the disk)"
+    ),
+    "pyrite.services.kb_service:KBService.rename_entry:Exception": (
+        "the rename is already on disk, so retrying it is wrong whatever the "
+        "sync's fault, a lock included: IndexSyncRecoveryHintError says to run "
+        "`pyrite index sync`, which recovers from every cause and moves nothing aside"
+    ),
 }
 
 
-def test_no_conversion_site_skips_the_classifier():
+def test_every_conversion_site_raises_the_classifier_result():
     sites = _conversion_sites()
-    handled = {
-        "connection._init_connection",
-        "connection._run_migrations",
-        "connection._raw_cursor",  # corruption only, through storage_error_from
-        "schema_repair.repair_schema",
-        "index.reconcile_kb",  # through _storage_error_for_write
-    }
-    assert set(sites) == handled | set(NOT_STORAGE_ERRORS), (
-        "a new site turns a SQLite error into a StorageError: route it through "
-        "storage_error_from and add it to LOCK_SITES with a lock that reaches it"
+    bypassing = {key: findings for key, findings in sites.items() if findings}
+    unexplained = {k: v for k, v in bypassing.items() if k not in NOT_THE_CLASSIFIERS_JOB}
+    assert not unexplained, (
+        "these handlers turn a database fault into a Pyrite error without "
+        "storage_error_from: raise its result (pass the advice as suggestion=), "
+        f"or explain them in NOT_THE_CLASSIFIERS_JOB: {unexplained}"
     )
-    for site in handled:
-        assert sites[site], f"{site} builds its StorageError without storage_error_from"
+    stale = set(NOT_THE_CLASSIFIERS_JOB) - set(bypassing)
+    assert not stale, f"NOT_THE_CLASSIFIERS_JOB names handlers that are gone or fixed: {stale}"
+
+
+def test_the_classifier_wrappers_return_its_result():
     import inspect
 
     from pyrite.storage import index
 
     assert "storage_error_from(" in inspect.getsource(index._storage_error_for_write)
+
+
+#: Sites found by reading the code (#1260 round 2), each routed through the
+#: classifier. The scan must see them: a resolver that lost an alias or a
+#: tuple would find no site and pass the test above for the wrong reason.
+_KNOWN_CLASSIFIED_SITES = {
+    "pyrite.storage.connection:ConnectionMixin._init_connection:"
+    "(OSError, sqlite3.Error, SQLAlchemyError, MigrationError)",
+    "pyrite.storage.connection:ConnectionMixin._raw_cursor:sqlite3.DatabaseError",
+    "pyrite.storage.connection:ConnectionMixin._run_migrations:MigrationError",
+    "pyrite.storage.schema_repair:repair_schema:sqlite3.Error",
+    "pyrite.storage.index:IndexManager.reconcile_kb:_DATABASE_FAULTS",
+    "pyrite.services.index_backup:backup_index:sqlite3.Error",
+    "pyrite.services.index_backup:backup_index:sqlite3.Error#2",
+    "pyrite.services.url_checker:URLChecker.collect_urls:"
+    "(SQLAlchemyError, sqlite3.Error, StorageError)",
+}
+
+
+def test_the_scan_sees_every_known_site():
+    sites = _conversion_sites()
+    missing = _KNOWN_CLASSIFIED_SITES - set(sites)
+    assert not missing, (missing, sorted(sites))
+    assert all(not sites[key] for key in _KNOWN_CLASSIFIED_SITES), {
+        k: sites[k] for k in _KNOWN_CLASSIFIED_SITES if sites[k]
+    }
+
+
+_SCRATCH_TRICKS = {
+    # Round 1 review (a): a second handler in a classified function.
+    "a second handler in a classified function": """
+import sqlite3
+from pyrite.exceptions import StorageError
+from pyrite.storage.errors import storage_error_from
+
+def _init_connection(conn):
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+    except sqlite3.OperationalError as exc:
+        raise StorageError(f"Cannot open: {exc}") from exc
+    except sqlite3.Error as exc:
+        raise storage_error_from(exc, "Cannot open") from exc
+""",
+    # Round 1 review (b): a name the substring match did not know.
+    "DatabaseError imported by name": """
+from sqlite3 import DatabaseError
+from pyrite.exceptions import StorageError
+
+class Thing:
+    def read(self, conn):
+        try:
+            conn.execute("SELECT 1")
+        except DatabaseError as exc:
+            raise StorageError(f"read failed: {exc}") from exc
+""",
+    "an aliased SQLAlchemy class": """
+from sqlalchemy.exc import DBAPIError as DriverFault
+from pyrite.exceptions import StorageError
+
+def read(session):
+    try:
+        session.execute("SELECT 1")
+    except DriverFault as exc:
+        raise StorageError("read failed") from exc
+""",
+    "an IntegrityError in a tuple through a module alias": """
+import sqlite3 as db
+from pyrite.exceptions import ValidationError
+
+def write(conn):
+    try:
+        conn.execute("INSERT INTO t VALUES (1)")
+    except (KeyError, db.IntegrityError) as exc:
+        raise ValidationError("bad row") from exc
+""",
+    "a classified error whose advice is replaced": """
+import sqlite3
+from pyrite.storage.errors import storage_error_from
+
+def write(conn):
+    try:
+        conn.execute("INSERT INTO t VALUES (1)")
+    except sqlite3.Error as exc:
+        err = storage_error_from(exc, "write failed")
+        err.suggestion = "Run `pyrite index build`."
+        raise err from exc
+""",
+    "a broad handler that builds a StorageError": """
+from pyrite.exceptions import StorageError
+
+def write(conn):
+    try:
+        conn.execute("INSERT INTO t VALUES (1)")
+    except Exception as exc:
+        raise StorageError("write failed") from exc
+""",
+}
+
+
+@pytest.mark.parametrize("trick", sorted(_SCRATCH_TRICKS))
+def test_the_guard_catches(trick, tmp_path, monkeypatch):
+    """Each way round 1's guard was fooled, written into a scratch module
+    under a scratch ``pyrite`` package and scanned as the real tree is."""
+    root = tmp_path / "pyrite"
+    root.mkdir()
+    (root / "scratch.py").write_text(_SCRATCH_TRICKS[trick], encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "_PYRITE_ROOT", root)
+    monkeypatch.setattr(sys.modules[__name__], "_MODULES", {})
+    sites = _conversion_sites(root)
+    assert any(sites.values()), sites
 
 
 # ---------------------------------------------------------------------------
@@ -996,6 +1359,8 @@ def test_no_conversion_site_skips_the_classifier():
 
 #: Each suggestion and the module that defines it.
 _SUGGESTION_HOMES = {
+    "BACKUP_DESTINATION_SUGGESTION": "pyrite.services.index_backup",
+    "BACKUP_RETRY_SUGGESTION": "pyrite.services.index_backup",
     "BUSY_SUGGESTION": "pyrite.storage.errors",
     "CORRUPT_INDEX_SUGGESTION": "pyrite.storage.connection",
     "DISK_SUGGESTION": "pyrite.storage.errors",
@@ -1024,6 +1389,8 @@ LOST_ON_REBUILD = ("pyrite kb add", "users", "sessions", "API keys", "stars", "r
 
 
 SUGGESTION_NAMES = [
+    "BACKUP_DESTINATION_SUGGESTION",
+    "BACKUP_RETRY_SUGGESTION",
     "BUSY_SUGGESTION",
     "CORRUPT_INDEX_SUGGESTION",
     "DISK_SUGGESTION",
