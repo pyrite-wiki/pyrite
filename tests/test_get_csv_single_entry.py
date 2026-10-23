@@ -55,9 +55,13 @@ def test_get_csv_prints_the_entry_without_tags(cli_world, console_width):
     rows = _rows(_run(world, ["get", ID, "-k", KB, "--format", "csv"]))
     assert len(rows) == 2, rows
     header, row = rows
-    assert header == ["id", "kb_name", "title", "tags"], header
+    # The single-entry render shows whatever keys the entry has, so the
+    # header is the payload's own key set (entry_type, body, summary, ...),
+    # not a hand-picked projection: pin the keys the read must carry.
+    assert "id" in header and "title" in header and "tags" in header, header
     assert row[header.index("id")] == ID
     assert row[header.index("title")] == TITLE
+    assert row[header.index("tags")] == "[]", row  # cell_text json-dumps the empty list
 
 
 def test_get_csv_stdout_ends_with_exactly_one_newline(cli_world, console_width):
