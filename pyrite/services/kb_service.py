@@ -896,8 +896,19 @@ class KBService:
         ``EntryNotFoundError``, whose message names only the KB the caller
         named: a KB outside ``readable_kbs`` neither answers nor is named.
 
-        ``entry_type`` counts only entries of that type, so a backlog command
-        is not refused over a note that shares the id in another KB.
+        **The type rule (#1310), one for every surface.** A command or tool
+        that acts on one entry type passes it as ``entry_type`` -- ``sw``
+        backlog items (``backlog_item``), ``wiki`` articles (``article``),
+        ``social vote`` writeups (``writeup``), a claim tool ``claim`` -- and
+        only entries of that type count: a note that shares the id in another
+        KB neither makes the id ambiguous nor answers it, and an id held only
+        by other types is ``ENTRY_NOT_FOUND`` ("backlog item 'x' not found").
+        A command that accepts any type (``zettel`` graph, the investigation
+        network tools) passes none, and then two entries of any types sharing
+        the id are ``AMBIGUOUS``. The CLI (``require_entry_kb``) and the MCP
+        dispatcher (a tool's ``locates_entry``) both pass the type the command
+        or tool is documented to act on; ``pyrite get`` and ``kb_get``, which
+        return any entry, pass none.
 
         Registry-only KBs (``pyrite kb add``) are searched when this service's
         config has them merged (``cli.context.get_config_and_db``).

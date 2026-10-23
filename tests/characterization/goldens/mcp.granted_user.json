@@ -172,10 +172,16 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_evidence_chain | granted_user | private-kb": {
-    "error": "Claim 'characterization-placeholder-id-investigation_evidence_chain-granted_user-private-kb' not found"
+    "error": "Entry claim 'characterization-placeholder-id-investigation_evidence_chain-granted_user-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "investigation_evidence_chain | granted_user | readable-kb": {
-    "error": "Claim 'characterization-placeholder-id-investigation_evidence_chain-granted_user-readable-kb' not found"
+    "error": "Entry claim 'characterization-placeholder-id-investigation_evidence_chain-granted_user-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "investigation_export_pack | granted_user | missing-kb": {
     "did_you_mean": [],
@@ -3172,10 +3178,16 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_check_ready | granted_user | private-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_check_ready-granted_user-private-kb' not found in KB 'private-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_check_ready-granted_user-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_check_ready | granted_user | readable-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_check_ready-granted_user-readable-kb' not found in KB 'readable-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_check_ready-granted_user-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_claim | granted_user | missing-kb": {
     "did_you_mean": [],
@@ -3252,10 +3264,16 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_context_for_item | granted_user | private-kb": {
-    "error": "Entry 'characterization-placeholder-id-sw_context_for_item-granted_user-private-kb' not found in KB 'private-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_context_for_item-granted_user-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_context_for_item | granted_user | readable-kb": {
-    "error": "Entry 'characterization-placeholder-id-sw_context_for_item-granted_user-readable-kb' not found in KB 'readable-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_context_for_item-granted_user-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_conventions | granted_user | missing-kb": {
     "did_you_mean": [],
@@ -3350,10 +3368,16 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_epic_detail | granted_user | private-kb": {
-    "error": "Epic 'characterization-placeholder-id-sw_epic_detail-granted_user-private-kb' not found in KB 'private-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_epic_detail-granted_user-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_epic_detail | granted_user | readable-kb": {
-    "error": "Epic 'characterization-placeholder-id-sw_epic_detail-granted_user-readable-kb' not found in KB 'readable-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_epic_detail-granted_user-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_epics | granted_user | missing-kb": {
     "did_you_mean": [],

@@ -121,6 +121,7 @@ class EncyclopediaPlugin:
                     },
                     "required": ["entry_id", "kb_name", "reviewer_id", "action"],
                 },
+                "locates_entry": {"id_args": ["entry_id"], "entry_type": "article"},
                 "handler": self._mcp_submit_review,
             }
             tools["wiki_assess_quality"] = {
@@ -138,6 +139,7 @@ class EncyclopediaPlugin:
                     },
                     "required": ["entry_id", "kb_name", "quality"],
                 },
+                "locates_entry": {"id_args": ["entry_id"], "entry_type": "article"},
                 "handler": self._mcp_assess_quality,
             }
 
@@ -158,6 +160,7 @@ class EncyclopediaPlugin:
                     },
                     "required": ["entry_id", "kb_name", "level"],
                 },
+                "locates_entry": {"id_args": ["entry_id"], "entry_type": "article"},
                 "handler": self._mcp_protect,
             }
 
@@ -325,6 +328,13 @@ class EncyclopediaPlugin:
 
     def _mcp_submit_review(self, args: dict[str, Any]) -> dict[str, Any]:
         """Submit a review."""
+        from pyrite.exceptions import ValidationError
+        from pyrite.services.access_policy import named_kb
+
+        # The dispatcher resolves the entry's KB (`locates_entry`); a row is
+        # never written for a KB named '' (#1310), whoever calls the handler.
+        if named_kb(args.get("kb_name")) is None:
+            raise ValidationError("kb_name is required: a row names the KB that holds the entry")
         from datetime import UTC, datetime
 
         db, should_close = self._get_db()

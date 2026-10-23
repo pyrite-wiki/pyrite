@@ -888,6 +888,9 @@ def test_the_walk_sees_every_id_shape_and_skips_the_rest():
     }
 
 
+@pytest.mark.control(
+    reason="the walk lives in this file: red was shown by running it against the old helpers (#1310 report)"
+)
 def test_the_walk_inspects_a_plugin_that_registers_one_command(monkeypatch):
     """`pyrite/cli/__init__.py` mounts a bare function as a command; the walk
     built it as `get_command(Typer())`, which raises RuntimeError (#1310)."""
@@ -915,6 +918,10 @@ def _ext_ids(name: str) -> dict[str, str]:
         "one": f"{slug}-one",
         "registry": f"{slug}-reg",
         "none": f"{slug}-absent",
+        # The command's type in EXT_A, a note in EXT_B (the type filter, #1310).
+        "twin": f"{slug}-twin",
+        # A note in EXT_A only: no entry of the command's type at all.
+        "wrongtype": f"{slug}-wrongtype",
     }
 
 
@@ -960,6 +967,9 @@ def ext_world(tmp_path, monkeypatch):
         put(EXT_B, ids["two"], case)
         put(EXT_B, ids["one"], case)
         put(EXT_REG, ids["registry"], case)
+        put(EXT_A, ids["twin"], case)
+        put(EXT_B, ids["twin"], _ExtCase("note", {}, None))
+        put(EXT_A, ids["wrongtype"], _ExtCase("note", {}, None))
 
     db = PyriteDB(tmp_path / "index.db")
     try:
@@ -1100,6 +1110,53 @@ def test_extension_command_with_k_answers_that_kb(ext_world, name):
         [*EXTENSION_CLI_CASES[name].argv(_ext_ids(name)["two"]), "-k", EXT_B],
     )
     assert result.exit_code == 0, result.output
+
+
+@pytest.mark.control(
+    reason="the commands already refused a -k without the id; the case was untested"
+)
+@pytest.mark.parametrize("name", sorted(_extension_id_commands()))
+def test_extension_command_with_k_lacking_the_id_writes_nothing(ext_world, name):
+    """-k naming a KB that lacks the id is NOT_FOUND, never a row for an entry
+    that is not there (#911's review, item 7)."""
+    before = _ext_snapshot(ext_world, name)
+    result = CliRunner().invoke(
+        __import__("pyrite.cli", fromlist=["app"]).app,
+        [*EXTENSION_CLI_CASES[name].argv(_ext_ids(name)["one"]), "-k", EXT_A],
+    )
+    assert result.exit_code == 1, result.output
+    assert "not found" in result.output.lower(), result.output
+    assert _ext_snapshot(ext_world, name) == before, f"{name} wrote for a KB without the id"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param(
+            name,
+            marks=[pytest.mark.control(reason="sw already passed backlog_item (#911)")]
+            if name.startswith("pyrite sw ")
+            else [],
+        )
+        for name in sorted(_extension_id_commands())
+    ],
+)
+def test_extension_command_counts_only_entries_of_its_type(ext_world, name):
+    """One rule for the ``entry_type`` filter, on CLI and MCP alike (#1310): a
+    command that acts on one type (``sw`` backlog items, ``wiki`` articles,
+    ``social vote`` writeups) counts only entries of that type, so a note
+    sharing the id in another KB neither makes it ambiguous nor answers it."""
+    ids = _ext_ids(name)
+    case = EXTENSION_CLI_CASES[name]
+    twin = _ext_cli(name, ids["twin"])
+    assert twin.exit_code == 0, twin.output
+    if case.writes and case.writes != "file":
+        assert _ext_rows(ext_world, case.writes) == [(ids["twin"], EXT_A)]
+    before = _ext_snapshot(ext_world, name)
+    wrong = _ext_cli(name, ids["wrongtype"])
+    assert wrong.exit_code == 1, wrong.output
+    assert "not found" in wrong.output.lower(), wrong.output
+    assert _ext_snapshot(ext_world, name) == before
 
 
 def test_locate_is_the_one_resolver(ext_world):

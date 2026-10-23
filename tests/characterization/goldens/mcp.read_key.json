@@ -188,13 +188,22 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_evidence_chain | read_key | no-default-role-kb": {
-    "error": "Claim 'characterization-placeholder-id-investigation_evidence_chain-read_key-no-default-role-kb' not found"
+    "error": "Entry claim 'characterization-placeholder-id-investigation_evidence_chain-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "investigation_evidence_chain | read_key | private-kb": {
-    "error": "Claim 'characterization-placeholder-id-investigation_evidence_chain-read_key-private-kb' not found"
+    "error": "Entry claim 'characterization-placeholder-id-investigation_evidence_chain-read_key-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "investigation_evidence_chain | read_key | readable-kb": {
-    "error": "Claim 'characterization-placeholder-id-investigation_evidence_chain-read_key-readable-kb' not found"
+    "error": "Entry claim 'characterization-placeholder-id-investigation_evidence_chain-read_key-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "investigation_export_pack | read_key | missing-kb": {
     "did_you_mean": [],
@@ -440,13 +449,22 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_promote_claim | read_key | no-default-role-kb": {
-    "error": "Claim not found: characterization-placeholder-id-investigation_promote_claim-read_key-no-default-role-kb"
+    "error": "Entry claim 'characterization-placeholder-id-investigation_promote_claim-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "investigation_promote_claim | read_key | private-kb": {
-    "error": "Claim not found: characterization-placeholder-id-investigation_promote_claim-read_key-private-kb"
+    "error": "Entry claim 'characterization-placeholder-id-investigation_promote_claim-read_key-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "investigation_promote_claim | read_key | readable-kb": {
-    "error": "Claim not found: characterization-placeholder-id-investigation_promote_claim-read_key-readable-kb"
+    "error": "Entry claim 'characterization-placeholder-id-investigation_promote_claim-read_key-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "investigation_qa_report | read_key | missing-kb": {
     "did_you_mean": [],
@@ -3680,19 +3698,22 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "social_vote | read_key | no-default-role-kb": {
-    "entry_id": "characterization-disposable-mutation-target",
-    "value": "characterization-value",
-    "voted": true
+    "error": "Entry writeup 'characterization-disposable-mutation-target' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "social_vote | read_key | private-kb": {
-    "entry_id": "characterization-disposable-mutation-target",
-    "value": "characterization-value",
-    "voted": true
+    "error": "Entry writeup 'characterization-disposable-mutation-target' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "social_vote | read_key | readable-kb": {
-    "entry_id": "characterization-disposable-mutation-target",
-    "value": "characterization-value",
-    "voted": true
+    "error": "Entry writeup 'characterization-disposable-mutation-target' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_adrs | read_key | missing-kb": {
     "did_you_mean": [],
@@ -3835,13 +3856,22 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_check_ready | read_key | no-default-role-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_check_ready-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_check_ready-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_check_ready | read_key | private-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_check_ready-read_key-private-kb' not found in KB 'private-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_check_ready-read_key-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_check_ready | read_key | readable-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_check_ready-read_key-readable-kb' not found in KB 'readable-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_check_ready-read_key-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_claim | read_key | missing-kb": {
     "did_you_mean": [],
@@ -3852,16 +3882,22 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_claim | read_key | no-default-role-kb": {
-    "claimed": false,
-    "error": "Backlog item 'characterization-placeholder-id-sw_claim-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_claim-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_claim | read_key | private-kb": {
-    "claimed": false,
-    "error": "Backlog item 'characterization-placeholder-id-sw_claim-read_key-private-kb' not found in KB 'private-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_claim-read_key-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_claim | read_key | readable-kb": {
-    "claimed": false,
-    "error": "Backlog item 'characterization-placeholder-id-sw_claim-read_key-readable-kb' not found in KB 'readable-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_claim-read_key-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_component | read_key | missing-kb": {
     "did_you_mean": [],
@@ -3904,13 +3940,22 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_context_for_item | read_key | no-default-role-kb": {
-    "error": "Entry 'characterization-placeholder-id-sw_context_for_item-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_context_for_item-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_context_for_item | read_key | private-kb": {
-    "error": "Entry 'characterization-placeholder-id-sw_context_for_item-read_key-private-kb' not found in KB 'private-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_context_for_item-read_key-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_context_for_item | read_key | readable-kb": {
-    "error": "Entry 'characterization-placeholder-id-sw_context_for_item-read_key-readable-kb' not found in KB 'readable-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_context_for_item-read_key-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_conventions | read_key | missing-kb": {
     "did_you_mean": [],
@@ -4014,13 +4059,22 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_epic_detail | read_key | no-default-role-kb": {
-    "error": "Epic 'characterization-placeholder-id-sw_epic_detail-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_epic_detail-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_epic_detail | read_key | private-kb": {
-    "error": "Epic 'characterization-placeholder-id-sw_epic_detail-read_key-private-kb' not found in KB 'private-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_epic_detail-read_key-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_epic_detail | read_key | readable-kb": {
-    "error": "Epic 'characterization-placeholder-id-sw_epic_detail-read_key-readable-kb' not found in KB 'readable-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_epic_detail-read_key-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_epics | read_key | missing-kb": {
     "did_you_mean": [],
@@ -4051,16 +4105,22 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_log | read_key | no-default-role-kb": {
-    "created": false,
-    "error": "Backlog item 'characterization-placeholder-id-sw_log-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_log-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_log | read_key | private-kb": {
-    "created": false,
-    "error": "Backlog item 'characterization-placeholder-id-sw_log-read_key-private-kb' not found in KB 'private-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_log-read_key-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_log | read_key | readable-kb": {
-    "created": false,
-    "error": "Backlog item 'characterization-placeholder-id-sw_log-read_key-readable-kb' not found in KB 'readable-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_log-read_key-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_milestones | read_key | missing-kb": {
     "did_you_mean": [],
@@ -4151,16 +4211,22 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_review | read_key | no-default-role-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_review-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
-    "reviewed": false
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_review-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_review | read_key | private-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_review-read_key-private-kb' not found in KB 'private-kb'",
-    "reviewed": false
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_review-read_key-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_review | read_key | readable-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_review-read_key-readable-kb' not found in KB 'readable-kb'",
-    "reviewed": false
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_review-read_key-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_review_queue | read_key | missing-kb": {
     "did_you_mean": [],
@@ -4229,16 +4295,22 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_submit | read_key | no-default-role-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_submit-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
-    "submitted": false
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_submit-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_submit | read_key | private-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_submit-read_key-private-kb' not found in KB 'private-kb'",
-    "submitted": false
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_submit-read_key-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_submit | read_key | readable-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_submit-read_key-readable-kb' not found in KB 'readable-kb'",
-    "submitted": false
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_submit-read_key-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_transition | read_key | missing-kb": {
     "did_you_mean": [],
@@ -4249,16 +4321,22 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_transition | read_key | no-default-role-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_transition-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
-    "transitioned": false
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_transition-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_transition | read_key | private-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_transition-read_key-private-kb' not found in KB 'private-kb'",
-    "transitioned": false
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_transition-read_key-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_transition | read_key | readable-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_transition-read_key-readable-kb' not found in KB 'readable-kb'",
-    "transitioned": false
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_transition-read_key-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_validations | read_key | missing-kb": {
     "did_you_mean": [],
@@ -4551,13 +4629,22 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_assess_quality | read_key | no-default-role-kb": {
-    "error": "Invalid quality: good"
+    "error": "Entry article 'characterization-disposable-mutation-target' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "wiki_assess_quality | read_key | private-kb": {
-    "error": "Invalid quality: good"
+    "error": "Entry article 'characterization-disposable-mutation-target' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "wiki_assess_quality | read_key | readable-kb": {
-    "error": "Invalid quality: good"
+    "error": "Entry article 'characterization-disposable-mutation-target' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "wiki_protect | read_key | missing-kb": {
     "did_you_mean": [],
@@ -4568,13 +4655,22 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_protect | read_key | no-default-role-kb": {
-    "error": "Invalid protection level: protected"
+    "error": "Entry article 'characterization-disposable-mutation-target' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "wiki_protect | read_key | private-kb": {
-    "error": "Invalid protection level: protected"
+    "error": "Entry article 'characterization-disposable-mutation-target' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "wiki_protect | read_key | readable-kb": {
-    "error": "Invalid protection level: protected"
+    "error": "Entry article 'characterization-disposable-mutation-target' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "wiki_quality_stats | read_key | missing-kb": {
     "did_you_mean": [],
@@ -4651,19 +4747,22 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "wiki_submit_review | read_key | no-default-role-kb": {
-    "action": "add",
-    "entry_id": "characterization-disposable-mutation-target",
-    "reviewed": true
+    "error": "Entry article 'characterization-disposable-mutation-target' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "wiki_submit_review | read_key | private-kb": {
-    "action": "add",
-    "entry_id": "characterization-disposable-mutation-target",
-    "reviewed": true
+    "error": "Entry article 'characterization-disposable-mutation-target' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "wiki_submit_review | read_key | readable-kb": {
-    "action": "add",
-    "entry_id": "characterization-disposable-mutation-target",
-    "reviewed": true
+    "error": "Entry article 'characterization-disposable-mutation-target' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "zettel_graph | read_key | missing-kb": {
     "did_you_mean": [],

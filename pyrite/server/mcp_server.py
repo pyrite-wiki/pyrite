@@ -2606,6 +2606,37 @@ class PyriteMCPServer:
         except LandingRefusedError as e:
             return None, _refusal(e)
 
+    def _locate_entry_ids(
+        self, spec: dict[str, Any], arguments: dict[str, Any], readable_kbs: set[str] | None
+    ) -> dict[str, Any]:
+        """``arguments`` with ``kb_name`` set to the KB that holds the entry ids.
+
+        The plugin tools' door to ``KBService.locate`` (#1310, the MCP half of
+        #911), the rule the CLI's ``require_entry_kb`` applies: a ``kb_name``
+        absent or blank names no KB, and the id is then found in the one
+        readable KB that holds it, refused ``AMBIGUOUS`` (with
+        ``candidate_kbs``) when several do, ``ENTRY_NOT_FOUND`` when none does.
+        A named KB must hold the id. ``spec`` is the tool's ``locates_entry``:
+        ``id_args`` (the arguments that carry entry ids, each a string or a
+        list of strings) and ``entry_type`` (the one type the tool acts on, or
+        absent for a tool that takes any). Every id must be in the one KB.
+        Raises ``PyriteError``; the caller renders the refusal.
+        """
+        ids: list[str] = []
+        for arg in spec["id_args"]:
+            value = arguments.get(arg)
+            values = value if isinstance(value, list | tuple) else [value]
+            ids.extend(v for v in values if isinstance(v, str) and v.strip())
+        if not ids:
+            return arguments  # the handler's own validation names the missing id
+        kb = named_kb(arguments.get("kb_name"))
+        for entry_id in ids:
+            found = self.svc.locate(
+                entry_id, kb, readable_kbs=readable_kbs, entry_type=spec.get("entry_type")
+            )
+            kb = kb or found
+        return {**arguments, "kb_name": kb}
+
     def _dispatch_tool(
         self,
         name: str,
@@ -2689,6 +2720,20 @@ class PyriteMCPServer:
                     refusal["legacy_error_code"] = "UPDATE_FAILED"
                 return refusal
 
+        # A tool that takes an entry id declares `locates_entry` (#1310). With
+        # no KB named, the id is resolved to the KB that holds it here, before
+        # the checks below, so they see a named KB and no handler works in a
+        # KB named ''. With a KB named, the checks run first (a caller who may
+        # not write there is told so, not "not found") and the id is verified
+        # in that KB just before the handler.
+        spec = self.tools[name].get("locates_entry")
+        if spec and not named_kbs:
+            try:
+                arguments = self._locate_entry_ids(spec, arguments, readable_kbs)
+            except PyriteError as e:
+                return _refusal(e)
+            named_kbs = _kbs_named_in(arguments)
+
         takes_readable = readable_kbs is not None and self._handler_takes_readable_kbs(name)
 
         # Fail closed. A scoped caller reaching a tool that names no KB, does
@@ -2752,6 +2797,10 @@ class PyriteMCPServer:
         try:
             handler = self.tools[name]["handler"]
             with binding(target):
+                if spec and named_kbs:
+                    # Verifies each id in the KB the call names (a no-op for an
+                    # id already resolved above); raises the refusal.
+                    arguments = self._locate_entry_ids(spec, arguments, readable_kbs)
                 if takes_readable:
                     # A cross-KB handler: nothing was named to refuse, so it
                     # must filter instead. Only handlers that declare the

@@ -30,7 +30,7 @@ def social_vote(
     config = load_config()
     require_kb(config, kb_name, output_format="rich")
     # The vote row names the entry's KB, never '' (#911).
-    kb_name = require_entry_kb(entry_id, kb_name, output_format="rich")
+    kb_name = require_entry_kb(entry_id, kb_name, entry_type="writeup", output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:

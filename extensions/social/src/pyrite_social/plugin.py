@@ -125,6 +125,7 @@ class SocialPlugin:
                     },
                     "required": ["entry_id", "kb_name", "user_id", "value"],
                 },
+                "locates_entry": {"id_args": ["entry_id"], "entry_type": "writeup"},
                 "handler": self._mcp_vote,
             }
             tools["social_post"] = {
@@ -332,6 +333,13 @@ class SocialPlugin:
 
     def _mcp_vote(self, args: dict[str, Any]) -> dict[str, Any]:
         """Cast a vote on a writeup."""
+        from pyrite.exceptions import ValidationError
+        from pyrite.services.access_policy import named_kb
+
+        # The dispatcher resolves the entry's KB (`locates_entry`); a row is
+        # never written for a KB named '' (#1310), whoever calls the handler.
+        if named_kb(args.get("kb_name")) is None:
+            raise ValidationError("kb_name is required: a row names the KB that holds the entry")
         from datetime import UTC, datetime
 
         db, should_close = self._get_db()

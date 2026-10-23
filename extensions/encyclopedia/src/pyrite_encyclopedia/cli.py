@@ -31,7 +31,7 @@ def wiki_review(
 
     require_kb(config, kb_name, output_format="rich")
     # The review row names the entry's KB, never '' (#911).
-    kb_name = require_entry_kb(entry_id, kb_name, output_format="rich")
+    kb_name = require_entry_kb(entry_id, kb_name, entry_type="article", output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -83,7 +83,7 @@ def wiki_quality(
             # Show current quality from index, in the one KB that holds the
             # id (#911: a loop over config.yaml picked the first KB and
             # skipped registry-only ones).
-            home = require_entry_kb(entry_id, kb_name, output_format="rich")
+            home = require_entry_kb(entry_id, kb_name, entry_type="article", output_format="rich")
             entry = db.get_entry(entry_id, home)
 
             if entry:

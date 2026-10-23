@@ -164,7 +164,10 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_evidence_chain | anonymous | no-default-role-kb": {
-    "error": "Claim 'characterization-placeholder-id-investigation_evidence_chain-anonymous-no-default-role-kb' not found"
+    "error": "Entry claim 'characterization-placeholder-id-investigation_evidence_chain-anonymous-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "investigation_evidence_chain | anonymous | private-kb": {
     "did_you_mean": [],
@@ -175,7 +178,10 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "investigation_evidence_chain | anonymous | readable-kb": {
-    "error": "Claim 'characterization-placeholder-id-investigation_evidence_chain-anonymous-readable-kb' not found"
+    "error": "Entry claim 'characterization-placeholder-id-investigation_evidence_chain-anonymous-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "investigation_export_pack | anonymous | missing-kb": {
     "did_you_mean": [],
@@ -3164,7 +3170,10 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_check_ready | anonymous | no-default-role-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_check_ready-anonymous-no-default-role-kb' not found in KB 'no-default-role-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_check_ready-anonymous-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_check_ready | anonymous | private-kb": {
     "did_you_mean": [],
@@ -3175,7 +3184,10 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_check_ready | anonymous | readable-kb": {
-    "error": "Backlog item 'characterization-placeholder-id-sw_check_ready-anonymous-readable-kb' not found in KB 'readable-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_check_ready-anonymous-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_claim | anonymous | missing-kb": {
     "did_you_mean": [],
@@ -3244,7 +3256,10 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_context_for_item | anonymous | no-default-role-kb": {
-    "error": "Entry 'characterization-placeholder-id-sw_context_for_item-anonymous-no-default-role-kb' not found in KB 'no-default-role-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_context_for_item-anonymous-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_context_for_item | anonymous | private-kb": {
     "did_you_mean": [],
@@ -3255,7 +3270,10 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_context_for_item | anonymous | readable-kb": {
-    "error": "Entry 'characterization-placeholder-id-sw_context_for_item-anonymous-readable-kb' not found in KB 'readable-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_context_for_item-anonymous-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_conventions | anonymous | missing-kb": {
     "did_you_mean": [],
@@ -3342,7 +3360,10 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_epic_detail | anonymous | no-default-role-kb": {
-    "error": "Epic 'characterization-placeholder-id-sw_epic_detail-anonymous-no-default-role-kb' not found in KB 'no-default-role-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_epic_detail-anonymous-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_epic_detail | anonymous | private-kb": {
     "did_you_mean": [],
@@ -3353,7 +3374,10 @@
     "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
   },
   "sw_epic_detail | anonymous | readable-kb": {
-    "error": "Epic 'characterization-placeholder-id-sw_epic_detail-anonymous-readable-kb' not found in KB 'readable-kb'"
+    "error": "Entry backlog item 'characterization-placeholder-id-sw_epic_detail-anonymous-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
   },
   "sw_epics | anonymous | missing-kb": {
     "did_you_mean": [],

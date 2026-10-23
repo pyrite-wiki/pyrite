@@ -314,6 +314,7 @@ class SoftwareKBPlugin:
                     },
                     "required": ["item_id", "kb_name"],
                 },
+                "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_context_for_item,
             }
             tools["sw_pull_next"] = {
@@ -418,6 +419,7 @@ class SoftwareKBPlugin:
                     },
                     "required": ["epic_id", "kb_name"],
                 },
+                "locates_entry": {"id_args": ["epic_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_epic_detail,
             }
             tools["sw_check_ready"] = {
@@ -430,6 +432,7 @@ class SoftwareKBPlugin:
                     },
                     "required": ["item_id", "kb_name"],
                 },
+                "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_check_ready,
             }
             tools["sw_refine"] = {
@@ -476,6 +479,10 @@ class SoftwareKBPlugin:
                     },
                     "required": ["kb_name"],
                 },
+                "locates_entry": {
+                    "id_args": ["item_ids", "item_id", "after", "before"],
+                    "entry_type": "backlog_item",
+                },
                 "handler": self._mcp_prioritize,
             }
             tools["sw_create_adr"] = {
@@ -514,6 +521,7 @@ class SoftwareKBPlugin:
                     },
                     "required": ["item_id", "kb_name", "assignee"],
                 },
+                "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_claim,
             }
             tools["sw_review"] = {
@@ -533,6 +541,7 @@ class SoftwareKBPlugin:
                     },
                     "required": ["item_id", "kb_name", "outcome", "reviewer"],
                 },
+                "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_review,
             }
             tools["sw_submit"] = {
@@ -545,6 +554,7 @@ class SoftwareKBPlugin:
                     },
                     "required": ["item_id", "kb_name"],
                 },
+                "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_submit,
             }
             tools["sw_create_backlog_item"] = {
@@ -595,6 +605,7 @@ class SoftwareKBPlugin:
                     },
                     "required": ["item_id", "kb_name", "to_status"],
                 },
+                "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_transition,
             }
             tools["sw_log"] = {
@@ -626,6 +637,7 @@ class SoftwareKBPlugin:
                     },
                     "required": ["item_id", "kb_name", "summary"],
                 },
+                "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_log,
             }
 
