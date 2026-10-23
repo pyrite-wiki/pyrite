@@ -61,6 +61,46 @@ def require_kb(
         raise  # unreachable: cli_error_from always exits
 
 
+def require_entry_kb(
+    entry_id: str,
+    kb_name: object,
+    *,
+    entry_type: str | None = None,
+    output_format: str | None = None,
+) -> str:
+    """The KB that holds ``entry_id``, for a command whose ``-k`` is optional (#911).
+
+    The CLI's door to ``KBService.locate``, the one rule for an id given
+    with or without a KB: ``-k`` resolved by :func:`require_kb`, then the id
+    found in that KB; without ``-k``, the one KB that holds it (config.yaml
+    and registry-only KBs, as ``pyrite get`` searches), or ``AMBIGUOUS`` with
+    ``candidate_kbs`` when several do, or ``NOT_FOUND``. A command calls it
+    before it reads or writes anything, and then works in the KB it returns
+    -- never in ``kb_name or ""``, which is a KB named '' that holds nothing
+    (rows written there belong to no entry). Unscoped: the CLI runs as the
+    local principal.
+
+    ``output_format`` as :func:`require_kb`: None raises for the root to
+    render (a command on the ADR-0046 contract); a legacy command passes its
+    format and the refusal is printed here, exit 1.
+    """
+    from ..exceptions import EntryNotFoundError
+    from ..services.access_policy import UNSCOPED
+
+    try:
+        with cli_context(kbs=(kb_name,)) as (_config, _db, svc):
+            return svc.locate(entry_id, kb_name, readable_kbs=UNSCOPED, entry_type=entry_type)
+    except PyriteError as exc:
+        if output_format is None:
+            raise
+        from ..utils.errors import cli_error_from
+
+        # The CLI spells a missing entry NOT_FOUND (utils/errors.py).
+        code = "NOT_FOUND" if isinstance(exc, EntryNotFoundError) else None
+        cli_error_from(exc, output_format, error_code=code)
+        raise  # unreachable: cli_error_from always exits
+
+
 def _init_base(
     kbs: tuple[object, ...], output_format: str | None
 ) -> tuple[PyriteConfig, PyriteDB, KBService]:

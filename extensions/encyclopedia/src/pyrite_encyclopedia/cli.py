@@ -6,7 +6,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from pyrite.cli.context import require_kb
+from pyrite.cli.context import require_entry_kb, require_kb
 from pyrite.config import load_config
 from pyrite.storage.database import PyriteDB
 
@@ -30,6 +30,8 @@ def wiki_review(
     config = load_config()
 
     require_kb(config, kb_name, output_format="rich")
+    # The review row names the entry's KB, never '' (#911).
+    kb_name = require_entry_kb(entry_id, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -38,7 +40,7 @@ def wiki_review(
             """INSERT INTO encyclopedia_review
                (entry_id, kb_name, reviewer_id, status, comments, created_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (entry_id, kb_name or "", user, action, comment, now),
+            (entry_id, kb_name, user, action, comment, now),
         )
         db._raw_conn.commit()
 
@@ -78,13 +80,11 @@ def wiki_quality(
             console.print(f"[green]Quality for {entry_id} set to {new_quality}[/green]")
             console.print("[dim]Update the article's frontmatter to apply.[/dim]")
         else:
-            # Show current quality from index
-            entry = db.get_entry(entry_id, kb_name) if kb_name else None
-            if not entry:
-                for kb in config.knowledge_bases:
-                    entry = db.get_entry(entry_id, kb.name)
-                    if entry:
-                        break
+            # Show current quality from index, in the one KB that holds the
+            # id (#911: a loop over config.yaml picked the first KB and
+            # skipped registry-only ones).
+            home = require_entry_kb(entry_id, kb_name, output_format="rich")
+            entry = db.get_entry(entry_id, home)
 
             if entry:
                 import json

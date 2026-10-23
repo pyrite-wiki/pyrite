@@ -554,22 +554,8 @@ CLI_BLANK_KB_CASES = {
     "pyrite links suggest": ["links", "suggest", DUPLICATE, "-k", ""],
     "pyrite links discover": ["links", "discover", DUPLICATE, "-k", ""],
 }
-_EXTENSION = (
-    "extension command resolving through its own query, not get_entry: out of scope "
-    "per #528's groom; #911"
-)
 CLI_EXCLUDED = {
     "pyrite export collection": "without -k it loads from no KB (`kb or ''`): a miss, never a pick",
-    "pyrite wiki review": _EXTENSION,
-    "pyrite wiki quality": _EXTENSION,
-    "pyrite social vote": _EXTENSION,
-    "pyrite sw epic": _EXTENSION,
-    "pyrite sw claim": _EXTENSION,
-    "pyrite sw submit": _EXTENSION,
-    "pyrite sw transition": _EXTENSION,
-    "pyrite sw review": _EXTENSION,
-    "pyrite sw log": _EXTENSION,
-    "pyrite sw check-ready": _EXTENSION,
 }
 
 
@@ -582,18 +568,24 @@ def _walk(cmd, path):
         yield " ".join(path), cmd
 
 
+def _takes_an_id_and_an_optional_kb(cmd) -> bool:
+    """An argument naming entries by id (``*_id``, or ``*_ids`` for a list)
+    beside a ``-k`` the caller may leave out."""
+    params = {p.name: p for p in cmd.params}
+    has_id = any(
+        p.param_type_name == "argument" and n.endswith(("_id", "_ids")) for n, p in params.items()
+    )
+    kb = [params[k] for k in ("kb_name", "kb") if k in params]
+    return has_id and bool(kb) and not kb[0].required
+
+
 def _id_commands_with_optional_kb() -> set[str]:
     from pyrite.cli import app
 
     out = set()
     for prog, root in (("pyrite", app), ("pyrite-read", read_app)):
         for name, cmd in _walk(typer.main.get_command(root), [prog]):
-            params = {p.name: p for p in cmd.params}
-            has_id = any(
-                p.param_type_name == "argument" and n.endswith("_id") for n, p in params.items()
-            )
-            kb = [params[k] for k in ("kb_name", "kb") if k in params]
-            if has_id and kb and not kb[0].required:
+            if _takes_an_id_and_an_optional_kb(cmd):
                 out.add(name)
     return out
 
@@ -603,7 +595,7 @@ def _id_commands_with_optional_kb() -> set[str]:
 )
 def test_every_cli_id_command_is_a_case_or_excluded():
     found = _id_commands_with_optional_kb()
-    unjudged = found - set(CLI_CASES) - set(CLI_EXCLUDED)
+    unjudged = found - set(CLI_CASES) - set(CLI_EXCLUDED) - _extension_id_commands()
     assert not unjudged, f"id-taking commands with an optional KB, not judged: {sorted(unjudged)}"
     # Core cases must exist. Extension exclusions are not required to: an
     # extension's group can be absent from `pyrite.cli.app` in a worker that
@@ -671,3 +663,382 @@ def test_read_only_cli_get_reports_ambiguity(cli_world):
     assert payload["error_code"] == "AMBIGUOUS"
     assert payload["candidate_kbs"] == UNSCOPED_CANDIDATES
     assert "-k" in payload["suggestion"]
+
+
+# ---------------------------------------------------------------------------
+# Extension CLI commands (#911): through the one core resolver, KBService.locate
+# ---------------------------------------------------------------------------
+#
+# The property, for every plugin command that takes an entry id and an
+# optional -k: without -k, an id in one KB is found (config or registry-only),
+# an id in two is AMBIGUOUS with candidate_kbs, an id in none is NOT_FOUND, and
+# nothing is written -- above all no row with kb_name ''. The commands are
+# enumerated from the plugin registry's CLI apps, not listed by hand: a command
+# added later with no case below fails test_extension_id_command_has_a_case.
+
+EXT_A = "ext-a-911"
+EXT_B = "ext-b-911"
+#: Registered in the index (`pyrite kb add`), absent from config.yaml.
+EXT_REG = "ext-registry-911"
+
+_BACKLOG = {"kind": "feature", "priority": "medium", "effort": "S"}
+
+
+class _ExtCase:
+    """How to drive one extension command, and what it writes."""
+
+    def __init__(self, entry_type, fields, argv, *, writes=None, json_out=False):
+        self.entry_type = entry_type
+        self.fields = fields
+        self.argv = argv
+        #: "file" (the entry's own file), or the plugin table it inserts into.
+        self.writes = writes
+        #: The command renders its refusal as JSON (it has --format json).
+        self.json_out = json_out
+
+
+EXTENSION_CLI_CASES = {
+    "pyrite sw epic": _ExtCase(
+        "backlog_item",
+        {**_BACKLOG, "kind": "epic", "status": "accepted"},
+        lambda i: ["sw", "epic", i, "--format", "json"],
+        json_out=True,
+    ),
+    "pyrite sw claim": _ExtCase(
+        "backlog_item",
+        {**_BACKLOG, "status": "accepted"},
+        lambda i: ["sw", "claim", i, "--assignee", "me"],
+        writes="file",
+    ),
+    "pyrite sw submit": _ExtCase(
+        "backlog_item",
+        {**_BACKLOG, "status": "in_progress", "assignee": "me"},
+        lambda i: ["sw", "submit", i],
+        writes="file",
+    ),
+    "pyrite sw transition": _ExtCase(
+        "backlog_item",
+        {**_BACKLOG, "status": "proposed"},
+        lambda i: ["sw", "transition", i, "accepted"],
+        writes="file",
+    ),
+    "pyrite sw review": _ExtCase(
+        "backlog_item",
+        {**_BACKLOG, "status": "review", "assignee": "me"},
+        lambda i: [
+            "sw",
+            "review",
+            i,
+            "--outcome",
+            "changes_requested",
+            "--reviewer",
+            "r",
+            "--feedback",
+            "f",
+        ],
+        writes="file",
+    ),
+    "pyrite sw log": _ExtCase(
+        "backlog_item",
+        {**_BACKLOG, "status": "in_progress"},
+        lambda i: ["sw", "log", i, "--summary", "did a thing"],
+    ),
+    "pyrite sw check-ready": _ExtCase(
+        "backlog_item",
+        {**_BACKLOG, "status": "accepted"},
+        lambda i: ["sw", "check-ready", i, "--format", "json"],
+        json_out=True,
+    ),
+    "pyrite sw prioritize": _ExtCase(
+        "backlog_item",
+        {**_BACKLOG, "status": "accepted"},
+        lambda i: ["sw", "prioritize", i],
+        writes="file",
+    ),
+    "pyrite wiki review": _ExtCase(
+        "article",
+        {"quality": "stub", "review_status": "under_review"},
+        lambda i: ["wiki", "review", i, "comment", "--comment", "c"],
+        writes="encyclopedia_review",
+    ),
+    "pyrite wiki quality": _ExtCase(
+        "article",
+        {"quality": "start", "review_status": "draft"},
+        lambda i: ["wiki", "quality", i],
+    ),
+    "pyrite social vote": _ExtCase(
+        "writeup",
+        {"author_id": "someone", "writeup_type": "essay"},
+        lambda i: ["social", "vote", i, "up"],
+        writes="social_vote",
+    ),
+}
+
+
+def _walk_app(app_or_cmd, path):
+    return _walk(typer.main.get_command(app_or_cmd), path)
+
+
+def _extension_id_commands() -> set[str]:
+    """Every plugin CLI command taking an entry id with an optional -k,
+    walked from the plugin registry (what `pyrite` mounts)."""
+    from pyrite.plugins import get_registry
+
+    out = set()
+    for group, app_or_cmd in get_registry().get_all_cli_commands():
+        if hasattr(app_or_cmd, "registered_commands"):
+            commands = _walk_app(app_or_cmd, ["pyrite", group])
+        else:
+            commands = [(f"pyrite {group}", typer.main.get_command(typer.Typer()))]
+        for name, cmd in commands:
+            if _takes_an_id_and_an_optional_kb(cmd):
+                out.add(name)
+    return out
+
+
+def _slug(name: str) -> str:
+    return name.removeprefix("pyrite ").replace(" ", "-") + "-911"
+
+
+def _ext_ids(name: str) -> dict[str, str]:
+    slug = _slug(name)
+    return {
+        "two": f"{slug}-dup",
+        "one": f"{slug}-one",
+        "registry": f"{slug}-reg",
+        "none": f"{slug}-absent",
+    }
+
+
+def _ext_file(root, kb: str, entry_id: str):
+    return root / kb / f"{entry_id}.md"
+
+
+@pytest.fixture
+def ext_world(tmp_path, monkeypatch):
+    """Two config KBs and one registry-only KB, each command's ids seeded:
+    ``-dup`` in both config KBs, ``-one`` in the second config KB only (so a
+    first-KB pick cannot find it), ``-reg`` in the registry-only KB."""
+    import pyrite.config as config_module
+    from pyrite.config import KBConfig, PyriteConfig, Settings
+    from pyrite.storage.database import PyriteDB
+    from pyrite.storage.index import IndexManager
+    from pyrite.utils.yaml import dump_yaml, dump_yaml_file
+
+    for kb in (EXT_A, EXT_B, EXT_REG):
+        (tmp_path / kb).mkdir()
+    config = PyriteConfig(
+        knowledge_bases=[
+            KBConfig(name=EXT_A, path=tmp_path / EXT_A, kb_type="generic"),
+            KBConfig(name=EXT_B, path=tmp_path / EXT_B, kb_type="generic"),
+        ],
+        settings=Settings(index_path=tmp_path / "index.db"),
+    )
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    config_file = config_dir / "config.yaml"
+    dump_yaml_file(config.to_dict(), config_file)
+
+    def put(kb, entry_id, case):
+        front = {"id": entry_id, "type": case.entry_type, "title": f"{kb} {entry_id}"}
+        front.update(case.fields)
+        _ext_file(tmp_path, kb, entry_id).write_text(
+            f"---\n{dump_yaml(front).rstrip()}\n---\n\n{kb} body\n"
+        )
+
+    for name, case in EXTENSION_CLI_CASES.items():
+        ids = _ext_ids(name)
+        put(EXT_A, ids["two"], case)
+        put(EXT_B, ids["two"], case)
+        put(EXT_B, ids["one"], case)
+        put(EXT_REG, ids["registry"], case)
+
+    db = PyriteDB(tmp_path / "index.db")
+    try:
+        db.register_kb(EXT_REG, "generic", str(tmp_path / EXT_REG))
+        db.merge_registered_kbs(config)
+        IndexManager(db, config).index_all()
+    finally:
+        db.close()
+
+    monkeypatch.setenv("PYRITE_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("PYRITE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(config_module, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(config_module, "CONFIG_FILE", config_file)
+    return tmp_path
+
+
+def _ext_cli(name: str, entry_id: str):
+    from pyrite.cli import app
+
+    return CliRunner().invoke(app, EXTENSION_CLI_CASES[name].argv(entry_id))
+
+
+def _ext_rows(root, table: str) -> list[tuple[str, str]]:
+    import sqlite3
+
+    conn = sqlite3.connect(root / "index.db")
+    try:
+        return [tuple(r) for r in conn.execute(f"SELECT entry_id, kb_name FROM {table}")]
+    finally:
+        conn.close()
+
+
+def _ext_snapshot(root, name: str):
+    """What the command can write: every seeded file's bytes, and the rows
+    of the plugin table it inserts into."""
+    files = {
+        p: p.read_bytes()
+        for kb in (EXT_A, EXT_B, EXT_REG)
+        for p in sorted((root / kb).glob("*.md"))
+    }
+    table = EXTENSION_CLI_CASES[name].writes
+    rows = _ext_rows(root, table) if table not in (None, "file") else []
+    return files, rows
+
+
+@pytest.mark.control(
+    reason="structural inventory: fails on an id-taking plugin command added later with no case"
+)
+@pytest.mark.parametrize("name", sorted(_extension_id_commands()))
+def test_extension_id_command_has_a_case(name):
+    assert name in EXTENSION_CLI_CASES, f"{name} takes an entry id and an optional -k: add a case"
+
+
+@pytest.mark.control(reason="the case table names only commands the registry still mounts")
+def test_extension_cases_are_all_mounted():
+    assert set(EXTENSION_CLI_CASES) <= _extension_id_commands()
+
+
+@pytest.mark.parametrize("name", sorted(_extension_id_commands()))
+def test_extension_command_refuses_an_id_in_two_kbs(ext_world, name):
+    before = _ext_snapshot(ext_world, name)
+    result = _ext_cli(name, _ext_ids(name)["two"])
+    assert result.exit_code == 1, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    if EXTENSION_CLI_CASES[name].json_out:
+        body = json.loads(result.stdout)
+        assert body["error_code"] == "AMBIGUOUS", body
+        assert body["candidate_kbs"] == [EXT_A, EXT_B], body
+    else:
+        assert "AMBIGUOUS" in result.output, result.output
+        assert EXT_A in result.output and EXT_B in result.output, result.output
+    assert _ext_snapshot(ext_world, name) == before, f"{name} wrote after refusing"
+
+
+#: Shapes a command already answered before #911, so its case is a control:
+#: the three sw writers read every KB's index rows (no KB filter) and found a
+#: lone id anywhere; `wiki quality` looped config.yaml (registry KBs missed);
+#: the read commands refused an absent id (as a miss in KB '').
+_HELD_BEFORE_911 = {
+    ("pyrite sw claim", "one"),
+    ("pyrite sw claim", "registry"),
+    ("pyrite sw submit", "one"),
+    ("pyrite sw submit", "registry"),
+    ("pyrite sw transition", "one"),
+    ("pyrite sw transition", "registry"),
+    ("pyrite wiki quality", "one"),
+    *(
+        (name, "none")
+        for name in EXTENSION_CLI_CASES
+        if name not in ("pyrite social vote", "pyrite wiki review", "pyrite sw prioritize")
+    ),
+}
+
+
+def _ext_params(regimes):
+    out = []
+    for name in sorted(_extension_id_commands()):
+        for regime in regimes:
+            marks = (
+                [pytest.mark.control(reason="this shape already held before #911")]
+                if (name, regime) in _HELD_BEFORE_911
+                else []
+            )
+            out.append(pytest.param(name, regime, marks=marks, id=f"{name}-{regime}"))
+    return out
+
+
+@pytest.mark.parametrize(("name", "regime"), _ext_params(["one", "registry"]))
+def test_extension_command_finds_an_id_in_one_kb(ext_world, name, regime):
+    """Found in its one KB without -k: a config KB that is not the first, or a
+    KB only the registry knows. Four sw commands missed here (KB '')."""
+    entry_id = _ext_ids(name)[regime]
+    home = EXT_B if regime == "one" else EXT_REG
+    case = EXTENSION_CLI_CASES[name]
+    before = _ext_file(ext_world, home, entry_id).read_bytes()
+    result = _ext_cli(name, entry_id)
+    assert result.exit_code == 0, result.output
+    if case.writes == "file":
+        assert _ext_file(ext_world, home, entry_id).read_bytes() != before, f"{name} wrote nothing"
+    elif case.writes:
+        assert _ext_rows(ext_world, case.writes) == [(entry_id, home)]
+
+
+@pytest.mark.parametrize(("name", "regime"), _ext_params(["none"]))
+def test_extension_command_refuses_an_absent_id_and_writes_nothing(ext_world, name, regime):
+    before = _ext_snapshot(ext_world, name)
+    result = _ext_cli(name, _ext_ids(name)[regime])
+    assert result.exit_code == 1, result.output
+    assert "not found" in result.output.lower(), result.output
+    assert _ext_snapshot(ext_world, name) == before, f"{name} wrote for an absent id"
+
+
+@pytest.mark.control(reason="-k names the KB and the command answers from it, as before")
+@pytest.mark.parametrize("name", sorted(_extension_id_commands()))
+def test_extension_command_with_k_answers_that_kb(ext_world, name):
+    result = CliRunner().invoke(
+        __import__("pyrite.cli", fromlist=["app"]).app,
+        [*EXTENSION_CLI_CASES[name].argv(_ext_ids(name)["two"]), "-k", EXT_B],
+    )
+    assert result.exit_code == 0, result.output
+
+
+def test_locate_is_the_one_resolver(ext_world):
+    """``KBService.locate``: the KB, AMBIGUOUS, or ENTRY_NOT_FOUND; a KB the
+    caller cannot read is never a candidate nor named; a type filter."""
+    from pyrite.cli.context import get_config_and_db
+    from pyrite.exceptions import AmbiguousEntryError, EntryNotFoundError
+
+    config, db = get_config_and_db()
+    try:
+        svc = KBService(config, db)
+        ids = _ext_ids("pyrite sw claim")
+        assert svc.locate(ids["one"], readable_kbs=None) == EXT_B
+        assert svc.locate(ids["registry"], readable_kbs=None) == EXT_REG
+        assert svc.locate(ids["two"], EXT_A, readable_kbs=None) == EXT_A
+        assert svc.locate(ids["two"], " ", readable_kbs={EXT_B}) == EXT_B
+        with pytest.raises(AmbiguousEntryError) as raised:
+            svc.locate(ids["two"], readable_kbs=None)
+        assert raised.value.candidate_kbs == [EXT_A, EXT_B]
+        with pytest.raises(EntryNotFoundError) as missing:
+            svc.locate(ids["two"], EXT_A, readable_kbs={EXT_B})
+        assert missing.value.error_code == "ENTRY_NOT_FOUND"
+        with pytest.raises(EntryNotFoundError) as concealed:
+            svc.locate(ids["one"], readable_kbs={EXT_A})
+        assert EXT_B not in str(concealed.value)
+        with pytest.raises(EntryNotFoundError):
+            svc.locate(ids["one"], EXT_A, readable_kbs=None)
+        # The type filter: an article id is no backlog item.
+        article = _ext_ids("pyrite wiki quality")["one"]
+        assert svc.locate(article, readable_kbs=None, entry_type="article") == EXT_B
+        with pytest.raises(EntryNotFoundError):
+            svc.locate(article, readable_kbs=None, entry_type="backlog_item")
+        with pytest.raises(EntryNotFoundError):
+            svc.locate(article, EXT_B, readable_kbs=None, entry_type="backlog_item")
+    finally:
+        db.close()
+
+
+def test_prioritize_refuses_items_in_two_kbs_without_k(ext_world):
+    """Each id found in one KB, but not the same one: one ranking cannot span
+    KBs, so nothing is ranked."""
+    name = "pyrite sw prioritize"
+    ids = _ext_ids(name)
+    before = _ext_snapshot(ext_world, name)
+    from pyrite.cli import app
+
+    result = CliRunner().invoke(app, ["sw", "prioritize", ids["one"], ids["registry"]])
+    assert result.exit_code == 1, result.output
+    assert "AMBIGUOUS" in result.output and EXT_B in result.output and EXT_REG in result.output
+    assert _ext_snapshot(ext_world, name) == before

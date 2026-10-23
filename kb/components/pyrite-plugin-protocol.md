@@ -36,6 +36,11 @@ The single extension point for all domain-specific capabilities. A `@runtime_che
 - `get_kb_presets()` — preset configs, used by `pyrite init --template <name>`
 - `set_context(ctx)` — receive shared config/db from the plugin registry at startup
 
+## Core calls a plugin command makes
+
+- `pyrite.cli.context.require_kb(config, name, output_format=...)` -- resolve a `-k` (an unknown name or a shortname is `KB_NOT_FOUND`).
+- `pyrite.cli.context.require_entry_kb(entry_id, kb_name, entry_type=..., output_format=...)` (#911) -- the KB an entry id names when `-k` is optional: found, `AMBIGUOUS` with `candidate_kbs`, or `NOT_FOUND`, through `KBService.locate` (the same rule as `pyrite get`). Call it before reading or writing and work in the KB it returns, never in `kb_name or ""`. Over MCP, `ctx.kb_service.locate(..., readable_kbs=...)` is the same rule within the caller's scope. Both belong in the plugin API symbol count that #1042 ratchets (ADR-0040).
+
 ## Implementors
 
 All extension plugins implement this protocol:

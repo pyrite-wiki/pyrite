@@ -6,7 +6,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from pyrite.cli.context import require_kb
+from pyrite.cli.context import require_entry_kb, require_kb
 from pyrite.config import load_config
 from pyrite.storage.database import PyriteDB
 
@@ -29,6 +29,8 @@ def social_vote(
     value = 1 if direction == "up" else -1
     config = load_config()
     require_kb(config, kb_name, output_format="rich")
+    # The vote row names the entry's KB, never '' (#911).
+    kb_name = require_entry_kb(entry_id, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -39,7 +41,7 @@ def social_vote(
                VALUES (?, ?, ?, ?, ?)
                ON CONFLICT(entry_id, kb_name, user_id)
                DO UPDATE SET value = ?, created_at = ?""",
-            (entry_id, kb_name or "", user, value, now, value, now),
+            (entry_id, kb_name, user, value, now, value, now),
         )
         db._raw_conn.commit()
         console.print(f"[green]Voted {direction} on {entry_id}[/green]")

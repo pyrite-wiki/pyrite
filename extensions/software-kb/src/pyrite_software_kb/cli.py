@@ -8,7 +8,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from pyrite.cli.context import require_kb
+from pyrite.cli.context import require_entry_kb, require_kb
 from pyrite.cli.output import output_format_choice
 from pyrite.config import load_config
 from pyrite.services.access_policy import UNSCOPED
@@ -49,6 +49,32 @@ def _query_entries(db: PyriteDB, entry_type: str, kb_name: str | None = None) ->
         item["_meta"] = meta
         results.append(item)
     return results
+
+
+def _items_kb(item_ids: list[str], anchors, kb_name: str | None) -> str:
+    """The KB that several backlog ids name, for a command whose -k is optional.
+
+    With -k, that KB. Without, each id (and anchor) is found through the core
+    resolver (``require_entry_kb``: AMBIGUOUS or NOT_FOUND refused) and all must
+    be in one KB: one ranking cannot span KBs. No ids: ``""``, for the caller's
+    own "provide item IDs" refusal.
+    """
+    if kb_name and kb_name.strip():
+        return kb_name
+    ids = [*item_ids, *(a for a in anchors if a)]
+    homes = {
+        i: require_entry_kb(i, None, entry_type="backlog_item", output_format="rich") for i in ids
+    }
+    if len(set(homes.values())) > 1:
+        from pyrite.utils.errors import cli_error
+
+        where = ", ".join(f"{i} ({kb})" for i, kb in homes.items())
+        cli_error(
+            f"The items are in more than one KB: {where}",
+            error_code="AMBIGUOUS",
+            suggestion="Name the KB with -k; one ranking orders one KB's items.",
+        )
+    return next(iter(homes.values()), "")
 
 
 def _json_output(items: list[dict]) -> None:
@@ -428,7 +454,8 @@ def sw_epic_detail(
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
-    result = plugin._mcp_epic_detail({"epic_id": epic_id, "kb_name": kb_name or ""})
+    home = require_entry_kb(epic_id, kb_name, entry_type="backlog_item", output_format=fmt)
+    result = plugin._mcp_epic_detail({"epic_id": epic_id, "kb_name": home})
 
     if "error" in result:
         console.print(f"[red]Error: {result['error']}[/red]")
@@ -469,7 +496,7 @@ def sw_prioritize(
 
     plugin = SoftwareKBPlugin()
 
-    args: dict[str, Any] = {"kb_name": kb_name or ""}
+    args: dict[str, Any] = {"kb_name": _items_kb(item_ids or [], (after, before), kb_name)}
     if not item_ids:
         console.print("[red]Provide item IDs to prioritize[/red]")
         raise typer.Exit(1)
@@ -1083,6 +1110,7 @@ def sw_claim(
     config = load_config()
 
     require_kb(config, kb_name, output_format="rich")
+    kb_name = require_entry_kb(item_id, kb_name, entry_type="backlog_item", output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -1138,6 +1166,7 @@ def sw_submit(
     config = load_config()
 
     require_kb(config, kb_name, output_format="rich")
+    kb_name = require_entry_kb(item_id, kb_name, entry_type="backlog_item", output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -1200,6 +1229,7 @@ def sw_transition(
     config = load_config()
 
     require_kb(config, kb_name, output_format="rich")
+    kb_name = require_entry_kb(item_id, kb_name, entry_type="backlog_item", output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -1313,7 +1343,9 @@ def sw_review_cmd(
     result = plugin._mcp_review(
         {
             "item_id": item_id,
-            "kb_name": kb_name or "",
+            "kb_name": require_entry_kb(
+                item_id, kb_name, entry_type="backlog_item", output_format="rich"
+            ),
             "outcome": outcome,
             "reviewer": reviewer,
             "feedback": feedback,
@@ -1346,7 +1378,9 @@ def sw_log_cmd(
     result = plugin._mcp_log(
         {
             "item_id": item_id,
-            "kb_name": kb_name or "",
+            "kb_name": require_entry_kb(
+                item_id, kb_name, entry_type="backlog_item", output_format="rich"
+            ),
             "summary": summary,
             "decisions": decisions or "",
             "rejected": rejected or "",
@@ -1457,7 +1491,8 @@ def sw_check_ready(
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
-    result = plugin._mcp_check_ready({"item_id": item_id, "kb_name": kb_name or ""})
+    home = require_entry_kb(item_id, kb_name, entry_type="backlog_item", output_format=fmt)
+    result = plugin._mcp_check_ready({"item_id": item_id, "kb_name": home})
 
     if "error" in result:
         console.print(f"[red]Error:[/red] {result['error']}")
