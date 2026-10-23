@@ -1250,6 +1250,55 @@ def test_a_binding_ends_with_its_call_and_never_reaches_a_sibling(world):
         server.close()
 
 
+def test_an_id_only_in_a_change_set_is_found_only_in_a_named_kb(world):
+    """The limit of an id lookup over MCP (#1310, `kb-service.md`): with no
+    `kb_name`, a `locates_entry` tool finds the id in the canonical index,
+    before any change set is bound -- the change set is chosen by the KB, and
+    no KB is known yet. So an item alice created in her change set is
+    ENTRY_NOT_FOUND until she names its KB; named, the dispatcher finds it in
+    her change set and hands the handler that KB. The handler is a spy: what
+    `sw_claim` itself then reads is #1315 (raw SQL reads main's index)."""
+    if world.landing != "review":
+        pytest.skip("only a landing: review KB has a change set")
+    from pyrite.server.mcp_server import PyriteMCPServer
+    from pyrite.services.access_policy import Principal
+
+    server = PyriteMCPServer(config=world.w.config, tier="write")
+    alice = Principal.user(world.alice_id, "write")
+    reached: list[object] = []
+    server.tools["sw_claim"] = {
+        **server.tools["sw_claim"],
+        "handler": lambda args: reached.append(args.get("kb_name")) or {"claimed": True},
+    }
+    try:
+        made = server._dispatch_tool(
+            "kb_create",
+            {
+                "kb_name": SW,
+                "entry_type": "backlog_item",
+                "title": "Only in the change set 1310",
+                "fields": {"kind": "feature", "status": "accepted", "priority": "low"},
+            },
+            principal=alice,
+        )
+        assert not _refused_mcp(made), made
+        item = made["entry_id"]
+
+        blank = server._dispatch_tool(
+            "sw_claim", {"item_id": item, "assignee": "alice"}, principal=alice
+        )
+        assert blank.get("error_code") == "ENTRY_NOT_FOUND", blank
+        assert reached == [], "the handler ran for an id the lookup did not find"
+
+        named = server._dispatch_tool(
+            "sw_claim", {"item_id": item, "assignee": "alice", "kb_name": SW}, principal=alice
+        )
+        assert named == {"claimed": True}, named
+        assert reached == [SW], reached
+    finally:
+        server.close()
+
+
 # =============================================================================
 # Per-item reporting: an existing or refused item never stops the rest
 # =============================================================================
