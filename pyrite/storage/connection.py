@@ -16,17 +16,19 @@ import weakref
 from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
-from typing import TypeGuard
+from typing import TypeGuard, cast
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import ExceptionContext
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
-from ..exceptions import StorageError
+from ..exceptions import IndexSchemaRefusedError, StorageError
 from .backends.sqlite_backend import SQLiteBackend
 from .errors import storage_error_from
+from .migrations import MigrationError
 from .models import Base
+from .schema_repair import WRITE_REFUSED_SUGGESTION, repair_schema, schema_lock
 from .virtual_tables import create_fts_tables, create_vec_table
 
 logger = logging.getLogger(__name__)
@@ -202,9 +204,6 @@ class ConnectionMixin:
                     err.suggestion = CORRUPT_INDEX_SUGGESTION
                     raise err from orig
 
-            # Create ORM tables
-            Base.metadata.create_all(self.engine)
-
             # Session factory. There is deliberately no long-lived *shared*
             # Session: one Session used by concurrent threads corrupts SQLAlchemy's
             # result state (#131). `self.session` below resolves per thread — the
@@ -222,35 +221,32 @@ class ConnectionMixin:
             self._fallback_sessions: list[Session] = []
             self._fallback_lock = threading.Lock()
 
-            # Raw sqlite3 connection for the FTS5 / sqlite-vec virtual tables and
-            # migrations. sqlite3 serialises internally, but see `_raw_cursor()`
-            # below: a shared *cursor* is what is unsafe, so raw reads take their
-            # own cursor under a lock rather than sharing one (#131 criterion 7).
-            self._sa_conn = self.engine.connect()
-            self._raw_conn = self._sa_conn.connection.dbapi_connection
-            self._raw_conn.row_factory = sqlite3.Row
-            self._raw_lock = threading.RLock()
+            # One process at a time brings the file to this build's schema
+            # (#1302): two that both see it behind would both migrate it. The
+            # lock is taken before the first connection, too: that connection
+            # switches a new file to WAL, and SQLite answers a second process
+            # doing the same at once with "database is locked", busy timeout
+            # or not.
+            with schema_lock(self.db_path):
+                # Raw sqlite3 connection for the FTS5 / sqlite-vec virtual tables and
+                # migrations. sqlite3 serialises internally, but see `_raw_cursor()`
+                # below: a shared *cursor* is what is unsafe, so raw reads take their
+                # own cursor under a lock rather than sharing one (#131 criterion 7).
+                self._sa_conn = self.engine.connect()
+                self._raw_conn = self._sa_conn.connection.dbapi_connection
+                self._raw_conn.row_factory = sqlite3.Row
+                self._raw_lock = threading.RLock()
 
-            # Load extensions and create virtual tables
-            self._load_extensions()
-            create_fts_tables(self._raw_conn)
-            if self.vec_available:
-                create_vec_table(self._raw_conn)
-
-            self._run_migrations()
-            self._create_plugin_tables()
-        except (OSError, sqlite3.Error, SQLAlchemyError) as exc:
-            if self._sa_conn is not None:
-                try:
-                    self._sa_conn.close()
-                except Exception:
-                    pass
-                self._sa_conn = None
-            if self.engine is not None:
-                try:
-                    self.engine.dispose()
-                except Exception:
-                    pass
+                self._load_extensions()
+                self._prepare_schema()
+        except StorageError:
+            # Already the error the user reads (the schema refusal, a busy
+            # schema lock, corruption the handle_error listener translated);
+            # only release the handles.
+            self._dispose_after_failed_open()
+            raise
+        except (OSError, sqlite3.Error, SQLAlchemyError, MigrationError) as exc:
+            self._dispose_after_failed_open()
             err = StorageError(f"Cannot open index database at {self.db_path}: {exc}")
             err.suggestion = CORRUPT_INDEX_SUGGESTION
             raise err from exc
@@ -455,17 +451,66 @@ class ConnectionMixin:
 
         self.vec_available = True
 
+    def _dispose_after_failed_open(self) -> None:
+        if self._sa_conn is not None:
+            try:
+                self._sa_conn.close()
+            except Exception:
+                pass
+            self._sa_conn = None
+        if self.engine is not None:
+            try:
+                self.engine.dispose()
+            except Exception:
+                pass
+
+    def _prepare_schema(self) -> None:
+        """Bring the file to this build's schema; runs under ``schema_lock``.
+
+        Four steps, in order, each its own call so the #718 explicit-upgrade
+        mode can refuse before the first one writes: ``create_all`` adds
+        missing tables, then the virtual tables, the numbered migrations, and
+        the repair that adds any model column or index still missing
+        (``schema_repair.py``), and last the plugin tables.
+        """
+        assert self.engine is not None  # set by _init_connection before the lock
+        Base.metadata.create_all(self.engine)
+        create_fts_tables(self._raw_conn)
+        if self.vec_available:
+            create_vec_table(self._raw_conn)
+        self._run_migrations()
+        self._repair_schema()
+        self._create_plugin_tables()
+
     def _run_migrations(self):
-        """Run any pending database migrations using legacy MigrationManager."""
-        from .migrations import MigrationManager
+        """Run any pending database migrations using legacy MigrationManager.
+
+        A migration that fails refuses the open with `IndexSchemaRefusedError`,
+        naming only the versions; the driver's text goes to the log.
+        """
+        from .migrations import CURRENT_VERSION, MigrationManager
 
         mgr = MigrationManager(self._raw_conn)
         pending = mgr.get_pending_migrations()
         if pending:
-            mgr.migrate()
+            from_version = mgr.get_current_version()
+            try:
+                mgr.migrate()
+            except MigrationError as exc:
+                logger.warning("Index migration failed: %s", exc)
+                err = IndexSchemaRefusedError(
+                    f"The index could not be upgraded from schema version {from_version} "
+                    f"to {CURRENT_VERSION}."
+                )
+                err.suggestion = WRITE_REFUSED_SUGGESTION
+                raise err from exc
         # Create vec_entry table if sqlite-vec is available and table doesn't exist
         if self.vec_available:
             create_vec_table(self._raw_conn)
+
+    def _repair_schema(self) -> list[str]:
+        """Add model columns and indexes the file lacks whatever its recorded version (#1260)."""
+        return repair_schema(cast(sqlite3.Connection, self._raw_conn))
 
     def _create_plugin_tables(self):
         """Create custom tables defined by plugins."""

@@ -394,6 +394,25 @@ class IndexSyncRecoveryHintError(StorageError):
     public_message = None
 
 
+class IndexSchemaRefusedError(StorageError):
+    """The index on disk cannot be brought to this build's schema, so it is
+    not opened (#1260).
+
+    Raised by the repair step that runs on every open
+    (`pyrite/storage/schema_repair.py`): a model column SQLite cannot add in
+    place (``NOT NULL`` with no default, a key), or a migration or repair the
+    file refused (read-only, out of space). Every command that opens the index
+    gets this one refusal instead of a raw ``OperationalError`` later.
+
+    The message names only schema versions and ``table.column`` names -- never
+    a path or the driver's own text, which is logged instead -- so it is safe
+    by construction and shown as is, like `IndexSyncRecoveryHintError`. The
+    base class's fixed sentence would hide the one thing the user needs.
+    """
+
+    public_message = None  # type: ignore[assignment]  # the base pins str; None shows str(exc)
+
+
 class StorageBusyError(StorageError):
     """A transient storage fault: the database was locked or busy (#431).
 

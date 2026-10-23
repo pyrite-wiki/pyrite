@@ -246,22 +246,34 @@ def test_search_files_says_so_when_the_variable_is_what_was_ignored(tmp_path):
 
 
 @pytest.mark.control(
-    reason="the Rich fallback already existed; its setup now breaks the entry table instead of writing a non-SQLite file, which #922 refuses"
+    reason="the Rich fallback already existed; its setup now makes entry a view that overflows, since #922 refuses a non-SQLite file and #1260 repairs a broken table"
 )
 def test_the_rich_fallback_to_file_search_says_so_without_naming_files(tmp_path):
     """When the index search fails in Rich mode the command falls back to file search; a user
     who never passed `--files` must not be told about `--files`.
 
-    The index here is a valid SQLite file whose `entry` table lacks `id`, so opening the index
-    succeeds and the failure happens inside the index search; the KB's files are on disk, so the
-    fallback really searches them."""
+    The index here is a valid SQLite file whose `entry` is a view that overflows when read (the
+    way `tests/test_json_stdout.py` breaks `source`), so opening the index succeeds and the index
+    search's first query on `entry` fails. A broken `entry` table no longer does this: the open
+    repairs or refuses it (#1260). The KB's files are on disk, so the fallback really searches
+    them."""
     import sqlite3
 
     config = make_cli_world(tmp_path)
     assert (tmp_path / "kb" / "notes" / "entry-1.md").exists()  # the fallback has a file to find
     with sqlite3.connect(tmp_path / "index.db") as conn:
-        conn.execute("DROP TABLE entry")
-        conn.execute("CREATE TABLE entry (x INTEGER)")
+        conn.executescript(
+            """
+            DROP TABLE entry;
+            CREATE VIEW entry AS
+                SELECT abs(-9223372036854775807 - 1) AS id, 'kb' AS kb_name;
+            -- The open creates the FTS sync triggers IF NOT EXISTS; on a view
+            -- they must already be there, as INSTEAD OF triggers.
+            CREATE TRIGGER entry_ai INSTEAD OF INSERT ON entry BEGIN SELECT 1; END;
+            CREATE TRIGGER entry_ad INSTEAD OF DELETE ON entry BEGIN SELECT 1; END;
+            CREATE TRIGGER entry_au INSTEAD OF UPDATE ON entry BEGIN SELECT 1; END;
+            """
+        )
     with cli_world(config):
         result = CliRunner().invoke(
             app, ["search", "excluded", "--fields", "status", "--format", "rich"]

@@ -392,6 +392,30 @@
       "status": 422
     }
   },
+  "IndexSchemaRefusedError": {
+    "cli": {
+      "error": "characterization message for IndexSchemaRefusedError",
+      "error_code": "STORAGE_ERROR",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for IndexSchemaRefusedError",
+      "error_code": "STORAGE_ERROR",
+      "legacy_error_code": "REQUEST_REFUSED",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "STORAGE_ERROR",
+          "message": "characterization message for IndexSchemaRefusedError",
+          "retryable": false
+        }
+      },
+      "status": 500
+    }
+  },
   "IndexSyncRecoveryHintError": {
     "cli": {
       "error": "characterization message for IndexSyncRecoveryHintError",

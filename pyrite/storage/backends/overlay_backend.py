@@ -711,5 +711,6 @@ _WRITES_REFUSED = frozenset(
      "add_workspace_repo", "delete_repo", "remove_workspace_repo", "link_kb_to_repo",
      "set_repo_upstream", "update_repo_synced", "update_workspace_role", "transaction",
      "_init_connection", "_run_migrations", "_create_plugin_tables",
-     "_create_table_from_def", "_record_private_policy"}
+     "_create_table_from_def", "_record_private_policy", "_prepare_schema",
+     "_repair_schema", "_dispose_after_failed_open"}
 )  # fmt: skip

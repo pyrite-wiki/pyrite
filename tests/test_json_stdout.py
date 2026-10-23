@@ -111,6 +111,10 @@ def test_qa_reports_preserve_entry_title(
     assert "\x1b" not in result.stdout
 
 
+@pytest.mark.control(
+    reason="an existing guard; #1260 only moved its list_entries fault to a generated "
+    "column, since the open now repairs a dropped one"
+)
 @pytest.mark.parametrize("output_format", ["json", "rich"])
 @pytest.mark.parametrize("failure_target", ["list_entries", "get_entry"])
 def test_check_urls_reports_database_failure(cli_world, output_format, failure_target, caplog):
@@ -125,7 +129,14 @@ def test_check_urls_reports_database_failure(cli_world, output_format, failure_t
     # Real faults. list_entries selects every entry column; get_entry also reads `source`.
     broken = sqlite3.connect(index_path, isolation_level=None)
     if failure_target == "list_entries":
+        # A dropped column is repaired when the index opens (#1260), so the
+        # fault is in a value: a generated column whose expression overflows
+        # when the select reads it.
         broken.execute("ALTER TABLE entry DROP COLUMN aliases")
+        broken.execute(
+            "ALTER TABLE entry ADD COLUMN aliases TEXT GENERATED ALWAYS AS "
+            "(abs(-9223372036854775807 - 1)) VIRTUAL"
+        )
     else:
         broken.execute("DROP TABLE source")
         broken.execute("CREATE VIEW source AS SELECT abs(-9223372036854775807 - 1) AS id")
