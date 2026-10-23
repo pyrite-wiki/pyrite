@@ -867,15 +867,34 @@ def _lock_writing_a_row(tmp_path: Path) -> StorageError:
         db.close()
 
 
-#: Every place in connection.py, migrations.py, schema_repair.py and index.py
-#: that turns a SQLite error (or a MigrationError) into a StorageError, with a
-#: real lock that reaches it. `test_no_conversion_site_skips_the_classifier`
-#: keeps this list complete.
+def _lock_backing_up(tmp_path: Path) -> StorageError:
+    """`index_backup.backup_index` (`pyrite db backup`): the source index is a
+    rollback-journal file another connection holds under BEGIN EXCLUSIVE."""
+    from pyrite.services.index_backup import backup_index
+
+    db_path = tmp_path / "index.db"
+    _load_shape("v0.26.0", db_path, wal=False)
+    holder = sqlite3.connect(db_path, isolation_level=None)
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        with pytest.raises(StorageError) as info:
+            backup_index(db_path, tmp_path / "backup.db")
+        return info.value
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+
+
+#: The sites that turn a SQLite error met while opening, migrating, repairing,
+#: writing or backing up the index into a StorageError, each with a real lock
+#: that reaches it. `test_every_conversion_site_raises_the_classifier_result`
+#: keeps every other site under pyrite/ on the classifier.
 LOCK_SITES = {
     "connection._init_connection": _lock_at_connect,
     "connection._run_migrations": _lock_in_a_migration,
     "schema_repair.repair_schema": _lock_in_the_repair,
     "index._storage_error_for_write": _lock_writing_a_row,
+    "index_backup.backup_index": _lock_backing_up,
 }
 
 
