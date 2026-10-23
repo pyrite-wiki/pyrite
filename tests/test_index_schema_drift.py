@@ -1338,6 +1338,11 @@ def write(conn):
 }
 
 
+@pytest.mark.control(
+    reason="tests the guard in this file against scratch modules, not pyrite/; the "
+    "guard's red against the real tree is test_every_conversion_site_raises_the_"
+    "classifier_result"
+)
 @pytest.mark.parametrize("trick", sorted(_SCRATCH_TRICKS))
 def test_the_guard_catches(trick, tmp_path, monkeypatch):
     """Each way round 1's guard was fooled, written into a scratch module
