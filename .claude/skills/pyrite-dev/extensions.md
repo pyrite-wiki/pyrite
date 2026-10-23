@@ -99,6 +99,20 @@ class MyExtensionPlugin:
                 },
                 "handler": self._mcp_handler,
             }
+            # A tool that takes an entry id and an optional kb_name:
+            tools["my_item_tool"] = {
+                "description": "Act on one item",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "kb_name": {"type": "string", "description": "KB name"},
+                        "item_id": {"type": "string", "description": "Item entry ID"},
+                    },
+                    "required": ["item_id"],
+                },
+                "locates_entry": {"id_args": ["item_id"], "entry_type": "my_type"},
+                "handler": self._mcp_item_handler,  # args["kb_name"] is set
+            }
         return tools
 
     def get_relationship_types(self) -> dict[str, dict]:
@@ -155,6 +169,30 @@ class MyExtensionPlugin:
         """Receive PluginContext with DB, config, services."""
         self._ctx = ctx
 ```
+
+### MCP tools that take an entry id: `locates_entry`
+
+A tool whose arguments carry entry ids declares `locates_entry` beside its
+`handler` (#1310): `id_args`, every argument that names an entry (a string or
+a list of strings; anchors such as `after`/`before` count), and `entry_type`,
+the one type the tool acts on (leave it out for a tool that takes any type).
+The MCP dispatcher then finds the ids with `KBService.locate`, the rule
+`kb_get` and the CLI's `require_entry_kb` use: with `kb_name` blank or
+absent, the one readable KB holding them, `AMBIGUOUS` with `candidate_kbs` when
+several do, `ENTRY_NOT_FOUND` when none does; every id must be in that one KB.
+It sets `args["kb_name"]` to the KB it found **before** the read, write and
+landing checks, so the handler always works in a checked KB.
+
+- The handler reads `args["kb_name"]` and never resolves an id itself, never
+  falls back to a default KB, and never works in `kb_name or ""`.
+- `kb_name` is the handler's KB. Another KB argument (`kb`, `target_kb`, ...)
+  is checked but does not choose where the id is found.
+- With no `kb_name`, the lookup reads the canonical index, so an id that
+  exists only in the caller's pending change set is found only when the call
+  names its KB.
+- `tests/test_plugin_mcp_tools_locate_ids.py` walks the registry and fails for
+  a tool with an id argument (by name, or by a description such as "Item entry
+  ID") and no `locates_entry`. Add a `Case` for your tool there.
 
 ## Entry Type Contract
 

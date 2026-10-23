@@ -1,0 +1,8 @@
+What the plugin MCP tools that take an entry id answer has changed with the id lookup (#1310):
+
+- `social_vote` and the `wiki_*` tools filter by type over MCP too, as `sw_*` does: `social_vote` counts only writeups and `wiki_submit_review`, `wiki_assess_quality` and `wiki_protect` only articles, so an entry of another type that shares the id neither answers it nor makes it `AMBIGUOUS`.
+- A not-found reply is the typed refusal (`error_code: ENTRY_NOT_FOUND`, `legacy_error_code: NOT_FOUND`, `retryable: false`). It no longer carries the tool's own `claimed`, `created`, `reviewed` or `submitted` keys, or `transitioned: false`.
+- The message wording changed: "Backlog item 'x' not found in KB 'k'" is now "Entry backlog item 'x' not found in KB 'k'", with the type each tool acts on (`article`, `writeup`, `claim`) or none.
+- `wiki_assess_quality` and `wiki_protect` report `ENTRY_NOT_FOUND` for a missing article before they check their other arguments, so a missing article with an invalid `quality` or `level` is not found rather than "Invalid quality"/"Invalid protection level".
+- The `investigation_*` tools no longer default to the investigation KB when the call takes an entry id: the id is found in the readable KB that holds it, and an id held in two readable KBs is `AMBIGUOUS` until `kb_name` names one.
+- With no `kb_name`, the id is looked up in the canonical index, before any change set is chosen: an id that exists only in a pending change set (a `landing: review` KB) is `ENTRY_NOT_FOUND` unless the call names its KB.

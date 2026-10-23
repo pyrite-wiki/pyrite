@@ -88,7 +88,23 @@ class PyritePlugin(Protocol):
 
         Returns:
             Dict mapping tool name to tool definition.
-            Each tool has "description", "inputSchema", "handler".
+            Each tool has "description", "inputSchema", "handler", and,
+            for a tool that takes an entry id, "locates_entry".
+
+        ``locates_entry`` (#1310): ``{"id_args": [...], "entry_type": ...}``.
+        ``id_args`` names every argument that carries an entry id (a string
+        or a list of strings); ``entry_type`` is the one type the tool acts
+        on, omitted for a tool that takes any type. The MCP dispatcher finds
+        the ids through ``KBService.locate`` within the caller's readable
+        KBs -- with ``kb_name`` absent or blank, the one KB that holds them,
+        ``AMBIGUOUS`` when several do, ``ENTRY_NOT_FOUND`` when none does --
+        and sets ``args["kb_name"]`` to that KB before its read, write and
+        landing checks, so the handler always works in a checked KB. The
+        handler reads ``args["kb_name"]``; it never resolves the id itself,
+        never falls back to a default KB, and never works in
+        ``kb_name or ""``. With no ``kb_name`` the lookup reads the canonical
+        index: an id only in the caller's pending change set is found only
+        when the call names its KB.
         """
         ...
 
