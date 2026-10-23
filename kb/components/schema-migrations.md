@@ -53,15 +53,24 @@ separate: #718's explicit-upgrade mode must refuse before the first write.
   server default, or a migration that rebuilds the table. The repair adds a
   column without its `REFERENCES` clause. Declare a new index on the model
   (`__table_args__`) so the repair can create it too.
-- Every SQLite fault on the open, migrate, repair and write paths goes through
-  `storage_error_from` (`pyrite/storage/errors.py`): a lock is a retryable
+- Every `except` under `pyrite/` that turns a SQLite, SQLAlchemy or
+  `MigrationError` fault into a Pyrite error raises what `storage_error_from`
+  (`pyrite/storage/errors.py`) returns: a lock is a retryable
   `StorageBusyError` that says to wait, a read-only or full disk gets the disk
   suggestion, and only a schema this build cannot reach in place, or a file
   SQLite cannot read, is told to move the index aside, naming what only the
   index holds (`INDEX_ONLY_STATE`: `kb add` registrations, accounts, stars,
-  reviews, settings, version history) and `pyrite db backup` first.
-  `tests/test_index_schema_drift.py::test_no_conversion_site_skips_the_classifier`
-  lists the sites.
+  reviews, settings, version history) and `pyrite db backup` first. Pass the
+  advice as `suggestion=` (and `disk_suggestion=` when the disk at fault is
+  not the index's, as in `db backup`'s destination); never set `.suggestion`
+  on the result. `tests/test_index_schema_drift.py::test_every_conversion_site_raises_the_classifier_result`
+  reads every module and fails on a handler that does otherwise, unless
+  `NOT_THE_CLASSIFIERS_JOB` gives the reason.
+- `pyrite db backup` (`services/index_backup.py`) is the first command a
+  refusal sends a user to, so it tells the index's faults (header,
+  `integrity_check`, a lock) from the output path's (read-only, full, not a
+  database) and bounds Python's `Connection.backup`, which otherwise retries a
+  lock for ever.
 - `<index>.schema-lock` is never deleted: unlinking a flocked file lets two
   holders in.
 - The index shapes old builds left on disk are fixtures in
