@@ -39,6 +39,38 @@ then failed with ``duplicate column name`` (#1302). ``schema_lock`` serialises
 the whole schema step across processes with ``flock`` on a sibling file, so the
 second process waits, then finds the index current and does nothing. The kernel
 drops the lock when its holder dies, so a killed process leaves no stale lock.
+
+**The lock file is never deleted, on purpose.** A process waiting on the lock
+holds the old file open; if the holder unlinked it on release, the next opener
+would create a new file at the same path and lock *that*, and two processes
+would hold "the" lock at once. An empty ``<index>.schema-lock`` left beside the
+index is the price; do not clean it up.
+
+**Why it fails open, unlike `pyrite/utils/file_lock.py`.** That lock guards a
+compare-and-replace of a user's file, where running unlocked could lose data,
+so it refuses (fails closed). This one only stops two openers racing to the same
+idempotent DDL; unlocked, the worst case is the pre-#1302 crash of one opener.
+So where no lock can be had (Windows, a read-only directory, a filesystem
+without ``flock``) the open runs unlocked rather than refusing every command.
+
+**Every SQLite fault is classified by ``storage_error_from``** (`errors.py`):
+a lock is ``StorageBusyError`` (retryable, "wait and run it again"), a read-only
+or full disk gets the disk suggestion, and only a schema this build cannot
+reach in place is told to rebuild, with `INDEX_ONLY_STATE` named, since the
+index file is the only home of ``kb add`` registrations, accounts, stars and
+reviews.
+
+**Default mode writes before it can refuse.** ``create_all``, the virtual
+tables and this build's migrations run before the repair plans, so a refused
+index has been changed by the open that refused it (the message says which
+versions were applied). Nothing-written-before-refusal is the #718 explicit
+mode's job, which must check before ``create_all``.
+
+**Added columns carry no ``REFERENCES`` clause.** ``CreateColumn`` compiles the
+column alone (``kb.repo_id`` becomes ``repo_id INTEGER``), so a foreign key the
+repair adds has no ``ON DELETE`` action, unlike a table ``create_all`` made.
+A declared ``UNIQUE`` index that fails on duplicate rows rolls the whole plan
+back and refuses the open with `REPAIR_FAILED_SUGGESTION`.
 """
 
 from __future__ import annotations
@@ -57,6 +89,7 @@ from sqlalchemy.dialects import sqlite as sqlite_dialect
 from sqlalchemy.schema import CreateColumn, CreateIndex
 
 from ..exceptions import IndexSchemaRefusedError, StorageBusyError
+from .errors import DISK_SUGGESTION, INDEX_ONLY_STATE, is_disk_fault, storage_error_from
 
 try:
     import fcntl
@@ -74,14 +107,23 @@ the holder is stopped or hung, and the open fails with `StorageBusyError`
 (retryable) instead of hanging the caller."""
 
 REBUILD_SUGGESTION = (
-    "Move the index file aside and run `pyrite index build` to rebuild the index "
-    "from the markdown files."
+    "This Pyrite version cannot upgrade the index in place. Run `pyrite db backup` "
+    "first, to keep a copy. Then move the index file aside and run `pyrite index "
+    f"build`. The rebuild restores the entries from the markdown files, not the "
+    f"{INDEX_ONLY_STATE}: they stay in the backup."
 )
 
-WRITE_REFUSED_SUGGESTION = (
-    "Check that the index file and its directory are writable and the disk has "
-    "space, then run the command again. Or move the index file aside and run "
-    "`pyrite index build` to rebuild the index from the markdown files."
+MIGRATION_FAILED_SUGGESTION = (
+    "The index is intact: each finished migration step is kept, and the next open "
+    "resumes from there. The log names the step's error. If the disk is writable and "
+    "has space, report that line as a Pyrite bug; do not rebuild, which would lose the "
+    f"{INDEX_ONLY_STATE}."
+)
+
+REPAIR_FAILED_SUGGESTION = (
+    "The index is unchanged: the repair is applied as one transaction and rolled "
+    "back. The log names the error. If the disk is writable and has space, report "
+    f"that line as a Pyrite bug; do not rebuild, which would lose the {INDEX_ONLY_STATE}."
 )
 
 _DIALECT = sqlite_dialect.dialect()
@@ -102,12 +144,28 @@ def recorded_version(conn: sqlite3.Connection) -> int | None:
     return row[0] if row else None
 
 
-def _version_text(conn: sqlite3.Connection) -> str:
-    version = recorded_version(conn)
-    return f"schema version {version}" if version is not None else "an unrecorded schema version"
+def describe_state(conn: sqlite3.Connection, version_at_open: int | None) -> str:
+    """What this open found and did, in a refusal: the recorded version before
+    the open and, when this open's migrations moved it, the version now."""
+    now = recorded_version(conn)
+    if version_at_open is None:
+        version_at_open = now
+    if version_at_open is None:
+        return "The index (no recorded schema version)"
+    if now is not None and now != version_at_open:
+        return (
+            f"The index was at schema version {version_at_open}; this open applied the "
+            f"migrations to {now}, and then"
+        )
+    return f"The index (schema version {version_at_open})"
 
 
-def repair_schema(conn: sqlite3.Connection, metadata: MetaData | None = None) -> list[str]:
+def repair_schema(
+    conn: sqlite3.Connection,
+    metadata: MetaData | None = None,
+    *,
+    version_at_open: int | None = None,
+) -> list[str]:
     """Add every model column and declared index missing from tables on disk.
 
     Returns what was added (``table.column`` and ``index <name>``), empty when
@@ -156,9 +214,11 @@ def repair_schema(conn: sqlite3.Connection, metadata: MetaData | None = None) ->
                 add_indexes.append((index.name, ddl))
 
     if cannot_add:
+        state = describe_state(conn, version_at_open)
+        verb = "lacks" if state.startswith("The index (") else "found it lacks"
         err = IndexSchemaRefusedError(
-            f"The index ({_version_text(conn)}) was built by another Pyrite version: "
-            f"{', '.join(cannot_add)} cannot be added to it in place."
+            f"{state} {verb} {', '.join(cannot_add)}, which this Pyrite version cannot "
+            "add in place, so the index is refused."
         )
         err.suggestion = REBUILD_SUGGESTION
         raise err
@@ -182,12 +242,16 @@ def repair_schema(conn: sqlite3.Connection, metadata: MetaData | None = None) ->
         # The driver's text is logged, not shown: it is not safe by
         # construction (IndexSchemaRefusedError's contract).
         logger.warning("Index schema repair failed adding %s: %s", ", ".join(added), exc)
-        err = IndexSchemaRefusedError(
-            f"The index ({_version_text(conn)}) needs {', '.join(added)}, "
-            "and the database refused the change."
+        failed = storage_error_from(
+            exc,
+            f"{describe_state(conn, version_at_open)} needs {', '.join(added)}, and adding "
+            "them failed; nothing was changed.",
+            cls=IndexSchemaRefusedError,
+            with_detail=False,
         )
-        err.suggestion = WRITE_REFUSED_SUGGESTION
-        raise err from exc
+        if failed.suggestion is None:
+            failed.suggestion = DISK_SUGGESTION if is_disk_fault(exc) else REPAIR_FAILED_SUGGESTION
+        raise failed from exc
     logger.info("Repaired the index schema: added %s", ", ".join(added))
     return added
 

@@ -25,10 +25,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from ..exceptions import IndexSchemaRefusedError, StorageError
 from .backends.sqlite_backend import SQLiteBackend
-from .errors import storage_error_from
+from .errors import DISK_SUGGESTION, INDEX_ONLY_STATE, is_disk_fault, storage_error_from
 from .migrations import MigrationError
 from .models import Base
-from .schema_repair import WRITE_REFUSED_SUGGESTION, repair_schema, schema_lock
+from .schema_repair import MIGRATION_FAILED_SUGGESTION, repair_schema, schema_lock
 from .virtual_tables import create_fts_tables, create_vec_table
 
 logger = logging.getLogger(__name__)
@@ -72,8 +72,9 @@ sqlite3.register_adapter(date, lambda d: d.isoformat())
 sqlite3.register_converter("timestamp", lambda b: datetime.fromisoformat(b.decode()))
 
 CORRUPT_INDEX_SUGGESTION = (
-    "Remove or move the unreadable index file and run `pyrite index build` "
-    "to rebuild the index from markdown files."
+    "Move the unreadable index file aside, and keep it, then run `pyrite index build` "
+    "to rebuild the index from the markdown files. The rebuild does not restore the "
+    f"{INDEX_ONLY_STATE}."
 )
 
 
@@ -185,10 +186,12 @@ class ConnectionMixin:
             @event.listens_for(self.engine, "connect")
             def set_sqlite_pragma(dbapi_connection, connection_record):
                 cursor = dbapi_connection.cursor()
+                # busy_timeout first: the journal_mode switch below waits for
+                # another connection's lock under it, not pysqlite's default.
+                cursor.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
                 cursor.execute("PRAGMA foreign_keys = ON")
                 cursor.execute("PRAGMA journal_mode = WAL")
                 cursor.execute("PRAGMA synchronous = NORMAL")
-                cursor.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
                 cursor.close()
 
             # Translate actual corruption, preserving query and lock errors.
@@ -247,8 +250,11 @@ class ConnectionMixin:
             raise
         except (OSError, sqlite3.Error, SQLAlchemyError, MigrationError) as exc:
             self._dispose_after_failed_open()
-            err = StorageError(f"Cannot open index database at {self.db_path}: {exc}")
-            err.suggestion = CORRUPT_INDEX_SUGGESTION
+            err = storage_error_from(exc, f"Cannot open index database at {self.db_path}")
+            if err.suggestion is None:
+                # A disk fault is not fixed by a rebuild; what is left is a file
+                # SQLite cannot read (corruption, not a database, a directory).
+                err.suggestion = DISK_SUGGESTION if is_disk_fault(exc) else CORRUPT_INDEX_SUGGESTION
             raise err from exc
 
         # Instantiate the search backend.
@@ -491,18 +497,26 @@ class ConnectionMixin:
         from .migrations import CURRENT_VERSION, MigrationManager
 
         mgr = MigrationManager(self._raw_conn)
+        self._version_at_open = mgr.get_current_version()
         pending = mgr.get_pending_migrations()
         if pending:
-            from_version = mgr.get_current_version()
+            from_version = self._version_at_open
             try:
                 mgr.migrate()
             except MigrationError as exc:
                 logger.warning("Index migration failed: %s", exc)
-                err = IndexSchemaRefusedError(
-                    f"The index could not be upgraded from schema version {from_version} "
-                    f"to {CURRENT_VERSION}."
+                err = storage_error_from(
+                    exc,
+                    f"Upgrading the index from schema version {from_version} to "
+                    f"{CURRENT_VERSION} stopped at migration v{exc.version}; the steps "
+                    "before it are kept.",
+                    cls=IndexSchemaRefusedError,
+                    with_detail=False,
                 )
-                err.suggestion = WRITE_REFUSED_SUGGESTION
+                if err.suggestion is None:
+                    err.suggestion = (
+                        DISK_SUGGESTION if is_disk_fault(exc) else MIGRATION_FAILED_SUGGESTION
+                    )
                 raise err from exc
         # Create vec_entry table if sqlite-vec is available and table doesn't exist
         if self.vec_available:
@@ -510,7 +524,10 @@ class ConnectionMixin:
 
     def _repair_schema(self) -> list[str]:
         """Add model columns and indexes the file lacks whatever its recorded version (#1260)."""
-        return repair_schema(cast(sqlite3.Connection, self._raw_conn))
+        return repair_schema(
+            cast(sqlite3.Connection, self._raw_conn),
+            version_at_open=getattr(self, "_version_at_open", None),
+        )
 
     def _create_plugin_tables(self):
         """Create custom tables defined by plugins."""

@@ -295,7 +295,8 @@ class TestSearchCatchAllDoesNotSwallowStorageError:
 
         assert result.exit_code == 1
         assert "STORAGE_ERROR" in result.stdout
-        assert "pyrite index build" in result.stdout
+        # Rich wraps the suggestion at the console width; read it unwrapped.
+        assert "pyrite index build" in " ".join(result.stdout.split())
         assert "Falling back to file search" not in result.stdout
 
     @pytest.mark.parametrize("fmt", ["json", "yaml", "csv", "markdown"])

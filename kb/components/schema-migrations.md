@@ -47,9 +47,23 @@ separate: #718's explicit-upgrade mode must refuse before the first write.
   timeout). Windows and filesystems without `flock` run unlocked.
 - **A new migration handler returns early when its table is absent**
   (`tests/test_migrations.py` drives the manager on bare connections). A new
-  column on the model needs no handler to reach old indexes: the repair adds
-  it. Declare a new index on the model (`__table_args__`) so the repair can
-  create it too.
+  model column that is nullable or has a server default needs no handler to
+  reach old indexes: the repair adds it. A `NOT NULL` column without a server
+  default cannot be added in place, so it refuses every old index: give it a
+  server default, or a migration that rebuilds the table. The repair adds a
+  column without its `REFERENCES` clause. Declare a new index on the model
+  (`__table_args__`) so the repair can create it too.
+- Every SQLite fault on the open, migrate, repair and write paths goes through
+  `storage_error_from` (`pyrite/storage/errors.py`): a lock is a retryable
+  `StorageBusyError` that says to wait, a read-only or full disk gets the disk
+  suggestion, and only a schema this build cannot reach in place, or a file
+  SQLite cannot read, is told to move the index aside, naming what only the
+  index holds (`INDEX_ONLY_STATE`: `kb add` registrations, accounts, stars,
+  reviews, settings, version history) and `pyrite db backup` first.
+  `tests/test_index_schema_drift.py::test_no_conversion_site_skips_the_classifier`
+  lists the sites.
+- `<index>.schema-lock` is never deleted: unlinking a flocked file lets two
+  holders in.
 - The index shapes old builds left on disk are fixtures in
   `tests/fixtures/index-shapes/`, rebuilt by `build_index_shapes.py` from the
   refs; add a shape when a release changes the schema.

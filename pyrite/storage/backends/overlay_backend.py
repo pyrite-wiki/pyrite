@@ -680,7 +680,7 @@ _READ_SQL_ONLY = frozenset({"execute_sql"})
 _RAW_HANDLES = frozenset(
     {"db_path", "engine", "vec_load_error", "_fallback_lock", "_fallback_sessions", "_local",
      "_raw_lock", "_sa_conn", "_session_factory", "conn", "_raw_cursor", "request_handle",
-     "session_scope", "_load_extensions"}
+     "session_scope", "_load_extensions", "_version_at_open"}
 )  # fmt: skip
 
 #: Writes a change-set write makes whose rows are rebuilt from files and git,

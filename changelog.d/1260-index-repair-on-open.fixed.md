@@ -12,3 +12,10 @@
   crash with `duplicate column name` or `database is locked`: the migration and
   repair run under one cross-process lock, and the second process waits and
   finds the index current (#1302).
+- A locked database met while opening, upgrading or repairing the index, or
+  while `index build` writes a row, is now the retryable `STORAGE_ERROR` that
+  says to wait, not a refusal. A read-only or full disk is told to check the
+  disk. Advice to move the index aside and rebuild is given only where nothing
+  else works, and it now says to run `pyrite db backup` first and names what a
+  rebuild does not restore: KBs added with `pyrite kb add`, users, sessions,
+  API keys, permissions, stars, reviews, settings and version history.

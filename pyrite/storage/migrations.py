@@ -640,7 +640,9 @@ class MigrationManager:
             logger.info("Applied migration v%d: %s", migration.version, migration.description)
         except Exception as e:
             self.conn.rollback()
-            raise MigrationError(f"Failed to apply migration v{migration.version}: {e}") from e
+            raise MigrationError(
+                f"Failed to apply migration v{migration.version}: {e}", version=migration.version
+            ) from e
 
     def _apply_v7(self) -> None:
         """Conditionally add OAuth columns to local_user (may already exist from ORM)."""
@@ -997,9 +999,12 @@ class MigrationManager:
 
 
 class MigrationError(Exception):
-    """Raised when a migration fails."""
+    """Raised when a migration fails. ``version`` is the one that failed, and
+    ``__cause__`` the SQLite error, which ``storage_error_from`` classifies."""
 
-    pass
+    def __init__(self, message: str, version: int | None = None):
+        super().__init__(message)
+        self.version = version
 
 
 def ensure_migrated(db_path: Path) -> None:

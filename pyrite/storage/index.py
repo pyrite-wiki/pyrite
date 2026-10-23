@@ -35,8 +35,8 @@ from ..models.protocols import (
 from ..schema.field_aliases import lift_declared_fields, read_metadata, read_view
 from ..utils.metadata import parse_metadata
 from .database import PyriteDB
+from .errors import DISK_SUGGESTION, driver_error, is_disk_fault, storage_error_from
 from .repository import KBRepository
-from .schema_repair import WRITE_REFUSED_SUGGESTION
 
 logger = logging.getLogger(__name__)
 
@@ -47,21 +47,33 @@ logger = logging.getLogger(__name__)
 # raises another class and stays a per-file problem.
 _DATABASE_FAULTS = (sqlite3.OperationalError, sa_exc.OperationalError, StorageError)
 
+WRITE_RETRY_SUGGESTION = (
+    "Run the command again: opening the index repairs its schema. If the same row "
+    "fails again, the log names the error and `pyrite index health` shows the "
+    "index's state."
+)
+
 
 def _storage_error_for_write(exc: BaseException, rel: str, db: PyriteDB) -> StorageError:
-    """The error ``reconcile_kb`` raises when the database refuses a row."""
+    """The error ``reconcile_kb`` raises when the database refuses a row.
+
+    Classified by ``storage_error_from``: a lock is retryable and says to wait;
+    a disk fault says so; anything else (a column lost after the open) says to
+    run the command again, since the next open repairs the schema. None of
+    them is told to rebuild: the file is intact.
+    """
     try:
         db.session.rollback()
     except Exception:  # pragma: no cover - defensive: the session may be gone
         logger.debug("Rollback after a failed index write failed", exc_info=True)
     if isinstance(exc, StorageError):
-        if not exc.suggestion:
-            exc.suggestion = WRITE_REFUSED_SUGGESTION
-        return exc
-    # First line only: a driver error carries the SQL and every bound value.
-    detail = (str(getattr(exc, "orig", None) or exc).splitlines() or [type(exc).__name__])[0]
-    err = StorageError(f"The index refused the row for {rel}: {detail}")
-    err.suggestion = WRITE_REFUSED_SUGGESTION
+        err = exc
+    else:
+        # The first line only: a driver error carries the SQL and every bound value.
+        err = storage_error_from(driver_error(exc), f"The index refused the row for {rel}")
+        err.args = ((str(err).splitlines() or [type(exc).__name__])[0],)
+    if not err.suggestion:
+        err.suggestion = DISK_SUGGESTION if is_disk_fault(exc) else WRITE_RETRY_SUGGESTION
     return err
 
 
