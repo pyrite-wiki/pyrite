@@ -699,3 +699,41 @@ def test_a_call_over_the_sdk_with_no_kb_name_is_located(server, tool):
 
     ambiguous = _sdk_call(srv, tool, case.args(ids["dup"]))
     assert ambiguous.get("error_code") == "AMBIGUOUS", ambiguous
+
+
+def _write_case_tools() -> list[str]:
+    """The cases whose tool writes a file or a row: one family each of sw
+    files, social and wiki rows."""
+    return sorted(t for t, c in CASES.items() if c.writes_file or c.table)
+
+
+@pytest.mark.parametrize("arg", ["kb", None], ids=["other-arg-named", "nothing-named"])
+@pytest.mark.parametrize("tool", _write_case_tools())
+def test_a_write_that_succeeds_lands_in_the_checked_kb(server, monkeypatch, tool, arg):
+    """The success side of the property: a scoped caller who may read A and B
+    and write B, the id in B only, ``kb_name`` blank. The call succeeds, the
+    checks ran on B, the handler worked in B, and the file or row lands in B
+    and nowhere else."""
+    from pyrite.server import mcp_server as mod
+
+    srv = server["server"]
+    case, ids = CASES[tool], _ids(tool)
+    checked: list[object] = []
+    real_refusal = mod._kb_refusal
+
+    def recording_refusal(svc, kb_name, readable_kbs):
+        checked.append(kb_name)
+        return real_refusal(svc, kb_name, readable_kbs)
+
+    monkeypatch.setattr(mod, "_kb_refusal", recording_refusal)
+    before = _files(server)
+    args = case.args(ids["one"]) if arg is None else {**case.args(ids["one"]), arg: KB_B}
+    result = _call(server, tool, args, readable={KB_A, KB_B}, writable={KB_B})
+
+    assert _resolved(result), result
+    assert KB_B in checked, checked
+    if case.table:
+        assert _rows(server, case.table) == [(ids["one"], KB_B)], result
+    if case.writes_file:
+        after = _files(server)
+        assert {p.parent.name for p in after if after[p] != before.get(p)} == {KB_B}, result
