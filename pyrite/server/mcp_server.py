@@ -2700,6 +2700,24 @@ class PyriteMCPServer:
                     retryable=True,
                 )
 
+        # A tool that takes an entry id declares `locates_entry` (#1310). The
+        # KB its handler works in is `kb_name`, so with `kb_name` not named
+        # the id is resolved to the KB that holds it HERE, before `named_kbs`
+        # is computed: the found KB is then a named KB like any other, and
+        # every check below (read, write, landing) runs on it by
+        # construction. Keyed on `kb_name` alone, never on `named_kbs`: a KB
+        # named under another argument does not choose the handler's KB, so
+        # it must not skip the lookup either. With `kb_name` named, the checks
+        # run first (a caller who may not write there is told so, not "not
+        # found") and the id is verified in that KB just before the handler.
+        spec = self.tools[name].get("locates_entry")
+        kb_name_named = named_kb(arguments.get("kb_name")) is not None
+        if spec and not kb_name_named:
+            try:
+                arguments = self._locate_entry_ids(spec, arguments, readable_kbs)
+            except PyriteError as e:
+                return _refusal(e)
+
         # Every KB the call names goes through the one resolver (#952),
         # for every caller: an unknown name, a KB outside a scoped caller's
         # readable set and a shortname are refused before the handler runs,
@@ -2719,20 +2737,6 @@ class PyriteMCPServer:
                 if name == "kb_update" and readable_kbs is None:
                     refusal["legacy_error_code"] = "UPDATE_FAILED"
                 return refusal
-
-        # A tool that takes an entry id declares `locates_entry` (#1310). With
-        # no KB named, the id is resolved to the KB that holds it here, before
-        # the checks below, so they see a named KB and no handler works in a
-        # KB named ''. With a KB named, the checks run first (a caller who may
-        # not write there is told so, not "not found") and the id is verified
-        # in that KB just before the handler.
-        spec = self.tools[name].get("locates_entry")
-        if spec and not named_kbs:
-            try:
-                arguments = self._locate_entry_ids(spec, arguments, readable_kbs)
-            except PyriteError as e:
-                return _refusal(e)
-            named_kbs = _kbs_named_in(arguments)
 
         takes_readable = readable_kbs is not None and self._handler_takes_readable_kbs(name)
 
@@ -2797,9 +2801,9 @@ class PyriteMCPServer:
         try:
             handler = self.tools[name]["handler"]
             with binding(target):
-                if spec and named_kbs:
-                    # Verifies each id in the KB the call names (a no-op for an
-                    # id already resolved above); raises the refusal.
+                if spec and kb_name_named:
+                    # Verifies each id in the `kb_name` the caller named (the
+                    # checks above ran on it); raises the refusal.
                     arguments = self._locate_entry_ids(spec, arguments, readable_kbs)
                 if takes_readable:
                     # A cross-KB handler: nothing was named to refuse, so it

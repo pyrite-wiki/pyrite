@@ -398,3 +398,73 @@ def test_the_row_writers_refuse_a_blank_kb_even_called_directly(server, tool, kb
     with pytest.raises(PyriteError):
         handler(args)
     assert _rows(server, CASES[tool].table) == []
+
+
+# -- the handler's KB is always a checked KB ---------------------------------
+
+
+def _other_kb_args() -> list[str]:
+    """Every KB argument name the dispatcher checks except ``kb_name``, the
+    one the lookup fills in. A call may name a KB under any of them and leave
+    ``kb_name`` blank."""
+    from pyrite.server.mcp_server import KB_ARGUMENT_NAMES
+
+    return [n for n in KB_ARGUMENT_NAMES if n != "kb_name"]
+
+
+def _named(arg: str, kb: str):
+    return [kb] if arg == "kb_names" else kb
+
+
+@pytest.mark.parametrize(
+    "named",
+    [
+        pytest.param(KB_A, id="writable-named"),
+        pytest.param(
+            KB_B,
+            id="read-only-named",
+            marks=pytest.mark.control(
+                reason="negative side: a write tool naming the read-only KB is refused by "
+                "the write check with or without the fix; writable-named is the evidence"
+            ),
+        ),
+    ],
+)
+@pytest.mark.parametrize("arg", _other_kb_args())
+@pytest.mark.parametrize("tool", sorted(CASES))
+def test_the_handler_acts_only_in_a_kb_the_checks_ran_on(server, monkeypatch, tool, arg, named):
+    """Readable {A, B}, writable {A}; the id lives in B only; ``kb_name`` is
+    blank and a KB is named under another KB argument. The KB the handler
+    works in is one the dispatcher's KB checks ran on, and a write tool never
+    changes B (the caller may only read it)."""
+    from pyrite.server import mcp_server as mod
+
+    srv = server["server"]
+    case, ids = CASES[tool], _ids(tool)
+    checked: list[object] = []
+    real_refusal = mod._kb_refusal
+
+    def recording_refusal(svc, kb_name, readable_kbs):
+        checked.append(kb_name)
+        return real_refusal(svc, kb_name, readable_kbs)
+
+    monkeypatch.setattr(mod, "_kb_refusal", recording_refusal)
+    seen: list[object] = []
+    real_handler = srv.tools[tool]["handler"]
+
+    def spy(args, **kw):
+        seen.append(args.get("kb_name"))
+        return real_handler(args, **kw)
+
+    monkeypatch.setitem(srv.tools[tool], "handler", spy)
+
+    files, rows = _files(server), _rows(server, case.table)
+    args = {**case.args(ids["one"]), arg: _named(arg, named)}
+    result = _call(server, tool, args, readable={KB_A, KB_B}, writable={KB_A})
+
+    for kb in seen:
+        assert kb in checked, f"{tool} worked in {kb!r}; the checks ran on {checked}: {result}"
+    if srv._tool_tiers.get(tool, "read") != "read":
+        assert "error" in result, result
+        assert _files(server) == files, result
+        assert _rows(server, case.table) == rows, result
