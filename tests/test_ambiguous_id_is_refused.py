@@ -163,18 +163,20 @@ MCP_TOOL_CASES = {
 }
 MCP_TOOL_EXCLUDED = {
     "kb_qa_validate": "without kb_name it validates every readable KB and never reads entry_id",
-    "investigation_money_flow": "plugin query of its own (_readable_kb), not get_entry: #528's "
-    "groom puts extension lookups out of scope; #911",
-    "investigation_network": "as investigation_money_flow",
-    "investigation_ownership_chain": "as investigation_money_flow",
 }
 
 
 def _id_tools_with_optional_kb(server) -> set[str]:
+    """Core and plugin tools that take an id with no KB required. A plugin
+    tool that declares ``locates_entry`` is left to its own registry walk,
+    ``tests/test_plugin_mcp_tools_locate_ids.py``: the dispatcher locates its
+    id and registers its ``kb_name`` as optional (#1310)."""
     from pyrite.server.mcp_server import KB_ARGUMENT_NAMES
 
     out = set()
     for name, meta in server.tools.items():
+        if meta.get("locates_entry"):
+            continue
         schema = meta.get("inputSchema") or {}
         props = set(schema.get("properties") or {})
         required = set(schema.get("required") or [])

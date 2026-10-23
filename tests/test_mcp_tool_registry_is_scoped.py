@@ -175,7 +175,6 @@ OPTIONAL_KB_TOOLS: dict[str, str] = {
                 "investigation_create_event",
                 "investigation_ftm_import",
                 "investigation_log_source",
-                "investigation_promote_claim",
                 "investigation_start",
             ),
         }.items()
@@ -229,9 +228,16 @@ def _claiming(kind):
 
 def _optional_kb_tools(servers):
     """Tools whose KB parameter is declared but not required: they span every
-    KB when the caller omits it."""
+    KB when the caller omits it.
+
+    Not a tool that declares ``locates_entry``: its ``kb_name`` is optional so
+    the dispatcher can fill it, and the dispatcher never calls its handler
+    without a named KB -- the one readable KB that holds the id, or a refusal
+    (#1310, ``tests/test_plugin_mcp_tools_locate_ids.py``)."""
     found = {}
     for _tier, name, meta in _all_tools(servers):
+        if meta.get("locates_entry"):
+            continue
         schema = meta.get("inputSchema") or {}
         props = set(schema.get("properties") or {})
         required = set(schema.get("required") or [])

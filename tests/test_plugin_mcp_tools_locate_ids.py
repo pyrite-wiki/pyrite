@@ -630,3 +630,72 @@ def test_a_call_with_every_id_blank_is_refused_before_anything_runs(server, monk
     assert reached == []
     assert _files(server) == files
     assert {t: _rows(server, c.table) for t, c in CASES.items() if c.table} == rows
+
+
+# -- over the wire: the SDK validates arguments against the schema first -----
+
+
+def test_every_locating_tool_leaves_kb_name_optional(server):
+    """The MCP SDK checks a call's arguments against the tool's inputSchema
+    before ``_dispatch_tool`` sees it, so a schema that requires ``kb_name``
+    refuses the very call the lookup exists for. Every ``locates_entry`` tool,
+    from the registry and from what the SDK lists."""
+    import asyncio
+
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    srv = server["server"]
+    # The case tools as well as the declared ones, so the check never runs
+    # over an empty set (a tool that stopped declaring is still checked).
+    tools = {**_locating_tools(srv), **{n: srv.tools[n] for n in CASES}}
+    for name, tool in tools.items():
+        assert "kb_name" not in tool["inputSchema"].get("required", []), name
+
+    async def listed():
+        async with create_connected_server_and_client_session(srv.build_sdk_server()) as session:
+            return {t.name: t.inputSchema for t in (await session.list_tools()).tools}
+
+    schemas = asyncio.run(listed())
+    for name in tools:
+        assert "kb_name" not in schemas[name].get("required", []), name
+
+
+def _sdk_call(srv, tool: str, arguments: dict) -> dict:
+    """One ``tools/call`` through the SDK server ``handle_sse`` builds, over
+    the SDK's in-memory client session: schema validation included."""
+    import asyncio
+    import json
+
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    async def run():
+        async with create_connected_server_and_client_session(srv.build_sdk_server()) as session:
+            result = await session.call_tool(tool, arguments)
+            text = result.content[0].text
+            try:
+                return json.loads(text)
+            except ValueError:  # the SDK's own refusal is plain text
+                return {"error": text, "sdk": True}
+
+    return asyncio.run(run())
+
+
+@pytest.mark.parametrize("tool", sorted(CASES))
+def test_a_call_over_the_sdk_with_no_kb_name_is_located(server, tool):
+    """Through the SDK server path, a call with no ``kb_name`` reaches the
+    lookup: an id in one KB resolves there (and a write lands there), an id in
+    two is AMBIGUOUS -- the dispatcher's answers, not the SDK's schema error."""
+    case, ids = CASES[tool], _ids(tool)
+    srv = server["server"]
+    before = _files(server)
+    result = _sdk_call(srv, tool, case.args(ids["one"]))
+    assert not result.get("sdk"), result
+    assert result.get("error_code") is None and not _missing(result), result
+    if case.table:
+        assert _rows(server, case.table) == [(ids["one"], KB_B)]
+    if case.writes_file:
+        after = _files(server)
+        assert {p.parent.name for p in after if after[p] != before.get(p)} == {KB_B}, result
+
+    ambiguous = _sdk_call(srv, tool, case.args(ids["dup"]))
+    assert ambiguous.get("error_code") == "AMBIGUOUS", ambiguous

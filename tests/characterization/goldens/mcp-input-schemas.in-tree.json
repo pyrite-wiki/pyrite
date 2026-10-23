@@ -2161,7 +2161,6 @@
         },
         "required": [
           "entry_id",
-          "kb_name",
           "user_id",
           "value"
         ],
@@ -2308,8 +2307,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name"
+          "item_id"
         ],
         "type": "object"
       }
@@ -2337,7 +2335,6 @@
         },
         "required": [
           "item_id",
-          "kb_name",
           "assignee"
         ],
         "type": "object"
@@ -2389,8 +2386,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name"
+          "item_id"
         ],
         "type": "object"
       }
@@ -2555,8 +2551,7 @@
           }
         },
         "required": [
-          "epic_id",
-          "kb_name"
+          "epic_id"
         ],
         "type": "object"
       }
@@ -2620,7 +2615,6 @@
         },
         "required": [
           "item_id",
-          "kb_name",
           "summary"
         ],
         "type": "object"
@@ -2677,9 +2671,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "kb_name"
-        ],
+        "required": [],
         "type": "object"
       }
     },
@@ -2757,7 +2749,6 @@
         },
         "required": [
           "item_id",
-          "kb_name",
           "outcome",
           "reviewer"
         ],
@@ -2828,8 +2819,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name"
+          "item_id"
         ],
         "type": "object"
       }
@@ -2861,7 +2851,6 @@
         },
         "required": [
           "item_id",
-          "kb_name",
           "to_status"
         ],
         "type": "object"
@@ -3286,7 +3275,6 @@
         },
         "required": [
           "entry_id",
-          "kb_name",
           "quality"
         ],
         "type": "object"
@@ -3320,7 +3308,6 @@
         },
         "required": [
           "entry_id",
-          "kb_name",
           "level"
         ],
         "type": "object"
@@ -3410,7 +3397,6 @@
         },
         "required": [
           "entry_id",
-          "kb_name",
           "reviewer_id",
           "action"
         ],
@@ -3440,8 +3426,7 @@
           }
         },
         "required": [
-          "entry_id",
-          "kb_name"
+          "entry_id"
         ],
         "type": "object"
       }
@@ -4773,8 +4758,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name"
+          "item_id"
         ],
         "type": "object"
       }
@@ -4825,8 +4809,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name"
+          "item_id"
         ],
         "type": "object"
       }
@@ -4874,8 +4857,7 @@
           }
         },
         "required": [
-          "epic_id",
-          "kb_name"
+          "epic_id"
         ],
         "type": "object"
       }
@@ -5245,8 +5227,7 @@
           }
         },
         "required": [
-          "entry_id",
-          "kb_name"
+          "entry_id"
         ],
         "type": "object"
       }
@@ -7227,7 +7208,6 @@
         },
         "required": [
           "entry_id",
-          "kb_name",
           "user_id",
           "value"
         ],
@@ -7374,8 +7354,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name"
+          "item_id"
         ],
         "type": "object"
       }
@@ -7403,7 +7382,6 @@
         },
         "required": [
           "item_id",
-          "kb_name",
           "assignee"
         ],
         "type": "object"
@@ -7455,8 +7433,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name"
+          "item_id"
         ],
         "type": "object"
       }
@@ -7621,8 +7598,7 @@
           }
         },
         "required": [
-          "epic_id",
-          "kb_name"
+          "epic_id"
         ],
         "type": "object"
       }
@@ -7686,7 +7662,6 @@
         },
         "required": [
           "item_id",
-          "kb_name",
           "summary"
         ],
         "type": "object"
@@ -7743,9 +7718,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "kb_name"
-        ],
+        "required": [],
         "type": "object"
       }
     },
@@ -7823,7 +7796,6 @@
         },
         "required": [
           "item_id",
-          "kb_name",
           "outcome",
           "reviewer"
         ],
@@ -7894,8 +7866,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name"
+          "item_id"
         ],
         "type": "object"
       }
@@ -7927,7 +7898,6 @@
         },
         "required": [
           "item_id",
-          "kb_name",
           "to_status"
         ],
         "type": "object"
@@ -8352,7 +8322,6 @@
         },
         "required": [
           "entry_id",
-          "kb_name",
           "quality"
         ],
         "type": "object"
@@ -8442,7 +8411,6 @@
         },
         "required": [
           "entry_id",
-          "kb_name",
           "reviewer_id",
           "action"
         ],
@@ -8472,8 +8440,7 @@
           }
         },
         "required": [
-          "entry_id",
-          "kb_name"
+          "entry_id"
         ],
         "type": "object"
       }

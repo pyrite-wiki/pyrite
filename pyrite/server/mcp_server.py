@@ -588,8 +588,18 @@ class PyriteMCPServer:
         )
 
     def _register_tool(self, name: str, schema: dict[str, Any], tier: str) -> None:
-        """Label a copy at registration, keeping shared schemas unmodified."""
+        """Label a copy at registration, keeping shared schemas unmodified.
+
+        A tool that declares `locates_entry` takes `kb_name` as optional,
+        whatever its plugin's schema says (#1310): the SDK validates a call
+        against `inputSchema` before `_dispatch_tool` runs, so a required
+        `kb_name` would refuse the call the lookup exists to answer. Derived
+        here from the declaration, so no plugin can get it wrong."""
         self._tool_tiers[name] = tier
+        if schema.get("locates_entry"):
+            input_schema = schema.get("inputSchema") or {}
+            required = [r for r in input_schema.get("required", []) if r != "kb_name"]
+            schema = {**schema, "inputSchema": {**input_schema, "required": required}}
         self.tools[name] = {
             **schema,
             "description": f"[{tier}] {schema.get('description') or ''}",
