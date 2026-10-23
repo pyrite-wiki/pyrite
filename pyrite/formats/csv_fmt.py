@@ -30,9 +30,9 @@ def csv_serialize(data: Any, **kwargs) -> str:
             # (Without this, an entry's `tags` list matched the tag-count
             # table and the entry itself never printed.)
             output = io.StringIO()
-            writer = csv.writer(output)
-            writer.writerow(data.keys())
-            writer.writerow([cell_text(data.get(key)) for key in data])
+            basic = csv.writer(output)
+            basic.writerow(list(data.keys()))
+            basic.writerow([cell_text(data.get(key)) for key in data])
             return output.getvalue()
         if "results" in data:
             return _results_to_csv(data["results"])
@@ -48,9 +48,9 @@ def csv_serialize(data: Any, **kwargs) -> str:
     # Fallback: single row of key-value pairs
     if isinstance(data, dict):
         output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(data.keys())
-        writer.writerow(data.values())
+        basic = csv.writer(output)
+        basic.writerow(list(data.keys()))
+        basic.writerow(list(data.values()))
         return output.getvalue()
 
     return str(data)
