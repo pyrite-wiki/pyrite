@@ -60,6 +60,18 @@ def test_get_csv_prints_the_entry_without_tags(cli_world, console_width):
     assert row[header.index("title")] == TITLE
 
 
+def test_get_csv_stdout_ends_with_exactly_one_newline(cli_world, console_width):
+    """Echo used to add a newline after the CSV's own line terminator, leaving
+    a trailing blank record that streaming CSV parsers read as an empty row
+    (#1234)."""
+    world = cli_world()
+    world.add_entry(KB, _note(ID, TITLE))
+    output = _run(world, ["get", ID, "-k", KB, "--format", "csv"])
+    assert output.endswith("\r\n"), repr(output[-10:])
+    assert not output.endswith("\r\n\n"), repr(output[-10:])
+    assert _rows(output)[-1] != [], _rows(output)
+
+
 def test_get_csv_prints_tags_and_tricky_cells(cli_world, console_width):
     world = cli_world()
     body = 'has, "quotes"\nand a newline'
