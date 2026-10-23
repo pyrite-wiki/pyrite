@@ -18,6 +18,7 @@ later fails ``test_every_*_surface_is_a_case_or_excluded`` until it is judged.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 import typer
@@ -556,6 +557,10 @@ CLI_BLANK_KB_CASES = {
 }
 CLI_EXCLUDED = {
     "pyrite export collection": "without -k it loads from no KB (`kb or ''`): a miss, never a pick",
+    "pyrite qa validate": (
+        "--entry without a KB drops the id and validates every KB: a wrong answer, "
+        "not a pick or a write (#1312)"
+    ),
 }
 
 
@@ -568,14 +573,37 @@ def _walk(cmd, path):
         yield " ".join(path), cmd
 
 
+#: A parameter that names an entry: ``entry_id``, ``item_ids``, ``entry``,
+#: ``id``; or one whose help says so ("Article entry ID"). Name or help, so a
+#: command is seen whatever it calls its id (#1310).
+_ID_NAME = re.compile(r"(^|_)(ids?|entry|entries|item|items)$")
+_ID_HELP = re.compile(r"\b(entry|item|article|writeup|claim|epic|task)\s+ids?\b", re.I)
+#: Ids of principals, not entries.
+_PRINCIPAL_PARAMS = frozenset({"user_id", "author_id", "reviewer_id", "assignee_id", "voter_id"})
+_KB_PARAM_NAMES = frozenset({"kb_name", "kb", "knowledge_base"})
+_KB_FLAGS = frozenset({"-k", "--kb", "--kb-name", "--knowledge-base"})
+
+
+def _is_entry_id_param(param) -> bool:
+    """An argument or an option (``--id``) that names entries by id."""
+    if param.param_type_name not in ("argument", "option") or param.name in _PRINCIPAL_PARAMS:
+        return False
+    return bool(_ID_NAME.search(param.name) or _ID_HELP.search(getattr(param, "help", None) or ""))
+
+
+def _is_kb_param(param) -> bool:
+    flags = set(getattr(param, "opts", ())) | set(getattr(param, "secondary_opts", ()))
+    return param.name in _KB_PARAM_NAMES or bool(flags & _KB_FLAGS)
+
+
 def _takes_an_id_and_an_optional_kb(cmd) -> bool:
-    """An argument naming entries by id (``*_id``, or ``*_ids`` for a list)
-    beside a ``-k`` the caller may leave out."""
-    params = {p.name: p for p in cmd.params}
-    has_id = any(
-        p.param_type_name == "argument" and n.endswith(("_id", "_ids")) for n, p in params.items()
-    )
-    kb = [params[k] for k in ("kb_name", "kb") if k in params]
+    """A parameter naming entries by id beside a KB parameter the caller may
+    leave out. The id may be an argument or an option, named anything; the KB
+    parameter is ``kb_name``, ``kb``, ``knowledge_base`` or any ``-k``/``--kb``
+    option. Still a heuristic: a command whose id is neither named nor
+    described as one is not seen (say so on a new command's help text)."""
+    has_id = any(_is_entry_id_param(p) for p in cmd.params)
+    kb = [p for p in cmd.params if _is_kb_param(p)]
     return has_id and bool(kb) and not kb[0].required
 
 
@@ -779,6 +807,14 @@ def _walk_app(app_or_cmd, path):
     return _walk(typer.main.get_command(app_or_cmd), path)
 
 
+def _single_command(group: str, callback):
+    """A plugin that registers one command function (`pyrite/cli/__init__.py`
+    mounts it as ``app.command(group)(callback)``), as the command Typer builds."""
+    holder = typer.Typer()
+    holder.command(group)(callback)
+    return typer.main.get_command(holder)
+
+
 def _extension_id_commands() -> set[str]:
     """Every plugin CLI command taking an entry id with an optional -k,
     walked from the plugin registry (what `pyrite` mounts)."""
@@ -789,11 +825,83 @@ def _extension_id_commands() -> set[str]:
         if hasattr(app_or_cmd, "registered_commands"):
             commands = _walk_app(app_or_cmd, ["pyrite", group])
         else:
-            commands = [(f"pyrite {group}", typer.main.get_command(typer.Typer()))]
+            commands = [(f"pyrite {group}", _single_command(group, app_or_cmd))]
         for name, cmd in commands:
             if _takes_an_id_and_an_optional_kb(cmd):
                 out.add(name)
     return out
+
+
+def _probe_app() -> typer.Typer:
+    """Commands in the shapes #1305's walk missed, plus two it must not match."""
+    probe = typer.Typer()
+
+    @probe.command("by-entry")
+    def by_entry(
+        entry: str = typer.Argument(..., help="Entry to open"), kb_name: str | None = None
+    ):
+        """An id argument not named *_id, described as one in its help."""
+
+    @probe.command("by-help")
+    def by_help(thing: str = typer.Argument(..., help="Article entry ID"), kb: str | None = None):
+        """An id argument named for neither, found by its help."""
+
+    @probe.command("by-option")
+    def by_option(
+        id: str = typer.Option(..., "--id", help="the thing"),
+        kb: str | None = typer.Option(None, "--kb", "-k"),
+    ):
+        """An id passed as an option."""
+
+    @probe.command("by-knowledge-base")
+    def by_knowledge_base(entry_id: str, knowledge_base: str | None = None):
+        """A KB parameter named knowledge_base."""
+
+    @probe.command("by-short-flag")
+    def by_short_flag(entry_id: str, where: str | None = typer.Option(None, "-k")):
+        """A KB parameter named for neither, found by its -k flag."""
+
+    @probe.command("principal-only")
+    def principal_only(user_id: str, kb_name: str | None = None):
+        """A user id is not an entry id."""
+
+    @probe.command("kb-required")
+    def kb_required(entry_id: str, kb_name: str = typer.Option(..., "-k")):
+        """A required KB is named by the caller; nothing to resolve."""
+
+    return probe
+
+
+@pytest.mark.control(reason="the walk's own predicate, driven on synthetic commands")
+def test_the_walk_sees_every_id_shape_and_skips_the_rest():
+    names = {
+        name
+        for name, cmd in _walk_app(_probe_app(), ["probe"])
+        if _takes_an_id_and_an_optional_kb(cmd)
+    }
+    assert names == {
+        "probe by-entry",
+        "probe by-help",
+        "probe by-option",
+        "probe by-knowledge-base",
+        "probe by-short-flag",
+    }
+
+
+def test_the_walk_inspects_a_plugin_that_registers_one_command(monkeypatch):
+    """`pyrite/cli/__init__.py` mounts a bare function as a command; the walk
+    built it as `get_command(Typer())`, which raises RuntimeError (#1310)."""
+    import pyrite.plugins as plugins
+
+    def one(entry_id: str, kb_name: str | None = None):
+        """A single-command plugin."""
+
+    class _Registry:
+        def get_all_cli_commands(self):
+            return [("solo", one)]
+
+    monkeypatch.setattr(plugins, "get_registry", lambda: _Registry())
+    assert _extension_id_commands() == {"pyrite solo"}
 
 
 def _slug(name: str) -> str:
