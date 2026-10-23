@@ -31,7 +31,19 @@ KB_B = "ids-b-1310"
 
 #: Ids of principals, not entries.
 PRINCIPAL_PARAMS = frozenset({"user_id", "author_id", "reviewer_id", "assignee_id", "voter_id"})
-_ID_PARAM = re.compile(r"(^|_)ids?$")
+#: An entry id by name (``entry_id``, ``item_ids``, ``entry``) or by its
+#: description ("Place item after this item ID"): the CLI walk's rule
+#: (``tests/test_ambiguous_id_is_refused.py``, ``_is_entry_id_param``), so an id
+#: argument named ``after`` is seen here as it is there.
+_ID_NAME = re.compile(r"(^|_)(ids?|entry|entries|item|items)$")
+_ID_HELP = re.compile(r"\b(entry|item|article|writeup|claim|epic|task)\s+ids?\b", re.I)
+
+#: Tools the walk finds that take an id and act on no entry it names; each
+#: names its reason and, for a bug, its issue.
+EXCLUDED = {
+    "sw_backlog": "epic is a list filter, not a pick or a write; blank kb_name filters to "
+    "nothing (#1314)",
+}
 
 _BACKLOG = {"kind": "feature", "priority": "medium", "effort": "S"}
 
@@ -176,13 +188,21 @@ def server():
 
 def _id_params(schema: dict) -> set[str]:
     props = schema.get("inputSchema", {}).get("properties", {})
-    return {p for p in props if _ID_PARAM.search(p) and p not in PRINCIPAL_PARAMS}
+    return {
+        p
+        for p, prop in props.items()
+        if p not in PRINCIPAL_PARAMS
+        and (_ID_NAME.search(p) or _ID_HELP.search(str(prop.get("description") or "")))
+    }
 
 
 def _plugin_id_tools(srv) -> dict[str, dict]:
     """Every registered tool that takes an entry id and a KB, from the tool
-    registry the server built (core tools resolve ids in KBService itself)."""
+    registry the server built (core tools resolve ids in KBService itself).
+    A KB argument is any name the dispatcher checks (``KB_ARGUMENT_NAMES``),
+    not only ``kb_name``."""
     from pyrite.server import tool_schemas
+    from pyrite.server.mcp_server import KB_ARGUMENT_NAMES
 
     core = (
         set(tool_schemas.READ_TOOLS) | set(tool_schemas.WRITE_TOOLS) | set(tool_schemas.ADMIN_TOOLS)
@@ -192,21 +212,47 @@ def _plugin_id_tools(srv) -> dict[str, dict]:
         for name, schema in srv.tools.items()
         if name not in core
         and _id_params(schema)
-        and "kb_name" in schema["inputSchema"].get("properties", {})
+        and set(KB_ARGUMENT_NAMES) & set(schema["inputSchema"].get("properties", {}))
     }
 
 
 @pytest.mark.control(reason="inventory: fails on a tool added later with no case, not on this fix")
 def test_every_plugin_id_tool_has_a_case(server):
     found = set(_plugin_id_tools(server["server"]))
-    assert found == set(CASES), (
-        f"plugin tools taking an entry id with no case: {sorted(found - set(CASES))}; "
-        f"cases for tools that no longer exist: {sorted(set(CASES) - found)}"
+    known = set(CASES) | set(EXCLUDED)
+    assert found == known, (
+        f"plugin tools taking an entry id with no case: {sorted(found - known)}; "
+        f"cases for tools that no longer exist: {sorted(known - found)}"
     )
+
+
+@pytest.mark.control(reason="pins the widened walk: it must see ids named for neither *_id")
+def test_the_walk_sees_ids_by_description_and_kbs_by_any_name():
+    """The walk itself: ``after``/``before`` are ids by their description, and
+    a tool whose KB argument is ``kb`` is seen as taking a KB."""
+    schema = {
+        "inputSchema": {
+            "properties": {
+                "kb": {"type": "string"},
+                "after": {"description": "Place item after this item ID"},
+                "before": {"description": "Place item before this item ID"},
+                "voter_id": {"description": "Entry ID of nobody"},
+                "limit": {"description": "How many"},
+            }
+        }
+    }
+
+    class Srv:
+        tools = {"probe_tool": schema}
+
+    assert _id_params(schema) == {"after", "before"}
+    assert set(_plugin_id_tools(Srv)) == {"probe_tool"}
 
 
 def test_every_plugin_id_tool_declares_locates_entry(server):
     for name, schema in _plugin_id_tools(server["server"]).items():
+        if name in EXCLUDED:
+            continue
         spec = schema.get("locates_entry")
         assert spec, f"{name} takes an entry id but declares no locates_entry"
         props = schema["inputSchema"]["properties"]
@@ -398,6 +444,61 @@ def test_the_row_writers_refuse_a_blank_kb_even_called_directly(server, tool, kb
     with pytest.raises(PyriteError):
         handler(args)
     assert _rows(server, CASES[tool].table) == []
+
+
+# -- sw_prioritize's anchors are ids too -------------------------------------
+
+
+def _prioritize(kb, items, anchor_arg, anchor):
+    """``items``: ("item_ids", id) or ("item_id", id); ``kb`` None leaves it out."""
+    arg, item = items
+    args = {arg: [item] if arg == "item_ids" else item, anchor_arg: anchor}
+    return _with_kb(args, kb)
+
+
+@pytest.mark.parametrize("items", ["item_ids", "item_id"])
+@pytest.mark.parametrize("anchor_arg", ["after", "before"])
+def test_sw_prioritize_locates_its_anchor_with_its_items(server, anchor_arg, items):
+    """``after`` and ``before`` name a backlog item. With no KB named, the
+    anchor must be in the KB the items resolve to: one held elsewhere, held
+    nowhere or held in two KBs is refused by the dispatcher (typed, before
+    the handler), and nothing is written; an anchor in the items' KB
+    resolves there."""
+    ids = _ids("sw_prioritize")
+    a_only = ids["twin"]  # a backlog item in A only (B's twin is a note)
+
+    def run(kb, item, anchor):
+        before = _files(server)
+        result = _call(server, "sw_prioritize", _prioritize(kb, (items, item), anchor_arg, anchor))
+        after = _files(server)
+        return result, {p.parent.name for p in after if after[p] != before.get(p)}
+
+    for kb in BLANKS:
+        result, changed = run(kb, ids["one"], a_only)
+        assert result.get("error_code") == "ENTRY_NOT_FOUND", (kb, result)
+        assert changed == set(), (kb, result)
+
+        result, changed = run(kb, ids["one"], ids["none"])
+        assert result.get("error_code") == "ENTRY_NOT_FOUND", (kb, result)
+        assert changed == set(), (kb, result)
+
+        result, changed = run(kb, ids["dup"], ids["dup"])
+        assert result.get("error_code") == "AMBIGUOUS", (kb, result)
+        assert result["candidate_kbs"] == [KB_A, KB_B], (kb, result)
+        assert changed == set(), (kb, result)
+
+    result, changed = run(KB_A, ids["dup"], ids["one"])
+    assert result.get("error_code") == "ENTRY_NOT_FOUND", result
+    assert changed == set(), result
+
+    # The items resolve to B, so the anchor held in A and B is B's. (A list
+    # placed --before an anchor at rank 0 is the handler's own "no room"
+    # answer, which it gives only after finding the anchor in B.)
+    result, changed = run(None, ids["one"], ids["dup"])
+    assert result.get("error_code") is None and not _missing(result), result
+    assert changed <= {KB_B}, result
+    if "error" not in result:
+        assert changed == {KB_B}, result
 
 
 # -- the handler's KB is always a checked KB ---------------------------------
