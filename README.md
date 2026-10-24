@@ -388,22 +388,14 @@ options — or [pyrite.wiki](https://pyrite.wiki) for a public demo.
 
 ## Development
 
+Setup, hooks, lint and test commands live in
+[CONTRIBUTING.md](CONTRIBUTING.md#running-the-tests).
+
+For the frontend development server:
+
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[all]"
-for ext in extensions/*/; do pip install -e "$ext"; done
-pre-commit install
-
-# Tests (core and extensions; -n 4, not -n auto, and through the heavy-run lock)
-scripts/heavy_lock.py -- pytest tests/ extensions/ -n 4
-
-# Frontend
 cd web && npm install && npm run dev
-# Port 5173 must be free -- strictPort is on, so a taken port is a startup
-# error, not a silent move to 5174.
-
-# Linting
-ruff check pyrite/
+# Port 5173 must be free: strictPort makes a taken port a startup error.
 ```
 
 Pyrite's own backlog and architecture docs live in `kb/`:

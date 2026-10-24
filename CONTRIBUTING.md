@@ -136,18 +136,7 @@ any needed ignored file explicitly after checking its contents.
 
 ### Style
 
-We use [ruff](https://docs.astral.sh/ruff/) for linting and formatting:
-
-```bash
-# Check for issues
-ruff check pyrite/
-
-# Auto-fix issues
-ruff check --fix pyrite/
-
-# Format code
-ruff format pyrite/
-```
+Use the commands in [Lint](#lint), which match CI.
 
 ### Type Hints
 
@@ -216,7 +205,21 @@ enforced by [test_public_message_logged_once.py](tests/test_public_message_logge
 4. **Plugin Protocol**: Extensions use structural typing (Protocol) — no base class inheritance required
 5. **SearchBackend Abstraction**: All search operations go through `SearchBackend` protocol (SQLite or Postgres)
 
+## Lint
+
+Run the same source scope as CI:
+
+```bash
+ruff check pyrite/ tests/ extensions/
+ruff format --check pyrite/ tests/ extensions/
+```
+
 ## Running the tests
+
+Run `scripts/test-affected --run` in the foreground and read its complete
+result before continuing (#425). Do not replace this with a background run
+and a summary-file check.
+
 
 Pyrite is written largely by AI agents and runs on its users' machines, so
 most tests are **medium**: agents build units that pass alone and do not work
@@ -515,7 +518,7 @@ here, and keep it cheap (these run on every push that touches a test).
 
 | Stage | Runs | Takes |
 |---|---|---|
-| commit | ruff, formatting, file hygiene, import-cycle check, KB schema validation | seconds |
+| pre-commit | ruff, formatting, file hygiene, import-cycle check, KB schema validation | seconds |
 | commit-msg | a `fix:` commit must touch `tests/` | — |
 | pre-push | `scripts/test-affected --run`: core + affected tests on `PYRITE_PUSH_WORKERS` (default 4) workers, only when the push touches code, tests, scripts or test config (a docs- or KB-only push skips it); skipped when the pushed tree already passed here or the pushed tip is verified by CI; `PYRITE_PUSH_FULL=1` runs the full suite | Seconds to minutes, depending on what changed |
 

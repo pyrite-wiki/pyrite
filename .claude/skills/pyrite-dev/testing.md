@@ -4,7 +4,7 @@
 `scripts/test-affected`, test sizes and when to run what -- is in
 [CONTRIBUTING.md, "Running the tests"](../../../CONTRIBUTING.md#running-the-tests).
 In short: medium tests through the real wiring are the default; run
-`scripts/test-affected --run` while you work; the PR's CI runs the full suite.
+`scripts/test-affected --run` in the foreground while you work; the PR's CI runs the full suite.
 Tests of experimental surfaces carry the `experimental` marker, applied from
 `tests/experimental_surface.py`; they run in their own non-blocking job and
 locally with `--experimental` (same section).
@@ -171,15 +171,17 @@ class TestValidators:
 
 ```bash
 # Single test
+# Diagnostic example: one named test, not the general suite policy
 .venv/bin/pytest tests/test_file.py::TestClass::test_name -v
 
 # Extension tests
 .venv/bin/pytest extensions/my-extension/tests/ -v
 
 # All backend tests (the whole suite is a heavy run: take the lock)
-scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/*/tests/ -n 4 -q
+# Full-suite command and shared lock: CONTRIBUTING.md, Running the tests
 
 # With print output visible
+# Diagnostic example: one named test, not the general suite policy
 .venv/bin/pytest tests/test_file.py -v -s --tb=long
 ```
 
