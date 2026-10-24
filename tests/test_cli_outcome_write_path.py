@@ -553,6 +553,7 @@ def test_add_rename_and_link_succeed_as_one_json_document_by_default(env):
                 "relation": "informs",
                 "target": "world",
                 "target_kb": "notes",
+                "resolved": True,
             }
         ],
         "outcome": "done",

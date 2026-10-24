@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -103,6 +104,48 @@ def _with_inverse_relation(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         d = dict(row)
         d["inverse_relation"] = known_inverse_relation(d["forward_relation"])
         out.append(d)
+    return out
+
+
+def _with_resolved(
+    rows: list[dict[str, Any]],
+    readable_kbs: set[str] | None,
+    lookup: Callable[[list[str]], dict[str, list[str]]] | None,
+) -> list[dict[str, Any]]:
+    """Add ``resolved`` -- and ``resolved_in_kbs`` on the unresolved -- to link rows (#64).
+
+    An outlink LEFT JOIN answers ``resolved`` itself: the joined target row is
+    there, or the target is missing-or-unreadable and ``title``/``entry_type``
+    come back null (P-R5). ``resolved_in_kbs`` needs one batched existence
+    lookup for the unresolved ids, over the KBs this caller can read: an id
+    that lives in two other KBs names both, and an id in a KB the caller
+    cannot read is never named -- it reads exactly as a missing one does
+    (concealment, ADR-0037 section 4). Backlink rows are never unresolved:
+    the JOIN proves the source exists and the target is the entry being read,
+    so they carry ``resolved: true`` and nothing else.
+
+    ``lookup(ids)`` answers ``{id: [kb, ...]}`` in one query; it exists so
+    ``get_outlinks`` can pass its own SQL, and every surface (MCP ``kb_get`` /
+    ``kb_backlinks``, REST entry reads, CLI ``get`` / ``backlinks``, plugin
+    network tools) carries the same fields from one implementation.
+    """
+    out = [dict(row) for row in rows]
+    unresolved = [row for row in out if row.get("title") is None]
+    for row in out:
+        row["resolved"] = True
+    if not unresolved:
+        return out
+    for row in unresolved:
+        row["resolved"] = False
+        row["resolved_in_kbs"] = []
+    if lookup is None:
+        return [{**row, "resolved": True} for row in rows]
+    ids = sorted({str(row["id"]) for row in unresolved})
+    hits = lookup(ids)
+    for row in unresolved:
+        where = hits.get(str(row["id"]), [])
+        if where:
+            row["resolved_in_kbs"] = sorted(where)
     return out
 
 
@@ -769,7 +812,7 @@ class BaseBackend(ABC):
             sql += " LIMIT :limit OFFSET :offset"
             params["limit"] = limit
             params["offset"] = offset
-        return _with_inverse_relation(self._exec(sql, params))
+        return _with_resolved(_with_inverse_relation(self._exec(sql, params)), readable_kbs, None)
 
     def get_outlinks(
         self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None
@@ -780,10 +823,16 @@ class BaseBackend(ABC):
         ``readable_kbs`` set the join to the target only matches a readable
         KB, and a target the caller cannot read comes back exactly as a
         missing one does -- ``title`` and ``entry_type`` null (P-R5).
+
+        Every row carries ``resolved`` (#64): whether the target exists *for
+        this caller*. An unresolved row whose id exists in other readable KBs
+        names them in ``resolved_in_kbs``; an id that exists only in KBs the
+        caller cannot read is named nowhere. The existence check is one
+        batched query, not one per link.
         """
         params: dict[str, Any] = {"entry_id": entry_id, "kb_name": kb_name}
         scope = kb_names_clause("e.kb_name", readable_kbs, params)
-        return self._exec(
+        rows = self._exec(
             f"""
             SELECT l.target_id as id, l.target_kb as kb_name,
                    e.title, e.entry_type, l.relation, l.target_prefix as prefix, l.note
@@ -794,6 +843,31 @@ class BaseBackend(ABC):
             """,
             params,
         )
+
+        def _other_kb_hits(ids: list[str]) -> dict[str, list[str]]:
+            """One query: in which readable KBs does each id exist?
+
+            The LEFT JOIN above resolves the row's own ``target_kb``; these
+            hits are the *other* KBs. A KB outside ``readable_kbs`` is never
+            in the answer, so an unreadable KB stays indistinguishable from
+            a missing target (P-R5, ADR-0037 section 4).
+            """
+            lparams: dict[str, Any] = {}
+            keys = [f"lid_{i}" for i, _ in enumerate(ids)]
+            for key, value in zip(keys, ids, strict=True):
+                lparams[key] = value
+            lsql = "SELECT e.id, e.kb_name FROM entry e WHERE e.id IN ({})".format(
+                ", ".join(f":{key}" for key in keys)
+            )
+            lscope = kb_names_clause("e.kb_name", readable_kbs, lparams)
+            if lscope:
+                lsql += f" AND {lscope}"
+            hits: dict[str, list[str]] = defaultdict(list)
+            for hit in self._exec(lsql, lparams):
+                hits[str(hit["id"])].append(str(hit["kb_name"]))
+            return hits
+
+        return _with_resolved(rows, readable_kbs, _other_kb_hits)
 
     def get_all_backlinks_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
         """Get ALL backlinks targeting entries in a KB in one query."""

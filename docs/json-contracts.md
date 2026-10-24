@@ -833,7 +833,7 @@ KB's task schema allows. It has no short flag: `-f` was `--format` on the
 **not** `--field` as on `create`/`update`.
 
 `pyrite link <source> <target> -k <kb> -r <relation>` answers
-`{"links": [{"created": true, "source", "relation", "target", "target_kb"}], "outcome": "done"}`
+`{"links": [{"created": true, "source", "relation", "target", "target_kb", "resolved"}], "outcome": "done"}`
 (`target_kb` is the KB the link points into: the one name for it across the link family, here and in `links bulk-create`; a bare `kb` is not a key of these payloads)
 (`--bidi` adds the inverse as a second item; one that failed is in `"failed"`,
 with `"outcome": "partial"` and exit `3`); under
@@ -1180,6 +1180,26 @@ KB is compared as it resolves (`kb: ops`, the shortname of `ops-kb`, is the
 link `--target-kb ops-kb` asks for), whatever prefix the file wrote.
 
 `outlinks` rows carry one field, `relation`, which is the forward relation.
+
+### Resolved: does the target exist for this caller?
+
+Every `outlink` and `backlink` row also carries `resolved: true|false` (#64):
+whether the target exists *for this caller*, the same field `kb_link` and
+`pyrite link --allow-dangling` report on write. A backlink row is never
+unresolved -- the row exists because the source exists and the target is the
+entry being read.
+
+On an `outlink` whose `resolved` is `false`, the row also carries
+`resolved_in_kbs`, a list of KBs (sorted) the target id exists in that this
+caller can read: a dangling `[[widget]]` whose id lives in both `ops` and
+`research` reads `"resolved_in_kbs": ["ops", "research"]`. A caller who can
+read neither KB gets `[]` -- an unreadable copy is indistinguishable from a
+missing one (ADR-0037, section 4). A `resolved: true` row carries no
+`resolved_in_kbs`.
+
+`resolved` is computed when the link is read, so a forward reference written
+with `--allow-dangling` flips to `true` the moment its target is created, with
+no rewrite of the link itself.
 
 ## Body truncation
 
