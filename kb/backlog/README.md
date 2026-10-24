@@ -91,7 +91,7 @@ pyrite index sync
 id: <kebab-case-id>
 type: backlog_item
 title: "Human-readable title"
-kind: feature | improvement | bug | epic | refactor | chore | docs | tech_debt
+kind: feature | improvement | bug | epic | refactor | chore | process | docs | tech_debt
 status: proposed | in_progress | completed | retired | deferred | superseded
 priority: critical | high | medium | low
 effort: S | M | L | XL

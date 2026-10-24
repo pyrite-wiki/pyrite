@@ -4883,3 +4883,98 @@ class TestSwListCommandsAreBounded:
                 assert {item["id"] for item in result[key]} <= {f"match-{i}" for i in range(5)}
             finally:
                 db.close()
+
+
+NEW_BACKLOG_KINDS = ("refactor", "chore", "process")
+
+
+class TestNewBacklogKindsThroughTheCli:
+    """Create and update accept each kind the maintainer added (2026-10-14)."""
+
+    @pytest.fixture
+    def world(self, tmp_path):
+        import yaml
+
+        from pyrite.config import KBConfig
+        from pyrite.plugins import get_registry
+        from tests._world import build_world
+
+        get_registry().register(SoftwareKBPlugin())
+        kb_path = tmp_path / "sw-kb"
+        kb_path.mkdir()
+        (kb_path / "kb.yaml").write_text(
+            yaml.safe_dump(SOFTWARE_KB_PRESET, sort_keys=False), encoding="utf-8"
+        )
+        world = build_world(
+            tmp_path / "cli-world",
+            kbs=[KBConfig(name="sw-kb", path=kb_path, kb_type="software")],
+            rest=False,
+        )
+        yield world
+        world.close()
+
+    def _run(self, world, args):
+        return world.cli(*args)
+
+    def _kind_on_disk(self, world, entry_id):
+        import yaml
+
+        kb_path = world.kb_path("sw-kb")
+        for candidate in kb_path.rglob(f"{entry_id}.md"):
+            text = candidate.read_text(encoding="utf-8")
+            return yaml.safe_load(text.split("---", 2)[1])["kind"]
+        raise AssertionError(f"{entry_id}.md not written under {kb_path}")
+
+    @pytest.mark.parametrize("kind", NEW_BACKLOG_KINDS)
+    def test_create_writes_the_kind(self, world, kind):
+        result = self._run(
+            world,
+            [
+                "create",
+                "-k",
+                "sw-kb",
+                "-t",
+                "backlog_item",
+                "--title",
+                f"A {kind} item",
+                "-f",
+                f"kind={kind}",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert self._kind_on_disk(world, payload["entry_id"]) == kind
+
+    @pytest.mark.parametrize("kind", NEW_BACKLOG_KINDS)
+    def test_update_writes_the_kind(self, world, kind):
+        created = self._run(
+            world,
+            [
+                "create",
+                "-k",
+                "sw-kb",
+                "-t",
+                "backlog_item",
+                "--title",
+                f"Update to {kind}",
+                "-f",
+                "kind=feature",
+            ],
+        )
+        assert created.exit_code == 0, created.output
+        entry_id = json.loads(created.stdout)["entry_id"]
+
+        result = self._run(world, ["update", entry_id, "-k", "sw-kb", "-f", f"kind={kind}"])
+
+        assert result.exit_code == 0, result.output
+        assert self._kind_on_disk(world, entry_id) == kind
+
+
+class TestBacklogKindToolSchemas:
+    @pytest.mark.parametrize("tool_name", ["sw_backlog", "sw_create_backlog_item"])
+    def test_kind_enum_matches_the_shared_vocabulary(self, tool_name):
+        registry = PluginRegistry()
+        registry.register(SoftwareKBPlugin())
+        schema = registry.get_all_mcp_tools("write")[tool_name]["inputSchema"]
+        assert schema["properties"]["kind"]["enum"] == list(BACKLOG_KINDS)

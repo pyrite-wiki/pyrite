@@ -140,6 +140,9 @@ BUILTIN_TEMPLATES = {
                             "docs",
                             "task",
                             "epic",
+                            "refactor",
+                            "chore",
+                            "process",
                         ],
                     },
                     "priority": {
