@@ -1045,7 +1045,7 @@ class SoftwareKBPlugin:
                     if link.get("relation") == "has_subtask":
                         epic_subtask_ids.add(link["id"])
                 for link in db.get_backlinks(epic_filter, kb_name or "", readable_kbs=readable_kbs):
-                    if link.get("relation") == "subtask_of":
+                    if link.get("relation") == "has_subtask":
                         epic_subtask_ids.add(link["id"])
 
             query = "SELECT * FROM entry WHERE entry_type = 'backlog_item'"
@@ -1896,79 +1896,63 @@ class SoftwareKBPlugin:
     ) -> dict[str, Any]:
         """Return dependency info for a backlog item.
 
-        Returns dict with blocked_by, blocks, and is_blocked. Within
-        `readable_kbs` (`None`: unscoped): a blocker the caller cannot read is
-        reported as a missing one is -- no title, status unknown, unresolved
-        -- and an item it cannot read that this one blocks is left out.
+        The storage layer reports a relation from the perspective of the
+        entry being queried for both outlinks and backlinks. Keep the caller's
+        read scope on each lookup: an unreadable blocker is reported without a
+        title, with unknown status, and remains unresolved; an unreadable item
+        this one blocks is omitted.
         """
         import json
 
-        blocked_by: list[dict[str, Any]] = []
-        blocks: list[dict[str, Any]] = []
+        dependencies: dict[str, dict[tuple[str, str], dict[str, Any]]] = {
+            "blocked_by": {},
+            "blocks": {},
+        }
 
-        # Outlinks with relation "blocked_by" → this item is blocked by those targets
-        for link in db.get_outlinks(item_id, kb_name, readable_kbs=readable_kbs):
-            if link.get("relation") != "blocked_by":
-                continue
-            dep_entry = self._readable_entry(
-                db, link["id"], link.get("kb_name", kb_name), readable_kbs=readable_kbs
-            )
-            if dep_entry:
-                meta = {}
-                if dep_entry.get("metadata"):
-                    try:
-                        meta = (
-                            json.loads(dep_entry["metadata"])
-                            if isinstance(dep_entry["metadata"], str)
-                            else dep_entry["metadata"]
-                        )
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                dep_status = dep_entry.get("status") or meta.get("status", "proposed")
-            else:
-                dep_status = "unknown"
-            blocked_by.append(
-                {
-                    "id": link["id"],
-                    "title": link.get("title", ""),
-                    "status": dep_status,
-                    "resolved": dep_status in self._RESOLVED_STATUSES,
-                }
-            )
+        for links in (
+            db.get_outlinks(item_id, kb_name, readable_kbs=readable_kbs),
+            db.get_backlinks(item_id, kb_name, readable_kbs=readable_kbs),
+        ):
+            for link in links:
+                relation = link.get("relation")
+                if relation not in dependencies:
+                    continue
 
-        # Backlinks with relation "blocked_by" → the source item is blocked by *this* item,
-        # meaning this item blocks that source.
-        for link in db.get_backlinks(item_id, kb_name, readable_kbs=readable_kbs):
-            if link.get("relation") != "blocked_by":
-                continue
-            dep_entry = self._readable_entry(
-                db, link["id"], link.get("kb_name", kb_name), readable_kbs=readable_kbs
-            )
-            if dep_entry:
-                meta = {}
-                if dep_entry.get("metadata"):
-                    try:
-                        meta = (
-                            json.loads(dep_entry["metadata"])
-                            if isinstance(dep_entry["metadata"], str)
-                            else dep_entry["metadata"]
-                        )
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                dep_status = dep_entry.get("status") or meta.get("status", "proposed")
-            else:
-                dep_status = "unknown"
-            blocks.append(
-                {
-                    "id": link["id"],
+                dep_kb = link.get("kb_name", kb_name)
+                dep_id = link["id"]
+                key = (dep_kb, dep_id)
+                if key in dependencies[relation]:
+                    continue
+
+                dep_entry = self._readable_entry(db, dep_id, dep_kb, readable_kbs=readable_kbs)
+                if dep_entry:
+                    meta = {}
+                    if dep_entry.get("metadata"):
+                        try:
+                            meta = (
+                                json.loads(dep_entry["metadata"])
+                                if isinstance(dep_entry["metadata"], str)
+                                else dep_entry["metadata"]
+                            )
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    dep_status = dep_entry.get("status") or meta.get("status", "proposed")
+                else:
+                    dep_status = "unknown"
+
+                dependency = {
+                    "id": dep_id,
                     "title": link.get("title", ""),
                     "status": dep_status,
                 }
-            )
+                if relation == "blocked_by":
+                    dependency["resolved"] = dep_status in self._RESOLVED_STATUSES
+                dependencies[relation][key] = dependency
 
+        blocked_by = list(dependencies["blocked_by"].values())
         return {
             "blocked_by": blocked_by,
-            "blocks": blocks,
+            "blocks": list(dependencies["blocks"].values()),
             "is_blocked": any(not dep["resolved"] for dep in blocked_by),
         }
 

@@ -1,0 +1,1 @@
+- **Backlog dependencies and epic filters honor the relation from the queried item’s perspective (#1289).** Links written from either endpoint now appear consistently, and duplicate links do not duplicate results.
