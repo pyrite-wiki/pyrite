@@ -586,6 +586,8 @@ class SearchService:
         query: str,
         kb_name: str | None = None,
         entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -611,6 +613,12 @@ class SearchService:
             query: Search query
             kb_name: Filter to specific KB (None for all)
             entry_type: Filter by type (event, actor, etc.)
+            entry_types: Filter by several types at once (an OR over the names).
+                The CLI's repeated `--type` arrives as this list; REST and MCP
+                still take the single `entry_type`. A supplied `entry_type` and
+                this list are combined into one filter set.
+            exclude_types: Remove these entry types from the results, whatever
+                the include side says (`--exclude-type`, repeatable).
             tags: Filter by tags (AND logic)
             date_from: Filter from date (YYYY-MM-DD)
             date_to: Filter to date (YYYY-MM-DD)
@@ -648,7 +656,8 @@ class SearchService:
         of the convention; the REST schema, the REST route and the ``kb_search``
         tool description point here rather than restating it:
 
-        1. Every filter — ``entry_type``, ``tags``, ``date_from``/``date_to``,
+        1. Every filter - ``entry_types``, ``exclude_types``, ``tags``,
+           ``date_from``/``date_to``,
            ``fips``, ``state``, ``status``, ``include_archived`` — is applied on
            **every** leg of every mode. Before #56 the vector leg ran unfiltered
            and the fused result silently contained entries the filter excluded.
@@ -759,6 +768,14 @@ class SearchService:
         if kb_name == "All KBs":
             kb_name = None
 
+        # One include-set from both spellings (#627): a single `entry_type`
+        # and a repeatable `entry_types` list are one filter, applied on
+        # every leg. An empty list is no filter, like None.
+        types = [t for t in (entry_types or []) if t]
+        if entry_type and entry_type not in types:
+            types.append(entry_type)
+        excluded = [t for t in (exclude_types or []) if t]
+
         signal["mode"] = mode.value
         tr["requested_mode"] = mode.value
         tr["actual_mode"] = mode.value
@@ -784,7 +801,8 @@ class SearchService:
                     kb_names=kb_names,
                     signal=signal,
                     filters=self._leg_filters(
-                        entry_type=entry_type,
+                        entry_types=types,
+                        exclude_types=excluded,
                         tags=tags,
                         date_from=date_from,
                         date_to=date_to,
@@ -808,7 +826,8 @@ class SearchService:
                 results = self._hybrid_search(
                     query,
                     kb_name,
-                    entry_type,
+                    types,
+                    excluded,
                     tags,
                     date_from,
                     date_to,
@@ -839,7 +858,8 @@ class SearchService:
                         query=q,
                         kb_name=kb_name,
                         kb_names=kb_names,
-                        entry_type=entry_type,
+                        entry_types=types or None,
+                        exclude_types=excluded or None,
                         tags=tags,
                         date_from=date_from,
                         date_to=date_to,
@@ -1167,7 +1187,8 @@ class SearchService:
     @staticmethod
     def _leg_filters(
         *,
-        entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -1185,7 +1206,8 @@ class SearchService:
         to search means adding it here, and both legs get it.
         """
         return {
-            "entry_type": entry_type,
+            "entry_types": entry_types or None,
+            "exclude_types": exclude_types or None,
             "tags": tags,
             "date_from": date_from,
             "date_to": date_to,
@@ -1235,7 +1257,8 @@ class SearchService:
         self,
         query: str,
         kb_name: str | None = None,
-        entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -1277,7 +1300,8 @@ class SearchService:
                 query=q,
                 kb_name=kb_name,
                 kb_names=kb_names,
-                entry_type=entry_type,
+                entry_types=entry_types or None,
+                exclude_types=exclude_types or None,
                 tags=tags,
                 date_from=date_from,
                 date_to=date_to,
@@ -1308,7 +1332,8 @@ class SearchService:
             kb_name,
             limit=fetch_size,
             filters=self._leg_filters(
-                entry_type=entry_type,
+                entry_types=entry_types,
+                exclude_types=exclude_types,
                 tags=tags,
                 date_from=date_from,
                 date_to=date_to,

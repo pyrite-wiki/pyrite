@@ -345,6 +345,8 @@ class PostgresBackend(BaseBackend):
         kb_name: str | None = None,
         kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -393,6 +395,17 @@ class PostgresBackend(BaseBackend):
         if entry_type:
             sql += " AND e.entry_type = :entry_type"
             params["entry_type"] = entry_type
+        if entry_types:
+            # The #627 include-set, as the sqlite leg applies it.
+            type_keys = [f"type_{i}" for i in range(len(entry_types))]
+            for key, value in zip(type_keys, entry_types, strict=True):
+                params[key] = value
+            sql += " AND e.entry_type IN (" + ",".join(f":{key}" for key in type_keys) + ")"
+        if exclude_types:
+            ex_keys = [f"ex_type_{i}" for i in range(len(exclude_types))]
+            for key, value in zip(ex_keys, exclude_types, strict=True):
+                params[key] = value
+            sql += " AND e.entry_type NOT IN (" + ",".join(f":{key}" for key in ex_keys) + ")"
         if date_from:
             sql += " AND e.date >= :date_from"
             params["date_from"] = date_from
@@ -511,6 +524,8 @@ class PostgresBackend(BaseBackend):
         limit: int = 20,
         min_similarity: float = DEFAULT_MIN_SIMILARITY,
         entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -557,6 +572,15 @@ class PostgresBackend(BaseBackend):
         if entry_type:
             sql += " AND e.entry_type = :entry_type"
             params["entry_type"] = entry_type
+        if entry_types:
+            # The #627 include-set, as the sqlite leg applies it.
+            type_keys = [f"sem_type_{i}" for i in range(len(entry_types))]
+            params.update(dict(zip(type_keys, entry_types, strict=True)))
+            sql += " AND e.entry_type IN (" + ",".join(f":{key}" for key in type_keys) + ")"
+        if exclude_types:
+            ex_keys = [f"sem_ex_type_{i}" for i in range(len(exclude_types))]
+            params.update(dict(zip(ex_keys, exclude_types, strict=True)))
+            sql += " AND e.entry_type NOT IN (" + ",".join(f":{key}" for key in ex_keys) + ")"
         if date_from:
             sql += " AND e.date >= :date_from"
             params["date_from"] = date_from

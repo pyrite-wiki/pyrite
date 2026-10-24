@@ -73,6 +73,13 @@ ENTRIES = [
 # (filter kwarg, valid value, the entry ids it must return, a bogus value)
 FILTER_CASES = [
     ("entry_type", "mechanism", {"mech-bypass"}, "zzz-not-a-real-type"),
+    (
+        "entry_types",
+        ["mechanism", "theme"],
+        {"mech-bypass", "theme-capture"},
+        ["zzz-not-a-real-type"],
+    ),
+    ("exclude_types", ["task"], {"mech-bypass", "theme-capture"}, ["mechanism", "theme", "task"]),
     ("tags", ["capture"], {"theme-capture"}, ["zzz-no-such-tag"]),
     ("state", "MI", {"mech-bypass"}, "ZZ"),
     ("fips", "26163", {"mech-bypass"}, "99999"),
@@ -767,6 +774,102 @@ def test_cli_search_honours_type_filter_in_hybrid(cli_index, monkeypatch):
     assert json.loads(result.stdout)["results"] == []
 
 
+@pytest.mark.parametrize("mode", ["semantic", "hybrid"])
+@pytest.mark.parametrize(
+    ("type_flags", "expected_ids"),
+    [
+        (["--type", "mechanism", "--type", "theme"], {"mech-bypass", "theme-capture"}),
+        (["--exclude-type", "task"], {"mech-bypass", "theme-capture"}),
+        (
+            ["--type", "mechanism", "--type", "theme", "--exclude-type", "theme"],
+            {"mech-bypass"},
+        ),
+    ],
+    ids=["include", "exclude", "both"],
+)
+def test_cli_search_honours_repeated_and_excluded_type_filters_across_vector_modes(
+    cli_world, stub_embeddings, mode, type_flags, expected_ids
+):
+    """#627: type filters traverse real config loading and SQLite/vector search."""
+    import json
+
+    world = cli_world()
+    if not world.db.vec_available:
+        pytest.skip("sqlite-vec not available")
+    _populate(world.db)
+    result = world.cli(
+        "search",
+        "detention",
+        "-k",
+        "test-kb",
+        "-m",
+        mode,
+        *type_flags,
+        "--format",
+        "json",
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert {r["id"] for r in payload["results"]} == expected_ids
+
+
+@pytest.mark.parametrize("mode", ["semantic", "hybrid"])
+def test_type_lists_and_exclusions_are_selective_inside_knn_without_kb_name(
+    svc_db, monkeypatch, mode
+):
+    """#627: ``entry_types`` and ``exclude_types`` mark the vector query selective even without ``-k``."""
+    import pyrite.services.embedding_service as es
+    from pyrite.storage.backends import sqlite_backend
+
+    monkeypatch.setattr(sqlite_backend, "_SQLITE_VEC_MAX_K", 8)
+    embedder = es.EmbeddingService(svc_db)
+    for index in range(20):
+        entry_id = f"type-distractor-{index}"
+        svc_db.upsert_entry(
+            {
+                "id": entry_id,
+                "kb_name": "test-kb",
+                "entry_type": "note",
+                "title": "detention",
+                "summary": "unwanted type distractor",
+                "body": "unrelated wording",
+                "tags": [],
+                "sources": [],
+                "links": [],
+            }
+        )
+        svc_db.backend.upsert_embedding(entry_id, "test-kb", embedder.embed_text("detention"))
+
+    svc_db.upsert_entry(
+        {
+            "id": "type-needle",
+            "kb_name": "test-kb",
+            "entry_type": "needle",
+            "title": "Remote evidence",
+            "summary": "semantic-only",
+            "body": "unrelated wording",
+            "tags": [],
+            "sources": [],
+            "links": [],
+        }
+    )
+    far = embedder.embed_text("detention")
+    far[0] += 0.3
+    svc_db.backend.upsert_embedding("type-needle", "test-kb", far)
+
+    svc = SearchService(svc_db)
+    included = svc.search("detention", mode=mode, entry_types=["needle"], limit=10)
+    assert "type-needle" in _ids(included)
+
+    excluded = svc.search(
+        "detention",
+        mode=mode,
+        exclude_types=["note", "mechanism", "theme", "task"],
+        limit=10,
+    )
+    assert "type-needle" in _ids(excluded)
+
+
 def test_a_bug_inside_the_vector_leg_propagates_even_with_a_filter(svc, monkeypatch):
     """The dropped-leg path must be a declared capability, not a caught TypeError.
 
@@ -978,3 +1081,19 @@ def test_a_good_limit_is_honoured(svc, mode):
     """Guard against over-validation: a normal limit still works everywhere."""
     results = svc.search("detention", kb_name="test-kb", mode=mode, limit=2)
     assert 0 < len(results) <= 2
+
+
+@pytest.mark.parametrize("mode", ["semantic", "hybrid"])
+def test_type_filter_paging_past_the_real_vector_cap_returns_an_empty_page(svc, mode):
+    from pyrite.storage.backends.sqlite_backend import _SQLITE_VEC_MAX_K
+
+    rows = svc.search(
+        "detention",
+        kb_name="test-kb",
+        mode=mode,
+        entry_types=["mechanism", "theme"],
+        exclude_types=["task"],
+        limit=1,
+        offset=_SQLITE_VEC_MAX_K + 1,
+    )
+    assert rows == []

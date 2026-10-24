@@ -24,9 +24,20 @@ class FileSearchResult:
 
 
 def search_kb_files(
-    kbs: list[KBConfig], query: str, entry_type: str | None, limit: int
+    kbs: list[KBConfig],
+    query: str,
+    entry_type: str | None,
+    limit: int,
+    entry_types: list[str] | None = None,
+    exclude_types: list[str] | None = None,
 ) -> FileSearchResult:
-    """Scan ``kbs`` in order for ``query`` (case-insensitive), stopping at ``limit`` hits."""
+    """Scan ``kbs`` in order for ``query`` (case-insensitive), stopping at ``limit`` hits.
+
+    ``entry_types`` and ``exclude_types`` (from the repeatable ``--type`` and
+    ``--exclude-type`` flags, #627) filter the same types the indexed search
+    does: the fallback must print the answers the filters asked for, not a
+    second, less filtered truth.
+    """
     out = FileSearchResult()
     needle = query.lower()
     for kb in kbs:
@@ -42,6 +53,12 @@ def search_kb_files(
                     entry = repo._load_entry(md_file)
 
                     if entry_type and entry.entry_type != entry_type:
+                        continue
+
+                    if entry_types and entry.entry_type not in entry_types:
+                        continue
+
+                    if exclude_types and entry.entry_type in exclude_types:
                         continue
 
                     out.hits.append((kb.name, entry, md_file))

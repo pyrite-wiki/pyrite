@@ -1057,6 +1057,25 @@ def embedded_backend(backend):
     return backend
 
 
+class TestRepeatedTypeFilterConformance:
+    @pytest.mark.parametrize("leg", ["keyword", "semantic"])
+    @pytest.mark.parametrize(
+        ("filters", "expected"),
+        [
+            ({"entry_types": ["mechanism", "theme"]}, {"mech", "theme"}),
+            ({"exclude_types": ["mechanism"]}, {"theme", "task"}),
+            ({"entry_types": ["mechanism"], "exclude_types": ["mechanism"]}, set()),
+        ],
+        ids=["include-many", "exclude", "same-type-included-and-excluded"],
+    )
+    def test_type_sets_filter_real_backend_rows(self, embedded_backend, leg, filters, expected):
+        if leg == "keyword":
+            rows = embedded_backend.search("Title", kb_name="test", **filters)
+        else:
+            rows = embedded_backend.search_semantic(_near_vector(), kb_name="test", **filters)
+        assert {row["id"] for row in rows} == expected
+
+
 class TestSemanticFilterConformance:
     """``search_semantic`` must honour every filter ``search`` honours.
 
