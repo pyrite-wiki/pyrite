@@ -46,7 +46,10 @@ def refusal_http(exc: ValidationError) -> HTTPException:
             "hint",
             f"Use an entry_type in [{', '.join(declared)}], or send allow_undeclared: true.",
         )
-    return HTTPException(status_code=409 if code == "ENTRY_EXISTS" else 400, detail=detail)
+    # A file its declared type cannot load is not a bad request: the same
+    # 422 as the central handler gives it (ADR-0042 8a).
+    status = {"ENTRY_EXISTS": 409, "ENTRY_UNREADABLE": 422}.get(code, 400)
+    return HTTPException(status_code=status, detail=detail)
 
 
 async def refuses_truncated_body(request: Request) -> None:

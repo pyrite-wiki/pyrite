@@ -320,6 +320,9 @@ def test_704_falsy_title_keeps_the_id_it_had_on_dev(kb, raw_title, stored):
     assert repo.find_file(row["id"]) == f
 
 
+@pytest.mark.control(
+    reason="#704's guard, already on dev; #1261 only moved its reason inside a longer message"
+)
 def test_704_unindexable_title_with_an_explicit_id_is_not_indexed(kb):
     # On dev an `id:` line skipped the title check, so a list or NaN title
     # reached the row write and crashed it (sqlite3.ProgrammingError).
@@ -334,11 +337,16 @@ def test_704_unindexable_title_with_an_explicit_id_is_not_indexed(kb):
 
     assert rows == {"fine"}
     # reported with the loader's reason, not a driver error naming SQL binding
-    assert {m["path"].rsplit("/", 1)[1]: m["error"] for m in result["malformed"]} == {
+    # (the reason sits inside the ENTRY_UNREADABLE message, ADR-0042 8a)
+    reported = {m["path"].rsplit("/", 1)[1]: m["error"] for m in result["malformed"]}
+    expected = {
         "lt.md": "title must be a string, got a list",
         "dt.md": "title must be a string, got a mapping",
         "nan.md": "title must be a string, got NaN",
     }
+    assert set(reported) == set(expected), reported
+    for name, reason in expected.items():
+        assert reason in reported[name] and "SQL" not in reported[name], reported[name]
 
 
 @pytest.mark.control(
