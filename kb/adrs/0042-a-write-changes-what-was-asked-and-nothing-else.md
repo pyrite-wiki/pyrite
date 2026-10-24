@@ -483,6 +483,9 @@ result. This generalises the existing downgrade for off-list enum values on
 unchanged fields (`kb_service.py:278`, `:340-343`): a hand-written file with a
 missing required field can still be edited elsewhere, and the response says
 what is wrong.
+This rule sorts the findings of validation, which runs on an entry its type
+has loaded. A file whose type's loader refuses it is not validated; decision
+8a governs it.
 
 Spike 2 sized it. Across 14,034 files, 143 (1%, in 8 KBs) are invalid in a
 field the write did not touch. **The most common existing violation is an
@@ -499,6 +502,86 @@ violations the write causes.
 address: files with no `id:`, derived-id collisions, files behind their schema
 version, alias keys, both alias and canonical key present, links to retired
 derived ids, and files Pyrite would refuse to change (anchors, TOML).
+
+### 8a. A file its type cannot load is read partially and written not at all
+
+*Accepted by the maintainer, 2026-10-23 (option C of the Andon #1327 options table). Raised by #1311 and #1261; related #777.*
+
+**Loading comes before validation.** A file *does not load as its type* when
+its frontmatter parses to a mapping and the declared type's loader raises on
+it: a value it will not convert, a shape it will not hold (a `metadata:` that
+is not a mapping), or a plugin loader's own check. This is distinct from a
+file that does not parse (#777) and from a loaded entry that fails validation
+(decision 8).
+
+1. **The declared type stands.** No path substitutes another type, a fallback
+   class, or a model of the declared type that holds defaults in place of the
+   refused values.
+2. **Every write to such an entry is refused, and nothing is written.** This
+   covers update, an echo of a read, link (as the source), delete, rename,
+   claim and the task services, and a plugin's write through
+   `ctx.kb_service` (decision 12). The refusal is `ENTRY_UNREADABLE` (HTTP
+   422, the code the maintainer chose for #777 on 2026-10-14). It names:
+   - the file, by its path relative to the KB;
+   - the declared type;
+   - each refused field, when the refusal can be isolated to fields;
+   - the loader's message.
+
+   A request that would change nothing is refused the same way.
+3. **Guards judge only a fully loaded entry.** Validators, `before_save` and
+   `before_delete` hooks, the templated move (decision 5) and the index row
+   receive only an entry its type loaded completely. Because the write is
+   refused before any of them, no guard is skipped and none sees a default. If
+   the file loads and the *result* of a write would not, the write is refused
+   as the request's own error (`VALIDATION_FAILED`, "the result would not
+   load"), as today.
+4. **Repair is by hand, or by an explicit repair command** (decision 7). There
+   is no ordinary update that repairs. When a real case asks for one, the
+   repair command is a `qa fix` fixer for load findings, or an operation that
+   names only the refused fields and whose result must load completely. Either
+   one runs its guards on that result.
+5. **The single-entry read** (see the decision 9 paragraph below) returns the
+   entry as its declared type. It carries the fields the loader accepts and a
+   `load_problems` list that names each refused field with the loader's
+   message. A refused field is absent from the fields (`null` in a REST
+   response model's fixed columns). It never appears as a default or as a
+   placeholder such as `[]` or `{}`. If the refusal cannot be isolated to
+   fields (a base field, a cross-field rule, a missing key the loader
+   requires), the read answers `ENTRY_UNREADABLE` instead. Lists, search and
+   counts have no row for the file. `index sync` and `index health` list it
+   as malformed, with its path and the loader's message.
+6. **Loaders should not refuse what a validator can report.** A type's loader
+   converts leniently (`safe_int`, #1247) or keeps the value as written, and
+   leaves the judgement to a validator. Decision 8 then applies: an edit
+   elsewhere in the file succeeds with a warning. A refusal in the loader
+   makes the file read-only through Pyrite until it is repaired. The plugin
+   contract (ADR-0045, `pyrite/plugins/protocol.py`) says so.
+7. **One place.** Strict loading is the default, and it is the only kind of
+   load a writer can call. The partial read exists inside the single-entry read
+   seam alone (`KBService._entry_file` / `_read_entry`). Its entry never leaves
+   that seam: callers receive the read's dict. `Entry` has no load-problems
+   attribute. A structural test fails if anything else calls the partial read.
+   A second test fails if a write method, given a file of any registered type
+   that does not load, writes bytes or calls a validator or hook.
+
+**Measured exposure** (architect, 2026-10-23: the type loader run on every
+parsed frontmatter mapping):
+- No loader refusals in this repository's KB (961 files).
+- No loader refusals in four local KBs (39,576 files, counts only).
+- In-tree triggers today: four integer fields (`rank`, `adr_number`,
+  `reputation`, `writeup_count`) until #1247/#1263 land; a `task` whose
+  `metadata:` is not a mapping; a `title` that is a list, a mapping or NaN.
+
+**Consequences of 8a.**
+
+- Compared with dev, a user loses the ability to edit another field of such a
+  file through Pyrite before repairing it. Dev allowed that only because it
+  read the file as an `event`: it validated against the wrong type, ran the
+  wrong type's hooks, and indexed the wrong type.
+- The user gains the true type on reads, the field and the message named on
+  every surface, and a guarantee that no write lands unjudged.
+- #777 uses the same code for files that do not parse, have bad bytes or
+  cannot be opened. This amendment adds one more cause under that code.
 
 ### 9. A single-entry read reads the file
 
@@ -521,6 +604,13 @@ file's own parsed values was byte-identical on all 14,034. **Echoed defaults,
 normalised values and derived links are one rule:** anything the type or the
 index computes must come back from a read under a derived key, or an echo
 writes it into the file. (This is the same property as ADR-0045 decision 3.)
+
+**A file its type cannot load** (decision 8a) is read as its declared type.
+Its refused fields are absent from the fields and named in `load_problems`
+(`field`, `rule: "load"`, `severity`, `message`). This is the rule above,
+applied to a value the type cannot hold: a read never presents a default as
+the file's value. `load_problems` is never written back. An update that
+carries it is refused under decision 8a anyway.
 
 ### 10. Writes are optimistic: merge against the base, lock only the instant of replace
 
@@ -1191,6 +1281,22 @@ are in this ADR's scope and spike 2's list.
   Refined to the path: `_index.md`, `index.md` and same-named files in
   different folders would otherwise share an id.
 - **TOML and JSON frontmatter.** Out of scope.
+- **Warn and write through a partial model (#1311, rounds 1 and 2).** Every
+  consumer of the model must treat the refused fields as absent. Those
+  consumers include plugin validators and hooks, an open set. The two cold
+  reads found a default presented as a value, a move to a directory named
+  after a default, a crash, and a hook-guarded write that landed. Each round
+  closed the reported instances and opened another. Rejected: the rule cannot
+  live in one place.
+- **Refuse every write except one that only repairs the refused fields.** This
+  keeps repair available over MCP and REST. But the write still needs a
+  "before" state taken from a file that does not load: the old status for the
+  workflow gate (which passes when that status is missing), `existing_entry`
+  for validators, and decision 8's before-values. It also needs a classifier
+  that decides which operations touch a refused field. And a REST read
+  placeholder (`metadata: {}`) echoed by a form would count as a repair and
+  overwrite the user's value. Deferred: build it as the explicit repair
+  command of point 4 when a real case needs it.
 
 ## Questions for the maintainer
 
