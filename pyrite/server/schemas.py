@@ -177,13 +177,16 @@ class EntryResponse(BaseModel):
     date: str | None = None
     importance: int | None = None
     status: str | None = None
-    tags: list[str] = []
-    participants: list[str] = []
-    sources: list[dict] = []
+    # None only for a file its type cannot fully load, whose read left this
+    # key out and named it in ``load_problems`` (ADR-0042 8a): never a
+    # placeholder standing for the file's value.
+    tags: list[str] | None = []
+    participants: list[str] | None = []
+    sources: list[dict] | None = []
     outlinks: list[dict] = []
     backlinks: list[dict] = []
     file_path: str | None = None
-    metadata: dict = {}
+    metadata: dict | None = {}
     created_at: str | None = None
     updated_at: str | None = None
     # SHA-256 of the file bytes the read parsed (ADR-0042 decision 9); None

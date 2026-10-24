@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from ...config import PyriteConfig
 from ...exceptions import (
     ConflictError,
+    EntryLoadError,
     EntryNotFoundError,
     KBReadOnlyError,
     PyriteError,
@@ -762,6 +763,12 @@ def get_entry(
             },
         )
 
+    if result.get("load_problems"):
+        # A key the read left out because the file's type refused it
+        # (ADR-0042 8a) is null here, never the model's `[]` or `{}`: a
+        # client must not take a placeholder for the file's value.
+        for key in _DEFAULTED_COLUMNS:
+            result.setdefault(key, None)
     result.setdefault("sources", [])
     result.setdefault("tags", [])
 
@@ -783,6 +790,9 @@ def get_entry(
 
 
 _CREATE_DEFAULTED = frozenset({"participants", "tags", "metadata"})
+
+#: The EntryResponse columns that default to a placeholder (``[]``, ``{}``).
+_DEFAULTED_COLUMNS = ("tags", "participants", "sources", "metadata")
 
 
 @router.post(
@@ -1020,6 +1030,8 @@ def delete_entry(
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
     except KBReadOnlyError as e:
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
+    except EntryLoadError as e:
+        raise refusal_http(e)  # ENTRY_UNREADABLE 422: nothing deleted (ADR-0042 8a)
     except (ValidationError, PyriteError, ValueError) as e:
         raise HTTPException(status_code=400, detail={"code": "DELETE_FAILED", "message": str(e)})
 
