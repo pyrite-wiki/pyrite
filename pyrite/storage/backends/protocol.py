@@ -355,6 +355,8 @@ class SearchBackend(Protocol):
         offset: int = 0,
         sort_order: str = "asc",
         kb_names: set[str] | list[str] | None = None,
+        status: str | None = None,
+        exclude_status: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Get timeline events ordered by date."""
         ...

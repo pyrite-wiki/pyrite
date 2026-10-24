@@ -1,0 +1,2 @@
+- Add `kb_names`, `status`, and `exclude_status` filters to MCP `kb_timeline` (#62).
+- `exclude_status` accepts only a non-empty list of strings, matching the published array contract; empty `kb_names` and `exclude_status` lists are refused. Omit either filter to leave it unrestricted.

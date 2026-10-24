@@ -166,6 +166,30 @@ READ_TOOLS = {
                     "type": "integer",
                     "description": "Minimum importance score (1-10)",
                 },
+                "kb_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Limit the timeline to these KBs. Omit for every KB the caller "
+                        "can read; an empty list is refused."
+                    ),
+                },
+                "status": {
+                    "type": "string",
+                    "description": (
+                        "Only entries whose status matches, the effective status: a task "
+                        "whose children are all resolved counts as done while its file "
+                        "still says open (or in_progress)."
+                    ),
+                },
+                "exclude_status": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Drop entries whose status matches any of these, the effective "
+                        "status; an entry with no status is kept."
+                    ),
+                },
                 "limit": {
                     "type": "integer",
                     "description": "Maximum results (default 50)",

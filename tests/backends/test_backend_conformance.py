@@ -743,6 +743,38 @@ class TestTimeline:
         assert timeline[0]["id"] == "e1"
         assert timeline[1]["id"] == "e2"
 
+    def test_timeline_status_filters_use_the_effective_status(self, backend):
+        """One conformance case for #62: `status` matches the effective
+        status (a parent done by its children counts though its file says
+        `open`), `exclude_status` keeps rows with no status, and both run
+        before `LIMIT`."""
+        backend.upsert_entry(_make_entry("e1", date="2024-01-15", importance=1))
+        backend.upsert_entry(
+            _make_entry("p", date="2024-01-20", importance=1, entry_type="task", status="open")
+        )
+        backend.upsert_entry(
+            _make_entry("p-a", entry_type="task", status="done", metadata={"parent": "p"})
+        )
+        backend.upsert_entry(
+            _make_entry("p-b", entry_type="task", status="cancelled", metadata={"parent": "p"})
+        )
+
+        timeline = backend.get_timeline(status="done")
+        assert [row["id"] for row in timeline] == ["p"]
+
+        timeline = backend.get_timeline(exclude_status=["done"], limit=1)
+        # `p` (effective `done`) is dropped, `e1` has no status and is kept:
+        # what fills the one-row page proves the filter ran before LIMIT.
+        assert [row["id"] for row in timeline] == ["e1"]
+
+    def test_timeline_status_and_exclude_status_serve_both_kinds(self, backend):
+        backend.upsert_entry(_make_entry("e1", date="2024-01-15", importance=1, status="draft"))
+        backend.upsert_entry(_make_entry("e2", date="2024-01-16", importance=1))
+        timeline = backend.get_timeline(exclude_status=["draft"])
+        assert [row["id"] for row in timeline] == ["e2"]
+        timeline = backend.get_timeline(status="draft")
+        assert [row["id"] for row in timeline] == ["e1"]
+
 
 # =========================================================================
 # Folder queries

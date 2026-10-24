@@ -3061,12 +3061,20 @@ class KBService:
         offset: int = 0,
         sort_order: str = "asc",
         kb_names: set[str] | list[str] | None = None,
+        status: str | None = None,
+        exclude_status: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Get timeline events ordered by date.
 
         ``kb_names`` restricts the result to the caller's readable KBs;
         pushed into the query so ``limit`` and the reported count are
         computed over readable rows only.
+
+        ``status`` / ``exclude_status`` (single value / list) filter on the
+        *effective* status in the query, before ``LIMIT`` (#62): a task whose
+        children are all resolved counts as ``done`` though its file says
+        ``open`` (`pyrite/storage/effective_status.py`). ``exclude_status``
+        keeps entries with no status; ``status`` drops them.
         """
         return self.db.get_timeline(
             date_from=date_from,
@@ -3077,6 +3085,8 @@ class KBService:
             offset=offset,
             sort_order=sort_order,
             kb_names=kb_names,
+            status=status,
+            exclude_status=exclude_status,
         )
 
     def get_tags(
