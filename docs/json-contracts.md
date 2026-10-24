@@ -114,6 +114,7 @@ inventing a release date for older class-level transitions.
 | KB resolver (including `kb_orient`) | Unknown or unreadable KB | `KB_NOT_FOUND` | `NOT_FOUND` | false | 0.25.7 (#66), unified by #952 | 0.27 |
 | Domain refusal | Read-only KB | `KB_READ_ONLY` | `READ_ONLY` | false | ADR-0037 theme 2 | 0.27 |
 | Domain refusal | Invalid frontmatter | `INVALID_FRONTMATTER` | `VALIDATION_FAILED` | false | ADR-0037 theme 2 | 0.27 |
+| Domain refusal | A file its declared type cannot load: every write, and a read the refusal cannot be isolated for | `ENTRY_UNREADABLE` | `VALIDATION_FAILED` | false | ADR-0042 8a (#1261) | 0.27 |
 | Domain refusal | Conflicting / refused config save | `CONFIG_CONFLICT` / `CONFIG_SAVE_REFUSED` | `CONFIG_ERROR` | false | ADR-0037 theme 2 | 0.27 |
 | Domain refusal | Storage / plugin fault | `STORAGE_ERROR` / `PLUGIN_ERROR` | `REQUEST_REFUSED` | only busy storage is retryable | ADR-0037 theme 2 | 0.27 |
 
@@ -1159,6 +1160,64 @@ hash was not computed: `GET /api/entries`, `GET /api/collections/{id}/entries`,
 `POST /api/collections/query-preview` and the daily-note routes when they
 answer from the index build their entries from index rows, which carry no
 hash. Read the entry by id for its hash.
+
+### `load_problems` and `ENTRY_UNREADABLE`: a file its type cannot load
+
+A file *does not load as its type* when its frontmatter parses to a mapping
+and the declared type's loader refuses it: a value it will not convert (a
+`backlog_item` with `rank: .inf`), a shape it will not hold (a `task` whose
+`metadata:` is not a mapping), or a plugin loader's own check (ADR-0042
+decision 8a). Pyrite reads such a file partially and writes it not at all.
+
+**Reads.** `kb_get` (the entry dict), `pyrite get`, `pyrite-read get` and REST
+`GET /api/entries/{id}` return the entry as the type it declares, with a
+`load_problems` list. The key is present only then.
+
+```json
+{
+  "id": "x", "entry_type": "backlog_item", "title": "T",
+  "load_problems": [
+    {"field": "rank", "rule": "load", "severity": "warning",
+     "message": "rank: cannot convert float infinity to integer"}
+  ]
+}
+```
+
+- **A refused field is absent, never a default.** `rank` is not in the reply
+  (not `0`), and a refused `status` is not `open`. The REST response model
+  spells a column the read does not carry as `null` (`metadata` is `null`, not
+  `{}`, when the whole `metadata:` was refused). `field` is the file's key; a
+  value under `metadata:` is `metadata.rank`, and the field is then absent from
+  the top level and from `metadata`.
+- **A refusal no field explains** (a `title` that is a list, a key the loader
+  requires) answers `ENTRY_UNREADABLE`, never "not found".
+- Lists, search and counts have no row for the file; `pyrite index sync` and
+  `pyrite index health` list it as malformed, with its path and the loader's
+  message.
+
+**Writes.** Every write to the file is refused with `ENTRY_UNREADABLE` (CLI
+exit 1, REST 422, MCP `error_code`), and nothing is written: an update (REST
+`PUT`/`PATCH`, MCP `kb_update`, CLI `update`), an echo of a read (it carries
+`load_problems`, which is set aside, and is refused like any other update), a
+delete, a link from it, a rename of it, a task claim, update, checkpoint or
+reset, and a plugin's write through `ctx.kb_service`. A request that would
+change nothing is refused the same way. No validator or hook is run, so none
+judges a value the file does not hold. The message names the file by its path
+relative to the KB, the declared type, the refused fields and the loader's
+message:
+
+```text
+items/x.md does not load as its type `backlog_item` (refused: rank; cannot
+convert float infinity to integer). Pyrite reads it but writes nothing to it
+until the file is fixed by hand.
+```
+
+Repair is by hand (or by an explicit repair command, ADR-0042 decision 7);
+there is no ordinary update that repairs. A rename of *another* entry leaves
+such a file's `[[links]]` as they were and lists it under `files_skipped` with
+this reason. `qa fix` records the file's fixes as failed and goes on; a bulk
+link fails that source's items and goes on; `export site` names the ids it
+left out.
 
 ### Backlink rows
 
