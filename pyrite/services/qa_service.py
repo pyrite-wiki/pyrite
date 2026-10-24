@@ -1223,6 +1223,7 @@ class QAService:
                     "rule": "schema_violation",
                     "severity": "error",
                     "field": err.get("field", ""),
+                    "schema_rule": err.get("rule", ""),
                     "message": (
                         f"Schema error on '{entry['id']}': "
                         f"field '{err.get('field', '')}' — {err.get('rule', '')} "
@@ -1644,6 +1645,7 @@ class QAService:
                         "rule": "schema_violation",
                         "severity": "error",
                         "field": err.get("field", ""),
+                        "schema_rule": err.get("rule", ""),
                         "message": (
                             f"Schema error on '{entry['id']}': "
                             f"field '{err.get('field', '')}' — {err.get('rule', '')} "
@@ -2175,13 +2177,6 @@ class QAService:
     def _fix_invalid_date(self, issue: dict[str, Any]) -> dict[str, Any] | None:
         """Delegate to QAFixService."""
         return self._fix_svc._fix_invalid_date(issue)
-
-    @staticmethod
-    def _fix_missing_field(issue: dict[str, Any]) -> dict[str, Any] | None:
-        """Delegate to QAFixService."""
-        from .qa_fix_service import QAFixService
-
-        return QAFixService._fix_missing_field(issue)
 
     @staticmethod
     def _edit_distance(a: str, b: str) -> int:
