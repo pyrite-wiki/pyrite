@@ -50,12 +50,16 @@ YAML frontmatter → entry_from_frontmatter() → ENTRY_TYPE_REGISTRY lookup →
                                             → read_view() → cls.from_frontmatter(view, body)
 ```
 
-`read_view` (`pyrite/schema/field_aliases.py`) is the one lift (#1025, ADR-0051's reader half): a declared field the file spells only under `metadata:` is spelled at that name in the view the class reads, so every `from_frontmatter` keeps reading top-level keys and still takes each field's value from `spelling_in(file, field)`, the path the writer writes. The raw mapping stays `_source_frontmatter`. `Entry.from_markdown` (the class-addressed loader behind `Entry.load`) makes the same lift; `tests/test_reader_reads_where_the_writer_writes.py` pins that no other production code calls `from_frontmatter`.
+`read_view` (`pyrite/schema/field_aliases.py`) is the one lift (#1025, [[adr-0051]]'s reader half): a declared field the file spells only under `metadata:` is spelled at that name in the view the class reads, so every `from_frontmatter` keeps reading top-level keys and still takes each field's value from `spelling_in(file, field)`, the path the writer writes. The raw mapping stays `_source_frontmatter`. `Entry.from_markdown` (the class-addressed loader behind `Entry.load`) makes the same lift; `tests/test_reader_reads_where_the_writer_writes.py` pins that no other production code calls `from_frontmatter`.
 
-Protocol mixins promote fields to DB columns (Assignable → assignee, Temporal → date, etc.) enabling indexed queries on protocol fields. A declared field with no column (a backlog item's `rank`, a task's `evidence`, `provenance`) rides in the row's `metadata` bag and is read at its own name by `lift_declared_fields`; the single-entry read (`IndexManager.read_fields`) then drops it from its `metadata` (`read_metadata`), so a read spells each field once and `metadata` holds only undeclared keys (ADR-0051, proposed amendment 2026-10-20). The index row keeps the whole bag: the storage dict the plugins read. An undeclared key stays in the bag and is not lifted.
+Protocol mixins promote fields to DB columns (Assignable → assignee, Temporal → date, etc.) enabling indexed queries on protocol fields. A declared field with no column (a backlog item's `rank`, a task's `evidence`, `provenance`) rides in the row's `metadata` bag and is read at its own name by `lift_declared_fields`; the single-entry read (`IndexManager.read_fields`) then drops it from its `metadata` (`read_metadata`), so a read spells each field once and `metadata` holds only undeclared keys ([[adr-0051]], proposed amendment 2026-10-20). The index row keeps the whole bag: the storage dict the plugins read. An undeclared key stays in the bag and is not lifted.
 
 ## Related
 
 - [[entry-factory]] — build_entry() creation path
 - [[entry-protocol-mixins]] — composable field groups
 - [[kb-repository]] — file I/O: `load` / `_load_entry`, `save` (a create, through `new_entry_text` and `create_entry_text`), `rename` (operations on the file's own bytes)
+
+## Decided, not yet built
+
+- [[adr-0045]] decision 6: legacy entry-class `to_frontmatter()` and `to_markdown()` serializers remain defined. Existing-file writes use file operations; retiring the class serialization interface remains unfinished.

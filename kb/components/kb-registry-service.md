@@ -42,3 +42,7 @@ The `list_kbs()` method enriches DB rows with config metadata (`read_only`, `sho
 - [[kb-service]] — domain operations on KB entries (CRUD, search, export)
 - [[storage-layer]] — PyriteDB stores KB registry rows
 - [[rest-api]] — KB endpoints delegate to KBRegistryService
+
+## Decided, not yet built
+
+- [[adr-0039]] decisions 1 and 3, with [[adr-0041]]'s file-owner boundary: `KBRegistryService` still seeds and mutates the DB registry; it is not yet a read of the operator's registry file.

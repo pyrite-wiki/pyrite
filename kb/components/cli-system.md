@@ -36,7 +36,7 @@ Typer-based CLI with a root app and eleven domain-specific sub-apps. Commands sh
 
 ## Outcomes: one point renders a result, sets the exit code, and is the only way out
 
-ADR-0046 (accepted 2026-10-10, with the enforcement-point amendment). A
+[[adr-0046]] (accepted 2026-10-10, with the enforcement-point amendment). A
 command on the contract returns an `Outcome` (`pyrite/cli/outcome.py`: `done`,
 `partial`, `nothing`, or `Outcome.from_counts(done, failed, data)` for a
 batch), carrying the data machine formats print and a `rich(console, data)`
@@ -90,7 +90,7 @@ test allows none on a command on the contract), stderr, a rich renderer's
 words, anything after `invoke` returns (`os._exit`, `atexit`, a thread, a
 private unflushed buffer), a duplicate of descriptor 1, a forked child, a
 command that reaches into the guard itself, and prompts (a prompt writes to
-stdout, so a command that asks a question stays legacy until ADR-0046's open
+stdout, so a command that asks a question stays legacy until [[adr-0046]]'s open
 question is decided).
 
 **Found building slice 2 (`entry_commands`, `links`).** (1) Bad input found

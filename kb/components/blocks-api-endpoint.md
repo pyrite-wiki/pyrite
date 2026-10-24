@@ -18,4 +18,4 @@ REST endpoint for block-level access to entry content.
   - Returns `BlockListResponse` with `blocks[]` and `total` count
   - Ordered by position within the entry
 
-Supports heading-level linking: `[[entry#heading]]` links resolve through this endpoint.
+Supports heading-level linking: <code>&#91;&#91;entry#heading&#93;&#93;</code> links resolve through this endpoint.
