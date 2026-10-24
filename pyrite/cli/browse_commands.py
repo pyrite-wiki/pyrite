@@ -364,7 +364,13 @@ def register_browse_commands(app: typer.Typer) -> None:
         entry_type: str | None = typer.Option(None, "--type", "-t", help="Filter by entry type"),
         limit: int = typer.Option(20, "--limit", "-n", help="Max entries"),
         since: str = typer.Option(
-            None, "--since", help="Only entries updated after this ISO datetime"
+            None,
+            "--since",
+            help=(
+                "Entries updated at or after this instant (inclusive): a date "
+                "(2026-10-22, read as midnight UTC) or an ISO datetime with or "
+                "without an offset"
+            ),
         ),
         fields: str = typer.Option(None, "--fields", help="Comma-separated fields to return"),
         output_format: str = typer.Option(

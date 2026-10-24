@@ -97,6 +97,10 @@ def test_mcp_refuses_a_since_it_cannot_parse(updates, bad):
         ("2026-10-23T05:00:00-04:00", {"late-note"}),
         # 07:00Z: LATE (12:00Z) is after it; a string comparison dropped it.
         ("2026-10-23T12:00:00+05:00", {"late-note"}),
+        # A datetime with no offset is read as UTC, not as the reader's local time.
+        ("2026-10-22T00:00:00", {"early-note", "late-note"}),
+        # A space separator is still ISO 8601; 10:00Z is before both later entries.
+        ("2026-10-22 10:00", {"early-note", "late-note"}),
         # No lower bound, not "nothing newer".
         ("", ALL_IDS),
     ],
@@ -121,6 +125,8 @@ def test_cli_refuses_a_since_it_cannot_parse(updates):
         ("2026-10-23T00:00:00Z", {"early-note", "late-note"}),
         ("2026-10-23T05:00:00-04:00", {"late-note"}),
         ("2026-10-23T12:00:00+05:00", {"late-note"}),
+        ("2026-10-22T00:00:00", {"early-note", "late-note"}),
+        ("2026-10-22 10:00", {"early-note", "late-note"}),
     ],
 )
 def test_cli_filters_by_the_instant_since_names(updates, since, expected):

@@ -899,7 +899,7 @@
             "type": "integer"
           },
           "since": {
-            "description": "Only entries updated after this ISO datetime (e.g. 2025-01-01T00:00:00)",
+            "description": "Lower bound on updated_at, inclusive: entries updated at or after this instant. A date (2026-10-22, read as midnight UTC) or an ISO 8601 datetime with or without an offset (2026-10-22T00:00:00Z). Any other form is refused with VALIDATION_FAILED, not matched as text.",
             "type": "string"
           }
         },
@@ -2181,7 +2181,7 @@
             "type": "integer"
           },
           "since": {
-            "description": "Only entries updated after this ISO datetime (e.g. 2025-01-01T00:00:00)",
+            "description": "Lower bound on updated_at, inclusive: entries updated at or after this instant. A date (2026-10-22, read as midnight UTC) or an ISO 8601 datetime with or without an offset (2026-10-22T00:00:00Z). Any other form is refused with VALIDATION_FAILED, not matched as text.",
             "type": "string"
           }
         },
@@ -3309,7 +3309,7 @@
             "type": "integer"
           },
           "since": {
-            "description": "Only entries updated after this ISO datetime (e.g. 2025-01-01T00:00:00)",
+            "description": "Lower bound on updated_at, inclusive: entries updated at or after this instant. A date (2026-10-22, read as midnight UTC) or an ISO 8601 datetime with or without an offset (2026-10-22T00:00:00Z). Any other form is refused with VALIDATION_FAILED, not matched as text.",
             "type": "string"
           }
         },
