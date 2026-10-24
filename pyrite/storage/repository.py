@@ -829,7 +829,7 @@ class KBRepository:
 
         Args:
             entry: The entry to save
-            subdir: Optional subdirectory (auto-inferred if not provided)
+            subdir: None infers the type folder; "" explicitly selects the KB root.
             touch_updated_at: Refresh ``updated_at`` as bookkeeping before
                 writing. Callers that already stamped it -- or that write a
                 caller-supplied ``updated_at`` and must not overwrite it
@@ -941,7 +941,7 @@ class KBRepository:
         update_links: bool = True,
         dry_run: bool = False,
     ) -> dict:
-        """Rename an entry: move file, rewrite frontmatter id, rewrite
+        """Rename an entry at its existing path: rewrite frontmatter id and
         all in-KB wikilinks.
 
         Args:
@@ -966,8 +966,8 @@ class KBRepository:
 
         A rename either completes, with every linker it could not patch
         listed, or changes nothing (#978 delta review, round 1): the entry
-        is moved first, under one lock for both paths, so a source that
-        changed or a target already taken leaves every file as it was; the
+        is rewritten first with compare-before-replace, so a source that
+        changed leaves every file as it was; the
         linking files are written after it, and a fault in any of them
         (hard-linked, undecodable, unparseable, refused by ``apply``, the
         lock directory) is listed, never fatal. No linker is written before
@@ -1068,21 +1068,12 @@ class KBRepository:
         # keep the entry in the same subdir it lived in by saving with
         # the explicit relative subdir of the old file.
         rel = src.parent.relative_to(self.path)
-        subdir = str(rel) if str(rel) != "." else None
+        subdir = str(rel) if str(rel) != "." else ""
 
-        # #391 cold read (round 2): a file's name is fixed at creation, so a
-        # `file_pattern` type's filename is NOT re-derived from the new id on
-        # rename -- only the frontmatter `id:` changes, exactly as an update
-        # already keeps the file where it is. Without this, a pattern with
-        # no `{id}`/`{slug}` placeholder (e.g. the software-kb `adr` type's
-        # `{adr_number:04d}-{title}.md`) re-resolves to the SAME path as the
-        # source (neither field changes on a rename), and the unconditional
-        # `src.unlink()` below used to delete the file it had just written.
-        schema = self.config.kb_schema
-        type_schema = schema.get_type_schema(entry.entry_type)
-        has_file_pattern = bool(type_schema and type_schema.file_pattern)
+        # A rename changes identity, never a file's deliberate placement.
+        # Keep the byte-based writer: loading the model supplies no file bytes.
         entry.file_path = src
-        file_path = self._target_path(entry, subdir, keep_filename=has_file_pattern)
+        file_path = self._target_path(entry, subdir, keep_filename=True)
 
         if file_path.resolve() == src.resolve():
             try:
