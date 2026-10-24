@@ -1076,6 +1076,23 @@ class TestSmokeLayer:
         assert ".[all]" in runs, runs
         assert "extensions/*/" in runs, "extensions are separate distributions"
 
+    def test_smoke_checks_the_oracle_against_the_recorded_hugo_version(self, ci):
+        steps = ci["jobs"]["smoke"]["steps"]
+        install = next(
+            (i for i, step in enumerate(steps) if "hugo_extended_0.151.2" in step.get("run", "")),
+            None,
+        )
+        oracle = next(
+            (i for i, step in enumerate(steps) if "-k live_hugo" in step.get("run", "")),
+            None,
+        )
+        assert install is not None, "The recorded oracle needs pinned Hugo 0.151.2"
+        assert oracle is not None, "Installing Hugo alone does not run the 31 oracle rows"
+        assert install < oracle
+        assert "--fail" in steps[install]["run"], "A failed download must fail the job"
+        assert "tests/test_frontmatter_splitter.py" in steps[oracle]["run"]
+        assert "junit-hugo-oracle.xml" in steps[oracle]["run"]
+
     def test_tutorial_runner_exists_and_parses(self):
         import os
         import subprocess

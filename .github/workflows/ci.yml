@@ -875,6 +875,21 @@ jobs:
             fi
           done
 
+      - name: Install the recorded Hugo oracle version
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --location --retry 3 \
+            https://github.com/gohugoio/hugo/releases/download/v0.151.2/hugo_extended_0.151.2_linux-amd64.deb \
+            --output "$RUNNER_TEMP/hugo.deb"
+          sudo dpkg -i "$RUNNER_TEMP/hugo.deb"
+          hugo version | grep -F 'v0.151.2'
+
+      - name: Compare the frontmatter oracle with live Hugo
+        run: |
+          pytest tests/test_frontmatter_splitter.py -k live_hugo -n auto -q --disable-warnings \
+            --durations=25 --durations-min=1.0 \
+            -o junit_family=xunit1 --junitxml=junit-hugo-oracle.xml
+
       - name: Live-process smoke tests (REST, MCP over SSE, MCP over stdio)
         env:
           # Offline: the smoke layer must not download a ~90 MB model. Tests
@@ -903,7 +918,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: junit-smoke
-          path: junit-smoke.xml
+          path: |
+            junit-smoke.xml
+            junit-hugo-oracle.xml
           if-no-files-found: ignore
           retention-days: 30
 
