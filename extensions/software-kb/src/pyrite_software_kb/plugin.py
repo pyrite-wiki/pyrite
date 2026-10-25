@@ -12,6 +12,7 @@ from pyrite.schema import generate_entry_id
 
 from .adr_listing import adr_relations, adr_sort_key
 from .entry_types import (
+    BACKLOG_KINDS,
     ADREntry,
     BacklogItemEntry,
     ComponentEntry,
@@ -353,7 +354,7 @@ class SoftwareKBPlugin:
                         },
                         "kind": {
                             "type": "string",
-                            "enum": ["feature", "bug", "tech_debt", "improvement", "spike", "epic"],
+                            "enum": list(BACKLOG_KINDS),
                             "description": "Filter by kind",
                         },
                         "epic": {
@@ -566,7 +567,7 @@ class SoftwareKBPlugin:
                         "title": {"type": "string", "description": "Item title"},
                         "kind": {
                             "type": "string",
-                            "enum": ["feature", "bug", "tech_debt", "improvement", "spike", "epic"],
+                            "enum": list(BACKLOG_KINDS),
                             "description": "Item kind",
                         },
                         "priority": {

@@ -36,6 +36,9 @@ BACKLOG_KINDS = (
     "docs",
     "task",
     "epic",
+    "refactor",
+    "chore",
+    "process",
 )
 BACKLOG_STATUSES = (
     "proposed",

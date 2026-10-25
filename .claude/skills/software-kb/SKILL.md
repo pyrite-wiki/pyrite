@@ -256,7 +256,7 @@ For these, add a `## Open Questions` section to the item body with specific asks
 
 | Field | Values | Notes |
 |-------|--------|-------|
-| `kind` | `feature`, `bug`, `tech_debt`, `improvement`, `spike`, `epic` | What type of work |
+| `kind` | `feature`, `bug`, `tech_debt`, `improvement`, `spike`, `epic`, `refactor`, `chore`, `process` | What type of work |
 | `status` | `proposed`, `accepted`, `in_progress`, `review`, `done`, `wont_do` | Where in the flow |
 | `priority` | `critical`, `high`, `medium`, `low` | Pull order |
 | `effort` | `XS`, `S`, `M`, `L`, `XL` | T-shirt sizing |
