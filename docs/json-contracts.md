@@ -1637,3 +1637,49 @@ fixes were attempted and failed. `manual` keeps only the issues a person must
 decide. One failed entry does not
 stop the rest. With `--dry-run`, `fixed` lists what would be attempted and
 `failed` is empty.
+
+## QA duplicate candidates
+
+`pyrite qa duplicates -t <type>` reports live entries that may describe the
+same thing, scanning every KB the caller may read. It is a **report**, not a
+merge: finding candidates is not a failure, so the exit code is `0` when the scan ran; an unknown
+`--format` or an out-of-range `--threshold` is a usage error (`2`). Empty
+`--type` or empty/comma-only `--status` values are structured
+`VALIDATION_FAILED` refusals (`1`).
+
+Scores are word-overlap (Jaccard) over the id slug, after removing the first
+matching `--strip-prefix`, and over the title. A pair is a candidate when either
+score is at or above `--threshold` (default `0.62`); `score` is the
+higher one and `signal` names every signal that matched (`id`, `title`,
+or `id+title`). Within each pair, `a` sorts before `b` by `(kb_name, id)`.
+Without `--status`, an entry is live while its lifecycle is `active` and its status is not `done`, `cancelled`, `failed`,
+`archived` or `closed`. Task status is effective: a task completed by its children
+counts as `done` even while its file still says `open`. This applies both to
+`--status` and the default live-entry scan; the scan does not rewrite files.
+
+```json
+{
+  "entry_type": "task",
+  "threshold": 0.62,
+  "skipped_tokens": 0,
+  "count": 1,
+  "pairs": [
+    {
+      "a": {"id": "2026-11-03", "kb_name": "notes", "title": "Election Day"},
+      "b": {"id": "election-day", "kb_name": "notes", "title": "Election Day"},
+      "score": 1.0,
+      "signal": "title"
+    }
+  ]
+}
+```
+
+`--format rich` prints one line per pair (`score kb/id ~ kb/id [signal]`) and
+discloses skipped common-token expansion when coverage is incomplete.
+
+To bound common-word expansion, tokens occurring in more than
+`max(64, entries // 25)` scanned entries are not broadly expanded.
+`skipped_tokens` reports how many tokens hit this bound; when nonzero, near-match
+coverage is incomplete. Identical nonempty id or title token sets are still
+paired, even in large clusters. Producing all pairs in a large identical cluster
+necessarily takes time proportional to that output.
