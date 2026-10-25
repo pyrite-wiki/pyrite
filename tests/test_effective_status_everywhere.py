@@ -188,6 +188,15 @@ def cli_task_list(cfg, s):
     return _ids(_cli(cfg, ["task", "list", "-k", KB, "--status", s, "--format", "json"])["tasks"])
 
 
+def cli_qa_duplicates(cfg, s):
+    # Each status fixture has a pair: this surface only returns paired entries.
+    out = _cli(
+        cfg,
+        ["qa", "duplicates", "-t", "task", "--status", s, "--threshold", "0", "--format", "json"],
+    )
+    return _ids([entry for pair in out["pairs"] for entry in (pair["a"], pair["b"])])
+
+
 def semantic_filter(cfg, s):
     """The filter the semantic and hybrid searches apply (no embeddings are
     needed to run it: the same WHERE fragment over the entry table)."""
@@ -212,6 +221,7 @@ EFFECTIVE_SURFACES = {
     "rest:GET /api/tasks": rest_tasks,
     "cli:search": cli_search,
     "cli:task list": cli_task_list,
+    "cli:qa duplicates": cli_qa_duplicates,
     "storage:semantic filter": semantic_filter,
 }
 
@@ -250,6 +260,18 @@ def test_qa_queue_skips_a_qa_task_done_by_its_children(config):
     assert {r["id"] for r in rows} == {"note-y"}
 
 
+def test_duplicate_scan_skips_a_task_done_by_its_children_by_default(config):
+    from pyrite.services.access_policy import UNSCOPED
+    from pyrite.services.qa_service import QAService
+
+    db = PyriteDB(config.settings.index_path)
+    try:
+        result = QAService(config, db).find_duplicates("task", readable_kbs=UNSCOPED, threshold=0)
+    finally:
+        db.close()
+    assert _ids([entry for pair in result["pairs"] for entry in (pair["a"], pair["b"])]) == {"q"}
+
+
 # -- The inventory ----------------------------------------------------------
 
 #: Every filter named `status`, classified. `effective`: in the matrix above.
@@ -278,6 +300,7 @@ CLI_STATUS_OPTIONS = {
     "search": "effective",
     "task list": "effective",
     "create": "write",
+    "qa duplicates": "effective",
     "task update": "write",
     "sw new-adr": "write",
     "investigation claims": "never-tasks",

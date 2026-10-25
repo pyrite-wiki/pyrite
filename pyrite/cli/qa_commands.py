@@ -1,15 +1,18 @@
 """
 QA validation and assessment commands for pyrite CLI.
 
-Commands: validate, status, assess
+Commands: validate, duplicates, status, assess
 """
 
 import typer
+from rich.console import Console
 from rich.table import Table
 
+from ..exceptions import ValidationError
 from ..services.access_policy import UNSCOPED
 from .context import cli_context
-from .output import cli_console, output_format_choice, validate_output_format
+from .outcome import Outcome
+from .output import OUTPUT_FORMAT, cli_console, output_format_choice, validate_output_format
 
 qa_app = typer.Typer(help="Quality assurance validation and assessment")
 console = cli_console()
@@ -117,6 +120,76 @@ def qa_validate(
 
         if error_count > 0:
             raise typer.Exit(1)
+
+
+@qa_app.command("duplicates")
+def qa_duplicates(
+    entry_type: str = typer.Option(..., "--type", "-t", help="Entry type to compare"),
+    status: str | None = typer.Option(
+        None,
+        "--status",
+        help="Comma-separated statuses to keep; default: live entries only",
+    ),
+    threshold: float = typer.Option(
+        0.62,
+        "--threshold",
+        min=0,
+        max=1,
+        help="Minimum score; a pair at or above it is a candidate",
+    ),
+    strip_prefix: list[str] | None = typer.Option(
+        None,
+        "--strip-prefix",
+        help="ID prefix to remove before comparing (repeatable, comma-separated accepted)",
+    ),
+    output_format: str = OUTPUT_FORMAT,
+) -> Outcome:
+    """Candidate near-duplicate entries of one type; never merges.
+
+    Scores two signals, the id slug and the title, by word overlap (Jaccard).
+    Finding candidates is not a failure: the command exits 0 when it ran.
+    """
+    from ..services.qa_service import QAService
+
+    if not entry_type.strip():
+        raise ValidationError("--type must name an entry type")
+    statuses = None
+    if status is not None:
+        statuses = {part.strip().lower() for part in status.split(",") if part.strip()}
+        if not statuses:
+            raise ValidationError("--status must name at least one status")
+    prefixes = tuple(
+        part.strip() for value in (strip_prefix or []) for part in value.split(",") if part.strip()
+    )
+
+    with cli_context(kbs=()) as (config, db, _svc):
+        result = QAService(config, db).find_duplicates(
+            entry_type.strip(),
+            readable_kbs=UNSCOPED,
+            statuses=statuses,
+            threshold=threshold,
+            strip_prefixes=prefixes,
+        )
+
+    def render(console: Console, data: dict) -> None:
+        if data["skipped_tokens"]:
+            console.print(
+                f"Common-token expansion skipped for {data['skipped_tokens']} tokens; "
+                "near-match coverage is incomplete. Exact token-set matches are included."
+            )
+        if not data["pairs"]:
+            console.print(f"No candidate duplicates of type {data['entry_type']!r}.")
+            return
+        for pair in data["pairs"]:
+            first, second = pair["a"], pair["b"]
+            console.print(
+                f"{pair['score']:.2f}  {first['kb_name']}/{first['id']}"
+                f"  ~  {second['kb_name']}/{second['id']}  [{pair['signal']}]",
+                markup=False,
+                highlight=False,
+            )
+
+    return Outcome.done(result, rich=render)
 
 
 @qa_app.command("assess")
