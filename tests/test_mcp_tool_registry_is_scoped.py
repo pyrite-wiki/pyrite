@@ -85,10 +85,6 @@ CROSS_KB_TOOLS: dict[str, str] = {
         "listing *is* the leak -- the spike's live run had it naming "
         "private-kb to a plain read-tier peer."
     ),
-    "kb_timeline": (
-        "filters. Spans every KB: dated events across the index, via "
-        "KBService.get_timeline(kb_names=...). count/has_more computed after."
-    ),
     "kb_batch_read": (
         "filters. Names its KBs inside the `entries` array, not by a KB "
         "parameter, so the chokepoint cannot see them. Unreadable pairs are "
@@ -145,6 +141,10 @@ _PLUGIN_REFUSAL = (
 )
 
 OPTIONAL_KB_TOOLS: dict[str, str] = {
+    "kb_timeline": (
+        "filters. Optional kb_names narrows readable KBs; omission uses the caller's "
+        "readable set via KBService.get_timeline(kb_names=...)."
+    ),
     # -- core, admin tier ---------------------------------------------------
     # Unreachable by a scoped caller in practice: the admin tier is only
     # served to a caller whose global role is "admin", and a global admin is

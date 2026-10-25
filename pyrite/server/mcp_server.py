@@ -891,18 +891,63 @@ class PyriteMCPServer:
     ) -> dict[str, Any]:
         """Get timeline events across every readable KB.
 
-        `count` and `has_more` below are computed from the filtered list, so
-        they never reveal how many private events matched.
+        The caller may name KBs (`kb_names`) and statuses (`status`,
+        `exclude_status`, #62): all of it lands in the SQL before `LIMIT`,
+        so count, `has_more` and the page itself are over matching rows
+        only -- a page is never filled with rows a filter would have
+        dropped, and neither reveals how many unreadable rows matched.
+
+        `kb_names` is in `KB_ARGUMENT_NAMES`, so the dispatcher has already
+        refused a named KB the caller cannot read, like an unknown one
+        (KB_NOT_FOUND); the handler only refuses the contradictory spellings
+        of its own argument set.
         """
         limit = args.get("limit", 50)
-        results = self.svc.get_timeline(
-            date_from=args.get("date_from"),
-            date_to=args.get("date_to"),
-            min_importance=args.get("min_importance", 1),
-            limit=limit,
-            offset=args.get("offset", 0),
-            kb_names=readable_kbs,
-        )
+        named = args.get("kb_names")
+        if "kb_names" in args and (
+            not isinstance(named, list)
+            or not named
+            or any(not isinstance(value, str) or not value.strip() for value in named)
+        ):
+            return _refusal(
+                ValidationError(
+                    "kb_names must be a non-empty list of non-blank strings. "
+                    "Omit kb_names to read every KB you can read."
+                )
+            )
+        exclude = args.get("exclude_status")
+        if "exclude_status" in args and (
+            not isinstance(exclude, list)
+            or not exclude
+            or any(not isinstance(value, str) for value in exclude)
+        ):
+            return _refusal(
+                ValidationError(
+                    "exclude_status must be a non-empty list of strings. "
+                    "Omit exclude_status to keep every status."
+                )
+            )
+        status = args.get("status")
+        if status and exclude and status in exclude:
+            return _refusal(
+                ValidationError(
+                    f"status and exclude_status both name '{status}': nothing would "
+                    "match. Name different values, or drop one."
+                )
+            )
+        try:
+            results = self.svc.get_timeline(
+                date_from=args.get("date_from"),
+                date_to=args.get("date_to"),
+                min_importance=args.get("min_importance", 1),
+                limit=limit,
+                offset=args.get("offset", 0),
+                kb_names=args["kb_names"] if named else readable_kbs,
+                status=status,
+                exclude_status=exclude,
+            )
+        except ValidationError as e:
+            return _refusal(e)
         return {
             "count": len(results),
             "has_more": len(results) == limit,

@@ -1152,7 +1152,18 @@ class BaseBackend(ABC):
         offset: int = 0,
         sort_order: str = "asc",
         kb_names: set[str] | list[str] | None = None,
+        status: str | None = None,
+        exclude_status: list[str] | None = None,
     ) -> list[dict[str, Any]]:
+        """Get timeline events ordered by date.
+
+        The status filters run through the *effective* status in this same
+        ``WHERE`` (#62), before ``LIMIT``: a task whose children are all
+        resolved counts as ``done`` though its file says ``open``
+        (``effective_status.status_sql`` -- the seq of the search finders,
+        one copy of the rule). ``exclude_status`` keeps rows with no status;
+        ``status`` drops them.
+        """
         sql = """
             SELECT id, kb_name, title, date, importance, location, summary
             FROM entry
@@ -1171,6 +1182,21 @@ class BaseBackend(ABC):
         if date_to:
             sql += " AND date <= :date_to"
             params["date_to"] = date_to
+        if status or exclude_status:
+            from .. import effective_status
+
+            keys = effective_status.derived_done_keys(self._session, kb_name, kb_names)
+            expr = effective_status.status_sql("", keys, params)  # no table alias here
+            if status:
+                sql += f" AND {expr} = :status"
+                params["status"] = status
+            if exclude_status:
+                binds = ", ".join(f":eks_{i}" for i in range(len(exclude_status)))
+                for i, value in enumerate(exclude_status):
+                    params[f"eks_{i}"] = value
+                # A row with no status is NULL, and NULL NOT IN (...) is NULL:
+                # keep it on purpose -- `exclude_status` drops only the named.
+                sql += f" AND ({expr} IS NULL OR {expr} NOT IN ({binds}))"
         order = "DESC" if sort_order.lower() == "desc" else "ASC"
         sql += f" ORDER BY date {order} LIMIT :limit OFFSET :offset"
         params["limit"] = limit

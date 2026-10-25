@@ -1898,6 +1898,20 @@
             "description": "End date (YYYY-MM-DD)",
             "type": "string"
           },
+          "exclude_status": {
+            "description": "Drop entries whose status matches any of these, the effective status; an entry with no status is kept. An empty list is refused; omit this argument to keep every status.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_names": {
+            "description": "Limit the timeline to these KBs. Omit for every KB the caller can read; an empty list or a blank name is refused.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "limit": {
             "description": "Maximum results (default 50)",
             "type": "integer"
@@ -1909,6 +1923,10 @@
           "offset": {
             "description": "Pagination offset (default 0)",
             "type": "integer"
+          },
+          "status": {
+            "description": "Only entries whose status matches, the effective status: a task whose children are all resolved counts as done while its file still says open (or in_progress).",
+            "type": "string"
           }
         },
         "required": [],
@@ -4528,6 +4546,20 @@
             "description": "End date (YYYY-MM-DD)",
             "type": "string"
           },
+          "exclude_status": {
+            "description": "Drop entries whose status matches any of these, the effective status; an entry with no status is kept. An empty list is refused; omit this argument to keep every status.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_names": {
+            "description": "Limit the timeline to these KBs. Omit for every KB the caller can read; an empty list or a blank name is refused.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "limit": {
             "description": "Maximum results (default 50)",
             "type": "integer"
@@ -4539,6 +4571,10 @@
           "offset": {
             "description": "Pagination offset (default 0)",
             "type": "integer"
+          },
+          "status": {
+            "description": "Only entries whose status matches, the effective status: a task whose children are all resolved counts as done while its file still says open (or in_progress).",
+            "type": "string"
           }
         },
         "required": [],
@@ -6945,6 +6981,20 @@
             "description": "End date (YYYY-MM-DD)",
             "type": "string"
           },
+          "exclude_status": {
+            "description": "Drop entries whose status matches any of these, the effective status; an entry with no status is kept. An empty list is refused; omit this argument to keep every status.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_names": {
+            "description": "Limit the timeline to these KBs. Omit for every KB the caller can read; an empty list or a blank name is refused.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "limit": {
             "description": "Maximum results (default 50)",
             "type": "integer"
@@ -6956,6 +7006,10 @@
           "offset": {
             "description": "Pagination offset (default 0)",
             "type": "integer"
+          },
+          "status": {
+            "description": "Only entries whose status matches, the effective status: a task whose children are all resolved counts as done while its file still says open (or in_progress).",
+            "type": "string"
           }
         },
         "required": [],

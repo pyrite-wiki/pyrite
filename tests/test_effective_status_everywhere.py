@@ -50,11 +50,18 @@ def _task(tid, status, parent="", extra=""):
 
 
 TOP = "assignee: agent:x\ndue_date: '2020-01-01'\n"
+#: The timeline's `date IS NOT NULL` must see `p` and `q` for the matrix to
+#: run its `kb_timeline` surface.
+TIMELINE_DATE = "date: '2024-01-15'\n"
 FILES = {
-    "p": _task("p", "open", extra=TOP).replace("Work for p.", "Work for p, zephyr."),
+    "p": _task("p", "open", extra=TOP + TIMELINE_DATE).replace(
+        "Work for p.", "Work for p, zephyr."
+    ),
     "p-a": _task("p-a", "done", "p"),
     "p-b": _task("p-b", "cancelled", "p"),
-    "q": _task("q", "open", extra=TOP).replace("Work for q.", "Work for q, zephyr."),
+    "q": _task("q", "open", extra=TOP + TIMELINE_DATE).replace(
+        "Work for q.", "Work for q, zephyr."
+    ),
     "q-a": _task("q-a", "open", "q"),
 }
 QA = "task_type: qa_validation\n"
@@ -166,6 +173,13 @@ def mcp_task_list(cfg, s):
     return _ids(_mcp(cfg, "task_list", {"status": s, "kb_name": KB})["tasks"])
 
 
+def mcp_kb_timeline(cfg, s):
+    """`kb_timeline` narrows the same way (#62): the filter runs in SQL
+    before `LIMIT` through the effective status."""
+    out = _mcp(cfg, "kb_timeline", {"status": s, "kb_names": [KB]})
+    return _ids(out["events"])
+
+
 def rest_entries(cfg, s):
     out = _rest_get(cfg, "/api/entries", {"kb": KB, "status": s})
     # The page and its total are the same query.
@@ -207,6 +221,7 @@ EFFECTIVE_SURFACES = {
     "mcp:kb_find_by_status(entry_type=task)": mcp_kb_find_by_status_tasks,
     "mcp:kb_find_by_assignee": mcp_kb_find_by_assignee,
     "mcp:kb_search": mcp_kb_search,
+    "mcp:kb_timeline": mcp_kb_timeline,
     "mcp:task_list": mcp_task_list,
     "rest:GET /api/entries": rest_entries,
     "rest:GET /api/tasks": rest_tasks,
@@ -255,10 +270,15 @@ def test_qa_queue_skips_a_qa_task_done_by_its_children(config):
 #: Every filter named `status`, classified. `effective`: in the matrix above.
 #: `write`: sets a status, filters nothing. `never-tasks`: returns only
 #: entries of types that are not `task` (software-kb's backlog items, ADRs,
-#: milestones; journalism's claims), whose status is the file's.
+#: milestones; journalism's claims), whose status is the file's. `column`:
+#: keeps the file's own status spelling, in Python, over already-loaded
+#: entries (export site's --exclude-status): not the effective status.
 MCP_STATUS_PARAMS = {
     "kb_find_by_assignee": "effective",
     "kb_find_by_status": "effective",
+    "kb_timeline": "effective",
+    "investigation_claims": "never-tasks",
+    "sw_transition": "write",
     "kb_search": "effective",
     "task_list": "effective",
     "kb_update": "write",
@@ -286,6 +306,7 @@ CLI_STATUS_OPTIONS = {
     "sw epics": "never-tasks",
     "sw milestones": "never-tasks",
     "sw refine": "never-tasks",
+    "export site": "column",
 }
 
 
@@ -294,7 +315,10 @@ def _mcp_status_tools() -> set[str]:
         return {
             name
             for name, meta in server.tools.items()
-            if "status" in (meta.get("inputSchema") or {}).get("properties", {})
+            if any(
+                key == "status" or key.endswith("_status")
+                for key in (meta.get("inputSchema") or {}).get("properties", {})
+            )
         }
 
 
@@ -304,7 +328,9 @@ def _rest_status_routes() -> set[str]:
 
     found = set()
     for path, route in _walk_routes(create_app().routes):
-        if any(p.name == "status" for p in route.dependant.query_params):
+        if any(
+            p.name == "status" or p.name.endswith("_status") for p in route.dependant.query_params
+        ):
             found |= {f"{m} {path}" for m in route.methods or ()}
     return found
 
@@ -313,6 +339,15 @@ def _cli_status_commands() -> set[str]:
     import click
     import typer.main
 
+    def _is_status_opt(p) -> bool:
+        for opt in getattr(p, "opts", None) or []:
+            if not opt.startswith("--"):
+                continue
+            name = opt[2:].replace("-", "_")
+            if name == "status" or name.endswith("_status"):
+                return True
+        return False
+
     found = set()
 
     def walk(cmd, path):
@@ -320,7 +355,7 @@ def _cli_status_commands() -> set[str]:
             ctx = click.Context(cmd)
             for name in cmd.list_commands(ctx):
                 walk(cmd.get_command(ctx, name), [*path, name])
-        elif any("--status" in (getattr(p, "opts", None) or []) for p in cmd.params):
+        elif any(_is_status_opt(p) for p in cmd.params):
             found.add(" ".join(path))
 
     walk(typer.main.get_command(app), [])
