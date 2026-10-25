@@ -141,10 +141,12 @@ class AmbiguousEntryError(PyriteError):
 #: public by construction. Every transport copies those an exception has into
 #: its error body under the same key, through ``refusal_fields``, so a class
 #: that adds one (#777's unreadable candidates) is mapped on REST, MCP and the
-#: CLI by naming it here. Not every extra goes through it yet:
+#: CLI by naming it here. ``errors`` (#1284) is the structured half of a
+#: validation refusal -- one row per refused field -- and reaches the same
+#: three surfaces by being named here. Not every extra goes through it yet:
 #: ``UndeclaredTypeError.declared_types`` is still copied by MCP's ``_refusal``
 #: and REST's write-refusal path themselves, with their own suggestion text.
-REFUSAL_FIELDS: tuple[str, ...] = ("candidate_kbs", "did_you_mean")
+REFUSAL_FIELDS: tuple[str, ...] = ("candidate_kbs", "did_you_mean", "errors")
 
 
 def refusal_fields(exc: BaseException) -> dict:
@@ -214,8 +216,19 @@ class ValidationError(PyriteError):
     error_code = "VALIDATION_FAILED"
     suggestion: str | None = None
 
-    def __init__(self, message: str, *, suggestion: str | None = None):
+    def __init__(
+        self, message: str, *, errors: list[dict] | None = None, suggestion: str | None = None
+    ):
         super().__init__(message)
+        #: One row per refused field, ``{field, rule, message, expected?, got?}``
+        #: (#1284). A transport copies it through ``refusal_fields``, so REST,
+        #: MCP and the CLI answer the same shape. ``None`` -- the key is then
+        #: absent from every body, never an empty list -- when the refusal is
+        #: not about a field (a truncated body, a stale id).
+        self.errors: list[dict] | None = list(errors) if errors else None
+        if suggestion is not None:
+            self.suggestion = suggestion
+
         if suggestion is not None:
             self.suggestion = suggestion
 
