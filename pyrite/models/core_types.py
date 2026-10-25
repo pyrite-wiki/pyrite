@@ -195,19 +195,40 @@ class EventEntry(Temporal, Locatable, Statusable, Entry):
             kw["status"] = EventStatus.CONFIRMED
         return cls(**kw)
 
-    def validate(self) -> list[str]:
-        """Validate event entry."""
-        errors = super().validate()
+    def validation_errors(self) -> list[dict[str, Any]]:
+        """Event rules as structured rows (#1284), each naming its field."""
+        errors = super().validation_errors()
 
         if not self.date:
-            errors.append("Event must have a date")
+            errors.append(
+                {
+                    "field": "date",
+                    "rule": "required",
+                    "message": "Event must have a date",
+                    "expected": "YYYY-MM-DD",
+                }
+            )
         elif not validate_date(self.date):
-            errors.append(f"Invalid date format: {self.date} (expected YYYY-MM-DD)")
+            errors.append(
+                {
+                    "field": "date",
+                    "rule": "format",
+                    "message": f"Invalid date format: {self.date} (expected YYYY-MM-DD)",
+                    "expected": "YYYY-MM-DD",
+                }
+            )
 
         # Validate the file's value when loading fell back to a default.
         importance = self.unrepresented_frontmatter().get("importance", self.importance)
         if not validate_importance(importance):
-            errors.append(f"Importance must be 1-10, got: {importance}")
+            errors.append(
+                {
+                    "field": "importance",
+                    "rule": "range",
+                    "message": f"Importance must be 1-10, got: {importance}",
+                    "expected": "1-10",
+                }
+            )
 
         return errors
 

@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
-from ...exceptions import ValidationError
+from ...exceptions import ValidationError, refusal_fields
 from ...services.body_bounds import MARKER_KEYS, ensure_not_truncated
 
 
@@ -36,6 +36,12 @@ def refusal_http(exc: ValidationError) -> HTTPException:
     """
     code = exc.error_code
     detail: dict = {"code": code, "message": str(exc), "retryable": False}
+    # REST's write path built its own body, so it dropped the public extra
+    # fields the other two transports copy through ``refusal_fields``: the
+    # structured ``errors`` rows of a field refusal (#1284), and before them the
+    # ``candidate_kbs``/``did_you_mean`` that ``docs/json-contracts.md`` already
+    # promises for AMBIGUOUS and KB_NOT_FOUND. One mapper, three surfaces.
+    detail.update(refusal_fields(exc))
     suggestion = getattr(exc, "suggestion", None)
     if suggestion:
         detail["hint"] = suggestion

@@ -288,6 +288,30 @@ with status `400` (`409` for `ENTRY_EXISTS`). REST `CONFLICT` is `409` with
 `STORAGE_ERROR` is `500` and carries `retryable`. MCP and the CLI use the error
 shape above.
 
+**A field refusal names the field.** `VALIDATION_FAILED` and `SCHEMA_VIOLATION`
+carry `errors`, one row per refused field, in the same shape on REST, MCP and
+the CLI:
+
+```json
+{
+  "error": "Event must have a date",
+  "error_code": "VALIDATION_FAILED",
+  "retryable": false,
+  "suggestion": "set date (YYYY-MM-DD)",
+  "errors": [
+    {"field": "date", "rule": "required", "message": "Event must have a date", "expected": "YYYY-MM-DD"}
+  ]
+}
+```
+
+Every row carries `field` and `rule`. A row from the entry model also carries
+`message` — the sentence that reaches `error`, so a caller never has to parse
+it — and `expected` when the fix is mechanical; a row from the KB schema or a
+plugin validator carries `expected` and, where the rule knows it, `got`, which
+is the shape `SCHEMA_VIOLATION` already documents. Several rows come back when
+several fields are refused, in the model's own order. A refusal that is not
+about a field carries no `errors` key at all: the key is absent, never empty.
+
 **Whole-request refusals (REST).** Two refusals stop an import, or any
 request, before a record is read:
 
