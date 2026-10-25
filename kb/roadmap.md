@@ -28,6 +28,72 @@ knowledge easier to trust, for its operator first and for invited readers next?
 
 ---
 
+## The release line (redesigned 2026-10-02, maintainer)
+
+**Design.** A KB is Markdown files with YAML frontmatter on disk, usable by any
+tool. Pyrite is additive to someone maintaining those files by hand (ADR-0041,
+accepted 2026-10-03). A write does what was asked, loses nothing, and reports it.
+
+**Who it is for now.** Local use by one operator, usually through a terminal
+coding agent. Multi-user stays experimental until its design is right; no new
+bespoke authorization objects are built before then.
+
+**Contracts are alpha.** The plugin and API contracts are our attempt to clean
+up the design around what matters most to users. They will be revised with
+community needs and feedback.
+
+| Release | Promise | Leaves |
+|---|---|---|
+| 0.25.7 | The first hour works; the alpha announcement | 2026-10-13 |
+| 0.25.8 | The CLI contract for agents | 2026-10-16 |
+| 0.26.0 | Your files, exactly | 2026-10-22 |
+| 0.26.1 | Search flags, link resolution, cross-KB tools and symlink identity | undated |
+| 0.27 | One operator, many users | undated |
+| 0.28 | Alpha plugin and API contracts | undated |
+
+Dated releases are trains: what is done by the date ships. The GitHub
+milestones carry the issues; this table carries the promise and the gate.
+
+- **0.25.7.** `mcp-setup` does what was asked (#582), first-hour docs (#583),
+  declared types (#595, #607), orient (#232), first search (#43), a save that
+  deletes a body line (#636), and the journalism-investigation tools marked
+  experimental and unsupported (#644). *Gate:* ADR-0041 accepted for entry
+  files. *Slips first:* #232, #43.
+- **0.25.8.** Formats (#547, #553, #303), exit codes (#526), ambiguity (#528),
+  error spelling (#610), create (#86), the echo rule against the file (#569),
+  tiers in tool descriptions (#68), `.claude/` by audience (#244), and
+  semantic filters applied inside SQLite's KNN query (#194). Left open for
+  contributors: #54, #52, #59, #572, #200.
+- **0.26.0: your files, exactly (shipped).** First the index tells the truth:
+  the ADR-0038 reconcile (#6, #7, #484 to #487, #495, #51, #22), identity
+  (#639, #494, #488 to #490), and health (#593). Writes change only what was
+  asked (ADR-0042: #638, #640, #178, explicit format and migrate commands),
+  with one landing rule for signed-in users' writes. Embedding retries keep
+  queued entries pending without consuming attempts when the model cannot
+  load (#594). The release also includes cross-KB link and read support
+  (#124, #622, #623).
+- **0.26.1.** What is left from the 0.25.9 / 0.26 line: #627, #64, #468 (on
+  the 0.26.1 milestone), #62 and #1262 (the remaining symlink identity/rename
+  case from #637 after the fix in #1249).
+- **0.27: one operator, many users.** Design first: the authorization model
+  and its executable matrix (#587), the security review (#586), and one
+  operator-owned KB registry ([[adr-0039]]; #539, #602, #382).
+  ~~The `published` flag~~ (`/site` was removed in 0.26.0). Two planes: users read and write entries
+  per KB by grant; everything else belongs to the operator. Capabilities
+  granted by the operator and configured in a user-owned file are the
+  direction, not this release.
+- **0.28: alpha plugin and API contracts.** Plugins out of tree with
+  journalism-investigation as the pilot, where its tools are fixed (#92, #93,
+  #94, #98); identity injected by the dispatcher (#384); #385, #412, #456,
+  #626.
+
+The history sections below predate this release line.
+Where they differ, this section wins; their detail is kept for the reasoning.
+
+---
+
+## History: earlier releases
+
 ## 0.3 — CLI Foundation (done)
 
 Core CLI, storage layer, service architecture, plugin system (15-method protocol), three-tier MCP server, SvelteKit web UI, content negotiation, collections (phases 1-3, 5), block references (phases 1-2), background embedding pipeline, REST API tier enforcement. 1040 tests.
@@ -448,117 +514,7 @@ neighbour at once (#63), and block-sequence indentation lost on a round trip
 
 ---
 
-## The working plan (approved 2026-10-03, maintainer)
-
-**How the work runs.** One core theme (write path, index, identity) in flight
-at a time; small independent fixes run alongside. Every theme is groomed
-against [[design]] (principle at stake, the user's model and the
-implementation model, its cluster) before code; a spike wherever scope or
-approach is uncertain; the Andon cord stops dispatch when two themes fail the
-same way; a cold read for the gate, storage, the write path and security; a
-retro after about five landed themes, counting churn first.
-
-**Maintainer decisions that gate work:** accept ADR-0041 (the 0.25.7
-message); accept ADR-0038 with its identity amendment (reconcile, identity);
-ADR-0042 questions 1 and 2 (write path phase 2); the principle 4 sentence on
-reads and derived values.
-
-**Track A: the first hour and agent friction.**
-- A1, 0.25.7 (Oct 8): #582/#647, the contributor PRs #649 and #652 (LF line
-  endings; add `.gitattributes`), the 20-minute tutorial #662 as the release's
-  acceptance test, #583 with a known-issues page, #595, #664. Cut line: #232,
-  #43.
-- A2, 0.25.8, under the CLI contract (#303): `--fields` in every format and a
-  compact default (#667), `sw adrs` sorted with supersession (#666), `orient`
-  recent from content dates (#670); a spike first for search scores and "no
-  strong match" (#668).
-- A3: contributor setup (#665, groomed and decomposed), Pyrite's own KB healthy
-  on `dev` with a CI check (#669), #672, #671, #673 (reproduce first), a spike
-  on making the skills findable (#674), #365.
-- A4: rerun the contributor hallway test on three models, repository attached,
-  after A1 and A3.
-
-**Track B: refactoring toward 0.26, "your files, exactly".** B1 #661
-follow-ups; B2 #659 cleanup, one PR per area (spike first on which migration
-path is live); B3 the divergence register as expected-failure conformance tests
-(ADR-0042 phase 1); B4 `ids missing` and `ids pin`, one release before the
-identity switch (0.25.9); B5 the index reconcile (ADR-0038 steps 2 to 5); B6 the
-write path in phases (spike first on concurrency, the per-file lock and `/` in
-ids); B7 derived task completion, then the rollup hook goes; B8 the ADR-0045
-protocol inventory (done: spike 2, recorded in ADR-0045), then aliases as schema
-data, `field_aliases:` (#697, before B6 lands; maintainer, 2026-10-03).
-
-**Track C: releases.** 0.25.7: A1, ADR-0041, the tutorial, the alpha
-announcement. 0.25.8: A2, A3, B1, first B2 removals. 0.25.9: passage
-embedding, B4, B3. 0.26: B8's aliases (#697) ahead of B6, then B5, B6, B7. 0.27 and 0.28: the
-authorization design, then the rest of B8 and the alpha contracts.
-
-**For contributors:** #664, #671, #666, #670, #672, groomed for strangers and
-left unclaimed a few days.
-
-## The release line (redesigned 2026-10-02, maintainer)
-
-**Design.** A KB is Markdown files with YAML frontmatter on disk, usable by any
-tool. Pyrite is additive to someone maintaining those files by hand (ADR-0041,
-accepted 2026-10-03). A write does what was asked, loses nothing, and reports it.
-
-**Who it is for now.** Local use by one operator, usually through a terminal
-coding agent. Multi-user stays experimental until its design is right; no new
-bespoke authorization objects are built before then.
-
-**Contracts are alpha.** The plugin and API contracts are our attempt to clean
-up the design around what matters most to users. They will be revised with
-community needs and feedback.
-
-| Release | Promise | Leaves |
-|---|---|---|
-| 0.25.7 | The first hour works; the alpha announcement | 2026-10-08 |
-| 0.25.8 | The CLI contract for agents | 2026-10-15 |
-| 0.25.9 | Search reads the whole entry; links work across KBs | 2026-10-22 |
-| 0.26 | Your files, exactly | undated |
-| 0.27 | One operator, many users | undated |
-| 0.28 | Alpha plugin and API contracts | undated |
-
-Dated releases are trains: what is done by the date ships. The GitHub
-milestones carry the issues; this table carries the promise and the gate.
-
-- **0.25.7.** `mcp-setup` does what was asked (#582), first-hour docs (#583),
-  declared types (#595, #607), orient (#232), first search (#43), a save that
-  deletes a body line (#636), and the journalism-investigation tools marked
-  experimental and unsupported (#644). *Gate:* ADR-0041 accepted for entry
-  files. *Slips first:* #232, #43.
-- **0.25.8.** Formats (#547, #553, #303), exit codes (#526), ambiguity (#528),
-  error spelling (#610), create (#86), the echo rule against the file (#569),
-  tiers in tool descriptions (#68), `.claude/` by audience (#244). Left open
-  for contributors: #54, #52, #59, #572, #200.
-- **0.25.9.** Whole-entry passage embedding
-  ([[embed-the-whole-entry-in-passages-by-default]]), #594, #194, #627; links
-  and cross-KB reads (#62, #64, #124, #621, #622, #623, #468). Embedding lands
-  before the index reconcile (maintainer, 2026-10-02).
-- **0.26: your files, exactly.** First the index tells the truth: the ADR-0038
-  reconcile (#6, #7, #484 to #487, #495, #51, #22), identity (#639, #494, #488
-  to #490), health (#593). Then a write changes only what was asked (ADR-0042,
-  accepted 2026-10-03; its rule is re-spiked on the real path first): #637, #638, #640,
-  #178, #628, a stale-read rule, and explicit format and migrate commands.
-  *Gate:* ADR-0038 and the ADR-0042 decisions.
-- **0.27: one operator, many users.** Design first: the authorization model
-  and its executable matrix (#587), the security review (#586), the registry
-  in config under the operator (#539, #521, #565, #602, #382), one landing rule
-  for writes, the `published` flag. Two planes: users read and write entries
-  per KB by grant; everything else belongs to the operator. Capabilities
-  granted by the operator and configured in a user-owned file are the
-  direction, not this release.
-- **0.28: alpha plugin and API contracts.** Plugins out of tree with
-  journalism-investigation as the pilot, where its tools are fixed (#92, #93,
-  #94, #98); identity injected by the dispatcher (#384); #385, #412, #456,
-  #626.
-
-The sections below for 0.25.7 to 0.25.9, 0.26 and 0.27 predate this line.
-Where they differ, this section wins; their detail is kept for the reasoning.
-
----
-
-## 0.25.7 to 0.25.9 — Agents in the terminal (next; weekly patch releases)
+## History: the terminal-agent plan as of 2026-10-01
 
 **Decided 2026-10-01 (maintainer).** The work a new user tests first comes before the
 multi-user review: Claude Code and terminal integration, and MCP on a local install.
@@ -600,7 +556,7 @@ requested effect that did not happen exits non-zero, an ambiguous id is an error
   `PluginContext` half of #384.
 - Needs design first: #303, #200, #22, #59.
 
-### 0.25.9 — The index tells the truth (target 2026-10-22 to 10-29)
+### History: the planned 0.25.9 index work (shipped in 0.26.0)
 
 **Done when:** after any change made outside Pyrite (an edit that keeps its mtime, a
 time-preserving copy, a `git mv`, a delete, a duplicate id), one command makes the
@@ -612,7 +568,7 @@ index match the files and reports duplicates, pinned by invariant tests.
   `embed-the-whole-entry-in-passages-by-default`, on the evidence of the embedding spike.
   It changes the index, so it needs a groom and probably an ADR first.
 
-## 0.26 — Multi-user you can trust (after 0.25.9; still alpha)
+## History: the multi-user plan as of 2026-10-01 (now 0.27)
 
 **Sequencing (2026-10-01):** grooming for the review starts in parallel with the 0.25.x
 releases, at a low rate; the build starts after 0.25.9. Target November, no fixed date.
@@ -773,12 +729,13 @@ maintainer.
 
 ---
 
-## 0.27 — Direction (maintainer decisions, 2026-09-26; not yet groomed)
+## History: the plugin direction as of 2026-09-26 (now 0.28)
 
 - **ADR-0037 themes 3b–5:** writes and MCP go through the one policy point.
 - **CodeQL advanced setup (#228).**
-- **A separate `published` flag.** Being on the anonymous `/site` becomes its
-  own switch, apart from `default_role: read` for registered users.
+- ~~**A separate `published` flag.** Being on the anonymous `/site` becomes its
+  own switch, apart from `default_role: read` for registered users.~~
+  Historical proposal: `/site` was removed in 0.26.0.
 - **One KB registry** (ADR-0039, accepted 2026-10-03 after a spike). A single source of
   truth for KB membership and per-KB policy; it removes the class behind
   private #61/#69 and the characterization-harness leaks.
