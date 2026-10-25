@@ -63,7 +63,17 @@ def register_search_command(app: typer.Typer):
     def search(
         query: str = typer.Argument(..., help="Search query (FTS5 syntax supported)"),
         kb_name: str | None = typer.Option(None, "--kb", "-k", help="Search specific KB"),
-        entry_type: str | None = typer.Option(None, "--type", "-t", help="Filter by type"),
+        entry_types: list[str] | None = typer.Option(
+            None,
+            "--type",
+            "-t",
+            help=("Filter by type; repeat to keep several types (e.g. --type note --type event)"),
+        ),
+        exclude_types: list[str] | None = typer.Option(
+            None,
+            "--exclude-type",
+            help=("Remove this type from the results; repeat to exclude several"),
+        ),
         tag: str | None = typer.Option(None, "--tag", help="Filter by tag"),
         date_from: str | None = typer.Option(None, "--from", help="Events from date (YYYY-MM-DD)"),
         date_to: str | None = typer.Option(None, "--to", help="Events until date (YYYY-MM-DD)"),
@@ -151,6 +161,10 @@ def register_search_command(app: typer.Typer):
         whatever the verdict. The contract is stated once, in the docstring of
         SearchService.search.
         """
+        for flag, values in (("--type", entry_types), ("--exclude-type", exclude_types)):
+            if any(not value.strip() for value in (values or [])):
+                raise typer.BadParameter("value must not be blank", param_hint=flag)
+
         asked = bool(
             parse_fields_param(fields) or parse_fields_param(os.environ.get(SEARCH_FIELDS_ENV))
         )
@@ -185,7 +199,7 @@ def register_search_command(app: typer.Typer):
 
         if use_files:
             _warn_fields_not_applied(fields)
-            _search_files(config, query, kb_name, entry_type, limit)
+            _search_files(config, query, kb_name, entry_types, exclude_types, limit)
             return
 
         from ..services.kb_service import KBService
@@ -223,7 +237,8 @@ def register_search_command(app: typer.Typer):
             response = search_svc.search_response(
                 query=query,
                 kb_name=kb_name,
-                entry_type=entry_type,
+                entry_types=entry_types or None,
+                exclude_types=exclude_types or None,
                 tags=tags_list,
                 date_from=date_from,
                 date_to=date_to,
@@ -388,7 +403,7 @@ def register_search_command(app: typer.Typer):
             console.print(f"[red]Search error ({type(e).__name__}):[/red] {e}")
             console.print("[dim]Falling back to file search...[/dim]")
             _warn_fields_not_applied(fields)
-            _search_files(config, query, kb_name, entry_type, limit)
+            _search_files(config, query, kb_name, entry_types, exclude_types, limit)
         finally:
             if db is not None:
                 db.close()
@@ -409,7 +424,14 @@ def _warn_fields_not_applied(fields):
     typer.echo(f"{source} is not applied by file search; showing its own table.", err=True)
 
 
-def _search_files(config, query, kb_name, entry_type, limit):
+def _search_files(
+    config,
+    query: str,
+    kb_name: str | None,
+    entry_types: list[str] | None,
+    exclude_types: list[str] | None,
+    limit: int,
+):
     """File-based search fallback."""
     if kb_name:
         kb = config.get_kb(kb_name)
@@ -433,7 +455,14 @@ def _search_files(config, query, kb_name, entry_type, limit):
 
     from ..services.file_search import search_kb_files
 
-    found = search_kb_files(kbs, query, entry_type, limit)
+    found = search_kb_files(
+        kbs,
+        query,
+        None,
+        limit,
+        entry_types=entry_types or None,
+        exclude_types=exclude_types or None,
+    )
     results, unreadable, scanned = found.hits, found.unreadable, found.scanned
 
     if unreadable:

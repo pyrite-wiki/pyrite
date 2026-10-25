@@ -620,6 +620,8 @@ class EmbeddingService:
         limit: int = 20,
         min_similarity: float = DEFAULT_MIN_SIMILARITY,
         entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -644,10 +646,13 @@ class EmbeddingService:
             entry_type, tags, date_from, date_to, fips, state, status,
             include_archived: the same filter set the keyword leg takes.
                 Applied by the backend inside the KNN query rather than after
-                it (#56) — a filter honoured on only one leg makes a fused
+                it (#56) - a filter honoured on only one leg makes a fused
                 hybrid result violate it. ``include_archived`` is the default
                 exclusion rather than a value filter, and holds on both legs
-                for the same reason.
+                for the same reason. ``entry_types`` (the #627 include-set,
+                which absorbs a single ``entry_type``) and ``exclude_types``
+                are part of that set too, so a repeated `--type` and an
+                `--exclude-type` reach the vector leg like every other filter.
             non_empty: leave out entries whose body and summary are both blank
                 (#200); applied inside the KNN like the others.
 
@@ -667,6 +672,8 @@ class EmbeddingService:
             min_similarity=min_similarity,
             kb_names=kb_names,
             entry_type=entry_type,
+            entry_types=entry_types or None,
+            exclude_types=exclude_types or None,
             tags=tags,
             date_from=date_from,
             date_to=date_to,

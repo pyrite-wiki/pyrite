@@ -244,6 +244,8 @@ class SQLiteBackend(BaseBackend):
         kb_name: str | None = None,
         kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -287,6 +289,15 @@ class SQLiteBackend(BaseBackend):
         if entry_type:
             sql += " AND e.entry_type = ?"
             params.append(entry_type)
+        if entry_types:
+            # The #627 include-set: every listed type is kept, an OR over the
+            # names. The single-type flag and a repeated `--type` are one set
+            # by the time the service gets here.
+            sql += f" AND e.entry_type IN ({','.join('?' * len(entry_types))})"
+            params.extend(entry_types)
+        if exclude_types:
+            sql += f" AND e.entry_type NOT IN ({','.join('?' * len(exclude_types))})"
+            params.extend(exclude_types)
         if date_from:
             sql += " AND e.date >= ?"
             params.append(date_from)
@@ -417,6 +428,8 @@ class SQLiteBackend(BaseBackend):
         limit: int = 20,
         min_similarity: float = DEFAULT_MIN_SIMILARITY,
         entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -490,6 +503,8 @@ class SQLiteBackend(BaseBackend):
         where, params, selective = self._semantic_filter_sql(
             kb_name=kb_name,
             entry_type=entry_type,
+            entry_types=entry_types or None,
+            exclude_types=exclude_types or None,
             tags=tags,
             date_from=date_from,
             date_to=date_to,
@@ -624,6 +639,8 @@ class SQLiteBackend(BaseBackend):
         self,
         kb_name: str | None = None,
         entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -669,6 +686,13 @@ class SQLiteBackend(BaseBackend):
         if entry_type:
             sql += " AND e.entry_type = ?"
             params.append(entry_type)
+        if entry_types:
+            # The #627 include-set, as the keyword leg applies it.
+            sql += f" AND e.entry_type IN ({','.join('?' * len(entry_types))})"
+            params.extend(entry_types)
+        if exclude_types:
+            sql += f" AND e.entry_type NOT IN ({','.join('?' * len(exclude_types))})"
+            params.extend(exclude_types)
         if date_from:
             sql += " AND e.date >= ?"
             params.append(date_from)
@@ -707,6 +731,8 @@ class SQLiteBackend(BaseBackend):
                 kb_name,
                 kb_names is not None,
                 entry_type,
+                entry_types,
+                exclude_types,
                 date_from,
                 date_to,
                 tags,

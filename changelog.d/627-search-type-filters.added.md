@@ -1,0 +1,2 @@
+- `pyrite search` accepts repeatable `--type` flags (matching any listed type) and repeatable `--exclude-type` flags across keyword, semantic, hybrid, and `--files` modes (#627).
+- Blank `--type` and `--exclude-type` values are usage errors (exit 2) in indexed and `--files` search.

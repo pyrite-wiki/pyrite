@@ -133,6 +133,8 @@ pyrite search "mathematician" -k my-kb --type person
 ```
 <!-- runner: expect-ids ada-lovelace -->
 
+Repeat `--type` to include several types and use `--exclude-type` to remove one: `pyrite search "mathematician" -k my-kb --type person --type event --exclude-type event`.
+
 **Semantic search** finds conceptually related content, not just keyword matches. It needs the `semantic` extra (in `[all]`; a [release-tag install](../README.md#install) adds it by name) and uses a local embedding model (`all-MiniLM-L6-v2`, ~90 MB) that is downloaded the first time it is needed — expect that one download to take a minute, once.
 
 **Writes never wait on it.** `auto_embed` (on by default) promises that an entry *will be* embedded, not that it is embedded by the time the write returns (ADR-0035): a `pyrite create` or a `POST /api/entries` records the entry, makes it keyword-searchable immediately, and notes the embedding as owed. So on a brand-new KB, a semantic search issued straight after a write may not find that entry yet. Settle the debt — and trigger the download — whenever you like:
