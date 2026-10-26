@@ -621,9 +621,10 @@ def qa_fix(
 ):
     """Auto-fix safe structural issues found by validation.
 
-    Fixes: date normalisation, missing field defaults, broken wikilinks
-    (by edit distance), and tag casing. Unsafe or ambiguous issues are
-    reported for manual resolution.
+    Fixes: date normalisation, broken wikilinks (by edit distance), and tag
+    casing. Unsafe or ambiguous issues are reported for manual resolution, and
+    a schema violation is always one of them: a required field is the author's
+    to fill, not a value `qa fix` may invent.
 
     Use --dry-run to preview changes before applying them.
     """

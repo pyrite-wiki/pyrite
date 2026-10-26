@@ -1244,6 +1244,7 @@ class QAService:
                     "rule": "schema_violation",
                     "severity": "error",
                     "field": err.get("field", ""),
+                    **_schema_rule(err),
                     "message": (
                         f"Schema error on '{entry['id']}': "
                         f"field '{err.get('field', '')}' — {err.get('rule', '')} "
@@ -1260,6 +1261,7 @@ class QAService:
                     "rule": "schema_violation",
                     "severity": "warning",
                     "field": warn.get("field", ""),
+                    **_schema_rule(warn),
                     "message": (
                         f"Schema warning on '{entry['id']}': "
                         f"field '{warn.get('field', '')}' — {warn.get('rule', '')} "
@@ -1665,6 +1667,7 @@ class QAService:
                         "rule": "schema_violation",
                         "severity": "error",
                         "field": err.get("field", ""),
+                        **_schema_rule(err),
                         "message": (
                             f"Schema error on '{entry['id']}': "
                             f"field '{err.get('field', '')}' — {err.get('rule', '')} "
@@ -1681,6 +1684,7 @@ class QAService:
                         "rule": "schema_violation",
                         "severity": "warning",
                         "field": warn.get("field", ""),
+                        **_schema_rule(warn),
                         "message": (
                             f"Schema warning on '{entry['id']}': "
                             f"field '{warn.get('field', '')}' — {warn.get('rule', '')} "
@@ -2198,13 +2202,6 @@ class QAService:
         return self._fix_svc._fix_invalid_date(issue)
 
     @staticmethod
-    def _fix_missing_field(issue: dict[str, Any]) -> dict[str, Any] | None:
-        """Delegate to QAFixService."""
-        from .qa_fix_service import QAFixService
-
-        return QAFixService._fix_missing_field(issue)
-
-    @staticmethod
     def _edit_distance(a: str, b: str) -> int:
         """Delegate to QAFixService."""
         from .qa_fix_service import QAFixService
@@ -2307,6 +2304,15 @@ def _keeps_integer_type(field_schema: Any) -> bool:
     if field_schema.field_type == "select" and field_schema.options:
         return all(isinstance(o, int) for o in field_schema.options)
     return False
+
+
+def _schema_rule(item: dict[str, Any]) -> dict[str, str]:
+    """``{"schema_rule": <rule>}`` for a schema error or warning that names its
+    rule (``required``, ``enum``, ...), else ``{}``: a caller tells a required
+    field from the issue's data, never from its message (#958). A plugin
+    validator that gives no rule adds no key."""
+    rule = item.get("rule")
+    return {"schema_rule": rule} if rule else {}
 
 
 def _validation_fields(

@@ -1,8 +1,8 @@
 """
 QA Fix Service — auto-fix for safe structural issues in knowledge bases.
 
-Extracted from QAService. Handles date normalisation, missing field defaults,
-broken wikilink fixes by edit distance, and tag normalisation.
+Extracted from QAService. Handles date normalisation, broken wikilink fixes by
+edit distance, and tag normalisation.
 """
 
 from __future__ import annotations
@@ -25,7 +25,6 @@ class QAFixService:
     FIXABLE_RULES = frozenset(
         {
             "invalid_date",
-            "schema_violation",  # only missing-field sub-cases
             "broken_link",
         }
     )
@@ -34,7 +33,7 @@ class QAFixService:
     #: `tag_case`, which comes from the tag index rather than an issue. A test
     #: runs each through a write that lands, raises, and finds no file
     #: (tests/test_qa_records_only_what_ran.py); add a kind here and there.
-    FIX_KINDS = ("invalid_date", "schema_violation", "broken_link", "tag_case")
+    FIX_KINDS = ("invalid_date", "broken_link", "tag_case")
 
     def __init__(self, config: PyriteConfig, db: PyriteDB, kb_svc=None):
         self.config = config
@@ -139,21 +138,6 @@ class QAFixService:
                     else:
                         manual.append({**issue, "reason": "cannot_normalise_date"})
 
-                elif rule == "schema_violation" and "missing" in issue.get("message", "").lower():
-                    # Only reached by an issue whose message says "missing":
-                    # the KB schema's required-field errors say "required",
-                    # so no validator yields one today (#795 Learned).
-                    fix = self._fix_missing_field(issue)
-                    if fix:
-                        # _fix_missing_field's only default is `importance`,
-                        # a top-level field. A metadata default would have to
-                        # send only its own key (update_entry merges metadata
-                        # into the file's), never a dict read from the index.
-                        updates[fix["field"]] = fix["new_value"]
-                        field_fixes.append(fix)
-                    else:
-                        manual.append({**issue, "reason": "no_safe_default"})
-
                 elif rule == "field_spelled_twice":
                     # Andon #994 / #1001 decision 2: an *equal* pair merges
                     # into the field's own top-level spelling, losing
@@ -186,6 +170,8 @@ class QAFixService:
                         )
                     else:
                         manual.append({**issue, "reason": "no_close_match"})
+                elif rule == "schema_violation" and issue.get("schema_rule") == "required":
+                    manual.append({**issue, "reason": "no_safe_default"})
                 else:
                     manual.append({**issue, "reason": "not_auto_fixable"})
 
@@ -315,34 +301,6 @@ class QAFixService:
             "old_value": raw_date,
             "new_value": normalised,
             "message": f"Normalised date '{raw_date}' -> '{normalised}'",
-        }
-
-    @staticmethod
-    def _fix_missing_field(issue: dict[str, Any]) -> dict[str, Any] | None:
-        """Provide a type-appropriate default for a missing required field.
-
-        Only handles fields where a safe default exists.
-        Returns fix dict or None.
-        """
-        field = issue.get("field", "")
-
-        # Map of field names to safe defaults
-        safe_defaults: dict[str, Any] = {
-            "importance": 5,
-        }
-
-        default_val = safe_defaults.get(field)
-        if default_val is None:
-            return None
-
-        return {
-            "entry_id": issue["entry_id"],
-            "kb_name": issue["kb_name"],
-            "rule": "schema_violation",
-            "field": field,
-            "old_value": None,
-            "new_value": default_val,
-            "message": f"Added default {field}={default_val}",
         }
 
     @staticmethod

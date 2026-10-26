@@ -1686,3 +1686,13 @@ fixes were attempted and failed. `manual` keeps only the issues a person must
 decide. One failed entry does not
 stop the rest. With `--dry-run`, `fixed` lists what would be attempted and
 `failed` is empty.
+
+**Schema issues name their rule.** A `schema_violation` issue in `qa validate`
+(and in the `issues` a `qa fix` reads), an error or a warning alike, carries
+`schema_rule`: the rule the schema or a plugin validator broke (`required`,
+`enum`, `field_select`, ...), beside `field`. A caller tells a required field
+from this key, never from the message. A validator that names no rule adds no
+key. `qa fix` offers no fix for a schema issue: a required field is reported
+in `manual` with `reason: "no_safe_default"`, any other schema issue with
+`not_auto_fixable`; `--fix-rule schema_violation` still selects them and
+writes nothing.
