@@ -3,9 +3,11 @@
 The property, whatever links are on the path: every write operation (create,
 update, rename, delete, ``ids pin``, ``qa fix``, software-kb's
 ``migrate-standards``) either stays inside the KB's resolved root or is
-refused with a stable code, every file left as it was. A rename of an entry
-whose file is a symbolic link never removes the link's target: it refuses,
-with the reason.
+refused with a stable code, every file left as it was. A rename keeps the
+file where it is, so a rename of an entry whose file is a symbolic link to a
+file inside the root is written through the link, as an update is: the link
+stays and its target's ``id:`` changes. Only ``migrate-standards``, which
+moves the file, still refuses a link.
 
 The grid: operation x placement x KB kind. A placement is a link kind at a
 position:
@@ -251,7 +253,6 @@ OPS = {
 }
 
 REFUSED_OUTSIDE = ("refused", OUTSIDE_CODE)
-REFUSED_LINK = ("refused", "VALIDATION_FAILED")  # a rename of a link: the reason says so
 REFUSED_HARD = ("refused", "STORAGE_ERROR")  # the existing hard-link refusal's code
 DONE = ("done", None)
 NOT_DONE = ("not-done", None)  # a batch operation reports the file and leaves it
@@ -280,7 +281,7 @@ EXPECTED: dict[tuple[str, str], tuple[tuple[str, str | None], str | None, set[st
     ("update", "dir-in"): (DONE, _REAL_FOLDER, {"git", "plain"}),
     # rename
     ("rename", "file-out"): (REFUSED_OUTSIDE, None, set()),
-    ("rename", "file-in"): (REFUSED_LINK, None, set()),
+    ("rename", "file-in"): (DONE, None, set()),  # in place, as an update; not a control
     ("rename", "file-hard"): (REFUSED_HARD, None, set()),
     ("rename", "dir-out"): (("refused", "ENTRY_NOT_FOUND"), _NOT_FOUND, {"git", "plain"}),
     ("rename", "dir-in"): (DONE, _REAL_FOLDER, {"git", "plain"}),
@@ -362,15 +363,15 @@ def test_no_write_leaves_the_kb_root(tmp_path: Path, op: str, placement: str, ki
     assert kb_after == {k: v for k, v in kb_before.items() if not k.startswith(".git")}, outcome
 
 
-def test_a_rename_of_a_link_says_why(tmp_path: Path):
-    """Property 2: the refusal names the reason, and the link's target is
-    still there."""
+def test_a_rename_of_a_link_inside_the_kb_is_written_through_it(tmp_path: Path):
+    """A rename keeps the file where it is, as an update does: the link stays
+    a link and its target (inside the KB) carries the new id."""
     cell = _cell(tmp_path, git=False, rel="notes/s.md", text=NOTE, placement="file-in")
     outcome = op_rename(cell)
-    assert not outcome.done
-    assert "symbolic link" in outcome.message, outcome
-    assert (cell.root / "store" / "s.txt").read_text() == NOTE
+    assert outcome.done, outcome
     assert (cell.root / "notes" / "s.md").is_symlink()
+    target = (cell.root / "store" / "s.txt").read_text()
+    assert "id: s2\n" in target and "id: s\n" not in target, target
 
 
 def test_an_outside_refusal_names_no_path(tmp_path: Path):

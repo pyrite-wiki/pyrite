@@ -1,0 +1,1 @@
+- A rename no longer moves the entry's file: it keeps its path and name, and only the `id:` changes, so a file at the KB root stays at the root and a hand-made folder stays put (#488, #489). The new id stays readable, updatable and deletable. A rename of an entry whose file is a symbolic link to a file inside the KB is now written through the link, as an update is.

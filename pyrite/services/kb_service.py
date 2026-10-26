@@ -2593,7 +2593,7 @@ class KBService:
         update_links: bool = True,
         dry_run: bool = False,
     ) -> dict:
-        """Rename an entry in-place: move the file, rewrite frontmatter
+        """Rename an entry at its existing file path: rewrite frontmatter
         id, rewrite ``[[old_id]]`` and ``[[old_id|alias]]`` wikilinks
         across this KB. Tier A r1700.
 

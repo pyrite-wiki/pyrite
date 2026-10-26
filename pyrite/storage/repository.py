@@ -39,7 +39,6 @@ from ..utils.yaml import load_yaml, load_yaml_file
 from .entry_writer import (
     FileChanged,
     create_entry_text,
-    move_entry_text,
     publish_entry_text,
     raw_scalar,
     remove_entry_file,
@@ -829,7 +828,7 @@ class KBRepository:
 
         Args:
             entry: The entry to save
-            subdir: Optional subdirectory (auto-inferred if not provided)
+            subdir: None infers the type folder; "" explicitly selects the KB root.
             touch_updated_at: Refresh ``updated_at`` as bookkeeping before
                 writing. Callers that already stamped it -- or that write a
                 caller-supplied ``updated_at`` and must not overwrite it
@@ -927,10 +926,10 @@ class KBRepository:
         return bool(files)
 
     # ---------------------------------------------------------------
-    # Rename — Tier A r1700. The smallest useful slice: same-KB file
-    # rename + frontmatter id rewrite + wikilink rewrite. Cross-KB
-    # rewrite, redirect-stub creation, and the `move` (subdir-change)
-    # variant are filed as r1700 follow-ups.
+    # Rename — Tier A r1700. The smallest useful slice: same-KB id
+    # rename (the file stays where it is) + frontmatter id rewrite +
+    # wikilink rewrite. Cross-KB rewrite, redirect-stub creation, and
+    # the `move` (subdir-change) variant are filed as r1700 follow-ups.
     # ---------------------------------------------------------------
 
     def rename(
@@ -941,7 +940,7 @@ class KBRepository:
         update_links: bool = True,
         dry_run: bool = False,
     ) -> dict:
-        """Rename an entry: move file, rewrite frontmatter id, rewrite
+        """Rename an entry at its existing path: rewrite frontmatter id and
         all in-KB wikilinks.
 
         Args:
@@ -966,9 +965,9 @@ class KBRepository:
 
         A rename either completes, with every linker it could not patch
         listed, or changes nothing (#978 delta review, round 1): the entry
-        is moved first, under one lock for both paths, so a source that
-        changed or a target already taken leaves every file as it was; the
-        linking files are written after it, and a fault in any of them
+        is rewritten first with compare-before-replace, so a source that
+        changed leaves every file as it was; the linking files are written
+        after it, and a fault in any of them
         (hard-linked, undecodable, unparseable, refused by ``apply``, the
         lock directory) is listed, never fatal. No linker is written before
         every linker's rewrite is computed and its hard links checked.
@@ -976,7 +975,7 @@ class KBRepository:
         Raises:
             EntryNotFoundError: if ``old_id`` doesn't exist in this KB.
             ValidationError: if the new ID equals the old ID or already exists.
-            ConflictError: if the entry changed between the read and the move.
+            ConflictError: if the entry changed between the read and the write.
             KBReadOnlyError: if the KB is read-only.
         """
         if self.config.read_only and not dry_run:
@@ -1050,66 +1049,28 @@ class KBRepository:
 
         # Execute: the entry first, so a rename that cannot move it changes
         # nothing (the delta review's "half-applied rename": the linkers used
-        # to be written first, and a refused move left them naming an id that
+        # to be written first, and a refused write left them naming an id that
         # did not exist). The source: one `Set("id", new_id)` on its own
         # bytes (and the `updated_at` bookkeeping where the file carries it),
-        # published at the new path as one move with the removal of the old
-        # file. The model is loaded only to resolve the new path; it supplies
-        # no bytes.
+        # published in place against the bytes read.
         raw = src.read_bytes()
         text = raw.decode("utf-8")
         split = split_frontmatter(text)
         if not isinstance(split, Frontmatter):
             raise ValidationError(f"Cannot rename '{old_id}': the file has no frontmatter")
         new_text = _renamed_text(text, split, new_id)
-        entry = self._load_entry(src, text)
-        entry.id = new_id
-        # File pattern in some plugin schemas can pull subdir from id;
-        # keep the entry in the same subdir it lived in by saving with
-        # the explicit relative subdir of the old file.
-        rel = src.parent.relative_to(self.path)
-        subdir = str(rel) if str(rel) != "." else None
 
-        # #391 cold read (round 2): a file's name is fixed at creation, so a
-        # `file_pattern` type's filename is NOT re-derived from the new id on
-        # rename -- only the frontmatter `id:` changes, exactly as an update
-        # already keeps the file where it is. Without this, a pattern with
-        # no `{id}`/`{slug}` placeholder (e.g. the software-kb `adr` type's
-        # `{adr_number:04d}-{title}.md`) re-resolves to the SAME path as the
-        # source (neither field changes on a rename), and the unconditional
-        # `src.unlink()` below used to delete the file it had just written.
-        schema = self.config.kb_schema
-        type_schema = schema.get_type_schema(entry.entry_type)
-        has_file_pattern = bool(type_schema and type_schema.file_pattern)
-        entry.file_path = src
-        file_path = self._target_path(entry, subdir, keep_filename=has_file_pattern)
-
-        if file_path.resolve() == src.resolve():
-            try:
-                publish_entry_text(src, new_text, expect=raw, root=self.path)
-            except FileChanged as e:
-                raise ConflictError(
-                    f"'{old_id}' in KB '{self.name}' changed while the rename ran; "
-                    "nothing was written. Read it again and retry."
-                ) from e
-        else:
-            # One move: the new file published and the old one removed as
-            # one write under one lock for both paths, the old file removed
-            # only while it still holds the bytes read above (#978 review,
-            # item 3). A target already taken, or a source that changed,
-            # leaves both paths as they are.
-            try:
-                move_entry_text(src, raw, file_path, new_text, root=self.path)
-            except FileExistsError:
-                raise ValidationError(
-                    f"Cannot rename '{old_id}' to '{new_id}': target already exists "
-                    f"in KB '{self.name}'"
-                ) from None
-            except FileChanged as e:
-                raise ConflictError(
-                    f"'{old_id}' in KB '{self.name}' changed while the rename ran; "
-                    "nothing was written. Read it again and retry."
-                ) from e
+        # A rename changes identity, never a file's placement: the file stays
+        # at its path (#488, #489), so there is no second path to move to and
+        # no target to find taken. A file that is a link inside the KB is
+        # written through, as an update writes it.
+        try:
+            publish_entry_text(src, new_text, expect=raw, root=self.path)
+        except FileChanged as e:
+            raise ConflictError(
+                f"'{old_id}' in KB '{self.name}' changed while the rename ran; "
+                "nothing was written. Read it again and retry."
+            ) from e
 
         # The linking files, each published against the bytes it was computed
         # on; one that changed meanwhile is re-read and rewritten again, one

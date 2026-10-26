@@ -148,8 +148,8 @@ def test_a_rename_sets_the_id_and_leaves_the_rest_of_the_file_as_written(tmp_pat
     result = KBRepository(config.knowledge_bases[0]).rename("old-one", "new-one")
 
     assert result["renamed"] and result["links_rewritten"] == 3, result
-    assert not (kb_path / "notes" / "old-one.md").exists()
-    after = _text(kb_path / "notes" / "new-one.md")
+    assert not (kb_path / "notes" / "new-one.md").exists()
+    after = _text(kb_path / "notes" / "old-one.md")
     assert "id: new-one\n" in after, after
     assert "- to: foo          # legacy spelling\n  type: related\n  since: 2020\n" in after
     assert_only_changed(before, after, [Set("id", "new-one")])
@@ -169,7 +169,7 @@ def test_a_renames_stamp_keeps_the_files_own_spelling(tmp_path: Path):
 
     KBRepository(config.knowledge_bases[0]).rename("old-one", "new-one")
 
-    after = _text(kb_path / "notes" / "new-one.md")
+    after = _text(kb_path / "notes" / "old-one.md")
     line = next(l for l in after.splitlines() if l.startswith("updated_at:"))
     assert re.fullmatch(r"updated_at: \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", line), line
     assert line != "updated_at: 2020-01-01T00:00:00Z", "the stamp did not move"
@@ -203,7 +203,7 @@ def test_the_cli_rename_goes_the_same_way(tmp_path: Path):
 
     _cli(config, ["rename", "old-one", "new-one", "-k", KB, "--format", "json"])
 
-    after = _text(kb_path / "notes" / "new-one.md")
+    after = _text(kb_path / "notes" / "old-one.md")
     assert_only_changed(before, after, [Set("id", "new-one")])
 
 
@@ -217,7 +217,7 @@ def test_a_rename_of_a_file_without_an_id_key_adds_one(tmp_path: Path):
 
     KBRepository(config.knowledge_bases[0]).rename("old", "new-one")
 
-    after = _text(kb_path / "notes" / "new-one.md")
+    after = _text(kb_path / "notes" / "old-one.md")
     assert "\nid: new-one\n" in after, after
     assert_only_changed(before, after, [Set("id", "new-one")])
 
@@ -443,8 +443,8 @@ def test_a_rename_is_refused_only_for_the_entry_renamed(
     result = repo.rename("old-one", "new-one")
 
     assert result["renamed"], result
-    assert (kb_path / "notes" / "new-one.md").exists()
-    assert not (kb_path / "notes" / "old-one.md").exists()
+    assert (kb_path / "notes" / "old-one.md").exists()
+    assert not (kb_path / "notes" / "new-one.md").exists()
     after = _text(linker)
     split_before, split_after = split_frontmatter(before), split_frontmatter(after)
     assert isinstance(split_before, Frontmatter) and isinstance(split_after, Frontmatter)
@@ -543,8 +543,8 @@ def test_a_rename_completes_and_lists_every_linker_it_could_not_patch(
     result = repo.rename("old-one", "new-one")
 
     assert result["renamed"], result
-    assert (kb_path / "notes" / "new-one.md").exists()
-    assert not (kb_path / "notes" / "old-one.md").exists()
+    assert (kb_path / "notes" / "old-one.md").exists()
+    assert not (kb_path / "notes" / "new-one.md").exists()
     for p in healthy:
         assert "[[new-one]]" in _text(p) and "[[old-one]]" not in _text(p), p
     skipped = {s["path"]: s["reason"] for s in result["files_skipped"]}
@@ -632,7 +632,7 @@ def test_a_rename_to_an_id_a_yaml_1_1_reader_takes_for_a_boolean_quotes_it(
 
     KBRepository(config.knowledge_bases[0]).rename("old-one", new_id)
 
-    after = _text(kb_path / "notes" / f"{new_id}.md")
+    after = _text(kb_path / "notes" / "old-one.md")
     assert f'id: "{new_id}"\n' in after, after
     fm, _body = load_frontmatter(after)
     assert fm["id"] == new_id and isinstance(fm["id"], str), fm
