@@ -290,9 +290,60 @@ class OverlaySearchBackend:
     ) -> list[dict[str, Any]]:
         main = self._main.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
         diff = self._diff.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
-        return self._merge_entry_lists(
+        merged = self._merge_entry_lists(
             main, diff, key_fields=("id", "kb_name", "relation", "prefix")
         )
+        return self._resolve_over_both(merged, readable_kbs)
+
+    def _resolve_over_both(
+        self,
+        merged: list[dict[str, Any]],
+        readable_kbs: set[str] | None,
+    ) -> list[dict[str, Any]]:
+        """``resolved`` as the overlay's reader sees it (#64).
+
+        Each half computed ``resolved`` against its own ``entry`` table, but an
+        entry exists in the overlay when either half holds it (``get_entry``):
+        a link written in main to a target created in the diff, or the other way
+        round, is resolved here though one half said it was not. Each row that
+        is unresolved in the merge is looked up once, in one batch over both
+        halves, and filled as the LEFT JOIN would have filled it. A row that
+        stays unresolved names the readable KBs holding its id in either half.
+        A target in a KB the caller cannot read stays unresolved and unnamed
+        (ADR-0037 section 4).
+        """
+        unresolved = [row for row in merged if not row.get("resolved", True)]
+        if not unresolved:
+            return merged
+        wanted = [
+            (str(row["id"]), str(row["kb_name"]))
+            for row in unresolved
+            if readable_kbs is None or row["kb_name"] in readable_kbs
+        ]
+        found = {(e["id"], e["kb_name"]): e for e in self.get_entries(wanted)} if wanted else {}
+        ids = sorted({str(row["id"]) for row in unresolved})
+        names: dict[str, set[str]] = {}
+        for half in (self._main, self._diff):
+            for target, kbs in half.get_kbs_holding(ids, readable_kbs=readable_kbs).items():
+                names.setdefault(target, set()).update(kbs)
+        out = []
+        for row in merged:
+            if row.get("resolved", True):
+                out.append(row)
+                continue
+            entry = found.get((str(row["id"]), str(row["kb_name"])))
+            if entry is not None:
+                out.append(
+                    {
+                        **{k: v for k, v in row.items() if k != "resolved_in_kbs"},
+                        "title": entry["title"],
+                        "entry_type": entry["entry_type"],
+                        "resolved": True,
+                    }
+                )
+            else:
+                out.append({**row, "resolved_in_kbs": sorted(names.get(str(row["id"]), set()))})
+        return out
 
     def get_graph_data(
         self,

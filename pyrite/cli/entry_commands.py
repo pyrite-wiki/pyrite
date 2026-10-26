@@ -794,6 +794,14 @@ def register_entry_commands(app: typer.Typer) -> None:
         target_kb: str | None = typer.Option(None, "--target-kb", help="Target KB (if different)"),
         note: str = typer.Option("", "--note", "-n", help="Note about the link"),
         bidirectional: bool = typer.Option(False, "--bidi", help="Create link in both directions"),
+        allow_dangling: bool = typer.Option(
+            False,
+            "--allow-dangling",
+            help=(
+                "Write the link even when the target does not exist yet "
+                "(a forward reference, like MCP kb_link's allow_dangling)"
+            ),
+        ),
         output_format: str = OUTPUT_FORMAT,
     ) -> Outcome:
         """Create a link between two entries."""
@@ -808,13 +816,24 @@ def register_entry_commands(app: typer.Typer) -> None:
                 target_kb,
             )
         ) as (config, db, svc):
-            result = svc.add_link(source, kb_name, target, relation, target_kb=target_kb, note=note)
+            result = svc.add_link(
+                source,
+                kb_name,
+                target,
+                relation,
+                target_kb=target_kb,
+                note=note,
+                allow_dangling=allow_dangling,
+            )
             tkb = target_kb or kb_name
             # `result["relation"]` is what is actually on disk, not the
             # caller's own `relation` argument -- on a no-op (already
             # linked) those can differ in spelling while still matching
             # under the service's normalisation (round-2 cold read): the
             # confirmation must name what a `grep` of the file would find.
+            # `resolved` is the same field the read surfaces report (#64):
+            # a forward reference written with --allow-dangling answers
+            # `false` here and flips to `true` when the target appears.
             links.append(
                 {
                     "created": result["created"],
@@ -822,6 +841,7 @@ def register_entry_commands(app: typer.Typer) -> None:
                     "relation": result["relation"],
                     "target": target,
                     "target_kb": tkb,
+                    "resolved": result["resolved"],
                 }
             )
 
@@ -865,6 +885,7 @@ def register_entry_commands(app: typer.Typer) -> None:
                             "relation": inv_result["relation"],
                             "target": source,
                             "target_kb": kb_name,
+                            "resolved": inv_result["resolved"],
                         }
                     )
 

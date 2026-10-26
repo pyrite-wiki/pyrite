@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -103,6 +104,36 @@ def _with_inverse_relation(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         d = dict(row)
         d["inverse_relation"] = known_inverse_relation(d["forward_relation"])
         out.append(d)
+    return out
+
+
+def _with_resolved(
+    rows: list[dict[str, Any]],
+    lookup: Callable[[list[str]], dict[str, list[str]]],
+) -> list[dict[str, Any]]:
+    """Add ``resolved`` -- and ``resolved_in_kbs`` on the unresolved -- to outlink rows (#64).
+
+    The outlink LEFT JOIN answers ``resolved`` itself: the joined target row is
+    there, or the target is missing-or-unreadable and ``title`` comes back null
+    (``entry.title`` is NOT NULL; P-R5). ``resolved_in_kbs`` needs one batched
+    existence lookup for the unresolved ids, over the KBs this caller can read:
+    an id that lives in two other KBs names both, and an id in a KB the caller
+    cannot read is never named -- it reads exactly as a missing one does
+    (concealment, ADR-0037 section 4).
+
+    ``lookup(ids)`` answers ``{id: [kb, ...]}`` in one query and is called only
+    when a row is unresolved. Every surface (MCP ``kb_get``, REST entry reads,
+    CLI ``get``, plugin network tools) carries the same fields from this one
+    implementation. A backlink row needs none of it: it is ``resolved: true`` by
+    construction (``get_backlinks``).
+    """
+    out = [{**row, "resolved": row.get("title") is not None} for row in rows]
+    unresolved = [row for row in out if not row["resolved"]]
+    if not unresolved:
+        return out
+    hits = lookup(sorted({str(row["id"]) for row in unresolved}))
+    for row in unresolved:
+        row["resolved_in_kbs"] = sorted(hits.get(str(row["id"]), []))
     return out
 
 
@@ -773,7 +804,10 @@ class BaseBackend(ABC):
             sql += " LIMIT :limit OFFSET :offset"
             params["limit"] = limit
             params["offset"] = offset
-        return _with_inverse_relation(self._exec(sql, params))
+        # The row exists because both ends do: `resolved` is true by construction.
+        return [
+            {**row, "resolved": True} for row in _with_inverse_relation(self._exec(sql, params))
+        ]
 
     def get_outlinks(
         self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None
@@ -784,10 +818,16 @@ class BaseBackend(ABC):
         ``readable_kbs`` set the join to the target only matches a readable
         KB, and a target the caller cannot read comes back exactly as a
         missing one does -- ``title`` and ``entry_type`` null (P-R5).
+
+        Every row carries ``resolved`` (#64): whether the target exists *for
+        this caller*. An unresolved row whose id exists in other readable KBs
+        names them in ``resolved_in_kbs``; an id that exists only in KBs the
+        caller cannot read is named nowhere. The existence check is one
+        batched query, not one per link.
         """
         params: dict[str, Any] = {"entry_id": entry_id, "kb_name": kb_name}
         scope = kb_names_clause("e.kb_name", readable_kbs, params)
-        return self._exec(
+        rows = self._exec(
             f"""
             SELECT l.target_id as id, l.target_kb as kb_name,
                    e.title, e.entry_type, l.relation, l.target_prefix as prefix, l.note
@@ -798,6 +838,34 @@ class BaseBackend(ABC):
             """,
             params,
         )
+
+        return _with_resolved(
+            rows, lambda ids: self.get_kbs_holding(ids, readable_kbs=readable_kbs)
+        )
+
+    def get_kbs_holding(
+        self, ids: list[str], *, readable_kbs: set[str] | None
+    ) -> dict[str, list[str]]:
+        """In which readable KBs does each id exist? One query for all ids (#64).
+
+        A KB outside ``readable_kbs`` is never in the answer, so an unreadable
+        KB stays indistinguishable from a missing target (P-R5, ADR-0037
+        section 4). An empty scope matches nothing.
+        """
+        params: dict[str, Any] = {}
+        keys = [f"lid_{i}" for i, _ in enumerate(ids)]
+        for key, value in zip(keys, ids, strict=True):
+            params[key] = value
+        sql = "SELECT e.id, e.kb_name FROM entry e WHERE e.id IN ({})".format(
+            ", ".join(f":{key}" for key in keys)
+        )
+        scope = kb_names_clause("e.kb_name", readable_kbs, params)
+        if scope:
+            sql += f" AND {scope}"
+        hits: dict[str, list[str]] = defaultdict(list)
+        for hit in self._exec(sql, params):
+            hits[str(hit["id"])].append(str(hit["kb_name"]))
+        return hits
 
     def get_all_backlinks_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
         """Get ALL backlinks targeting entries in a KB in one query."""
