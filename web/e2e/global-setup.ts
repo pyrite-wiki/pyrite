@@ -25,7 +25,7 @@
  * The world it builds is described, entry by entry, in `fixtures.ts`.
  * See kb/backlog/playwright-e2e-suite-non-deterministic-failures-*.md, Package A.
  */
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -115,7 +115,7 @@ const PYRITE_BIN = join(REPO_ROOT, '.venv', 'bin', 'pyrite');
 export function preflightPort(port: number, label: string): void {
 	let output: string;
 	try {
-		output = execSync(`lsof -sTCP:LISTEN -i :${port}`, {
+		output = execFileSync('lsof', ['-sTCP:LISTEN', '-i', `:${port}`], {
 			encoding: 'utf8',
 			stdio: ['ignore', 'pipe', 'ignore']
 		});

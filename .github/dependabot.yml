@@ -1,0 +1,31 @@
+# Keeps the SHA pins in .github/workflows/ (tests/test_workflow_actions_pinned.py)
+# and the dependency manifests current: at most one grouped PR per ecosystem a week.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      github-actions:
+        patterns: ["*"]
+  - package-ecosystem: pip
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      python:
+        patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /web
+    target-branch: dev
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      npm:
+        patterns: ["*"]
