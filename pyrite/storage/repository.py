@@ -502,7 +502,30 @@ class KBRepository:
                 if subdir:
                     return self._contained(self.path / subdir / custom_name)
                 return self._contained(self.path / custom_name)
-        return self._get_file_path(entry.id, subdir)
+        return self._free_default_path(entry.id, subdir)
+
+    def _free_default_path(self, entry_id: str, subdir: str | None) -> Path:
+        """``<id>.md`` for a new entry, or the first ``<id>-N.md`` when that
+        path is held by a *different* id.
+
+        A file's name is a location fixed at creation, never evidence of the
+        id it holds (ADR-0038 decision 1, I6): after ``rename(a, b)`` the file
+        ``a.md`` holds ``b``, and a hand edit of ``id:`` does the same. The id
+        ``a`` is free, so a create of it must not be refused for that file. A
+        path whose holder cannot be read stays taken (the create refuses)."""
+        path = self._get_file_path(entry_id, subdir)
+        holder = self.id_of_file(path) if path.exists() else None
+        if holder is None or holder == entry_id:
+            return path
+        for n in range(2, 1000):
+            candidate = path.with_name(f"{entry_id}-{n}.md")
+            if not candidate.exists() and not candidate.is_symlink():
+                return candidate
+        return path
+
+    def holder_of_path(self, path: Path) -> str | None:
+        """The id the file at ``path`` holds, for a message; None if unreadable."""
+        return self.id_of_file(path) if path.exists() else None
 
     def _infer_subdir(self, entry: Entry) -> str | None:
         """Infer subdirectory for entries based on type.
@@ -1047,7 +1070,7 @@ class KBRepository:
                 dry_run=True,
             )
 
-        # Execute: the entry first, so a rename that cannot move it changes
+        # Execute: the entry first, so a rename that cannot write it changes
         # nothing (the delta review's "half-applied rename": the linkers used
         # to be written first, and a refused write left them naming an id that
         # did not exist). The source: one `Set("id", new_id)` on its own

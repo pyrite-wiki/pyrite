@@ -799,7 +799,9 @@ def register_entry_commands(app: typer.Typer) -> None:
             "--allow-dangling",
             help=(
                 "Write the link even when the target does not exist yet "
-                "(a forward reference, like MCP kb_link's allow_dangling)"
+                "(a forward reference, like MCP kb_link's allow_dangling). With --bidi "
+                "the inverse cannot be written on a target that does not exist: the "
+                "forward link lands and the run ends partial, exit 3"
             ),
         ),
         output_format: str = OUTPUT_FORMAT,

@@ -1382,9 +1382,11 @@ class KBService:
         repo = KBRepository(kb_config)
         resolved_path = repo._resolve_file_path(entry, repo._infer_subdir(entry))
         if resolved_path.exists() or resolved_path in (pending_paths or ()):
+            holder = repo.holder_of_path(resolved_path) if resolved_path.exists() else None
+            held = f", which holds '{holder}'" if holder and holder != entry.id else ""
             raise EntryExistsError(
                 f"Entry with ID '{entry.id}' would resolve to a file that already "
-                f"exists ({resolved_path.name}) in KB '{kb_name}'. Use update to "
+                f"exists ({resolved_path.name}{held}) in KB '{kb_name}'. Use update to "
                 "change it, or choose a different title/id."
             )
         return entry, warnings
@@ -2630,7 +2632,7 @@ class KBService:
         # resolves to the renamed entry, then read back to confirm it
         # actually worked. Skip on dry_run (nothing was written).
         #
-        # The file rename already succeeded on disk by this point — that
+        # The id rewrite already succeeded on disk by this point — that
         # part is never rolled back. A degraded index is recovered by the
         # next `pyrite index sync`, but the caller must be told the write
         # is degraded, not given a silent-success response while old_id

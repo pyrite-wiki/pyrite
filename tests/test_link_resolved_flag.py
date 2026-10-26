@@ -226,3 +226,18 @@ def test_a_backlink_row_is_resolved_through_get_backlinks(link_world):
 
     rows = link_world.db.backend.get_backlinks("widget", OTHER, readable_kbs=UNSCOPED)
     assert [(r["id"], r["resolved"]) for r in rows] == [("src", True)]
+
+
+def test_allow_dangling_with_bidi_lands_the_forward_link_and_ends_partial(link_world):
+    """The inverse cannot be written on a target that does not exist: the
+    forward reference stays, the run is `partial`, exit 3."""
+    result = link_world.cli(
+        "link", "src", "nowhere-entry", "-k", KB, "--allow-dangling", "--bidi", "--format", "json"
+    )
+    assert result.exit_code == 3, result.output
+    data = json.loads(result.output)
+    assert data["outcome"] == "partial"
+    assert [(row["target"], row["resolved"]) for row in data["links"]] == [("nowhere-entry", False)]
+    assert len(data["failed"]) == 1 and data["failed"][0]["source"] == "nowhere-entry"
+    row = next(r for r in _outlinks(link_world, "src", KB) if r["id"] == "nowhere-entry")
+    assert row["resolved"] is False

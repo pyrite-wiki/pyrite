@@ -109,6 +109,7 @@ _METHOD_CAPABILITIES: dict[str, BackendCapability] = {
     # ── ENTITY — graph (links) ──────────────────────────────────────
     "get_backlinks": BackendCapability.ENTITY,
     "get_outlinks": BackendCapability.ENTITY,
+    "get_kbs_holding": BackendCapability.ENTITY,
     "get_all_backlinks_for_kb": BackendCapability.ENTITY,
     "get_all_outlinks_for_kb": BackendCapability.ENTITY,
     "get_all_sources_for_kb": BackendCapability.ENTITY,

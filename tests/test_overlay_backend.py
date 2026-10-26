@@ -434,7 +434,9 @@ class TestOverlayResolved:
         assert overlay.get_entry("oldone", "test") is not None
         assert self._row(overlay, "oldone")["resolved"] is True
 
-    def test_a_target_the_diff_deleted_is_unresolved_again(self, dbs):
+    def test_a_target_the_diff_created_and_deleted_is_unresolved_again(self, dbs):
+        """A target held by main and deleted in the diff still resolves: the
+        overlay has no tombstones, and `get_entry` still finds it."""
         main_db, diff_db = dbs
         self._link(main_db, "source", "test", "newone", "test")
         _insert_entry(diff_db, "newone", "test", "New one")

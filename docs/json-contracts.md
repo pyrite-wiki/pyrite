@@ -1233,6 +1233,10 @@ read neither KB gets `[]` -- an unreadable copy is indistinguishable from a
 missing one (ADR-0037, section 4). A `resolved: true` row carries no
 `resolved_in_kbs`.
 
+`pyrite link --allow-dangling --bidi` to a missing target writes the forward
+link and cannot write the inverse on an entry that does not exist: the run
+ends `partial` (exit 3) with the inverse in `failed`.
+
 `resolved` is computed when the link is read, so a forward reference written
 with `--allow-dangling` flips to `true` the moment its target is created, with
 no rewrite of the link itself.
@@ -1241,7 +1245,9 @@ Through the multi-user overlay (experimental) the answer is the overlay
 reader's: a target held by either the shared index or the user's pending edits
 resolves a link held by the other, and `resolved_in_kbs` names the readable KBs
 holding the id in either. A row's `title` is null exactly when `resolved` is
-`false`.
+`false`. A target that a change set created and then deleted is unresolved
+again; a target held by main and deleted in a change set still resolves, as
+`get_entry` still finds it (the overlay has no tombstones yet).
 
 ## Body truncation
 
