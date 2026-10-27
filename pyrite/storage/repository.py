@@ -1093,6 +1093,18 @@ class KBRepository:
         # the delete before any file goes.
         for file_path in files:
             KBFiles(self.path).require_removable(file_path)
+        # Removing a file is a write to it (ADR-0042 decision 8a): the service
+        # loaded one holder of the id, and this removes every holder, so each
+        # is judged here, before the first goes. A file that cannot be parsed
+        # at all is not this rule's cause (#777) and is removed as before.
+        for file_path in files:
+            if file_path.suffix == ".md":
+                try:
+                    self._load_entry(file_path)
+                except EntryLoadError:
+                    raise
+                except Exception:  # noqa: BLE001 - not this rule's cause
+                    pass
         for file_path in files:
             remove_entry_file(file_path, root=self.path)
         return bool(files)

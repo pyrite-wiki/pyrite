@@ -737,9 +737,11 @@ def sw_migrate_standards(
     """Migrate type:standard entries to programmatic_validation or development_convention."""
     from pathlib import Path
 
+    from pyrite.exceptions import EntryLoadError
     from pyrite.storage.database import PyriteDB
     from pyrite.storage.entry_writer import FileChanged, move_entry_text, publish_entry_text
     from pyrite.storage.file_operations import FrontmatterSpan, Set, Unset, apply
+    from pyrite.storage.repository import KBRepository
     from pyrite.utils.atomic_write import HardLinked
     from pyrite.utils.frontmatter import Frontmatter, describe, split_frontmatter
     from pyrite.utils.kb_files import KBFileIsLinkError, KBFileOutsideRootError
@@ -819,6 +821,16 @@ def sw_migrate_standards(
                 console.print(f"  [red]Skip[/red] {row['title']}: {describe(split)}")
                 skipped += 1
                 continue
+            # A row can be older than the file: one its type can no longer
+            # load is written not at all (ADR-0042 decision 8a).
+            try:
+                KBRepository(row_kb).load_entry_from_bytes(path, raw)
+            except EntryLoadError as e:
+                console.print(f"  [red]Skip[/red] {row['title']}: {e}", markup=False)
+                skipped += 1
+                continue
+            except Exception:  # noqa: BLE001 - not this rule's cause; apply() decides
+                pass
             values = load_yaml(split.text)
             ops: list[Any] = [Set("type", new_type)]
             if isinstance(values, dict) and "enforced" in values:

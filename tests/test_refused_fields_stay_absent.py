@@ -151,15 +151,47 @@ def test_a_refusal_no_field_explains_is_entry_unreadable_never_not_found(
     assert REL in text and spec.loader in text, text
 
 
-def test_a_rest_read_spells_a_refused_placeholder_column_null(make_world):
+def test_a_rest_read_omits_a_refused_column_and_never_nulls_a_list(make_world):
     # EntryResponse defaults `metadata` to {}: for a refused `metadata:` that
-    # default would read as "the file has an empty metadata".
+    # default would read as "the file has an empty metadata", so the column is
+    # left out of the JSON. Every other list stays a list: a client indexes
+    # `.length` on them (round 4, B2: `participants` was null on any partial
+    # read, and EntryMeta.svelte threw on it).
     world = make_world(_text("task", SHAPES["metadata-whole"]["task"]))
 
     data = world.client.get("/api/entries/x", params={"kb": "sw"}).json()
 
-    assert data["metadata"] is None
-    assert data["tags"] == []  # not refused: the read's own value
+    assert "metadata" not in data
+    assert [p["field"] for p in data["load_problems"]] == ["metadata"]
+    for key in ("tags", "participants", "sources", "outlinks", "backlinks"):
+        assert isinstance(data[key], list), (key, data[key])
+
+
+@pytest.mark.parametrize("column", ["tags", "participants", "sources"])
+def test_a_rest_read_omits_a_refused_list_column_rather_than_nulling_it(make_world, column):
+    # A list column the type itself refuses is left out (absent, as on the
+    # other surfaces), never `null` and never a `[]` standing for the file's
+    # value. The other list columns keep their lists.
+    from pyrite.models.task import TaskEntry
+    from tests.test_unloadable_file_is_never_written import Shape
+
+    original = TaskEntry.from_frontmatter.__func__
+
+    def refusing(klass, meta, body=""):
+        if column in meta:
+            raise ValueError(f"{column} must be a list of strings")
+        return original(klass, meta, body)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(TaskEntry, "from_frontmatter", classmethod(refusing))
+        world = make_world(_text("task", Shape(f"{column}: oops\n")))
+
+        data = world.client.get("/api/entries/x", params={"kb": "sw"}).json()
+
+    assert column not in data, data
+    assert [p["field"] for p in data["load_problems"]] == [column]
+    for other in {"tags", "participants", "sources", "outlinks", "backlinks"} - {column}:
+        assert isinstance(data[other], list), (other, data[other])
 
 
 @pytest.mark.control(reason="a file that loads reads as before, with no load_problems key")

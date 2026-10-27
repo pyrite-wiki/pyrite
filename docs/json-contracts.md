@@ -1184,9 +1184,14 @@ decision 8a). Pyrite reads such a file partially and writes it not at all.
 ```
 
 - **A refused field is absent, never a default.** `rank` is not in the reply
-  (not `0`), and a refused `status` is not `open`. The REST response model
-  spells a column the read does not carry as `null` (`metadata` is `null`, not
-  `{}`, when the whole `metadata:` was refused). `field` is the file's key; a
+  (not `0`), and a refused `status` is not `open`. REST leaves a refused
+  column out of the reply too (`metadata` is absent, not `{}` or `null`, when
+  the whole `metadata:` was refused; likewise `tags`, `participants` and
+  `sources`). A list is never `null`: `tags`, `participants`, `sources`,
+  `outlinks` and `backlinks` are lists when present, and the ones `load_problems`
+  does not name keep the value the read gave them or the empty list, so a
+  client may read `.length` of any of them and must treat an absent one as
+  "refused". `field` is the file's key; a
   value under `metadata:` is `metadata.rank`, and the field is then absent from
   the top level and from `metadata`.
 - **A refusal no field explains** (a `title` that is a list, a key the loader

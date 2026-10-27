@@ -659,7 +659,9 @@ CALL_SITES: dict[str, tuple[str, object]] = {
     ),
     "extensions/software-kb/src/pyrite_software_kb/cli.py::sw_migrate_standards": (
         SAFE,
-        "driven by index rows; a file its type cannot load has no row",
+        "loads each row's file strictly before the move or publish; a row can be older than the file "
+        "(test_remaining_writers_write_through_apply.py::"
+        "test_migrate_standards_never_writes_a_file_its_type_can_no_longer_load)",
     ),
     # readers: never write
     "pyrite/services/kb_service.py::KBService._entry_file": (
@@ -880,3 +882,43 @@ def test_an_entry_renamed_in_place_and_then_made_unloadable_cannot_be_renamed_ag
 
     assert not outcome.ok and outcome.code == "ENTRY_UNREADABLE", outcome
     assert _snapshot(root) == before
+
+
+# -- a delete removes every file that holds the id (round 4, B1) --------------------
+#
+# `KBService.delete_entry` loads one file; `KBRepository.delete` then removes
+# every file that holds the id. The files it did not load must be judged too.
+
+
+@pytest.mark.parametrize("surface", ["cli_delete", "rest_delete", "mcp_delete"])
+@pytest.mark.parametrize("bad", ["x.md", "sub/x.md"], ids=["bad-first", "bad-second"])
+@pytest.mark.parametrize("entry_type", ["task", "backlog_item"])
+def test_a_delete_never_removes_an_unloadable_file_that_shares_the_id(
+    make_world, spies, surface, bad, entry_type
+):
+    good = "sub/x.md" if bad == "x.md" else "x.md"
+    world = make_world(
+        {
+            good: _text(entry_type, Shape()),
+            bad: _text(entry_type, SHAPES["metadata-whole"][entry_type]),
+        }
+    )
+    root = world.kb_path("sw")
+    before = _snapshot(root)
+    spies.clear()
+
+    outcome = WRITE_METHODS[surface](world)
+
+    assert not outcome.ok, outcome
+    assert outcome.code == "ENTRY_UNREADABLE", outcome
+    assert bad in outcome.message.replace("\n", " "), outcome.message
+    assert _snapshot(root) == before
+    assert [c for c in spies if c[0] == "after_delete"] == []
+
+
+@pytest.mark.control(reason="two loadable holders of one id are still both removed")
+def test_a_delete_still_removes_every_loadable_holder_of_the_id(make_world):
+    world = make_world({"x.md": _text("task", Shape()), "sub/x.md": _text("task", Shape())})
+
+    assert w_cli_delete(world).ok
+    assert not list(world.kb_path("sw").rglob("x.md"))
