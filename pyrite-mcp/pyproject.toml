@@ -16,8 +16,13 @@ classifiers = [
 ]
 keywords = ["mcp", "knowledge-base", "ai", "agent"]
 
+# The git tag, as the main README installs Pyrite: the `pyrite` name on PyPI is
+# held by an account we do not control (ADR-0025), so `pyrite>=0.20.0` would
+# resolve to someone else's package. PyPI refuses to accept an upload with a
+# direct reference, so this package is installed from the tag, not from PyPI
+# (tests/test_pyrite_mcp_install.py keeps the tag in step with the README).
 dependencies = [
-    "pyrite>=0.20.0",
+    "pyrite @ git+https://github.com/pyrite-wiki/pyrite@v0.26.0",
 ]
 
 [project.scripts]
