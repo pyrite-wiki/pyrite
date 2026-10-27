@@ -1774,6 +1774,7 @@ class TestTheRedLineIsFirstAndEveryGatingRunLeavesATimingRecord:
         assert ci["jobs"]["gate"]["needs"] == [
             "changes",
             "kb",
+            "lock",
             "test",
             "shard-report",
             "frontend",

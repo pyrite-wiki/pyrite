@@ -1,0 +1,47 @@
+name: Unlocked dependencies
+
+# Every other job installs from requirements.lock (#1357), so a new upstream
+# release cannot change what CI tests. Users installing from PyPI get the
+# newest versions pyproject.toml allows, so once a week we install exactly that
+# (no -c requirements.lock) and run the suite. A red run here means a release
+# inside our ranges broke Pyrite: cap the range in pyproject.toml (as `mcp`
+# is capped below 2.0.0) or fix the code, then refresh the lock with
+# scripts/lock-deps.sh. It is not part of `gate`: it never blocks a PR.
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unlocked:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - name: Install the newest allowed versions
+        run: |
+          uv pip install --system -e ".[all]"
+          for ext in extensions/*/; do
+            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -e "$ext"; fi
+          done
+          uv pip list --system > installed-versions.txt
+      - name: Run the suite
+        run: |
+          pytest -n auto -m "not slow and not e2e and not experimental" \
+            -W "error::DeprecationWarning:pyrite" \
+            -W "error::DeprecationWarning:tests" \
+            --disable-warnings -q
+      - name: Record what resolved
+        if: ${{ !cancelled() }}
+        run: cat installed-versions.txt >> "$GITHUB_STEP_SUMMARY"

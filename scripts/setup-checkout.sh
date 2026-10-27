@@ -37,8 +37,8 @@ cd "$wt_dir"
 #
 # The cost that IS real is worktree *count*. Remove a worktree
 # once its PR merges (`git worktree remove`).
-# What an install is made from. cksum is POSIX, so it exists on a laptop and a VM.
-stamp="$( { cat pyproject.toml extensions/*/pyproject.toml uv.lock 2>/dev/null; echo "$extras"; } | cksum)"
+# What an install is made from (requirements.lock pins every version, #1357). cksum is POSIX, so it exists on a laptop and a VM.
+stamp="$( { cat pyproject.toml extensions/*/pyproject.toml requirements.lock 2>/dev/null; echo "$extras"; } | cksum)"
 if [ "$if_changed" = 1 ] && [ -x .venv/bin/python ] \
    && [ "$(cat .venv/.pyrite-install-stamp 2>/dev/null)" = "$stamp" ] \
    && .venv/bin/python scripts/check_checkout_imports.py --root "$wt_dir"; then
@@ -46,15 +46,15 @@ if [ "$if_changed" = 1 ] && [ -x .venv/bin/python ] \
   stamp=""
 elif command -v uv >/dev/null 2>&1; then
   [ -x .venv/bin/python ] || uv venv -q .venv
-  uv pip install -q --python .venv/bin/python -e ".[$extras]"
+  uv pip install -q --python .venv/bin/python -c requirements.lock -e ".[$extras]"
   for ext in extensions/*/; do
-    [ -f "$ext/pyproject.toml" ] && uv pip install -q --python .venv/bin/python -e "$ext"
+    [ -f "$ext/pyproject.toml" ] && uv pip install -q --python .venv/bin/python -c requirements.lock -e "$ext"
   done
 else
   [ -x .venv/bin/python ] || python3 -m venv .venv
-  .venv/bin/pip install -q -e ".[$extras]"
+  .venv/bin/pip install -q -c requirements.lock -e ".[$extras]"
   for ext in extensions/*/; do
-    [ -f "$ext/pyproject.toml" ] && .venv/bin/pip install -q -e "$ext"
+    [ -f "$ext/pyproject.toml" ] && .venv/bin/pip install -q -c requirements.lock -e "$ext"
   done
 fi
 .venv/bin/python scripts/check_checkout_imports.py --root "$wt_dir"
