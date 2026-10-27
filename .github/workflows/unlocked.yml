@@ -1,9 +1,9 @@
 name: Unlocked dependencies
 
-# Every other job installs from requirements.lock (#1357), so a new upstream
+# Every other job installs from uv.lock (#1357), so a new upstream
 # release cannot change what CI tests. Users installing from PyPI get the
 # newest versions pyproject.toml allows, so once a week we install exactly that
-# (no -c requirements.lock) and run the suite. A red run here means a release
+# (no -c uv.lock) and run the suite. A red run here means a release
 # inside our ranges broke Pyrite: cap the range in pyproject.toml (as `mcp`
 # is capped below 2.0.0) or fix the code, then refresh the lock with
 # scripts/lock-deps.sh. It is not part of `gate`: it never blocks a PR.

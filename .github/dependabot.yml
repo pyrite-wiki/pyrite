@@ -11,10 +11,10 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
-  # Reads pyproject.toml's ranges only. It cannot read requirements.lock (it
-  # fetches requirements*.txt, pip-compile output and uv.lock, not a file named
-  # .lock); refresh that with scripts/lock-deps.sh --upgrade (CONTRIBUTING).
-  - package-ecosystem: pip
+  # Updates pyproject.toml's ranges and uv.lock, the one lock CI and contributor
+  # installs use (#1357); `scripts/lock-deps.sh --check` and the `lock` CI job
+  # verify the pair.
+  - package-ecosystem: uv
     directory: /
     target-branch: dev
     schedule:

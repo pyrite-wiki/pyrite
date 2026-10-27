@@ -883,6 +883,7 @@ class TestCloudEnvironment:
         for name in (
             "cloud-env-setup.sh",
             "setup-checkout.sh",
+            "lock-constraints.sh",
             "cloud-postgres.sh",
             "known_cloud_failures.py",
             "known-cloud-failures.json",
@@ -903,6 +904,8 @@ class TestCloudEnvironment:
             "  mkdir -p .venv/bin\n"
             "  for t in python pyrite pre-commit; do printf '#!/bin/sh\\nexit 0\\n' > .venv/bin/$t; chmod +x .venv/bin/$t; done\n"
             "fi\n"
+            # lock-constraints.sh exports uv.lock to the file after -o.
+            'if [ "$1" = export ]; then while [ $# -gt 0 ]; do [ "$1" = -o ] && : > "$2"; shift; done; exit 0; fi\n'
             '[ "${FAKE_UV_FAIL:-0}" = 1 ] && [ "$1" = pip ] && exit 1\n'
             "exit 0\n"
         )

@@ -156,7 +156,7 @@ jobs:
               - 'tests/**'
               - 'conftest.py'
               - 'pyproject.toml'
-              - 'requirements.lock'
+              - 'uv.lock'
               - 'kb/kb.yaml'
               - '.pre-commit-config.yaml'
               - '.github/workflows/**'
@@ -177,7 +177,7 @@ jobs:
               - 'tests/conftest.py'
               - 'tests/**/conftest.py'
               - 'pyproject.toml'
-              - 'requirements.lock'
+              - 'uv.lock'
               - '.pre-commit-config.yaml'
               - '.github/workflows/ci.yml'
               - 'scripts/*.sh'
@@ -187,7 +187,7 @@ jobs:
               - 'conftest.py'
               - 'tests/experimental_surface.py'
 
-  # requirements.lock pins every version CI and contributor installs use
+  # uv.lock pins every version CI and contributor installs use
   # (#1357). This fails when pyproject.toml's ranges no longer agree with it;
   # the fix is `scripts/lock-deps.sh`. Seconds, so it always runs. It does not
   # fail because a newer release exists: that is `unlocked.yml`'s job.
@@ -215,11 +215,11 @@ jobs:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
-            requirements.lock
+            uv.lock
       - run: |
-          uv pip install --system -c requirements.lock -e ".[cli]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[cli]"
           for ext in extensions/*/; do
-            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -c requirements.lock -e "$ext"; fi
+            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"; fi
           done
       - name: Validate KB entries
         run: pyrite schema validate kb/
@@ -323,7 +323,7 @@ jobs:
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
-            requirements.lock
+            uv.lock
 
       - name: Install dependencies
         # `.[dev]` is test TOOLING ONLY (pytest/mypy/ruff/xdist) -- it pulls
@@ -334,7 +334,7 @@ jobs:
         # while pip still exited 0 so the install step reported success.
         # `.[all]` is the whole optional surface (API, MCP, CLI, AI).
         run: |
-          uv pip install --system -c requirements.lock -e ".[all,postgres]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all,postgres]"
           # Extensions are separate distributions, covered by NO pyrite extra.
           # Without this loop 37 test modules fail at collection with
           # ModuleNotFoundError (pyrite_journalism_investigation,
@@ -344,7 +344,7 @@ jobs:
           # pure duplicate.
           for ext in extensions/*/; do
             if [ -f "$ext/pyproject.toml" ]; then
-              uv pip install --system -c requirements.lock -e "$ext"
+              uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"
             fi
           done
 
@@ -513,13 +513,13 @@ jobs:
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
-            requirements.lock
+            uv.lock
       - name: Install dependencies
         run: |
-          uv pip install --system -c requirements.lock -e ".[all,postgres]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all,postgres]"
           for ext in extensions/*/; do
             if [ -f "$ext/pyproject.toml" ]; then
-              uv pip install --system -c requirements.lock -e "$ext"
+              uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"
             fi
           done
       - name: Count the selection
@@ -645,14 +645,14 @@ jobs:
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
-            requirements.lock
+            uv.lock
 
       - name: Install dependencies
         run: |
-          uv pip install --system -c requirements.lock -e ".[all,postgres]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all,postgres]"
           for ext in extensions/*/; do
             if [ -f "$ext/pyproject.toml" ]; then
-              uv pip install --system -c requirements.lock -e "$ext"
+              uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"
             fi
           done
 
@@ -710,12 +710,12 @@ jobs:
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
-            requirements.lock
+            uv.lock
       - name: Install dependencies
         run: |
-          uv pip install --system -c requirements.lock -e ".[all]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all]"
           for ext in extensions/*/; do
-            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -c requirements.lock -e "$ext"; fi
+            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"; fi
           done
       - name: Run tests with coverage
         run: pytest -n auto --cov=pyrite --cov-report=term-missing --cov-report=xml
@@ -804,7 +804,7 @@ jobs:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
-            requirements.lock
+            uv.lock
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -818,7 +818,7 @@ jobs:
         # so the venv path must match that expectation.
         run: |
           uv venv .venv
-          uv pip install --python .venv/bin/python -c requirements.lock -e ".[all]"
+          uv pip install --python .venv/bin/python -c "$(scripts/lock-constraints.sh)" -e ".[all]"
 
       - name: Install web dependencies
         working-directory: web
@@ -884,17 +884,17 @@ jobs:
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
-            requirements.lock
+            uv.lock
 
       - name: Install dependencies
         # Same surface as `test`: the smoke layer drives the installed console
         # scripts (pyrite, pyrite-server), so the install has to be the one a
         # user gets, extensions included.
         run: |
-          uv pip install --system -c requirements.lock -e ".[all]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all]"
           for ext in extensions/*/; do
             if [ -f "$ext/pyproject.toml" ]; then
-              uv pip install --system -c requirements.lock -e "$ext"
+              uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"
             fi
           done
 
@@ -982,15 +982,15 @@ jobs:
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
-            requirements.lock
+            uv.lock
 
       # The tests run in the throwaway tree with it first on PYTHONPATH; the
       # script refuses (#189) if any package there imports from elsewhere.
       - name: Install dependencies
         run: |
-          uv pip install --system -c requirements.lock -e ".[all]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all]"
           for ext in extensions/*/; do
-            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -c requirements.lock -e "$ext"; fi
+            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"; fi
           done
 
       - name: Fetch the diff coverage
@@ -1079,13 +1079,13 @@ jobs:
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
-            requirements.lock
+            uv.lock
 
       - name: Install dependencies
         run: |
-          uv pip install --system -c requirements.lock -e ".[all,postgres]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all,postgres]"
           for ext in extensions/*/; do
-            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -c requirements.lock -e "$ext"; fi
+            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"; fi
           done
 
       # Never fails the job itself: the ratchet below reads the report and

@@ -59,6 +59,8 @@ repos:
         stages: [pre-commit]
       - id: check-added-large-files
         args: ['--maxkb=500']
+        # A lockfile cannot be split or compressed (#1357).
+        exclude: '^uv\.lock$'
         stages: [pre-commit]
       - id: check-merge-conflict
         stages: [pre-commit]
