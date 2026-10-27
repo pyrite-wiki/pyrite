@@ -9,6 +9,7 @@ block everyone's commits. So: nothing slow at the commit stage, the full
 suite at pre-push, CI as the authority.
 """
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -1040,8 +1041,10 @@ class TestCloudEnvironment:
         lines = env_file.read_text().splitlines()
         assert any(l.startswith('export PATH="') and ".venv/bin" in l for l in lines)
         assert any("PYRITE_TEST_PG_URL=" in l and f":{listener}/pyrite_test" in l for l in lines)
-        assert "Known cloud-only failures (not a CI waiver):" in result.stdout
-        assert "issues/1110" in result.stdout
+        # The brief itself is tested in tests/test_known_cloud_failures.py; the
+        # registry may be empty, which prints nothing.
+        registry = json.loads((REPO / "scripts" / "known-cloud-failures.json").read_text())
+        assert ("Known cloud-only failures" in result.stdout) == bool(registry)
 
     def test_contributing_pastes_the_line_the_script_documents_and_names_the_opt_out(self):
         line = "curl -fsSL https://raw.githubusercontent.com/pyrite-wiki/pyrite/dev/scripts/cloud-env-setup.sh | bash"
