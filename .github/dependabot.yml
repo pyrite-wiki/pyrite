@@ -11,6 +11,9 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+  # Reads pyproject.toml's ranges only. It cannot read requirements.lock (it
+  # fetches requirements*.txt, pip-compile output and uv.lock, not a file named
+  # .lock); refresh that with scripts/lock-deps.sh --upgrade (CONTRIBUTING).
   - package-ecosystem: pip
     directory: /
     target-branch: dev

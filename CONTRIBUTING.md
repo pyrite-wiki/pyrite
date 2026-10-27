@@ -34,10 +34,10 @@ uv venv
 source .venv/bin/activate  # or `.venv\Scripts\activate` on Windows
 # `.[all]` is the whole optional surface (CLI, server, MCP, AI) plus the test
 # tooling. `.[dev]` alone is tooling only and cannot even collect the suite.
-uv pip install -e ".[all]"
+uv pip install -c requirements.lock -e ".[all]"
 
 # Install all extensions (required for full test suite)
-for ext in extensions/*/; do uv pip install -e "$ext"; done
+for ext in extensions/*/; do uv pip install -c requirements.lock -e "$ext"; done
 
 # Install the git hooks (commit, commit-msg and pre-push in one go)
 pre-commit install
@@ -57,6 +57,33 @@ scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/*/tests/ -n 4 -q
 
 Pytest prints the current collected and passed test counts in its summary;
 they change as the project and extensions grow.
+
+#### The dependency lock
+
+`requirements.lock` pins every dependency, transitive ones included, to one
+version for all of Python 3.11, 3.12 and 3.13 (#1357). CI, `scripts/setup-checkout.sh`
+(its `uv` and `pip` paths) and the commands above all install with
+`-c requirements.lock`, so two runs a day apart test the same code. It is a
+pip constraints file: `pyproject.toml` keeps its ranges, they are the contract
+with people who `pip install pyrite`, and the published wheel does not change.
+
+After you add or change a dependency in `pyproject.toml`, refresh the lock and
+commit it with the change:
+
+```bash
+scripts/lock-deps.sh            # re-resolves only what pyproject.toml forces
+scripts/lock-deps.sh --upgrade  # moves every pin to the newest allowed version
+scripts/lock-deps.sh --check    # what CI's `lock` job runs: fails if the lock is stale
+```
+
+`tests/test_dependency_lock.py` fails offline when a declared dependency is
+missing from the lock or pinned outside its range; the `lock` CI job
+re-resolves and diffs. The lock does not hide upstream breakage from us: the
+weekly `unlocked.yml` workflow installs `.[all]` *without* it and runs the
+suite, so a release inside our ranges that breaks Pyrite shows up there.
+Dependabot's `pip` ecosystem cannot read `requirements.lock`, so lock bumps
+are a hand-made `scripts/lock-deps.sh --upgrade` PR (the `uv` ecosystem reads
+`uv.lock`, not this file; see #1357 for the open follow-up).
 
 See [Setting Up the Development Environment](kb/runbooks/setting-up-dev-environment.md) for troubleshooting.
 Line endings are normalised to LF across platforms via repository `.gitattributes`.
@@ -446,11 +473,15 @@ identical version. An unbounded `pytest>=8.0.0` once resolved 9.1.1 on one
 interpreter and 9.0.2 on another; a change that passed the PR gate under one
 version broke `dev` under the other. `tests/test_dev_process_config.py`
 asserts the pins stay exact, so loosening one is a visible diff, not a silent
-drift on the next `uv pip install`. After changing a pin, refresh your
-worktree's venv and confirm it took:
+drift on the next `uv pip install`. The same is now true of every other
+dependency through `requirements.lock` (see [The dependency lock](#the-dependency-lock));
+the runner's exact pins remain because they are also what `pyproject.toml`
+tells a contributor who installs without the lock. After changing a pin,
+run `scripts/lock-deps.sh`, then refresh your worktree's venv and confirm it
+took:
 
 ```bash
-uv pip install --python .venv/bin/python -e ".[all,dev]"
+uv pip install --python .venv/bin/python -c requirements.lock -e ".[all,dev]"
 .venv/bin/python -m pytest --version
 ```
 
