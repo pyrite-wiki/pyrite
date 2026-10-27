@@ -27,6 +27,7 @@ import pytest
 from pyrite.config import KBConfig
 from pyrite.services.kb_service import KBService
 from tests._world import build_world
+from tests.cli_help import plain
 
 KB = "test-kb"
 OTHER = "other-kb"
@@ -174,6 +175,32 @@ def test_pyrite_link_accepts_allow_dangling_and_reports_resolved(link_world, tmp
     assert result.exit_code == 0, result.output
     row = json.loads(result.output)["links"][0]
     assert row["resolved"] is True
+
+
+def test_rich_link_line_marks_an_unresolved_target(link_world):
+    """The rich confirmation says when the target does not exist yet (#1371)."""
+    result = link_world.cli(
+        "link", "src", "nowhere-entry", "-k", KB, "--allow-dangling", "--format", "rich"
+    )
+    assert result.exit_code == 0, result.output
+    clean = plain(result.output)
+    assert "Linked:" in clean, clean
+    assert "unresolved" in clean, clean
+
+    result = link_world.cli(
+        "link", "src", "widget", "-k", KB, "--target-kb", OTHER, "--format", "rich"
+    )
+    assert result.exit_code == 0, result.output
+    clean = plain(result.output)
+    assert "unresolved" not in clean, clean
+
+    result = link_world.cli(
+        "link", "src", "nowhere-entry", "-k", KB, "--allow-dangling", "--format", "rich"
+    )
+    assert result.exit_code == 0, result.output
+    clean = plain(result.output)
+    assert "Already linked:" in clean, clean
+    assert "unresolved" in clean, clean
 
 
 def test_rest_entry_read_carries_the_same_fields(link_world, tmp_path):
