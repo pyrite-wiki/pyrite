@@ -208,8 +208,9 @@ def test_repository_reads_every_row_as_the_splitter_does(repo, tmp_path, case):
         return
     entry = repo._load_entry(_write(tmp_path, text))
     assert entry.body == body
-    # A mapping with no `type:` loads as a note; an empty one falls back to an event.
-    assert type(entry).__name__ == ("NoteEntry" if yaml_text.strip() else "EventEntry")
+    # A mapping with no `type:` loads as a note, and so does an empty one: the
+    # type the loader dispatches an untyped file to, never an event (#1261).
+    assert type(entry).__name__ == "NoteEntry"
 
 
 @pytest.mark.parametrize(

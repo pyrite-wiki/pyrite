@@ -4,10 +4,12 @@ import logging
 from pathlib import Path
 
 import typer
+from rich.markup import escape
 
 from pyrite.cli.output import cli_console, path_line
 
 from ..cli.context import cli_context
+from ..exceptions import EntryLoadError
 from ..services.access_policy import UNSCOPED
 from ..utils.errors import exit_unless_whole
 from ..utils.frontmatter import Frontmatter, split_frontmatter
@@ -143,7 +145,11 @@ def export_collection(
                     unreadable.append(result)
         else:
             # Collection ID mode — load collection, resolve its entries
-            collection = svc.load_entry_from_disk(collection_id, kb or "")
+            try:
+                collection = svc.load_entry_from_disk(collection_id, kb or "")
+            except EntryLoadError as e:
+                console.print(f"[red]{escape(str(e))}[/red]")
+                raise typer.Exit(1) from None
             if not collection:
                 console.print(f"[red]Collection not found: {collection_id}[/red]")
                 raise typer.Exit(1)
@@ -276,10 +282,20 @@ def export_site(
 
         # Load full Entry objects from disk
         entries = []
+        unloadable: list[str] = []
         for row in raw_entries:
             entry = _load_entry_from_result(row, svc, kb)
             if entry:
                 entries.append(entry)
+            else:
+                unloadable.append(str(row.get("id", "")))
+        if unloadable:
+            # A file that stopped loading since the last sync is left out, and
+            # said so by id: it was never exported as another type (#1261).
+            console.print(
+                f"[yellow]{len(unloadable)} entr(ies) could not be loaded and are not "
+                f"exported: {escape(', '.join(unloadable))}[/yellow]"
+            )
 
         if not entries:
             console.print("[yellow]No entries could be loaded.[/yellow]")
@@ -321,7 +337,8 @@ def _entry_from_file(path):
     split = split_frontmatter(path.read_text(encoding="utf-8"))
     if not isinstance(split, Frontmatter):
         return None
-    entry = entry_from_frontmatter(load_yaml(split.text), split.body)
+    # An empty frontmatter is an empty mapping, a note, as the loader reads it.
+    entry = entry_from_frontmatter(load_yaml(split.text) or {}, split.body)
     entry.file_path = path
     return entry
 
@@ -346,7 +363,10 @@ def _load_entry_from_result(result: dict, svc, kb: str | None):
     entry_id = result.get("id", "")
     entry_kb = result.get("kb_name", kb or "")
     if entry_id and entry_kb:
-        return svc.load_entry_from_disk(entry_id, entry_kb)
+        try:
+            return svc.load_entry_from_disk(entry_id, entry_kb)
+        except EntryLoadError:
+            return None  # its type cannot load it: left out, and counted by the caller
     return None
 
 
@@ -362,7 +382,12 @@ def _follow_links(entries: list, svc, kb_name: str, depth: int) -> list:
             for link in entry.links:
                 target_id = link.target
                 if target_id not in seen_ids:
-                    linked = svc.load_entry_from_disk(target_id, kb_name)
+                    try:
+                        linked = svc.load_entry_from_disk(target_id, kb_name)
+                    except EntryLoadError as e:
+                        console.print(f"[yellow]Not exported: {escape(str(e))}[/yellow]")
+                        seen_ids.add(target_id)
+                        continue
                     if linked:
                         all_entries.append(linked)
                         next_frontier.append(linked)

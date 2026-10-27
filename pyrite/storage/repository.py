@@ -10,7 +10,7 @@ import io
 import logging
 import os
 import stat
-from collections.abc import Callable, Iterator, Set
+from collections.abc import Callable, Iterator, Mapping, Set
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +18,7 @@ from ..config import KBConfig
 from ..exceptions import (
     ConflictError,
     EntryExistsError,
+    EntryLoadError,
     EntryNotFoundError,
     FrontmatterError,
     KBReadOnlyError,
@@ -33,7 +34,7 @@ from ..models.core_types import (
     read_entry_id,
 )
 from ..schema import CORE_TYPES
-from ..utils.frontmatter import Frontmatter, split_frontmatter
+from ..utils.frontmatter import Frontmatter, describe, split_frontmatter
 from ..utils.kb_files import KBFiles
 from ..utils.yaml import load_yaml, load_yaml_file
 from .entry_writer import (
@@ -331,13 +332,80 @@ def _plain_for_file(value: object) -> object:
     return value
 
 
-def _event_fallback(file_path: Path, text: str | None) -> Entry:
-    """``EventEntry.load``, from ``text`` when the caller already read it."""
-    if text is None:
-        return EventEntry.load(file_path)
-    entry = EventEntry.from_markdown(text)
-    entry.file_path = file_path
-    return entry
+def load_problem(field_path: str, error: str) -> dict[str, str]:
+    """One refused field of a single-entry read (``load_problems``): the file
+    key, ``rule: load``, a severity and the loader's message."""
+    return {
+        "field": field_path,
+        "rule": "load",
+        "severity": "warning",
+        "message": f"{field_path}: {error}",
+    }
+
+
+def _loader_refuses(fm: dict) -> str | None:
+    """The loader's message when the type ``fm`` declares refuses it, else None."""
+    try:
+        entry_from_frontmatter(fm, "")
+    except Exception as e:  # noqa: BLE001 - a probe of the type's own loader
+        return str(e) or type(e).__name__
+    return None
+
+
+def _without(fm: dict, refused: Mapping[str, str]) -> dict:
+    """``fm`` without the refused keys (``rank``, or ``metadata.rank`` inside
+    a ``metadata:`` mapping)."""
+    kept = dict(fm)
+    nested = dict(kept["metadata"]) if isinstance(kept.get("metadata"), dict) else None
+    for key in refused:
+        head, _, sub = key.partition(".")
+        if sub and head == "metadata" and nested is not None:
+            nested.pop(sub, None)
+        else:
+            kept.pop(key, None)
+    if nested is not None and "metadata" in kept:
+        kept["metadata"] = nested
+    return kept
+
+
+def _refused_fields(fm: dict, body: str) -> dict[str, str]:
+    """``{file key: loader message}`` for each key the declared type's loader
+    refuses on its own, or ``{}`` when the refusal is not isolated to fields.
+
+    A key is refused when the loader raises on the base keys (``type``,
+    ``id``, ``title``) plus that key alone; a ``metadata:`` mapping is probed
+    key by key, so ``metadata.rank`` is named as such. Isolated means the base
+    keys load alone and the file loads without the refused keys; otherwise
+    (a base field, a cross-field rule, a key the loader requires) it is
+    ``{}``. Runs only for a file that already failed to load.
+    """
+    base = {k: fm[k] for k in ("type", "id", "title") if k in fm}
+    if _loader_refuses(base) is not None:
+        return {}
+    refused: dict[str, str] = {}
+    for key, value in fm.items():
+        if key in base:
+            continue
+        whole = _loader_refuses({**base, key: value})
+        if whole is None:
+            continue
+        if key == "metadata" and isinstance(value, dict):
+            subs = {
+                f"metadata.{sub}": msg
+                for sub, sub_value in value.items()
+                if (msg := _loader_refuses({**base, "metadata": {sub: sub_value}})) is not None
+            }
+            if subs:
+                refused.update(subs)
+                continue
+        refused[str(key)] = whole
+    if not refused:
+        return {}
+    try:
+        entry_from_frontmatter(_without(fm, refused), body)
+    except Exception:  # noqa: BLE001 - the rest still does not load: not isolated
+        return {}
+    return refused
 
 
 class KBRepository:
@@ -364,60 +432,130 @@ class KBRepository:
         return Entry
 
     def _load_entry(self, file_path: Path, text: str | None = None) -> Entry:
-        """Load an entry from a file, dispatching to the correct type.
+        """Load an entry from a file as the type its frontmatter declares: THE
+        strict load, the only kind a writer can call (ADR-0042 decision 8a).
 
         ``text``: the file's text, already read (``load_entry_from_bytes``);
         read here when None.
-        """
-        # Try to load with type-aware parsing
-        try:
-            # Read frontmatter to determine type
-            if text is None:
-                text = file_path.read_text(encoding="utf-8")
-            split = split_frontmatter(text)
-            if isinstance(split, Frontmatter):
-                fm = load_yaml(split.text)
-                if fm and isinstance(fm, dict):
-                    body = split.body
-                    fm = self._maybe_migrate(fm)
-                    # `fm` is the entry's frontmatter and nothing else. It
-                    # used to get `body` and `file_path` injected here, but
-                    # no from_frontmatter reads either (body arrives as the
-                    # positional argument, file_path is set by the caller),
-                    # while capture_extra_frontmatter reads this same dict to
-                    # decide which keys the class did not declare -- so the
-                    # two internals were recorded as "unknown frontmatter"
-                    # and written back into the file on the next save (#46).
-                    entry = entry_from_frontmatter(fm, body)
-                    # Preserve references in metadata if present in frontmatter
-                    # (typed entries drop unknown fields during from_frontmatter)
-                    if "references" in fm and fm["references"]:
-                        if not hasattr(entry, "metadata") or not entry.metadata:
-                            entry.metadata = {}
-                        if "references" not in entry.metadata:
-                            entry.metadata["references"] = fm["references"]
-                    return entry
 
-            # Fallback: try EventEntry.load for backward compat
-            return _event_fallback(file_path, text)
-        except FrontmatterError:
-            # Malformed YAML: the EventEntry fallback re-parses the same bytes
-            # and would fail identically, so re-raise rather than retry.
-            logger.warning("Entry load failed for %s: malformed frontmatter", file_path)
+        Returns an entry of the declared type, fully loaded, or raises. A read
+        error (``OSError``, ``UnicodeError``) propagates as itself, so the
+        reconcile can tell an unreadable file from one with bad content.
+        Frontmatter that is missing, does not parse or is not a mapping raises
+        ``FrontmatterError``; a type loader that raises is ``EntryLoadError``
+        (``ENTRY_UNREADABLE``) naming the file, the declared type and, when the
+        refusal is isolated to fields, those fields. No path substitutes
+        another type: this used to fall back to ``EventEntry`` of the same
+        file, which indexed a ``backlog_item`` with a bad ``rank`` as an
+        ``event`` and dropped it from its typed views with nothing reported
+        (#1261). Nor does it return a model of the declared type that holds
+        defaults for the refused values: a guard would judge a value the file
+        does not hold (#1311 rounds 1-2). The single-entry read's partial view
+        is ``load_for_read``, never a writer's.
+        """
+        if text is None:
+            text = file_path.read_text(encoding="utf-8")
+        try:
+            fm, body = self._frontmatter_of(text)
+            try:
+                entry = entry_from_frontmatter(fm, body)
+            except FrontmatterError:
+                raise
+            except Exception as e:
+                raise self._load_error(file_path, fm, body, e) from e
+        except FrontmatterError as e:
+            # One line, never a traceback: per-file tracebacks drowned bulk
+            # sync output (Tier A 1080); the reconcile reports the file under
+            # `malformed` with this message.
+            logger.warning("Entry load failed for %s: %s", file_path, e)
             raise
-        except Exception as e:
-            # Log a one-line warning instead of a full traceback. Per-file
-            # tracebacks spam the operator during bulk sync (a research KB's
-            # drafts hit ~13 of these every operation). The underlying parse
-            # error is wrapped into FrontmatterError on re-raise from
-            # EventEntry.load if the cause is YAML; sync_incremental's
-            # malformed-summary captures it. Tier A 1080.
-            logger.warning(
-                "Entry load failed for %s, trying EventEntry fallback: %s",
-                file_path,
-                e,
-            )
-            return _event_fallback(file_path, text)
+        return self._with_references(entry, fm)
+
+    def _frontmatter_of(self, text: str) -> tuple[dict, str]:
+        """``(frontmatter, body)`` of an entry file's text, migrated, as the
+        loader reads it; ``FrontmatterError`` when there is no mapping."""
+        split = split_frontmatter(text)
+        if not isinstance(split, Frontmatter):
+            raise FrontmatterError(f"Invalid entry format: {describe(split)}")
+        fm = load_yaml(split.text)
+        if fm is None:
+            fm = {}  # `---\n---` and `null`: an empty mapping, as `read_entry_id` reads it
+        if not isinstance(fm, dict):
+            raise FrontmatterError("Invalid entry format: the frontmatter is not a mapping")
+        # `fm` is the entry's frontmatter and nothing else. It used to get
+        # `body` and `file_path` injected here, but no from_frontmatter reads
+        # either (body arrives as the positional argument, file_path is set by
+        # the caller), while capture_extra_frontmatter reads this same dict to
+        # decide which keys the class did not declare -- so the two internals
+        # were recorded as "unknown frontmatter" and written back into the
+        # file on the next save (#46).
+        return self._maybe_migrate(fm), split.body
+
+    @staticmethod
+    def _with_references(entry: Entry, fm: dict) -> Entry:
+        # Preserve references in metadata if present in frontmatter
+        # (typed entries drop unknown fields during from_frontmatter)
+        if "references" in fm and fm["references"]:
+            if not hasattr(entry, "metadata") or not entry.metadata:
+                entry.metadata = {}
+            if "references" not in entry.metadata:
+                entry.metadata["references"] = fm["references"]
+        return entry
+
+    def _load_error(self, file_path: Path, fm: dict, body: str, cause: Exception) -> EntryLoadError:
+        """The refusal for a file its declared type's loader raised on: the
+        KB-relative path, the declared type, the refused fields (when isolated)
+        and the loader's message, in one message every surface shows."""
+        declared = fm.get("type")
+        entry_type = str(declared) if declared else None
+        loader_message = str(cause) or type(cause).__name__
+        fields = _refused_fields(fm, body)
+        rel = self._rel(file_path)
+        named = ", ".join(fields) if fields else "not isolated to a field"
+        message = (
+            f"{rel} does not load as its type `{entry_type or 'note'}` "
+            f"(refused: {named}; {loader_message}). Pyrite reads it but writes "
+            "nothing to it until the file is fixed by hand."
+        )
+        return EntryLoadError(
+            message,
+            path=file_path,
+            entry_type=entry_type,
+            rel_path=rel,
+            fields=fields,
+            loader_message=loader_message,
+        )
+
+    def load_for_read(self, file_path: Path, raw: bytes) -> tuple[Entry, list[dict[str, str]]]:
+        """The single-entry read's view of a file: ``(entry, load_problems)``.
+
+        ONLY ``KBService._entry_file`` calls this
+        (``tests/test_refused_fields_stay_absent.py`` fails otherwise), and its
+        entry never leaves that seam: callers get the read's dict. A file that
+        loads gives ``(entry, [])``. A file its type's loader refuses in some
+        fields (ADR-0042 decision 8a, point 5) gives an entry of the DECLARED
+        type built without those keys, and one ``load_problem`` per refused
+        key. That model holds the type's default where the file's value was
+        refused, so the read leaves each named key out
+        (``IndexManager.read_fields(refused=)``); it is for presenting the
+        accepted fields, never for a write, a validator or a hook. A refusal
+        no field explains (a base field, a cross-field rule, a missing key the
+        loader requires) raises the ``EntryLoadError`` as the strict load does.
+        """
+        try:
+            return self.load_entry_from_bytes(file_path, raw), []
+        except EntryLoadError as error:
+            if not error.fields:
+                raise
+            fm, body = self._frontmatter_of(_text_of(raw))
+            try:
+                entry = entry_from_frontmatter(_without(fm, error.fields), body)
+            except Exception:
+                raise error from None
+            entry = self._with_references(entry, fm)
+            entry.kb_name = self.name
+            entry.file_path = file_path
+            return entry, [load_problem(k, m) for k, m in error.fields.items()]
 
     def _maybe_migrate(self, fm: dict) -> dict:
         """Apply pending schema migrations to frontmatter if needed."""
@@ -823,7 +961,16 @@ class KBRepository:
         return file_path, file_path.read_bytes()
 
     def load(self, entry_id: str) -> Entry | None:
-        """Load an entry by ID."""
+        """Load an entry by ID, strictly: None when no file holds the id.
+
+        A file its declared type cannot load raises ``EntryLoadError``
+        (``ENTRY_UNREADABLE``), never None: every caller that loads by id to
+        write (delete, link, the task and qa services) is then refused before
+        any hook runs, instead of reading None as "not found" or as "no entry
+        to hand the hooks" (ADR-0042 decision 8a; ``delete_entry`` ran
+        ``before_delete`` only ``if entry``). The file's other faults (YAML,
+        bytes, permissions) are still None until #777 gives them the same code.
+        """
         file_path = self.find_file(entry_id)
         if not file_path:
             return None
@@ -833,6 +980,8 @@ class KBRepository:
             entry.kb_name = self.name
             entry.file_path = file_path
             return entry
+        except EntryLoadError:
+            raise
         except Exception as e:
             logger.warning("Could not load %s: %s", file_path, e)
             return None
@@ -944,6 +1093,18 @@ class KBRepository:
         # the delete before any file goes.
         for file_path in files:
             KBFiles(self.path).require_removable(file_path)
+        # Removing a file is a write to it (ADR-0042 decision 8a): the service
+        # loaded one holder of the id, and this removes every holder, so each
+        # is judged here, before the first goes. A file that cannot be parsed
+        # at all is not this rule's cause (#777) and is removed as before.
+        for file_path in files:
+            if file_path.suffix == ".md":
+                try:
+                    self._load_entry(file_path)
+                except EntryLoadError:
+                    raise
+                except Exception:  # noqa: BLE001 - not this rule's cause
+                    pass
         for file_path in files:
             remove_entry_file(file_path, root=self.path)
         return bool(files)
@@ -1021,6 +1182,13 @@ class KBRepository:
                 f"Cannot rename '{old_id}' to '{new_id}': target already exists in KB '{self.name}'"
             )
 
+        # A source its declared type cannot load is written not at all
+        # (ADR-0042 decision 8a). The rename no longer loads the model (it
+        # rewrites the id in place, ADR-0038 I6), so the strict load is made
+        # here, before the dry-run return too: a request that would change
+        # nothing is refused the same way.
+        self._load_entry(src, src.read_text(encoding="utf-8"))
+
         # Plan the link rewrite. We scan every body once and substitute
         # `[[<old_id>]]` and `[[<old_id>|...]]`. Substring matches at
         # arbitrary positions are NOT touched (the spec calls for exact
@@ -1050,7 +1218,7 @@ class KBRepository:
                     continue
                 if rewrite.count == 0 and rewrite.partial is None:
                     continue
-                fault = _hard_link_fault(md_file)
+                fault = _hard_link_fault(md_file) or self._write_refusal(md_file, raw)
                 if fault is not None:
                     skipped[rel] = fault
                     continue
@@ -1154,6 +1322,20 @@ class KBRepository:
         except ValueError:
             return path.name
 
+    def _write_refusal(self, path: Path, raw: bytes) -> str | None:
+        """Why no write may land on ``path`` (ADR-0042 decision 8a), or None:
+        a linking file its declared type cannot load keeps its bytes, and the
+        rename lists it with this reason. Only that cause: a file with no
+        frontmatter or one that does not parse is rewritten as before (#777
+        owns those)."""
+        try:
+            self.load_entry_from_bytes(path, raw)
+        except EntryLoadError as e:
+            return str(e)
+        except Exception:  # noqa: BLE001 - not this rule's cause
+            return None
+        return None
+
     def _publish_rewrite(
         self, path: Path, raw: bytes, rewrite: _Rewrite, old_id: str, new_id: str
     ) -> _Published:
@@ -1175,6 +1357,9 @@ class KBRepository:
                     return _Published(0, None, _fault_reason(e))
                 if rewrite.count == 0:
                     return _Published(0, rewrite.partial, None)
+                refusal = self._write_refusal(path, raw)
+                if refusal is not None:
+                    return _Published(0, None, refusal)
             except Exception as e:  # noqa: BLE001 - listed, not fatal
                 return _Published(0, None, _fault_reason(e))
         return _Published(

@@ -54,3 +54,14 @@ describe('EntryMeta source URLs', () => {
 		expect(container.querySelector('a[href^="data:"]')).toBeNull();
 	});
 });
+
+describe('EntryMeta on a partial read (ADR-0042 8a)', () => {
+	it('renders when a refused tags or participants column is absent', () => {
+		// REST leaves a column the file's type refused out of the reply.
+		const entry = baseEntry() as Partial<EntryResponse>;
+		delete entry.tags;
+		delete entry.participants;
+		const { container } = render(EntryMeta, { entry: entry as EntryResponse });
+		expect(container.querySelector('a')).toBeNull();
+	});
+});

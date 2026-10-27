@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from ..config import PyriteConfig
+from ..exceptions import EntryLoadError
 from ..storage.database import PyriteDB
 
 logger = logging.getLogger(__name__)
@@ -435,7 +436,13 @@ class QAFixService:
             return None
         if field_name in ("type", "entry_type"):
             return "field_fixed_once_created"
-        entry = KBRepository(kb_config).load(entry_id)
+        try:
+            entry = KBRepository(kb_config).load(entry_id)
+        except EntryLoadError as e:
+            # Called outside `attempt()`, so a raise would end the whole run:
+            # the file its type cannot load is a hand fix, named, and the run
+            # goes on (ADR-0042 8a: no write lands on it).
+            return f"{e.error_code}: {e}"
         source = getattr(entry, "_source_frontmatter", None)
         if entry is None or not isinstance(source, dict):
             return None

@@ -177,6 +177,8 @@ class EntryResponse(BaseModel):
     date: str | None = None
     importance: int | None = None
     status: str | None = None
+    # A list is a list: a column a file's type refused is left out of the reply
+    # (ADR-0042 8a, ``get_entry``), never sent as null.
     tags: list[str] = []
     participants: list[str] = []
     sources: list[dict] = []

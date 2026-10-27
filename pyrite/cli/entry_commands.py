@@ -28,6 +28,7 @@ from rich.console import Console
 
 from ..exceptions import (
     AmbiguousEntryError,
+    EntryLoadError,
     EntryNotFoundError,
     KBNotFoundError,
     PyriteError,
@@ -718,6 +719,10 @@ def register_entry_commands(app: typer.Typer) -> None:
                 cli_error(str(e), output_format, error_code="NOT_FOUND")
             except KBNotFoundError as e:
                 cli_error(str(e), output_format, error_code="KB_NOT_FOUND")
+            except EntryLoadError as e:
+                # Nothing deleted: a file its type cannot load is written not
+                # at all (ADR-0042 8a).
+                cli_error(str(e), output_format, error_code=e.error_code)
             except (PyriteError, ValueError) as e:
                 cli_error(str(e), output_format, error_code="ERROR")
 
