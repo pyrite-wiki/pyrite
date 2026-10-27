@@ -4,19 +4,26 @@ name: Publish to PyPI
 # name on PyPI is held by a locked pre-2FA account (ADR-0025, amended
 # 2026-09-17), so an automatic run can only fail -- and would put a red X on
 # every GitHub release. Restore the release trigger once the name is recovered
-# or the package is published under a new one.
+# or the package is published under a new one. pyrite-mcp's dependency on
+# pyrite is a git tag (#1369), which PyPI refuses in an upload, so the
+# publish-pyrite-mcp job needs that dependency changed back before it can run.
 on:
   workflow_dispatch:
 
 permissions:
   contents: read
-  id-token: write
+
+# The build runs with no `id-token`: anything it installs or executes cannot
+# mint a PyPI upload credential. The publish jobs hold the token and do
+# nothing but download what the build produced and run the pinned publish
+# action (tests/test_publish_workflow_separation.py). The `pypi` environment
+# carries the tag restriction and required reviewer, set in repository
+# settings.
 
 jobs:
-  publish-pyrite:
-    name: Publish pyrite to PyPI
+  build:
+    name: Build distributions
     runs-on: ubuntu-latest
-    environment: pypi
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -26,10 +33,43 @@ jobs:
           python-version: "3.12"
 
       - name: Install build tools
-        run: pip install build
+        run: pip install build==1.6.1
 
-      - name: Build package
+      - name: Build pyrite
         run: python -m build
+
+      - name: Build pyrite-mcp
+        working-directory: pyrite-mcp
+        run: python -m build
+
+      - name: Upload pyrite distributions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist-pyrite
+          path: dist/
+          if-no-files-found: error
+
+      - name: Upload pyrite-mcp distributions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist-pyrite-mcp
+          path: pyrite-mcp/dist/
+          if-no-files-found: error
+
+  publish-pyrite:
+    name: Publish pyrite to PyPI
+    runs-on: ubuntu-latest
+    needs: build
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist-pyrite
+          path: dist/
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
@@ -37,22 +77,17 @@ jobs:
   publish-pyrite-mcp:
     name: Publish pyrite-mcp to PyPI
     runs-on: ubuntu-latest
+    needs: [build, publish-pyrite]
     environment: pypi
-    needs: publish-pyrite
+    permissions:
+      contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - name: Download distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          python-version: "3.12"
-
-      - name: Install build tools
-        run: pip install build
-
-      - name: Build package
-        working-directory: pyrite-mcp
-        run: python -m build
+          name: dist-pyrite-mcp
+          path: pyrite-mcp/dist/
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
