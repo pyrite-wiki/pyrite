@@ -1,0 +1,20 @@
+# Paths that run on their own (hooks, CI, editors, test collection) or that
+# instruct agents. A change to any of them is reviewed by the maintainer.
+# tests/test_agent_path_guards.py keeps this list covering the paths in #1369.
+
+/.claude/                                   @markramm
+/AGENTS.md                                  @markramm
+/CLAUDE.md                                  @markramm
+/.github/                                   @markramm
+/scripts/cloud-session-start.sh             @markramm
+/scripts/cloud-env-setup.sh                 @markramm
+/scripts/setup-checkout.sh                  @markramm
+/scripts/cloud-postgres.sh                  @markramm
+/scripts/check_checkout_imports.py          @markramm
+/scripts/known_cloud_failures.py            @markramm
+/scripts/known-cloud-failures.json          @markramm
+conftest.py                                 @markramm
+/.pre-commit-config.yaml                    @markramm
+/.vscode/                                   @markramm
+*.code-workspace                            @markramm
+/.devcontainer/                             @markramm
