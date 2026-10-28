@@ -876,7 +876,8 @@ with `"outcome": "partial"` and exit `3`); under
 `--format rich` it prints
 `Linked: <src> --[<relation>]--> <tgt> (in <kb>)` for a new link, or
 `Already linked: ...` when that `(target, kb, relation)` already exists
-(`"created": false`).
+(`"created": false`). When the target does not exist yet (`"resolved": false`),
+the line ends with `— unresolved: the target does not exist yet`.
 Another relation between the same two entries is a new link.
 
 `pyrite links check` is a check (ADR-0046): it exits `0` with `"outcome": "done"`
