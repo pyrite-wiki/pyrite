@@ -1,0 +1,1 @@
+- **README facts about the code are now pinned by tests (#1378).** A new `tests/test_readme_facts.py` fails when the README's built-in entry-type list, plugin protocol method count, or shipped-extension table disagrees with the code, so adding a type, a protocol method, or an extension without updating the README goes red instead of drifting.
