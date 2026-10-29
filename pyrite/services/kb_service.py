@@ -381,6 +381,24 @@ def _safe_message(exc: Exception) -> str:
     return public_text(exc, log=logger)
 
 
+def _validation_suggestion(errors: list[dict[str, Any]]) -> str | None:
+    """The one fix hint a field refusal carries (#1284), or ``None``.
+
+    Built from the first row whose fix is mechanical: a missing field names the
+    field, a format or a range names the accepted value. A row that carries
+    only a message (a plugin's own rule) has no mechanical fix and adds none.
+    """
+    for error in errors:
+        field = error.get("field") or "the field"
+        expected = error.get("expected")
+        rule = error.get("rule")
+        if rule == "required":
+            return f"set {field}" + (f" ({expected})" if expected else "")
+        if rule in {"format", "range"} and expected:
+            return f"use {expected} for {field}"
+    return None
+
+
 def _storage_error(entry_id: str, e: OSError) -> StorageError:
     """A write's filesystem fault as the ``StorageError`` the surfaces show.
     ``str()`` keeps the detail for the log (``public_text`` logs it, ADR-0037
@@ -632,12 +650,17 @@ class KBService:
         )
         model_errors = []
         model_warnings = []
-        for message in entry.validate():
+        # The structured rows (#1284) are what a refusal carries: one per
+        # refused field, so REST, MCP and the CLI name the field. The message
+        # stays the same sentence `validate()` produces, which is what the
+        # on-disk comparison below keys on.
+        for row in entry.validation_errors():
+            message = row["message"]
             if prior_model_errors[message]:
                 prior_model_errors[message] -= 1
                 model_warnings.append(
                     {
-                        "field": "",
+                        "field": row.get("field", ""),
                         "rule": "model_validation",
                         "severity": "warning",
                         "message": message,
@@ -645,9 +668,13 @@ class KBService:
                     }
                 )
             else:
-                model_errors.append(message)
+                model_errors.append(row)
         if model_errors:
-            raise ValidationError("; ".join(model_errors))
+            raise ValidationError(
+                "; ".join(row["message"] for row in model_errors),
+                errors=model_errors,
+                suggestion=_validation_suggestion(model_errors),
+            )
 
         fields = self._validated_fields(entry)
         result = self._schema_result(entry, fields, kb_name, kb_config, existing_entry)
