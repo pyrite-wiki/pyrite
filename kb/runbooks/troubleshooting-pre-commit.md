@@ -14,10 +14,11 @@ tags: [git, pre-commit, troubleshooting]
 **Cause**: ruff-format modifies files, but they need to be re-staged.
 **Fix**: `git add -u && git commit` (the hooks run twice — first pass reformats, second pass should pass)
 
-### pytest hook fails with import error
-**Symptom**: `ModuleNotFoundError: No module named 'pyrite_zettelkasten'`
-**Cause**: Extensions not installed in `.venv/` (pre-commit uses `.venv/bin/activate`)
-**Fix**: `.venv/bin/pip install -e extensions/<name>` for each extension
+### Test or extension import failure
+
+Tests run at pre-push, not at commit. Follow the canonical
+[hook and failure policy](../../CONTRIBUTING.md#branches-hooks-and-pull-requests)
+and [development setup](../../CONTRIBUTING.md#development-setup) for installing extensions.
 
 ### Python version mismatch
 **Symptom**: `requires-python = ">=3.11"` error
