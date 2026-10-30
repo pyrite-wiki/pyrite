@@ -234,6 +234,23 @@ wrong.
 `scripts/test-affected` picks tests by what a change can reach, not by size.
 Tests carry no size marker yet.
 
+### Regenerating goldens
+
+Install all extensions so the registered tool set matches the reviewed contract.
+After intentional contract changes, regenerate the selected characterization
+modules and review their diff. The outcome report helps spot access changes:
+
+```bash
+python scripts/golden_status_diff.py --base origin/dev
+```
+
+On pull requests that change `tests/characterization/goldens/`, the warning-only
+`golden-status` job compares the merge commit with its first parent (`HEAD^1`).
+Its summary groups outcome transitions by surface and principal, names added or
+removed cases, and warns about deny-to-allow transitions. No PR comment or token
+is required. Error mapping changes are listed separately. Unchanged status with
+broader body-level access is outside this report; review the JSON diff as well.
+
 **Everything**
 
 Measured gate snapshots are recorded in [#1045](https://github.com/pyrite-wiki/pyrite/issues/1045)
