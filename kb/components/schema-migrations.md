@@ -35,9 +35,13 @@ and declared index still missing, and last the plugin tables. Keep the steps
 separate: #718's explicit-upgrade mode must refuse before the first write.
 
 - The repair only adds. A column SQLite cannot add in place (key, `UNIQUE`,
-  `NOT NULL` without a server default), a failed migration, or a file that
-  refuses the write is one `IndexSchemaRefusedError` (`STORAGE_ERROR`, a
-  message naming versions and `table.column` only, and a suggestion).
+  `NOT NULL` without a server default, a non-constant default or a `STORED`
+  generated column on a table that has rows), a failed migration, or a file
+  that refuses the write is one `IndexSchemaRefusedError` (`STORAGE_ERROR`, a
+  message naming versions and `table.column` only, and a suggestion). A
+  non-constant default (`CURRENT_TIMESTAMP`) or a `STORED` generated column is
+  accepted by SQLite on an empty table; the repair counts the table's rows and
+  refuses at plan time only when it has one (#1318).
 - A second open of a current index runs no DDL (`PRAGMA schema_version`
   unchanged); `tests/test_index_schema_drift.py` checks it per shape.
 - `schema_lock` (`flock` on `<index>.schema-lock`) is held from before the
@@ -47,10 +51,12 @@ separate: #718's explicit-upgrade mode must refuse before the first write.
   timeout). Windows and filesystems without `flock` run unlocked.
 - **A new migration handler returns early when its table is absent**
   (`tests/test_migrations.py` drives the manager on bare connections). A new
-  model column that is nullable or has a server default needs no handler to
-  reach old indexes: the repair adds it. A `NOT NULL` column without a server
-  default cannot be added in place, so it refuses every old index: give it a
-  server default, or a migration that rebuilds the table. The repair adds a
+  model column that is nullable or has a constant server default needs no
+  handler to reach old indexes: the repair adds it. A `NOT NULL` column without
+  a server default cannot be added in place, so it refuses every old index:
+  give it a server default, or a migration that rebuilds the table. A
+  non-constant default is addable only to an empty table, so a migration must
+  add such a column without its default and backfill it. The repair adds a
   column without its `REFERENCES` clause. Declare a new index on the model
   (`__table_args__`) so the repair can create it too.
 - Every `except` under `pyrite/` that turns a SQLite, SQLAlchemy or

@@ -181,6 +181,11 @@ def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
 
 
+def _all_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    """``table_xinfo``: unlike ``table_info``, it lists generated columns too."""
+    return {row[1] for row in conn.execute(f"PRAGMA table_xinfo({table})")}
+
+
 def _schema_snapshot(db_path: Path) -> tuple[int, list[tuple]]:
     """SQLite's schema cookie (bumped by every DDL) and the schema text."""
     conn = sqlite3.connect(db_path)
@@ -396,6 +401,14 @@ def _drop_kb_path(db_path: Path) -> None:
     conn.close()
 
 
+def _drop_link_created_at(db_path: Path) -> None:
+    """``link.created_at`` has ``DEFAULT CURRENT_TIMESTAMP``, non-constant (#1318)."""
+    conn = sqlite3.connect(db_path)
+    conn.execute("ALTER TABLE link DROP COLUMN created_at")
+    conn.commit()
+    conn.close()
+
+
 def test_a_column_that_cannot_be_added_refuses_the_open(tmp_path):
     db_path = tmp_path / "index.db"
     _load_shape("v0.26.0", db_path)
@@ -423,6 +436,204 @@ def test_a_column_that_cannot_be_added_refuses_the_open(tmp_path):
     with pytest.raises(StorageError, match="kb.path"):
         PyriteDB(db_path)
     assert _schema_snapshot(db_path) == before
+
+
+def test_a_non_constant_default_on_a_table_with_rows_refuses_the_open(tmp_path):
+    """#1318: SQLite refuses ``DEFAULT CURRENT_TIMESTAMP`` once the table has a
+    row. The repair must plan the refusal, not fail inside the transaction and
+    tell the user to report a bug."""
+    db_path = tmp_path / "index.db"
+    _load_shape("v0.26.0", db_path)
+    _seed_rows(db_path, tmp_path / "kb")
+    _drop_link_created_at(db_path)
+    # An addable column is missing too: the refusal must not add it first.
+    conn = sqlite3.connect(db_path)
+    conn.execute("ALTER TABLE entry DROP COLUMN aliases")
+    conn.commit()
+    conn.close()
+    with pytest.raises(StorageError) as info:
+        PyriteDB(db_path)
+    err = info.value
+    assert type(err).__name__ == REFUSAL
+    assert err.error_code == "STORAGE_ERROR"
+    assert "link.created_at" in str(err)
+    assert "non-constant default" in str(err)
+    assert str(tmp_path) not in str(err), "the message must not carry a path"
+    assert err.public_message is None, "the message is safe; the generic one must not replace it"
+    assert "pyrite index build" in (err.suggestion or "")
+    # Planned before it wrote: neither field was added.
+    conn = sqlite3.connect(db_path)
+    assert "created_at" not in _columns(conn, "link")
+    assert "aliases" not in _columns(conn, "entry")
+    conn.close()
+    # And a second refused open changes nothing more.
+    before = _schema_snapshot(db_path)
+    with pytest.raises(StorageError, match="link.created_at"):
+        PyriteDB(db_path)
+    assert _schema_snapshot(db_path) == before
+
+
+@pytest.mark.control(
+    reason="SQLite already accepted the default on an empty table; guards against over-refusal"
+)
+def test_a_non_constant_default_is_added_to_an_empty_table(tmp_path):
+    """The same column on an empty table is what SQLite accepts in place."""
+    db_path = tmp_path / "index.db"
+    _load_shape("v0.26.0", db_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("DELETE FROM link")
+    conn.execute("ALTER TABLE link DROP COLUMN created_at")
+    conn.commit()
+    conn.close()
+    PyriteDB(db_path).close()
+    conn = sqlite3.connect(db_path)
+    assert "created_at" in _columns(conn, "link")
+    link_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'link'"
+    ).fetchone()[0]
+    assert "CURRENT_TIMESTAMP" in link_sql.upper(), link_sql
+    conn.close()
+
+
+@pytest.mark.control(
+    reason="a constant default always added in place; guards the classifier against over-refusal"
+)
+def test_a_constant_default_still_adds_to_a_table_with_rows(tmp_path):
+    """The refusal is only for the defaults SQLite cannot evaluate per row."""
+    db_path = tmp_path / "index.db"
+    _load_shape("v0.26.0", db_path)
+    _seed_rows(db_path, tmp_path / "kb")
+    conn = sqlite3.connect(db_path)
+    conn.execute("ALTER TABLE kb DROP COLUMN source")
+    conn.commit()
+    conn.close()
+    PyriteDB(db_path).close()
+    conn = sqlite3.connect(db_path)
+    assert "source" in _columns(conn, "kb")
+    assert {row[0] for row in conn.execute("SELECT source FROM kb")} == {"user"}
+    conn.close()
+
+
+@pytest.mark.parametrize(
+    "default",
+    ["CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME", "(datetime('now'))"],
+    ids=["timestamp", "date", "time", "parenthesised"],
+)
+@pytest.mark.parametrize(
+    "rows",
+    [
+        pytest.param(
+            0,
+            id="empty",
+            marks=pytest.mark.control(
+                reason="SQLite already accepted the default on an empty table; guards against over-refusal"
+            ),
+        ),
+        pytest.param(1, id="with-rows"),
+    ],
+)
+def test_a_non_constant_sql_default_is_refused_only_on_rows(default, rows, tmp_path):
+    """Every default SQLite calls non-constant: accepted empty, refused with rows."""
+    from sqlalchemy import Column, Integer, MetaData, Table, Text, text
+
+    from pyrite.storage.schema_repair import repair_schema
+
+    conn = sqlite3.connect(tmp_path / "bare.db")
+    conn.execute("CREATE TABLE t (a INTEGER)")
+    if rows:
+        conn.execute("INSERT INTO t (a) VALUES (1)")
+    conn.commit()
+    metadata = MetaData()
+    Table("t", metadata, Column("a", Integer), Column("x", Text, server_default=text(default)))
+    if rows:
+        with pytest.raises(StorageError) as info:
+            repair_schema(conn, metadata)
+        assert type(info.value).__name__ == REFUSAL
+        assert "t.x" in str(info.value)
+        assert "non-constant default" in str(info.value)
+        assert "x" not in _columns(conn, "t")
+    else:
+        assert repair_schema(conn, metadata) == ["t.x"]
+        assert "x" in _columns(conn, "t")
+    conn.close()
+
+
+@pytest.mark.control(
+    reason="literal SQL defaults always added in place; guards the classifier against over-refusal"
+)
+@pytest.mark.parametrize("default", ["0", "'active'", "((1))", "NULL", "TRUE"])
+def test_a_constant_sql_default_is_added_to_a_table_with_rows(default, tmp_path):
+    """A literal default, even parenthesised, is what SQLite accepts in place."""
+    from sqlalchemy import Column, Integer, MetaData, Table, text
+
+    from pyrite.storage.schema_repair import repair_schema
+
+    conn = sqlite3.connect(tmp_path / "bare.db")
+    conn.execute("CREATE TABLE t (a INTEGER)")
+    conn.execute("INSERT INTO t (a) VALUES (1)")
+    conn.commit()
+    metadata = MetaData()
+    Table("t", metadata, Column("a", Integer), Column("x", Integer, server_default=text(default)))
+    assert repair_schema(conn, metadata) == ["t.x"]
+    assert "x" in _columns(conn, "t")
+    conn.close()
+
+
+@pytest.mark.parametrize(
+    "persisted",
+    [
+        pytest.param(True, id="stored"),
+        pytest.param(
+            False,
+            id="virtual",
+            marks=pytest.mark.control(
+                reason="SQLite adds a VIRTUAL generated column even with rows; guards against over-refusal"
+            ),
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "rows",
+    [
+        pytest.param(
+            0,
+            id="empty",
+            marks=pytest.mark.control(
+                reason="SQLite already accepted a STORED generated column on an empty table"
+            ),
+        ),
+        pytest.param(1, id="with-rows"),
+    ],
+)
+def test_a_generated_column_is_refused_only_when_stored_on_rows(persisted, rows, tmp_path):
+    """SQLite refuses a STORED generated column on a table with rows, not a VIRTUAL one."""
+    from sqlalchemy import Column, Computed, Integer, MetaData, Table
+
+    from pyrite.storage.schema_repair import repair_schema
+
+    conn = sqlite3.connect(tmp_path / "bare.db")
+    conn.execute("CREATE TABLE t (a INTEGER)")
+    if rows:
+        conn.execute("INSERT INTO t (a) VALUES (1)")
+    conn.commit()
+    metadata = MetaData()
+    Table(
+        "t",
+        metadata,
+        Column("a", Integer),
+        Column("g", Integer, Computed("a + 1", persisted=persisted)),
+    )
+    if persisted and rows:
+        with pytest.raises(StorageError) as info:
+            repair_schema(conn, metadata)
+        assert type(info.value).__name__ == REFUSAL
+        assert "t.g" in str(info.value)
+        assert "stored generated column" in str(info.value)
+        assert "g" not in _all_columns(conn, "t")
+    else:
+        assert repair_schema(conn, metadata) == ["t.g"]
+        assert "g" in _all_columns(conn, "t")
+    conn.close()
 
 
 @pytest.mark.cli
