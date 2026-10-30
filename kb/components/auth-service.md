@@ -81,4 +81,8 @@ KB permission management endpoints live under `/api/kbs/{name}/permissions` (see
 - [[rest-api]] — auth endpoints at root, KB permission endpoints under /api
 - [[web-frontend]] — web UI consumes auth endpoints
 - [[per-kb-permissions]] — design doc for per-KB ACL system
-- [[configuration-system]] — `AuthConfig` ephemeral policy fields, `KBConfig.default_role`
+- [[config-system]] — `AuthConfig` ephemeral policy fields, `KBConfig.default_role`
+
+## Decided, not yet built
+
+- [[adr-0043]] decisions 2, 3 and 5: sessions and DB-backed grants remain the current model; the operator credential and complete two-plane role ladder are not yet the service's public contract. Accounts remain database state as [[adr-0039]] explicitly decides.
