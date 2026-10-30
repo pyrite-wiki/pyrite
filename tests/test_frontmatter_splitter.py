@@ -4,7 +4,7 @@
 principles 1 and 8). Its reference is the convention other tools follow -- Hugo
 and YAML -- not Pyrite's old loader, which was the code under test, not the
 property (Andon #745). ``ORACLE`` below records, per input class, what Hugo
-0.151.2 does (recorded from a run; ``test_oracle_matches_live_hugo`` re-runs it
+0.168.0 does (recorded from a run; ``test_oracle_matches_live_hugo`` re-runs it
 when ``hugo`` is installed), what YAML does, and what Pyrite does, classed as
 ``agrees``, ``fixed`` (the old Pyrite disagreed with Hugo and now agrees) or
 ``departs`` (a stated choice, with the reason, that refuses visibly).
@@ -343,7 +343,7 @@ def test_id_pin_inserts_before_a_closing_line_with_trailing_blanks():
 # ---- the oracle: Hugo and YAML, not the old loader ----------------------------
 #
 # (id, text, hugo, hugo_body, yaml, pyrite, body, status, why)
-#   hugo       "fm" | "none" | "err": Hugo 0.151.2 building the text as content/p.md
+#   hugo       "fm" | "none" | "err": Hugo 0.168.0 building the text as content/p.md
 #              (RawContent stripped = hugo_body)
 #   yaml       what a YAML parser says about the same line, in words
 #   pyrite     the result class of split_frontmatter; body when it is Frontmatter
@@ -394,13 +394,15 @@ ORACLE = [
     (
         "open-trailing-tab",
         f"---\t\n{Y}---\nbody\n",
-        ERR,
-        None,
+        FM,
+        "body",
         "",
         "Malformed",
         None,
-        "agrees",
-        "",
+        "departs",
+        "Hugo 0.168.0 reads the tabbed fence as front matter; here the file is "
+        "refused, because as a YAML stream the tabbed fence raises in PyYAML "
+        "and ruamel",
     ),
     (
         "open-comment",
