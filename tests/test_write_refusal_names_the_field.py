@@ -20,56 +20,38 @@ covered by the tests that already assert on `errors`.
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
-from typer.testing import CliRunner
 
-from pyrite.cli import app
-from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
+from pyrite.config import KBConfig, KBType
 from pyrite.exceptions import ValidationError, refusal_fields
 from pyrite.services.kb_service import KBService
-from pyrite.storage.database import PyriteDB
-from tests.characterization.world import build_world
+from tests._world import build_world
+from tests.characterization.world import build_world as build_characterization_world
 from tests.link_scope_seed import READABLE
-
-runner = CliRunner()
 
 NO_DATE = {"entry_type": "event", "title": "No date event"}
 
 
 @pytest.fixture
 def event_kb(tmp_path):
-    notes = tmp_path / "events"
-    notes.mkdir()
-    kb = KBConfig(name="ev", path=notes, kb_type=KBType.GENERIC)
-    config = PyriteConfig(knowledge_bases=[kb], settings=Settings(index_path=tmp_path / "index.db"))
-    db = PyriteDB(config.settings.index_path)
+    """One real world with an empty `ev` KB: config on disk, the app's own db."""
+    built = build_world(
+        tmp_path,
+        kbs=[KBConfig(name="ev", path=tmp_path / "events", kb_type=KBType.GENERIC)],
+        settings={"index_path": tmp_path / "index.db"},
+        rest=False,
+    )
     try:
-        yield config, db
+        yield built
     finally:
-        db.close()
-
-
-def _cli_config(config):
-    """Point both `load_config` bindings at the fixture's config, as other CLI tests do."""
-    import contextlib
-
-    @contextlib.contextmanager
-    def _patched():
-        with patch("pyrite.cli.load_config", return_value=config):
-            with patch("pyrite.cli.context.load_config", return_value=config):
-                yield
-
-    return _patched()
+        built.close()
 
 
 class TestServiceRefusal:
     def test_a_missing_field_names_itself_and_suggests_the_value(self, event_kb):
-        config, db = event_kb
-        service = KBService(config, db)
+        service = KBService(event_kb.config, event_kb.db)
 
         with pytest.raises(ValidationError) as caught:
             service.create_entry("ev", "no-date", "No date event", "event", "x")
@@ -84,8 +66,7 @@ class TestServiceRefusal:
         assert "Event must have a date" in str(exc)
 
     def test_every_refused_field_gets_its_own_row(self, event_kb):
-        config, db = event_kb
-        service = KBService(config, db)
+        service = KBService(event_kb.config, event_kb.db)
 
         with pytest.raises(ValidationError) as caught:
             service.create_entry("ev", "bad-event", "Bad event", "event", "x", importance=15)
@@ -100,22 +81,9 @@ class TestServiceRefusal:
 
 class TestCliRefusal:
     def test_create_prints_the_field_in_json(self, event_kb):
-        config, _db = event_kb
-        with _cli_config(config):
-            result = runner.invoke(
-                app,
-                [
-                    "create",
-                    "-k",
-                    "ev",
-                    "-t",
-                    "event",
-                    "--title",
-                    "No date event",
-                    "--format",
-                    "json",
-                ],
-            )
+        result = event_kb.cli(
+            "create", "-k", "ev", "-t", "event", "--title", "No date event", "--format", "json"
+        )
 
         assert result.exit_code == 1, result.output
         body = json.loads(result.stdout)
@@ -126,7 +94,7 @@ class TestCliRefusal:
 
 @pytest.fixture(scope="module")
 def world(tmp_path_factory):
-    built = build_world(tmp_path_factory, label="write-refusal-field")
+    built = build_characterization_world(tmp_path_factory, label="write-refusal-field")
     try:
         yield built
     finally:
@@ -165,8 +133,7 @@ class TestMcpRefusal:
 class TestNonFieldRefusal:
     def test_a_refusal_that_is_not_about_a_field_carries_no_errors_key(self, event_kb):
         """`errors` stays None, so `refusal_fields` leaves the key out entirely."""
-        config, db = event_kb
-        service = KBService(config, db)
+        service = KBService(event_kb.config, event_kb.db)
         service.create_entry("ev", "dated", "Dated", "event", "x", date="2026-01-01")
 
         with pytest.raises(ValidationError) as caught:
