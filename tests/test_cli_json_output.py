@@ -362,6 +362,29 @@ def test_unknown_format_is_a_usage_error(command, invalid_format):
     assert "error_type" not in output
 
 
+@pytest.mark.parametrize(
+    ("command", "option", "invalid_value"),
+    [
+        ("list-entries", "--limit", "-1"),
+        ("list-entries", "--limit", "0"),
+        ("list-entries", "--offset", "-1"),
+        ("recent", "--limit", "-1"),
+        ("recent", "--limit", "0"),
+    ],
+)
+def test_pagination_rejects_invalid_bounds(command, option, invalid_value):
+    """Invalid pagination bounds fail during CLI argument parsing."""
+    result = runner.invoke(app, [command, option, invalid_value])
+    output = unstyle(result.output)
+
+    assert result.exit_code == 2, result.output
+    assert "Traceback" not in output
+
+    document = json.loads(next(line for line in output.splitlines() if line.startswith("{")))
+    assert document["error_code"] == "USAGE_ERROR"
+    assert f"Invalid value for '{option}'" in document["error"]
+
+
 @pytest.mark.cli
 def test_search_error_json_is_clean_structured_error(cli_env):
     """When the index search raises, -f json must emit a clean structured
