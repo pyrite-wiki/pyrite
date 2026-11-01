@@ -362,14 +362,16 @@ def test_unknown_format_is_a_usage_error(command, invalid_format):
     assert "error_type" not in output
 
 
+@pytest.mark.cli
 @pytest.mark.parametrize(
     ("command", "option", "invalid_value"),
     [
         ("list-entries", "--limit", "-1"),
-        ("list-entries", "--limit", "0"),
+        ("list-entries", "--limit", "-1000"),
         ("list-entries", "--offset", "-1"),
+        ("list-entries", "--offset", "-1000"),
         ("recent", "--limit", "-1"),
-        ("recent", "--limit", "0"),
+        ("recent", "--limit", "-1000"),
     ],
 )
 def test_pagination_rejects_invalid_bounds(command, option, invalid_value):
@@ -383,6 +385,40 @@ def test_pagination_rejects_invalid_bounds(command, option, invalid_value):
     document = json.loads(next(line for line in output.splitlines() if line.startswith("{")))
     assert document["error_code"] == "USAGE_ERROR"
     assert f"Invalid value for '{option}'" in document["error"]
+
+
+@pytest.mark.cli
+def test_pagination_preserves_valid_offset_and_limit(cli_world):
+    """A valid offset returns the remaining entry without another page."""
+    world = cli_world()
+    world.add_entry(
+        "test-kb",
+        "---\nid: first-note\ntype: note\ntitle: First\n---\n\nFirst entry\n",
+    )
+    world.add_entry(
+        "test-kb",
+        "---\nid: second-note\ntype: note\ntitle: Second\n---\n\nSecond entry\n",
+    )
+
+    result = world.cli(
+        "list-entries",
+        "-k",
+        "test-kb",
+        "--limit",
+        "1",
+        "--offset",
+        "1",
+        "--format",
+        "json",
+    )
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(unstyle(result.output))
+    assert document["total"] == 2
+    assert document["limit"] == 1
+    assert document["offset"] == 1
+    assert len(document["entries"]) == 1
+    assert document["has_more"] is False
 
 
 @pytest.mark.cli
