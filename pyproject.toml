@@ -28,6 +28,8 @@ dependencies = [
     "PyYAML>=6.0.1",
     "ruamel.yaml>=0.18.0",
     "SQLAlchemy>=2.0.0",
+    "certifi>=2026.10.19",  # minimum patched version
+    "anyio>=4.14.2",  # minimum patched version
     # pyrite/server/mcp_server.py's build_sdk_server() uses the mcp SDK's
     # 1.x low-level Server API (e.g. Server.list_tools() as a decorator),
     # which the SDK's 2.0.0 release removed/renamed. An unbounded install
@@ -59,6 +61,8 @@ server = [
     "alembic>=1.13.0",
     "markdownify>=0.14.1",
     "bcrypt>=4.0.0",
+    "python-multipart>=0.0.31",  # minimum patched version (the import route takes File())
+    "cryptography>=50.0.0",  # minimum patched version (auth_service.py imports it)
 ]
 cli = [
     "typer[all]>=0.12.3",
