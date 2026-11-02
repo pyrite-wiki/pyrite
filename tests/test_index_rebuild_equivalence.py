@@ -228,9 +228,18 @@ def test_incremental_session_equals_a_files_only_rebuild(tmp_path):
         IndexManager(db, config).sync_incremental("demo")
 
         incremental = snapshot(path)
-        assert {"renamed", "source", "relation", "loose"} <= {
-            row["id"] for row in incremental["entry"]
+        assert {row["id"] for row in incremental["entry"]} == {
+            "renamed",
+            "source",
+            "relation",
+            "loose",
+            "no-explicit-id",
+            "duplicate",
+            "missing-link",
+            "later-target",
         }
+        duplicate = next(row for row in incremental["entry"] if row["id"] == "duplicate")
+        assert duplicate["file_path"].endswith("duplicate-a.md")
         assert incremental["entry_tag"]
         assert incremental["link"]
         for table in ("source", "entry_ref", "block", "edge_endpoint", "fts"):
