@@ -81,6 +81,68 @@ class TestServiceRefusal:
         assert caught.value.suggestion == "set date (YYYY-MM-DD)"
 
 
+class TestPipelineRefusalsCarryRows:
+    """The write pipeline's own field raises carry a row too (#1284).
+
+    The model and the KB schema are not the only places a field is refused:
+    `_prepare`, the importer and the bulk link checker each name a field in
+    prose. They raised a bare `ValidationError`, so a caller who had learned to
+    read `errors` fell back to parsing the sentence on exactly these refusals.
+    """
+
+    def test_a_create_without_a_title_names_the_title(self, event_kb):
+        service = KBService(event_kb.config, event_kb.db)
+
+        with pytest.raises(ValidationError) as caught:
+            service.create_entry("ev", "no-title", "", "note", "x")
+
+        exc = caught.value
+        assert exc.errors == [
+            {"field": "title", "rule": "required", "message": "title is required"}
+        ]
+        assert exc.suggestion == "set title"
+
+    @pytest.mark.parametrize(
+        ("frontmatter", "field"), [("title: Has no type\n", "type"), ("type: note\n", "title")]
+    )
+    def test_an_imported_file_names_the_frontmatter_key_it_lacks(
+        self, event_kb, tmp_path, frontmatter, field
+    ):
+        service = KBService(event_kb.config, event_kb.db)
+        source = tmp_path / f"{field}.md"
+        source.write_text(f"---\n{frontmatter}---\n\nBody\n", encoding="utf-8")
+
+        with pytest.raises(ValidationError) as caught:
+            service.add_entry_from_file("ev", source)
+
+        row = caught.value.errors[0]
+        assert (row["field"], row["rule"]) == (field, "required")
+        assert row["message"] == f"Frontmatter must include '{field}'"
+        assert caught.value.suggestion == f"set {field}"
+
+    def test_a_managed_field_names_itself(self, event_kb):
+        service = KBService(event_kb.config, event_kb.db)
+
+        with pytest.raises(ValidationError) as caught:
+            service.create_entry(
+                "ev", "managed", "Managed", "note", "x", file_path="notes/managed.md"
+            )
+
+        row = caught.value.errors[0]
+        assert (row["field"], row["rule"]) == ("file_path", "managed")
+        assert "Pyrite maintains this field" in row["message"]
+
+    def test_a_bulk_link_spec_keeps_its_row_in_the_result(self, event_kb):
+        service = KBService(event_kb.config, event_kb.db)
+
+        results = service.add_links("ev", [{"source": "one"}], dry_run=True)
+
+        assert results[0]["status"] == "failed"
+        assert results[0]["errors"] == [
+            {"field": "target", "rule": "required", "message": "missing required field 'target'"}
+        ]
+
+
 class TestCliRefusal:
     def test_create_prints_the_field_in_json(self, event_kb):
         result = event_kb.cli(

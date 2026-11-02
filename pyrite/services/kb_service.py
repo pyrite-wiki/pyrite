@@ -40,6 +40,7 @@ from ..exceptions import (
     UndeclaredTypeError,
     ValidationError,
     public_text,
+    refusal_fields,
 )
 from ..models import Entry
 from ..models.base import _timestamp_instant
@@ -1353,7 +1354,10 @@ class KBService:
         entry_type = named_type or file_type or "note"
         title = fields.pop("title", None)
         if not title:
-            raise ValidationError("title is required")
+            rows = [{"field": "title", "rule": "required", "message": "title is required"}]
+            raise ValidationError(
+                "title is required", errors=rows, suggestion=_validation_suggestion(rows)
+            )
         if not allow_undeclared:
             self._refuse_undeclared_type(entry_type, kb_name, kb_config)
 
@@ -1752,10 +1756,11 @@ class KBService:
         body = split.body
 
         # Require type and title
-        if "type" not in meta:
-            raise ValidationError("Frontmatter must include 'type'")
-        if "title" not in meta:
-            raise ValidationError("Frontmatter must include 'title'")
+        for required_key in ("type", "title"):
+            if required_key not in meta:
+                message = f"Frontmatter must include '{required_key}'"
+                rows = [{"field": required_key, "rule": "required", "message": message}]
+                raise ValidationError(message, errors=rows, suggestion=_validation_suggestion(rows))
 
         def from_file(entry_type, entry_id, title, body_, fields):
             # The loader's own reading of the frontmatter, so links, sources,
@@ -2262,10 +2267,15 @@ class KBService:
         if found:
             key, name, _in_envelope = found[0]
             spelled = f" (sent as `{key}`)" if key != name else ""
-            raise ValidationError(
+            message = (
                 f"Cannot set {name} on a new {entry_type}{spelled}: Pyrite maintains "
                 "this field. To keep a field of your own under that name, "
                 f"name it differently (for example `{entry_type}_{name}`)."
+            )
+            raise ValidationError(
+                message,
+                errors=[{"field": name, "rule": "managed", "message": message}],
+                suggestion=f"name it something else, for example `{entry_type}_{name}`",
             )
 
     def _drop_managed_for_import(
@@ -2872,7 +2882,15 @@ class KBService:
             try:
                 source_id, target_id, relation, note, tkb = self._checked_bulk_spec(spec, kb_name)
             except (ValidationError, KBNotFoundError) as e:
-                results[i] = {"status": "failed", "error": str(e), "error_code": e.error_code}
+                results[i] = {
+                    "status": "failed",
+                    "error": str(e),
+                    "error_code": e.error_code,
+                    # A field-shaped refusal keeps its row here too (#1284), so
+                    # a bulk caller reads the same `errors` the single-entry
+                    # surfaces answer instead of a sentence alone.
+                    **refusal_fields(e),
+                }
                 continue
             if source_id not in loaded:
                 loaded[source_id] = repo.load(source_id)
@@ -2921,7 +2939,9 @@ class KBService:
             raise ValidationError(f"expected a mapping, got {type(spec).__name__}")
         for key in ("source", "target"):
             if spec.get(key) is None:
-                raise ValidationError(f"missing required field '{key}'")
+                message = f"missing required field '{key}'"
+                rows = [{"field": key, "rule": "required", "message": message}]
+                raise ValidationError(message, errors=rows, suggestion=_validation_suggestion(rows))
         source_id = spec["source"]
         if not isinstance(source_id, str) or not source_id.strip():
             raise ValidationError(f"A link needs a source entry id; got {source_id!r}.")
