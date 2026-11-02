@@ -226,7 +226,10 @@ def _report_link(console: Console, link: dict) -> None:
     arrow = escape(
         f"{link['source']} --[{link['relation']}]--> {link['target']} (in {link['target_kb']})"
     )
-    console.print(f"{verb} {arrow}")
+    suffix = ""
+    if link.get("resolved") is False:
+        suffix = " — unresolved: the target does not exist yet"
+    console.print(f"{verb} {arrow}{suffix}")
 
 
 def register_entry_commands(app: typer.Typer) -> None:
