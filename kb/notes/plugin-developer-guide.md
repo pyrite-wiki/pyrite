@@ -1888,11 +1888,11 @@ Once a plugin is `pip install -e`'d, its entry point is live for all `PluginRegi
 4. Install with `pip install -e extensions/<name>/`
 5. Write tests following the 8-section structure
 6. Run tests: `pytest extensions/<name>/tests/`
-7. If using pre-commit hooks, also install in the `.venv`: `.venv/bin/pip install -e extensions/<name>/`
+7. Keep that extension installed in the checkout `.venv` used by the hooks.
 
 ### Pre-commit hook environment
 
-The project's `.pre-commit-config.yaml` has a pytest hook that runs via `.venv/`. Extensions must be installed in both system Python (for development) and the `.venv` (for the pre-commit hook). The `ruff-format` hook may reformat files, requiring re-staging before the commit succeeds.
+The project's `.pre-commit-config.yaml` runs fast checks at commit time and tests at pre-push. Install extensions in the checkout's `.venv`; there is no separate system-Python installation requirement. See [CONTRIBUTING.md](../../CONTRIBUTING.md), "Branches, hooks and pull requests" and "Running the tests", for the current commands and hook stages. The `ruff-format` hook may reformat files, requiring re-staging before the commit succeeds.
 
 ---
 

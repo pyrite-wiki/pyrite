@@ -92,9 +92,11 @@ This isn't a failed hypothesis — it's likely a wrong architecture. STOP.
 ### Backend issues
 ```bash
 # Run specific test with verbose output
+# Diagnostic example: substitute the node relevant to your change
 .venv/bin/pytest tests/test_file.py::test_name -v -s
 
 # Run with print output visible
+# Diagnostic example: substitute the node relevant to your change
 .venv/bin/pytest tests/test_file.py -v -s --tb=long
 
 # Check DB state
@@ -200,3 +202,6 @@ Trace backward from the bad output:
 ### Key principle
 
 **Every agent-quality bug should produce a schema or validation improvement.** If the agent *could* have produced bad output, it eventually *will*. The fix is always structural — better constraints, better tool descriptions, better validation — not "tell the agent to be more careful."
+
+General test commands and local worker limits live in
+[CONTRIBUTING](../../../CONTRIBUTING.md#running-the-tests).

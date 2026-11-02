@@ -260,12 +260,10 @@ merge.
   every test in it is experimental by the mapping; then the core run warns and
   continues, and the experimental job reports it as a failure of that file.
 
-Run either set locally:
-
-```bash
-scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/ -n 4 -m "not slow and not e2e and not experimental"
-scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/ -n 4 -m "experimental and not slow and not e2e"
-```
+Use the local commands and shared-lock guidance in
+[CONTRIBUTING.md — Running the tests](../CONTRIBUTING.md#running-the-tests).
+For a core-only diagnostic, select `not slow and not e2e and not experimental`;
+for the separate experimental diagnostic, select `experimental and not slow and not e2e`.
 
 ## Automatic shard timing refresh
 
