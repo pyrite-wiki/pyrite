@@ -229,9 +229,6 @@ class ValidationError(PyriteError):
         if suggestion is not None:
             self.suggestion = suggestion
 
-        if suggestion is not None:
-            self.suggestion = suggestion
-
 
 class UndeclaredTypeError(ValidationError):
     """A create named a type the KB's kb.yaml does not declare (#197).
@@ -254,13 +251,22 @@ class EntryExistsError(ValidationError):
 
 
 class SchemaViolationError(ValidationError):
-    """The KB schema or a plugin validator rejected the entry (enum, required, range...)."""
+    """The KB schema or a plugin validator rejected the entry (enum, required, range...).
+
+    Its rows are the schema path's own, ``{field, rule, expected, got?, message?}``
+    (``pyrite/schema``), so they carry the same ``field`` and ``rule`` the entry
+    model's rows do. Construction goes through :class:`ValidationError`, which
+    leaves ``errors`` ``None`` when there are no rows -- the key is then absent
+    from every body, never an empty list -- so a refusal that is not about a
+    field answers the same shape on REST, MCP and the CLI.
+    """
 
     error_code = "SCHEMA_VIOLATION"
 
     def __init__(self, message: str, errors: list[dict] | None = None):
-        super().__init__(message)
-        self.errors = errors or []
+        # Positional, because `services/kb_service.py` raises it that way; the
+        # base class keeps ``None`` for "not about a field".
+        super().__init__(message, errors=errors)
 
 
 class TruncatedBodyError(ValidationError):

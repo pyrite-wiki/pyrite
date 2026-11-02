@@ -304,7 +304,10 @@ the CLI:
 }
 ```
 
-Every row carries `field` and `rule`. A row from the entry model also carries
+Every row carries `field` and `rule`, on `SCHEMA_VIOLATION` too: the schema
+path's own rows name the check that refused (`field_select`, `field_range`,
+`required`, ...), and a plugin validator's rows are copied as the plugin wrote
+them. A row from the entry model also carries
 `message` — the sentence that reaches `error`, so a caller never has to parse
 it — and `expected` when the fix is mechanical; a row from the KB schema or a
 plugin validator carries `expected` and, where the rule knows it, `got`, which
