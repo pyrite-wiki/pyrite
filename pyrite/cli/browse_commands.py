@@ -19,6 +19,25 @@ from .output import cli_console, validate_output_format
 console = cli_console()
 
 
+def _validate_sort_order(value: str) -> str:
+    """Validate a sort direction; unknown values are a usage error."""
+    if value not in ("asc", "desc"):
+        raise typer.BadParameter(
+            f"unknown sort order {value!r}; choose one of: asc, desc"
+        )
+    return value
+
+
+def _validate_sort_by(value: str) -> str:
+    """Validate a sort column; unknown values are a usage error."""
+    valid = ("title", "updated_at", "created_at", "entry_type")
+    if value not in valid:
+        raise typer.BadParameter(
+            f"unknown sort column {value!r}; choose one of: {', '.join(valid)}"
+        )
+    return value
+
+
 def _format_output(data: dict, fmt: str, **kwargs) -> str | None:
     from .output import format_output
 
@@ -44,9 +63,15 @@ def register_browse_commands(app: typer.Typer) -> None:
         sort_by: str = typer.Option(
             "updated_at",
             "--sort-by",
+            callback=_validate_sort_by,
             help="Sort column: title, updated_at, created_at, entry_type",
         ),
-        sort_order: str = typer.Option("desc", "--sort-order", help="Sort direction: asc, desc"),
+        sort_order: str = typer.Option(
+            "desc",
+            "--sort-order",
+            callback=_validate_sort_order,
+            help="Sort direction: asc, desc",
+        ),
         limit: int = typer.Option(50, "--limit", "-n", help="Max entries (max 200)"),
         offset: int = typer.Option(0, "--offset", help="Pagination offset"),
         fields: str = typer.Option(None, "--fields", help="Comma-separated fields to return"),
@@ -450,7 +475,11 @@ def register_browse_commands(app: typer.Typer) -> None:
         min_importance: int = typer.Option(1, "--min-importance", help="Minimum importance (1-10)"),
         limit: int = typer.Option(50, "--limit", "-n", help="Max results"),
         sort: str = typer.Option(
-            "desc", "--sort", "-s", help="Sort order: asc or desc (default: desc)"
+            "desc",
+            "--sort",
+            "-s",
+            callback=_validate_sort_order,
+            help="Sort order: asc or desc (default: desc)",
         ),
         output_format: str = typer.Option(
             "json",
