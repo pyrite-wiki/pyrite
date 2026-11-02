@@ -298,6 +298,30 @@
       "status": 422
     }
   },
+  "EntryLoadError": {
+    "cli": {
+      "error": "characterization message for EntryLoadError",
+      "error_code": "ENTRY_UNREADABLE",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for EntryLoadError",
+      "error_code": "ENTRY_UNREADABLE",
+      "legacy_error_code": "VALIDATION_FAILED",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "ENTRY_UNREADABLE",
+          "message": "characterization message for EntryLoadError",
+          "retryable": false
+        }
+      },
+      "status": 422
+    }
+  },
   "EntryNotFoundError": {
     "cli": {
       "error": "characterization message for EntryNotFoundError",

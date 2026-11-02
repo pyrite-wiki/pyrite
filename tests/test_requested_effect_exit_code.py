@@ -1639,6 +1639,10 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "a failed --bidi inverse is returned as Outcome.partial (exit 3): "
         "tests/test_cli_outcome_write_path.py",
     ),
+    ("pyrite/cli/export_commands.py", "_follow_links"): (
+        "safe",
+        "a linked file its type cannot load is left out and named; export is a read (ADR-0042 8a)",
+    ),
     ("pyrite/cli/export_commands.py", "_load_entry_from_result"): ("fixed", "TestExportCollection"),
     ("pyrite/cli/export_commands.py", "export_collection"): ("fixed", "TestExportCollection"),
     ("pyrite/cli/extension_commands.py", "_verify_distribution"): ("fixed", "TestExtensionVerify"),

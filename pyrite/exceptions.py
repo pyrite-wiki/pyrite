@@ -301,6 +301,49 @@ class FrontmatterError(ValidationError):
     error_code = "INVALID_FRONTMATTER"
 
 
+class EntryLoadError(FrontmatterError):
+    """A file whose frontmatter parses to a mapping that the type it declares
+    cannot load: its loader raised (a value it will not convert, a shape it
+    will not hold, a plugin loader's own check). ADR-0042 decision 8a.
+
+    The file is never another type (#1261). Pyrite reads it partially (the
+    single-entry read, ``KBRepository.load_for_read``) and writes it not at
+    all: every writer loads strictly, so this reaches the caller before any
+    operation, validator or hook runs, and nothing is written. The reconcile
+    lists the file under ``malformed`` and indexes no row for it, as for any
+    other ``FrontmatterError``.
+
+    ``ENTRY_UNREADABLE`` (HTTP 422) is the code the maintainer chose for #777
+    on 2026-10-14; this is its first cause, and #777 adds the files that do
+    not parse. The message names the file by its path relative to the KB
+    (ADR-0037 section 3), the declared type, the refused fields when the
+    refusal is isolated to fields, and the loader's message. ``path`` is the
+    absolute path (for the server's own use, never a message), ``fields``
+    maps each refused file key (``rank``, ``metadata.rank``) to the loader's
+    message for it, empty when no field alone explains the refusal, and the
+    loader's exception is the ``__cause__``.
+    """
+
+    error_code = "ENTRY_UNREADABLE"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        path=None,
+        entry_type: str | None = None,
+        rel_path: str | None = None,
+        fields: dict[str, str] | None = None,
+        loader_message: str = "",
+    ):
+        super().__init__(message)
+        self.path = path
+        self.entry_type = entry_type
+        self.rel_path = rel_path
+        self.fields = dict(fields or {})
+        self.loader_message = loader_message
+
+
 class PluginError(PyriteError):
     """Raised when a plugin operation fails.
 

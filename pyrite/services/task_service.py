@@ -1041,6 +1041,11 @@ def _task_validate_transition(entry: Entry, context: dict) -> Entry:
 
     old_status = context.get("old_status")
     new_status = getattr(entry, "status", None)
+    # Fails OPEN on a missing old status. That is safe only because every
+    # update hands this hook the old status of a fully loaded file: a file its
+    # type cannot load is refused before any hook (ADR-0042 8a), never given
+    # a context without one (#1311 round 2 did, and `open -> done` landed).
+    # tests/test_unloadable_file_is_never_written.py pins it.
     if not old_status or not new_status or old_status == new_status:
         return entry
 

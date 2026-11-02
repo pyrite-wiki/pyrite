@@ -32,7 +32,14 @@ from ..models.protocols import (
     Statusable,
     Temporal,
 )
-from ..schema.field_aliases import lift_declared_fields, read_metadata, read_view
+from ..schema.field_aliases import (
+    NotAFieldError,
+    class_field_aliases,
+    field_at,
+    lift_declared_fields,
+    read_metadata,
+    read_view,
+)
 from ..utils.metadata import parse_metadata
 from .database import PyriteDB
 from .errors import driver_error, storage_error_from
@@ -456,6 +463,28 @@ def unmodellable_files(kb: KBConfig, paths: Iterable[Path] | None = None) -> lis
     return found
 
 
+def _leave_out(result: dict[str, Any], cls: type, entry_type: str, key: str) -> None:
+    """Drop the field a refused file key denotes from a single-entry read
+    (``read_fields(refused=)``): its own name and every alias of it, at the
+    top level and in ``metadata``; for the key ``metadata`` itself (not a
+    field: ``field_at`` says so), the whole ``metadata``."""
+    try:
+        field, _rest = field_at(cls, entry_type, key)
+    except NotAFieldError:
+        result.pop("metadata", None)
+        return
+    except ValueError:
+        return
+    names = {field} | {
+        alias for alias, target in class_field_aliases(cls, entry_type).items() if target == field
+    }
+    metadata = result.get("metadata")
+    for name in names:
+        result.pop(name, None)
+        if isinstance(metadata, dict):
+            metadata.pop(name, None)
+
+
 class IndexManager:
     """
     Manages the SQLite FTS index for all KBs.
@@ -859,8 +888,16 @@ class IndexManager:
         *,
         content_hash: str,
         row: dict[str, Any] | None,
+        refused: Iterable[str] = (),
     ) -> dict[str, Any]:
         """A single-entry read of ``entry``, parsed from ``file_path`` just now.
+
+        ``refused``: the file keys the declared type's loader refused
+        (``KBRepository.load_for_read``; ADR-0042 decisions 8a and 9). The
+        model holds the type's default for each (``rank: 0``, ``status:
+        open``), which is not the file's value, so each is left out of the
+        read: the field it denotes, at every spelling, and the whole
+        ``metadata`` when that key itself was refused.
 
         The same keys, in the same order, with the same values a row indexed
         from this parse would return (``PyriteDB.get_entry``): the entry is
@@ -931,6 +968,8 @@ class IndexManager:
         result["sources"] = _read_sources(data["sources"], entry.id, kb_name, row)
         result["links"] = row.get("links", [])
         result["content_hash"] = content_hash
+        for key in refused:
+            _leave_out(result, type(entry), entry.entry_type, key)
         return result
 
     # -----------------------------------------------------------------
