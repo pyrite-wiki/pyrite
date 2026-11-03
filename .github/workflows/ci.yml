@@ -71,6 +71,7 @@ jobs:
     # both with `||` is what makes a merge group classify as everything-changed
     # instead of falling off the end into a silent all-skip (#273).
     outputs:
+      goldens: ${{ steps.filter.outputs.goldens || 'false' }}
       backend: ${{ steps.all.outputs.backend || steps.filter.outputs.backend }}
       web: ${{ steps.all.outputs.web || steps.filter.outputs.web }}
       kb: ${{ steps.all.outputs.kb || steps.filter.outputs.kb }}
@@ -150,6 +151,8 @@ jobs:
         uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:
           filters: |
+            goldens:
+              - 'tests/characterization/goldens/**'
             backend:
               - 'pyrite/**'
               - 'extensions/**'
@@ -184,6 +187,21 @@ jobs:
               # it decide which tests the gate runs (#657).
               - 'conftest.py'
               - 'tests/experimental_surface.py'
+
+  golden-status:
+    timeout-minutes: 5
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.goldens == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Report golden outcome transitions (warning only)
+        run: python scripts/golden_status_diff.py --base HEAD^1 --head HEAD
 
   # Fast check for KB-only changes: schema validation, seconds.
   kb:
