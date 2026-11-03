@@ -133,3 +133,12 @@ def test_check_urls_reads_the_database_before_it_is_closed(real_context):
 
     assert result.exit_code == 0, result.output
     assert events.index("collected") < events.index("closed")
+
+
+def test_check_urls_refuses_a_negative_sample() -> None:
+    from pyrite.cli.qa_commands import qa_app
+
+    result = runner.invoke(qa_app, ["check-urls", KB, "--sample", "-1"])
+
+    assert result.exit_code == 2, result.output
+    assert "Invalid value" in result.output
