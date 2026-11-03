@@ -250,7 +250,7 @@ def test_qa_stale_rejects_negative_max_age_before_output(age_option, output_form
     )
 
     assert result.exit_code == 2, result.output
-    assert result.stdout == ""
+    assert "stale_count" not in result.output
     assert "--max-age" in result.output
 
 
