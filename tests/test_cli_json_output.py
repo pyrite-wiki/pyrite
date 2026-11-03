@@ -232,6 +232,43 @@ def test_qa_reports_use_real_context(cli_env, monkeypatch, command, count_key):
 
 
 @pytest.mark.cli
+@pytest.mark.parametrize("age_option", ["--max-age", "-a"])
+@pytest.mark.parametrize("output_format", ["rich", "json", "markdown", "csv", "yaml"])
+def test_qa_stale_rejects_negative_max_age_before_output(age_option, output_format):
+    """Negative stale thresholds are usage errors for every output format."""
+    result = runner.invoke(
+        app,
+        [
+            "qa",
+            "stale",
+            "test-events",
+            age_option,
+            "-1",
+            "--format",
+            output_format,
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert result.stdout == ""
+    assert "--max-age" in result.output
+
+
+@pytest.mark.cli
+def test_qa_stale_accepts_zero_max_age(cli_env, monkeypatch):
+    """A zero-day stale threshold remains valid."""
+    monkeypatch.setattr(cli_context_module, "load_config", lambda: cli_env["config"])
+
+    result = runner.invoke(
+        app,
+        ["qa", "stale", "test-events", "--max-age", "0", "--format", "json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert isinstance(json.loads(result.output)["stale_count"], int)
+
+
+@pytest.mark.cli
 def test_auth_status_json(cli_env):
     """auth status --format json returns valid JSON with 'authenticated' key."""
     with (
