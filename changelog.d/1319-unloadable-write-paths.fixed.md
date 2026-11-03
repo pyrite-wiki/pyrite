@@ -1,0 +1,1 @@
+Write paths no longer report an unloadable entry as not found: a task update, a qa-fix field write, or a bulk-link write on a file that exists but fails to load now refuses it naming the file's path and the loader's message, and writes nothing (#1319).

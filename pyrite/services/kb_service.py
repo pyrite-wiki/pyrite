@@ -2004,9 +2004,13 @@ class KBService:
                 entry = repo.load_entry_from_bytes(path, raw)
             except Exception as e:
                 logger.warning("Could not load %s: %s", path, e)
-                raise EntryNotFoundError(
-                    f"Entry not found: {entry_id}{repo.not_found_hint(entry_id)}"
-                ) from None
+                # The file exists -- read_for_write found it -- so a load
+                # failure is an unloadable file, never a miss (#1319): refuse
+                # it with its path and the loader's message instead of
+                # answering ENTRY_NOT_FOUND.
+                raise ValidationError(
+                    f"Cannot update '{entry_id}': {path} cannot be loaded ({e})"
+                ) from e
             text = raw.decode("utf-8")
             split = split_frontmatter(text)
             if not isinstance(split, Frontmatter):
@@ -2851,7 +2855,18 @@ class KBService:
                 loaded[source_id] = repo.load(source_id)
             entry = loaded[source_id]
             if entry is None:
-                results[i] = {"status": "failed", "error": f"source entry not found: {source_id}"}
+                unloadable = _unloadable_source_error(repo, source_id)
+                if unloadable is not None:
+                    results[i] = {
+                        "status": "failed",
+                        "error": unloadable,
+                        "error_code": ValidationError.error_code,
+                    }
+                else:
+                    results[i] = {
+                        "status": "failed",
+                        "error": f"source entry not found: {source_id}",
+                    }
                 continue
             # Duplicate key matches add_link's: (target, kb, relation) (#396),
             # normalised the same way so legacy data (no `relation:` key,
@@ -4172,6 +4187,26 @@ def _refuse_unreadable_fields(path: Path, entry_id: str, exc: Exception) -> NoRe
     raise ValidationError(
         f"Cannot read '{entry_id}': the frontmatter holds a value Pyrite cannot read ({exc})"
     ) from exc
+
+
+def _unloadable_source_error(repo: KBRepository, source_id: str) -> str | None:
+    """The error text for a bulk-link source whose file exists but does not
+    load (#1319), else ``None`` for a genuinely missing source.
+
+    ``repo.load`` answers ``None`` for both cases, so a missing source is
+    told apart from an unloadable one by re-reading the file it found and
+    loading it once more: a failure there names the path and the loader's
+    message, and nothing is written either way.
+    """
+    found = repo.read_for_write(source_id)
+    if found is None:
+        return None
+    path, raw = found
+    try:
+        repo.load_entry_from_bytes(path, raw)
+    except Exception as e:
+        return f"source entry unloadable: {path} ({e})"
+    return None
 
 
 def _refuse_unmodellable_named(repo: KBRepository, entry_id: str, verb: str) -> None:
