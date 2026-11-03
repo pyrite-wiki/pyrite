@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 from pyrite.exceptions import PyriteError, SchemaViolationError, public_text
 from pyrite.plugins.capabilities import Capability
 from pyrite.plugins.scoping import kb_scope_clause
+from pyrite.utils.parse import safe_int
 
 from .adr_listing import adr_relations, adr_sort_key
 from .entry_types import (
@@ -1084,7 +1085,7 @@ class SoftwareKBPlugin:
                 priority = row["priority"] or meta.get("priority", "medium")
                 kind = meta.get("kind", "")
                 assignee = row["assignee"] or meta.get("assignee", "")
-                rank = int(meta.get("rank", 0))
+                rank = safe_int(meta.get("rank", 0))
                 if status_filter and status != status_filter:
                     continue
                 if priority_filter and priority != priority_filter:
@@ -1373,7 +1374,7 @@ class SoftwareKBPlugin:
                             anchor_meta = json.loads(anchor_row["metadata"])
                         except (json.JSONDecodeError, TypeError):
                             pass
-                    anchor_rank = int(anchor_meta.get("rank", 0))
+                    anchor_rank = safe_int(anchor_meta.get("rank", 0))
                     # --after: start at anchor + 100. --before: start at
                     # max(1, anchor - 100*N) so the highest item lands just
                     # before the anchor.
@@ -1422,7 +1423,7 @@ class SoftwareKBPlugin:
                         anchor_meta = json.loads(anchor_row["metadata"])
                     except (json.JSONDecodeError, TypeError):
                         pass
-                anchor_rank = int(anchor_meta.get("rank", 0))
+                anchor_rank = safe_int(anchor_meta.get("rank", 0))
 
                 if after_id:
                     # Place after: new_rank = anchor_rank + 50 (midpoint to next)
@@ -2571,7 +2572,7 @@ class SoftwareKBPlugin:
                 if status != "accepted":
                     continue
                 priority = row["priority"] or meta.get("priority", "medium")
-                item_rank = int(meta.get("rank", 0))
+                item_rank = safe_int(meta.get("rank", 0))
                 candidates.append(
                     {
                         "id": row["id"],

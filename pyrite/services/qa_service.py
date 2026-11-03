@@ -32,6 +32,7 @@ from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
 from ..utils.metadata import parse_metadata
+from ..utils.parse import safe_int
 
 logger = logging.getLogger(__name__)
 
@@ -2338,7 +2339,7 @@ def _validation_fields(
     for k in _TYPED_COLUMNS:
         if source is not None and source.get(k) is not None:
             fields[k] = source[k]
-    schema_version = int(meta_dict.get("_schema_version", 0))
+    schema_version = safe_int(meta_dict.get("_schema_version", 0))
     for k, v in meta_dict.items():
         if k not in fields and k != "_schema_version" and v is not None:
             fields[k] = v

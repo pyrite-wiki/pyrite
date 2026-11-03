@@ -42,6 +42,41 @@ def test_assessment_fields_fall_back_and_task_keeps_its_own_priority_policy(lite
     assert (assessment.tier, assessment.issues_found, assessment.issues_resolved) == (1, 0, 0)
 
 
+@pytest.mark.parametrize("literal", [".inf", "-.inf", ".nan"])
+def test_extension_integer_fields_fall_back_on_nonfinite(literal):
+    """Every integer field on core and extension entry types uses safe_int.
+
+    A new integer field added to an entry type must be covered here so a
+    non-finite value cannot crash loading.
+    """
+    from pyrite_social.entry_types import UserProfileEntry
+    from pyrite_software_kb.entry_types import (
+        ADREntry,
+        BacklogItemEntry,
+    )
+
+    # Social: reputation, writeup_count
+    profile = UserProfileEntry.from_frontmatter(
+        load_yaml(
+            f"id: u\ntitle: User\nreputation: {literal}\nwriteup_count: {literal}\n"
+        ),
+        "",
+    )
+    assert profile.reputation == 0
+    assert profile.writeup_count == 0
+
+    # Software-kb: adr_number, rank
+    adr = ADREntry.from_frontmatter(
+        load_yaml(f"id: a\ntitle: ADR\nadr_number: {literal}\n"), ""
+    )
+    assert adr.adr_number == 0
+
+    backlog = BacklogItemEntry.from_frontmatter(
+        load_yaml(f"id: b\ntitle: Item\nrank: {literal}\n"), ""
+    )
+    assert backlog.rank == 0
+
+
 @pytest.mark.parametrize(
     ("value", "expected"), [("12", 12), (3.8, 3), (-2, -2), (None, 9), ("bad", 9)]
 )
