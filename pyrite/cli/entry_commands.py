@@ -33,6 +33,7 @@ from ..exceptions import (
     PyriteError,
     UndeclaredTypeError,
     ValidationError,
+    refusal_row_text,
 )
 from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_cli_fields, project_fields
@@ -510,7 +511,14 @@ def register_entry_commands(app: typer.Typer) -> None:
 
         errors = result.get("errors", [])
         if validate_only and errors:
-            raise ValidationError("Validation failed: " + "; ".join(str(e) for e in errors))
+            # The service answers rows, not a sentence, so the sentence is built
+            # here -- `str(row)` printed the dict where the message belonged. The
+            # rows travel with the refusal so a caller can still read the field
+            # and the rule (#1381 review).
+            raise ValidationError(
+                "Validation failed: " + "; ".join(refusal_row_text(row) for row in errors),
+                errors=[row for row in errors if isinstance(row, dict)] or None,
+            )
 
         warnings = list(result.get("warnings", []))
         data: dict[str, Any] = {

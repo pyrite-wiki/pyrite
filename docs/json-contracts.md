@@ -311,9 +311,13 @@ them. A row from the entry model also carries
 `message` — the sentence that reaches `error`, so a caller never has to parse
 it — and `expected` when the fix is mechanical; a row from the KB schema or a
 plugin validator carries `expected` and, where the rule knows it, `got`, which
-is the shape `SCHEMA_VIOLATION` already documents. Several rows come back when
-several fields are refused, in the model's own order. A refusal that is not
-about a field carries no `errors` key at all: the key is absent, never empty.
+is the shape `SCHEMA_VIOLATION` already documents. `got` and `expected` are
+always JSON-safe: a date written without quotes in frontmatter arrives as its
+ISO string (`"2026-01-01"`), and a non-finite float as its text (`"inf"`), so
+an unquoted value cannot turn the refusal into an unrenderable answer. Several
+rows come back when several fields are refused, in the model's own order. A
+refusal that is not about a field carries no `errors` key at all: the key is
+absent, never empty.
 
 **Whole-request refusals (REST).** Two refusals stop an import, or any
 request, before a record is read:

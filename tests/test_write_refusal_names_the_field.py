@@ -357,3 +357,93 @@ def test_a_schema_refusal_without_rows_leaves_the_key_out():
 
     assert exc.errors is None
     assert "errors" not in refusal_fields(exc)
+
+
+# -- what the rows carry, and what a row that only names a field reads like ----
+
+
+@pytest.fixture
+def typed_world(tmp_path):
+    """The `typed` KB behind REST, so both the request body and the answer are real JSON."""
+    typed = tmp_path / SCHEMA_KB
+    typed.mkdir(parents=True)
+    (typed / "kb.yaml").write_text(SCHEMA_KB_YAML, encoding="utf-8")
+    built = build_world(
+        tmp_path,
+        kbs=[KBConfig(name=SCHEMA_KB, path=typed, kb_type=KBType.GENERIC)],
+        settings={"index_path": tmp_path / "index.db"},
+        rest=True,
+    )
+    try:
+        yield built
+    finally:
+        built.close()
+
+
+def _json_body(result) -> dict:
+    assert result.exit_code == 1, result.output
+    return json.loads(result.stdout[result.stdout.index("{") :])
+
+
+def test_validate_only_answers_a_sentence_and_keeps_the_rows(typed_world, tmp_path):
+    """`add --validate-only` used to print a row as a Python dict in `error` (#1381 review).
+
+    The CLI joined the rows themselves, so `error` read
+    `Validation failed: {'field': 'org_type', ...}` and the body carried no
+    `errors` key at all: the sentence lost to the dict, and the rows never
+    reached the caller.
+    """
+    source = tmp_path / "off-list.md"
+    source.write_text(
+        "---\ntype: org\ntitle: Off-list org\norg_type: bogus\n---\nbody\n", encoding="utf-8"
+    )
+
+    body = _json_body(
+        typed_world.cli("add", str(source), "-k", SCHEMA_KB, "--validate-only", "--format", "json")
+    )
+
+    assert "{" not in body["error"], body
+    assert "org_type" in body["error"], body
+    assert [row["field"] for row in body["errors"]] == ["org_type"], body
+    assert body["errors"][0]["rule"] == "field_select", body
+
+
+def test_a_date_reaches_the_row_as_its_iso_string(typed_world, tmp_path):
+    """An unquoted YAML date made `add --format json` answer NO_OUTCOME (#1381 review).
+
+    `yaml` reads `org_type: 2026-01-01` as a `date`, the row shipped it as is,
+    and the answer could not be rendered -- a TypeError the root reported as
+    NO_OUTCOME, "what the command did is unknown", instead of the refusal.
+    """
+    source = tmp_path / "dated.md"
+    source.write_text(
+        "---\ntype: org\ntitle: Dated org\norg_type: 2026-01-01\n---\nbody\n", encoding="utf-8"
+    )
+
+    body = _json_body(typed_world.cli("add", str(source), "-k", SCHEMA_KB, "--format", "json"))
+
+    assert body["error_code"] == "SCHEMA_VIOLATION", body
+    assert body["errors"][0]["got"] == "2026-01-01", body
+
+
+def test_a_non_finite_float_reaches_the_row_as_text(typed_world):
+    """`Infinity` in `metadata` turned the 400 into a 500 (#1381 review).
+
+    `json.dumps` refuses `inf`, so serialising the refusal raised
+    `ValueError: Out of range float values are not JSON compliant` -- the rows
+    now carry the value as text, which is what the client needed to see.
+    """
+    # Sent as raw text: `httpx`'s own encoder refuses `inf` (allow_nan=False), and
+    # the claim under test is what the server does with a body that carries it.
+    raw = (
+        f'{{"kb": "{SCHEMA_KB}", "entry_type": "org", "title": "Inf org", '
+        '"metadata": {"org_type": Infinity}}'
+    )
+    response = typed_world.client.post(
+        "/api/entries", content=raw, headers={"content-type": "application/json"}
+    )
+
+    assert response.status_code == 400, response.text
+    body = response.json()["detail"]
+    assert body["code"] == "SCHEMA_VIOLATION", body
+    assert body["errors"][0]["got"] == "inf", body

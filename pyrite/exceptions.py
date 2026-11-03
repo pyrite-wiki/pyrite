@@ -53,7 +53,9 @@ phrase themselves safely, which is exactly the trap: a class-level
 path).
 """
 
+import datetime
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +161,66 @@ def refusal_fields(exc: BaseException) -> dict:
     return out
 
 
+def json_safe_value(value):
+    """A JSON-serialisable stand-in for a refused value (#1381 review).
+
+    A row's ``got`` is whatever the caller wrote, and the row travels as JSON:
+    a ``yaml`` date used to make the answer unrenderable on the CLI
+    (``NO_OUTCOME``) and an ``Infinity`` in a request body used to raise
+    ``ValueError: Out of range float values are not JSON compliant`` while
+    serialising a 400. A date becomes its ISO string and a non-finite float its
+    text, so the refusal still says what was refused.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)  # 'inf', '-inf', 'nan'
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+        return value.isoformat()
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).decode("utf-8", "replace")
+    if isinstance(value, (set, frozenset)):
+        return sorted((json_safe_value(item) for item in value), key=repr)
+    if isinstance(value, (list, tuple)):
+        return [json_safe_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): json_safe_value(item) for key, item in value.items()}
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    return str(value)
+
+
+#: The row keys whose values are the caller's own, and so the ones that can
+#: carry a date or a non-finite float into a JSON body.
+_VALUE_KEYS = ("got", "expected")
+
+
+def json_safe_row(row: dict) -> dict:
+    """``row`` with its refused values made JSON-safe, everything else untouched."""
+    safe = dict(row)
+    for key in _VALUE_KEYS:
+        if key in safe:
+            safe[key] = json_safe_value(safe[key])
+    return safe
+
+
+def refusal_row_text(row: dict | str) -> str:
+    """One sentence for a refusal row: its ``message``, else ``field: rule`` and the values.
+
+    ``pyrite add --validate-only`` joins rows into ``str(exc)``, and a row built
+    from a KB schema carries no ``message`` -- joining the dict printed
+    ``{'field': 'org_type', ...}`` where the sentence belonged (#1381 review).
+    """
+    if isinstance(row, str):
+        return row
+    message = row.get("message")
+    if message:
+        return str(message)
+    field = row.get("field") or "?"
+    rule = row.get("rule")
+    head = f"{field}: {rule}" if rule else str(field)
+    details = [f"{name} {row[name]!r}" for name in ("expected", "got") if row.get(name) is not None]
+    return f"{head} ({', '.join(details)})" if details else head
+
+
 class KBNotFoundError(PyriteError):
     """Raised when a knowledge base cannot be found.
 
@@ -225,7 +287,7 @@ class ValidationError(PyriteError):
         #: MCP and the CLI answer the same shape. ``None`` -- the key is then
         #: absent from every body, never an empty list -- when the refusal is
         #: not about a field (a truncated body, a stale id).
-        self.errors: list[dict] | None = list(errors) if errors else None
+        self.errors: list[dict] | None = [json_safe_row(row) for row in errors] if errors else None
         if suggestion is not None:
             self.suggestion = suggestion
 
