@@ -126,10 +126,18 @@ def refuses_undeclared_keys(
             return
         unknown = sorted(set(payload) - allowed)
         if unknown:
+            message = (
+                f"Unknown field(s) on a {verb}: {', '.join(unknown)}. "
+                f"A {verb} accepts: {', '.join(sorted(allowed))}."
+            )
             raise refusal_http(
                 ValidationError(
-                    f"Unknown field(s) on a {verb}: {', '.join(unknown)}. "
-                    f"A {verb} accepts: {', '.join(sorted(allowed))}."
+                    message,
+                    # One row per key the model does not declare (#1381 review).
+                    errors=[
+                        {"field": key, "rule": "unknown_field", "message": message}
+                        for key in unknown
+                    ],
                 )
             )
         # FastAPI validates this same parsed object after solving dependencies.

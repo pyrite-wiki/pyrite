@@ -226,11 +226,26 @@ def check_link_target(link: dict[str, Any]) -> None:
             continue
         value = link[key]
         if value is None and refuse_null:
-            raise ValidationError(f"A link's {key} is empty (null); the index cannot store it.")
-        if isinstance(value, list | tuple | set | dict):
+            message = f"A link's {key} is empty (null); the index cannot store it."
             raise ValidationError(
+                message, errors=[{"field": key, "rule": "required", "message": message}]
+            )
+        if isinstance(value, list | tuple | set | dict):
+            message = (
                 f"A link's {key} is a {type(value).__name__}, not a single value; "
                 "the index cannot store it."
+            )
+            raise ValidationError(
+                message,
+                errors=[
+                    {
+                        "field": key,
+                        "rule": "type",
+                        "message": message,
+                        "expected": "a single value",
+                        "got": type(value).__name__,
+                    }
+                ],
             )
 
 
@@ -284,22 +299,41 @@ def check_link_spec(
     parser refuses a third part.
     """
     if target is None or (isinstance(target, str) and not target.strip()):
-        raise ValidationError(f"A link needs a target entry id; got {target!r}.")
+        message = f"A link needs a target entry id; got {target!r}."
+        raise ValidationError(
+            message, errors=[{"field": "target", "rule": "required", "message": message}]
+        )
     if not isinstance(target, str):
-        raise ValidationError(f"A link target must be text; got {_shown(target)}.")
+        message = f"A link target must be text; got {_shown(target)}."
+        raise ValidationError(
+            message,
+            errors=[{"field": "target", "rule": "type", "message": message, "got": _shown(target)}],
+        )
     if relation is None:
         relation = _DEFAULT_RELATION
     elif not isinstance(relation, str) or not relation.strip():
-        raise ValidationError(
+        message = (
             f"A link's relation must be non-empty text; got {relation!r}. "
-            f"Leave it out for {_DEFAULT_RELATION}.",
+            f"Leave it out for {_DEFAULT_RELATION}."
+        )
+        raise ValidationError(
+            message,
+            errors=[{"field": "relation", "rule": "required", "message": message}],
         )
     if note is None:
         note = ""
     elif not isinstance(note, str):
-        raise ValidationError(f"A link's note must be text; got {type(note).__name__}.")
+        message = f"A link's note must be text; got {type(note).__name__}."
+        raise ValidationError(
+            message,
+            errors=[{"field": "note", "rule": "type", "message": message}],
+        )
     if target_kb is not None and not isinstance(target_kb, str):
-        raise ValidationError(f"A link's target_kb must be a KB name; got {target_kb!r}.")
+        message = f"A link's target_kb must be a KB name; got {target_kb!r}."
+        raise ValidationError(
+            message,
+            errors=[{"field": "target_kb", "rule": "type", "message": message}],
+        )
     return target, relation, note
 
 
@@ -428,7 +462,15 @@ def _refusal_result(exc: Exception) -> dict[str, Any]:
         code = getattr(exc, "error_code", None) or "CREATE_FAILED"
     else:
         code = "CREATE_FAILED"
-    return {"created": False, "error": _safe_message(exc), "error_code": code}
+    return {
+        "created": False,
+        "error": _safe_message(exc),
+        "error_code": code,
+        # The rows a field-shaped refusal carries travel with the per-item
+        # result too, so a bulk caller reads the same `errors` the single-entry
+        # surfaces answer (#1381 review).
+        **refusal_fields(exc),
+    }
 
 
 class KBService:
@@ -1390,7 +1432,11 @@ class KBService:
             try:
                 check_link_target(link.to_dict())
             except ValidationError as e:
-                raise ValidationError(f"links: {e}") from None
+                raise ValidationError(
+                    f"links: {e}",
+                    errors=getattr(e, "errors", None),
+                    suggestion=getattr(e, "suggestion", None),
+                ) from None
         warnings = self._validate_write(entry, kb_name, kb_config)
 
         # Create never replaces. Ids are derived from titles, so two entries
@@ -2243,7 +2289,11 @@ class KBService:
                 field, _rest = field_at(cls, entry_type, path)
             except (NotAFieldError, ValueError) as e:
                 if in_envelope:
-                    raise ValidationError(f"Cannot create a {entry_type}: {e}") from None
+                    raise ValidationError(
+                        f"Cannot create a {entry_type}: {e}",
+                        errors=getattr(e, "errors", None),
+                        suggestion=getattr(e, "suggestion", None),
+                    ) from None
                 continue  # a custom top-level key: written as sent
             if field in managed:
                 found.append((key, field, in_envelope))
@@ -2399,17 +2449,23 @@ class KBService:
         # Checked AFTER the KB and entry lookups: a missing KB or entry, or a
         # read-only KB, must still answer its own 404/403.
         if field in ("type", "entry_type") or field == "":
-            raise ValidationError(
+            message = (
                 f"Cannot set {field or '(empty key)'} on {entry_id!r} with an update: "
                 "an entry's type is fixed once created, and a --field key must be "
                 "non-empty."
             )
+            raise ValidationError(
+                message, errors=[{"field": field, "rule": "managed", "message": message}]
+            )
         if field == "body":
             # The request named `body` where only a frontmatter key can land
             # (under `metadata`): the body is the entry's text, never a key.
-            raise ValidationError(
+            message = (
                 f"Cannot set body on {entry_id!r} as a frontmatter key: the body is "
                 "the entry's text; send it as `body` at the top level."
+            )
+            raise ValidationError(
+                message, errors=[{"field": "body", "rule": "managed", "message": message}]
             )
         whole_item = isinstance(op, Append | Remove) and not rest
         if restrict:
@@ -2418,11 +2474,14 @@ class KBService:
                 # #557: the usual way to arrive here is a KB using one of these
                 # names for a field of its own (`provenance:` on a draft), so
                 # the refusal says how to keep that field.
-                raise ValidationError(
+                message = (
                     f"Cannot set {field} on {entry.entry_type} '{entry_id}' with an "
                     "update: Pyrite maintains these fields. To keep a field of your "
                     "own under that name, rename it in the file (for example "
                     f"`{entry.entry_type}_{field}`) and update the new name."
+                )
+                raise ValidationError(
+                    message, errors=[{"field": field, "rule": "managed", "message": message}]
                 )
         try:
             head = spelling_in(file_values, type(entry), entry.entry_type, field)
@@ -2444,10 +2503,14 @@ class KBService:
                 and all(values_identical(v, values[0]) for v in values)
             ):
                 return Unset(path_sent)
-            raise ValidationError(
+            message = (
                 f"Cannot update {field} on {entry_id!r}: {e}. A field has one spelling "
                 "per file; remove one of them by hand, or `pyrite qa fix` merges an "
                 "equal pair, then update."
+            )
+            raise ValidationError(
+                message,
+                errors=[{"field": field, "rule": "field_spelled_twice", "message": message}],
             ) from None
 
         # The output path is the tuple `field_at` decided on, with the file's
@@ -2497,12 +2560,23 @@ class KBService:
             if _DATETIME_LOCAL.fullmatch(spelled):
                 spelled += ":00"
             if not _yaml_reads_a_timestamp(spelled):
-                raise ValidationError(
+                message = (
                     f"Cannot set {key} on {entry.entry_type} '{entry.id}': {spelled!r} is "
                     "not a timestamp YAML reads. Send YYYY-MM-DD, optionally followed by T "
                     "or a space, HH:MM:SS, a fraction, and Z or an offset such as +05:30 "
                     "(e.g. 2026-01-15T09:00:00Z), or YYYY-MM-DDTHH:MM, which is written "
                     "with :00 seconds."
+                )
+                raise ValidationError(
+                    message,
+                    errors=[
+                        {
+                            "field": key,
+                            "rule": "format",
+                            "message": message,
+                            "got": spelled,
+                        }
+                    ],
                 )
             value = TimestampText(spelled)
         if hasattr(entry, key):
@@ -2927,9 +3001,15 @@ class KBService:
                 )
             except Exception as e:
                 # Once per failed save, not once per position: one cause, one line.
-                message = _safe_message(e)
+                # The refusal's own code and rows come along (#1381 review).
+                failure = {
+                    "status": "failed",
+                    "error": _safe_message(e),
+                    "error_code": getattr(e, "error_code", None) or "CREATE_FAILED",
+                    **refusal_fields(e),
+                }
                 for i in positions:
-                    results[i] = {"status": "failed", "error": message}
+                    results[i] = dict(failure)
         return results
 
     def _checked_bulk_spec(self, spec: Any, kb_name: str) -> tuple[str, str, str, str, str]:
@@ -2944,7 +3024,10 @@ class KBService:
                 raise ValidationError(message, errors=rows, suggestion=_validation_suggestion(rows))
         source_id = spec["source"]
         if not isinstance(source_id, str) or not source_id.strip():
-            raise ValidationError(f"A link needs a source entry id; got {source_id!r}.")
+            message = f"A link needs a source entry id; got {source_id!r}."
+            raise ValidationError(
+                message, errors=[{"field": "source", "rule": "required", "message": message}]
+            )
         target_id, relation, note = check_link_spec(
             spec["target"],
             spec.get("relation"),
@@ -4313,16 +4396,29 @@ def _checked_item(entry: Entry, field: str, value: Any) -> Any:
     written and then refused by the index insert (#973 fix round 1)."""
     item_type = Link if field == "links" else Source
     if not isinstance(value, dict):
-        raise ValidationError(
+        message = (
             f"Cannot append to {field} on {entry.entry_type} '{entry.id}': an item is an "
             f'object (for a link, {{"target": "<id>", "relation": "<relation>"}}), '
             f"got {type(value).__name__}."
         )
+        raise ValidationError(
+            message,
+            errors=[
+                {
+                    "field": field,
+                    "rule": "type",
+                    "message": message,
+                    "expected": "an object",
+                    "got": type(value).__name__,
+                }
+            ],
+        )
     try:
         item = item_type.from_dict(value)
     except Exception as e:
+        message = f"Cannot append to {field} on {entry.entry_type} '{entry.id}': {e}"
         raise ValidationError(
-            f"Cannot append to {field} on {entry.entry_type} '{entry.id}': {e}"
+            message, errors=[{"field": field, "rule": "type", "message": message}]
         ) from e
     if field == "links":
         check_link_target(item.to_dict())
@@ -4419,8 +4515,20 @@ def _as_field_type(entry: Entry, key: str, value: Any) -> Any:
     if key in ("sources", "links"):
         item_type = Source if key == "sources" else Link
         if not isinstance(value, list):
-            raise ValidationError(
+            message = (
                 f"Cannot set {key} on {entry.entry_type} '{entry.id}': expected a list of objects."
+            )
+            raise ValidationError(
+                message,
+                errors=[
+                    {
+                        "field": key,
+                        "rule": "type",
+                        "message": message,
+                        "expected": "a list of objects",
+                        "got": type(value).__name__,
+                    }
+                ],
             )
         converted = []
         for index, item in enumerate(value):
@@ -4429,8 +4537,18 @@ def _as_field_type(entry: Entry, key: str, value: Any) -> Any:
             elif isinstance(item, dict):
                 converted.append(item_type.from_dict(item))
             else:
+                message = f"Cannot set {key}[{index}] on {entry.entry_type} '{entry.id}': expected an object."
                 raise ValidationError(
-                    f"Cannot set {key}[{index}] on {entry.entry_type} '{entry.id}': expected an object."
+                    message,
+                    errors=[
+                        {
+                            "field": f"{key}[{index}]",
+                            "rule": "type",
+                            "message": message,
+                            "expected": "an object",
+                            "got": type(item).__name__,
+                        }
+                    ],
                 )
         return converted
 

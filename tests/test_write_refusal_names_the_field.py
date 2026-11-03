@@ -28,7 +28,7 @@ import pytest
 
 from pyrite.config import KBConfig, KBType
 from pyrite.exceptions import SchemaViolationError, ValidationError, refusal_fields
-from pyrite.services.kb_service import KBService
+from pyrite.services.kb_service import KBService, check_link_spec
 from tests._world import build_world
 from tests.characterization.world import build_world as build_characterization_world
 from tests.link_scope_seed import READABLE
@@ -447,3 +447,136 @@ def test_a_non_finite_float_reaches_the_row_as_text(typed_world):
     body = response.json()["detail"]
     assert body["code"] == "SCHEMA_VIOLATION", body
     assert body["errors"][0]["got"] == "inf", body
+
+
+# -- the bulk answers carry the rows on the record they refused ----------------
+
+
+def test_a_bulk_link_spec_keeps_its_row_through_the_cli(typed_world, tmp_path):
+    """`links bulk-create` copied `error` and `error_code`, and dropped the row (#1381 review)."""
+    specs = tmp_path / "specs.yaml"
+    specs.write_text("- target: b\n", encoding="utf-8")  # no `source`
+
+    result = typed_world.cli(
+        "links", "bulk-create", str(specs), "-k", SCHEMA_KB, "--format", "json"
+    )
+
+    body = json.loads(result.stdout[result.stdout.index("{") :])
+    item = body["results"][0]
+    assert item["status"] == "failed", body
+    assert item["error_code"] == "VALIDATION_FAILED", body
+    assert [row["field"] for row in item["errors"]] == ["source"], body
+
+
+def test_a_bulk_create_record_keeps_its_row(typed_world):
+    """`_refusal_result` built `{created, error, error_code}` with no rows (#1381 review)."""
+    service = KBService(typed_world.config, typed_world.db)
+
+    results = service.bulk_create_entries(
+        SCHEMA_KB, [{"entry_type": "org", "title": "Off-list", "org_type": "bogus"}]
+    )
+
+    assert results[0]["created"] is False, results
+    assert results[0]["error_code"] == "SCHEMA_VIOLATION", results
+    assert [row["field"] for row in results[0]["errors"]] == ["org_type"], results
+
+
+def test_an_imported_record_keeps_its_row(typed_world):
+    """REST import narrowed each failure to `{title, error, error_code}` (#1381 review)."""
+    body = json.dumps([{"type": "org", "title": "Off-list", "org_type": "bogus"}])
+
+    response = typed_world.client.post(
+        "/api/entries/import",
+        params={"kb": SCHEMA_KB},
+        files={"file": ("in.json", body, "application/json")},
+    )
+
+    assert response.status_code == 200, response.text
+    out = response.json()
+    assert out["errors"] == 1, out
+    # The top-level `errors` is the count; the row rides on the record it refused.
+    assert [row["field"] for row in out["error_details"][0]["errors"]] == ["org_type"], out
+
+
+def test_a_saved_link_keeps_the_rows_of_its_refusal(typed_world, monkeypatch):
+    """A save refused inside `add_links` kept the message alone (#1381 review)."""
+    service = KBService(typed_world.config, typed_world.db)
+    service.create_entry(SCHEMA_KB, "a", "A", "org")
+    refusal = ValidationError(
+        "links: an item is an object",
+        errors=[{"field": "links", "rule": "type", "message": "an item is an object"}],
+    )
+
+    def refuse(*_args, **_kwargs):
+        raise refusal
+
+    monkeypatch.setattr(service, "apply_operations", refuse)
+
+    results = service.add_links(SCHEMA_KB, [{"source": "a", "target": "b"}])
+
+    assert results[0]["status"] == "failed", results
+    assert results[0]["error_code"] == "VALIDATION_FAILED", results
+    assert [row["field"] for row in results[0]["errors"]] == ["links"], results
+
+
+# -- the raises that were left: a link spec, a managed field, an unknown key ---
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "field"),
+    [
+        ({"target": ""}, "target"),
+        ({"target": "x", "relation": "  "}, "relation"),
+        ({"target": "x", "note": 5}, "note"),
+        ({"target": "x", "target_kb": 5}, "target_kb"),
+    ],
+)
+def test_a_refused_link_spec_names_its_field(kwargs, field):
+    """`check_link_spec` refused with a sentence alone (#1381 review, item 4)."""
+    with pytest.raises(ValidationError) as caught:
+        check_link_spec(**kwargs)
+
+    assert [row["field"] for row in caught.value.errors] == [field]
+
+
+def test_a_structural_field_on_an_update_names_its_field(typed_world):
+    """An update refused `type` with a sentence and no row (#1381 review, item 4)."""
+    service = KBService(typed_world.config, typed_world.db)
+    service.create_entry(SCHEMA_KB, "a", "A", "org")
+
+    result = typed_world.cli("update", "a", "-k", SCHEMA_KB, "-f", "type=org", "--format", "json")
+
+    body = _json_body(result)
+    assert [row["field"] for row in body["errors"]] == ["type"], body
+
+
+def test_a_bad_field_pair_names_the_argument(typed_world):
+    """`--field` without `=` is a field-shaped refusal too (#1381 review, item 4)."""
+    result = typed_world.cli(
+        "create",
+        "-k",
+        SCHEMA_KB,
+        "-t",
+        "org",
+        "--title",
+        "X",
+        "-f",
+        "nokeyvalue",
+        "--format",
+        "json",
+    )
+
+    body = _json_body(result)
+    assert [row["field"] for row in body["errors"]] == ["--field"], body
+
+
+def test_an_unknown_write_key_gets_one_row_per_key(typed_world):
+    """REST refused unknown keys with a sentence and no rows (#1381 review, item 4)."""
+    response = typed_world.client.post(
+        "/api/entries", json={"kb": SCHEMA_KB, "title": "X", "bogus": 1}
+    )
+
+    assert response.status_code == 400, response.text
+    body = response.json()["detail"]
+    assert [row["field"] for row in body["errors"]] == ["bogus"], body
+    assert body["errors"][0]["rule"] == "unknown_field", body

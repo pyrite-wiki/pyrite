@@ -317,7 +317,9 @@ ISO string (`"2026-01-01"`), and a non-finite float as its text (`"inf"`), so
 an unquoted value cannot turn the refusal into an unrenderable answer. Several
 rows come back when several fields are refused, in the model's own order. A
 refusal that is not about a field carries no `errors` key at all: the key is
-absent, never empty.
+absent, never empty. In a bulk answer the rows travel on the record they
+refused, not at the top: `results[i].errors` for `kb_bulk_create` and
+`links bulk-create`, `error_details[i].errors` for an import.
 
 **Whole-request refusals (REST).** Two refusals stop an import, or any
 request, before a record is read:
@@ -883,7 +885,7 @@ paragraph above; how it writes, and the `changed`, `locked` and
 |---|---|---|
 | CLI | `pyrite import <file> -k <kb>` | Rich text: one `Created: <id>` / `Failed [CODE]: <title>: <message>` line per record, then `Imported N entries` (or `Imported N entries (M failed)`). Exit `3` if some records were written and some failed, `1` if none was written. Its `--format` selects the *input* file format. |
 | MCP | `kb_bulk_create` | the block below, results in input order. |
-| REST (not run) | `POST /api/entries/import` (multipart) | `{"imported": N, "errors": M, "entries": [{"id", "title"}, ...], "error_details": [{"title", "error", "error_code"}, ...]}`. |
+| REST (not run) | `POST /api/entries/import` (multipart) | `{"imported": N, "errors": M, "entries": [{"id", "title"}, ...], "error_details": [{"title", "error", "error_code", "errors?"}, ...]}`. The top-level `errors` is a count, so a record's rows ride on its `error_details` item. |
 
 `--format` selects JSON, YAML or Markdown input. Without it, `.json`, `.yaml`/`.yml` and `.md` file extensions are detected; `--stream` applies only to Markdown imports.
 
@@ -891,6 +893,9 @@ paragraph above; how it writes, and the `changed`, `locked` and
 ```json
 {"total": 2, "created": 1, "failed": 1, "results": [{"created": false, "error": "...", "error_code": "ENTRY_EXISTS"}, {"created": true, "entry_id": "two"}]}
 ```
+
+A failed record carries `errors` beside `error_code` when the refusal named a
+field, in the row shape above.
 
 ### `task create` and `link`
 

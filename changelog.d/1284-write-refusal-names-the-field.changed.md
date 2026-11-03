@@ -7,5 +7,8 @@
   as its ISO string and a non-finite float as its text, so an unquoted value in
   frontmatter cannot turn the refusal into an unrenderable answer. The CLI's
   `add --validate-only` builds its sentence from the rows and carries them with
-  the refusal, instead of printing a row as a Python dict. See
-  `docs/json-contracts.md`.
+  the refusal, instead of printing a row as a Python dict. The bulk answers keep
+  the rows on the record they refused -- `kb_bulk_create` and
+  `links bulk-create` results, REST `error_details` items -- and the link, update,
+  `--field` and unknown-key refusals that named a field in prose now carry a row
+  too. See `docs/json-contracts.md`.
