@@ -230,9 +230,7 @@ def test_qa_reports_use_real_context(cli_env, monkeypatch, command, count_key, e
     """Sibling QA reports use the same context-manager contract."""
     monkeypatch.setattr(cli_context_module, "load_config", lambda: cli_env["config"])
 
-    result = runner.invoke(
-        app, ["qa", command, "test-events", "--format", "json", *extra_args]
-    )
+    result = runner.invoke(app, ["qa", command, "test-events", "--format", "json", *extra_args])
 
     assert result.exit_code == 0, result.output
     assert isinstance(json.loads(result.output)[count_key], int)
@@ -259,7 +257,6 @@ def test_qa_stale_rejects_negative_max_age_before_output(age_option, output_form
     assert result.exit_code == 2, result.output
     assert "stale_count" not in result.output
     assert "--max-age" in plain(result.output)
-
 
 
 @pytest.mark.cli
