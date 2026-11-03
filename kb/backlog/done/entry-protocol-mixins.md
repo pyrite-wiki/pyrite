@@ -24,7 +24,7 @@ Implement 5 composable protocol mixin dataclasses (Assignable, Temporal, Locatab
 
 ## Completed Work
 
-- ADR-0017 documenting the 5 protocols, field names, DB column plan
+- [[adr-0017]] documenting the 5 protocols, field names, DB column plan
 - `pyrite/models/protocols.py` with 5 mixin dataclasses and PROTOCOL_REGISTRY
 - Promoted `importance` to base Entry class
 - Migrated core types (EventEntry, PersonEntry, OrganizationEntry, DocumentEntry) to use protocol mixins

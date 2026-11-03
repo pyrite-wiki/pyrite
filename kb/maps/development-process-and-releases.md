@@ -97,7 +97,7 @@ search vocabulary, not a second copy of the rules.
 10. A pull request is a unit a reviewer can hold: complete on one theme, never a
     fragment. Review attention is the constraint. [[adr-0019]], [[adr-0032]];
     `CONTRIBUTING.md`.
-11. A reviewed-changes flow for users mirrors this one. **proposed** ADR-0044.
+11. A reviewed-changes flow for users mirrors this one. **proposed** [[adr-0044]].
 
 ## Invariants a test could check
 

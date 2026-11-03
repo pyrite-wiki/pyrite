@@ -24,7 +24,7 @@ The editor system provides a dual-mode editing experience for knowledge base ent
 | `codemirror/setup.ts` | `createEditorExtensions()` — assembles all CM6 extensions (line numbers, history, markdown lang, slash commands, wikilinks, theme) |
 | `codemirror/slash-commands.ts` | Notion-style `/` menu with headings, callouts, code blocks, tables, wikilinks, dates, tasks, quotes |
 | `codemirror/theme.ts` | `darkTheme` / `lightTheme` — Zinc-based color scheme for CM6, JetBrains Mono font |
-| `codemirror/wikilinks.ts` | CM6 wikilink extension: `[[ ` autocomplete (fetches entry titles via API with 30s TTL cache) and `WikilinkWidget` pill decorations that hide when cursor is inside the link |
+| `codemirror/wikilinks.ts` | CM6 wikilink extension: <code>&#91;&#91; </code> autocomplete (fetches entry titles via API with 30s TTL cache) and `WikilinkWidget` pill decorations that hide when cursor is inside the link |
 | `tiptap/wikilink-extension.ts` | Custom Tiptap `Node` for wikilinks — inline atom node, click-to-navigate ProseMirror plugin, input-rule highlighting |
 | `tiptap/markdown.ts` | `markdownToHtml` (via `marked`, pre-processes wikilinks into `<span data-wikilink>`) and `htmlToMarkdown` (recursive DOM-to-Markdown converter) |
 
@@ -37,7 +37,7 @@ The editor system provides a dual-mode editing experience for knowledge base ent
 
 ### Wikilink Syntax
 
-Both editors support `[[target]]`, `[[target|display text]]`, and `[[kb:target]]` cross-KB syntax via a shared regex pattern `WIKILINK_REGEX`. The `parseWikilinks()` function extracts structured `WikilinkMatch` objects (target, display, kb prefix, offsets). The `renderWikilinks()` function replaces wikilinks in rendered HTML with anchor tags, supporting "red links" for missing entries via an optional `existingIds` set.
+Both editors support <code>&#91;&#91;target&#93;&#93;</code>, <code>&#91;&#91;target|display text&#93;&#93;</code>, and <code>&#91;&#91;kb:target&#93;&#93;</code> cross-KB syntax via a shared regex pattern `WIKILINK_REGEX`. The `parseWikilinks()` function extracts structured `WikilinkMatch` objects (target, display, kb prefix, offsets). The `renderWikilinks()` function replaces wikilinks in rendered HTML with anchor tags, supporting "red links" for missing entries via an optional `existingIds` set.
 
 ### Slash Commands (CodeMirror)
 

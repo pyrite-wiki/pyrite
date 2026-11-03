@@ -13,7 +13,7 @@ tags: [core, config]
 
 The configuration system manages multi-KB setups, global application settings, repository definitions, and GitHub authentication. Configuration is loaded from `~/.pyrite/config.yaml` (or `$PYRITE_CONFIG_DIR`), with per-KB overrides in each KB's `kb.yaml` file and environment variable fallbacks.
 
-A repo-local `.pyrite/config.yaml` found by searching up from the cwd (the ADR-0032 worktree registry) is untrusted: `load_config` reads only the `_UNTRUSTED_*_KEYS` allowlist from it (KB registry entries inside its tree, `index_path` inside its tree, a few switches) and warns about the rest; credentials always come from `trusted_config_dir()`. `~/.pyrite` and an explicit `PYRITE_CONFIG_DIR`/`PYRITE_DATA_DIR` are trusted in full.
+A repo-local `.pyrite/config.yaml` found by searching up from the cwd (the [[adr-0032]] worktree registry) is untrusted: `load_config` reads only the `_UNTRUSTED_*_KEYS` allowlist from it (KB registry entries inside its tree, `index_path` inside its tree, a few switches) and warns about the rest; credentials always come from `trusted_config_dir()`. `~/.pyrite` and an explicit `PYRITE_CONFIG_DIR`/`PYRITE_DATA_DIR` are trusted in full.
 
 ## Key Files
 
@@ -62,7 +62,7 @@ Configuration for a subscribed remote KB with `url`, `local_path`, `auto_sync`, 
 - YAML serialization uses `pyrite.utils.yaml` wrappers around `ruamel.yaml`, not the stdlib `yaml` module.
 - `KBConfig.kb_type` is a free-form string for extensibility; the `KBType` enum exists only for legacy compatibility.
 - Ephemeral KBs are tracked via `ephemeral`, `ttl`, and `created_at_ts` fields and garbage-collected by `KBService.gc_ephemeral_kbs()`.
-- The `shortname` field on `KBConfig` enables concise cross-KB wikilink syntax (`[[shortname:entry-id]]`) and nothing else (#952, ADR-0049 Q3): the link prefix is looked up among the caller's readable KBs only, by `readable_kb_named(name, readable_kbs=...)` (full name, then shortname; `readable_kb_with_shortname` is its second step) -- scoped methods, `readable_kbs` a required keyword, the implementation `services/kb_resolver` delegates to and the index uses to store the KB a link names (ADR-0049 Q3); the unscoped `kb_name_for`/`get_kb_by_shortname` are gone; every `kb` parameter, `-k` and `kb_name` takes the full name, and a shortname there is refused by the one resolver, `services/kb_resolver.py`, with the full name suggested. `require_kb(name, db=None)` is that resolver for a caller with no scope: a blank name is `ValidationError`, an unknown one `KBNotFoundError` with `did_you_mean`, and with `db` a KB registered after the config was loaded is found (#925).
+- KB name and shortname resolution uses [[kb-resolver]]; link prefixes resolve only among readable KBs.
 
 ## Consumers
 
@@ -76,3 +76,8 @@ Configuration for a subscribed remote KB with `url`, `local_path`, `auto_sync`, 
 - [[kb-service]] -- primary consumer of `PyriteConfig`
 - [[storage-layer]] -- `PyriteDB` path comes from `Settings.index_path`
 - [[rest-api]] -- injects config into FastAPI dependency chain
+
+## Decided, not yet built
+
+- [[adr-0039]] decisions 1–3, 5–6 and 8–11: `PyriteConfig`/`save_config` still combine registry, policy and stored settings rather than expose the decided read-only operator-file catalog.
+- [[adr-0043]] decision 5, dependent on [[adr-0041]]: today's KB role/config helpers still support KB-admin and server-side registry changes.

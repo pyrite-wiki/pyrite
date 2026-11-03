@@ -51,7 +51,7 @@ Lazy-loaded plugin system using Python entry points for discovery and a structur
 
 ## Hooks and writes
 
-A `before_save` hook may refuse a write by raising. On update its changes are ignored (ADR-0042 decision 4); only create keeps them. An `after_save` hook never writes another entry.
+A `before_save` hook may refuse a write by raising. On update its changes are ignored ([[adr-0042]] decision 4); only create keeps them. An `after_save` hook never writes another entry.
 
 ## Capabilities
 
@@ -62,3 +62,7 @@ Entry types, CLI commands, MCP tools, DB schema (columns + tables), relationship
 - [[pyrite-plugin-protocol]] — the protocol definition
 - [[mcp-server]] — MCP tool registration from plugins
 - [[software-kb-extension]] — canonical plugin implementation
+
+## Decided, not yet built
+
+- [[adr-0045]] decisions 4–6: plugin discovery still registers entry classes and hooks through `PluginRegistry`; the complete structural protocol interface is not yet the registration contract.

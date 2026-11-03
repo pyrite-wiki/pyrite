@@ -13,7 +13,7 @@ owner: core
 
 The one resolver from a caller's KB string to one KB, a KB set, or one refusal. Every surface asks it and none decides on its own: REST through `pyrite/server/authz.py` (`resolve_named_kb`) and `AccessPolicy`, MCP in `_kb_refusal` (`pyrite/server/mcp_server.py:415`) at the dispatch, prompt and resource chokepoints, the CLI through `cli.context.require_kb`, and services through `PyriteConfig.require_kb` (`pyrite/config.py:519`).
 
-The rule it keeps is [[adr-0049]] (the URL names the KB; scope, an address and a link's meaning are three things each decided once, with ADR-0037 §4 behind the refusal). The module docstring states the cases: a blank name names no KB; a full name the caller may read is that KB; anything else is one `KBNotFoundError`, with the same answer for an unknown and an unreadable KB, and a shortname is link syntax only. `readable_kbs` is a required keyword, so forgetting it is a `TypeError`, never "see everything".
+The rule it keeps is [[adr-0049]] (the URL names the KB; scope, an address and a link's meaning are three things each decided once, with [[adr-0037]] §4 behind the refusal). The module docstring states the cases: a blank name names no KB; a full name the caller may read is that KB; anything else is one `KBNotFoundError`, with the same answer for an unknown and an unreadable KB, and a shortname is link syntax only. `readable_kbs` is a required keyword, so forgetting it is a `TypeError`, never "see everything".
 
 ## Public functions (line numbers on this branch)
 
