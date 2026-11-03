@@ -804,7 +804,14 @@
       {
         "created": false,
         "error": "title is required",
-        "error_code": "VALIDATION_FAILED"
+        "error_code": "VALIDATION_FAILED",
+        "errors": [
+          {
+            "field": "title",
+            "message": "title is required",
+            "rule": "required"
+          }
+        ]
       }
     ],
     "total": 1
@@ -816,7 +823,14 @@
       {
         "created": false,
         "error": "title is required",
-        "error_code": "VALIDATION_FAILED"
+        "error_code": "VALIDATION_FAILED",
+        "errors": [
+          {
+            "field": "title",
+            "message": "title is required",
+            "rule": "required"
+          }
+        ]
       }
     ],
     "total": 1
@@ -828,7 +842,14 @@
       {
         "created": false,
         "error": "title is required",
-        "error_code": "VALIDATION_FAILED"
+        "error_code": "VALIDATION_FAILED",
+        "errors": [
+          {
+            "field": "title",
+            "message": "title is required",
+            "rule": "required"
+          }
+        ]
       }
     ],
     "total": 1

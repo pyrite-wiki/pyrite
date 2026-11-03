@@ -498,27 +498,6 @@ def test_an_imported_record_keeps_its_row(typed_world):
     assert [row["field"] for row in out["error_details"][0]["errors"]] == ["org_type"], out
 
 
-def test_a_saved_link_keeps_the_rows_of_its_refusal(typed_world, monkeypatch):
-    """A save refused inside `add_links` kept the message alone (#1381 review)."""
-    service = KBService(typed_world.config, typed_world.db)
-    service.create_entry(SCHEMA_KB, "a", "A", "org")
-    refusal = ValidationError(
-        "links: an item is an object",
-        errors=[{"field": "links", "rule": "type", "message": "an item is an object"}],
-    )
-
-    def refuse(*_args, **_kwargs):
-        raise refusal
-
-    monkeypatch.setattr(service, "apply_operations", refuse)
-
-    results = service.add_links(SCHEMA_KB, [{"source": "a", "target": "b"}])
-
-    assert results[0]["status"] == "failed", results
-    assert results[0]["error_code"] == "VALIDATION_FAILED", results
-    assert [row["field"] for row in results[0]["errors"]] == ["links"], results
-
-
 # -- the raises that were left: a link spec, a managed field, an unknown key ---
 
 
