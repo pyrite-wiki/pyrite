@@ -22,6 +22,8 @@ from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
 from pyrite.storage.repository import KBRepository
 
+from tests.cli_help import plain
+
 runner = CliRunner()
 
 KB = "qa-run"
@@ -141,4 +143,4 @@ def test_check_urls_refuses_a_negative_sample() -> None:
     result = runner.invoke(qa_app, ["check-urls", KB, "--sample", "-1"])
 
     assert result.exit_code == 2, result.output
-    assert "Invalid value" in result.output
+    assert "Invalid value" in plain(result.output)
