@@ -304,22 +304,34 @@ the CLI:
 }
 ```
 
-Every row carries `field` and `rule`, on `SCHEMA_VIOLATION` too: the schema
-path's own rows name the check that refused (`field_select`, `field_range`,
-`required`, ...), and a plugin validator's rows are copied as the plugin wrote
-them. A row from the entry model also carries
+Every row carries `field`; a row Pyrite itself builds also carries `rule`, on
+`SCHEMA_VIOLATION` too: the schema path's own rows name the check that refused
+(`field_select`, `field_range`, `required`, ...). A plugin validator's rows are
+copied as the plugin wrote them, so a plugin that sends only `{field, message}`
+contributes a row without `rule`. A row from the entry model also carries
 `message` — the sentence that reaches `error`, so a caller never has to parse
 it — and `expected` when the fix is mechanical; a row from the KB schema or a
-plugin validator carries `expected` and, where the rule knows it, `got`, which
-is the shape `SCHEMA_VIOLATION` already documents. `got` and `expected` are
+plugin validator carries `expected` and, where the rule knows it, `got`: the
+allowed-list/value pair a `SCHEMA_VIOLATION` row has always carried. A row from
+the KB schema's enum pass also names `origin` (`field` for a field's own
+`options:`/`values:` list, `rule` for a `validation.rules` entry), `severity`
+(`error`, or `warning` when the field has `allow_other: true`), and
+`allow_other: true` on such a field. `got` and `expected` are
 always JSON-safe: a date written without quotes in frontmatter arrives as its
 ISO string (`"2026-01-01"`), and a non-finite float as its text (`"inf"`), so
-an unquoted value cannot turn the refusal into an unrenderable answer. Several
-rows come back when several fields are refused, in the model's own order. A
+an unquoted value cannot turn the refusal into an unrenderable answer. A
+refusal that names one field carries one row — a frontmatter key the entry type
+does not declare, the first managed spelling a create finds, a bulk link spec
+missing `source` or `target`, a required frontmatter key that is absent. Several
+rows come back when one pass refuses several fields — the entry model's own
+validation, or a plugin validator that reports a list — in the order that pass
+reports them. A
 refusal that is not about a field carries no `errors` key at all: the key is
 absent, never empty. In a bulk answer the rows travel on the record they
 refused, not at the top: `results[i].errors` for `kb_bulk_create` and
-`links bulk-create`, `error_details[i].errors` for an import.
+`links bulk-create`, `error_details[i].errors` for an import, and an
+`entity_errors[i].errors` row for the journalism-investigation setup tools that
+create several entities at once.
 
 **Whole-request refusals (REST).** Two refusals stop an import, or any
 request, before a record is read:

@@ -142,6 +142,47 @@ class TestPipelineRefusalsCarryRows:
             {"field": "target", "rule": "required", "message": "missing required field 'target'"}
         ]
 
+    def test_an_envelope_key_no_parser_reads_names_itself(self, event_kb):
+        """`metadata.metadata` is not a field (#1284 round 5, item 1).
+
+        The raise already said so in prose; it carried no row, so the one
+        surface that answers `errors` answered it with a sentence alone.
+        """
+        service = KBService(event_kb.config, event_kb.db)
+
+        with pytest.raises(ValidationError) as caught:
+            service.create_entry(
+                "ev", "bad-envelope", "Bad envelope", "note", "x", metadata={"metadata": {"x": 1}}
+            )
+
+        row = caught.value.errors[0]
+        assert (row["field"], row["rule"]) == ("metadata", "unknown_field")
+        assert "is not a field" in row["message"]
+
+    def test_an_update_path_no_parser_reads_names_itself(self, event_kb):
+        service = KBService(event_kb.config, event_kb.db)
+        service.create_entry("ev", "note-one", "Note one", "note", "x")
+
+        with pytest.raises(ValidationError) as caught:
+            service.update("note-one", "ev", {"metadata": {"metadata": {"x": 1}}})
+
+        row = caught.value.errors[0]
+        assert (row["field"], row["rule"]) == ("metadata", "unknown_field")
+        assert "is not a field" in row["message"]
+
+    def test_an_off_list_enum_value_names_the_field_and_the_list(self, event_kb):
+        """An update to an enum field answers a row, not only a sentence."""
+        service = KBService(event_kb.config, event_kb.db)
+        service.create_entry("ev", "an-event", "An event", "event", "x", date="2026-01-01")
+
+        with pytest.raises(ValidationError) as caught:
+            service.update_entry("an-event", "ev", status="not-a-status")
+
+        row = caught.value.errors[0]
+        assert (row["field"], row["rule"]) == ("status", "enum")
+        assert "confirmed" in row["expected"]
+        assert "not-a-status" in row["message"]
+
 
 class TestCliRefusal:
     def test_create_prints_the_field_in_json(self, event_kb):

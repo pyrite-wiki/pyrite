@@ -36,11 +36,12 @@ def refusal_http(exc: ValidationError) -> HTTPException:
     """
     code = exc.error_code
     detail: dict = {"code": code, "message": str(exc), "retryable": False}
-    # REST's write path built its own body, so it dropped the public extra
-    # fields the other two transports copy through ``refusal_fields``: the
-    # structured ``errors`` rows of a field refusal (#1284), and before them the
-    # ``candidate_kbs``/``did_you_mean`` that ``docs/json-contracts.md`` already
-    # promises for AMBIGUOUS and KB_NOT_FOUND. One mapper, three surfaces.
+    # REST's write path built its own body, so it copied only ``suggestion``
+    # and ``declared_types``: the structured ``errors`` rows of a field refusal
+    # (#1284) never reached the caller, and neither did the ``candidate_kbs``/
+    # ``did_you_mean`` an endpoint answers itself -- the central handler in
+    # ``server/errors.py`` already copies them for the refusals it sees. One
+    # mapper, three surfaces.
     detail.update(refusal_fields(exc))
     suggestion = getattr(exc, "suggestion", None)
     if suggestion:

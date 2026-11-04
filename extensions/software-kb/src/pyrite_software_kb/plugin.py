@@ -5,7 +5,7 @@ from collections.abc import Callable
 from datetime import UTC
 from typing import Any, ClassVar
 
-from pyrite.exceptions import PyriteError, SchemaViolationError, public_text
+from pyrite.exceptions import PyriteError, SchemaViolationError, public_text, refusal_fields
 from pyrite.plugins.capabilities import Capability
 from pyrite.plugins.scoping import kb_scope_clause
 
@@ -1833,7 +1833,12 @@ class SoftwareKBPlugin:
                 "deciders": args.get("deciders", []),
             }
         except PyriteError as exc:
-            return {"created": False, "error": _safe_error(exc), "error_code": exc.error_code}
+            return {
+                "created": False,
+                "error": _safe_error(exc),
+                "error_code": exc.error_code,
+                **refusal_fields(exc),
+            }
         finally:
             if should_close:
                 db.close()
@@ -3185,7 +3190,12 @@ class SoftwareKBPlugin:
                 "filename": _saved_filename(kb_config, saved),
             }
         except PyriteError as exc:
-            refused = {"created": False, "error": _safe_error(exc), "error_code": exc.error_code}
+            refused = {
+                "created": False,
+                "error": _safe_error(exc),
+                "error_code": exc.error_code,
+                **refusal_fields(exc),
+            }
             if isinstance(exc, SchemaViolationError):
                 schema = kb_config.kb_schema
                 if "work_log" not in schema.types:

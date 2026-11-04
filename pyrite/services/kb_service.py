@@ -2289,9 +2289,10 @@ class KBService:
                 field, _rest = field_at(cls, entry_type, path)
             except (NotAFieldError, ValueError) as e:
                 if in_envelope:
+                    message = f"Cannot create a {entry_type}: {e}"
                     raise ValidationError(
-                        f"Cannot create a {entry_type}: {e}",
-                        errors=getattr(e, "errors", None),
+                        message,
+                        errors=[{"field": key, "rule": "unknown_field", "message": message}],
                         suggestion=getattr(e, "suggestion", None),
                     ) from None
                 continue  # a custom top-level key: written as sent
@@ -2435,12 +2436,16 @@ class KBService:
             # emptied `metadata:` block goes with them, so no `metadata: {}`
             # the author never wrote appears (#1001 round 4, item 4).
             return Unset(("metadata",))
+        raw_path = getattr(op, "path", None)
         try:
-            field, rest = field_at(type(entry), entry.entry_type, getattr(op, "path", None))
-        except NotAFieldError as e:
-            raise ValidationError(f"Cannot update {entry_id!r}: {e}") from None
-        except ValueError as e:
-            raise ValidationError(f"Cannot update {entry_id!r}: {e}") from None
+            field, rest = field_at(type(entry), entry.entry_type, raw_path)
+        except (NotAFieldError, ValueError) as e:
+            message = f"Cannot update {entry_id!r}: {e}"
+            segments = raw_path if isinstance(raw_path, (tuple, list)) else ()
+            key = next((segment for segment in segments if isinstance(segment, str)), "")
+            raise ValidationError(
+                message, errors=[{"field": key, "rule": "unknown_field", "message": message}]
+            ) from None
 
         # `type`/`entry_type` and the empty key are never model attributes on
         # any entry (`type` is frontmatter-only; `entry_type` is a read-only
@@ -4560,7 +4565,18 @@ def _as_field_type(entry: Entry, key: str, value: Any) -> Any:
         return enum_type(value)
     except ValueError:
         allowed = ", ".join(str(member.value) for member in enum_type)
-        raise ValidationError(
+        message = (
             f"Cannot set {key}={value!r} on {entry.entry_type} '{entry.id}': "
             f"expected one of {allowed}."
+        )
+        raise ValidationError(
+            message,
+            errors=[
+                {
+                    "field": key,
+                    "rule": "enum",
+                    "message": message,
+                    "expected": [str(member.value) for member in enum_type],
+                }
+            ],
         ) from None
