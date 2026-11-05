@@ -200,7 +200,9 @@ def register_browse_commands(app: typer.Typer) -> None:
         kb_name: str | None = typer.Option(
             None, "--kb", "-k", help="Knowledge base to orient in. Omit to list the KBs."
         ),
-        recent: int = typer.Option(5, "--recent", "-r", help="Number of recent entries to include"),
+        recent: int = typer.Option(
+            5, "--recent", "-r", min=0, help="Number of recent entries to include"
+        ),
         detail: str | None = typer.Option(
             None,
             "--detail",

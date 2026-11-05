@@ -3345,6 +3345,8 @@ class KBService:
         existing caller's response is unchanged.
         """
         detail = self._orient_detail(detail)
+        if isinstance(recent_limit, bool) or not isinstance(recent_limit, int) or recent_limit < 0:
+            raise ValidationError("recent_limit must be non-negative")
         kb_config = self.require_kb(kb_name)
 
         total = self.count_entries(kb_name=kb_name)
