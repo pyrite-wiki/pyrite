@@ -500,17 +500,23 @@ def init_kb(
             )
         return
 
-    # Resolve preset: try plugin presets first, fall back to built-in
+    # Resolve preset: try plugin presets first, fall back to built-in.
+    # A preset supplied by a plugin registers with that plugin's KB type
+    # (e.g. "software"), so the plugin's validators run on the new KB;
+    # a built-in template, or one given via --schema-file, stays generic.
     preset = None
+    kb_type = "generic"
     if schema_file is not None:
         preset = load_yaml_file(schema_file)
     else:
         try:
             from ..plugins import get_registry
 
-            plugin_presets = get_registry().get_all_kb_presets()
+            registry = get_registry()
+            plugin_presets = registry.get_all_kb_presets()
             if template in plugin_presets:
                 preset = plugin_presets[template]
+                kb_type = registry.get_kb_type_for_preset(template) or "generic"
         except Exception:
             logger.warning(
                 "Failed to load plugin presets for template '%s'", template, exc_info=True
@@ -546,7 +552,7 @@ def init_kb(
         # Already registered, skip
         pass
     else:
-        kb_config = KBConfig(name=kb_name, path=path, kb_type="generic")
+        kb_config = KBConfig(name=kb_name, path=path, kb_type=kb_type)
         kb_config.load_kb_yaml()
         config.add_kb(kb_config)
         save_config(config)
