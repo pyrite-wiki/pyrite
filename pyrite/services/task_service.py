@@ -585,7 +585,7 @@ class TaskService:
         task_id: str,
         kb_name: str,
         message: str,
-        confidence: float = 0.0,
+        confidence: float | None = None,
         partial_evidence: list[str] | None = None,
     ) -> dict[str, Any]:
         """Append a timestamped checkpoint to a task."""
@@ -602,7 +602,7 @@ class TaskService:
 
         # Build checkpoint section
         section = f"\n\n## Checkpoint {timestamp}\n\n{message}"
-        if confidence > 0:
+        if confidence is not None:
             section += f"\n\n**Confidence**: {int(confidence * 100)}%"
         if partial_evidence:
             evidence_str = ", ".join(f"`{e}`" for e in partial_evidence)
@@ -614,7 +614,7 @@ class TaskService:
         agent_ctx = dict(getattr(entry, "agent_context", {}) or {})
         agent_ctx["last_checkpoint"] = timestamp
         agent_ctx["last_message"] = message
-        if confidence > 0:
+        if confidence is not None:
             agent_ctx["confidence"] = confidence
         if partial_evidence:
             existing = agent_ctx.get("evidence", [])
