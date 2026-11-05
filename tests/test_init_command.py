@@ -59,6 +59,38 @@ class TestInitCommand:
         assert (kb_path / "standards").is_dir()
         assert (kb_path / "runbooks").is_dir()
 
+    def test_init_software_template_registers_software_kb_type(self, init_env):
+        """Init with software template registers the KB as type software (#1405)."""
+        kb_path = init_env["tmpdir"] / "my-sw-kb"
+        config = init_env["config"]
+
+        with (
+            patch("pyrite.config.load_config", return_value=config),
+            patch("pyrite.config.save_config"),
+        ):
+            result = runner.invoke(test_app, ["--template", "software", "--path", str(kb_path)])
+
+        assert result.exit_code == 0, result.output
+        kb = config.get_kb("my-sw-kb")
+        assert kb is not None
+        assert kb.kb_type == "software"
+
+    def test_init_zettelkasten_template_registers_generic(self, init_env):
+        """Init with a built-in template still registers the KB as generic (#1405)."""
+        kb_path = init_env["tmpdir"] / "my-zk"
+        config = init_env["config"]
+
+        with (
+            patch("pyrite.config.load_config", return_value=config),
+            patch("pyrite.config.save_config"),
+        ):
+            result = runner.invoke(test_app, ["--template", "zettelkasten", "--path", str(kb_path)])
+
+        assert result.exit_code == 0, result.output
+        kb = config.get_kb("my-zk")
+        assert kb is not None
+        assert kb.kb_type == "generic"
+
     def test_init_zettelkasten_template(self, init_env):
         """Init with zettelkasten template creates expected directories."""
         kb_path = init_env["tmpdir"] / "my-zk"
