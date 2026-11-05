@@ -510,6 +510,53 @@ class TestCheckpointTask:
         assert entry.agent_context["last_message"] == "Progress"
         assert "last_checkpoint" in entry.agent_context
 
+    def test_checkpoint_with_confidence_zero_overwrites_previous(self, task_env):
+        svc = task_env["svc"]
+        created = svc.create_task(kb_name="test-tasks", title="Zero confidence task")
+        entry_id = created["entry_id"]
+
+        svc.checkpoint_task(entry_id, "test-tasks", "First pass", confidence=0.8)
+        result = svc.checkpoint_task(
+            entry_id, "test-tasks", "Found a blocker, not confident", confidence=0
+        )
+        assert result["confidence"] == 0
+
+        repo = KBRepository(task_env["kb_config"])
+        entry = repo.load(entry_id)
+        assert entry.agent_context["confidence"] == 0
+        assert "**Confidence**: 0%" in entry.body
+
+    def test_checkpoint_without_confidence_records_none(self, task_env):
+        svc = task_env["svc"]
+        created = svc.create_task(kb_name="test-tasks", title="Omitted confidence task")
+        entry_id = created["entry_id"]
+
+        svc.checkpoint_task(entry_id, "test-tasks", "First pass", confidence=0.8)
+        result = svc.checkpoint_task(entry_id, "test-tasks", "Still going")
+        assert result["confidence"] is None
+
+        repo = KBRepository(task_env["kb_config"])
+        entry = repo.load(entry_id)
+        assert entry.agent_context["confidence"] == 0.8
+        assert entry.body.count("**Confidence**") == 1
+
+    @pytest.mark.parametrize(
+        ("confidence", "expected_line"),
+        [(1.0, "**Confidence**: 100%"), (0.01, "**Confidence**: 1%")],
+    )
+    def test_checkpoint_confidence_edge_values(self, task_env, confidence, expected_line):
+        svc = task_env["svc"]
+        created = svc.create_task(kb_name="test-tasks", title=f"Edge confidence task {confidence}")
+        entry_id = created["entry_id"]
+
+        result = svc.checkpoint_task(entry_id, "test-tasks", "Edge", confidence=confidence)
+        assert result["confidence"] == confidence
+
+        repo = KBRepository(task_env["kb_config"])
+        entry = repo.load(entry_id)
+        assert entry.agent_context["confidence"] == confidence
+        assert expected_line in entry.body
+
 
 class TestDerivedParentCompletion:
     """The parent rollup no longer writes (ADR-0042 decision 4); completion is

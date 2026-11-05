@@ -2010,7 +2010,7 @@ class PyriteMCPServer:
                 task_id=args["task_id"],
                 kb_name=args["kb_name"],
                 message=args["message"],
-                confidence=args.get("confidence", 0.0),
+                confidence=args.get("confidence"),
                 partial_evidence=args.get("partial_evidence"),
             )
         except (PyriteError, ValueError) as e:
