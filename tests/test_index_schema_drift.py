@@ -561,7 +561,9 @@ def test_a_non_constant_sql_default_is_refused_only_on_rows(default, rows, tmp_p
 @pytest.mark.control(
     reason="literal SQL defaults always added in place; guards the classifier against over-refusal"
 )
-@pytest.mark.parametrize("default", ["0", "'active'", "((1))", "NULL", "TRUE"])
+@pytest.mark.parametrize(
+    "default", ["0", "'active'", "((1))", "NULL", "TRUE", "x'00'", "0x10", "1e3", "-1", ".5"]
+)
 def test_a_constant_sql_default_is_added_to_a_table_with_rows(default, tmp_path):
     """A literal default, even parenthesised, is what SQLite accepts in place."""
     from sqlalchemy import Column, Integer, MetaData, Table, text
