@@ -12,7 +12,8 @@
   `links bulk-create` results, REST `error_details` items -- and the link, update,
   `--field` and unknown-key refusals that named a field in prose now carry a row
   too, as do an enum value refused on an update and an update or create path no
-  parser reads. The software-kb and journalism-investigation tool handlers keep
+  parser reads. The software-kb, social and journalism-investigation tool handlers keep
   those rows on the record they refused (`results[i].errors`,
-  `entity_errors[i].errors`) instead of answering a code and a sentence. See
+  `entity_errors[i].errors`, `entries[i].errors`) instead of answering a code
+  and a sentence. See
   `docs/json-contracts.md`.

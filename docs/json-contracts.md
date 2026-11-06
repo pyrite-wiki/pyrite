@@ -331,7 +331,8 @@ absent, never empty. In a bulk answer the rows travel on the record they
 refused, not at the top: `results[i].errors` for `kb_bulk_create` and
 `links bulk-create`, `error_details[i].errors` for an import, and an
 `entity_errors[i].errors` row for the journalism-investigation setup tools that
-create several entities at once.
+create several entities at once, or an `entries[i].errors` row for the edges
+`investigation_bulk_edges` creates.
 
 **Whole-request refusals (REST).** Two refusals stop an import, or any
 request, before a record is read:

@@ -600,3 +600,34 @@ def test_an_unknown_write_key_gets_one_row_per_key(typed_world):
     body = response.json()["detail"]
     assert [row["field"] for row in body["errors"]] == ["bogus"], body
     assert body["errors"][0]["rule"] == "unknown_field", body
+
+
+def test_a_plugin_tool_keeps_the_row_the_service_refused(cli_world, tmp_path):
+    """The row survives a plugin handler, which catches the refusal itself.
+
+    `sw_create_adr` is the entry point a caller actually reaches: the handler
+    builds the create and catches `PyriteError` on its own, so the row only
+    arrives because the handler copies `refusal_fields`. The KB's `adr` type
+    requires `owner`, and the tool never sets it, so the refusal is the
+    schema's `required` row (#1381 review, item 2).
+    """
+    from pyrite.config import KBConfig
+    from pyrite.plugins import get_registry
+    from pyrite_software_kb.plugin import SoftwareKBPlugin
+
+    get_registry().register(SoftwareKBPlugin())
+    kb_path = tmp_path / "arch"
+    kb_path.mkdir()
+    (kb_path / "kb.yaml").write_text(
+        "name: arch\nkb_type: generic\ntypes:\n  adr:\n    fields:\n"
+        "      owner: {type: text, required: true}\nvalidation:\n  enforce: true\n",
+        encoding="utf-8",
+    )
+    world = cli_world(kbs=[KBConfig(name="arch", path=kb_path, kb_type="generic")])
+
+    result = world.mcp()._dispatch_tool("sw_create_adr", {"kb_name": "arch", "title": "Decision"})
+
+    assert result["created"] is False, result
+    assert all(isinstance(row, dict) for row in result["errors"]), result
+    assert "owner" in [row["field"] for row in result["errors"]], result
+    assert any(row.get("rule") for row in result["errors"]), result

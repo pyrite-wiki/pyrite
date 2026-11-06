@@ -122,7 +122,7 @@ def create_investigation(
             },
         )
     except PyriteError as e:
-        return {"error": public_text(e), "error_code": e.error_code}
+        return {"error": public_text(e), "error_code": e.error_code, **refusal_fields(e)}
 
     result: dict[str, Any] = {"created": entry_id, "title": title}
 
