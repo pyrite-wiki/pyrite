@@ -56,11 +56,11 @@ separate: #718's explicit-upgrade mode must refuse before the first write.
   a server default cannot be added in place, so it refuses every old index:
   give it a server default, or a migration that rebuilds the table. A
   non-constant default is addable only to an empty table, so the repair cannot
-  add it to an index that has rows and refuses instead. Such a column reaches
-  old indexes only through a numbered migration, which adds it without the
-  default and backfills it; the repair does not do that silently, since the
-  resulting DDL would differ from the model (#1318). The repair adds a column
-  without its `REFERENCES` clause. Declare a new index on the model
+  add it to an index that has rows and refuses instead (#1318). A migration
+  that adds such a column rebuilds the table too (as v24 does for
+  `starred_entry`), so the column keeps its DEFAULT: added without one, every
+  later insert that omits it would store NULL. The repair adds a column without
+  its `REFERENCES` clause. Declare a new index on the model
   (`__table_args__`) so the repair can create it too.
 - Every `except` under `pyrite/` that turns a SQLite, SQLAlchemy or
   `MigrationError` fault into a Pyrite error raises what `storage_error_from`
