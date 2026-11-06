@@ -7,7 +7,7 @@ efficient single-pass indexing.
 
 from typing import Any
 
-from pyrite.exceptions import PyriteError
+from pyrite.exceptions import PyriteError, refusal_fields
 from pyrite.schema import generate_entry_id
 from pyrite.utils.errors import public_text
 
@@ -170,8 +170,9 @@ def create_edge_batch(
                     "title": title,
                     "type": edge_type,
                     "status": "error",
-                    "errors": [public_text(e)],
+                    "error": public_text(e),
                     "error_code": e.error_code,
+                    **refusal_fields(e),
                 }
             )
             continue

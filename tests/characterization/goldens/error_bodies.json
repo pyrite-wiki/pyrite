@@ -795,18 +795,36 @@
     "cli": {
       "error": "schema violation",
       "error_code": "SCHEMA_VIOLATION",
+      "errors": [
+        {
+          "error": "required",
+          "field": "title"
+        }
+      ],
       "outcome": "error",
       "retryable": false
     },
     "mcp": {
       "error": "schema violation",
       "error_code": "SCHEMA_VIOLATION",
+      "errors": [
+        {
+          "error": "required",
+          "field": "title"
+        }
+      ],
       "retryable": false
     },
     "rest": {
       "body": {
         "detail": {
           "code": "SCHEMA_VIOLATION",
+          "errors": [
+            {
+              "error": "required",
+              "field": "title"
+            }
+          ],
           "message": "schema violation",
           "retryable": false
         }

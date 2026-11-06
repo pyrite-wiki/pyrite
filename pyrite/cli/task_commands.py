@@ -132,28 +132,44 @@ def _parse_task_create_fields(
     fields: dict[str, Any] = {}
     for fv in field or []:
         if "=" not in fv:
-            raise ValidationError(f"--field must be key=value, got '{fv}'")
+            message = f"--field must be key=value, got '{fv}'"
+            raise ValidationError(
+                message, errors=[{"field": "--field", "rule": "format", "message": message}]
+            )
         k, v = fv.split("=", 1)
         if k in _FIELD_OWN_OPTION:
+            message = f"--field {k}=... is refused: use {_FIELD_OWN_OPTION[k]} instead."
             raise ValidationError(
-                f"--field {k}=... is refused: use {_FIELD_OWN_OPTION[k]} instead."
+                message, errors=[{"field": k, "rule": "managed", "message": message}]
             )
         if k == "status":
-            raise ValidationError(
+            message = (
                 "--field status=... is refused: a new task is always created open; "
                 "use `task update --status` to change it."
             )
-        if k in _FIELD_CREATE_OWNED:
-            raise ValidationError(f"--field {k}=... is refused: " + _FIELD_CREATE_OWNED_HINT[k])
-        if k in _FIELD_CREATE_ENTRY_COLLISION:
             raise ValidationError(
+                message, errors=[{"field": k, "rule": "managed", "message": message}]
+            )
+        if k in _FIELD_CREATE_OWNED:
+            message = f"--field {k}=... is refused: " + _FIELD_CREATE_OWNED_HINT[k]
+            raise ValidationError(
+                message, errors=[{"field": k, "rule": "managed", "message": message}]
+            )
+        if k in _FIELD_CREATE_ENTRY_COLLISION:
+            message = (
                 f"--field {k}=... is refused: this name collides with a parameter "
                 f"`task create` itself needs."
             )
-        if k in _FIELD_CREATE_NEVER_TAKES_EFFECT:
             raise ValidationError(
+                message, errors=[{"field": k, "rule": "managed", "message": message}]
+            )
+        if k in _FIELD_CREATE_NEVER_TAKES_EFFECT:
+            message = (
                 f"--field {k}=... is refused: a freshly created task cannot carry this "
                 f"value; it would report success and set nothing."
+            )
+            raise ValidationError(
+                message, errors=[{"field": k, "rule": "managed", "message": message}]
             )
         fields[k] = _parse_field_value(v, _field_type_for(config, kb_name, "task", k))
     return fields

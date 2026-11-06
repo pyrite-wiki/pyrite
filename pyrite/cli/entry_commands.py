@@ -33,6 +33,7 @@ from ..exceptions import (
     PyriteError,
     UndeclaredTypeError,
     ValidationError,
+    refusal_row_text,
 )
 from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_cli_fields, project_fields
@@ -125,7 +126,11 @@ def _parse_link_option(spec: str) -> tuple[str, str]:
     try:
         target, relation, _note = check_link_spec(target, relation)
     except ValidationError as e:
-        raise ValidationError(f"--link '{spec}': {e}") from None
+        raise ValidationError(
+            f"--link '{spec}': {e}",
+            errors=getattr(e, "errors", None),
+            suggestion=getattr(e, "suggestion", None),
+        ) from None
     return target, relation
 
 
@@ -364,11 +369,17 @@ def register_entry_commands(app: typer.Typer) -> None:
 
         # Require title for non-template mode
         if title is None:
-            raise ValidationError("--title is required (unless using --template)")
+            message = "--title is required (unless using --template)"
+            raise ValidationError(
+                message, errors=[{"field": "title", "rule": "required", "message": message}]
+            )
 
         # Require kb for non-template mode
         if kb_name is None:
-            raise ValidationError("--kb is required (unless using --template)")
+            message = "--kb is required (unless using --template)"
+            raise ValidationError(
+                message, errors=[{"field": "kb", "rule": "required", "message": message}]
+            )
 
         # Every --link is parsed and checked before anything is written: a
         # malformed one refuses the create instead of leaving an entry behind
@@ -399,7 +410,11 @@ def register_entry_commands(app: typer.Typer) -> None:
             if field:
                 for fv in field:
                     if "=" not in fv:
-                        raise ValidationError(f"--field must be key=value, got '{fv}'")
+                        message = f"--field must be key=value, got '{fv}'"
+                        raise ValidationError(
+                            message,
+                            errors=[{"field": "--field", "rule": "format", "message": message}],
+                        )
                     k, v = fv.split("=", 1)
                     extra[k] = _parse_field_value(
                         v, _field_type_for(config, kb_name, entry_type, k)
@@ -510,7 +525,14 @@ def register_entry_commands(app: typer.Typer) -> None:
 
         errors = result.get("errors", [])
         if validate_only and errors:
-            raise ValidationError("Validation failed: " + "; ".join(str(e) for e in errors))
+            # The service answers rows, not a sentence, so the sentence is built
+            # here -- `str(row)` printed the dict where the message belonged. The
+            # rows travel with the refusal so a caller can still read the field
+            # and the rule (#1381 review).
+            raise ValidationError(
+                "Validation failed: " + "; ".join(refusal_row_text(row) for row in errors),
+                errors=[row for row in errors if isinstance(row, dict)] or None,
+            )
 
         warnings = list(result.get("warnings", []))
         data: dict[str, Any] = {
@@ -606,7 +628,11 @@ def register_entry_commands(app: typer.Typer) -> None:
             if field:
                 for fv in field:
                     if "=" not in fv:
-                        raise ValidationError(f"--field must be key=value, got '{fv}'")
+                        message = f"--field must be key=value, got '{fv}'"
+                        raise ValidationError(
+                            message,
+                            errors=[{"field": "--field", "rule": "format", "message": message}],
+                        )
                     k, v = fv.split("=", 1)
                     updates[k] = _parse_field_value(
                         v, _field_type_for(config, kb_name, entry_type, k)
@@ -619,7 +645,11 @@ def register_entry_commands(app: typer.Typer) -> None:
                 out: dict[str, Any] = {}
                 for fv in pairs or []:
                     if "=" not in fv:
-                        raise ValidationError(f"expected key=value, got '{fv}'")
+                        message = f"expected key=value, got '{fv}'"
+                        raise ValidationError(
+                            message,
+                            errors=[{"field": "--field", "rule": "format", "message": message}],
+                        )
                     k, v = fv.split("=", 1)
                     value = _parse_field_value(v, _field_type_for(config, kb_name, entry_type, k))
                     out.setdefault(k, []).extend(value if isinstance(value, list) else [value])

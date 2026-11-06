@@ -694,7 +694,12 @@ async def import_entries(
                 }
             )
         else:
-            errors.append({"title": title, "error": r["error"], "error_code": r["error_code"]})
+            detail = {"title": title, "error": r["error"], "error_code": r["error_code"]}
+            if r.get("errors"):
+                # Rows stay per record: the top-level `errors` is a count, so a
+                # row belongs beside the record it refused (#1381 review).
+                detail["errors"] = r["errors"]
+            errors.append(detail)
 
     return {
         "imported": len(created),

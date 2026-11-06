@@ -424,7 +424,7 @@ def test_cli_import_dry_run_works_on_a_read_only_kb(env):
 
 
 def test_bulk_create_missing_title_is_a_validation_refusal(env, mcp):
-    """#358's per-item title failure now carries the pipeline's code too."""
+    """#358's per-item title failure now carries the pipeline's code and row too."""
     res = mcp._dispatch_tool(
         "kb_bulk_create",
         {"kb_name": KB, "entries": [{"entry_type": "person", "body": "untitled"}]},
@@ -433,6 +433,8 @@ def test_bulk_create_missing_title_is_a_validation_refusal(env, mcp):
         "created": False,
         "error": "title is required",
         "error_code": "VALIDATION_FAILED",
+        # The row the refusal built travels with the record (#1381 review).
+        "errors": [{"field": "title", "rule": "required", "message": "title is required"}],
     }, res
 
 

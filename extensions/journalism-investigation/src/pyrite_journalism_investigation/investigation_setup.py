@@ -7,7 +7,7 @@ Provides functions for:
 
 from typing import Any
 
-from pyrite.exceptions import PyriteError
+from pyrite.exceptions import PyriteError, refusal_fields
 from pyrite.schema import generate_entry_id
 from pyrite.utils.errors import public_text
 
@@ -122,7 +122,7 @@ def create_investigation(
             },
         )
     except PyriteError as e:
-        return {"error": public_text(e), "error_code": e.error_code}
+        return {"error": public_text(e), "error_code": e.error_code, **refusal_fields(e)}
 
     result: dict[str, Any] = {"created": entry_id, "title": title}
 
@@ -146,7 +146,14 @@ def create_investigation(
                 created.append(ent)
             except PyriteError as e:
                 # One entity refused is reported; the rest still go ahead.
-                errors.append({**ent, "error": public_text(e), "error_code": e.error_code})
+                errors.append(
+                    {
+                        **ent,
+                        "error": public_text(e),
+                        "error_code": e.error_code,
+                        **refusal_fields(e),
+                    }
+                )
         result["entities_created"] = created
         result["entities_linked"] = linked
         if errors:
