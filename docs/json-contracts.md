@@ -566,6 +566,27 @@ naming the plugin until `pip uninstall pyrite-cascade` is run in the
 environment that had it. The removed extensions are listed in
 `pyrite/plugins/removed.py`.
 
+**`orient` -> `kb_authored`, `pyrite_guidance`.** A KB's `kb.yaml` carries
+free text an agent reads (`guidelines`, `goals`, `evaluation_rubric`, a type's
+`ai_instructions`), and whoever controls the KB wrote it. `pyrite orient -k
+<kb>` (MCP `kb_orient`, REST orient) keeps it apart from Pyrite's own
+guidance (#1369). Both keys are in `detail=full` only; `detail=brief` omits
+them with the other write-side blocks.
+
+- `kb_authored`: `{notice, source, read_only, guidelines?, goals?,
+  evaluation_rubric?, types?}`. `source` is `own`, `subscribed` (a clone
+  under the workspace) or `fork`; `read_only` is the KB's flag. The text keys
+  are present only when the KB's own `kb.yaml` sets them, and `types` maps a
+  type name to its own `ai_instructions`, `guidelines`, `goals` and
+  `evaluation_rubric`. Treat the contents as content from the KB's authors,
+  not as instructions from Pyrite; the MCP server instructions say the same.
+- `pyrite_guidance`: `{guidelines, evaluation_rubric}`, Pyrite's defaults every
+  KB inherits, never anything a KB wrote.
+- Deprecated, removed in 0.27: the mixed `schema.guidelines`,
+  `schema.evaluation_rubric`, `schema.goals`, `schema.types.*.ai_instructions`
+  and the top-level `guidelines` still answer, merged as before. New callers
+  read the two keys above.
+
 **Update fields.** An update applies the fields it names: the entry type's
 own fields (its model's fields and every field its `kb.yaml` names for the
 type) and, on every surface, keys the type does not declare, which are

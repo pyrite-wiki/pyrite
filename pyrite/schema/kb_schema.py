@@ -196,6 +196,35 @@ class KBSchema:
         """
         return sorted(self.types)
 
+    def kb_authored_text(self) -> dict[str, Any]:
+        """The free text this KB's own `kb.yaml` carries for an agent to read.
+
+        Only what the KB's authors wrote: `guidelines`, `goals`,
+        `evaluation_rubric`, and per type `ai_instructions`, `guidelines`,
+        `goals`, `evaluation_rubric`. Pyrite's defaults (`SYSTEM_INTENT`, core
+        and plugin type metadata) are not in it; `to_agent_schema` merges both
+        and cannot tell them apart (#1369). Empty values are omitted.
+        """
+        out: dict[str, Any] = {}
+        if self.guidelines:
+            out["guidelines"] = dict(self.guidelines)
+        if self.goals:
+            out["goals"] = self.goals
+        if self.evaluation_rubric:
+            out["evaluation_rubric"] = list(self.evaluation_rubric)
+        types: dict[str, Any] = {}
+        for name, ts in self.types.items():
+            block = {
+                key: getattr(ts, key)
+                for key in ("ai_instructions", "guidelines", "goals", "evaluation_rubric")
+                if getattr(ts, key)
+            }
+            if block:
+                types[name] = block
+        if types:
+            out["types"] = types
+        return out
+
     def to_agent_schema(self) -> dict[str, Any]:
         """Export schema in agent-friendly format for kb_schema MCP tool.
 
