@@ -1,0 +1,1 @@
+- `kb create --ephemeral --ttl` now refuses negative values with a usage error (exit 2), instead of creating a KB that is already expired (#1407).
