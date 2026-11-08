@@ -208,3 +208,19 @@ class TestCollectionTarget:
         text = _say(result)
         assert "--target" in text
         assert "--format" not in text
+
+
+class TestCollectionDepth:
+    def test_negative_depth_is_a_usage_error_and_writes_nothing(self, config, tmp_path):
+        out = tmp_path / "x"
+        result = _export(config, *COLLECTION, "-o", str(out), "--depth", "-1")
+        assert result.exit_code == 2
+        assert "--depth" in _say(result)
+        assert not out.exists()
+
+    @pytest.mark.parametrize("depth", ["0", "1"])
+    def test_zero_and_positive_depth_still_work(self, config, tmp_path, depth):
+        out = tmp_path / "d"
+        result = _export(config, *COLLECTION, "-o", str(out), "--depth", depth)
+        assert result.exit_code == 0, result.output
+        assert (out / "_manifest.md").exists()

@@ -64,7 +64,7 @@ def export_collection(
     ),
     sources: str = typer.Option("public", "--sources", help="Source mode: public, full, redact"),
     depth: int = typer.Option(
-        0, "--depth", help="Link-following depth (0=no following, 1=direct links, etc.)"
+        0, "--depth", min=0, help="Link-following depth (0=no following, 1=direct links, etc.)"
     ),
     title: str = typer.Option(None, "--title", help="Title for the manifest document"),
     target: str = typer.Option(
