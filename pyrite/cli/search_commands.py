@@ -92,7 +92,7 @@ def register_search_command(app: typer.Typer):
                 "'readiness') are NOT reachable via this flag."
             ),
         ),
-        limit: int = typer.Option(20, "--limit", "-n", help="Max results"),
+        limit: int = typer.Option(20, "--limit", "-n", min=1, help="Max results"),
         mode: str = typer.Option(
             None, "--mode", "-m", help="Search mode: keyword, semantic, hybrid"
         ),
