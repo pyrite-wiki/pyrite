@@ -1,0 +1,1 @@
+- Timeline `--limit` and `--min-importance` now refuse out-of-range values as usage errors (#1392).

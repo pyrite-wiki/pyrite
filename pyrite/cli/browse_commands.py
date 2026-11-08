@@ -447,8 +447,10 @@ def register_browse_commands(app: typer.Typer) -> None:
         kb_name: str = typer.Option(None, "--kb", "-k", help="Filter to a specific knowledge base"),
         date_from: str = typer.Option(None, "--from", help="Start date (YYYY-MM-DD)"),
         date_to: str = typer.Option(None, "--to", help="End date (YYYY-MM-DD)"),
-        min_importance: int = typer.Option(1, "--min-importance", help="Minimum importance (1-10)"),
-        limit: int = typer.Option(50, "--limit", "-n", help="Max results"),
+        min_importance: int = typer.Option(
+            1, "--min-importance", min=1, max=10, help="Minimum importance (1-10)"
+        ),
+        limit: int = typer.Option(50, "--limit", "-n", min=1, max=500, help="Max results (1-500)"),
         sort: str = typer.Option(
             "desc", "--sort", "-s", help="Sort order: asc or desc (default: desc)"
         ),
