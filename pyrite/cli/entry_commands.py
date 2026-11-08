@@ -309,7 +309,9 @@ def register_entry_commands(app: typer.Typer) -> None:
         body: str = typer.Option("", "--body", "-b", help="Entry body text"),
         tags: str = typer.Option("", "--tags", help="Comma-separated tags"),
         date: str = typer.Option("", "--date", "-d", help="Date (YYYY-MM-DD, for events)"),
-        importance: int = typer.Option(5, "--importance", "-i", help="Importance (1-10)"),
+        importance: int = typer.Option(
+            5, "--importance", "-i", min=1, max=10, help="Importance (1-10)"
+        ),
         status: str = typer.Option("", "--status", help="Entry status (e.g., draft, confirmed)"),
         field: list[str] | None = typer.Option(
             None, "--field", "-f", help="Extra field as key=value"
@@ -539,7 +541,9 @@ def register_entry_commands(app: typer.Typer) -> None:
         body_file: Path | None = typer.Option(None, "--body-file", help="Read body from file"),
         stdin_flag: bool = typer.Option(False, "--stdin", help="Read body from stdin"),
         tags: str = typer.Option(None, "--tags", help="New comma-separated tags"),
-        importance: int = typer.Option(None, "--importance", "-i", help="New importance (1-10)"),
+        importance: int = typer.Option(
+            None, "--importance", "-i", min=1, max=10, help="New importance (1-10)"
+        ),
         lifecycle: str = typer.Option(
             None, "--lifecycle", help="Lifecycle state: active or archived"
         ),
