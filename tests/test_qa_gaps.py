@@ -2,12 +2,15 @@
 Tests for QAService.analyze_gaps() — structural coverage gap analysis.
 """
 
+import contextlib
 import json
 import tempfile
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+from pyrite.cli import qa_commands
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models import EventEntry, NoteEntry
 from pyrite.schema.core_types import CORE_TYPES
@@ -260,3 +263,38 @@ def test_untyped_qa_gap_analysis_falls_back_to_all_core_types(tmp_path):
         assert set(result["empty_types"]) == set(CORE_TYPES)
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("threshold", [-5, -1])
+def test_qa_gaps_rejects_negative_threshold(threshold):
+    result = CliRunner().invoke(
+        qa_commands.qa_app,
+        ["gaps", "--kb", "test-kb", "--threshold", str(threshold)],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid value for '--threshold'" in result.output
+
+
+def test_qa_gaps_accepts_zero_threshold(monkeypatch):
+    class StubQAService:
+        def __init__(self, config, db):
+            pass
+
+        def analyze_gaps(self, kb_name, threshold):
+            return {"kb_name": kb_name, "threshold": threshold}
+
+    monkeypatch.setattr(
+        qa_commands,
+        "cli_context",
+        lambda **kwargs: contextlib.nullcontext((None, None, None)),
+    )
+    monkeypatch.setattr("pyrite.services.qa_service.QAService", StubQAService)
+
+    result = CliRunner().invoke(
+        qa_commands.qa_app,
+        ["gaps", "--kb", "test-kb", "--threshold", "0", "--format", "json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {"kb_name": "test-kb", "threshold": 0}
