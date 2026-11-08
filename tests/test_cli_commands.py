@@ -194,6 +194,21 @@ class TestTyperTagsCommand:
 
 
 @pytest.mark.cli
+class TestTyperQaCompactCommand:
+    @pytest.mark.parametrize("bad_age", ["-1", "-5"])
+    def test_compact_min_age_negative_is_usage_error(self, cli_env, bad_age):
+        with _patch_config(cli_env):
+            result = runner.invoke(app, ["qa", "compact", "test-events", "--min-age", bad_age])
+            assert result.exit_code == 2
+            assert "Invalid value for '--min-age'" in result.output
+
+    def test_compact_min_age_zero_is_accepted(self, cli_env):
+        with _patch_config(cli_env):
+            result = runner.invoke(app, ["qa", "compact", "test-events", "--min-age", "0"])
+            assert result.exit_code == 0
+
+
+@pytest.mark.cli
 class TestTyperBacklinksCommand:
     def test_backlinks_no_results(self, cli_env):
         with _patch_config(cli_env):
