@@ -1550,9 +1550,16 @@ class TestMCPPagination:
                 async with create_connected_server_and_client_session(sdk) as session:
                     return await session.call_tool("kb_tags", arguments)
 
-            for bad_args in ({"limit": -1}, {"limit": 0}, {"offset": -1}):
+            for bad_args, min_val in (
+                ({"limit": -1}, 1),
+                ({"limit": 0}, 1),
+                ({"offset": -1}, 0),
+            ):
                 refused = asyncio.run(call_kb_tags(bad_args))
                 assert refused.isError is True, (bad_args, refused)
+                msg = refused.content[0].text
+                assert "Input validation error:" in msg, (bad_args, msg)
+                assert f"is less than the minimum of {min_val}" in msg, (bad_args, msg)
 
             one = asyncio.run(call_kb_tags({"limit": 1, "offset": 0}))
             assert one.isError is False
