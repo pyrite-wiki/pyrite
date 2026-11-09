@@ -1523,6 +1523,51 @@ class TestMCPPagination:
         for t in prefixed["tags"]:
             assert t["tag"].startswith("tag-")
 
+    def test_kb_tags_refuses_non_positive_limit_and_negative_offset(self):
+        """MCP kb_tags enforces limit >= 1 and offset >= 0 via its inputSchema (#1421)."""
+        import asyncio
+        import json
+
+        from mcp.shared.memory import create_connected_server_and_client_session
+
+        def _seed_tagged_files(_config, kb_map):
+            kb_path = kb_map["test-kb"].path
+            for i in range(3):
+                (kb_path / f"note-{i}.md").write_text(
+                    f"---\nid: note-{i}\ntype: note\ntitle: Note {i}\n"
+                    f"tags:\n  - tag-{i}\n  - group/item-{i}\n---\nBody {i}.\n",
+                    encoding="utf-8",
+                )
+
+        with _make_mcp_server(
+            [{"name": "test-kb", "kb_type": KBType.GENERIC}],
+            tier="read",
+            extra_setup=_seed_tagged_files,
+        ) as env:
+            sdk = env["server"].build_sdk_server()
+
+            async def call_kb_tags(arguments):
+                async with create_connected_server_and_client_session(sdk) as session:
+                    return await session.call_tool("kb_tags", arguments)
+
+            for bad_args in ({"limit": -1}, {"limit": 0}, {"offset": -1}):
+                refused = asyncio.run(call_kb_tags(bad_args))
+                assert refused.isError is True, (bad_args, refused)
+
+            one = asyncio.run(call_kb_tags({"limit": 1, "offset": 0}))
+            assert one.isError is False
+            one_data = json.loads(one.content[0].text)
+            assert one_data["tag_count"] == 1
+            assert one_data["has_more"] is True
+
+            default_call = asyncio.run(call_kb_tags({}))
+            assert default_call.isError is False
+            assert json.loads(default_call.content[0].text)["tag_count"] == 6
+
+            tree_call = asyncio.run(call_kb_tags({"tree": True}))
+            assert tree_call.isError is False
+            assert "tree" in json.loads(tree_call.content[0].text)
+
 
 # ---------------------------------------------------------------------------
 # TestMCPValidation — schema validation tests
