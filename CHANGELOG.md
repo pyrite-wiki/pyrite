@@ -13,6 +13,12 @@ asserts that `[Unreleased]` stays empty.
 
 ## [Unreleased]
 
+## [0.26.1] - 2026-11-10
+
+Search, links and cross-KB reads. `pyrite search` takes repeatable `--type` and `--exclude-type`. Every link row carries `resolved`, and an unresolved outlink names the readable KBs that hold its id. MCP `kb_timeline` filters by KB and status. Inputs that cannot be honoured are refused instead of answered with nothing: an unreadable `since`, an unknown REST key, a blank id in a list, an out-of-range CLI bound. A rename keeps the file where it is and changes only its `id:`.
+
+**Upgrade notes.** `qa validate` exits 1 when any rule reports an error, in every output format, the default JSON included (#935). `qa fix` no longer offers the missing-field fix (#958). A rename no longer moves the entry's file. Typer is held below 0.29 until #1432 lands.
+
 ## [0.26.0] - 2026-10-22
 
 Your files, exactly. The index tells the truth: it keeps one link row per link a file writes, stores a `[[short:id]]` link under the KB's full name, indexes an entry that carries a YAML timestamp, and reads a field wherever the file spells it. `index health` lists the files it cannot read, the index rows no file holds and the frontmatter Pyrite cannot model, and marks the index unhealthy instead of passing. A write changes only what was asked (ADR-0042, ADR-0051): create, update, link, rename and `schema migrate` are operations on the file's own text, so comments, key order, quoting and line endings stay as written, and a request that changes nothing writes nothing. One resolver answers "which KB" on every surface. For instances with more than one user, which stay experimental: a write to a KB entry stays inside the KB root, one landing rule decides where a signed-in user's write lands on every REST route and MCP tool, and the server bounds the size of a request body. The cascade extension, the built-in public site and the Streamlit UI are removed.
