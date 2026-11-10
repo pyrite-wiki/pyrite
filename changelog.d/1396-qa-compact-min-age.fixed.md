@@ -1,0 +1,1 @@
+- `pyrite qa compact` now refuses negative `--min-age` values as usage errors instead of treating every old entry as a match (#1396).

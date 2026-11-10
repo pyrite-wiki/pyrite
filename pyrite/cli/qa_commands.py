@@ -778,7 +778,9 @@ def qa_stale(
 @qa_app.command("compact")
 def qa_compact(
     kb_name: str = typer.Argument(..., help="KB to check for archival candidates"),
-    min_age: int = typer.Option(90, "--min-age", "-a", help="Minimum days old to be a candidate"),
+    min_age: int = typer.Option(
+        90, "--min-age", "-a", min=0, help="Minimum days old to be a candidate"
+    ),
     output_format: str = typer.Option(
         "rich",
         "--format",
