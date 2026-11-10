@@ -1,0 +1,1 @@
+- Typer is held below 0.29: Typer 0.29.0, released 2026-11-09, changed its parameter objects so that `.type` is gone, which broke the CLI contract tests and every CI run that installed it.
