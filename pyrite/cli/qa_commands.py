@@ -843,7 +843,9 @@ def qa_compact(
 @qa_app.command("check-urls")
 def qa_check_urls(
     kb_name: str = typer.Argument(..., help="KB to check source URLs"),
-    sample: int = typer.Option(0, "--sample", "-s", help="Check a random sample of N URLs (0=all)"),
+    sample: int = typer.Option(
+        0, "--sample", "-s", min=0, help="Check a random sample of N URLs (0=all)"
+    ),
     cache_file: str = typer.Option("", "--cache", help="Path to URL check cache file"),
     output_format: str = typer.Option(
         "rich",
