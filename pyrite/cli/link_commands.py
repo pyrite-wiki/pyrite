@@ -387,7 +387,7 @@ def links_discover(
     target_kb: str | None = typer.Option(
         None, "--target-kb", help="KB to search (default: all KBs, including the source KB)"
     ),
-    limit: int = typer.Option(10, "--limit", "-n", help="Max results"),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, help="Max results"),
     mode: str = typer.Option(
         "hybrid", "--mode", "-m", help="Search mode: keyword, semantic, hybrid"
     ),
