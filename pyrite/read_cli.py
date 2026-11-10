@@ -282,7 +282,7 @@ def timeline(
 def tags_cmd(
     kb_name: str = typer.Option(None, "--kb", "-k", help="Filter by KB"),
     prefix: str = typer.Option(None, "--prefix", "-p", help="Filter tags by prefix"),
-    limit: int = typer.Option(100, "--limit", "-n", help="Max tags to show"),
+    limit: int = typer.Option(100, "--limit", "-n", min=1, help="Max tags to show"),
     output_format: str = typer.Option(
         "rich",
         "--format",
