@@ -1,0 +1,1 @@
+- `pyrite orient --limit` now refuses values outside 1-100 as a usage error (exit 2), as its help text promises, instead of failing later with `VALIDATION_FAILED` (#1424).

@@ -207,7 +207,11 @@ def register_browse_commands(app: typer.Typer) -> None:
             help="full (default) or brief. brief omits the write-side schema blocks.",
         ),
         overview_limit: int = typer.Option(
-            50, "--limit", help="KBs per no-name overview page (maximum 100)."
+            50,
+            "--limit",
+            min=1,
+            max=100,
+            help="KBs per no-name overview page (maximum 100).",
         ),
         overview_offset: int = typer.Option(
             0, "--offset", min=0, help="KB offset for a no-name overview page."
