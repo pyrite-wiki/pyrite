@@ -1,1 +1,0 @@
-- **CLI pagination bounds (#1386):** `list-entries` and `recent` now reject negative limits, and `list-entries` rejects negative offsets with a usage error.

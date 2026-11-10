@@ -1,1 +1,0 @@
-- `pyrite-read tags` and `pyrite tags` now refuse `--limit 0` and negative limits as usage errors instead of returning nothing or every tag (#1414).

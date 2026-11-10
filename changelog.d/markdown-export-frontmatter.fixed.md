@@ -1,1 +1,0 @@
-Serialize Markdown export frontmatter as YAML so punctuation, multiline titles, dates and string tags remain parseable and retain their values; include the entry type from API records. Preserve zero and false as data; omit None, empty strings and empty lists. Rendering does not mutate the input record.

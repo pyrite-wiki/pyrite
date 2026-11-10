@@ -1,1 +1,0 @@
-- `sw_backlog` now resolves an epic filter within readable KBs when no KB is supplied. Ambiguous and missing epic IDs produce errors instead of empty results (#1314).

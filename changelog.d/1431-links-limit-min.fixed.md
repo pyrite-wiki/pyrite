@@ -1,1 +1,0 @@
-- `pyrite links check` and `pyrite links suggest` now refuse `--limit 0` and negative limits as usage errors instead of silently returning a shortened or empty list (#1431).
