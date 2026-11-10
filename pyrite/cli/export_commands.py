@@ -121,7 +121,7 @@ def export_collection(
 
     with cli_context(kbs=(kb,), output_format="rich") as (config, db, svc):
         entries: list[Entry] = []
-        unreadable: list[object] = []  # matched, but could not be loaded for the export
+        unreadable: list[tuple[str, str]] = []  # (name, reason) for each row left out
 
         if collection_id.startswith("q:"):
             # Query mode — resolve entries via collection query DSL
@@ -136,11 +136,11 @@ def export_collection(
 
             # Load full Entry objects from disk
             for result in results:
-                entry = _load_entry_from_result(result, svc, kb)
+                entry, reason = _load_entry_from_result(result, svc, kb)
                 if entry:
                     entries.append(entry)
                 else:
-                    unreadable.append(result)
+                    unreadable.append((_row_name(result), reason))
         else:
             # Collection ID mode — load collection, resolve its entries
             collection = svc.load_entry_from_disk(collection_id, kb or "")
@@ -162,11 +162,11 @@ def export_collection(
                     query.kb_name = kb
                 results, total = evaluate_query(query, db, readable_kbs=UNSCOPED)
                 for result in results:
-                    entry = _load_entry_from_result(result, svc, kb)
+                    entry, reason = _load_entry_from_result(result, svc, kb)
                     if entry:
                         entries.append(entry)
                     else:
-                        unreadable.append(result)
+                        unreadable.append((_row_name(result), reason))
             elif collection.folder_path:
                 # Folder-based: list entries in that folder
                 kb_config = config.get_kb(kb or "")
@@ -178,15 +178,20 @@ def export_collection(
                                 continue
                             try:
                                 entry = _entry_from_file(md_file)
-                                if entry:
-                                    entries.append(entry)
                             except Exception as e:
                                 logger.warning("Could not load %s: %s", md_file, e)
-                                unreadable.append(md_file)
+                                unreadable.append((str(md_file), _reason(e)))
+                            else:
+                                if entry:
+                                    entries.append(entry)
+                                else:
+                                    unreadable.append((str(md_file), "the file has no frontmatter"))
 
         # Follow links to depth N
         if depth > 0 and entries:
             entries = _follow_links(entries, svc, kb or "", depth)
+
+        _report_left_out(unreadable)
 
         if not entries:
             console.print("[yellow]No entries to export.[/yellow]")
@@ -203,15 +208,12 @@ def export_collection(
             title=export_title,
         )
 
-        console.print(f"[green]Exported {result['entries_exported']} entries[/green]")
+        console.print(
+            f"[green]Exported {_count(result['entries_exported'], 'entry', 'entries')}[/green]"
+        )
         console.print(f"  Files created: {result['files_created']}")
         console.print(path_line("  Manifest: ", output / "_manifest.md"))
         console.print(path_line("  Output: ", output))
-        if unreadable:
-            console.print(
-                f"[yellow]{len(unreadable)} matched entr(ies) could not be loaded "
-                f"and are not in the export.[/yellow]"
-            )
         exit_unless_whole(len(unreadable), result["entries_exported"])
 
 
@@ -232,8 +234,15 @@ def export_site(
     init: bool = typer.Option(
         False, "--init", help="Scaffold a complete project (first-time setup)"
     ),
+    allow_partial: bool = typer.Option(
+        False, "--allow-partial", help="Exit 0 even when entries were left out"
+    ),
 ):
     """Export an entire KB as a static site.
+
+    An entry that cannot be loaded is named with its loader's message and left
+    out of the export; the command then exits 3 (some exported) or 1 (none).
+    ``--allow-partial`` restores exit 0 for callers that accept a partial site.
 
     Examples:
 
@@ -276,13 +285,20 @@ def export_site(
 
         # Load full Entry objects from disk
         entries = []
+        left_out: list[tuple[str, str]] = []
         for row in raw_entries:
-            entry = _load_entry_from_result(row, svc, kb)
+            entry, reason = _load_entry_from_result(row, svc, kb)
             if entry:
                 entries.append(entry)
+            else:
+                left_out.append((_row_name(row), reason))
+
+        _report_left_out(left_out)
 
         if not entries:
             console.print("[yellow]No entries could be loaded.[/yellow]")
+            if not allow_partial:
+                exit_unless_whole(len(left_out), 0)  # matched but unloadable: nothing exported
             raise typer.Exit(0)
 
         # Export to content/ subdirectory (or root if not --init)
@@ -298,11 +314,15 @@ def export_site(
             exclude_statuses=status_filter,
         )
 
-        console.print(f"[green]Exported {result['entries_exported']} entries[/green]")
+        console.print(
+            f"[green]Exported {_count(result['entries_exported'], 'entry', 'entries')}[/green]"
+        )
         if result["skipped"]:
             console.print(f"  Skipped: {result['skipped']} (filtered)")
         console.print(f"  Files created: {result['files_created']}")
         console.print(path_line("  Output: ", content_dir))
+        if not allow_partial:
+            exit_unless_whole(len(left_out), result["entries_exported"])
 
         if init:
             console.print("")
@@ -310,6 +330,37 @@ def export_site(
             console.print(path_line("  cd ", output))
             console.print("  npm install")
             console.print("  npx quartz build --serve")
+
+
+def _reason(error: Exception) -> str:
+    """The loader's message for an error, falling back to its class name."""
+    return str(error) or type(error).__name__
+
+
+def _row_name(row: dict) -> str:
+    """How an export names a row it left out: its id, else its file, else a dash."""
+    return row.get("id") or row.get("file_path") or "(unknown)"
+
+
+def _count(n: int, singular: str, plural: str) -> str:
+    """``n`` with the right word, so an export never prints "1 entries"."""
+    return f"{n} {singular if n == 1 else plural}"
+
+
+def _report_left_out(left_out: list[tuple[str, str]]) -> None:
+    """Name every row an export left out, one line each, with the loader's reason.
+
+    Filtering (`--exclude-types`, `--exclude-status`) is not "left out": the
+    caller asked for it and it is reported separately.
+    """
+    if not left_out:
+        return
+    console.print(
+        f"[yellow]{_count(len(left_out), 'entry', 'entries')} left out, "
+        f"could not be loaded:[/yellow]"
+    )
+    for name, reason in left_out:
+        console.print(f"  {name}: {reason}")
 
 
 def _entry_from_file(path):
@@ -326,8 +377,12 @@ def _entry_from_file(path):
     return entry
 
 
-def _load_entry_from_result(result: dict, svc, kb: str | None):
-    """Load an Entry from a DB query result, using file_path when available."""
+def _load_entry_from_result(result: dict, svc, kb: str | None) -> tuple[object, str]:
+    """Load an Entry from a DB query result, using file_path when available.
+
+    Returns ``(entry, "")`` on success and ``(None, reason)`` otherwise, so an
+    export can name every row it leaves out and say why.
+    """
     # Try file_path from DB first (handles ID/filename mismatches)
     file_path = result.get("file_path", "")
     if file_path:
@@ -337,17 +392,25 @@ def _load_entry_from_result(result: dict, svc, kb: str | None):
         if path.exists():
             try:
                 entry = _entry_from_file(path)
-                if entry:
-                    return entry
-            except Exception:
-                pass
+            except Exception as e:
+                return None, _reason(e)
+            if entry:
+                return entry, ""
+            return None, "the file has no frontmatter"
 
     # Fallback to load_entry_from_disk (searches by ID)
     entry_id = result.get("id", "")
     entry_kb = result.get("kb_name", kb or "")
     if entry_id and entry_kb:
-        return svc.load_entry_from_disk(entry_id, entry_kb)
-    return None
+        try:
+            entry = svc.load_entry_from_disk(entry_id, entry_kb)
+        except Exception as e:
+            return None, _reason(e)
+        if entry:
+            return entry, ""
+    if file_path:
+        return None, f"the file is missing: {file_path}"
+    return None, "it is not on disk"
 
 
 def _follow_links(entries: list, svc, kb_name: str, depth: int) -> list:

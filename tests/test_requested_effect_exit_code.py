@@ -1908,5 +1908,5 @@ class TestExportCollection:
         cli.pyrite("index", "sync", "--no-embed")
         out = cli.pyrite("export", "collection", "stuff", "-k", "demo", "-o", str(cli.root / "out"))
         text = out.stdout + out.stderr
-        assert "Exported 1 entries" in text, text
+        assert "Exported 1 entry" in text, text
         assert out.returncode == PARTIAL, text
