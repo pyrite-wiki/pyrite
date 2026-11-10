@@ -1344,6 +1344,29 @@ class TestMethodCapabilitiesMap:
         # CONTEXT
         assert m.get("set_context") == Capability.CONTEXT
 
+    def test_capability_map_matches_protocol_methods(self):
+        """ADR-0002: the map must cover every PyritePlugin Protocol
+        method, and nothing else. A method missing from the map is
+        silently ungated (_plugin_declares returns True for unmapped
+        methods), so a new Protocol method without a map entry, or a
+        map entry deleted by accident, must fail this test."""
+        import inspect
+
+        from pyrite.plugins import registry as registry_mod
+        from pyrite.plugins.protocol import PyritePlugin
+
+        protocol_methods = {
+            name
+            for name, member in inspect.getmembers(PyritePlugin, predicate=inspect.isfunction)
+            if not name.startswith("_")
+        }
+        mapping = registry_mod._METHOD_CAPABILITIES
+        assert set(mapping) == protocol_methods, (
+            "capability map and Protocol disagree: "
+            f"unmapped methods={sorted(protocol_methods - set(mapping))}, "
+            f"stale entries={sorted(set(mapping) - protocol_methods)}"
+        )
+
 
 class TestRegistryDispatchSkip:
     """The registry's aggregation helpers consult the plugin's declared
