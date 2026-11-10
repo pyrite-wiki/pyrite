@@ -31,7 +31,7 @@ console = cli_console()
 @links_app.command("check")
 def links_check(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB to check links from"),
-    limit: int = typer.Option(500, "--limit", help="Max missing targets to show"),
+    limit: int = typer.Option(500, "--limit", min=1, help="Max missing targets to show"),
     detail: bool = typer.Option(False, "--detail", help="Show per-link breakdown"),
     output_format: str = OUTPUT_FORMAT,
 ) -> Outcome:
@@ -271,7 +271,7 @@ def links_suggest(
     target_kb: str | None = typer.Option(
         None, "--target-kb", help="KB to search for candidates (default: same as --kb)"
     ),
-    limit: int = typer.Option(10, "--limit", "-n", help="Max number of suggestions"),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, help="Max number of suggestions"),
     output_format: str = OUTPUT_FORMAT,
 ) -> Outcome:
     """Suggest related entries that could be linked.
