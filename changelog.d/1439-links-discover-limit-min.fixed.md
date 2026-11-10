@@ -1,1 +1,0 @@
-- `pyrite links discover` now refuses `--limit 0` and negative limits as usage errors instead of silently returning one result (#1439).

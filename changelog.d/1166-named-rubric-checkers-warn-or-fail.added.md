@@ -1,1 +1,0 @@
-- **Configurable named rubric action in CI:** A KB can now choose whether named rubric checker findings fail `pyrite ci` or report as warnings without failing CI (`rubric_action: warn` in `kb.yaml`, or `action: warn` on individual rubric items in `evaluation_rubric`). The default remains `fail` (#1166).

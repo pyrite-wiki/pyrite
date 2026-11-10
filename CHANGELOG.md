@@ -19,6 +19,288 @@ Search, links and cross-KB reads. `pyrite search` takes repeatable `--type` and 
 
 **Upgrade notes.** `qa validate` exits 1 when any rule reports an error, in every output format, the default JSON included (#935). `qa fix` no longer offers the missing-field fix (#958). A rename no longer moves the entry's file. Typer is held below 0.29 until #1432 lands.
 
+### Added
+
+- **Configurable named rubric action in CI:** A KB can now choose whether named rubric checker findings fail `pyrite ci` or report as warnings without failing CI (`rubric_action: warn` in `kb.yaml`, or `action: warn` on individual rubric items in `evaluation_rubric`). The default remains `fail` (#1166).
+
+- **README facts about the code are now pinned by tests (#1378).** A new `tests/test_readme_facts.py` fails when the README's built-in entry-type list, plugin protocol method count, or shipped-extension table disagrees with the code, so adding a type, a protocol method, or an extension without updating the README goes red instead of drifting.
+
+- Add `kb_names`, `status`, and `exclude_status` filters to MCP `kb_timeline` (#62).
+- `exclude_status` accepts only a non-empty list of strings, matching the published array contract. `kb_names` requires a non-empty list of non-blank strings; empty lists are refused for both filters. Omit a filter to leave it unrestricted within the caller's readable KBs.
+
+- `pyrite search` accepts repeatable `--type` flags (matching any listed type) and repeatable `--exclude-type` flags across keyword, semantic, hybrid, and `--files` modes (#627).
+- Blank `--type` and `--exclude-type` values are usage errors (exit 2) in indexed and `--files` search.
+
+- Every link row `get`, `backlinks` and the REST and MCP entry reads return now carries `resolved`: whether the link's target exists for the caller. An unresolved outlink also carries `resolved_in_kbs`, the readable KBs that hold its id; an id held only by a KB the caller cannot read is named nowhere and reads as missing. `pyrite link` takes `--allow-dangling` (as MCP `kb_link` does) and reports `resolved` (#64).
+
+- **`pyrite qa validate` checks task references (#935).** The new
+  `task_references` rule reports missing dependency or deliverable entry IDs as
+  errors and an already-existing non-task deliverable as a warning for open
+  tasks. Cross-KB `kb:id` references respect the caller's read scope. The rule
+  also runs through `pyrite ci`.
+
+### Changed
+
+Avoid eager imports of SQLAlchemy and HTTPX during CLI startup to optimize CLI invocation time (#1046).
+
+What the plugin MCP tools that take an entry id answer has changed with the id lookup (#1310):
+
+- `social_vote` and the `wiki_*` tools filter by type over MCP too, as `sw_*` does: `social_vote` counts only writeups and `wiki_submit_review`, `wiki_assess_quality` and `wiki_protect` only articles, so an entry of another type that shares the id neither answers it nor makes it `AMBIGUOUS`.
+- A not-found reply is the typed refusal (`error_code: ENTRY_NOT_FOUND`, `legacy_error_code: NOT_FOUND`, `retryable: false`). It no longer carries the tool's own `claimed`, `created`, `reviewed` or `submitted` keys, or `transitioned: false`.
+- The message wording changed: "Backlog item 'x' not found in KB 'k'" is now "Entry backlog item 'x' not found in KB 'k'", with the type each tool acts on (`article`, `writeup`, `claim`) or none.
+- `wiki_assess_quality` and `wiki_protect` report `ENTRY_NOT_FOUND` for a missing article before they check their other arguments, so a missing article with an invalid `quality` or `level` is not found rather than "Invalid quality"/"Invalid protection level".
+- The `investigation_*` tools no longer default to the investigation KB when the call takes an entry id: the id is found in the readable KB that holds it, and an id held in two readable KBs is `AMBIGUOUS` until `kb_name` names one.
+- A call to one of these tools whose id arguments are all missing, empty or whitespace is refused `VALIDATION_FAILED` (not retryable) before any KB check, whatever KB it names. Before, `sw_*` answered `INTERNAL`, `social_vote` and `wiki_submit_review` wrote a row for an empty id, and the investigation tools answered from their default KB.
+- `kb_name` is optional in these tools' schemas (`tools/list`), so a client that leaves it out reaches the id lookup instead of the SDK's "'kb_name' is a required property".
+- With no `kb_name`, the id is looked up in the canonical index, before any change set is chosen: an id that exists only in a pending change set (a `landing: review` KB) is `ENTRY_NOT_FOUND` unless the call names its KB.
+
+- When a backend cannot honor type filters in its vector leg, the fallback
+  warning names the normalized `entry_types` filter, including callers that
+  supplied the single legacy `entry_type`.
+
+- **Software KB backlog items accept `refactor`, `chore`, and `process` kinds
+  (#669).** Create and update use the expanded vocabulary, and the
+  `sw_backlog` filter and `sw_create_backlog_item` MCP input schemas now expose
+  all declared backlog kinds from the shared vocabulary.
+
+- **`pyrite qa validate` exits 1 when any validation rule reports an error,
+  in every output format, including the default JSON format (#935, ADR-0046).**
+  Previously formatted output returned success before evaluating the verdict.
+  Scripts consuming the JSON must now handle this nonzero exit status; warnings
+  alone still return success.
+
+- Update `CONTRIBUTING.md` with measured test suite size and golden regeneration instructions (#1045).
+
+Move the 8-section extension test template from testing.md to extensions.md (#1100).
+
+### Deprecated
+
+- **`task status`, `db.conn` and `FRONTMATTER_ALIASES` are scheduled for
+  removal in 0.27 (#1255, #1256).** Their deprecation warnings and migration
+  guidance now name the release.
+
+### Removed
+
+- `qa fix` no longer offers a missing-field fix (`--fix-rule
+  schema_violation`). It matched the word "missing" in an issue's message, and
+  the KB schema's required-field errors say "required", so no validator could
+  produce an issue it handled; its one default (`importance: 5`) could not be
+  the field of a real error either, since the index always carries the model's
+  own default. A required field is the author's to fill: the issue is reported
+  as `manual` with `no_safe_default`, and `qa fix` still fixes invalid dates,
+  broken links and tag casing.
+- `qa validate` issues with `rule: "schema_violation"`, errors and warnings
+  alike, now carry `schema_rule` (`required`, `enum`, ...), the rule the schema
+  broke, so a required field is told from the issue's data and not from its
+  message (#958). The key is absent when a plugin validator names no rule.
+
+### Fixed
+
+- Ensure PostgreSQL schema migration adds `aliases` column on existing databases (#1011).
+
+- The memory-bound canary (`test_apps_a_test_builds_are_freed_after_its_teardown`) now builds its
+  apps in the test body instead of through `make_client`, so pytest's `item.funcargs` no longer
+  keeps all of them alive while it checks. The pre-push suite passes on a clean checkout and the
+  check is a hard failure on every platform again (#1110).
+
+Worktree submission refuses a failed git commit without marking the worktree
+submitted. Merging a branch with no committed changes reports `merged: false`.
+
+- `sw_create_adr` numbers a new ADR from the files on disk rather than the index, matching `pyrite sw new-adr` and resolving the single configured KB when `kb_name` is omitted (#1175).
+- Implicit ADR KB selection considers only readable KBs and refuses an unresolved
+  selection without naming hidden KBs. CLI and MCP share the resolver; unreadable
+  non-UTF-8 files are skipped with a warning while numbering.
+
+- When an index page is corrupt or the file is not a database, a SQLite error raised mid-command
+  is mapped to `STORAGE_ERROR` naming the index path and suggesting `pyrite index build`,
+  preventing non-search CLI commands from falling through to `NO_OUTCOME` (#1182).
+  Query errors and locks are not reclassified as corruption. SQLite storage
+  errors use the shared constructor in `pyrite.storage.errors`.
+
+REST entry writes share one unknown-key refusal rule across POST, PUT and PATCH.
+A client that PUTs a whole GET response (including `id` or `file_path`) now gets
+400 `VALIDATION_FAILED`, rather than 200 with silently dropped keys. ADR-0034
+transport markers are accepted consistently and are never stored.
+
+- **The web UI is readable in light mode (#12).** Make sidebar and empty-state chrome readable in light mode, and update graph labels and canvas when switching themes. Theme utilities now follow the saved UI theme instead of the OS preference.
+
+- REST `PATCH /api/entries/{id}` refuses undeclared body keys with 400
+  `VALIDATION_FAILED` naming them, before writing anything (#1221). A misspelt
+  `vaule` no longer silently writes null. An explicit `value: null` and the
+  existing field operations remain supported.
+
+- Opening an index now adds any column or index the current schema expects
+  that the file lacks, whatever schema version it records. An index built on
+  `arch/2026-10` before the sprint merge (schema 28 without
+  `link.target_prefix`) no longer crashes `get`, `backlinks` and `index health`
+  with `OperationalError`, and `index build` on it no longer exits 0 with every
+  file "could not be parsed" and an empty index: a database fault during a
+  build is now a `STORAGE_ERROR` with a suggestion, and the rows already there
+  are kept (#1260). Where the repair cannot run (a column SQLite cannot add in
+  place, a migration that fails), the open is refused once with a
+  `STORAGE_ERROR` that says which version and column, and how to rebuild.
+- Two Pyrite processes opening an old index at the same moment no longer
+  crash with `duplicate column name` or `database is locked`: the migration and
+  repair run under one cross-process lock, and the second process waits and
+  finds the index current (#1302).
+- A locked database met while opening, upgrading or repairing the index, or
+  while `index build` writes a row, is now the retryable `STORAGE_ERROR` that
+  says to wait, not a refusal. A read-only or full disk is told to check the
+  disk. Advice to move the index aside and rebuild is given only where nothing
+  else works, and it now says to run `pyrite db backup` first and names what a
+  rebuild does not restore: KBs added with `pyrite kb add`, users, sessions,
+  API keys, permissions, stars, reviews, settings and version history.
+- `pyrite db backup` no longer tells you to move a healthy index aside when the
+  fault is the backup's output path (a read-only directory or file, a full
+  disk, a file there that is not a database): it says the output path is at fault and
+  says the index was not changed. A locked index or output file is the
+  retryable `STORAGE_ERROR` that says to wait, where a lock on the output file
+  used to hang the command, and a failed backup no longer deletes a file that
+  was already at the output path.
+
+- **A `since` value that cannot be read is now refused, not answered with an
+  empty list (#1268).** `kb_recent {"since": "yesterday"}` returned
+  `{"entries": [], "count": 0}` — the same answer as "nothing changed since
+  then" — because the value was never parsed: entries were kept by comparing
+  strings, `(updated_at or "") >= since`. MCP `kb_recent` and `pyrite recent
+  --since` now share one parser (`pyrite/schema/validators.py`): a date
+  (`2026-10-22`, midnight UTC) or an ISO 8601 datetime, with or without an
+  offset. Anything else is a `VALIDATION_FAILED` that names `since`, the
+  accepted forms and an example. An empty value still means "no lower bound".
+- **`since` with a non-UTC offset now compares instants, not text (#1268).**
+  `2026-10-23T05:00:00-04:00` is 09:00Z; the string comparison kept every entry
+  updated earlier that UTC day. Filtering is done on parsed instants, so the
+  answer matches the moment the caller named. `date_from`/`date_to` are
+  unchanged (see #1270).
+
+Software-KB `pull-next` context counts now match `context-for-item`, including incoming links and excluding dependency entries. Both CLI and MCP retain readable-KB scoping and count duplicate links as they appear in the full context (#1280).
+
+- Fix CLI help text rendering across subcommands: escape wikilink brackets in `pyrite rename --help`, replace historical developer notes with user documentation in `sw new-adr` and `zettel new`, clarify `create -k` requirement, explain orphan vs missing-link counts in `qa validate` / `qa gaps`, and document review outcome state changes in `sw review` (#1290).
+
+- CLI path labels and file lists keep long paths on a single line, including spaces and literal brackets, across the core and extension CLIs (#1291).
+
+- Populate MCP server initialize instructions directing connecting clients to call `kb_orient` first (#1292).
+
+- `pyrite sw backlog`, `epics`, `epic`, `adrs`, and `components` now print full entry IDs in Rich output without slicing or truncation, and `sw components --format json` rows carry `id` and `kb_name` (#1293).
+
+- `CURRENT_TIMESTAMP` server defaults on the index tables are emitted as SQL rather than a quoted string literal, so a row that omits `link.created_at` (or another timestamp column) stores a real timestamp instead of the text `CURRENT_TIMESTAMP` (#1304).
+
+Plugin MCP tools that take an entry id (`social_vote`, `wiki_submit_review`, `wiki_assess_quality`, `wiki_protect`, `zettel_graph`, the `sw_*` item tools including `sw_prioritize`'s `after` and `before`, the `investigation_*` network and claim tools) now find the id the way `kb_get` does: a blank or missing `kb_name` is no KB named, an id in one KB is found there, an id in several is refused as `AMBIGUOUS` with the candidate KBs, and an id in none, or in a named KB without it, is `ENTRY_NOT_FOUND`. The dispatcher finds the id before it checks the call, so the KB a tool works in is always one the read, write and landing checks ran on. Before, `social_vote` and `wiki_submit_review` wrote a row with an empty KB name for an unscoped caller and answered `voted`/`reviewed: true` for an id no KB held, and the other tools answered "not found in KB ''" for an id that existed (#1310). `wiki review|quality` and `social vote` on the command line now count only articles and writeups, as `sw` counts only backlog items.
+
+- **Opening an index whose table has rows and lacks a column SQLite cannot add
+  in place now refuses with `STORAGE_ERROR` and a rebuild suggestion at plan
+  time, instead of failing inside the repair and telling the user to report a
+  bug (#1318).** This covers a non-constant default (`CURRENT_TIMESTAMP`,
+  `CURRENT_DATE`, `CURRENT_TIME`, or a parenthesised expression that is not a
+  literal) and a `STORED` generated column. An empty table still takes such a
+  column, and constant defaults such as `'active'` or `0` still add in place on
+  a table with rows.
+
+- `pyrite export site` names every entry it matched but could not load, with
+  the loader's message, one line each, and exits 3 when some entries were
+  exported and 1 when none were (#1325). `pyrite export collection` reports its
+  unloadable rows the same way, and both commands say "1 entry" rather than
+  "1 entries". Filtering with `--exclude-types`/`--exclude-status` is asked for
+  and still exits 0; names and reasons are printed literally, so a YAML message
+  that quotes `[...]` does not reach Rich's markup parser. A folder collection
+  now exports exactly the files the indexer lists: a README, a hidden file and
+  a `_templates` scaffold file are no longer exported, a file whose name starts
+  with `__` now is, and a `folder_path` that leaves the KB exports nothing. A
+  `folder_path` that only matches after normalising (`stuff/../stuff`) or an
+  in-KB symlink to another folder matches its files again.
+
+- **`GET /api/entries` no longer returns 500 for a signed-in user with an open
+  change set (#1373).** The overlay search backend now accepts the `kb_names`
+  filter the entries route passes, so listing and counting entries on a
+  review-landing KB respect the caller's readable KBs instead of raising
+  `TypeError`.
+
+- Timeline `--limit` and `--min-importance` now refuse out-of-range values as usage errors (#1392).
+
+`pyrite task checkpoint --confidence` now refuses values outside 0.0-1.0 with a usage error instead of recording them.
+
+- `pyrite qa compact` now refuses negative `--min-age` values as usage errors instead of treating every old entry as a match (#1396).
+
+- Refuse a negative `--depth` on `pyrite export collection` as a usage error (#1398).
+
+- `qa check-urls --sample` refuses a negative value as a usage error — exit 2
+  with a single `USAGE_ERROR` JSON document naming `--sample` under
+  `--format json` — instead of crashing inside `random.sample` (#1399).
+  `--sample 0` (all URLs) and positive samples behave as before.
+
+- `pyrite-read tags` and `pyrite tags` now refuse `--limit 0` and negative limits as usage errors instead of returning nothing or every tag (#1414).
+
+- `pyrite links check` and `pyrite links suggest` now refuse `--limit 0` and negative limits as usage errors instead of silently returning a shortened or empty list (#1431).
+
+- `pyrite links discover` now refuses `--limit 0` and negative limits as usage errors instead of silently returning one result (#1439).
+
+- **Worktree setup gives actionable remote errors (#665).** The default
+  `origin/dev` path reports a missing origin or preserves Git's fetch error,
+  with a project-remote hint for forks without `dev`. Explicit local branch,
+  tag, or commit start-points work without an origin. The affected-test diff
+  hint also names `--base <REF>`.
+
+- Plugin commands that take an entry id with an optional `-k` (`pyrite sw epic|claim|submit|transition|review|log|check-ready|prioritize`, `pyrite wiki review|quality`, `pyrite social vote`) now find the id the way `pyrite get` does: an id in one KB is found (registry-only KBs included), an id in several is refused as `AMBIGUOUS` with the candidate KBs, and an absent id is `NOT_FOUND`. Before, some picked the first KB, four missed an id held by only one KB, and `social vote` and `wiki review` wrote rows with an empty KB name (#911).
+
+- `sw_backlog` now resolves an epic filter within readable KBs when no KB is supplied. Ambiguous and missing epic IDs produce errors instead of empty results (#1314).
+
+- **Backlog dependencies and epic filters honor the relation from the queried item’s perspective (#1289).** Links written from either endpoint now appear consistently, and duplicate links do not duplicate results.
+
+- Reading a collection's declared fields no longer inserts them into the entry's undeclared metadata dictionary or changes an earlier projection during a later read (#1220).
+
+- Task updates to `claimed` now share the refusal for parents whose subtasks are all resolved. The refusal gives an open-subtask creation command; after adding new work, ordinary claim succeeds.
+- Parents at open whose children are all resolved can also record explicit done without a claim; this exception does not change plugin workflow defaults.
+
+- Editing the title or body of an already-claimed parent remains allowed when its children finish; the claim refusal applies to entering `claimed` (#743, #832).
+
+CSV imports preserve the first column of UTF-8 files with a byte-order mark, including title, id, type and tags, instead of silently substituting defaults.
+
+- Entry deletion now reports the indexed inbound links left dangling, scoped to the caller's readable KBs. CLI deletion supports JSON output and explains `--force` when confirmation is unavailable (#1275).
+
+- KB details, health reports and stats now derive entry counts from the index. Registry health uses the same verdict as `index health`, so writes and non-entry Markdown files no longer produce misleading results (#1267).
+
+- Disk errors now include recovery advice even when the caller supplies no suggestion. Search failures point to file permissions and disk space instead of omitting the advice (#1317).
+
+- QA and CI now report malformed frontmatter as an error for each file. `kb validate` includes those files in its drift report and `index sync` shows KB-relative paths (#1269).
+
+Serialize Markdown export frontmatter as YAML so punctuation, multiline titles, dates and string tags remain parseable and retain their values; include the entry type from API records. Preserve zero and false as data; omit None, empty strings and empty lists. Rendering does not mutate the input record.
+
+- MCP tools that locate entries now reject blank or non-string IDs inside a list, even when other IDs are valid. The error names the argument and element before any KB check or handler runs (#1321).
+
+Enforce `"minimum": 1` on `limit` and `"minimum": 0` on `offset` in the `kb_tags` MCP tool `inputSchema`, matching the REST `/api/tags` endpoint and `kb_orient` (#1421).
+
+Escape values a terminal cannot encode in the rich MCP setup report, so a successful configuration change still prints its full result and restart hint.
+
+- MCP now distinguishes tools that require a higher tier from unknown tool names. Refusals include the required tier and advice suited to local or HTTP connections (#1276).
+
+- **CLI pagination bounds (#1386):** `list-entries` and `recent` now reject negative limits, and `list-entries` rejects negative offsets with a usage error.
+
+The CLI outcome guard includes root-context cleanup, retains a refusal reason when stdout was also written, and refuses the shared format option under a standalone non-Pyrite root. Legacy plugin format and environment fallback limits are documented.
+
+- Typer is held below 0.29: Typer 0.29.0, released 2026-11-09, changed its parameter objects so that `.type` is gone, which broke the CLI contract tests and every CI run that installed it.
+
+- `qa validate --entry ID` now finds the entry's KB when none is supplied. Ambiguous and missing IDs are refused instead of silently validating every KB (#1312).
+
+- **`pyrite init --template research` now declares a `source` type (#1384).**
+  A research KB created from the template rejected `create -t source` with
+  `UNDECLARED_TYPE`, so the works the research cites had nowhere of their own
+  to go. The template now ships the same `source` type as
+  `intellectual-biography`, writing to `sources/`.
+
+- `sw log` and MCP `sw_create_adr` now save and index their records before reporting success. New software KBs declare the `work_log` type. Existing enforced schemas that lack it receive an explanation without being changed (#1266).
+
+Cancel obsolete merge-group CI runs after their temporary queue branches disappear, so rebuilt groups do not compete with dead runs.
+
+- The import-cycle and fix-commit hooks now work when only `python3` is on PATH. If no interpreter is available they explain how to set up the checkout (#1264).
+
+- A rename no longer moves the entry's file: it keeps its path and name, and only the `id:` changes, so a file at the KB root stays at the root and a hand-made folder stays put (#488, #489). The new id stays readable, updatable and deletable. A rename of an entry whose file is a symbolic link to a file inside the KB is now written through the link, as an update is. A rename frees its old id: creating an entry whose `<id>.md` is held by a different id gets a fresh filename (`<id>-2.md`), and a `file_pattern` name held by another id is refused naming that id.
+
+Release pooled database connection and close fallback session on thread termination (#1100).
+
+- Updates now apply the same model validation as creates, including event dates and importance. Unchanged violations in hand-edited files produce warnings while new invalid values are refused before writing (#1270).
+
+Usage-error handling counts binary stdout writes and resolves format aliases from the parsed command instead of treating every -f as a format.
+
 ## [0.26.0] - 2026-10-22
 
 Your files, exactly. The index tells the truth: it keeps one link row per link a file writes, stores a `[[short:id]]` link under the KB's full name, indexes an entry that carries a YAML timestamp, and reads a field wherever the file spells it. `index health` lists the files it cannot read, the index rows no file holds and the frontmatter Pyrite cannot model, and marks the index unhealthy instead of passing. A write changes only what was asked (ADR-0042, ADR-0051): create, update, link, rename and `schema migrate` are operations on the file's own text, so comments, key order, quoting and line endings stay as written, and a request that changes nothing writes nothing. One resolver answers "which KB" on every surface. For instances with more than one user, which stay experimental: a write to a KB entry stays inside the KB root, one landing rule decides where a signed-in user's write lands on every REST route and MCP tool, and the server bounds the size of a request body. The cascade extension, the built-in public site and the Streamlit UI are removed.
