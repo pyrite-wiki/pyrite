@@ -251,10 +251,12 @@ READ_TOOLS = {
                 },
                 "limit": {
                     "type": "integer",
+                    "minimum": 1,
                     "description": "Maximum tags to return (default 100)",
                 },
                 "offset": {
                     "type": "integer",
+                    "minimum": 0,
                     "description": "Pagination offset (default 0)",
                 },
             },

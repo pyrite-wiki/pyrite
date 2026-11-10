@@ -1108,10 +1108,12 @@
           },
           "limit": {
             "description": "Maximum tags to return (default 100)",
+            "minimum": 1,
             "type": "integer"
           },
           "offset": {
             "description": "Pagination offset (default 0)",
+            "minimum": 0,
             "type": "integer"
           },
           "prefix": {
@@ -2308,10 +2310,12 @@
           },
           "limit": {
             "description": "Maximum tags to return (default 100)",
+            "minimum": 1,
             "type": "integer"
           },
           "offset": {
             "description": "Pagination offset (default 0)",
+            "minimum": 0,
             "type": "integer"
           },
           "prefix": {
@@ -3436,10 +3440,12 @@
           },
           "limit": {
             "description": "Maximum tags to return (default 100)",
+            "minimum": 1,
             "type": "integer"
           },
           "offset": {
             "description": "Pagination offset (default 0)",
+            "minimum": 0,
             "type": "integer"
           },
           "prefix": {
