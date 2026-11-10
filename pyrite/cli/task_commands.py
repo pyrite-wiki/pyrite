@@ -594,7 +594,9 @@ def task_checkpoint(
     task_id: str = typer.Argument(..., help="Task entry ID"),
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
     message: str = typer.Option(..., "--message", "-m", help="Checkpoint message"),
-    confidence: float = typer.Option(0.0, "--confidence", help="Confidence 0.0-1.0"),
+    confidence: float = typer.Option(
+        0.0, "--confidence", min=0.0, max=1.0, help="Confidence 0.0-1.0"
+    ),
     evidence: list[str] | None = typer.Option(
         None, "--evidence", "-e", help="Evidence entry IDs (repeatable)"
     ),
