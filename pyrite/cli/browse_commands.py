@@ -47,8 +47,8 @@ def register_browse_commands(app: typer.Typer) -> None:
             help="Sort column: title, updated_at, created_at, entry_type",
         ),
         sort_order: str = typer.Option("desc", "--sort-order", help="Sort direction: asc, desc"),
-        limit: int = typer.Option(50, "--limit", "-n", help="Max entries (max 200)"),
-        offset: int = typer.Option(0, "--offset", help="Pagination offset"),
+        limit: int = typer.Option(50, "--limit", "-n", min=0, help="Max entries (max 200)"),
+        offset: int = typer.Option(0, "--offset", min=0, help="Pagination offset"),
         fields: str = typer.Option(None, "--fields", help="Comma-separated fields to return"),
         output_format: str = typer.Option(
             "json",
@@ -362,7 +362,7 @@ def register_browse_commands(app: typer.Typer) -> None:
     def recent_entries(
         kb_name: str | None = typer.Option(None, "--kb", "-k", help="Filter by KB"),
         entry_type: str | None = typer.Option(None, "--type", "-t", help="Filter by entry type"),
-        limit: int = typer.Option(20, "--limit", "-n", help="Max entries"),
+        limit: int = typer.Option(20, "--limit", "-n", min=0, help="Max entries"),
         since: str = typer.Option(
             None,
             "--since",
