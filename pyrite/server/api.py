@@ -161,7 +161,7 @@ def _landed(request: Request, config: PyriteConfig, db: PyriteDB) -> tuple[Pyrit
     takes `get_read_kb_service` instead (ADR-0044 §1).
     """
     state = request.state
-    target = getattr(state, "write_target", None)
+    target: tuple[PyriteConfig, PyriteDB] | None = getattr(state, "write_target", None)
     if target is not None:
         return target
     if getattr(state, "landing_asked", False) or request.method not in _WRITE_METHODS:
