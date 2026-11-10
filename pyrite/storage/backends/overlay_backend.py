@@ -11,6 +11,7 @@ own pending edits overlaid on the shared main index.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 from .protocol import DEFAULT_MIN_SIMILARITY
@@ -706,7 +707,7 @@ class WorktreeDB:
 _READ_SQL = re.compile(r"^\s*(SELECT|WITH|PRAGMA|EXPLAIN)\b", re.IGNORECASE)
 
 
-def _refuse(name: str, why: str):
+def _refuse(name: str, why: str) -> Callable[..., Any]:
     def refused(*args: Any, **kwargs: Any) -> Any:
         from pyrite.exceptions import ChangeSetRecordRefusedError
 

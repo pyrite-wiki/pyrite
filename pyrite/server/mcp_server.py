@@ -572,7 +572,8 @@ class PyriteMCPServer:
         bound = current_target()
         if bound is None:
             return self._svc
-        return bound.service("kb", KBService)
+        svc: KBService = bound.service("kb", KBService)
+        return svc
 
     @svc.setter
     def svc(self, value: KBService) -> None:

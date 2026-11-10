@@ -363,7 +363,7 @@ DEFAULT_MAX_REQUEST_BODY_BYTES = 32 * 1024 * 1024  # 32 MiB
 def _positive_int(value: object, name: str) -> int:
     """``value`` as a positive int, or a ValueError naming the setting."""
     try:
-        number = int(value)  # type: ignore[arg-type]
+        number: int = int(value)  # type: ignore[call-overload]
     except (TypeError, ValueError):
         raise ValueError(f"settings.{name} must be a positive integer, got {value!r}") from None
     if isinstance(value, bool) or number <= 0 or str(number) != str(value).strip():
