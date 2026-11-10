@@ -335,9 +335,12 @@ class TestLinksSuggest:
                     "unrelated-cooking",
                     "--kb",
                     "test-notes",
+                    "--format",
+                    "rich",
                 ],
             )
             assert result.exit_code == 0
+            assert "No suggestions found." in result.output
 
     def test_suggest_fts_quoting_regression(self, suggest_env):
         """Regression test for #304: entries with FTS-column-colliding vocabulary
