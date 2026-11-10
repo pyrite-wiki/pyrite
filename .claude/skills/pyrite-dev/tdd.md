@@ -44,6 +44,7 @@ def test_search(tmp_kb):
 
 ```bash
 # Backend
+# Diagnostic example: one named test, not the general suite policy
 .venv/bin/pytest tests/path/test_file.py::test_name -v
 
 # Frontend unit
@@ -78,6 +79,7 @@ Run the specific test AND the full suite for the area:
 ```bash
 # Backend: specific test, then the affected tests (the whole suite is CI's
 # job; if you need it, scripts/heavy_lock.py -- <command>)
+# Diagnostic example: one named test, not the general suite policy
 .venv/bin/pytest tests/path/test_file.py::test_name -v
 scripts/test-affected --run
 
