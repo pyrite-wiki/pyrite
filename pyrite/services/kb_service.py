@@ -2951,6 +2951,18 @@ class KBService:
         """List all collection entries, optionally restricted to readable KBs."""
         return self.list_entries(kb_name=kb_name, kb_names=kb_names, entry_type="collection")
 
+    def list_entry_files(self, kb_name: str) -> list[Path]:
+        """Every markdown file the indexer walks for ``kb_name``, in path order.
+
+        ``list_files`` applies the indexer's own rule (no README, no hidden
+        path, no ``_templates`` scaffold), so a surface that lists a folder's
+        files agrees with what sync indexes (#1325).
+        """
+        kb_config = self.config.get_kb(kb_name)
+        if not kb_config or not kb_config.path.exists():
+            return []
+        return sorted(KBRepository(kb_config).list_files())
+
     @staticmethod
     def _normalize_metadata_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Parse the ``metadata`` field on each row to a dict.
