@@ -296,6 +296,10 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     # The overlay's `resolved` never names a KB the caller cannot read (#64).
     "tests/test_overlay_backend.py::TestOverlayResolved::test_other_kbs_holding_the_id_are_named_from_both_halves_and_only_readable_ones": SCOPE,
     "tests/test_overlay_backend.py::TestOverlayResolved::test_a_target_in_an_unreadable_kb_stays_unresolved_whichever_half_holds_it": SCOPE,
+    # The overlay's list/count honor kb_names on both halves (#1373): entries
+    # outside the caller's readable set must not leak through either half.
+    "tests/test_overlay_backend.py::TestOverlayListEntries::test_kb_names_filters_both_halves": SCOPE,
+    "tests/test_overlay_backend.py::TestOverlayCountEntries::test_kb_names_filters_count": SCOPE,
     "tests/test_mcp_read_scoping.py": SCOPE,
     "tests/test_mcp_sse_kb_policy.py": SCOPE,
     "tests/test_mcp_tool_registry_is_scoped.py": SCOPE,
