@@ -245,15 +245,11 @@ def export_site(
     init: bool = typer.Option(
         False, "--init", help="Scaffold a complete project (first-time setup)"
     ),
-    allow_partial: bool = typer.Option(
-        False, "--allow-partial", help="Exit 0 even when entries were left out"
-    ),
 ):
     """Export an entire KB as a static site.
 
     An entry that cannot be loaded is named with its loader's message and left
     out of the export; the command then exits 3 (some exported) or 1 (none).
-    ``--allow-partial`` restores exit 0 for callers that accept a partial site.
 
     Examples:
 
@@ -309,8 +305,7 @@ def export_site(
 
         if not entries:
             console.print("[yellow]No entries could be loaded.[/yellow]")
-            if not allow_partial:
-                exit_unless_whole(len(left_out), 0)  # matched but unloadable: nothing exported
+            exit_unless_whole(len(left_out), 0)  # matched but unloadable: nothing exported
             raise typer.Exit(0)
 
         # Export to content/ subdirectory (or root if not --init)
@@ -343,8 +338,7 @@ def export_site(
 
         # After the scaffold's next steps: a caller that asked for `--init`
         # still needs them when an entry was left out.
-        if not allow_partial:
-            exit_unless_whole(len(left_out), result["entries_exported"])
+        exit_unless_whole(len(left_out), result["entries_exported"])
 
 
 def _reason(error: Exception) -> str:

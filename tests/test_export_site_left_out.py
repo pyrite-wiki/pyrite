@@ -108,29 +108,6 @@ class TestLeftOutEntries:
         assert "left out" not in text, text
         assert "Skipped: 3 (filtered)" in text, text
 
-    def test_allow_partial_restores_zero_and_still_names_the_entry(self, world):
-        _break(world, "bad1", "invalid-yaml")
-        result = _export(world, "--allow-partial")
-        text = _say(result)
-
-        assert result.exit_code == 0, text
-        assert "1 entry left out" in text, text
-        assert "bad1" in text, text
-
-    def test_allow_partial_covers_nothing_loadable(self, world):
-        for name, how in (
-            ("good", "invalid-yaml"),
-            ("bad1", "invalid-yaml"),
-            ("bad2", "no-frontmatter"),
-        ):
-            _break(world, name, how)
-        result = _export(world, "--allow-partial")
-        text = _say(result)
-
-        assert result.exit_code == 0, text
-        assert "3 entries left out" in text, text
-        assert "No entries could be loaded." in text, text
-
     def test_a_row_the_filters_drop_is_not_counted_as_left_out(self, world):
         """A broken row of an excluded type is asked for, not left out."""
         _break(world, "bad1", "invalid-yaml")
