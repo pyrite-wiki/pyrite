@@ -178,14 +178,18 @@ def export_collection(
                 if kb_config:
                     from ..storage.repository import KBRepository
 
-                    folder = kb_config.path / collection.folder_path
+                    # Resolved once, and compared against each file's resolved
+                    # path: `stuff/../stuff` and an in-KB symlink still name
+                    # their files. A `folder_path` that leaves the KB matches
+                    # nothing, as it should.
+                    folder = (kb_config.path / collection.folder_path).resolve()
                     if folder.exists():
                         # The indexer's own rule (`_listed`, reached through
                         # list_files): a README, a hidden file or a `_templates`
                         # scaffold is not an entry, so it is not "left out".
                         repo = KBRepository(kb_config)
                         for md_file in sorted(repo.list_files()):
-                            if folder not in md_file.parents:
+                            if folder not in md_file.resolve().parents:
                                 continue
                             try:
                                 entry = _entry_from_file(md_file)
@@ -364,7 +368,10 @@ def _filtered_out(row: dict, types: set[str], statuses: set[str]) -> bool:
     """
     if types and (row.get("entry_type") or row.get("type")) in types:
         return True
-    status = row.get("status")
+    # A plain note keeps its status in the frontmatter's `metadata`, where the
+    # renderer reads it; the row's own column is NULL for it.
+    metadata = row.get("metadata") or {}
+    status = row.get("status") or metadata.get("status")
     return bool(statuses) and status is not None and status in statuses
 
 

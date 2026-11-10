@@ -140,6 +140,19 @@ class TestLeftOutEntries:
         assert result.exit_code == 0, text
         assert "left out" not in text, text
 
+    def test_a_status_kept_in_metadata_is_filtered_too(self, world):
+        """A plain note's status lives in `metadata`; `--exclude-status` sees it."""
+        world.add_entry(
+            "test-kb",
+            "---\nid: draft1\ntitle: Draft\ntype: note\nstatus: draft\n---\nbody\n",
+        )
+        _break(world, "draft1", "invalid-yaml")
+        result = _export(world, "--exclude-status", "draft")
+        text = _say(result)
+
+        assert result.exit_code == 0, text
+        assert "left out" not in text, text
+
     def test_init_prints_next_steps_even_when_an_entry_is_left_out(self, world):
         _break(world, "bad1", "invalid-yaml")
         result = _export(world, "--init")
@@ -208,3 +221,18 @@ class TestCollectionLeftOutRows:
         assert "1 entry left out" in text, text
         assert "broken" in text, text
         assert "README" not in text, text
+
+    def test_a_folder_path_that_only_matches_after_normalising_still_exports(self, world):
+        folder = world.kb_path("test-kb") / "stuff"
+        folder.mkdir()
+        (folder / "ok.md").write_text("---\nid: ok\ntitle: Ok\ntype: note\n---\nbody\n")
+        world.add_entry(
+            "test-kb",
+            "---\nid: stuff\ntitle: Stuff\ntype: collection\nsource_type: folder\n"
+            "folder_path: stuff/../stuff\n---\n",
+        )
+        result = _export_collection(world, "stuff")
+        text = _say(result)
+
+        assert result.exit_code == 0, text
+        assert "Exported 1 entry" in text, text
