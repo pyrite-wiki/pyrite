@@ -259,6 +259,17 @@ class TestLinksSuggest:
             data = json.loads(result.output)
             assert len(data["suggestions"]) <= 1
 
+    @pytest.mark.parametrize("bad_limit", [["--limit", "0"], ["--limit", "-1"], ["-n", "-1"]])
+    def test_limit_below_one_is_usage_error(self, suggest_env, bad_limit):
+        """--limit/-n below 1 is refused instead of returning one suggestion."""
+        with _patch_config(suggest_env):
+            result = runner.invoke(
+                app,
+                ["links", "suggest", "python-testing", "--kb", "test-notes", *bad_limit],
+            )
+            assert result.exit_code == 2
+            assert "Invalid value for '--limit'" in result.output
+
     def test_entry_not_found(self, suggest_env):
         """Non-existent entry returns error."""
         with _patch_config(suggest_env):
@@ -324,8 +335,6 @@ class TestLinksSuggest:
                     "unrelated-cooking",
                     "--kb",
                     "test-notes",
-                    "--limit",
-                    "0",
                 ],
             )
             assert result.exit_code == 0
