@@ -81,6 +81,7 @@ class OverlaySearchBackend:
     def list_entries(
         self,
         kb_name: str | None = None,
+        kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
         tag: str | None = None,
         sort_by: str = "updated_at",
@@ -94,6 +95,7 @@ class OverlaySearchBackend:
         # Get all from main (without limit — we need to merge before paginating)
         main_results = self._main.list_entries(
             kb_name=kb_name,
+            kb_names=kb_names,
             entry_type=entry_type,
             tag=tag,
             sort_by=sort_by,
@@ -106,6 +108,7 @@ class OverlaySearchBackend:
         )
         diff_results = self._diff.list_entries(
             kb_name=kb_name,
+            kb_names=kb_names,
             entry_type=entry_type,
             tag=tag,
             sort_by=sort_by,
@@ -122,6 +125,7 @@ class OverlaySearchBackend:
     def count_entries(
         self,
         kb_name: str | None = None,
+        kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
         tag: str | None = None,
         status: str | None = None,
@@ -129,6 +133,7 @@ class OverlaySearchBackend:
     ) -> int:
         main_count = self._main.count_entries(
             kb_name=kb_name,
+            kb_names=kb_names,
             entry_type=entry_type,
             tag=tag,
             status=status,
@@ -136,6 +141,7 @@ class OverlaySearchBackend:
         )
         diff_entries = self._diff.list_entries(
             kb_name=kb_name,
+            kb_names=kb_names,
             entry_type=entry_type,
             tag=tag,
             limit=10000,
@@ -147,7 +153,7 @@ class OverlaySearchBackend:
         main_ids = set()
         if diff_entries:
             main_all = self._main.list_entries(
-                kb_name=kb_name, entry_type=entry_type, tag=tag, limit=10000
+                kb_name=kb_name, kb_names=kb_names, entry_type=entry_type, tag=tag, limit=10000
             )
             main_ids = {(e["id"], e["kb_name"]) for e in main_all}
         new_in_diff = sum(1 for e in diff_entries if (e["id"], e["kb_name"]) not in main_ids)
