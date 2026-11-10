@@ -4,4 +4,6 @@
   that accept a partial site (#1325). `pyrite export collection` reports its
   unloadable rows the same way, and both commands say "1 entry" rather than
   "1 entries". Filtering with `--exclude-types`/`--exclude-status` is asked for
-  and still exits 0.
+  and still exits 0; names and reasons are printed literally, so a YAML message
+  that quotes `[...]` does not reach Rich's markup parser, and a folder
+  collection's README or parentless file is not an entry.

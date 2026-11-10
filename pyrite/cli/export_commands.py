@@ -2,8 +2,10 @@
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
+from rich.markup import escape
 
 from pyrite.cli.output import cli_console, path_line
 
@@ -11,6 +13,9 @@ from ..cli.context import cli_context
 from ..services.access_policy import UNSCOPED
 from ..utils.errors import exit_unless_whole
 from ..utils.frontmatter import Frontmatter, split_frontmatter
+
+if TYPE_CHECKING:
+    from ..models.base import Entry
 
 logger = logging.getLogger(__name__)
 console = cli_console()
@@ -136,7 +141,7 @@ def export_collection(
 
             # Load full Entry objects from disk
             for result in results:
-                entry, reason = _load_entry_from_result(result, svc, kb)
+                entry, reason = _load_entry_with_reason(result, svc, kb)
                 if entry:
                     entries.append(entry)
                 else:
@@ -162,7 +167,7 @@ def export_collection(
                     query.kb_name = kb
                 results, total = evaluate_query(query, db, readable_kbs=UNSCOPED)
                 for result in results:
-                    entry, reason = _load_entry_from_result(result, svc, kb)
+                    entry, reason = _load_entry_with_reason(result, svc, kb)
                     if entry:
                         entries.append(entry)
                     else:
@@ -171,10 +176,16 @@ def export_collection(
                 # Folder-based: list entries in that folder
                 kb_config = config.get_kb(kb or "")
                 if kb_config:
+                    from ..storage.repository import KBRepository
+
                     folder = kb_config.path / collection.folder_path
                     if folder.exists():
-                        for md_file in sorted(folder.rglob("*.md")):
-                            if md_file.name.startswith("__"):
+                        # The indexer's own rule (`_listed`, reached through
+                        # list_files): a README, a hidden file or a `_templates`
+                        # scaffold is not an entry, so it is not "left out".
+                        repo = KBRepository(kb_config)
+                        for md_file in sorted(repo.list_files()):
+                            if folder not in md_file.parents:
                                 continue
                             try:
                                 entry = _entry_from_file(md_file)
@@ -184,8 +195,6 @@ def export_collection(
                             else:
                                 if entry:
                                     entries.append(entry)
-                                else:
-                                    unreadable.append((str(md_file), "the file has no frontmatter"))
 
         # Follow links to depth N
         if depth > 0 and entries:
@@ -287,10 +296,11 @@ def export_site(
         entries = []
         left_out: list[tuple[str, str]] = []
         for row in raw_entries:
-            entry, reason = _load_entry_from_result(row, svc, kb)
+            entry, reason = _load_entry_with_reason(row, svc, kb)
             if entry:
                 entries.append(entry)
-            else:
+            elif not _filtered_out(row, type_filter, status_filter):
+                # A row the export's own filters drop is asked for, not left out.
                 left_out.append((_row_name(row), reason))
 
         _report_left_out(left_out)
@@ -321,8 +331,6 @@ def export_site(
             console.print(f"  Skipped: {result['skipped']} (filtered)")
         console.print(f"  Files created: {result['files_created']}")
         console.print(path_line("  Output: ", content_dir))
-        if not allow_partial:
-            exit_unless_whole(len(left_out), result["entries_exported"])
 
         if init:
             console.print("")
@@ -330,6 +338,11 @@ def export_site(
             console.print(path_line("  cd ", output))
             console.print("  npm install")
             console.print("  npx quartz build --serve")
+
+        # After the scaffold's next steps: a caller that asked for `--init`
+        # still needs them when an entry was left out.
+        if not allow_partial:
+            exit_unless_whole(len(left_out), result["entries_exported"])
 
 
 def _reason(error: Exception) -> str:
@@ -342,6 +355,19 @@ def _row_name(row: dict) -> str:
     return row.get("id") or row.get("file_path") or "(unknown)"
 
 
+def _filtered_out(row: dict, types: set[str], statuses: set[str]) -> bool:
+    """Whether the export's own filters drop ``row``.
+
+    ``--exclude-types``/``--exclude-status`` are asked for, so a row they drop
+    is not one the export failed to load; counting it as left out would make a
+    filtered export exit 3 for a file the caller never asked for.
+    """
+    if types and (row.get("entry_type") or row.get("type")) in types:
+        return True
+    status = row.get("status")
+    return bool(statuses) and status is not None and status in statuses
+
+
 def _count(n: int, singular: str, plural: str) -> str:
     """``n`` with the right word, so an export never prints "1 entries"."""
     return f"{n} {singular if n == 1 else plural}"
@@ -352,6 +378,10 @@ def _report_left_out(left_out: list[tuple[str, str]]) -> None:
 
     Filtering (`--exclude-types`, `--exclude-status`) is not "left out": the
     caller asked for it and it is reported separately.
+
+    Both values come from the KB, not from a literal: an id or a path may hold
+    `[...]`, and a YAML message quotes the line it failed on, so they are
+    escaped for Rich rather than parsed as markup (#1325).
     """
     if not left_out:
         return
@@ -360,7 +390,7 @@ def _report_left_out(left_out: list[tuple[str, str]]) -> None:
         f"could not be loaded:[/yellow]"
     )
     for name, reason in left_out:
-        console.print(f"  {name}: {reason}")
+        console.print(f"  {escape(name)}: {escape(reason)}")
 
 
 def _entry_from_file(path):
@@ -377,12 +407,21 @@ def _entry_from_file(path):
     return entry
 
 
-def _load_entry_from_result(result: dict, svc, kb: str | None) -> tuple[object, str]:
-    """Load an Entry from a DB query result, using file_path when available.
+def _load_entry_from_result(result: dict, svc, kb: str | None):
+    """Load an Entry from a DB query result, using file_path when available."""
+    entry, _ = _load_entry_with_reason(result, svc, kb)
+    return entry
+
+
+def _load_entry_with_reason(result: dict, svc, kb: str | None) -> tuple["Entry | None", str]:
+    """Load an Entry from a DB query result, with the reason when it cannot be.
 
     Returns ``(entry, "")`` on success and ``(None, reason)`` otherwise, so an
-    export can name every row it leaves out and say why.
+    export can name every row it leaves out and say why. The fallback to the
+    service's lookup is kept: a file with no frontmatter falls through to it,
+    as it did before the reason was reported (#1325).
     """
+    reason = ""
     # Try file_path from DB first (handles ID/filename mismatches)
     file_path = result.get("file_path", "")
     if file_path:
@@ -396,7 +435,9 @@ def _load_entry_from_result(result: dict, svc, kb: str | None) -> tuple[object, 
                 return None, _reason(e)
             if entry:
                 return entry, ""
-            return None, "the file has no frontmatter"
+            reason = "the file has no frontmatter"
+        else:
+            reason = f"the file is missing: {file_path}"
 
     # Fallback to load_entry_from_disk (searches by ID)
     entry_id = result.get("id", "")
@@ -408,9 +449,7 @@ def _load_entry_from_result(result: dict, svc, kb: str | None) -> tuple[object, 
             return None, _reason(e)
         if entry:
             return entry, ""
-    if file_path:
-        return None, f"the file is missing: {file_path}"
-    return None, "it is not on disk"
+    return None, reason or "it is not on disk"
 
 
 def _follow_links(entries: list, svc, kb_name: str, depth: int) -> list:

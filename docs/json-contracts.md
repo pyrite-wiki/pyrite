@@ -1417,7 +1417,9 @@ migrates; until then `kb validate` drift exits `2` and `ids missing` `3`.
     `pyrite-admin index embed` (`Errors: N`; the entries stay owed and a rerun
     retries them, so offline with nothing embedded is `1`), `schema migrate`,
     `index reconcile`, `import`, `links bulk-create`, `export collection`,
-    `search --files`, `repo sync`, `batch-read` (an id not found), `task decompose`
+    `export site` (done = entries exported, a row that could not be loaded is
+    named and counted as left out), `search --files`, `repo sync`, `batch-read`
+    (an id not found), `task decompose`
     (every child refused is `1`, `"outcome": "nothing"`),
     `sw prioritize`, `sw migrate-standards`, `investigation bulk-edges` and
     `ftm-import`;
