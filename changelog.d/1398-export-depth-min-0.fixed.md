@@ -1,0 +1,1 @@
+- Refuse a negative `--depth` on `pyrite export collection` as a usage error (#1398).
