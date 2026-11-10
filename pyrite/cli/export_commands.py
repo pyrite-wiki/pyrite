@@ -176,19 +176,17 @@ def export_collection(
                 # Folder-based: list entries in that folder
                 kb_config = config.get_kb(kb or "")
                 if kb_config:
-                    from ..storage.repository import KBRepository
-
                     # Resolved once, and compared against each file's resolved
                     # path: `stuff/../stuff` and an in-KB symlink still name
                     # their files. A `folder_path` that leaves the KB matches
                     # nothing, as it should.
                     folder = (kb_config.path / collection.folder_path).resolve()
                     if folder.exists():
-                        # The indexer's own rule (`_listed`, reached through
-                        # list_files): a README, a hidden file or a `_templates`
-                        # scaffold is not an entry, so it is not "left out".
-                        repo = KBRepository(kb_config)
-                        for md_file in sorted(repo.list_files()):
+                        # The indexer's own rule (through the service's
+                        # list_entry_files): a README, a hidden file or a
+                        # `_templates` scaffold is not an entry, so it is not
+                        # "left out".
+                        for md_file in svc.list_entry_files(kb or ""):
                             if folder not in md_file.resolve().parents:
                                 continue
                             try:

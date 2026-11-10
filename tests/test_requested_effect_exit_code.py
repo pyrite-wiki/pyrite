@@ -1639,7 +1639,11 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "a failed --bidi inverse is returned as Outcome.partial (exit 3): "
         "tests/test_cli_outcome_write_path.py",
     ),
-    ("pyrite/cli/export_commands.py", "_load_entry_from_result"): ("fixed", "TestExportCollection"),
+    ("pyrite/cli/export_commands.py", "_load_entry_with_reason"): (
+        "safe",
+        "an unloadable row is returned with its reason; the command prints it and "
+        "the caller exits through exit_unless_whole (#1325)",
+    ),
     ("pyrite/cli/export_commands.py", "export_collection"): ("fixed", "TestExportCollection"),
     ("pyrite/cli/extension_commands.py", "_verify_distribution"): ("fixed", "TestExtensionVerify"),
     ("pyrite/cli/extension_commands.py", "extension_install"): ("fixed", "TestExtensionVerify"),
