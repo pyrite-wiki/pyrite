@@ -4,7 +4,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, ClassVar
 
-from pyrite.exceptions import PyriteError, public_text
+from pyrite.exceptions import PyriteError, public_text, refusal_fields
 from pyrite.plugins.capabilities import Capability
 from pyrite.plugins.scoping import kb_scope_clause
 
@@ -413,7 +413,7 @@ class SocialPlugin:
             # what every other transport already shows; the real detail
             # still reaches the log (ADR-0037 theme 2 round 2, item 1).
             message = public_text(e, log=_masked_log)
-            return {"error": message, "error_code": code}
+            return {"error": message, "error_code": code, **refusal_fields(e)}
         finally:
             if should_close:
                 db.close()

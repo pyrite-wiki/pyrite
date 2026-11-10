@@ -7,7 +7,7 @@ efficient single-pass indexing.
 
 from typing import Any
 
-from pyrite.exceptions import PyriteError
+from pyrite.exceptions import PyriteError, refusal_fields
 from pyrite.schema import generate_entry_id
 from pyrite.utils.errors import public_text
 
@@ -35,29 +35,46 @@ def validate_edge_batch(edges: list[dict]) -> dict[str, Any]:
 
     Each edge dict: ``{"type": str, "fields": dict, "title": optional str}``.
 
-    Returns ``{"valid": int, "invalid": int, "errors": [...]}``.
+    Returns ``{"valid": int, "invalid": int, "errors": [...]}``. Each entry
+    names the edge it refused (``index``, ``edge``) and carries ``errors``: one
+    row per refused field, in the shape `docs/json-contracts.md` defines for a
+    refusal row. The create path copies those rows onto the record it refused,
+    so ``entries[i].errors`` holds rows on this branch too.
     """
     valid = 0
     invalid = 0
     errors: list[dict[str, Any]] = []
 
     for idx, edge in enumerate(edges):
-        edge_errors: list[str] = []
+        rows: list[dict[str, Any]] = []
         edge_type = edge.get("type", "")
 
         if edge_type not in EDGE_TYPES:
-            edge_errors.append(
-                f"Invalid type '{edge_type}'. Must be one of: {', '.join(sorted(EDGE_TYPES))}"
+            allowed = sorted(EDGE_TYPES)
+            rows.append(
+                {
+                    "field": "type",
+                    "rule": "enum",
+                    "message": f"Invalid type '{edge_type}'. Must be one of: {', '.join(allowed)}",
+                    "got": edge_type,
+                    "expected": allowed,
+                }
             )
         else:
             fields = edge.get("fields", {}) or {}
             for req in EDGE_TYPES[edge_type]["required"]:
                 if not fields.get(req):
-                    edge_errors.append(f"Missing required field: {req}")
+                    rows.append(
+                        {
+                            "field": req,
+                            "rule": "required",
+                            "message": f"Missing required field: {req}",
+                        }
+                    )
 
-        if edge_errors:
+        if rows:
             invalid += 1
-            errors.append({"index": idx, "edge": edge, "errors": edge_errors})
+            errors.append({"index": idx, "edge": edge, "errors": rows})
         else:
             valid += 1
 
@@ -170,8 +187,9 @@ def create_edge_batch(
                     "title": title,
                     "type": edge_type,
                     "status": "error",
-                    "errors": [public_text(e)],
+                    "error": public_text(e),
                     "error_code": e.error_code,
+                    **refusal_fields(e),
                 }
             )
             continue

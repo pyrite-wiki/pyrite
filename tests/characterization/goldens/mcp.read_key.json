@@ -12,7 +12,17 @@
     "entries": [
       {
         "errors": [
-          "Invalid type 'characterization-placeholder'. Must be one of: funding, membership, ownership"
+          {
+            "expected": [
+              "funding",
+              "membership",
+              "ownership"
+            ],
+            "field": "type",
+            "got": "characterization-placeholder",
+            "message": "Invalid type 'characterization-placeholder'. Must be one of: funding, membership, ownership",
+            "rule": "enum"
+          }
         ],
         "id": null,
         "status": "error",
@@ -28,7 +38,17 @@
     "entries": [
       {
         "errors": [
-          "Invalid type 'characterization-placeholder'. Must be one of: funding, membership, ownership"
+          {
+            "expected": [
+              "funding",
+              "membership",
+              "ownership"
+            ],
+            "field": "type",
+            "got": "characterization-placeholder",
+            "message": "Invalid type 'characterization-placeholder'. Must be one of: funding, membership, ownership",
+            "rule": "enum"
+          }
         ],
         "id": null,
         "status": "error",
@@ -44,7 +64,17 @@
     "entries": [
       {
         "errors": [
-          "Invalid type 'characterization-placeholder'. Must be one of: funding, membership, ownership"
+          {
+            "expected": [
+              "funding",
+              "membership",
+              "ownership"
+            ],
+            "field": "type",
+            "got": "characterization-placeholder",
+            "message": "Invalid type 'characterization-placeholder'. Must be one of: funding, membership, ownership",
+            "rule": "enum"
+          }
         ],
         "id": null,
         "status": "error",
@@ -804,7 +834,14 @@
       {
         "created": false,
         "error": "title is required",
-        "error_code": "VALIDATION_FAILED"
+        "error_code": "VALIDATION_FAILED",
+        "errors": [
+          {
+            "field": "title",
+            "message": "title is required",
+            "rule": "required"
+          }
+        ]
       }
     ],
     "total": 1
@@ -816,7 +853,14 @@
       {
         "created": false,
         "error": "title is required",
-        "error_code": "VALIDATION_FAILED"
+        "error_code": "VALIDATION_FAILED",
+        "errors": [
+          {
+            "field": "title",
+            "message": "title is required",
+            "rule": "required"
+          }
+        ]
       }
     ],
     "total": 1
@@ -828,7 +872,14 @@
       {
         "created": false,
         "error": "title is required",
-        "error_code": "VALIDATION_FAILED"
+        "error_code": "VALIDATION_FAILED",
+        "errors": [
+          {
+            "field": "title",
+            "message": "title is required",
+            "rule": "required"
+          }
+        ]
       }
     ],
     "total": 1

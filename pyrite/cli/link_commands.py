@@ -199,6 +199,10 @@ def links_bulk_create(
             item["error"] = r.get("error", "failed")
             if r.get("error_code"):
                 item["error_code"] = r["error_code"]
+            if r.get("errors"):
+                # The rows the service answered, on the item they belong to
+                # (#1381 review): a bulk caller fixes fields, not prose.
+                item["errors"] = r["errors"]
         items.append(item)
 
     def rich(console: Console, data: dict) -> None:

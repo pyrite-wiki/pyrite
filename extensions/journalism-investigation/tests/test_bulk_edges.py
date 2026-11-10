@@ -44,7 +44,9 @@ class TestValidateEdgeBatch:
         assert result["invalid"] == 1
         assert len(result["errors"]) == 1
         assert result["errors"][0]["index"] == 0
-        assert any("asset" in e for e in result["errors"][0]["errors"])
+        assert result["errors"][0]["errors"] == [
+            {"field": "asset", "rule": "required", "message": "Missing required field: asset"}
+        ]
 
     def test_invalid_edge_type_rejected(self):
         """Unknown edge type is rejected."""
@@ -54,7 +56,10 @@ class TestValidateEdgeBatch:
         result = validate_edge_batch(edges)
         assert result["valid"] == 0
         assert result["invalid"] == 1
-        assert any("type" in e.lower() for e in result["errors"][0]["errors"])
+        row = result["errors"][0]["errors"][0]
+        assert (row["field"], row["rule"]) == ("type", "enum")
+        assert row["got"] == "bribery"
+        assert row["expected"] == ["funding", "membership", "ownership"]
 
     def test_mixed_valid_and_invalid(self):
         """Mix of valid and invalid edges counted correctly."""
@@ -184,6 +189,12 @@ class TestCreateEdgeBatch:
         statuses = {e["status"] for e in result["entries"]}
         assert "created" in statuses
         assert "error" in statuses
+
+        # The refused record carries the row, not the sentence the row came from.
+        refused = next(e for e in result["entries"] if e["status"] == "error")
+        assert refused["errors"] == [
+            {"field": "asset", "rule": "required", "message": "Missing required field: asset"}
+        ]
 
     def test_custom_title_used_when_provided(self, db):
         """If title is explicitly provided, it is used instead of auto-generated."""
