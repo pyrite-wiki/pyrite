@@ -1,1 +1,0 @@
-Commits made through the REST API, MCP tools and `kb_service` no longer run the repository's git hooks, so a hook such as a pre-commit secret scanner does not run for an agent's commit. `pyrite kb commit` at the command line still runs them, and a hook that rejects the commit still fails the command.

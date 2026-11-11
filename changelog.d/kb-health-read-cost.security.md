@@ -1,1 +1,0 @@
-KB health at read tier reuses a KB's report while its index is unchanged, for at most 60 seconds, and reads without merging registered KBs into the shared configuration or writing to the database. The CLI and the admin tool compute it fresh.
