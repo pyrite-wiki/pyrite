@@ -21,7 +21,8 @@ change the world come after every check:
                        yet (locally, on origin, or as a GitHub release) and
                        `origin/main` is an ancestor of the SHA, so step d can
                        only ever fast-forward; the version in pyproject.toml is
-                       <version>; CHANGELOG has a dated section with content
+                       <version>; `uv lock --check` passes (a version bump leaves uv.lock
+                       stale until `scripts/lock-deps.sh`); CHANGELOG has a dated section with content
                        and no stranded `[Unreleased]` entries; no open PR
                        labelled `release-blocker`; the private fixes
                        repository's `dev` (`--private-remote`, default
@@ -333,6 +334,35 @@ def check_version_matches(repo: Path, version: str) -> None:
             f"{version!r}. The release commit belongs on dev: bump pyproject.toml "
             "and date the CHANGELOG section there first."
         )
+
+
+def check_lock_is_current(repo: Path) -> None:
+    """`uv.lock` agrees with `pyproject.toml` on the commit being released.
+
+    `uv.lock` records the project's own version, so the bump that makes a
+    release commit leaves the lock stale until `scripts/lock-deps.sh` is run
+    and committed (#1357). CI's `lock` job would say so, but only on a PR;
+    this asks again of the exact commit that is about to be tagged. `uv lock
+    --check` writes nothing and does not look for newer releases. A checkout
+    with no `uv.lock` keeps no lock (the script is not Pyrite-only: it takes
+    its repository from `origin`), so there is nothing to be stale; Pyrite's
+    own is asserted present by tests/test_dependency_lock.py.
+    """
+    if not (repo / "uv.lock").exists():
+        return
+    try:
+        _check_output(["uv", "lock", "--check"], cwd=repo)
+    except FileNotFoundError as exc:
+        raise ReleaseError(
+            "`uv` is not on PATH, so whether uv.lock is current cannot be checked. "
+            "Install it (https://docs.astral.sh/uv/) and re-run."
+        ) from exc
+    except ReleaseError as exc:
+        raise ReleaseError(
+            "uv.lock is stale: it no longer matches pyproject.toml (a version bump "
+            "does this). Run `scripts/lock-deps.sh`, commit uv.lock on dev, and "
+            f"release from that commit.\n{exc}"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -1050,6 +1080,11 @@ def step_preconditions(ctx: Context) -> None:
 
     if ctx.attempt(lambda: check_changelog(ctx.repo, ctx.version, ctx.day)):
         ctx.runner.note(f"CHANGELOG has `## [{ctx.version}] - {ctx.day.isoformat()}` with content")
+    if ctx.attempt(lambda: check_lock_is_current(ctx.repo)):
+        ctx.runner.note(
+            "uv.lock matches pyproject.toml (uv lock --check; none kept = nothing to check)"
+        )
+
     # Asked unconditionally, as before: the notes are read out of the CHANGELOG
     # section, and `_print_notes` stays silent when there is no section to read,
     # so a missing section is still named once, by the check above (#889). Every

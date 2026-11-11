@@ -28,6 +28,8 @@ dependencies = [
     "PyYAML>=6.0.1",
     "ruamel.yaml>=0.18.0",
     "SQLAlchemy>=2.0.0",
+    "certifi>=2026.10.19",  # minimum patched version
+    "anyio>=4.14.2",  # minimum patched version
     # kb.yaml rubric patterns run with a time limit, which `re` cannot give.
     "regex>=2024.4.16",
     # pyrite/server/mcp_server.py's build_sdk_server() uses the mcp SDK's
@@ -61,6 +63,8 @@ server = [
     "alembic>=1.13.0",
     "markdownify>=0.14.1",
     "bcrypt>=4.0.0",
+    "python-multipart>=0.0.31",  # minimum patched version (the import route takes File())
+    "cryptography>=50.0.0",  # minimum patched version (auth_service.py imports it)
 ]
 cli = [
     "typer[all]>=0.12.3,<0.29",  # 0.29.0 (2026-11-09) breaks CLI introspection; #1432

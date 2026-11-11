@@ -64,6 +64,7 @@ def repo(tmp_path):
     """A tmp checkout whose CHANGELOG and pyproject are release-ready."""
     (tmp_path / "CHANGELOG.md").write_text(GOOD_CHANGELOG.format(today=date.today().isoformat()))
     (tmp_path / "pyproject.toml").write_text(GOOD_PYPROJECT)
+    (tmp_path / "uv.lock").write_text("version = 1\n")  # the check applies to a checkout with one
     return tmp_path
 
 
@@ -169,6 +170,7 @@ def dry_run(no_network, monkeypatch, tmp_path_factory):
         "- A release script.\n\n## [0.24.1] - 2026-09-17\n\n- Older.\n"
     )
     (fake_repo / "pyproject.toml").write_text(GOOD_PYPROJECT)
+    (fake_repo / "uv.lock").write_text("version = 1\n")
 
     def _go(argv=("0.24.2",)):
         args = release.parse_args([*argv, "--repo", str(fake_repo)])
@@ -1056,6 +1058,72 @@ class TestReleaseBlockers:
     def test_the_script_never_plans_to_create_a_label(self, dry_run_commands):
         """It is a documented prerequisite, not something the release creates."""
         assert not [c for c in dry_run_commands if c[:3] == ["gh", "label", "create"]]
+
+
+class TestLockIsCurrentPrecondition:
+    """`uv.lock` records the project version, so a release bump leaves it stale
+    until `scripts/lock-deps.sh` runs (#1357). Step (a) asks `uv lock --check`
+    of the release commit."""
+
+    @staticmethod
+    def _stale(monkeypatch):
+        original = release._check_output
+
+        def patched(cmd, **kwargs):
+            if cmd[:3] == ["uv", "lock", "--check"]:
+                raise release.ReleaseError(
+                    "command failed (1): uv lock --check\nThe lockfile needs to be updated"
+                )
+            return original(cmd, **kwargs)
+
+        monkeypatch.setattr(release, "_check_output", patched)
+
+    def test_a_current_lock_passes_and_is_asked_of_the_repo(self, dry_run):
+        code, _runner, calls = dry_run()
+        assert code == 0
+        assert ["uv", "lock", "--check"] in calls
+
+    def test_check_function_passes_when_uv_says_current(self, no_network, repo):
+        release.check_lock_is_current(repo)
+
+    def test_check_function_names_the_fix_when_stale(self, no_network, repo, monkeypatch):
+        self._stale(monkeypatch)
+        with pytest.raises(release.ReleaseError, match=r"scripts/lock-deps\.sh"):
+            release.check_lock_is_current(repo)
+
+    def test_a_checkout_with_no_lock_has_nothing_to_check(self, no_network, repo):
+        (repo / "uv.lock").unlink()
+        release.check_lock_is_current(repo)
+        assert ["uv", "lock", "--check"] not in no_network
+
+    def test_missing_uv_is_a_release_error_not_a_traceback(self, no_network, repo, monkeypatch):
+        def no_uv(cmd, **kwargs):
+            raise FileNotFoundError("uv")
+
+        monkeypatch.setattr(release, "_check_output", no_uv)
+        with pytest.raises(release.ReleaseError, match="uv"):
+            release.check_lock_is_current(repo)
+
+    def test_a_stale_lock_stops_the_release(self, dry_run, monkeypatch, capsys):
+        self._stale(monkeypatch)
+        code, runner, _calls = dry_run()
+        assert code != 0
+        assert runner.planned == []
+        assert "lock-deps.sh" in capsys.readouterr().out
+
+    def test_the_dry_run_names_it_among_every_problem(self, dry_run, monkeypatch, capsys):
+        self._stale(monkeypatch)
+        dry_run()
+        out = capsys.readouterr().out
+        assert "WOULD STOP --execute: uv.lock is stale" in out
+
+    def test_execute_stops_at_the_stale_lock(self, no_network, repo, monkeypatch):
+        """Under --execute the first failing check raises rather than recording."""
+        self._stale(monkeypatch)
+        runner = release.Runner(execute=True)
+        ctx = release.Context(repo=repo, version="0.24.2", runner=runner, wait_ci_minutes=0)
+        with pytest.raises(release.ReleaseError, match="uv.lock is stale"):
+            ctx.attempt(lambda: release.check_lock_is_current(repo))
 
 
 class TestTagAndRemotePreconditions:
