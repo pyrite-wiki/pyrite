@@ -377,7 +377,7 @@ UNSCOPED: None = None
 def named_kb(value: object) -> str | None:
     """The KB a request or call names by ``value``, or None when it names none.
 
-    A blank or whitespace-only name is **never a KB** (private #74). The REST
+    A blank or whitespace-only name is **never a KB**. The REST
     resolver, the MCP chokepoint and the service lookups all read it the same
     way -- as "no KB named" -- so none of them refuses it as a KB while
     another treats it as one; a read naming no KB is then bounded by the

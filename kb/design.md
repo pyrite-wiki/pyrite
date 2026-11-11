@@ -57,7 +57,10 @@ contracts are alpha.
    and keys are the operator's, kept in a documented config file the operator
    edits. Whoever holds the files is the operator. The database holds the
    derived index and machinery, never the only copy of content or
-   configuration.
+   configuration. A network call reaches entries by grant and nothing else
+   the server account holds: no file outside a KB, no credential, no text
+   Pyrite did not write for a caller, and no answer that depends on any of
+   them. The local process is the operator and keeps the operator's reach.
 8. **Each rule lives in one place.** A property is enforced at the single
    point everything passes through, with a test that fails when new code goes
    around it. A rule enforced call site by call site is not yet a rule.
@@ -163,6 +166,9 @@ code follows it; check, and treat a mismatch as the work to do.
 - Entry classes and protocol mixins serialise themselves (principle 6).
 - KBs can exist only as database rows; grants and secrets are not in a
   reviewable config file (principle 7).
+- Network reach is enforced per call site for reads, git and response text,
+  and the ssh agent and identities stay reachable to a network git command
+  until N2 lands (ADR-0052).
 - Several rules are enforced per call site (principle 8).
 - The supported-surface list is approved but not yet reflected in the
   README, `--help` and tool descriptions, and experimental tests are not yet

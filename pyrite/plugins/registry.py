@@ -16,6 +16,7 @@ from importlib.metadata import EntryPoint
 from typing import Any, cast
 
 from ..exceptions import PluginError
+from ..services.access_policy import ROLES
 from .capabilities import Capability
 from .context import PluginContext
 from .protocol import PyritePlugin
@@ -29,6 +30,15 @@ def load_plugin_entry_point(ep: EntryPoint) -> PyritePlugin:
     if not hasattr(plugin, "name"):
         raise ValueError(f"Plugin {ep.name} has no 'name' attribute")
     return cast(PyritePlugin, plugin)
+
+
+#: The MCP tiers, lowest first: the roles, whose one home is the policy.
+MCP_TIERS = ROLES
+
+
+def normalise_tool_name(name: str) -> str:
+    """A tool name as compared for collisions: trimmed and case-folded."""
+    return name.strip().casefold()
 
 
 # Probe arguments used only to check that a callable's signature *binds* the
@@ -603,19 +613,88 @@ class PluginRegistry:
         """Get all CLI commands from all plugins."""
         return self._aggregate_list("get_cli_commands")
 
-    def get_all_mcp_tools(self, tier: str) -> dict[str, dict]:
-        """Get all MCP tools for the given tier from all plugins."""
+    def mcp_tools_by_tier(
+        self, tier: str, *, reserved: frozenset[str] | set[str] | None = None
+    ) -> dict[str, tuple[dict, str]]:
+        """The plugin tools served at ``tier``: ``{name: (tool, label_tier)}``.
+
+        Each tool name has one owner across every tier, decided once
+        (ADR-0040 §3): the first plugin, in registration order, that
+        offers the name at any tier. A later plugin offering it is refused,
+        and so is any name in ``reserved`` -- by default the core's tool names
+        (`tool_schemas.CORE_TOOL_NAMES`), so the protection holds for every
+        caller unless one passes another set on purpose. Names are compared trimmed and case-folded
+        (`normalise_tool_name`), so a variant in case or spacing is the same
+        name. A tool is served at ``tier`` when its owner registers it at or
+        below ``tier``, with the owner's handler, under the lowest tier the
+        owner registered it at -- the tier the per-KB write check and the
+        rate limiter key on. Each refusal is logged with the plugin.
+        """
         self.discover()
-        tools: dict[str, dict] = {}
+        if reserved is None:
+            from ..server.tool_schemas import CORE_TOOL_NAMES
+
+            reserved = CORE_TOOL_NAMES
+        if tier not in MCP_TIERS:
+            raise ValueError(f"Unknown MCP tier: {tier!r}")
+        reserved_keys = {normalise_tool_name(n) for n in reserved}
+        owners: dict[str, tuple[str, Any, str]] = {}  # key -> (name, plugin, lowest tier)
         for plugin in self._plugins.values():
-            if hasattr(plugin, "get_mcp_tools"):
+            if not hasattr(plugin, "get_mcp_tools"):
+                continue
+            offered: dict[str, str] = {}
+            try:
+                for t in MCP_TIERS:
+                    for name in plugin.get_mcp_tools(t) or {}:
+                        offered.setdefault(name, t)
+            except Exception as e:
+                logger.warning("Plugin %s get_mcp_tools failed: %s", plugin.name, e)
+                continue
+            for name, lowest in offered.items():
+                key = normalise_tool_name(name)
+                if key in reserved_keys:
+                    logger.warning(
+                        "Plugin '%s' registers MCP tool '%s', which conflicts with "
+                        "a core tool; refused, the core tool is kept",
+                        plugin.name,
+                        name,
+                    )
+                elif key in owners:
+                    logger.warning(
+                        "Plugin '%s' registers MCP tool '%s', which conflicts with "
+                        "plugin '%s''s registration; refused, the first registration is kept",
+                        plugin.name,
+                        name,
+                        owners[key][1].name,
+                    )
+                else:
+                    owners[key] = (name, plugin, lowest)
+
+        served: dict[str, tuple[dict, str]] = {}
+        level = MCP_TIERS.index(tier)
+        at_tier: dict[str, dict] = {}  # plugin name -> its tools at `tier`
+        for name, plugin, lowest in owners.values():
+            if MCP_TIERS.index(lowest) > level:
+                continue
+            if plugin.name not in at_tier:
                 try:
-                    plugin_tools = plugin.get_mcp_tools(tier)
-                    if plugin_tools:
-                        self._merge_dict(tools, plugin_tools, plugin.name, "MCP tool")
+                    at_tier[plugin.name] = plugin.get_mcp_tools(tier) or {}
                 except Exception as e:
                     logger.warning("Plugin %s get_mcp_tools failed: %s", plugin.name, e)
-        return tools
+                    at_tier[plugin.name] = {}
+            tool = at_tier[plugin.name].get(name)
+            if tool is not None:
+                served[name] = (tool, lowest)
+        return served
+
+    def get_all_mcp_tools(
+        self, tier: str, *, reserved: frozenset[str] | set[str] | None = None
+    ) -> dict[str, dict]:
+        """The plugin tools served at ``tier``, by name (`mcp_tools_by_tier`)."""
+        return {
+            name: tool
+            for name, (tool, _) in self.mcp_tools_by_tier(tier, reserved=reserved).items()
+        }
 
     def get_all_db_columns(self) -> list[dict]:
         """Get all additional DB columns from all plugins."""

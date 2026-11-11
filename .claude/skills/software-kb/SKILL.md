@@ -63,13 +63,18 @@ Side exits: `proposed → wont_do`, `proposed → deferred → proposed`, `done 
 
 | Tool | Purpose | Key args |
 |------|---------|----------|
-| `sw_claim` | Claim item: `accepted → in_progress` + set assignee (CAS) | `item_id`, `kb_name`, `assignee` |
+| `sw_claim` | Claim item: `accepted → in_progress` + set assignee (CAS) | `item_id`, `kb_name`, `assignee`¹ |
 | `sw_submit` | Submit for review: `in_progress → review` | `item_id`, `kb_name` |
-| `sw_review` | Record review outcome: `review → done` or `review → in_progress` | `item_id`, `kb_name`, `outcome`, `reviewer`, `feedback` |
+| `sw_review` | Record review outcome: `review → done` or `review → in_progress` | `item_id`, `kb_name`, `outcome`, `reviewer`¹, `feedback` |
 | `sw_create_adr` | Create auto-numbered ADR | `title`, `kb_name` |
 | `sw_create_backlog_item` | Create backlog item | `title`, `kind` |
 | `sw_transition` | Transition to any valid status (with gate check) | `item_id`, `kb_name`, `to_status`, `reason` |
 | `sw_log` | Log work session: decisions, rejected approaches, open questions | `item_id`, `kb_name`, `summary` |
+
+¹ Over an MCP session signed in as a user, the assignee or reviewer is that
+user, recorded as `user:<account id>`: leave the argument out; any other
+value, your username included, is refused. With no session identity (local
+stdio, an operator key, the CLI) the argument is a label and is required.
 
 ---
 
@@ -103,7 +108,8 @@ pyrite sw milestones -k <kb>           # Milestones
 ```
 1. sw_pull_next(kb_name=...)           → get recommendation
 2. sw_context_for_item(item_id, kb)    → read linked ADRs, validations, reviews
-3. sw_claim(item_id, kb, assignee=...) → lock the item (CAS — fails if already claimed)
+3. sw_claim(item_id, kb)               → lock the item as yourself (CAS — fails if already claimed;
+                                         pass assignee=... only with no signed-in user, e.g. stdio)
    ↳ Read the `gate` field in the response (Definition of Ready)
 4. Address gate results:
    - checker failures → fix before proceeding (estimate effort, resolve blockers, decompose XL items)

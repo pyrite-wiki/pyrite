@@ -739,10 +739,10 @@ class TestIndexManager:
         target = sorted(setup["kb_path"].rglob("*.md"))[0]
         original_hash = index_module._hash_file
 
-        def unavailable_hash(path):
+        def unavailable_hash(path, root):
             if path == target:
                 return None
-            return original_hash(path)
+            return original_hash(path, root)
 
         original_load = KBRepository.load_entry_from_file
 

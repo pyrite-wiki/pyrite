@@ -8,7 +8,10 @@ import json
 import logging
 from typing import Any
 
-from .utils import parse_meta, persist_entry
+from pyrite.exceptions import PyriteError
+from pyrite.utils.errors import public_text
+
+from .utils import parse_meta, persist_entry, require_writable_kb
 
 logger = logging.getLogger(__name__)
 
@@ -355,20 +358,24 @@ def pyrite_to_ftm(entry: dict) -> dict | None:
 
 
 def import_ftm(
-    db,
+    kb_service,
     kb_name: str,
     ftm_entities: list[dict],
     *,
     dry_run: bool = False,
-    kb_service: Any = None,
 ) -> dict:
-    """Import a batch of FtM entities into a KB.
+    """Import a batch of FtM entities into a KB, through ``kb_service``.
 
-    `kb_service` (MCP) writes each entry as a file through the KB service;
-    None (the CLI) writes the index alone -- see `utils.persist_entry`.
+    Every imported entity is created by `KBService`: a file and
+    an index row, with the pipeline's id, read-only and validator checks. A
+    read-only or unknown KB refuses the whole batch (raises); ``dry_run``
+    writes nothing.
 
     Returns summary dict with counts and entry details.
     """
+    if not dry_run:
+        require_writable_kb(kb_service, kb_name)
+    db = kb_service.db
     imported = 0
     skipped = 0
     unmapped = 0
@@ -377,6 +384,19 @@ def import_ftm(
     entries: list[dict[str, Any]] = []
 
     for ftm_entity in ftm_entities:
+        if not isinstance(ftm_entity, dict):
+            # A malformed item is that item's error; the batch goes on.
+            errors += 1
+            entries.append(
+                {
+                    "id": None,
+                    "title": "",
+                    "type": "",
+                    "status": "error",
+                    "errors": ["An entity must be an object"],
+                }
+            )
+            continue
         schema = ftm_entity.get("schema", "")
 
         # Convert
@@ -427,7 +447,7 @@ def import_ftm(
             }
             if "date" in pyrite_entry:
                 entry_data["date"] = pyrite_entry["date"]
-            persist_entry(db, kb_service, entry_data)
+            persist_entry(kb_service, entry_data)
             imported += 1
             entries.append(
                 {
@@ -438,7 +458,8 @@ def import_ftm(
                 }
             )
         except Exception as exc:
-            logger.error("Error importing FtM entity %s: %s", ftm_entity.get("id"), exc)
+            # One bad entity is reported and the batch goes on, as before.
+            logger.info("FtM entity %s not imported: %s", ftm_entity.get("id"), exc)
             errors += 1
             entries.append(
                 {
@@ -446,6 +467,11 @@ def import_ftm(
                     "title": pyrite_entry.get("title", ""),
                     "type": pyrite_entry.get("entry_type", ""),
                     "status": "error",
+                    "errors": [
+                        public_text(exc)
+                        if isinstance(exc, PyriteError)
+                        else "could not be imported"
+                    ],
                 }
             )
 

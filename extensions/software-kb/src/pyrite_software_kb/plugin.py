@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from pyrite.exceptions import PyriteError, SchemaViolationError, public_text, refusal_fields
 from pyrite.plugins.capabilities import Capability
+from pyrite.plugins.identity import CALLER, PERSON_ARGUMENTS
 from pyrite.plugins.scoping import kb_scope_clause
 
 from .adr_listing import adr_relations, adr_sort_key
@@ -517,6 +518,7 @@ class SoftwareKBPlugin:
                     "required": ["title"],
                 },
                 "handler": self._mcp_create_adr,
+                "default_kb": self._default_adr_kb,
             }
             tools["sw_claim"] = {
                 "description": "Claim a backlog item: transition to in_progress and set assignee (atomic CAS)",
@@ -525,12 +527,16 @@ class SoftwareKBPlugin:
                     "properties": {
                         "item_id": {"type": "string", "description": "Backlog item ID"},
                         "kb_name": {"type": "string", "description": "KB name"},
-                        "assignee": {"type": "string", "description": "Who is claiming the item"},
+                        "assignee": {
+                            "type": "string",
+                            "description": "Who is claiming the item: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
+                        },
                     },
-                    "required": ["item_id", "kb_name", "assignee"],
+                    "required": ["item_id", "kb_name"],
                 },
                 "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_claim,
+                PERSON_ARGUMENTS: {"assignee": CALLER},
             }
             tools["sw_review"] = {
                 "description": "Record review outcome for a backlog item in review status",
@@ -545,12 +551,16 @@ class SoftwareKBPlugin:
                             "description": "Review outcome",
                         },
                         "feedback": {"type": "string", "description": "Review notes/feedback"},
-                        "reviewer": {"type": "string", "description": "Who is reviewing"},
+                        "reviewer": {
+                            "type": "string",
+                            "description": "Who is reviewing: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
+                        },
                     },
-                    "required": ["item_id", "kb_name", "outcome", "reviewer"],
+                    "required": ["item_id", "kb_name", "outcome"],
                 },
                 "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_review,
+                PERSON_ARGUMENTS: {"reviewer": CALLER},
             }
             tools["sw_submit"] = {
                 "description": "Submit an in-progress item for review",
@@ -1774,6 +1784,17 @@ class SoftwareKBPlugin:
             if should_close:
                 db.close()
 
+    def _default_adr_kb(self, args: dict[str, Any], readable_kbs: set[str] | None) -> str | None:
+        """The KB ``sw_create_adr`` writes when the call names none: the one
+        ADR KB the caller may read (``resolve_adr_kb``), or None when there is
+        no single one. Asked by the MCP dispatcher before its checks (the
+        ``default_kb`` declaration), so the handler's ``kb_name``
+        is always a KB those checks ran on."""
+        from .adr_listing import resolve_adr_kb
+
+        kb_conf = resolve_adr_kb(self._get_config(), None, readable_kbs=readable_kbs)
+        return kb_conf.name if kb_conf is not None else None
+
     def _mcp_create_adr(
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
     ) -> dict[str, Any]:
@@ -2661,17 +2682,21 @@ class SoftwareKBPlugin:
                 db.close()
 
     def _mcp_claim(
-        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+        self,
+        args: dict[str, Any],
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> dict[str, Any]:
-        """Claim a backlog item: transition to in_progress and set assignee."""
+        """Claim a backlog item: transition to in_progress and set the
+        assignee, a person argument the dispatcher has set from the session."""
         import json
 
         from .workflows import BACKLOG_WORKFLOW, can_transition, get_allowed_transitions
 
+        assignee = args["assignee"]
         db, should_close = self._get_db()
         item_id = args["item_id"]
         kb_name = args["kb_name"]
-        assignee = args["assignee"]
 
         try:
             # Get current entry
@@ -2948,19 +2973,23 @@ class SoftwareKBPlugin:
                 db.close()
 
     def _mcp_review(
-        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+        self,
+        args: dict[str, Any],
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> dict[str, Any]:
-        """Record review outcome for a backlog item in review status."""
+        """Record review outcome for a backlog item in review status. The
+        reviewer is a person argument the dispatcher has set from the session."""
         import json
 
         from .workflows import BACKLOG_WORKFLOW, can_transition, get_allowed_transitions
 
+        reviewer = args["reviewer"]
         db, should_close = self._get_db()
         item_id = args["item_id"]
         kb_name = args["kb_name"]
         outcome = args["outcome"]
         feedback = args.get("feedback")
-        reviewer = args["reviewer"]
 
         try:
             # Get current entry

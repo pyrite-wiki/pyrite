@@ -36,6 +36,8 @@ RESERVED_KB_NAMES = frozenset({"ephemeral", "gc"})
 def refuse_reserved_kb_name(name: str) -> None:
     """Refuse route-literal collisions when a new KB is registered."""
     if name in RESERVED_KB_NAMES:
-        from ..exceptions import ConfigError
+        from ..exceptions import KBNameReservedError
 
-        raise ConfigError(f"KB name '{name}' is reserved for an API route; choose another name")
+        raise KBNameReservedError(
+            f"KB name '{name}' is reserved for an API route; choose another name"
+        )

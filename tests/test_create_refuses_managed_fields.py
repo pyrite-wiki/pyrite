@@ -518,7 +518,7 @@ CALL_SITES: dict[tuple[str, str], tuple[int, str]] = {
         "create_entry",
     ): (
         1,
-        "safe: persist_entry, the investigation tools' file write over MCP (bulk edges' "
+        "safe: persist_entry, the investigation tools' one file write, MCP and CLI (bulk edges' "
         "caller `fields` and FtM metadata go under `metadata`); create_entry refuses a "
         "managed field at any spelling, metadata included (#1010), and owns nothing",
     ),

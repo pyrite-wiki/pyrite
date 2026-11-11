@@ -17,7 +17,9 @@ from typing import TYPE_CHECKING, Any
 from ..exceptions import (
     QuerySyntaxError,
     QueryTooLongError,
+    RefusedValueError,
     ValidationError,
+    outside_text,
 )
 from ..storage.errors import storage_error_from
 
@@ -508,7 +510,7 @@ class SearchService:
                     "use operators or quotes)."
                 ) from e
             raise QuerySyntaxError(
-                f"Query could not be parsed: {e}. If your query uses AND/OR/NOT "
+                f"Query could not be parsed: {outside_text(e)}. If your query uses AND/OR/NOT "
                 "or phrase quotes, quote any tokens containing - : . yourself "
                 "(sanitization is skipped once you use operators or quotes)."
             ) from e
@@ -758,7 +760,7 @@ class SearchService:
         # 400 SEARCH_FAILED. Both are the caller's mistake; say so, and name
         # the value (#56).
         if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-            raise ValueError(f"limit must be a positive integer, got {limit!r}")
+            raise RefusedValueError(f"limit must be a positive integer, got {limit!r}")
 
         # Normalize mode (already validated above, so SearchMode(...) cannot fail)
         if isinstance(mode, str):

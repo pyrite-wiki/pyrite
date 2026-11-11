@@ -18,39 +18,53 @@ from .utils import parse_meta, persist_entry
 
 
 def create_investigation(
-    db: Any,
+    kb_service: Any,
     kb_name: str,
     title: str,
     scope: str = "",
     key_questions: list[str] | None = None,
     initial_entities: list[dict[str, str]] | None = None,
-    kb_service: Any = None,
 ) -> dict[str, Any]:
     """Create a new investigation with optional initial entities.
 
+    Every entry is created through ``kb_service``: a file and an
+    index row, with the pipeline's read-only, id, type and validator checks,
+    landing where the landing rule says (ADR-0044). An initial entity that
+    already exists is linked as it is, never written again.
+
     Args:
-        db: PyriteDB instance
+        kb_service: the KBService the entries are created through (the
+            plugin context's over MCP; one over the operator's config from
+            the CLI)
         kb_name: Target KB name
         title: Investigation title
         scope: Description of investigation scope
         key_questions: List of key questions to investigate
         initial_entities: List of {"name": ..., "type": ...} dicts for initial entities
-        kb_service: writes the entries as files through the KB service (MCP);
-            None writes the index alone (the CLI) -- see `utils.persist_entry`
 
     Returns:
         Dict with created investigation ID and any created entities
+
+    Raises:
+        KBReadOnlyError: if the KB is read-only
     """
+    from pyrite.exceptions import KBNotFoundError, KBReadOnlyError
+
     if not title.strip():
         return {"error": "Investigation title is required"}
-    # Without this the insert below dies on the entry->kb foreign key and the
-    # caller sees a raw IntegrityError instead of being told which KB is missing.
-    if db.get_kb_stats(kb_name) is None:
+    db = kb_service.db
+    try:
+        kb_config = kb_service.config.require_kb(kb_name, db=db)  # the one resolver (#952)
+    except KBNotFoundError:
+        kb_config = None
+    if kb_config is None:
         return {
             "error": f"KB '{kb_name}' not found",
             "error_code": "NOT_FOUND",
             "suggestion": "Pass kb_name, or create an investigation KB first",
         }
+    if kb_config.read_only:
+        raise KBReadOnlyError(f"KB is read-only: {kb_name}")
 
     entry_id = generate_entry_id(title)
     if db.get_entry(entry_id, kb_name) is not None:
@@ -108,7 +122,6 @@ def create_investigation(
 
     try:
         persist_entry(
-            db,
             kb_service,
             {
                 "id": entry_id,
@@ -132,7 +145,6 @@ def create_investigation(
         for ent in to_create:
             try:
                 persist_entry(
-                    db,
                     kb_service,
                     {
                         "id": ent["id"],

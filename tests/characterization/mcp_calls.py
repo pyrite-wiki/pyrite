@@ -222,11 +222,28 @@ def _placeholder(name: str, schema: dict, call_key: str) -> Any:
     return "characterization-placeholder"
 
 
+# The person a tool records. Optional in the schema -- a signed-in
+# caller is recorded as themselves -- but required of a caller with no
+# identity, which is every principal this matrix dispatches as. Filled as
+# when it was required, so the call still reaches the scoping it
+# characterizes instead of stopping at "who?".
+_RECORDS_A_PERSON = {
+    "social_vote": "user_id",
+    "social_post": "author_id",
+    "wiki_submit_review": "reviewer_id",
+    "sw_claim": "assignee",
+    "sw_review": "reviewer",
+    "task_claim": "assignee",
+}
+
+
 def _generic_arguments(
     world: World, tool_name: str, kb: str, schema: dict, call_key: str
 ) -> dict[str, Any]:
     props: dict = schema.get("properties") or {}
-    required: list[str] = schema.get("required") or []
+    required: list[str] = list(schema.get("required") or [])
+    if tool_name in _RECORDS_A_PERSON:
+        required.append(_RECORDS_A_PERSON[tool_name])
     kb_args = _KB_ARG_OVERRIDE.get(tool_name, ("kb_name",) if "kb_name" in props else ())
 
     args: dict[str, Any] = {}

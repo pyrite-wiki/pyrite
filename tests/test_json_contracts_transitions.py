@@ -89,4 +89,4 @@ def test_server_account_table_statuses_match_the_central_rest_mapping():
         assert status is not None, line
         assert _STATUS_BY_CODE[code] == int(status.group(1)), line
         checked.add(code)
-    assert len(checked) == 10
+    assert len(checked) == 12

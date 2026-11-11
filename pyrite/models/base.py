@@ -14,6 +14,7 @@ from functools import cache
 from pathlib import Path
 from typing import Any, ClassVar
 
+from ..exceptions import EntryTypeError
 from ..schema import Link, Provenance, Source
 from ..utils.frontmatter import require_frontmatter
 from ..utils.yaml import load_yaml
@@ -440,9 +441,9 @@ class Entry(ABC):
         # so an `id:` line cannot smuggle an unindexable title into the index.
         if isinstance(title, (list, tuple, dict)):
             kind = "a mapping" if isinstance(title, dict) else "a list"
-            raise TypeError(f"title must be a string, got {kind}")
+            raise EntryTypeError(f"title must be a string, got {kind}")
         if isinstance(title, float) and title != title:  # NaN
-            raise TypeError("title must be a string, got NaN")
+            raise EntryTypeError("title must be a string, got NaN")
         if isinstance(title, bool):
             title = "true" if title else "false"
         elif title is not None and not isinstance(title, str):

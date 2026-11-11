@@ -1982,3 +1982,91 @@ class TestArchivedExclusionRetry:
         knn = self._knn(sql_log)
         assert [p[1] for _, p in knn] == [4, 8], knn
         assert all("rowid IN" in q for q, _ in knn), knn
+
+
+# Filters on a column of the row itself, correlated with its KB before the fix;
+# the tag filters were not.
+_FILTERS_SAFE_BEFORE = {
+    "entry_type",
+    "entry_types",
+    "state",
+    "fips",
+    "status",
+    "date_from",
+    "date_to",
+}
+
+
+class TestEveryFilterIsScopedToTheRowsKB:
+    """A filter on a search of KB K is evaluated against K's row only.
+
+    Entry ids are unique within a KB, not across KBs. Every filter of both
+    legs is listed here, each with a same-id entry in a second KB that
+    satisfies it while K's entry does not: K's entry must not match.
+    """
+
+    # (search kwargs, what the other KB's same-id entry carries)
+    FILTERS = {
+        "tags": ({"tags": ["only-elsewhere"]}, {"tags": ["only-elsewhere"]}),
+        "two-tags": (
+            {"tags": ["only-elsewhere", "also-elsewhere"]},
+            {"tags": ["only-elsewhere", "also-elsewhere"]},
+        ),
+        "entry_type": ({"entry_type": "event"}, {"entry_type": "event"}),
+        "entry_types": ({"entry_types": ["event"]}, {"entry_type": "event"}),
+        "state": ({"state": "MI"}, {"state": "MI"}),
+        "fips": ({"fips": "26163"}, {"fips": "26163"}),
+        "status": ({"status": "processed"}, {"status": "processed"}),
+        "date_from": ({"date_from": "2030-01-01"}, {"date": "2030-06-01"}),
+        "date_to": ({"date_to": "2000-01-01"}, {"date": "1999-06-01"}),
+    }
+
+    @pytest.fixture
+    def two_kbs(self, backend_with_db):
+        backend, _ = backend_with_db
+        return backend
+
+    @pytest.mark.parametrize("scope", ["kb_name", "kb_names"])
+    @pytest.mark.parametrize("leg", ["keyword", "semantic"])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            pytest.param(
+                n,
+                marks=[pytest.mark.control(reason="a column of the row itself, never wrong")]
+                if n in _FILTERS_SAFE_BEFORE
+                else [],
+                id=n,
+            )
+            for n in FILTERS
+        ],
+    )
+    def test_a_same_id_entry_in_another_kb_does_not_satisfy_the_filter(
+        self, two_kbs, name, leg, scope
+    ):
+        backend = two_kbs
+        search, other = self.FILTERS[name]
+        backend.upsert_entry(_make_entry("dup", kb_name="test", date="2020-01-01"))
+        backend.upsert_entry(_make_entry("dup", kb_name="other", **{"date": "2020-01-01", **other}))
+        where = {"kb_name": "test"} if scope == "kb_name" else {"kb_names": ["test"]}
+        if leg == "keyword":
+            rows = backend.search("Title", **where, **search)
+        else:
+            if not (
+                backend.upsert_embedding("dup", "test", _near_vector(1))
+                and backend.upsert_embedding("dup", "other", _near_vector(2))
+                and backend.has_embeddings()
+            ):
+                pytest.skip("backend cannot store embeddings (no vector support)")
+            rows = backend.search_semantic(_near_vector(), limit=10, **where, **search)
+        assert [(r["kb_name"], r["id"]) for r in rows] == []
+
+    @pytest.mark.control(reason="each filter still matches the entry that carries it")
+    @pytest.mark.parametrize("name", list(FILTERS))
+    def test_the_filter_matches_its_own_kbs_entry(self, two_kbs, name):
+        backend = two_kbs
+        search, other = self.FILTERS[name]
+        backend.upsert_entry(_make_entry("dup", kb_name="test", date="2020-01-01"))
+        backend.upsert_entry(_make_entry("dup", kb_name="other", **{"date": "2020-01-01", **other}))
+        rows = backend.search("Title", kb_name="other", **search)
+        assert [(r["kb_name"], r["id"]) for r in rows] == [("other", "dup")]

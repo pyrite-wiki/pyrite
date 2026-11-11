@@ -70,6 +70,19 @@ class KBOpsMixin:
             self.session.add(kb)
         self.session.commit()
 
+    def ensure_kb(self, name: str, kb_type: str, path: str, description: str = "") -> bool:
+        """Make the KB's row when it has none; never change one.
+
+        What an entry write and the index sync call: they need the row to
+        exist (an entry's foreign key), and they are not the operator's
+        registry operations, so an existing row's ``source``, ``path``,
+        ``description`` and ``default_role`` stay as the operator's
+        ``seed_from_config``/``add_kb``/``update_kb`` left them. ``register_kb``
+        overwrote them, so every write turned a config KB into a ``user`` KB
+        that ``remove_kb`` no longer protected. Returns whether it made the row.
+        """
+        return self.insert_new_kb(name, kb_type, path, description)
+
     def insert_new_kb(
         self,
         name: str,

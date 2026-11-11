@@ -313,6 +313,9 @@ class WorktreeService:
         Returns (success, message). On conflict, returns (False, details).
         After successful merge, rebases the user's branch and clears the diff index.
         """
+        # A read-only KB takes no write, a merged change set included: refused
+        # before git touches the repository.
+        self.config.require_kb(kb_name, db=self.db).refuse_writes()
         row = self._get_worktree_row(kb_name, user_id)
         if not row:
             return False, f"No worktree for user {user_id} in KB '{kb_name}'"

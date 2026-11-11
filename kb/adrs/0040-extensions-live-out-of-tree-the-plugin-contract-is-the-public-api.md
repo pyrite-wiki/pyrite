@@ -123,7 +123,9 @@ that are not imported by name:
   signature `(entry, ctx)`, both enforced at registration (#379), and the
   hook names `before_save`, `after_save` and `after_delete`. The MCP tool
   shape is `{description, inputSchema, handler}`, where `handler(args, *,
-  readable_kbs=None)` returns a dict. The KB argument names are fixed by
+  readable_kbs=None)` returns a dict; `readable_kbs` is passed only to a
+  handler that declares it. A tool that records a person adds
+  `person_arguments` (alpha, below). The KB argument names are fixed by
   `KB_ARGUMENT_NAMES`, and a CLI command is `(name, typer.Typer)`.
 
 ### Internal violations per extension (source files only)
@@ -196,6 +198,7 @@ fails a plugin that imports any other `pyrite.*` module outside its tests.
 | Schema | `generate_entry_id`, `EventStatus`, `ResearchStatus`. The dict shapes for types, field schemas, presets, relationship types, workflows, DB tables and migrations are specified as `TypedDict`s in the façade. |
 | Errors | `PyriteError`, `QueryTooLongError`. An MCP handler returns `{"error": ...}` or raises `PyriteError`, and ADR-0037's error contract shapes what the caller sees. |
 | Scoping | `kb_scope_clause` and `UNSCOPED`. |
+| Person arguments (**alpha**) | `PERSON_ARGUMENTS`, `CALLER`, `OPTIONAL`, `ACTING_KEYWORD`, `person_key`, `resolve_person_arguments` (`pyrite.plugins.identity`). Alpha: may change when the multi-user design is settled. |
 | CLI helpers | `cli_error`, plus a new `plugin_context()` that gives a CLI command a context from the runtime #382 builds. |
 | Testing | `pyrite.plugins.testing` (section 6). |
 
@@ -216,7 +219,26 @@ internal asks for it to be added to the contract.
   today's rule in `_register_plugin_tools`. Tool names are namespaced
   `<prefix>_*`, and the prefix is declared once on the plugin. A name that
   collides with a core tool or another plugin's tool is **refused at
-  registration**, and the plugin's tool is the one dropped.
+  registration**, and the plugin's tool is the one dropped: against a core
+  tool, the core tool is kept at every tier; between two plugins, the first
+  registration is kept. A name has one owner across every tier, decided
+  once, and is served under the tier its owner registered it at. Names are
+  compared trimmed and case-folded, so a variant in case or spacing is the
+  same name. All of this is in force today (`CORE_TOOL_NAMES`,
+  `PluginRegistry.mcp_tools_by_tier`).
+  A tool that records a person -- who voted, wrote, reviewed, claimed or is
+  assigned -- declares those arguments in its tool dict,
+  `person_arguments: {"<argument>": "caller" | "optional"}` (a list item's
+  field as `"<list>[].<field>"`). **Alpha.** The dispatcher sets each one
+  from the session's `Principal` before the handler runs, so the handler
+  never sees a caller-supplied identity, however it is wrapped: a signed-in
+  user is recorded as `user:<account id>`, and an argument naming anything
+  else is refused (`FORBIDDEN`, with a `suggestion`); a scoped caller with no
+  account records no one; with no session identity (the local operator, an
+  operator key) the argument is a label. `acting_keyword: True` also
+  passes the caller's key as `acting=`. The core's task tools and the REST
+  claim and review routes follow the same rule; a gate test fails on any
+  person-looking argument that is neither declared nor explained.
   Each tool states how it relates to KB content, so core's gate needs no list
   of plugin tool names. There are three ways a tool can do this:
   - it names its KB through a `KB_ARGUMENT_NAMES` parameter;
@@ -375,7 +397,7 @@ src/pyrite_<name>/
   entry_types.py       # Entry subclasses via base_kwargs / base_frontmatter
   preset.py            # KB preset (TypedDict from pyrite.plugin_api)
   validators.py  hooks.py
-  mcp.py               # tools: handler(args, *, readable_kbs=None) using ctx.index / ctx.kb_service
+  mcp.py               # tools: handler(args, *, readable_kbs=None) using ctx.index / ctx.kb_service; person_arguments for people
   cli.py               # typer app; plugin_context() for dependencies
   tables.py            # <name>_* tables, if any
 tests/

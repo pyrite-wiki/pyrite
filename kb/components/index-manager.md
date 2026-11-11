@@ -25,7 +25,10 @@ files git changed and adds history through its `enrich` hook.
   `file_size` still match is not read (`_file_changed`, the one staleness
   rule); every other file is parsed. Claims are grouped by id; the first path
   wins; ids with several files are `duplicates`; unparseable files are
-  `malformed`.
+  `malformed`. A file that resolves outside the KB's root or has more than
+  one hard link is `skipped` before its stat is trusted and never read: most
+  exports write from the index, so it holds only bytes read inside the root
+  (`tests/test_indexed_bytes_stay_inside_the_kb.py`).
 - **Apply**: write a winner whose row is missing, moved or has another content
   hash (`added`/`updated`); rewrite silently when only the stat moved (a touch);
   retire every row no parseable file claims (`removed`). A file whose row

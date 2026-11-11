@@ -6,6 +6,7 @@ from typing import Any, ClassVar
 
 from pyrite.exceptions import PyriteError, public_text, refusal_fields
 from pyrite.plugins.capabilities import Capability
+from pyrite.plugins.identity import CALLER, PERSON_ARGUMENTS
 from pyrite.plugins.scoping import kb_scope_clause
 
 from .entry_types import UserProfileEntry, WriteupEntry
@@ -116,17 +117,21 @@ class SocialPlugin:
                     "properties": {
                         "entry_id": {"type": "string", "description": "Entry ID to vote on"},
                         "kb_name": {"type": "string", "description": "KB name"},
-                        "user_id": {"type": "string", "description": "Voter user ID"},
+                        "user_id": {
+                            "type": "string",
+                            "description": "Voter: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
+                        },
                         "value": {
                             "type": "integer",
                             "enum": [1, -1],
                             "description": "Vote value: 1 (up) or -1 (down)",
                         },
                     },
-                    "required": ["entry_id", "kb_name", "user_id", "value"],
+                    "required": ["entry_id", "kb_name", "value"],
                 },
                 "locates_entry": {"id_args": ["entry_id"], "entry_type": "writeup"},
                 "handler": self._mcp_vote,
+                PERSON_ARGUMENTS: {"user_id": CALLER},
             }
             tools["social_post"] = {
                 "description": "Create a new writeup in a social KB",
@@ -136,7 +141,10 @@ class SocialPlugin:
                         "kb_name": {"type": "string", "description": "Target KB"},
                         "title": {"type": "string", "description": "Writeup title"},
                         "body": {"type": "string", "description": "Writeup body (markdown)"},
-                        "author_id": {"type": "string", "description": "Author user ID"},
+                        "author_id": {
+                            "type": "string",
+                            "description": "Author: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
+                        },
                         "writeup_type": {
                             "type": "string",
                             "enum": ["essay", "story", "review", "howto", "opinion"],
@@ -148,9 +156,10 @@ class SocialPlugin:
                             "description": "Tags",
                         },
                     },
-                    "required": ["kb_name", "title", "body", "author_id"],
+                    "required": ["kb_name", "title", "body"],
                 },
                 "handler": self._mcp_post,
+                PERSON_ARGUMENTS: {"author_id": CALLER},
             }
 
         return tools
@@ -332,7 +341,10 @@ class SocialPlugin:
                 db.close()
 
     def _mcp_vote(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Cast a vote on a writeup."""
+        """Cast a vote on a writeup. `user_id` is a person argument
+        (`PERSON_ARGUMENTS`): the dispatcher has set it from the session --
+        ``user:<id>`` for a signed-in voter -- so one account holds one vote
+        per entry and no other account's vote can be written."""
         from pyrite.exceptions import ValidationError
         from pyrite.services.access_policy import named_kb
 
@@ -342,6 +354,7 @@ class SocialPlugin:
             raise ValidationError("kb_name is required: a row names the KB that holds the entry")
         from datetime import UTC, datetime
 
+        voter = args["user_id"]
         db, should_close = self._get_db()
 
         try:
@@ -354,7 +367,7 @@ class SocialPlugin:
                 (
                     args["entry_id"],
                     args["kb_name"],
-                    args["user_id"],
+                    voter,
                     args["value"],
                     now,
                     args["value"],
@@ -375,13 +388,15 @@ class SocialPlugin:
         no exists check (an existing id was silently overwritten), no
         validators, no before/after-save hooks, and error responses carried no
         `error_code`. Now goes through `KBService.create_entry`, the same
-        pipeline `software-kb`'s `_mcp_create_backlog_item` uses.
+        pipeline `software-kb`'s `_mcp_create_backlog_item` uses. `author_id`
+        is a person argument the dispatcher has set from the session.
         """
         from pyrite.services.kb_service import KBService
 
         db, should_close = self._get_db()
         config = self._get_config()
 
+        author = args["author_id"]
         kb_name = args["kb_name"]
         try:
             kb_config = config.require_kb(kb_name)  # the one resolver (#952)
@@ -396,7 +411,7 @@ class SocialPlugin:
                 args["title"],
                 "writeup",
                 args["body"],
-                author_id=args["author_id"],
+                author_id=author,
                 writeup_type=args.get("writeup_type", "essay"),
                 tags=args.get("tags", []),
             )

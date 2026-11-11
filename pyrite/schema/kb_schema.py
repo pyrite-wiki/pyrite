@@ -49,11 +49,13 @@ class KBSchema:
 
     @classmethod
     def from_yaml(cls, path: Path) -> "KBSchema":
-        """Load schema from kb.yaml file."""
+        """Load schema from kb.yaml file, read only inside the KB's folder (the
+        file's own): a link out of it, or a file with more than one hard
+        link, raises ``KBFileReadOutsideRootError`` (``OUTSIDE_KB_ROOT``)."""
         if not path.exists():
             return cls()
 
-        data = load_yaml_file(path)
+        data = load_yaml_file(path, kb_root=path.parent)
 
         return cls.from_dict(data)
 

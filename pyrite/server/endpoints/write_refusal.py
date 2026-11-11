@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
-from ...exceptions import ValidationError, refusal_fields
+from ...exceptions import ValidationError, public_text, refusal_fields
 from ...services.body_bounds import MARKER_KEYS, ensure_not_truncated
 
 
@@ -35,7 +35,7 @@ def refusal_http(exc: ValidationError) -> HTTPException:
     one code, on every surface including this one.
     """
     code = exc.error_code
-    detail: dict = {"code": code, "message": str(exc), "retryable": False}
+    detail: dict = {"code": code, "message": public_text(exc), "retryable": False}
     # REST's write path built its own body, so it copied only ``suggestion``
     # and ``declared_types``: the structured ``errors`` rows of a field refusal
     # (#1284) never reached the caller, and neither did the ``candidate_kbs``/

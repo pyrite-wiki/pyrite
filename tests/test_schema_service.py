@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from pyrite.config import KBConfig
 from pyrite.exceptions import KBNotFoundError
 from pyrite.services.schema_service import SchemaService
 from pyrite.utils.yaml import dump_yaml_file, load_yaml_file
@@ -24,10 +25,14 @@ class FakeKBConfig:
         self.schema = None
         self.types = None
         self.policies = None
+        self.read_only = False
 
     @property
     def kb_yaml_path(self) -> Path:
         return self.path / "kb.yaml"
+
+    # The read-only rule is the real KBConfig's, not a copy of it.
+    refuse_writes = KBConfig.refuse_writes
 
     def load_kb_yaml(self) -> bool:
         if self.kb_yaml_path.exists():

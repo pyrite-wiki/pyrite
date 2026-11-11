@@ -285,7 +285,8 @@ def test_template_file_reads_quoted_dashes(tmp_path):
     from pyrite.services.template_service import TemplateService
 
     parsed = TemplateService._parse_template_file(
-        _write(tmp_path, '---\ntemplate_name: T\nentry_type: note\ntitle: "a --- b"\n---\nBody\n')
+        _write(tmp_path, '---\ntemplate_name: T\nentry_type: note\ntitle: "a --- b"\n---\nBody\n'),
+        tmp_path,
     )
     assert parsed["frontmatter"]["title"] == "a --- b"
     assert parsed["body"] == "Body\n"
@@ -294,7 +295,12 @@ def test_template_file_reads_quoted_dashes(tmp_path):
 def test_export_does_not_build_an_entry_from_prose_between_two_rules(tmp_path):
     from pyrite.cli.export_commands import _load_entry_from_result
 
+    from pyrite.config import KBConfig, PyriteConfig
+
     class Svc:
+        # The export reads an entry's file only inside its KB's folder.
+        config = PyriteConfig(knowledge_bases=[KBConfig(name="k", path=tmp_path)])
+
         def load_entry_from_disk(self, entry_id, kb):
             return "from-disk"
 
@@ -302,13 +308,6 @@ def test_export_does_not_build_an_entry_from_prose_between_two_rules(tmp_path):
     path = _write(tmp_path, "Intro.\n\n---\ntitle: Not Frontmatter\n---\nmore\n")
     got = _load_entry_from_result({"file_path": str(path), "id": "x", "kb_name": "k"}, Svc(), None)
     assert got == "from-disk"
-
-
-def test_journalism_known_entities_reads_quoted_dashes(tmp_path):
-    from pyrite_journalism_investigation.known_entities import _extract_aliases
-
-    path = _write(tmp_path, TRICKY)
-    assert _extract_aliases({"file_path": str(path)}) == ["Foo", "Bar"]
 
 
 def test_markdown_importer_reads_a_file_with_no_body_and_no_final_newline():
@@ -824,7 +823,7 @@ def _readers(tmp_path, kb_service):
     """name -> fn(text) -> ('loaded', title, body) | ('plain',) | ('refused', why)."""
     from pyrite.cli import export_commands as ec
     from pyrite.cli.schema_commands import _parse_frontmatter
-    from pyrite.config import KBConfig
+    from pyrite.config import KBConfig, PyriteConfig
     from pyrite.exceptions import PyriteError
     from pyrite.formats.importers.markdown_importer import import_markdown
     from pyrite.services.id_pin_service import PinRefusedError, insert_id_line
@@ -863,7 +862,7 @@ def _readers(tmp_path, kb_service):
         return ("refused", "None") if m is None else ("loaded", m["title"], "")
 
     def template(text):
-        t = TemplateService._parse_template_file(path_of(text))
+        t = TemplateService._parse_template_file(path_of(text), tmp_path)
         if t["frontmatter"] == {} and t["body"] == text:
             return ("plain",)
         return ("loaded", t["frontmatter"]["title"], t["body"].strip())
@@ -877,10 +876,15 @@ def _readers(tmp_path, kb_service):
 
     def export(text):
         class Svc:
+            # The export reads an entry's file only inside its KB's folder.
+            config = PyriteConfig(knowledge_bases=[KBConfig(name="t", path=tmp_path)])
+
             def load_entry_from_disk(self, *_):
                 return None
 
-        e = ec._load_entry_from_result({"file_path": str(path_of(text))}, Svc(), None)
+        e = ec._load_entry_from_result(
+            {"file_path": str(path_of(text)), "kb_name": "t"}, Svc(), None
+        )
         return ("refused", "None") if e is None else ("loaded", e.title, e.body)
 
     def create(text):
@@ -901,13 +905,6 @@ def _readers(tmp_path, kb_service):
         out = insert_id_line(text, "abc")
         return ("loaded", "A", "") if "id: abc" in out else ("refused", "no id")
 
-    def aliases(text):
-        from pyrite_journalism_investigation.known_entities import _extract_aliases
-
-        p = path_of(text.replace("type: note", "type: note\naliases: [Zed]"))
-        found = [a.lower() for a in _extract_aliases({"file_path": str(p)})]
-        return ("loaded", "A", "") if found == ["zed"] else ("refused", "no aliases")
-
     return {
         "repository": guard(repo),
         "schema-check": guard(schema),
@@ -918,7 +915,6 @@ def _readers(tmp_path, kb_service):
         "create-body-file": guard(create),
         "export": guard(export),
         "ids-pin": guard(pin),
-        "journalism-aliases": guard(aliases),
     }
 
 
@@ -960,7 +956,6 @@ def test_every_reader_follows_the_rule_or_refuses(row, tmp_path, kb_service):
             if name in (
                 "git-change-summary",
                 "ids-pin",
-                "journalism-aliases",
                 "create-body-file",  # drops type/title from the returned fields
             ):
                 # these read part of the file: they find what is there, from the right place

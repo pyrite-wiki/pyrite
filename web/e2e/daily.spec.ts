@@ -4,9 +4,8 @@ import { SEEDED_DAILY_DATES, dateOffsetFromToday } from './fixtures';
 /**
  * Every date this file navigates to, whether directly or via prev/next click
  * sequences, must be a member of SEEDED_DAILY_DATES -- see fixtures.ts and the
- * Package E ticket. With auth disabled, GET /daily/{date} CREATES a note for a
- * date with none, so navigating outside that set turns a read-only run into a
- * write that other specs would then see.
+ * Package E ticket. Outside that set a date has no note: GET /daily/{date}
+ * answers 404 (it creates nothing) and the page shows "Start today's note".
  *
  * The daily page always starts at offset 0 (today). DAILY_OFFSETS_SEEDED is
  * [-3, -2, -1, 0, 1, 2], so a click sequence here may use at most 3 "previous

@@ -176,12 +176,25 @@ def export_collection(
                 # Folder-based: list entries in that folder
                 kb_config = config.get_kb(kb or "")
                 if kb_config:
+                    from ..utils.kb_files import KBFiles
+
                     # Resolved once, and compared against each file's resolved
                     # path: `stuff/../stuff` and an in-KB symlink still name
-                    # their files. A `folder_path` that leaves the KB matches
-                    # nothing, as it should.
+                    # their files.
                     folder = (kb_config.path / collection.folder_path).resolve()
-                    if folder.exists():
+                    # The folder is the collection's own value: it is walked
+                    # only where it resolves inside the KB, and each file is
+                    # read the same way (`_entry_from_file`).
+                    inside = KBFiles(kb_config.path).contains(folder)
+                    if not inside:
+                        logger.warning(
+                            "Collection %s names a folder outside its KB; nothing exported from it",
+                            collection_id,
+                        )
+                        unreadable.append(
+                            (collection.folder_path, "the folder resolves outside the KB")
+                        )
+                    if inside and folder.exists():
                         # The indexer's own rule (through the service's
                         # list_entry_files): a README, a hidden file or a
                         # `_templates` scaffold is not an entry, so it is not
@@ -190,7 +203,7 @@ def export_collection(
                             if folder not in md_file.resolve().parents:
                                 continue
                             try:
-                                entry = _entry_from_file(md_file)
+                                entry = _entry_from_file(md_file, kb_config.path)
                             except Exception as e:
                                 logger.warning("Could not load %s: %s", md_file, e)
                                 unreadable.append((str(md_file), _reason(e)))
@@ -392,13 +405,24 @@ def _report_left_out(left_out: list[tuple[str, str]]) -> None:
         console.print(f"  {escape(name)}: {escape(reason)}")
 
 
-def _entry_from_file(path):
+def _entry_from_file(path, root):
     """The Entry a markdown file holds, split by the loader's rule; None when
-    the file has no frontmatter."""
+    the file has no frontmatter.
+
+    Read only where ``path`` resolves inside ``root``, the KB's folder
+    (`KBFiles.read_bytes`): a file that is a link out of the KB raises
+    `KBFileOutsideRootError`, and what it points at reaches no export."""
+    import io
+
     from ..models.core_types import entry_from_frontmatter
+    from ..utils.kb_files import KBFiles
     from ..utils.yaml import load_yaml
 
-    split = split_frontmatter(path.read_text(encoding="utf-8"))
+    raw = KBFiles(root).read_bytes(path)
+    if raw is None:
+        return None
+    text = io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8").read()
+    split = split_frontmatter(text)
     if not isinstance(split, Frontmatter):
         return None
     entry = entry_from_frontmatter(load_yaml(split.text), split.body)
@@ -423,13 +447,21 @@ def _load_entry_with_reason(result: dict, svc, kb: str | None) -> tuple["Entry |
     reason = ""
     # Try file_path from DB first (handles ID/filename mismatches)
     file_path = result.get("file_path", "")
-    if file_path:
+    entry_kb = result.get("kb_name", kb or "")
+    kb_config = svc.config.get_kb(entry_kb) if entry_kb else None
+    if file_path and kb_config is not None:
         from pathlib import Path
+
+        from ..utils.kb_files import OUTSIDE_KB_REASON, KBFileOutsideRootError
 
         path = Path(file_path)
         if path.exists():
             try:
-                entry = _entry_from_file(path)
+                entry = _entry_from_file(path, kb_config.path)
+            except KBFileOutsideRootError:
+                # A link out of the KB: not exported, and not looked up again
+                # by id (the lookup would read the same link).
+                return None, f"the file {OUTSIDE_KB_REASON}"
             except Exception as e:
                 return None, _reason(e)
             if entry:
@@ -438,10 +470,12 @@ def _load_entry_with_reason(result: dict, svc, kb: str | None) -> tuple["Entry |
         else:
             reason = f"the file is missing: {file_path}"
 
-    # Fallback to load_entry_from_disk (searches by ID)
+    # Fallback to load_entry_from_disk (searches by ID). The lookup reads only
+    # inside the KB (`KBRepository._read_inside`): a link out of it, or a
+    # hard link, is never read, so there is nothing to check afterwards. A
+    # KB the config does not know is not looked up at all.
     entry_id = result.get("id", "")
-    entry_kb = result.get("kb_name", kb or "")
-    if entry_id and entry_kb:
+    if entry_id and kb_config is not None:
         try:
             entry = svc.load_entry_from_disk(entry_id, entry_kb)
         except Exception as e:
@@ -463,7 +497,8 @@ def _follow_links(entries: list, svc, kb_name: str, depth: int) -> list:
             for link in entry.links:
                 target_id = link.target
                 if target_id not in seen_ids:
-                    linked = svc.load_entry_from_disk(target_id, kb_name)
+                    row = svc.get_entry(target_id, kb_name, readable_kbs=UNSCOPED)
+                    linked = _load_entry_from_result(row, svc, kb_name) if row else None
                     if linked:
                         all_entries.append(linked)
                         next_frontier.append(linked)

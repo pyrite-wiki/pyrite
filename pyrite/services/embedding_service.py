@@ -362,7 +362,9 @@ def _check_model_source(name: str) -> None:
     try:
         modules = json.loads(modules_file.read_text())
     except (OSError, ValueError) as e:
-        raise EmbeddingModelRefusedError(f"Cannot read {modules_file}: {e}") from e
+        from ..exceptions import outside_text
+
+        raise EmbeddingModelRefusedError(f"Cannot read {modules_file}: {outside_text(e)}") from e
     for module in modules if isinstance(modules, list) else []:
         ref = module.get("type", "") if isinstance(module, dict) else ""
         if not str(ref).startswith("sentence_transformers."):
@@ -386,11 +388,13 @@ def _load_model(name: str) -> Any:
     try:
         from sentence_transformers import SentenceTransformer
     except ImportError as e:
+        from ..exceptions import outside_text
+
         # is_available() only sees the package through the finder, so a broken
         # install reaches its first load here: name it and the remedy (#1101).
         raise EmbeddingModelUnavailableError(
             "sentence-transformers is installed but cannot be imported: "
-            f"{e}. Reinstall it with `{extra_install_command('semantic')}`."
+            f"{outside_text(e)}. Reinstall it with `{extra_install_command('semantic')}`."
         ) from e
 
     # Suppress noisy output during model loading:

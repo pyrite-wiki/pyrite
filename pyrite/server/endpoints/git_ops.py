@@ -2,7 +2,13 @@
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
-from ...exceptions import InvalidGitRefError, KBNotFoundError, PyriteError
+from ...exceptions import (
+    InvalidGitRefError,
+    KBNotFoundError,
+    KBReadOnlyError,
+    PyriteError,
+    public_text,
+)
 from ...services.access_policy import KB, AccessPolicy, Action
 from ...services.export_service import ExportService
 from ...services.kb_service import KBService
@@ -58,7 +64,9 @@ def publish_changes(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{kb_name}' not found"}
         )
     except PyriteError as e:
-        raise HTTPException(status_code=400, detail={"code": "PUBLISH_FAILED", "message": str(e)})
+        raise HTTPException(
+            status_code=400, detail={"code": "PUBLISH_FAILED", "message": public_text(e)}
+        )
 
 
 @router.post("/kbs/{kb_name}/commit", dependencies=[Depends(requires_tier("admin"))])
@@ -77,12 +85,16 @@ def commit_kb(
     try:
         result = export_svc.commit_kb(kb_name, message=message, paths=paths, sign_off=sign_off)
         return result
+    except KBReadOnlyError as e:
+        raise HTTPException(status_code=403, detail={"code": "KB_READ_ONLY", "message": str(e)})
     except KBNotFoundError:
         raise HTTPException(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{kb_name}' not found"}
         )
     except PyriteError as e:
-        raise HTTPException(status_code=400, detail={"code": "COMMIT_FAILED", "message": str(e)})
+        raise HTTPException(
+            status_code=400, detail={"code": "COMMIT_FAILED", "message": public_text(e)}
+        )
 
 
 @router.post("/kbs/{kb_name}/push", dependencies=[Depends(requires_tier("admin"))])
@@ -100,6 +112,8 @@ def push_kb(
     try:
         result = export_svc.push_kb(kb_name, remote=remote, branch=branch)
         return result
+    except KBReadOnlyError as e:
+        raise HTTPException(status_code=403, detail={"code": "KB_READ_ONLY", "message": str(e)})
     except KBNotFoundError:
         raise HTTPException(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{kb_name}' not found"}
@@ -107,4 +121,6 @@ def push_kb(
     except InvalidGitRefError as e:
         raise HTTPException(status_code=400, detail={"code": "INVALID_REF", "message": str(e)})
     except PyriteError as e:
-        raise HTTPException(status_code=400, detail={"code": "PUSH_FAILED", "message": str(e)})
+        raise HTTPException(
+            status_code=400, detail={"code": "PUSH_FAILED", "message": public_text(e)}
+        )

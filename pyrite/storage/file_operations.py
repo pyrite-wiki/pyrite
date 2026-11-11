@@ -189,6 +189,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
+from ..exceptions import RefusedValueError, ValidationError, outside_text
 from ..utils.frontmatter import (
     Frontmatter,
     Malformed,
@@ -197,15 +198,16 @@ from ..utils.frontmatter import (
     describe,
     split_frontmatter,
 )
-from ..utils.yaml import _is_yaml11_ambiguous
+from ..utils.yaml import _is_yaml11_ambiguous, check_yaml_limits
 
 # --- the public surface -----------------------------------------------------
 
 
-class OperationRefusedError(Exception):
+class OperationRefusedError(ValidationError):
     """The operation cannot be applied as asked, and nothing was changed.
 
-    ``reason`` says why, in words a caller can show to a person.
+    ``reason`` says why, in words a caller can show to a person: a Pyrite
+    refusal (``VALIDATION_FAILED``), so every surface shows it.
     """
 
     def __init__(self, reason: str, op: Any = None):
@@ -519,13 +521,23 @@ def _yaml() -> YAML:
 
 @functools.lru_cache(maxsize=4096)
 def _scalar_of(text: str) -> Any:
-    """What ``text`` reads as when written bare as a YAML 1.2 scalar key."""
+    """What ``text`` reads as when written bare as a YAML 1.2 scalar key.
+
+    A probe (``tests/test_untrusted_yaml_is_bounded.py``): one line, read as
+    one key, and only a scalar key is taken. A collection key (a flow
+    sequence, which may hold anchors and aliases) is never converted
+    (``_plain`` would walk every alias), so the segment is its own text."""
+    if not text or not _printable(text):
+        return text
     try:
-        value = YAML().load(f"{text}: 0") if text else None
+        value = YAML().load(f"{text}: 0")
     except Exception:  # YAMLError; ValueError for ``2024-02-30``, a date that is none
         return text
     if isinstance(value, Mapping) and len(value) == 1:
-        return _plain(next(iter(value)))
+        key = next(iter(value))
+        if isinstance(key, Mapping | list | tuple | set | frozenset):
+            return text
+        return _plain(key)
     return text
 
 
@@ -645,6 +657,7 @@ def unmodellable_reason(text: str, span: FrontmatterSpan) -> tuple[str, int] | N
         return None
     y = _yaml()
     try:
+        check_yaml_limits(text[span.start : span.end])  # an alias bomb is not walked
         root = y.compose(text[span.start : span.end])
     except Exception:  # YAMLError; RecursionError on deep nesting (#972 round 1)
         return None
@@ -715,7 +728,7 @@ def frontmatter_refusal(root: Node | None, y: YAML) -> tuple[tuple[str, Node | N
     except Exception as e:  # DuplicateKeyError, ValueError, RecursionError
         if duplicate is not None:
             return (_DUPLICATE.format(duplicate.value), duplicate), None
-        return (f"{_DOES_NOT_PARSE}{e}{_BODY_TOO}", None), None
+        return (f"{_DOES_NOT_PARSE}{outside_text(e)}{_BODY_TOO}", None), None
     tagged = _tagged_scalar_key_node(root, made)
     if tagged is not None:
         return (_TAGGED_KEY, tagged), None
@@ -813,9 +826,10 @@ def _parse(text: str, span: FrontmatterSpan) -> _Doc:
     yaml_text = text[span.start : span.end]
     y = _yaml()
     try:
+        check_yaml_limits(yaml_text)  # an alias bomb is refused, not walked
         root = y.compose(yaml_text)
     except Exception as e:  # YAMLError; RecursionError on deep nesting
-        raise OperationRefusedError(f"{_DOES_NOT_PARSE}{e}{_BODY_TOO}") from e
+        raise OperationRefusedError(f"{_DOES_NOT_PARSE}{outside_text(e)}{_BODY_TOO}") from e
     # Before construction: constructing a merge (``<<: *b``) removes that pair
     # from the node, so it cannot be found afterwards.
     anchored = frozenset(
@@ -1131,9 +1145,11 @@ def _segments(path: Any, op: Any = None) -> list[str | int]:
         elif isinstance(path, str):
             segs = parse_field_path(path)
         else:
-            raise ValueError(f"a path is a string or a tuple, not {type(path).__name__}")
+            raise RefusedValueError(f"a path is a string or a tuple, not {type(path).__name__}")
     except ValueError as e:
-        raise OperationRefusedError(str(e), op) from None
+        # The parser's own refusals are RefusedValueError (shown); any other
+        # ValueError's text is withheld from a network caller (ADR-0052 N3).
+        raise OperationRefusedError(outside_text(e), op) from None
     if not segs and not isinstance(op, AddSubkey):
         raise OperationRefusedError(f"the path {path!r} is empty", op)
     if segs and isinstance(segs[0], int):
@@ -1670,7 +1686,7 @@ def _final_check(current: _Doc, expected: dict) -> str | None:
     try:
         parsed = load_frontmatter(current.text)
     except Exception as e:  # FrontmatterError: the edit broke the YAML
-        return f"the reader cannot parse the result ({e})"
+        return f"the reader cannot parse the result ({outside_text(e)})"
     if parsed is None:
         return "the reader finds no frontmatter in the result"
     meta, body = parsed

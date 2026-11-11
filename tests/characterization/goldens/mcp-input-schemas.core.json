@@ -1370,7 +1370,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "description": "Who claims the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
           "kb_name": {
@@ -1384,8 +1384,7 @@
         },
         "required": [
           "task_id",
-          "kb_name",
-          "assignee"
+          "kb_name"
         ],
         "type": "object"
       }
@@ -1398,7 +1397,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "description": "Assignee, optional; over a signed-in session it must be you (leave it out; any other value is refused) (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
           "body": {
@@ -1479,6 +1478,7 @@
             "items": {
               "properties": {
                 "assignee": {
+                  "description": "Optional; over a signed-in session it must be you",
                   "type": "string"
                 },
                 "body": {
@@ -1601,7 +1601,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "New assignee",
+            "description": "New assignee; over a signed-in session it must be you (leave it out; any other value is refused); empty clears it",
             "type": "string"
           },
           "kb_name": {
@@ -3702,7 +3702,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "description": "Who claims the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
           "kb_name": {
@@ -3716,8 +3716,7 @@
         },
         "required": [
           "task_id",
-          "kb_name",
-          "assignee"
+          "kb_name"
         ],
         "type": "object"
       }
@@ -3730,7 +3729,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "description": "Assignee, optional; over a signed-in session it must be you (leave it out; any other value is refused) (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
           "body": {
@@ -3811,6 +3810,7 @@
             "items": {
               "properties": {
                 "assignee": {
+                  "description": "Optional; over a signed-in session it must be you",
                   "type": "string"
                 },
                 "body": {
@@ -3933,7 +3933,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "New assignee",
+            "description": "New assignee; over a signed-in session it must be you (leave it out; any other value is refused); empty clears it",
             "type": "string"
           },
           "kb_name": {

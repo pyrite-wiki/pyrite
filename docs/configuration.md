@@ -11,7 +11,7 @@ config file at all.
 |---|---|---|
 | `PYRITE_CONFIG_DIR` | `~/.pyrite` | Directory holding `config.yaml`. When unset, a `.pyrite/config.yaml` found in the current directory or any parent is used instead of `~/.pyrite` — a repo-local registry, so a checkout's `kb/` resolves to that checkout. The index and cloned repos default to this directory too (see below). |
 | `PYRITE_DATA_DIR` | `~/.pyrite` | Directory for the index (`index.db`) and cloned repos (`repos/`); overrides `settings.index_path` in `config.yaml`. When set it is also where `config.yaml` is read from, ahead of `PYRITE_CONFIG_DIR`. Set this in containers and point a volume at it. |
-| `PYRITE_STATIC_DIR` | `<checkout>/web/dist` | Built web UI to serve at `/`. Needed when the package is installed into site-packages rather than run from a checkout. |
+| `PYRITE_STATIC_DIR` | `<checkout>/web/dist` | Built web UI to serve at `/`. Needed when the package is installed into site-packages rather than run from a checkout. A relative value is resolved once, at startup, against the working directory of the process that starts the server. |
 | `PYRITE_BRANDING_DIR` | built-in | Folder of white-label branding assets (see `deploy/branding-examples/`) |
 | `PYRITE_LOG_LEVEL` | `WARNING` (`INFO` for `pyrite serve` and `pyrite-server`) | Level of the log lines on stderr: `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`. `-v` (INFO) and `-vv` (DEBUG) on the command line, in any position, beat it. |
 
@@ -120,7 +120,7 @@ a copy of `config.yaml` to restore from.
 |---|---|---|
 | `PYRITE_HOST` | `127.0.0.1` | Bind address. Containers need `0.0.0.0`. |
 | `PYRITE_PORT` | `8088` | Port. When unset, `PORT` is used (platforms such as Railway and Heroku set it). |
-| `PYRITE_CORS_ORIGINS` | localhost dev ports | Comma-separated allowed origins |
+| `PYRITE_CORS_ORIGINS` | localhost dev ports | Comma-separated allowed origins; empty items are ignored. A `*` admits every origin and turns off credentialed (cookie) requests from any origin |
 | `PYRITE_PUBLISHED_ON_LOOPBACK` | unset | Set to exactly `true` by the bundled `docker-compose.yml`, which publishes the port on `127.0.0.1`. Silences the startup warning for a credential-free wildcard bind, only inside a container and only with auth off. True only while the published address is loopback: remove it when you change `ports:` (including in a `docker-compose.override.yml`). Do not set it by hand elsewhere; outside a container it has no effect |
 | `PYRITE_ALLOWED_HOSTS` | unset | Comma-separated extra hostnames a credential-free server answers (see below) |
 | `PYRITE_API_KEY` | unset | Single admin API key (legacy single-key mode). Prefer `api_keys` in `config.yaml` — hashed keys with a role each. |
@@ -138,6 +138,47 @@ settings:
       role: read          # read | write | admin
       label: "Reader"
 ```
+
+### Fixed bounds on untrusted input
+
+These are not settings. Each is a constant chosen above anything a legitimate
+KB reaches; a document or request past one is refused with a message that names
+the bound.
+
+| Input | Bound | Where |
+|---|---|---|
+| YAML aliases in one document | 1,000 aliases, or an expanded size of 1,000,000 nodes (measured from parse events, without building the expansion) | `pyrite/utils/yaml.py` (`MAX_YAML_ALIASES`, `MAX_YAML_EXPANDED_NODES`); refused as `INVALID_FRONTMATTER` (import: `400 PARSE_ERROR`; index sync: the file is listed as malformed) |
+| A page fetched by the web clipper | 5 MiB counted after decoding, memory bounded at every decoding step (one gzip or deflate coding is decoded in 64 KiB steps; a stack of codings, br and zstd are refused), and twice the request timeout in all | `pyrite/services/clipper.py` (`MAX_CLIP_BYTES`); `413 CLIP_TOO_LARGE` |
+| Anonymous WebSocket sockets | 100 in all, 5 per client; a client is its IPv4 address or its IPv6 /64 (below) | `pyrite/server/websocket.py`, `pyrite/server/client_key.py` |
+| A lookup of an id the index lacks | reads at most 200 files, only those the index is behind on | `pyrite/services/kb_service.py` (`MISS_SCAN_MAX_FILES`) |
+| KB health at read tier (REST) | a report is reused while the KB's index is unchanged, for at most 60 seconds | `kb_registry_service.HEALTH_CACHE_SECONDS` |
+| QA validate and status (`GET /api/qa/validate`, `GET /api/qa/status`, MCP `kb_qa_validate`, `kb_qa_status`) | a report per readable set is reused while the index of its KBs is unchanged, for at most 60 seconds | `qa_cache.QA_CACHE_SECONDS` |
+
+#### What the clipper checks, and what it does not
+
+Every request the clipper sends, including each redirect hop, is checked first:
+the host must resolve only to globally routable addresses (`ip.is_global`;
+IPv4-mapped IPv6 is judged as IPv4), and an address the check cannot read is
+refused. The check resolves the name and the connection resolves it again, so
+this is a check of each hop, not a defence against a name that changes its
+answer between the two.
+
+IPv6-only networks that synthesise addresses with DNS64 (the `64:ff9b::/96`
+prefix) resolve every IPv4 host to an address the clipper refuses, because the
+embedded IPv4 address cannot be judged from the prefix alone; the clipper does
+not work from such a network. The same holds for 6to4 (`2002::/16`).
+
+#### Anonymous WebSocket clients behind a reverse proxy
+
+An anonymous client is keyed by the connection's peer address: the IPv4
+address, or the IPv6 /64 (the smallest allocation an end site receives, so
+rotating addresses inside one allocation stays one client). The same key
+limits REST rate. Behind a reverse proxy the peer address is the proxy's, so
+all anonymous visitors share one key (5 sockets, and the REST rate limit)
+unless the server is run to trust the proxy's forwarding headers (uvicorn's
+`--proxy-headers` with `--forwarded-allow-ips`, or `FORWARDED_ALLOW_IPS`, which
+rewrite the peer address from `X-Forwarded-For`). Pyrite reads the peer address
+the server hands it and no header of its own.
 
 ### Importing a large file (the request body limit)
 
@@ -226,6 +267,88 @@ add the public origin (`https://<public name>`) to `cors_origins`. This applies
 to an auth-disabled instance without API keys, to one with
 `anonymous_tier: write`, and to every signed-in write on an auth-enabled
 instance.
+
+### Where a network caller may register a KB (`kb_roots`)
+
+Registering a knowledge base by path over the network (`POST /api/kbs`, and
+the MCP tool `kb_registry_add` over HTTP; both admin tier) is limited to
+folders under the roots listed in `settings.kb_roots`. **The default is empty:
+no network caller may register a path until you list roots**, so the web UI's
+"create knowledge base" answers 403 until `kb_roots` is set. The local
+operator registers any path: `pyrite kb add`, `pyrite-admin`, and `pyrite mcp`
+over stdio.
+
+```yaml
+settings:
+  kb_roots: [/srv/pyrite/kbs, ~/shared-kbs]   # or PYRITE_KB_ROOTS=/srv/pyrite/kbs:~/shared-kbs
+```
+
+A KB goes in a folder under a root, not the root itself. Each root must be an
+absolute path (`~` is expanded) and is resolved when the configuration loads;
+the requested path is resolved too (symbolic links and `..` followed), so
+neither a link nor `..` leads outside a root. `PYRITE_KB_ROOTS` separates
+roots with the platform's path separator (`:` on Linux and macOS, `;` on
+Windows), as `PATH` does. A path outside every root is refused with
+`KB_PATH_NOT_ALLOWED` (HTTP 403), naming the configured roots, and nothing is
+created. An operator API key used over the network is held to the roots too:
+the rule is about where the request comes from, not its role.
+
+### Git hosts Pyrite may clone from and push to
+
+Every git network operation Pyrite runs for a caller contacts only an
+`https://` URL on a host in `git_allowed_hosts`: the clone and push of export
+to repo (`POST /api/kbs/{kb}/export`), the clone of repository subscribe and
+fork (`/api/repos/subscribe`, `/api/repos/fork`, `pyrite repo subscribe|fork`,
+`pyrite-admin repo subscribe|fork`), and the pull of every sync
+(`/api/repos/{name}/sync`, `pyrite repo sync`). The CLI is bound by it as well
+as the server. The default is GitHub alone:
+
+```yaml
+settings:
+  git_allowed_hosts: [github.com, git.example.org]   # or PYRITE_GIT_ALLOWED_HOSTS=github.com,git.example.org
+```
+
+An entry is a bare hostname, or `host:port` for a URL that names a port;
+case and surrounding spaces are normalised. The setting is checked when the
+configuration loads: a value that is not a list, or an entry that could never
+match a host (a scheme or path, a wildcard, a space, an empty value), is one
+error naming the setting and the entry. `[]` allows no host, and a refusal
+then says the setting is empty.
+
+Subscribe and fork work with GitHub repositories only (`https://github.com/<owner>/<repo>`,
+nothing after the repository name), so for them the setting can narrow what is
+reachable but not add a host; export to repo reaches any host on the list.
+
+A destination that is a local path, a `file://`, `ssh://`, `git@host:` or
+`http://` URL, a host not on the list, or a URL with userinfo, a query, a
+fragment or `.`/`..` path segments is refused before git runs, with the code
+`REMOTE_NOT_ALLOWED` and a message naming this setting. The check is on the
+URL git will really contact: a `url.<base>.insteadOf` (or `pushInsteadOf`)
+rule in the git configuration of the account Pyrite runs as that turns an
+allowed URL into anything the setting does not allow is refused with a message
+naming that rule. A sync refuses a subscription whose stored remote is not
+allowed (for example an `ssh` remote subscribed before this setting, or a host
+since removed from it) the same way.
+
+For these operations git runs with only the https transport, with Git LFS
+transfers off, and without following HTTP redirects, so the host that answers
+is the host that was checked. A remote that answers with a redirect (a renamed
+repository, for instance) is refused with `REMOTE_REDIRECTED`; use the
+repository's current URL.
+
+Paths these operations create stay inside the directory Pyrite chose: an
+export writes nothing through a link in the cloned repository (it is refused
+with `UNSAFE_DESTINATION`, and nothing is committed or pushed), and a
+subscribed or forked clone lands at `<workspace>/<owner>/<repo>` only when
+that path resolves inside the workspace root, and an owner or repository name
+beginning with `.` is refused.
+
+**Not covered, by design: pushing a KB's own repository** (`pyrite kb push`,
+`POST /api/kbs/{kb}/push`, the `kb_push` MCP tool; admin only). That push goes to a remote
+already configured in the KB's repository by whoever set the KB up; a caller
+can only name one of those configured remotes, never a URL or path (anything
+else is refused as `INVALID_REF`). The operator chose that destination, often
+over SSH or to a self-hosted server, so `git_allowed_hosts` does not apply to it.
 
 ## Authentication (multi-user)
 
@@ -336,7 +459,36 @@ knowledge_bases:
   per-user worktree on every KB. An operator who relied on that sets
   `landing: review` on those KBs.
 
+### A read-only KB (`read_only: true`)
+
+A KB marked `read_only` takes no write to its files, from any surface and any
+caller, the local operator included. Refused, with `KB_READ_ONLY`:
+
+- every entry write (create, update, delete, rename, link, import), through
+  REST, MCP and the CLI;
+- every MCP tool above the read tier that names the KB, write and admin,
+  core and plugin. The exceptions write no file of the KB: `kb_index_sync`,
+  and `kb_manage`'s `discover`, `validate` and `show_schema`;
+- schema edits (`kb_manage` `add_type`, `remove_type`, `set_schema`) and
+  `pyrite schema migrate` (a `--dry-run` still reports);
+- `kb_commit`, `kb_push` and their REST and CLI forms;
+- `pyrite ids pin` (a `--dry-run` still plans), `pyrite sw migrate-standards
+  --apply` (each entry of a read-only KB is skipped and said so) and
+  `pyrite readme --write`;
+- the admin merge of a user's change set into the KB
+  (`POST /api/admin/merge-queue/{user}/merge`).
+
+Reading, searching, indexing and exporting a read-only KB are unchanged. A
+link stored in a writable KB may point into a read-only one. To change a
+read-only KB, clear `read_only` first, or use git and an editor directly.
+
 ### The web app's Content-Security-Policy
+
+Every response that is not the API's (the web UI's page and files,
+`/branding` files, and their 404s, redirects and refusals) carries this
+policy and `X-Content-Type-Options: nosniff`. `/branding` files add
+`sandbox`; the web UI's page adds the build's own script hash. A file served
+from the web UI's bundle is the one that was checked to lie inside it.
 
 The web app's pages are served with a strict policy (`script-src 'self'` plus
 the build's own bootstrap hash, no other inline scripts). If a reverse proxy

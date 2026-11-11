@@ -10,7 +10,7 @@ own pending edits overlaid on the shared main index.
 
 from __future__ import annotations
 
-import re
+from pathlib import Path
 from typing import Any
 
 from .protocol import DEFAULT_MIN_SIMILARITY
@@ -592,10 +592,19 @@ class WorktreeDB:
     #: checks this instead of writing main (ADR-0044 §1).
     is_change_set = True
 
-    def __init__(self, main_db: Any, diff_db: Any):
+    def __init__(
+        self, main_db: Any, diff_db: Any, *, kb_roots: dict[str, tuple[Any, ...]] | None = None
+    ):
         self._main = main_db
         self._diff = diff_db
         self._overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
+        #: KB name -> the other copies of that KB this handle's rows may
+        #: name: the user's working copy (a read with main's config) or
+        #: main's folder (a write into the change set, whose config names the
+        #: working copy). A row's file outside the configured root is read
+        #: only inside one of these (``KBService._read_overlay_file``), never
+        #: through a link out of it.
+        self.kb_roots: dict[str, tuple[Any, ...]] = dict(kb_roots or {})
 
     @property
     def _backend(self):
@@ -678,7 +687,7 @@ class WorktreeDB:
         if name in _READS_FROM_MAIN or name in _RAW_HANDLES:
             return getattr(self._main, name)
         if name in _READ_SQL_ONLY:
-            return self._read_only_sql(getattr(self._main, name), name)
+            return self._read_only_sql(self._main, name)
         if name in _WRITES_TO_DIFF:
             return getattr(self._diff, name)
         if name in _RECORDS_REFUSED:
@@ -691,19 +700,108 @@ class WorktreeDB:
         )
 
     @staticmethod
-    def _read_only_sql(method: Any, name: str) -> Any:
-        """`execute_sql` runs whatever it is given, on main: here it runs a
-        read and refuses anything else."""
+    def _read_only_sql(main: Any, name: str) -> Any:
+        """`execute_sql` on a change set: one statement that reads main's
+        index and creates or changes no file.
 
-        def guarded(sql: str, *args: Any, **kwargs: Any) -> Any:
-            if not _READ_SQL.match(sql):
-                return _refuse(name, "a SQL write, which a change set cannot carry")()
-            return method(sql, *args, **kwargs)
+        It runs on a read-only connection to main's database (a write fails
+        with ``SQLITE_READONLY``), with an authorizer that admits only reading
+        (`_READ_ONLY_ACTIONS`, `_READ_PRAGMAS`) and no attached database
+        (``SQLITE_LIMIT_ATTACHED`` 0), so no statement form writes the index
+        or creates or changes any file. A second statement is refused. It reads what main has committed. Rows come back as
+        `execute_sql`'s do: a list of dicts, empty for a statement with none.
+        """
 
-        return guarded
+        def run_read_only(sql: str, params: Any = None) -> list[dict]:
+            import sqlite3
+
+            path = getattr(main, "db_path", None)
+            if path is None:  # not a SQLite index: nothing here can tell a read
+                return _refuse(
+                    name, "SQL on an index that is not SQLite, which a change set cannot check"
+                )()
+            # Main opened (and checked) this index through `_init_connection`;
+            # this second connection only reads what main has committed.
+            conn = sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True)
+            try:
+                conn.setlimit(sqlite3.SQLITE_LIMIT_ATTACHED, 0)
+                conn.set_authorizer(_authorize_read_only)
+                conn.row_factory = sqlite3.Row
+                try:
+                    cursor = conn.execute(sql, params or {})
+                    return [dict(row) for row in cursor.fetchall()]
+                except sqlite3.DatabaseError as e:
+                    code = getattr(e, "sqlite_errorcode", None)
+                    if isinstance(e, sqlite3.ProgrammingError) and "one statement" in str(e):
+                        raise _refusal(name, "more than one SQL statement") from e
+                    if code in (sqlite3.SQLITE_READONLY, sqlite3.SQLITE_AUTH) or (
+                        "too many attached" in str(e)
+                    ):
+                        raise _refusal(
+                            name, "SQL that writes, which a change set cannot carry"
+                        ) from e
+                    raise
+            finally:
+                conn.close()
+
+        return run_read_only
 
 
-_READ_SQL = re.compile(r"^\s*(SELECT|WITH|PRAGMA|EXPLAIN)\b", re.IGNORECASE)
+def _authorize_read_only(action: int, arg1: Any, arg2: Any, db: Any, trigger: Any) -> int:
+    """The SQLite authorizer of a change set's `execute_sql`: reading only.
+
+    Everything not listed is denied, so an action SQLite adds later is denied
+    too. A PRAGMA is admitted only by name, and with an argument only where the
+    argument names what to read (``table_info(entry)``), never a value to set.
+    """
+    import sqlite3
+
+    if action in _READ_ONLY_ACTIONS:
+        return sqlite3.SQLITE_OK
+    if action == sqlite3.SQLITE_PRAGMA:
+        pragma = (arg1 or "").lower()
+        if pragma in _READ_PRAGMAS and (arg2 is None or pragma in _READ_PRAGMAS_WITH_ARGUMENT):
+            return sqlite3.SQLITE_OK
+    return sqlite3.SQLITE_DENY
+
+
+def _read_only_action_codes() -> frozenset[int]:
+    import sqlite3
+
+    return frozenset(
+        {
+            sqlite3.SQLITE_SELECT,
+            sqlite3.SQLITE_READ,
+            sqlite3.SQLITE_FUNCTION,
+            sqlite3.SQLITE_RECURSIVE,
+        }
+    )
+
+
+_READ_ONLY_ACTIONS = _read_only_action_codes()
+
+#: PRAGMAs that only report.
+_READ_PRAGMAS = frozenset(
+    {"application_id", "collation_list", "compile_options", "data_version", "database_list",
+     "encoding", "foreign_key_list", "foreign_keys", "freelist_count", "function_list",
+     "index_info", "index_list", "index_xinfo", "integrity_check", "journal_mode",
+     "module_list", "page_count", "page_size", "pragma_list", "quick_check", "schema_version",
+     "table_info", "table_list", "table_xinfo", "user_version"}
+)  # fmt: skip
+
+#: Of those, the ones whose argument names a table or index to report on.
+_READ_PRAGMAS_WITH_ARGUMENT = frozenset(
+    {"foreign_key_list", "index_info", "index_list", "index_xinfo", "integrity_check",
+     "quick_check", "table_info", "table_list", "table_xinfo"}
+)  # fmt: skip
+
+
+def _refusal(name: str, why: str) -> Exception:
+    from pyrite.exceptions import ChangeSetRecordRefusedError
+
+    return ChangeSetRecordRefusedError(
+        f"{name} is {why}. It is available to the operator, or after the change set merges."
+    )
 
 
 def _refuse(name: str, why: str):
@@ -756,12 +854,14 @@ _RAW_HANDLES = frozenset(
 
 #: Writes a change-set write makes whose rows are rebuilt from files and git,
 #: so nothing is lost when the diff index is discarded at merge:
-#: - `register_kb`, `update_kb_indexed`: the diff index's own row for the KB
-#:   (path = the working copy); main's row is not the change set's to change.
+#: - `register_kb`, `ensure_kb`, `update_kb_indexed`: the diff index's own row
+#:   for the KB (path = the working copy); main's row is not the change set's
+#:   to change.
 #: - `upsert_entry_version`, `delete_entry_version`: entry history indexed
 #:   from git commits, rebuilt from the merged history.
 _WRITES_TO_DIFF = frozenset(
-    {"register_kb", "update_kb_indexed", "upsert_entry_version", "delete_entry_version"}
+    {"register_kb", "ensure_kb", "update_kb_indexed", "upsert_entry_version",
+     "delete_entry_version"}
 )  # fmt: skip
 
 #: Database-only records: no file behind them, so the merge, which discards the

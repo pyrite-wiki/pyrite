@@ -28,6 +28,8 @@ def export_svc(mock_config, mock_db):
 class TestExportKBToDirectory:
     def test_exports_entries_as_markdown(self, export_svc, mock_config, mock_db, tmp_path):
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
         mock_config.require_kb.return_value = kb_cfg
@@ -64,6 +66,8 @@ class TestExportKBToDirectory:
     ):
         """Titles with YAML-special characters must be properly quoted."""
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
         mock_config.require_kb.return_value = kb_cfg
@@ -94,6 +98,8 @@ class TestExportKBToDirectory:
     ):
         """Newlines in title must not inject additional YAML fields."""
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
         mock_config.require_kb.return_value = kb_cfg
@@ -125,6 +131,7 @@ class TestCommitKB:
     @patch("pyrite.services.git_service.GitService")
     def test_delegates_to_git_service(self, mock_git_svc, export_svc, mock_config):
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
         kb_cfg.path = Path("/fake/kb")
         mock_config.require_kb.return_value = kb_cfg
         mock_git_svc.is_git_repo.return_value = True
@@ -132,8 +139,9 @@ class TestCommitKB:
 
         result = export_svc.commit_kb("test", "my commit")
 
+        # A commit made for a caller runs no repository hook unless asked.
         mock_git_svc.commit.assert_called_once_with(
-            Path("/fake/kb"), "my commit", paths=None, sign_off=False
+            Path("/fake/kb"), "my commit", paths=None, sign_off=False, run_hooks=False
         )
         assert result["success"] is True
         assert result["commit_hash"] == "abc123"
@@ -147,6 +155,7 @@ class TestCommitKB:
     @patch("pyrite.services.git_service.GitService")
     def test_raises_on_non_git_repo(self, mock_git_svc, export_svc, mock_config):
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
         kb_cfg.path = Path("/fake/kb")
         mock_config.require_kb.return_value = kb_cfg
         mock_git_svc.is_git_repo.return_value = False
@@ -162,6 +171,8 @@ class TestPathTraversalPrevention:
         self, export_svc, mock_config, mock_db, tmp_path
     ):
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
         mock_config.require_kb.return_value = kb_cfg
@@ -196,6 +207,8 @@ class TestPathTraversalPrevention:
 
     def test_entry_id_with_backslash_traversal(self, export_svc, mock_config, mock_db, tmp_path):
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
         mock_config.require_kb.return_value = kb_cfg
@@ -226,6 +239,8 @@ class TestPathTraversalPrevention:
         """CodeQL #16: an entry_type that is an absolute path must not become
         an absolute path join -- it must land inside target_dir."""
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
         mock_config.require_kb.return_value = kb_cfg
@@ -257,6 +272,8 @@ class TestPathTraversalPrevention:
         self, export_svc, mock_config, mock_db, tmp_path
     ):
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
         mock_config.require_kb.return_value = kb_cfg
@@ -284,6 +301,8 @@ class TestPathTraversalPrevention:
     def test_normal_type_still_gets_own_subdir(self, export_svc, mock_config, mock_db, tmp_path):
         """A normal plugin type name must still get its own, unchanged subdirectory."""
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
         mock_config.require_kb.return_value = kb_cfg
@@ -308,6 +327,8 @@ class TestPathTraversalPrevention:
         "a_b" both -> note/a_b.md) must not let one entry's export silently
         overwrite the other's (#221 redispatch cold read)."""
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
         mock_config.require_kb.return_value = kb_cfg
@@ -332,6 +353,8 @@ class TestPathTraversalPrevention:
         ("note" and "note_" both -> note/) must not let one type's export
         silently overwrite the other's (#221 redispatch cold read)."""
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
         mock_config.require_kb.return_value = kb_cfg
@@ -369,6 +392,8 @@ class TestPathTraversalPrevention:
         """The stored/exported frontmatter `type:` must keep the raw value --
         only the directory name is sanitized."""
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
         mock_config.require_kb.return_value = kb_cfg
@@ -401,6 +426,7 @@ class TestPushKB:
     @patch("pyrite.services.git_service.GitService")
     def test_delegates_to_git_service(self, mock_git_svc, export_svc, mock_config):
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
         kb_cfg.path = Path("/fake/kb")
         mock_config.require_kb.return_value = kb_cfg
         mock_git_svc.is_git_repo.return_value = True

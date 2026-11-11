@@ -1,0 +1,1 @@
+The QA URL checker applies the web clipper's destination rule to the first request and to every redirect hop: only globally routable addresses are contacted, and an address the rule cannot read is refused. A host that does not resolve is reported as unresolvable.

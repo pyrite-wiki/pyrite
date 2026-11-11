@@ -1,0 +1,1 @@
+An MCP tool call, prompt and resource read, and a REST import (parse and write), run in a worker thread, so one slow call does not hold up other sessions. Per-call context, such as the write-target binding, reaches the handler. Each call, prompt and resource read has a database session of its own, and the shared index worker and per-target services are built once.

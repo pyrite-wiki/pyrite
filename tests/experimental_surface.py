@@ -272,6 +272,9 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     "extensions/journalism-investigation/tests/test_mcp_tools.py::*no_tools_for_invalid_tier*": AUTHZ,
     # A read-only KB refuses a write, on every path that writes.
     "extensions/journalism-investigation/tests/test_promote_claim.py::*read_only_kb_refused*": AUTHZ,
+    # A read-only KB takes no write from the investigation tools, MCP or CLI.
+    "extensions/journalism-investigation/tests/test_bulk_tools_write_through_the_pipeline.py::*read_only*": AUTHZ,
+    "extensions/journalism-investigation/tests/test_cli_writes_through_the_pipeline.py::TestAReadOnlyKBIsRefusedAndNothingIsWritten::*": AUTHZ,
     "tests/test_kb_bulk_create_description.py::*unavailable_kb_still_rejects_whole_batch*": AUTHZ,
     # A tier's tool list is what an HTTP MCP credential of that tier may call.
     "extensions/software-kb/tests/test_software_kb.py::*read_tier_no_write_tools*": AUTHZ,
@@ -410,7 +413,16 @@ _FIXTURE_LEAK = "journalism data about a leak (a document classification), not a
 _PUBLIC_FIXTURE = "builds a public KB (default_role: read) as fixture; tests rendering, not access"
 _IN_READ_TIER = "asserts a tool IS offered at the read tier (feature), not that one is withheld"
 _JSONLD = "parses the page's JSON-LD block for SEO fields; escaping is TestXSSPrevention"
+# A MagicMock KB config is truthy everywhere, read_only included: the mock
+# says read_only = False so the export runs at all.
+_WRITABLE_MOCK = (
+    "a mock KB config marked read_only = False so the operation runs; no security property"
+)
+
 REVIEWED_EXPERIMENTAL: dict[str, str] = {
+    "tests/test_export_service.py::TestExportKBToDirectory::*": _WRITABLE_MOCK,
+    "tests/test_export_service.py::TestCommitKB::*": _WRITABLE_MOCK,
+    "tests/test_export_service.py::TestPushKB::*": _WRITABLE_MOCK,
     "tests/test_overlay_backend.py::TestOverlayLinks::test_relation_identity": "identity of a link relation, not of a principal; no security property",
     "tests/test_overlay_backend.py::TestOverlayLinks::test_two_prefixes_of_one_link_survive_the_merge": "identity of a written link prefix in the overlay merge; no security property",
     "extensions/journalism-investigation/tests/test_claim_entry.py::TestClaimEntry::test_round_trip": _FIXTURE_LEAK,

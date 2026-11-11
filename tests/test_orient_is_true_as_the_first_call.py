@@ -749,7 +749,7 @@ class TestAKbNameThatIsNotAStringIsRefused:
         assert out.get("error_code") == "VALIDATION_FAILED", out
         assert "knowledge_bases" not in out
 
-    @pytest.mark.control(reason="a blank string is already 'no name' (named_kb, private #74)")
+    @pytest.mark.control(reason="a blank string is already 'no name' (named_kb)")
     @pytest.mark.parametrize("blank", ["", "   "])
     def test_a_blank_string_is_still_no_name(self, sw, blank):
         assert "knowledge_bases" in sw.dispatch("kb_orient", {"kb_name": blank})

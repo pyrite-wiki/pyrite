@@ -1,0 +1,1 @@
+Reading an entry id the index does not know reads only the files the index lacks (a path with no row, or a file whose size or modification time moved): at most the 200 most recently modified, and none when the index is current. A hand-added or renamed file is found by its `id:`. Past 200 such files an older one is not found until `pyrite index sync`.

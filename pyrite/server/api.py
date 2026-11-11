@@ -8,13 +8,10 @@ the ``endpoints/`` subpackage; this module provides shared dependencies, the rat
 limiter, and the application factory.
 """
 
-import hashlib
 import logging
-import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -22,7 +19,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from .. import __version__
 from ..config import PyriteConfig, Settings, load_config
@@ -59,6 +55,7 @@ from ..services.version_service import VersionService
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
 from .authz import get_principal, not_authenticated
+from .client_key import client_key
 
 if TYPE_CHECKING:
     from ..services.auth_service import AuthService
@@ -81,8 +78,7 @@ def _anonymized_key_func(request: Request) -> str:
     Uses SHA-256 truncated to 16 chars — sufficient for rate limiting,
     not reversible to the original IP address.
     """
-    raw_ip = get_remote_address(request)
-    return hashlib.sha256(raw_ip.encode()).hexdigest()[:16]
+    return client_key(request)
 
 
 # =============================================================================
@@ -171,6 +167,36 @@ def _landed(request: Request, config: PyriteConfig, db: PyriteDB) -> tuple[Pyrit
     from ..services.write_target import LandingRefusedError
 
     raise LandingRefusedError("This route did not ask where its write lands; nothing was written")
+
+
+class NobodyActingMiddleware:
+    """Every request starts with nobody acting (`services.acting`), whatever
+    the serving process had bound (`pyrite serve` runs under the CLI, which
+    binds the operator). Only `bind_acting_account`, from the request's own
+    principal, makes a request the operator. Pure ASGI, so the value is set
+    in the request's own task and reaches its routes."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        from ..services.acting import acting_as, local_process
+
+        with acting_as(None), local_process(False):
+            await self.app(scope, receive, send)
+
+
+async def bind_acting_account(request: Request) -> None:
+    """Bind who this request acts for (`services.acting.acting_for`: the
+    account, the operator, or nobody), for the write pipeline's rules that
+    depend on the caller. On every `/api` route, after `verify_api_key`.
+    Async on purpose: it runs in the request's own task, so the binding
+    reaches the worker thread a sync endpoint runs in; a sync dependency's
+    would not."""
+    from ..services.acting import acting_for
+    from ..services.acting import bind_acting_account as bind
+
+    bind(acting_for(get_principal(request)))
 
 
 def get_read_kb_service(
@@ -614,7 +640,7 @@ def _enforce_tier(principal: Principal | None, tier: str) -> None:
 # a readable KB in one parameter and serves from a private one in the other
 # (#186). `center_kb` (`/api/graph`) is checked too: it was once left out on
 # the grounds that the graph was filtered after it was built, but a private
-# centre still answered differently from a missing one (private #57), so it is
+# centre still answered differently from a missing one, so it is
 # refused the same way as any other unreadable KB -- and a missing one alike.
 KB_PARAM_NAMES = ("kb", "kb_name", "source_kb", "target_kb", "center_kb")
 
@@ -663,7 +689,7 @@ async def _resolve_kb_names(request: Request) -> list[str]:
     names: list[str] = []
 
     def add(value: object) -> None:
-        # A blank or whitespace-only name names no KB (private #74): see
+        # A blank or whitespace-only name names no KB (one reading everywhere): see
         # `access_policy.named_kb`, which the services read the same way.
         name = named_kb(value)
         if name and name not in names:
@@ -1345,6 +1371,17 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
             )
         )
 
+    # A workspace cloned by an earlier version carries its clone token in the
+    # remote URL; every registered workspace is cleaned once, at start.
+    @application.on_event("startup")
+    async def _scrub_workspace_remotes() -> None:
+        from starlette.concurrency import run_in_threadpool
+
+        from ..services.repo_service import RepoService
+
+        db = _app_db()
+        await run_in_threadpool(lambda: RepoService(config, db).scrub_workspace_remotes())
+
     # Sync routes and IndexWorker threads have no running loop; they hand
     # WebSocket events to this one (#326, #322). Captured here, not at import,
     # because the loop that serves the sockets exists only once the server
@@ -1398,13 +1435,18 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
     from .body_limit import RequestBodyLimitMiddleware
 
     application.add_middleware(RequestBodyLimitMiddleware, get_config=_app_get_config)
+    application.add_middleware(NobodyActingMiddleware)
 
-    # CORS — use configured origins; disable credentials with wildcard (spec compliance)
-    origins = config.settings.cors_origins
+    # CORS: the configured origins. A "*" anywhere in the list admits every
+    # origin, so credentials are allowed only when no item is "*" -- never
+    # every site's page reading a response made with the visitor's cookie.
+    from ..config import cors_origin_list
+
+    origins = cors_origin_list(config.settings.cors_origins)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_credentials=origins != ["*"],
+        allow_credentials="*" not in origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -1453,7 +1495,11 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
     # Collect endpoint routers under /api with auth + read-tier baseline
     api_router = APIRouter(
         prefix="/api",
-        dependencies=[Depends(verify_api_key), Depends(requires_tier("read"))],
+        dependencies=[
+            Depends(verify_api_key),
+            Depends(requires_tier("read")),
+            Depends(bind_acting_account),
+        ],
     )
     for r in all_routers:
         api_router.include_router(r)
@@ -1526,20 +1572,16 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
         except WebSocketDisconnect:
             manager.disconnect(ws)
 
-    # Mount static files if dist directory exists
-    # Check env override first (for containerised deploys where the package is
-    # installed as a site-package and the relative path won't resolve).
-    dist_dir = (
-        Path(os.environ.get("PYRITE_STATIC_DIR", ""))
-        if os.environ.get("PYRITE_STATIC_DIR")
-        else None
-    )
-    if dist_dir is None:
-        dist_dir = Path(__file__).parent.parent.parent / "web" / "dist"
-    # Mount SPA static files if dist directory exists
-    if dist_dir.is_dir():
-        from .static import mount_static
+    # Every non-API response carries one set of headers, whether or not the
+    # SPA bundle is mounted (branding assets, refusals and 404s too); added
+    # last, so it is the outermost middleware.
+    from .static import install_security_headers, mount_static, resolve_dist_dir
 
+    install_security_headers(application)
+    # The SPA bundle's directory, resolved once (PYRITE_STATIC_DIR for a
+    # containerised deploy, else the source tree's web/dist).
+    dist_dir = resolve_dist_dir()
+    if dist_dir.is_dir():
         mount_static(application, dist_dir)
 
     return application
