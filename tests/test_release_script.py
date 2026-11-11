@@ -64,6 +64,7 @@ def repo(tmp_path):
     """A tmp checkout whose CHANGELOG and pyproject are release-ready."""
     (tmp_path / "CHANGELOG.md").write_text(GOOD_CHANGELOG.format(today=date.today().isoformat()))
     (tmp_path / "pyproject.toml").write_text(GOOD_PYPROJECT)
+    (tmp_path / "uv.lock").write_text("version = 1\n")  # the check applies to a checkout with one
     return tmp_path
 
 
@@ -169,6 +170,7 @@ def dry_run(no_network, monkeypatch, tmp_path_factory):
         "- A release script.\n\n## [0.24.1] - 2026-09-17\n\n- Older.\n"
     )
     (fake_repo / "pyproject.toml").write_text(GOOD_PYPROJECT)
+    (fake_repo / "uv.lock").write_text("version = 1\n")
 
     def _go(argv=("0.24.2",)):
         args = release.parse_args([*argv, "--repo", str(fake_repo)])
@@ -1088,6 +1090,11 @@ class TestLockIsCurrentPrecondition:
         self._stale(monkeypatch)
         with pytest.raises(release.ReleaseError, match=r"scripts/lock-deps\.sh"):
             release.check_lock_is_current(repo)
+
+    def test_a_checkout_with_no_lock_has_nothing_to_check(self, no_network, repo):
+        (repo / "uv.lock").unlink()
+        release.check_lock_is_current(repo)
+        assert ["uv", "lock", "--check"] not in no_network
 
     def test_missing_uv_is_a_release_error_not_a_traceback(self, no_network, repo, monkeypatch):
         def no_uv(cmd, **kwargs):

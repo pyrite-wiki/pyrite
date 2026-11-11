@@ -343,8 +343,13 @@ def check_lock_is_current(repo: Path) -> None:
     release commit leaves the lock stale until `scripts/lock-deps.sh` is run
     and committed (#1357). CI's `lock` job would say so, but only on a PR;
     this asks again of the exact commit that is about to be tagged. `uv lock
-    --check` writes nothing and does not look for newer releases.
+    --check` writes nothing and does not look for newer releases. A checkout
+    with no `uv.lock` keeps no lock (the script is not Pyrite-only: it takes
+    its repository from `origin`), so there is nothing to be stale; Pyrite's
+    own is asserted present by tests/test_dependency_lock.py.
     """
+    if not (repo / "uv.lock").exists():
+        return
     try:
         _check_output(["uv", "lock", "--check"], cwd=repo)
     except FileNotFoundError as exc:
@@ -1076,7 +1081,9 @@ def step_preconditions(ctx: Context) -> None:
     if ctx.attempt(lambda: check_changelog(ctx.repo, ctx.version, ctx.day)):
         ctx.runner.note(f"CHANGELOG has `## [{ctx.version}] - {ctx.day.isoformat()}` with content")
     if ctx.attempt(lambda: check_lock_is_current(ctx.repo)):
-        ctx.runner.note("uv.lock matches pyproject.toml (uv lock --check)")
+        ctx.runner.note(
+            "uv.lock matches pyproject.toml (uv lock --check; none kept = nothing to check)"
+        )
 
     # Asked unconditionally, as before: the notes are read out of the CHANGELOG
     # section, and `_print_notes` stays silent when there is no section to read,
