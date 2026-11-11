@@ -4,7 +4,7 @@ import re
 from datetime import UTC, date, datetime
 from typing import Any
 
-from ..exceptions import ValidationError
+from ..exceptions import EntryTypeError, ValidationError
 
 
 def validate_date(date_str: Any) -> bool:
@@ -158,9 +158,9 @@ def generate_entry_id(title: Any) -> str:
     import unicodedata
 
     if isinstance(title, (list, tuple, dict)):
-        raise TypeError(f"cannot derive an id: title is a {type(title).__name__}")
+        raise EntryTypeError(f"cannot derive an id: title is a {type(title).__name__}")
     if isinstance(title, float) and math.isnan(title):
-        raise TypeError("cannot derive an id: title is NaN")
+        raise EntryTypeError("cannot derive an id: title is NaN")
     if not title:
         # None, "" and falsy scalars (0, False, 0.0) all slug as the empty
         # title, as they did before #704, so no existing id moves.

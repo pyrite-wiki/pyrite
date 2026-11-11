@@ -689,7 +689,9 @@ def test_a_symlink_to_a_file_outside_the_kb_is_reported_and_never_written(kb):
     assert [r["path"] for r in before["missing"]] == ["a.md"]
     [link] = before["skipped"]
     assert link["path"] == "link.md" and "symbolic link" in link["reason"]
-    assert "outside-thing" in link["reason"]  # the id it has today, for a hand edit
+    # Not the KB's file: nothing it holds (not even the id it derives) is read
+    # or reported.
+    assert "outside-thing" not in link["reason"]
 
     result = _run(config, "ids", "pin", "-k", "notes")
     assert result.exit_code == OUTSIDE_CONTRACT, result.output

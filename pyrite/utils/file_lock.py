@@ -143,6 +143,9 @@ holder fails the write with ``LockTimeout`` instead of hanging the caller."""
 LOCK_SUBDIR = ("pyrite", "locks")
 
 _POLL_SECONDS = 0.001
+# The longest wait between two attempts when the entry's directory changed
+# while the lock was being taken (the wait doubles from _POLL_SECONDS).
+_RETRY_MAX_WAIT = 0.05
 _process_locks = [threading.Lock() for _ in range(STRIPES)]
 
 
@@ -218,7 +221,9 @@ def _read_gitfile(dot_git: str) -> str:
         with open(dot_git, encoding="utf-8") as f:
             text = f.read(4096)
     except OSError as e:
-        raise LockDirError(f"cannot read the git file {dot_git} ({e.strerror or e})") from e
+        raise LockDirError(
+            f"cannot read the git file {dot_git} ({e.strerror or type(e).__name__})"
+        ) from e
     if not text.startswith("gitdir: "):
         raise LockDirError(f"{dot_git} is not a valid git file (no 'gitdir: ' line), as git says")
     target = text[len("gitdir: ") :].rstrip()
@@ -349,11 +354,13 @@ def _open_child_dir(parent_fd: int, parent: Path, name: str, git_dir_mode: int) 
     except FileExistsError:
         created = False
     except OSError as e:
-        raise _unsafe(path, f"cannot create it ({e.strerror or e})") from e
+        raise _unsafe(path, f"cannot create it ({e.strerror or type(e).__name__})") from e
     try:
         fd = os.open(name, _DIR_FLAGS, dir_fd=parent_fd)
     except OSError as e:
-        raise _unsafe(path, f"cannot open it as a directory ({e.strerror or e})") from e
+        raise _unsafe(
+            path, f"cannot open it as a directory ({e.strerror or type(e).__name__})"
+        ) from e
     try:
         if created:
             os.fchmod(fd, stat.S_IMODE(git_dir_mode) & 0o3777)  # umask-independent
@@ -383,7 +390,9 @@ def _open_lock_dir(lock_dir: Path) -> tuple[int, int]:
     try:
         current = os.open(git_dir, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     except OSError as e:
-        raise _unsafe(lock_dir, f"cannot open the git dir {git_dir} ({e.strerror or e})") from e
+        raise _unsafe(
+            lock_dir, f"cannot open the git dir {git_dir} ({e.strerror or type(e).__name__})"
+        ) from e
     try:
         git_mode = os.fstat(current).st_mode
         parent = git_dir
@@ -411,11 +420,12 @@ def _open_stripe(lock_dir: Path, stripe: int) -> int:
                 fd = os.open(name, flags, dir_fd=dfd)
             except OSError as e:
                 raise _unsafe(
-                    lock_dir, f"stripe file {name} cannot be opened ({e.strerror or e})"
+                    lock_dir,
+                    f"stripe file {name} cannot be opened ({e.strerror or type(e).__name__})",
                 ) from e
         except OSError as e:
             raise _unsafe(
-                lock_dir, f"stripe file {name} cannot be created ({e.strerror or e})"
+                lock_dir, f"stripe file {name} cannot be created ({e.strerror or type(e).__name__})"
             ) from e
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             os.close(fd)
@@ -435,7 +445,7 @@ _BUSY = {errno.EWOULDBLOCK, errno.EAGAIN}
 def _no_flock(lock_dir: Path, e: OSError) -> LockDirError:
     return _unsafe(
         lock_dir,
-        f"its filesystem does not support flock ({e.strerror or e}); a git dir on a "
+        f"its filesystem does not support flock ({e.strerror or type(e).__name__}); a git dir on a "
         "network filesystem may need lockd, see pyrite.utils.file_lock",
     )
 
@@ -458,10 +468,14 @@ def _os_unlock(fd: int) -> None:
 
 
 @contextlib.contextmanager
-def file_lock(*paths: str | os.PathLike[str], timeout: float = LOCK_TIMEOUT) -> Iterator[None]:
+def file_lock(*paths: str | os.PathLike[str], timeout: float = LOCK_TIMEOUT) -> Iterator[list[str]]:
     """Hold the momentary lock for one path, or for two when a write moves a
     file. The lock is where ``lock_dir_for`` says, and only there; the stripe
-    is ``stripe_of`` the entry. ``timeout`` must be finite (``check_timeout``)."""
+    is ``stripe_of`` the entry. ``timeout`` must be finite (``check_timeout``).
+
+    Yields the keys held (``lock_key`` of each path, in order): the folder
+    each names by ``(st_dev, st_ino)`` is the folder this lock covers, which a
+    writer holding a folder descriptor checks it against (``KBFiles``)."""
     timeout = check_timeout(timeout)
     if fcntl is None:
         raise LockDirError("file locking is not supported on Windows")
@@ -475,6 +489,7 @@ def file_lock(*paths: str | os.PathLike[str], timeout: float = LOCK_TIMEOUT) -> 
         )
     lock_dir = lock_dirs[0]
     deadline = time.monotonic() + timeout
+    wait = _POLL_SECONDS
     while True:
         keys = [lock_key(p) for p in paths]
         with contextlib.ExitStack() as stack:
@@ -491,7 +506,12 @@ def file_lock(*paths: str | os.PathLike[str], timeout: float = LOCK_TIMEOUT) -> 
             # was replaced while the lock was being taken, the lock held is
             # for the old key: release it and take the new one.
             if [lock_key(p) for p in paths] == keys:
-                yield
+                yield keys
                 return
-        if time.monotonic() >= deadline:
+        now = time.monotonic()
+        if now >= deadline:
             raise LockTimeout("lock not acquired in time: the entry's directory kept changing")
+        # Released; wait before taking it again, longer each time, so a
+        # directory that keeps changing is not met with a spin.
+        time.sleep(min(wait, deadline - now))
+        wait = min(wait * 2, _RETRY_MAX_WAIT)

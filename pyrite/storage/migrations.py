@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..exceptions import outside_text
+
 logger = logging.getLogger(__name__)
 
 # Current schema version
@@ -641,7 +643,8 @@ class MigrationManager:
         except Exception as e:
             self.conn.rollback()
             raise MigrationError(
-                f"Failed to apply migration v{migration.version}: {e}", version=migration.version
+                f"Failed to apply migration v{migration.version}: {outside_text(e)}",
+                version=migration.version,
             ) from e
 
     def _apply_v7(self) -> None:
@@ -982,7 +985,9 @@ class MigrationManager:
             logger.info("Rolled back migration v%d: %s", migration.version, migration.description)
         except Exception as e:
             self.conn.rollback()
-            raise MigrationError(f"Failed to rollback migration v{migration.version}: {e}") from e
+            raise MigrationError(
+                f"Failed to rollback migration v{migration.version}: {outside_text(e)}"
+            ) from e
 
     def status(self) -> dict:
         """Get migration status summary."""

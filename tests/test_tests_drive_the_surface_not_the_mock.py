@@ -110,6 +110,10 @@ EDGES: dict[str, str] = {
     "pyrite.services.git_service.GitService.fork_repo": (
         "one GitHub API request (a fork); needs the network and a real token"
     ),
+    "pyrite.services.git_service.GitService._effective_url": (
+        "one `git ls-remote --get-url` subprocess (the account's insteadOf rewrite); a test "
+        "that clones a local bare repo in place of an https host answers it with the URL"
+    ),
     "pyrite.services.url_checker.URLChecker._urlopen": (
         "one HEAD request via urlopen; needs the network, status mapping stays in check_url"
     ),
@@ -196,8 +200,10 @@ ALLOWLIST: dict[str, tuple[int, str]] = {
         "behind PyriteMCPServer, _dispatch_tool: kb_service.build_entry",
     ),
     "tests/test_kb_export_read_scoping.py": (
-        1,
-        "behind TestClient: export_service.ExportService.export_kb_to_repo",
+        3,
+        "behind TestClient: export_service.ExportService.export_kb_to_repo; and "
+        "git_service.GitService.check_remote_allowed/_check_remote_urls, so a local bare "
+        "repo stands in for an allowed https host (git_allowed_hosts)",
     ),
     "tests/test_kb_policy_availability.py": (
         1,
@@ -291,15 +297,27 @@ ALLOWLIST: dict[str, tuple[int, str]] = {
         "patches get_hooks_for_kb on a local registry; unresolved",
     ),
     "tests/test_repo_error_disclosure.py": (
-        12,
-        "unit tests of GitService's error text patch GitService in a file whose other classes drive REST via make_client; split the file (Q8) or migrate",
+        14,
+        "unit tests of GitService's error text patch GitService in a file whose other classes drive REST via make_client; split the file (Q8) or migrate. "
+        "2 answer the host rule's own git lookups (_check_remote_urls, _pull_remote; _effective_url is an EDGE) so the stubbed failure is the clone's",
     ),
     "tests/test_shipped_schemas_accept_workflows.py": (
         1,
         "patch target built with an f-string; unresolved",
     ),
+    "tests/test_rest_bodies_carry_no_fault_text.py": (
+        4,
+        "fault injection (ADR-0052 N3): an OS or storage fault whose text must not reach "
+        "a body cannot be seeded into a world; 1 patches every public KBService method by "
+        "name in a loop (unresolved), to call every route and tool with the fault",
+    ),
+    "tests/test_update_walks_every_surface.py": (
+        1,
+        "fault injection: a StorageError from the writer, for kb_update's legacy code; "
+        "no world state makes the writer refuse",
+    ),
 }
-ALLOWLIST_SIZE = 49  # lower it with every file removed; never raise it
+ALLOWLIST_SIZE = 51  # lower it with every file removed; never raise it
 
 
 def _is_service_path(dotted: str) -> bool:

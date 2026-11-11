@@ -806,7 +806,7 @@ class PyriteCLIGroup(TyperGroup):
                     pass
         if held:
             if isinstance(raised, PyriteError | ValueError):
-                typer.echo(public_text(raised, log=logger), err=True)
+                typer.echo(public_text(raised, log=logger, local=True), err=True)
             answer = _error_answer(
                 _no_outcome_payload(
                     f"the command wrote {len(held)} bytes to stdout itself (moved to stderr)"

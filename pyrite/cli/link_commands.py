@@ -108,9 +108,9 @@ def links_check(
 
 def _parse_link_specs(raw: str) -> list[dict]:
     """Parse YAML link specifications from a string."""
-    import yaml
+    from ..utils.yaml import safe_load_bounded
 
-    data = yaml.safe_load(raw)
+    data = safe_load_bounded(raw)
     if not isinstance(data, list):
         raise ValidationError("YAML input must be a list of link specs")
     return data

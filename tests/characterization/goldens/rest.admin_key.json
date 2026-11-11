@@ -301,123 +301,30 @@
   },
   "GET /api/daily/{date_str} | admin_key | no-default-role-kb": {
     "body": {
-      "aliases": [],
-      "assigned_at": null,
-      "assignee": null,
-      "backlinks": [],
-      "body": "# Sunday, May 2, 2021",
-      "content_hash": "58bcb6c0df255df5542d8583297cfb1293bb6d28a693909c76518e74964cb542",
-      "coordinates": null,
-      "created_at": "<TIMESTAMP>",
-      "created_by": null,
-      "date": null,
-      "due_date": null,
-      "end_date": null,
-      "entry_type": "note",
-      "file_path": "<TMPDIR>/no-default-role-kb/notes/daily-2021-05-02.md",
-      "id": "daily-2021-05-02",
-      "importance": 5,
-      "indexed_at": "<TIMESTAMP>",
-      "kb_name": "no-default-role-kb",
-      "lifecycle": "active",
-      "links": [],
-      "location": null,
-      "metadata": {},
-      "modified_by": null,
-      "outlinks": [],
-      "participants": [],
-      "priority": null,
-      "sources": [],
-      "start_date": null,
-      "status": null,
-      "summary": "",
-      "tags": [
-        "daily"
-      ],
-      "title": "Daily Note - 2021-05-02",
-      "updated_at": "<TIMESTAMP>"
+      "detail": {
+        "code": "NOT_FOUND",
+        "message": "No daily note for '2021-05-02' in KB 'no-default-role-kb'"
+      }
     },
-    "status": 200
+    "status": 404
   },
   "GET /api/daily/{date_str} | admin_key | private-kb": {
     "body": {
-      "aliases": [],
-      "assigned_at": null,
-      "assignee": null,
-      "backlinks": [],
-      "body": "# Monday, October 30, 2017",
-      "content_hash": "a1e1f1691936c189e41a857759917ec3d35764466fb8b5b2a0be4f898df196f8",
-      "coordinates": null,
-      "created_at": "<TIMESTAMP>",
-      "created_by": null,
-      "date": null,
-      "due_date": null,
-      "end_date": null,
-      "entry_type": "note",
-      "file_path": "<TMPDIR>/private-kb/notes/daily-2017-10-30.md",
-      "id": "daily-2017-10-30",
-      "importance": 5,
-      "indexed_at": "<TIMESTAMP>",
-      "kb_name": "private-kb",
-      "lifecycle": "active",
-      "links": [],
-      "location": null,
-      "metadata": {},
-      "modified_by": null,
-      "outlinks": [],
-      "participants": [],
-      "priority": null,
-      "sources": [],
-      "start_date": null,
-      "status": null,
-      "summary": "",
-      "tags": [
-        "daily"
-      ],
-      "title": "Daily Note - 2017-10-30",
-      "updated_at": "<TIMESTAMP>"
+      "detail": {
+        "code": "NOT_FOUND",
+        "message": "No daily note for '2017-10-30' in KB 'private-kb'"
+      }
     },
-    "status": 200
+    "status": 404
   },
   "GET /api/daily/{date_str} | admin_key | readable-kb": {
     "body": {
-      "aliases": [],
-      "assigned_at": null,
-      "assignee": null,
-      "backlinks": [],
-      "body": "# Saturday, February 3, 2018",
-      "content_hash": "c8dd880ea8972954c9e76798d8567f7f02eb61935ca859db3c89e9e197e3e1c4",
-      "coordinates": null,
-      "created_at": "<TIMESTAMP>",
-      "created_by": null,
-      "date": null,
-      "due_date": null,
-      "end_date": null,
-      "entry_type": "note",
-      "file_path": "<TMPDIR>/readable-kb/notes/daily-2018-02-03.md",
-      "id": "daily-2018-02-03",
-      "importance": 5,
-      "indexed_at": "<TIMESTAMP>",
-      "kb_name": "readable-kb",
-      "lifecycle": "active",
-      "links": [],
-      "location": null,
-      "metadata": {},
-      "modified_by": null,
-      "outlinks": [],
-      "participants": [],
-      "priority": null,
-      "sources": [],
-      "start_date": null,
-      "status": null,
-      "summary": "",
-      "tags": [
-        "daily"
-      ],
-      "title": "Daily Note - 2018-02-03",
-      "updated_at": "<TIMESTAMP>"
+      "detail": {
+        "code": "NOT_FOUND",
+        "message": "No daily note for '2018-02-03' in KB 'readable-kb'"
+      }
     },
-    "status": 200
+    "status": 404
   },
   "GET /api/entries | admin_key | missing-kb": {
     "body": {
@@ -6978,7 +6885,7 @@
     "body": {
       "detail": {
         "code": "CLIPPER_BLOCKED_HOST",
-        "message": "Could not resolve host 'example.invalid': <OS_RESOLVER_DETAIL>"
+        "message": "That address cannot be clipped: only public http(s) pages are allowed."
       }
     },
     "status": 400
@@ -6987,7 +6894,7 @@
     "body": {
       "detail": {
         "code": "CLIPPER_BLOCKED_HOST",
-        "message": "Could not resolve host 'example.invalid': <OS_RESOLVER_DETAIL>"
+        "message": "That address cannot be clipped: only public http(s) pages are allowed."
       }
     },
     "status": 400
@@ -6996,7 +6903,7 @@
     "body": {
       "detail": {
         "code": "CLIPPER_BLOCKED_HOST",
-        "message": "Could not resolve host 'example.invalid': <OS_RESOLVER_DETAIL>"
+        "message": "That address cannot be clipped: only public http(s) pages are allowed."
       }
     },
     "status": 400
@@ -7455,7 +7362,8 @@
   },
   "POST /api/kbs/{kb_name}/export | admin_key | no-default-role-kb": {
     "body": {
-      "error": "Clone failed: Git operation failed \u2014 see the server log for details",
+      "error": "Git remote refused: only https:// URLs on a host listed in the git_allowed_hosts setting may be cloned from or pushed to. To use another host, an operator adds it to git_allowed_hosts in config.yaml or PYRITE_GIT_ALLOWED_HOSTS.",
+      "error_code": "REMOTE_NOT_ALLOWED",
       "kb_name": "no-default-role-kb",
       "repo_url": "https://example.invalid/characterization.git",
       "success": false
@@ -7464,7 +7372,8 @@
   },
   "POST /api/kbs/{kb_name}/export | admin_key | private-kb": {
     "body": {
-      "error": "Clone failed: Git operation failed \u2014 see the server log for details",
+      "error": "Git remote refused: only https:// URLs on a host listed in the git_allowed_hosts setting may be cloned from or pushed to. To use another host, an operator adds it to git_allowed_hosts in config.yaml or PYRITE_GIT_ALLOWED_HOSTS.",
+      "error_code": "REMOTE_NOT_ALLOWED",
       "kb_name": "private-kb",
       "repo_url": "https://example.invalid/characterization.git",
       "success": false
@@ -7473,7 +7382,8 @@
   },
   "POST /api/kbs/{kb_name}/export | admin_key | readable-kb": {
     "body": {
-      "error": "Clone failed: Git operation failed \u2014 see the server log for details",
+      "error": "Git remote refused: only https:// URLs on a host listed in the git_allowed_hosts setting may be cloned from or pushed to. To use another host, an operator adds it to git_allowed_hosts in config.yaml or PYRITE_GIT_ALLOWED_HOSTS.",
+      "error_code": "REMOTE_NOT_ALLOWED",
       "kb_name": "readable-kb",
       "repo_url": "https://example.invalid/characterization.git",
       "success": false

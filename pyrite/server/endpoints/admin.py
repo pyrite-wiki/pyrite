@@ -7,7 +7,13 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import ValidationError as PydanticValidationError
 
-from ...exceptions import ConfigError, KBNotFoundError, KBProtectedError, ValidationError
+from ...exceptions import (
+    ConfigError,
+    KBNotFoundError,
+    KBProtectedError,
+    ValidationError,
+    public_text,
+)
 from ...services.access_policy import ROLES, AccessPolicy, Action, AnyKB, ReadScope
 from ...services.auth_service import AuthService
 from ...services.embedding_worker import EmbeddingWorker
@@ -206,14 +212,17 @@ def create_kb(
             kb = eph_svc.create_ephemeral_kb(name, ttl=ttl or 3600, description=description)
         except InvalidEphemeralKBNameError as e:
             raise HTTPException(
-                status_code=400, detail={"code": "INVALID_KB_NAME", "message": str(e)}
+                status_code=400, detail={"code": "INVALID_KB_NAME", "message": public_text(e)}
             ) from None
         return {"created": True, "name": kb.name, "path": str(kb.path), "ephemeral": True}
 
     try:
         result = registry.add_kb(name=name, path=path, kb_type=kb_type, description=description)
     except ConfigError as e:
-        raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": str(e)})
+        # ConfigError fixes its public_message (its text may name a server
+        # path); a subclass that says what conflicts (KB already exists)
+        # shows its own.
+        raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": public_text(e)})
     return {"created": True, **result}
 
 
@@ -281,7 +290,9 @@ def delete_kb(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{name}' not found"}
         )
     except KBProtectedError as e:
-        raise HTTPException(status_code=403, detail={"code": "PROTECTED", "message": str(e)})
+        raise HTTPException(
+            status_code=403, detail={"code": "PROTECTED", "message": public_text(e)}
+        )
     return {"deleted": True, "name": name}
 
 
@@ -367,10 +378,10 @@ def create_ephemeral_kb(
         result = auth_service.create_user_ephemeral_kb(auth_user["id"], eph_svc, name=name)
     except InvalidEphemeralKBNameError as e:
         raise HTTPException(
-            status_code=400, detail={"code": "INVALID_KB_NAME", "message": str(e)}
+            status_code=400, detail={"code": "INVALID_KB_NAME", "message": public_text(e)}
         ) from None
     except ValueError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+        raise HTTPException(status_code=403, detail=public_text(e))
 
     return {"created": True, **result}
 
@@ -445,7 +456,7 @@ def manage_kb_permission(
     try:
         auth_service.grant_kb_permission(user_id, name, role, granted_by)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=public_text(e))
 
     return {"granted": True, "user_id": user_id, "kb_name": name, "role": role}
 
@@ -466,7 +477,7 @@ def update_kb_default_role(
     try:
         registry.update_kb(name, default_role=role)
     except KBNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=public_text(e))
     return {"ok": True, "kb_name": name, "default_role": role}
 
 

@@ -14,7 +14,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
-from pyrite.utils.yaml import dump_yaml_file, load_yaml_file
+from pyrite.utils.private_files import ensure_private_dir, tighten_file, write_private_text
+from pyrite.utils.yaml import dump_yaml_text, load_yaml_file
 
 try:
     import httpx
@@ -24,6 +25,7 @@ except ImportError:
     HAS_HTTPX = False
 
 from .config import GitHubAuth, trusted_config_dir
+from .exceptions import outside_text
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +49,7 @@ def get_auth_file_path() -> Path:
     # Never a repo-local .pyrite/: a tree the user merely works in neither
     # supplies their GitHub credentials nor receives them.
     config_dir = trusted_config_dir()
-    config_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(config_dir)
     return config_dir / "github_auth.yaml"
 
 
@@ -56,6 +58,7 @@ def load_github_auth() -> GitHubAuth | None:
     auth_file = get_auth_file_path()
     if not auth_file.exists():
         return None
+    tighten_file(auth_file)
     try:
         data = load_yaml_file(auth_file)
         return GitHubAuth.from_dict(data)
@@ -86,15 +89,9 @@ def save_github_auth(auth: GitHubAuth) -> None:
     if auth.installation_id:
         data["installation_id"] = auth.installation_id
 
-    dump_yaml_file(data, auth_file)
-
-    # Secure the file (readable only by owner)
-    try:
-        os.chmod(auth_file, 0o600)
-    except Exception:
-        logger.debug(
-            "Could not set file permissions on %s (may be unsupported on this OS)", auth_file
-        )
+    # Written to a 0600 sibling created with that mode, then renamed: the
+    # token is never in a file other users can read, not even briefly.
+    write_private_text(auth_file, dump_yaml_text(data))
 
 
 def clear_github_auth() -> None:
@@ -235,7 +232,7 @@ def start_oauth_flow(
             response.raise_for_status()
             token_data = response.json()
     except Exception as e:
-        return False, f"Failed to exchange code for token: {e}"
+        return False, f"Failed to exchange code for token: {outside_text(e)}"
 
     if "error" in token_data:
         return (
@@ -307,7 +304,7 @@ def check_github_auth() -> tuple[bool, str]:
             else:
                 return False, f"GitHub API error: {response.status_code}"
     except Exception as e:
-        return False, f"Could not verify token: {e}"
+        return False, f"Could not verify token: {outside_text(e)}"
 
 
 def get_github_token() -> str | None:

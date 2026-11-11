@@ -24,6 +24,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..exceptions import IndexSchemaRefusedError, StorageError
+from ..utils.private_files import create_private_file, ensure_private_dir, tighten_file
 from .backends.sqlite_backend import SQLiteBackend
 from .errors import INDEX_ONLY_STATE, storage_error_from
 from .migrations import MigrationError
@@ -159,9 +160,16 @@ class ConnectionMixin:
         self.engine = None
         self._sa_conn = None
         try:
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            ensure_private_dir(self.db_path.parent)
             if self.db_path.is_dir():
                 raise IsADirectoryError(f"Index path is a directory: {self.db_path}")
+            # The index holds password hashes and tokens: it is created 0600
+            # (never at the umask's mode and tightened later), and so are the
+            # -wal/-shm files SQLite makes beside it, which take the mode of
+            # the file they belong to. One that already exists is tightened.
+            create_private_file(self.db_path)
+            for suffix in ("-wal", "-shm"):
+                tighten_file(self.db_path.with_name(self.db_path.name + suffix))
             problem = index_file_problem(self.db_path)
             if problem:
                 raise sqlite3.DatabaseError(problem)

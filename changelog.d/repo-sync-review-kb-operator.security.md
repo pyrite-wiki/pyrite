@@ -1,0 +1,3 @@
+`POST /api/repos/{name}/sync` on a repository that holds a `landing: review` knowledge base needs the operator (a global admin, an operator API key, or the local process). A knowledge base counts when it is linked to the subscription or its folder lies inside the repository's checkout (or contains it). A repository whose knowledge bases all land canonical keeps the per-KB write rule.
+
+**Upgrade notes:** a user with write access who synced such a repository is now refused with 403; ask an administrator to run the sync (`pyrite repo sync` on the server, or the REST call as an admin). Repositories of canonical knowledge bases are unchanged.

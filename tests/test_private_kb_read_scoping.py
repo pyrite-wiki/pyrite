@@ -809,3 +809,20 @@ def test_admin_timeline_and_tags_still_include_the_private_kb(env):
     assert {e["id"] for e in timeline.json()["events"]} == {"public-event", "secret-event"}
     tags = env["admin"].get("/api/tags")
     assert "confidential/operation-zebra" in {t["name"] for t in tags.json()["tags"]}
+
+
+@pytest.mark.control(
+    reason="control: guards the report cache; without the cache every read is fresh"
+)
+@pytest.mark.parametrize("route", ["/api/qa/validate", "/api/qa/status"])
+def test_a_qa_report_built_for_an_admin_is_not_served_to_an_anonymous_reader(env, route):
+    """QA reports are reused for a minute; a report is keyed by the readable
+    set it was built for, so the admin's full inventory never answers anon."""
+    full = env["admin"].get(route)
+    assert full.status_code == 200, full.text
+    anon = env["anon"].get(route)
+    assert anon.status_code == 200, anon.text
+    assert PRIVATE in full.text or route.endswith("status")
+    assert PRIVATE not in anon.text and "secret" not in anon.text
+    if route.endswith("status"):
+        assert anon.json()["total_entries"] < full.json()["total_entries"]

@@ -6,6 +6,8 @@ Config.yaml KBs are seeded as source="config"; user-added KBs are source="user".
 """
 
 import logging
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -15,14 +17,31 @@ from ..exceptions import (
     KBAlreadyExistsError,
     KBDefinedInConfigError,
     KBNotFoundError,
+    KBPathNotAllowedError,
     KBProtectedError,
     ValidationError,
 )
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
 from .credential_events import announce_kb_policy_change
+from .qa_cache import index_fingerprint
 
 logger = logging.getLogger(__name__)
+
+#: How long a read-tier route may reuse a KB's health report (seconds).
+HEALTH_CACHE_SECONDS = 60.0
+_HEALTH_CACHE_MAX = 256
+_HEALTH_CACHE: dict[tuple[str, str], tuple[float, tuple, dict[str, Any]]] = {}
+_HEALTH_LOCKS: dict[tuple[str, str], threading.Lock] = {}
+_HEALTH_LOCKS_GUARD = threading.Lock()
+
+
+def _health_lock(key: tuple[str, str]) -> threading.Lock:
+    """One lock per (index, KB): a pass for one KB never waits on another's."""
+    with _HEALTH_LOCKS_GUARD:
+        if len(_HEALTH_LOCKS) >= _HEALTH_CACHE_MAX and key not in _HEALTH_LOCKS:
+            _HEALTH_LOCKS.clear()
+        return _HEALTH_LOCKS.setdefault(key, threading.Lock())
 
 
 KB_TYPE_REQUIRED = (
@@ -229,6 +248,7 @@ class KBRegistryService:
         # Checked before anything is created: no directory, no preset, no row.
         self.config.refuse_outside_tree(path, f"adding KB '{name}'")
         resolved = Path(path).expanduser().resolve()
+        self._refuse_outside_kb_roots(resolved)
         resolved.mkdir(parents=True, exist_ok=True)
 
         # Apply plugin preset if kb_type matches one
@@ -263,6 +283,34 @@ class KBRegistryService:
         )
 
         return self.get_kb(name)  # type: ignore[return-value]
+
+    def _refuse_outside_kb_roots(self, resolved: Path) -> None:
+        """A network caller registers a KB only in a folder under one of
+        ``settings.kb_roots`` (``KBPathNotAllowedError`` otherwise, naming the
+        roots); the local operator (``is_local_process``) registers any path.
+
+        ``resolved`` is the requested path fully resolved (symbolic links and
+        ``..`` followed, as far as the path exists), and each root is resolved
+        when the configuration loads, so neither a link nor ``..`` reaches
+        outside a root. A root itself is not a KB path: a KB goes in a folder
+        under it."""
+        from .acting import is_local_process
+
+        if is_local_process():
+            return
+        roots = list(self.config.settings.kb_roots)
+        if any(root in resolved.parents for root in roots):
+            return
+        if not roots:
+            raise KBPathNotAllowedError(
+                "Registering a KB path over the network is off: no kb_roots are configured. "
+                "The operator can register it with `pyrite kb add`, or list the folders "
+                "network callers may use in settings.kb_roots."
+            )
+        raise KBPathNotAllowedError(
+            "A KB registered over the network must be in a folder under one of the "
+            f"configured kb_roots: {', '.join(str(r) for r in roots)}"
+        )
 
     def _apply_preset(self, kb_path: Path, name: str, kb_type: str, description: str) -> None:
         """Materialize a plugin preset into the KB directory.
@@ -525,8 +573,36 @@ class KBRegistryService:
             raise KBNotFoundError(f"KB '{name}' not found")
         return self.index_mgr.sync_kb(kb_config)
 
-    def health_kb(self, name: str) -> dict[str, Any]:
-        """Report the live entry count and the shared index-health verdict."""
+    def health_kb(self, name: str, *, max_age: float = 0.0) -> dict[str, Any]:
+        """Report the live entry count and the shared index-health verdict.
+
+        The report parses every file of the KB. ``max_age`` is how many seconds old a report
+        for this KB may be: 0, the default, always computes it (the CLI and
+        the admin tools); a read-tier route passes ``HEALTH_CACHE_SECONDS``,
+        so any number of callers cost one pass per window. Concurrent callers
+        wait for the one pass instead of each starting their own.
+
+        Reading changes nothing: a KB registered in the database (``kb add``)
+        is checked through a config holding just that KB, never merged into
+        the shared config or written back.
+        """
+        if max_age <= 0:
+            return self._health_kb(name)
+        key = (str(self.db.db_path), name)
+        with _health_lock(key):
+            # Reused only while the index of this KB is unchanged, so an
+            # entry written, removed or re-indexed shows at once.
+            fingerprint = index_fingerprint(self.db, [name])
+            hit = _HEALTH_CACHE.get(key)
+            if hit is not None and hit[1] == fingerprint and time.monotonic() - hit[0] < max_age:
+                return dict(hit[2])
+            result = self._health_kb(name)
+            if len(_HEALTH_CACHE) >= _HEALTH_CACHE_MAX:
+                _HEALTH_CACHE.clear()
+            _HEALTH_CACHE[key] = (time.monotonic(), fingerprint, result)
+            return dict(result)
+
+    def _health_kb(self, name: str) -> dict[str, Any]:
         from ..storage.models import KB
 
         kb = self.db.session.get(KB, name)
@@ -546,8 +622,11 @@ class KBRegistryService:
 
         stats = self.db.get_kb_stats(name) or {}
         entry_count = stats.get("entry_count", 0)
-        self.db.merge_registered_kbs(self.config)
-        health = IndexManager(self.db, self.config).check_health(name)
+        kb_config = self.get_kb_config(name)
+        scoped = PyriteConfig(
+            knowledge_bases=[kb_config] if kb_config else [], settings=self.config.settings
+        )
+        health = IndexManager(self.db, scoped).check_health(name)
         healthy = path_exists and not health_verdict(health)["is_unhealthy"]
         drift = {
             key: health[key]

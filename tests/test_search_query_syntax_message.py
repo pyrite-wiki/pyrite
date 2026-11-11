@@ -61,11 +61,24 @@ def test_a_column_the_query_does_not_name_is_not_the_callers_fault():
     assert not isinstance(excinfo.value, QuerySyntaxError)
 
 
+@pytest.mark.control(reason="the local operator keeps the driver's text, as before")
 def test_other_operational_errors_keep_the_previous_text():
-    message = _message("detention AND third-party-doctrine", "unterminated string")
+    from pyrite.services.acting import local_process
+
+    with local_process(True):  # the CLI's operator
+        message = _message("detention AND third-party-doctrine", "unterminated string")
 
     assert "unterminated string" in message
     assert "third-party-doctrine" not in message
+
+
+def test_a_network_caller_never_sees_the_drivers_text():
+    """The FTS parser's own words are the operator's (ADR-0052 N3): a
+    network caller reads Pyrite's message with the detail withheld."""
+    message = _message("detention AND third-party-doctrine", "unterminated string at /srv/x")
+
+    assert message.startswith("Query could not be parsed: the server log has the details.")
+    assert "/srv/x" not in message
 
 
 def test_error_code_is_unchanged():

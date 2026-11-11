@@ -118,6 +118,8 @@ def no_network(monkeypatch):
             return FAKE_SHA
         if "remote get-url" in joined:
             return "git@github.com:markramm/pyrite.git\n"
+        if cmd[-1] == "remote":
+            return "origin\nsecurity\n"  # the private fixes remote is there
         if "tag -l" in joined:
             return ""  # the tag does not exist locally
         if "ls-remote" in joined:

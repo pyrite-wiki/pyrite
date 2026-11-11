@@ -7,6 +7,7 @@ retryable, and the advice to move the index aside is given only for an index
 that is corrupt.
 """
 
+import contextlib
 import sqlite3
 import time
 from pathlib import Path
@@ -15,6 +16,7 @@ from ..exceptions import StorageError
 from ..storage import connection
 from ..storage.connection import CORRUPT_INDEX_SUGGESTION, index_file_problem, is_index_corruption
 from ..storage.errors import storage_error_from
+from ..utils.private_files import create_private_file
 
 #: A fault of the output path: its directory or the file is not writable, the
 #: disk is full, or the file there is not a SQLite database.
@@ -107,6 +109,11 @@ def backup_index(db_path: Path, output_path: Path) -> None:
         # non-database file at the path (SQLITE_NOTADB, a corruption code) --
         # is the output path's.
         try:
+            # A copy of the index holds what the index holds: a new file is
+            # created 0600, an existing one is made 0600 before it is written.
+            # A path that cannot be created is reported by the connect below.
+            with contextlib.suppress(OSError):
+                create_private_file(output_path)
             dest_conn = sqlite3.connect(str(output_path), timeout=timeout_s)
             source_conn.backup(dest_conn, progress=_bounded_progress(timeout_s))
         except sqlite3.Error as exc:

@@ -1,6 +1,6 @@
 """A signed-in non-admin user's write lands in that user's worktree, or is
 refused -- on every transport, never in the main checkout
-(markramm/pyrite-security#110; the landing rule of ADR-0044 §1).
+(the landing rule of ADR-0044 §1).
 
 The world: auth on, five KBs (generic, software, journalism-investigation,
 encyclopedia, social), each the root of its own git repository in its own
@@ -167,7 +167,7 @@ def _stub_clipper(monkeypatch):
         return real_client(*args, transport=httpx.MockTransport(page), **kwargs)
 
     monkeypatch.setattr(
-        "pyrite.services.clipper.socket.getaddrinfo",
+        "pyrite.utils.public_destination.socket.getaddrinfo",
         lambda host, *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))],
     )
     monkeypatch.setattr("pyrite.services.clipper.httpx.AsyncClient", client)
@@ -292,7 +292,8 @@ REST_CASES: dict[str, Case] = {
         lambda s: {
             "url": f"/api/tasks/{s[0]}/claim",
             "params": {"kb": NOTES},
-            "json": {"assignee": "agent:x"},
+            # No assignee: a signed-in caller is recorded as themselves.
+            "json": {},
         },
         seeds=((NOTES, "task", "status: open\n"),),
     ),
@@ -363,7 +364,6 @@ REST_CASES: dict[str, Case] = {
             "json": {
                 "entry_id": s[0],
                 "kb_name": NOTES,
-                "reviewer": "r",
                 "reviewer_type": "user",
                 "result": "pass",
             }
@@ -402,6 +402,8 @@ _ADMIN_TOOL = "admin tier: the write-tier server alice is given does not registe
 # file, and the case becomes WRITES. The main-index check covers them meanwhile.
 _ADVISORY = "returns the frontmatter for the caller to write; writes no file"
 
+# Person arguments (assignee, reviewer, author) are left out: both callers
+# here are signed in, and the dispatcher records each as themselves.
 MCP_CASES: dict[str, Case] = {
     "kb_create": Case(
         WRITES, lambda s: {"kb_name": NOTES, "entry_type": "note", "title": f"Mcp {s.tag}"}
@@ -427,7 +429,7 @@ MCP_CASES: dict[str, Case] = {
     ),
     "task_claim": Case(
         WRITES,
-        lambda s: {"kb_name": NOTES, "task_id": s[0], "assignee": "agent:x"},
+        lambda s: {"kb_name": NOTES, "task_id": s[0]},
         seeds=((NOTES, "task", "status: open\n"),),
     ),
     "task_decompose": Case(
@@ -447,7 +449,7 @@ MCP_CASES: dict[str, Case] = {
     ),
     "wiki_submit_review": Case(
         NO_KB_FILE,
-        lambda s: {"kb_name": WIKI, "entry_id": s[0], "reviewer_id": "r", "action": "approve"},
+        lambda s: {"kb_name": WIKI, "entry_id": s[0], "action": "approve"},
         seeds=((WIKI, "article", "review_status: under_review\n"),),
         reason=_ADVISORY,
         main_rows=("encyclopedia_review",),
@@ -529,12 +531,12 @@ MCP_CASES: dict[str, Case] = {
     "sw_create_adr": Case(WRITES, lambda s: {"kb_name": SW, "title": f"Adr {s.tag}"}),
     "sw_claim": Case(
         WRITES,
-        lambda s: {"kb_name": SW, "item_id": s[0], "assignee": "agent:x"},
+        lambda s: {"kb_name": SW, "item_id": s[0]},
         seeds=((SW, "backlog_item", "kind: feature\nstatus: accepted\n"),),
     ),
     "sw_review": Case(
         WRITES,
-        lambda s: {"kb_name": SW, "item_id": s[0], "outcome": "approved", "reviewer": "r"},
+        lambda s: {"kb_name": SW, "item_id": s[0], "outcome": "approved"},
         seeds=((SW, "backlog_item", "kind: feature\nstatus: review\nassignee: agent:x\n"),),
         change_set_refused="it records a review verdict in the database",
     ),
@@ -558,7 +560,7 @@ MCP_CASES: dict[str, Case] = {
     ),
     "social_post": Case(
         WRITES,
-        lambda s: {"kb_name": SOCIAL, "title": f"Post {s.tag}", "body": "b", "author_id": "alice"},
+        lambda s: {"kb_name": SOCIAL, "title": f"Post {s.tag}", "body": "b"},
         main_rows=("social_reputation_log",),
     ),
     "social_vote": Case(
@@ -909,14 +911,13 @@ def world(request):
             world.landing = landing
             world.cookies = {"a": _login(app, "root"), "u": _login(app, USER)}
             # Start the admin- and write-tier MCP servers now: a server's first
-            # start reconciles the KB registry with the config (seed_from_config:
-            # `kb.source` back to "config"). That is needed because every
-            # KBService write calls `register_kb(...)` with no `source`, which
-            # turns a config KB's `kb.source` into "user" on main
-            # (kb_service.py `_update`, index.py) -- a defect older than this
-            # change, tracked separately. Starting the servers here keeps that
-            # reconcile from being charged to whichever call came first, and
-            # `reset_kb_rows` puts the rows back before every user case.
+            # start reconciles the KB registry with the config
+            # (seed_from_config), and starting them here keeps that reconcile
+            # from being charged to whichever call came first. Writes no longer
+            # rewrite a KB's row (`ensure_kb`;
+            # tests/test_writes_leave_the_kb_registry_row_alone.py);
+            # `reset_kb_rows` still puts the rows back before every user case,
+            # so a leak in one case cannot hide the same leak in a later one.
             world.mcp("a", "kb_list", {})
             world.mcp("key", "kb_list", {})
             import sqlite3
@@ -1281,15 +1282,11 @@ def test_an_id_only_in_a_change_set_is_found_only_in_a_named_kb(world):
         assert not _refused_mcp(made), made
         item = made["entry_id"]
 
-        blank = server._dispatch_tool(
-            "sw_claim", {"item_id": item, "assignee": "alice"}, principal=alice
-        )
+        blank = server._dispatch_tool("sw_claim", {"item_id": item}, principal=alice)
         assert blank.get("error_code") == "ENTRY_NOT_FOUND", blank
         assert reached == [], "the handler ran for an id the lookup did not find"
 
-        named = server._dispatch_tool(
-            "sw_claim", {"item_id": item, "assignee": "alice", "kb_name": SW}, principal=alice
-        )
+        named = server._dispatch_tool("sw_claim", {"item_id": item, "kb_name": SW}, principal=alice)
         assert named == {"claimed": True}, named
         assert reached == [SW], reached
     finally:
@@ -1332,3 +1329,79 @@ def test_one_item_does_not_fail_the_rest(world, label, who):
         assert statuses == ["created", "error", "created"], result
         assert result["entries"][1]["error_code"] == "ENTRY_EXISTS", result
         assert (result["created"], result["errors"]) == (2, 1), result
+
+
+# =============================================================================
+# GET writes nothing, for any route (ADR-0044 L2 whatever the method)
+# =============================================================================
+#
+# The write routes above ask the landing rule; a GET never does, so the
+# property is that no GET writes at all: every GET route of `create_app()`, driven as alice with a KB
+# named everywhere a route takes one, leaves the main checkout, her worktrees
+# and the main index as they were. Generated from the route table, so a new
+# GET route is covered the day it is added.
+
+# A value per path parameter, by name: a KB of this world, an entry or a date
+# with nothing behind it yet (a missing daily note, which no GET may create
+# either), or a name that matches nothing.
+_GET_PATH_VALUES = {
+    "kb_name": NOTES,
+    "name": NOTES,
+    "username": USER,
+    "date_str": "2031-01-02",
+}
+
+
+# The GET routes that wrote before 0.26.1. Every other route is a control:
+# it wrote nothing then either, and is here so a new GET that writes fails.
+_GET_ROUTES_THAT_WROTE = {"GET /api/daily/{date_str}"}
+
+
+def _get_routes() -> list:
+    return [
+        pytest.param(
+            name,
+            marks=[]
+            if name in _GET_ROUTES_THAT_WROTE
+            else [pytest.mark.control(reason="this GET wrote nothing before the fix either")],
+            id=name,
+        )
+        for name in sorted(ep.name for ep in rest_operations() if ep.name.split()[0] == "GET")
+    ]
+
+
+def _fill(path: str) -> str:
+    import re
+
+    def value(m):
+        name = m.group(1).split(":")[0]
+        return _GET_PATH_VALUES.get(name, "no-such-thing")
+
+    return re.sub(r"\{([^}]+)\}", value, path)
+
+
+@pytest.mark.parametrize("route", _get_routes())
+@pytest.mark.parametrize("who", ["u", "a"], ids=["user", "admin"])
+def test_no_get_route_writes(world, route, who):
+    """As alice and as the admin, whose writes land canonical: a GET is a read
+    for both."""
+    path = _fill(route.split(" ", 1)[1])
+    world.reset_kb_rows()
+    before, wt_before, index_before = world.main_trees(), world.worktree_trees(), world.main_index()
+    world.client.cookies.clear()
+    world.client.cookies.set("pyrite_session", world.cookies[who])
+    try:
+        resp = world.client.get(
+            path, params={"kb": NOTES, "kb_name": NOTES}, follow_redirects=False
+        )
+        label = f"{route} ({resp.status_code} {resp.text[:200]})"
+    except Exception as e:  # a read that crashes still must not have written
+        # GET /api/entries crashes for a user with an open change set
+        # (pyrite-wiki/pyrite#1373); what is checked here is the write.
+        label = f"{route} (raised {type(e).__name__}: {e})"
+    finally:
+        world.client.cookies.clear()
+    assert _main_changes(world, before) == {}, f"{label} wrote the main checkout"
+    assert world.worktree_trees() == wt_before, f"{label} wrote alice's worktree"
+    rows = world.index_changes(index_before)
+    assert rows == {}, f"{label} wrote the main index: {rows}"

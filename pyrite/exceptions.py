@@ -51,6 +51,13 @@ traceback fragment, a confined-root path -- alongside sites that already
 phrase themselves safely, which is exactly the trap: a class-level
 ``public_message=None`` looked correct until the next raise site embedded a
 path).
+
+**An exception that is not a ``PyriteError`` shows nothing of its own.** Its
+text was written for the operator -- an ``OSError`` names a path, a provider
+SDK names its endpoint, a stdlib ``ValueError`` quotes its input -- so
+``public_text`` answers ``INTERNAL_PUBLIC_MESSAGE`` for it and logs the real
+text, on every transport. Only the local operator's own process (the CLI,
+``local=True``) is shown it.
 """
 
 import datetime
@@ -60,15 +67,31 @@ import math
 logger = logging.getLogger(__name__)
 
 
+#: What a response shows for a fault that is not a ``PyriteError``: the
+#: exception's own text (a server path, a provider's or driver's message) is
+#: the operator's and goes to the log.
+INTERNAL_PUBLIC_MESSAGE = "Internal error; the server log has the details."
+
+
 def public_text(
     exc: BaseException,
     *,
     already_logged: bool = False,
     log: logging.Logger | None = None,
+    local: bool | None = None,
 ) -> str:
     """The text a response may show for ``exc``, and the one place that decides it.
 
-    Returns ``exc.public_message`` when the class sets one, else ``str(exc)``.
+    An exception that is not a ``PyriteError`` -- an ``OSError`` naming a
+    path, a provider SDK's error, a ``ValueError`` quoting its input -- shows
+    ``INTERNAL_PUBLIC_MESSAGE``: its text was not written for a caller. The
+    real text is logged at WARNING unless ``already_logged``. ``local``: the
+    caller is the operator's own process (the CLI), to whom the text belongs;
+    it is shown as it is. None, the default, asks ``acting.is_local_process``:
+    the CLI and stdio MCP get the text, a REST request or an MCP call over
+    HTTP the fixed message.
+
+    For a ``PyriteError``: ``exc.public_message`` when the class sets one, else ``str(exc)``.
     When it substitutes, the real ``str(exc)`` is logged at WARNING (#848), so
     the cause stays findable server-side -- on the CLI, stderr at the default
     level. A class that leaves ``public_message`` unset shows ``str(exc)`` and
@@ -84,12 +107,60 @@ def public_text(
     ``exc`` need not be a ``PyriteError`` (some call sites catch
     ``ValueError`` too), hence ``getattr``.
     """
+    if not isinstance(exc, PyriteError):
+        if local is None:
+            from .services.acting import is_local_process
+
+            local = is_local_process()
+        if local:
+            return str(exc)
+        if not already_logged:
+            (log or logger).warning("%s: %s", type(exc).__name__, exc)
+        return INTERNAL_PUBLIC_MESSAGE
     public = getattr(exc, "public_message", None)
     if public is None:
         return str(exc)
     if not already_logged:
         (log or logger).warning("%s: %s", type(exc).__name__, exc)
     return str(public)
+
+
+#: What a Pyrite message carries, for a network caller, in place of the text
+#: of an exception from outside Pyrite that it would otherwise name
+#: (``outside_text``).
+OUTSIDE_TEXT_WITHHELD = "the server log has the details"
+
+
+def outside_text(
+    exc: BaseException,
+    *,
+    already_logged: bool = False,
+    local: bool | None = None,
+) -> str:
+    """The text of ``exc`` for placing *inside* a Pyrite message (ADR-0052 N3).
+
+    ``public_text`` answers for a whole response; this is for a message
+    Pyrite writes around a cause (``f"Invalid YAML frontmatter: {...}"``).
+    The local process (``acting.is_local_process``: the CLI, stdio MCP) gets
+    the exception's own text, as it always did. A network caller gets a
+    ``PyriteError``'s ``public_text``, and for anything else
+    ``OUTSIDE_TEXT_WITHHELD``: an OS error, a library's or a provider's
+    message, a parser's quote of file content were not written for a caller.
+    The real text is logged at WARNING (on ``pyrite.exceptions``) unless
+    ``already_logged``. ``tests/test_response_text_is_pyrites.py`` holds
+    every message built in an ``except`` body to this or ``public_text``.
+    """
+    if isinstance(exc, PyriteError):
+        return public_text(exc, already_logged=already_logged)
+    if local is None:
+        from .services.acting import is_local_process
+
+        local = is_local_process()
+    if local:
+        return str(exc)
+    if not already_logged:
+        logger.warning("%s: %s", type(exc).__name__, exc)
+    return OUTSIDE_TEXT_WITHHELD
 
 
 class PyriteError(Exception):
@@ -356,6 +427,25 @@ class InvalidGitRefError(ValidationError):
     error_code = "INVALID_REF"
 
 
+class RemoteNotAllowedError(ValidationError):
+    """A git remote Pyrite would clone from or push to for a caller is not an
+    https:// URL on a host in the operator's ``git_allowed_hosts`` setting.
+    The message names the setting and never echoes the URL (which can carry
+    credentials). Carries ``error_code`` ``REMOTE_NOT_ALLOWED``.
+    """
+
+    error_code = "REMOTE_NOT_ALLOWED"
+
+
+class UnsafeDestinationError(ValidationError):
+    """A path Pyrite would create or write does not resolve inside the
+    directory Pyrite chose for it (a link, or a name leading out of it).
+    Nothing is written. Carries ``error_code`` ``UNSAFE_DESTINATION``.
+    """
+
+    error_code = "UNSAFE_DESTINATION"
+
+
 class LandingRefusedError(ValidationError):
     """A write with no place to land under its KB's `landing` (ADR-0044 §1):
     refused, and nothing is written. Carries ``error_code`` ``LANDING_REFUSED``."""
@@ -380,6 +470,14 @@ class FrontmatterError(ValidationError):
     """
 
     error_code = "INVALID_FRONTMATTER"
+
+
+class YamlLimitError(FrontmatterError):
+    """A YAML document passes a fixed bound on aliases or expanded size.
+
+    Raised at load, before an entry is built, by ``pyrite.utils.yaml``. The
+    message is Pyrite's own and names only the bound, so it is safe to show.
+    """
 
 
 class PluginError(PyriteError):
@@ -574,6 +672,17 @@ class BrandingInvalidError(PyriteError):
     )
 
 
+class KBNameReservedError(ConfigError):
+    """A new KB's name is one an API route uses (``kb_names.RESERVED_KB_NAMES``).
+
+    The message names only the caller's own KB name, so it is shown on every
+    transport, unlike the base ``ConfigError``'s fixed sentence; the code
+    stays the base's.
+    """
+
+    public_message = None
+
+
 class KBAlreadyExistsError(ConfigError):
     """`KBRegistryService.add_kb` refused: a KB with this name is already
     registered (#506, narrowing #501's fixed `ConfigError.public_message`).
@@ -685,6 +794,13 @@ class ClipperBlockedHostError(PyriteError):
     error_code = "CLIPPER_BLOCKED_HOST"
 
 
+class ClipperTooLargeError(PyriteError):
+    """Raised when a page the web clipper fetches is larger than the byte cap,
+    counted after decompression. The message is Pyrite's own and safe to show."""
+
+    error_code = "CLIP_TOO_LARGE"
+
+
 class LastAdminError(ValidationError):
     """AuthService.set_role refused to demote the last global admin (#416).
 
@@ -728,6 +844,45 @@ class Forbidden(AccessDenied):
     """
 
     error_code = "FORBIDDEN"
+
+
+class EntryValueError(ValidationError, ValueError):
+    """An entry value Pyrite cannot store or index, said in Pyrite's words for
+    the caller (``metadata cannot be stored as JSON``, ``date is a list, not a
+    value the index can store``). A ``ValueError`` too, so code that caught
+    the built-in keeps working; a ``ValidationError`` so every surface shows
+    its text (``public_text``)."""
+
+
+class RefusedValueError(ValidationError, ValueError):
+    """A value Pyrite refuses, said in Pyrite's words for the caller (a field
+    path that names no field, a sign-up refused, a KB name that is not
+    allowed). A ``ValueError`` too, so code that caught the built-in keeps
+    working; a ``ValidationError`` so ``public_text`` shows its text to a
+    network caller, where a plain ``ValueError``'s text -- which may come
+    from anywhere -- is withheld (ADR-0052 N3)."""
+
+
+class EntryTypeError(ValidationError, TypeError):
+    """An entry value of a type Pyrite cannot use (``title must be a string,
+    got a list``; ``cannot derive an id: title is a list``). A ``TypeError``
+    too, so code that caught the built-in keeps working."""
+
+
+class KBNotInConfigError(KBNotFoundError, ValueError):
+    """``KB_NOT_FOUND`` from code that raised a ``ValueError`` before: the
+    message names only the KB the caller asked for."""
+
+
+class KBPathNotAllowedError(Forbidden):
+    """A network caller asked to register a KB at a path outside the
+    configured ``settings.kb_roots`` (``KBRegistryService.add_kb``). The local
+    operator registers any path; over the network (REST, MCP with a
+    principal) only a folder under a root. The message names the roots, so
+    the caller knows where a KB may go; it names nothing else on the server.
+    """
+
+    error_code = "KB_PATH_NOT_ALLOWED"
 
 
 class InvalidQATierError(ValidationError):

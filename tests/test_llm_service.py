@@ -668,7 +668,9 @@ class TestLLMServiceTestConnection:
         with patch("pyrite.services.llm_service._import_openai", return_value=mock_module):
             result = svc.test_connection()
         assert result["ok"] is False
-        assert "Invalid API key" in result["message"]
+        # The provider's text is the operator's: logged, not returned.
+        assert "Invalid API key" not in result["message"]
+        assert "Connection failed" in result["message"]
 
 
 class TestAIStatusEndpoint:

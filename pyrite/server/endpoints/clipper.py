@@ -2,9 +2,10 @@
 
 import logging
 
+import anyio.to_thread
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ...exceptions import ClipperBlockedHostError, ValidationError
+from ...exceptions import ClipperBlockedHostError, ClipperTooLargeError, ValidationError
 from ...services.clipper import ClipperService
 from ...services.kb_service import KBService
 from ..api import get_kb_service, limiter, requires_kb_tier
@@ -49,17 +50,33 @@ async def clip_url(
     try:
         result = await clipper.clip_url(req.url, title=req.title)
     except ClipperBlockedHostError as e:
-        # SSRF defense: blocked host/scheme. Surface a 400 with the
-        # stable error code so callers can distinguish a policy
-        # rejection from an upstream fetch failure.
+        # SSRF defense: blocked host/scheme. A stable code lets callers tell a
+        # policy rejection from an upstream failure. The text names no
+        # address: what a name resolved to is the operator's, so it goes to
+        # the log only.
+        logger.warning("Clip of %r refused: %s", req.url, e)
         raise HTTPException(
             status_code=400,
+            detail={
+                "code": e.error_code,
+                "message": "That address cannot be clipped: only public http(s) pages are allowed.",
+            },
+        ) from e
+    except ClipperTooLargeError as e:
+        raise HTTPException(
+            status_code=413,
             detail={"code": e.error_code, "message": str(e)},
         ) from e
     except Exception as e:
+        # The exception's text can quote internal addresses, paths or parser
+        # state: it goes to the log, the caller gets Pyrite's own message.
+        logger.warning("Clip of %r failed", req.url, exc_info=True)
         raise HTTPException(
             status_code=502,
-            detail={"code": "CLIP_FAILED", "message": f"Failed to fetch URL: {e}"},
+            detail={
+                "code": "CLIP_FAILED",
+                "message": "The page could not be fetched. Check the URL and try again.",
+            },
         ) from e
 
     # Build entry body with source attribution
@@ -76,14 +93,23 @@ async def clip_url(
         "tags": req.tags or [],
         "metadata": {"source_url": result.source_url, "clipped": True},
     }
+
+    # The write touches files, the index and git: off the event loop.
+    def _create():
+        return svc.create(req.kb, spec, allow_undeclared=req.allow_undeclared).entry
+
     try:
-        entry = svc.create(req.kb, spec, allow_undeclared=req.allow_undeclared).entry
+        entry = await anyio.to_thread.run_sync(_create)
     except ValidationError as e:
         raise refusal_http(e) from e
     except Exception as e:
+        logger.warning("Clip of %r: entry creation failed", req.url, exc_info=True)
         raise HTTPException(
             status_code=400,
-            detail={"code": "CREATE_FAILED", "message": f"Entry creation failed: {e}"},
+            detail={
+                "code": "CREATE_FAILED",
+                "message": "The page was fetched but the entry could not be created.",
+            },
         ) from e
 
     # Broadcast WebSocket event

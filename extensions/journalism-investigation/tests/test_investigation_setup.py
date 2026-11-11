@@ -6,20 +6,32 @@ from pyrite_journalism_investigation.investigation_setup import (
     create_investigation,
 )
 
+from pyrite.config import KBConfig, PyriteConfig, Settings
+from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
 
 KB_NAME = "test-investigation"
 
 
 @pytest.fixture
-def ji_db(tmp_path):
-    """Fresh DB with an empty investigation KB."""
+def ji_svc(tmp_path):
+    """A KBService over an empty investigation KB: creates go through it."""
     kb_path = tmp_path / "test-kb"
     kb_path.mkdir()
+    config = PyriteConfig(
+        knowledge_bases=[KBConfig(name=KB_NAME, path=kb_path, kb_type="journalism-investigation")],
+        settings=Settings(index_path=tmp_path / "index.db"),
+    )
     db = PyriteDB(tmp_path / "index.db")
     db.register_kb(KB_NAME, "journalism-investigation", str(kb_path))
-    yield db, KB_NAME
+    yield KBService(config, db)
     db.close()
+
+
+@pytest.fixture
+def ji_db(ji_svc):
+    """Fresh DB with an empty investigation KB."""
+    return ji_svc.db, KB_NAME
 
 
 @pytest.fixture
@@ -144,10 +156,10 @@ def db_with_investigation(ji_db):
 class TestCreateInvestigation:
     """Test creating a new investigation."""
 
-    def test_creates_investigation_entry(self, ji_db):
+    def test_creates_investigation_entry(self, ji_svc, ji_db):
         db, kb_name = ji_db
         result = create_investigation(
-            db=db,
+            ji_svc,
             kb_name=kb_name,
             title="New Investigation",
             scope="Looking into XYZ Corp",
@@ -160,10 +172,10 @@ class TestCreateInvestigation:
         assert entry is not None
         assert entry["title"] == "New Investigation"
 
-    def test_creates_initial_entities(self, ji_db):
+    def test_creates_initial_entities(self, ji_svc, ji_db):
         db, kb_name = ji_db
         result = create_investigation(
-            db=db,
+            ji_svc,
             kb_name=kb_name,
             title="Corp Investigation",
             scope="Corporate fraud",
@@ -174,10 +186,10 @@ class TestCreateInvestigation:
         )
         assert len(result.get("entities_created", [])) == 2
 
-    def test_returns_investigation_id(self, ji_db):
+    def test_returns_investigation_id(self, ji_svc, ji_db):
         db, kb_name = ji_db
         result = create_investigation(
-            db=db,
+            ji_svc,
             kb_name=kb_name,
             title="Test Investigation",
             scope="Test scope",
@@ -186,11 +198,11 @@ class TestCreateInvestigation:
         assert isinstance(result["created"], str)
         assert len(result["created"]) > 0
 
-    def test_key_questions_stored(self, ji_db):
+    def test_key_questions_stored(self, ji_svc, ji_db):
         db, kb_name = ji_db
         questions = ["Question 1?", "Question 2?"]
         result = create_investigation(
-            db=db,
+            ji_svc,
             kb_name=kb_name,
             title="Questions Test",
             scope="Scope",
@@ -203,10 +215,11 @@ class TestCreateInvestigation:
         assert "Question 1?" in body
         assert "Question 2?" in body
 
-    def test_empty_title_returns_error(self, ji_db):
+    @pytest.mark.control(reason="refused or read before any write; unchanged by this change")
+    def test_empty_title_returns_error(self, ji_svc, ji_db):
         db, kb_name = ji_db
         result = create_investigation(
-            db=db,
+            ji_svc,
             kb_name=kb_name,
             title="",
             scope="Some scope",
@@ -262,7 +275,8 @@ class TestBuildInvestigationStatus:
         assert isinstance(summary, str)
         assert len(summary) > 0
 
-    def test_empty_kb_returns_status(self, ji_db):
+    @pytest.mark.control(reason="refused or read before any write; unchanged by this change")
+    def test_empty_kb_returns_status(self, ji_svc, ji_db):
         db, kb_name = ji_db
         status = build_investigation_status(db, kb_name)
         assert status["entity_count"] == 0

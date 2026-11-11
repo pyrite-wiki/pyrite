@@ -10,20 +10,25 @@ Tiers:
 - admin: Write + KB management, index rebuild, repo sync, config.
 """
 
+import contextlib
+import functools
 import json
 import logging
+import threading
 from typing import Any
 
 from pydantic import AnyUrl
 
 from ..config import PyriteConfig, load_config
 from ..exceptions import (
+    AccessDenied,
     BrandingInvalidError,
     ConfigError,
     ConflictError,
     EntryNotFoundError,
     InvalidGitRefError,
     KBNotFoundError,
+    KBPathNotAllowedError,
     KBProtectedError,
     KBReadOnlyError,
     PyriteError,
@@ -34,8 +39,17 @@ from ..exceptions import (
     public_text,
     refusal_fields,
 )
+from ..plugins.identity import (
+    ACTING_KEYWORD,
+    CALLER,
+    OPTIONAL,
+    PERSON_ARGUMENTS,
+    person_key,
+    resolve_person_arguments,
+)
 from ..schema import filter_updated_since, parse_since
 from ..services.access_policy import ROLES, Principal, named_kb
+from ..services.acting import OPERATOR, acting, acting_as, acting_for, local_process
 from ..services.body_bounds import (
     MARKER_KEYS,
     BodyBounds,
@@ -45,11 +59,13 @@ from ..services.body_bounds import (
 from ..services.export_service import ExportService
 from ..services.graph_service import GraphService
 from ..services.kb_service import KBService, check_link_spec
+from ..services.qa_cache import cached_report
 from ..services.read_shaping import project_fields
-from ..services.write_target import binding, current_target
+from ..services.write_target import binding, current_target, session_for_call
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
 from .mcp_rate_limiter import MCPRateLimiter
+from .tool_schemas import CORE_TOOL_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -313,11 +329,15 @@ def _protocol_refusal(err: dict) -> Exception:
     whole in the JSON-RPC error's ``data``, with ``error`` as its message. A
     bare ``ValueError`` here sent the message alone (#528 fix round 1).
     Tools answer the same envelope as their result instead.
+
+    The JSON-RPC category: a refusal is the caller's to fix (``INVALID_PARAMS``);
+    ``INTERNAL`` is the server's fault, ``INTERNAL_ERROR``.
     """
     from mcp.shared.exceptions import McpError
-    from mcp.types import INVALID_PARAMS, ErrorData
+    from mcp.types import INTERNAL_ERROR, INVALID_PARAMS, ErrorData
 
-    return McpError(ErrorData(code=INVALID_PARAMS, message=err["error"], data=err))
+    code = INTERNAL_ERROR if err.get("error_code") == "INTERNAL" else INVALID_PARAMS
+    return McpError(ErrorData(code=code, message=err["error"], data=err))
 
 
 MAX_TIMELINE_EVENTS = 50
@@ -372,6 +392,35 @@ KB_ARGUMENT_NAMES = (
     "kb_a",
     "kb_b",
 )
+
+# The core tools that record a person, and how (`pyrite.plugins.identity`).
+# The dispatcher sets each of these arguments from the session's principal
+# before the handler runs; plugins declare theirs under `PERSON_ARGUMENTS` in
+# their tool dicts. `task_update` also gets the caller's key (`acting=`) to
+# protect a task another account holds.
+CORE_PERSON_ARGUMENTS: dict[str, dict[str, str]] = {
+    "task_claim": {"assignee": CALLER},
+    "task_create": {"assignee": OPTIONAL},
+    "task_update": {"assignee": OPTIONAL},
+    "task_decompose": {"children[].assignee": OPTIONAL},
+}
+CORE_ACTING_KEYWORD = frozenset({"task_update"})
+
+#: Admin actions that write no file of the KB they name, so a read-only KB
+#: still takes them: tool -> its actions (None: every call). Everything else
+#: above the read tier that names a read-only KB is refused at the dispatcher.
+_READ_ONLY_KB_SAFE: dict[str, frozenset[str] | None] = {
+    "kb_index_sync": None,  # rebuilds the index from the files; writes none
+    "kb_manage": frozenset({"discover", "validate", "show_schema"}),
+}
+
+
+def _writes_no_kb_file(tool: str, arguments: dict[str, Any]) -> bool:
+    if tool not in _READ_ONLY_KB_SAFE:
+        return False
+    actions = _READ_ONLY_KB_SAFE[tool]
+    return actions is None or arguments.get("action") in actions
+
 
 # The keyword by which `_dispatch_tool` hands the readable set to a handler
 # that spans KBs. A handler opts in by declaring it; handlers that do not --
@@ -433,6 +482,42 @@ def _kbs_named_in(arguments: dict[str, Any]) -> list[str]:
     return named
 
 
+#: The KB arguments that take a list of names. Every other name in
+#: `KB_ARGUMENT_NAMES` takes one name, a string.
+PLURAL_KB_ARGUMENTS = frozenset({"kb_names"})
+
+#: The tool-dict key a plugin write tool declares when its KB may be omitted:
+#: ``default_kb(args, readable_kbs) -> str | None``, the KB the tool
+#: works in when the call names none. The dispatcher asks it before any check
+#: and sets ``kb_name`` to the answer, so the checks run on the KB the handler
+#: will write.
+DEFAULT_KB = "default_kb"
+
+
+def _malformed_kb_argument(arguments: dict[str, Any]) -> str | None:
+    """Why a KB argument has a shape the dispatcher cannot check, or None.
+
+    The checks read a KB argument as a string, or as the strings of a list,
+    and a handler receives only values they have read. So every KB argument
+    is one of: absent or null; a string, where a blank one names no KB (as
+    ``access_policy.named_kb`` reads it, on every surface); or, for a plural
+    argument, a list of non-blank strings. Anything else is refused before
+    any check.
+    """
+    for key in KB_ARGUMENT_NAMES:
+        value = arguments.get(key)
+        if value is None:
+            continue
+        if key in PLURAL_KB_ARGUMENTS:
+            if not isinstance(value, list | tuple) or any(
+                not isinstance(v, str) or not v.strip() for v in value
+            ):
+                return f"{key} must be a list of knowledge base names (non-blank strings)"
+        elif not isinstance(value, str):
+            return f"{key} must be a knowledge base name (a string), not {type(value).__name__}"
+    return None
+
+
 def _only_readable(rows: list[dict], readable_kbs: set[str] | None) -> list[dict]:
     """Drop rows from KBs the caller may not read.
 
@@ -475,6 +560,11 @@ def _kb_refusal(svc: KBService, kb_name: object, readable_kbs: set[str] | None) 
     return None
 
 
+# Guards lazily built shared state (the index worker, the per-target service
+# cache): calls run on worker threads.
+_BUILD_LOCK = threading.RLock()
+
+
 class PyriteMCPServer:
     """
     Three-tier MCP Server for pyrite.
@@ -504,6 +594,15 @@ class PyriteMCPServer:
 
         self.registry = KBRegistryService(self.config, self.db, self.index_mgr)
         self.registry.seed_from_config()
+        # A workspace cloned by an earlier version carries its clone token in
+        # the remote URL; cleaned when the MCP server starts, as the REST
+        # server and the repo commands do (``RepoService.scrub_workspace_remotes``).
+        try:
+            from ..services.repo_service import RepoService
+
+            RepoService(self.config, self.db).scrub_workspace_remotes()
+        except Exception:
+            logger.warning("Could not clean the workspace remotes at start", exc_info=True)
         self.svc = KBService(self.config, self.db, registry=self.registry)
         self.graph_svc = GraphService(self.db)
         self.export_svc = ExportService(self.config, self.db)
@@ -583,10 +682,11 @@ class PyriteMCPServer:
         bound = current_target()
         if bound is not None:
             return bound.service(name, build)
-        cache = self.__dict__.setdefault("_service_cache", {})
-        if name not in cache:
-            cache[name] = build(self._config, self._db)
-        return cache[name]
+        with _BUILD_LOCK:
+            cache = self.__dict__.setdefault("_service_cache", {})
+            if name not in cache:
+                cache[name] = build(self._config, self._db)
+            return cache[name]
 
     # =========================================================================
     # Tool registration by tier
@@ -639,6 +739,10 @@ class PyriteMCPServer:
 
         for name, schema in self._render_schemas(WRITE_TOOLS).items():
             self._register_tool(name, {**schema, "handler": getattr(self, f"_{name}")}, "write")
+            if name in CORE_PERSON_ARGUMENTS:
+                self.tools[name][PERSON_ARGUMENTS] = CORE_PERSON_ARGUMENTS[name]
+            if name in CORE_ACTING_KEYWORD:
+                self.tools[name][ACTING_KEYWORD] = True
 
     def _build_admin_tools(self):
         """Register admin tools (available only in admin tier)."""
@@ -648,9 +752,16 @@ class PyriteMCPServer:
             self._register_tool(name, {**schema, "handler": getattr(self, f"_{name}")}, "admin")
 
     def _register_plugin_tools(self):
-        """Register MCP tools from plugins for the current tier."""
+        """Register MCP tools from plugins for the current tier.
+
+        A name the core registers -- at any tier, not only this server's --
+        is never a plugin's (ADR-0040 §3): a core tool's tier drives the
+        per-KB write check and the rate limiter, and its handler applies the
+        scoping, so a plugin tool under that name is refused and logged.
+        """
         try:
             from ..plugins import PluginContext, get_registry
+            from .tool_schemas import CORE_TOOL_NAMES
 
             registry = get_registry()
 
@@ -658,20 +769,19 @@ class PyriteMCPServer:
             ctx = PluginContext(config=self.config, db=self.db)
             registry.set_context(ctx)
 
-            plugin_tools = registry.get_all_mcp_tools(self.tier)
-            # Plugins return every tool up to the tier asked for, so a tool's
-            # own tier is the lowest one that returns it. Labelling them all
-            # with the server's tier would make a plugin's read tools look
-            # like writes to the per-KB write check and the rate limiter.
-            lower: set[str] = set()
-            for tier in self.VALID_TIERS:
-                at_tier = plugin_tools if tier == self.tier else registry.get_all_mcp_tools(tier)
-                for name in at_tier:
-                    if name not in lower:
-                        self._tool_tiers[name] = tier
-                lower.update(at_tier)
-            for name, schema in plugin_tools.items():
-                self._register_tool(name, schema, self._tool_tiers[name])
+            # One owner per name across every tier, decided once; each tool is
+            # labelled with the tier its owner registered it at, not the
+            # server's (a read tool labelled "write" would be rate-limited and
+            # write-checked as one; a write labelled "read" would skip both).
+            # Every owned name is labelled, served at this tier or not, so a
+            # call to a higher-tier plugin tool is told the tier it needs
+            # rather than that the tool does not exist.
+            owned = registry.mcp_tools_by_tier(self.VALID_TIERS[-1], reserved=CORE_TOOL_NAMES)
+            for name, (_, label) in owned.items():
+                self._tool_tiers[name] = label
+            served = registry.mcp_tools_by_tier(self.tier, reserved=CORE_TOOL_NAMES)
+            for name, (schema, label) in served.items():
+                self._register_tool(name, schema, label)
         except Exception:
             logger.warning("Plugin MCP tool loading failed", exc_info=True)
 
@@ -950,6 +1060,14 @@ class PyriteMCPServer:
                     "match. Name different values, or drop one."
                 )
             )
+        # The KBs read are the named ones the caller may read, never more:
+        # the dispatcher refused an unreadable name, and this does not rest on
+        # that alone. An empty result reads nothing -- an empty
+        # list, never None, which would be every KB.
+        if named:
+            kb_names = [n for n in named if readable_kbs is None or n in readable_kbs]
+        else:
+            kb_names = readable_kbs
         try:
             results = self.svc.get_timeline(
                 date_from=args.get("date_from"),
@@ -957,7 +1075,7 @@ class PyriteMCPServer:
                 min_importance=args.get("min_importance", 1),
                 limit=limit,
                 offset=args.get("offset", 0),
-                kb_names=args["kb_names"] if named else readable_kbs,
+                kb_names=kb_names,
                 status=status,
                 exclude_status=exclude,
             )
@@ -1065,10 +1183,23 @@ class PyriteMCPServer:
             result = qa.validate_entry(entry_id, kb_name, readable_kbs=readable_kbs)
             issues = result["issues"]
         elif kb_name:
-            result = qa.validate_kb(kb_name, readable_kbs=readable_kbs)
+            # The same reuse rule and keys as the REST routes (`qa_cache`).
+            result = cached_report(
+                qa,
+                f"validate:{kb_name}",
+                [kb_name],
+                readable_kbs,
+                lambda: qa.validate_kb(kb_name, readable_kbs=readable_kbs),
+            )
             issues = result["issues"]
         else:
-            result = qa.validate_all(kb_names=readable_kbs, readable_kbs=readable_kbs)
+            result = cached_report(
+                qa,
+                "validate:all",
+                readable_kbs,
+                readable_kbs,
+                lambda: qa.validate_all(kb_names=readable_kbs, readable_kbs=readable_kbs),
+            )
             issues = []
             for kb in result["kbs"]:
                 issues.extend(kb["issues"])
@@ -1098,10 +1229,17 @@ class PyriteMCPServer:
         # Counts over the readable set too: a private target counts as broken
         # and a private linker does not keep an entry from being an orphan,
         # exactly as kb_qa_validate reports them (P-R4, P-R5).
-        status = qa.get_status(
-            kb_name=args.get("kb_name"),
-            kb_names=None if args.get("kb_name") else readable_kbs,
-            readable_kbs=readable_kbs,
+        named = args.get("kb_name")
+        status = cached_report(
+            qa,
+            f"status:{named or ''}",
+            [named] if named else readable_kbs,
+            readable_kbs,
+            lambda: qa.get_status(
+                kb_name=named,
+                kb_names=None if named else readable_kbs,
+                readable_kbs=readable_kbs,
+            ),
         )
 
         # Add coverage stats if a specific KB is requested
@@ -1505,7 +1643,7 @@ class PyriteMCPServer:
             )
         except KBReadOnlyError:
             return _error("READ_ONLY", f"KB '{kb_name}' is read-only")
-        except ValidationError as e:
+        except (ValidationError, AccessDenied) as e:
             return _refusal(e)
         except PyriteError as e:
             return _error("CREATE_FAILED", _safe_message(e), retryable=True)
@@ -1614,6 +1752,8 @@ class PyriteMCPServer:
             refusal = _refusal(e)
             refusal["legacy_error_code"] = "UPDATE_FAILED"
             return refusal
+        except AccessDenied as e:
+            return _refusal(e)
         except PyriteError as e:
             return _error("UPDATE_FAILED", _safe_message(e), retryable=True)
 
@@ -1944,20 +2084,24 @@ class PyriteMCPServer:
         }
 
     def _task_create(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Create a new task."""
+        """Create a new task. `assignee` is a person argument (`CORE_PERSON_ARGUMENTS`):
+        the dispatcher has already set it from the session."""
         return self.task_svc.create_task(
             kb_name=args["kb_name"],
             title=args["title"],
             body=args.get("body", ""),
             parent=args.get("parent", ""),
             priority=args.get("priority", 5),
-            assignee=args.get("assignee", ""),
+            assignee=args.get("assignee") or "",
             dependencies=args.get("dependencies"),
             tags=args.get("tags"),
         )
 
-    def _task_update(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Update task fields."""
+    def _task_update(self, args: dict[str, Any], *, acting: str | None = None) -> dict[str, Any]:
+        """Update task fields. `assignee` is a person argument the dispatcher
+        has set from the session; an empty one clears the assignee. A task
+        another account holds cannot have its assignee changed -- taken or
+        cleared -- by a signed-in caller (`acting`, the caller's key)."""
         task_id = args.get("task_id")
         kb_name = args.get("kb_name")
         if not task_id:
@@ -1969,17 +2113,18 @@ class PyriteMCPServer:
         if "status" in args:
             updates["status"] = args["status"]
         if "assignee" in args:
-            updates["assignee"] = args["assignee"]
+            updates["assignee"] = args.get("assignee") or ""
         if "priority" in args:
             updates["priority"] = args["priority"]
 
         if not updates:
             return _error("VALIDATION_ERROR", "No updates specified")
 
-        return self.task_svc.update_task(task_id, kb_name, **updates)
+        return self.task_svc.update_task(task_id, kb_name, acting=acting, **updates)
 
     def _task_claim(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Atomically claim an open task."""
+        """Atomically claim an open task. `assignee` is a person argument the
+        dispatcher has set from the session (`CORE_PERSON_ARGUMENTS`)."""
         return self.task_svc.claim_task(
             task_id=args["task_id"],
             kb_name=args["kb_name"],
@@ -1987,12 +2132,14 @@ class PyriteMCPServer:
         )
 
     def _task_decompose(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Decompose a parent task into children."""
+        """Decompose a parent task into children. Each child's `assignee` is a
+        person argument the dispatcher has set from the session."""
+        children = args["children"]
         try:
             results = self.task_svc.decompose_task(
                 parent_id=args["parent_id"],
                 kb_name=args["kb_name"],
-                children=args["children"],
+                children=children,
             )
             return {
                 "decomposed": True,
@@ -2054,12 +2201,21 @@ class PyriteMCPServer:
         return job
 
     def _get_index_worker(self):
-        """Lazy-init IndexWorker."""
-        if self._index_worker is None:
-            from ..services.index_worker import IndexWorker
+        """The IndexWorker, built on first use (once, whatever calls ask at once).
 
-            self._index_worker = IndexWorker(self.db, self.config)
-        return self._index_worker
+        A call bound to a change-set target gets a worker of its own on that
+        target, never stored on this shared instance."""
+        from ..services.index_worker import IndexWorker
+
+        bound = current_target()
+        if bound is not None:
+            # `service` builds with `(config, db)`; IndexWorker takes them
+            # the other way round.
+            return bound.service("index_worker", lambda c, d: IndexWorker(d, c))
+        with _BUILD_LOCK:
+            if self._index_worker is None:
+                self._index_worker = IndexWorker(self._db, self._config)
+            return self._index_worker
 
     def _kb_manage(self, args: dict[str, Any]) -> dict[str, Any]:
         """Manage knowledge bases."""
@@ -2124,6 +2280,8 @@ class PyriteMCPServer:
                     return _error("MISSING_PARAMETER", "kb_name required for set_schema")
                 return svc.set_schema(kb_name, schema)
 
+        except KBReadOnlyError as e:
+            return _refusal(e)
         except (PyriteError, ValueError) as e:
             return _error("OPERATION_FAILED", _safe_message(e))
 
@@ -2143,6 +2301,8 @@ class PyriteMCPServer:
             return self.export_svc.commit_kb(
                 kb_name, message=message, paths=paths, sign_off=sign_off
             )
+        except KBReadOnlyError as e:
+            return _refusal(e)
         except PyriteError as e:
             return _error("OPERATION_FAILED", _safe_message(e))
 
@@ -2157,6 +2317,8 @@ class PyriteMCPServer:
 
         try:
             return self.export_svc.push_kb(kb_name, remote=remote, branch=branch)
+        except KBReadOnlyError as e:
+            return _refusal(e)
         except InvalidGitRefError as e:
             return _error("VALIDATION_ERROR", str(e))
         except PyriteError as e:
@@ -2176,6 +2338,8 @@ class PyriteMCPServer:
                 description=args.get("description", ""),
             )
             return {"created": True, **result}
+        except KBPathNotAllowedError as e:
+            return _refusal(e)
         except (PyriteError, ValueError) as e:
             return _error("CONFLICT", _safe_message(e))
 
@@ -2278,6 +2442,29 @@ class PyriteMCPServer:
 
     def _get_prompt(
         self, name: str, arguments: dict[str, Any], *, readable_kbs: set[str] | None = None
+    ) -> dict[str, Any]:
+        """``_get_prompt_checked`` with the tools' one error contract
+        (``_contained``, outermost: a fault in opening or closing the session
+        is contained too), run in a database session of the call's own
+        (``_get_prompt_in_session``)."""
+        return self._contained(
+            "Prompt",
+            name,
+            lambda: self._get_prompt_in_session(name, arguments, readable_kbs=readable_kbs),
+        )
+
+    def _get_prompt_in_session(
+        self, name: str, arguments: dict[str, Any], *, readable_kbs: set[str] | None
+    ) -> dict[str, Any]:
+        """``_get_prompt_checked`` in a database session of the call's own,
+        closed with it (``session_for_call``), as a tool call is: the worker
+        thread that runs it is reused, and must not carry one call's reads
+        into the next."""
+        with session_for_call(self._db):
+            return self._get_prompt_checked(name, arguments, readable_kbs=readable_kbs)
+
+    def _get_prompt_checked(
+        self, name: str, arguments: dict[str, Any], *, readable_kbs: set[str] | None
     ) -> dict[str, Any]:
         """Dispatch to the appropriate prompt handler.
 
@@ -2515,6 +2702,45 @@ class PyriteMCPServer:
         ]
 
     def _read_resource(self, uri: str, *, readable_kbs: set[str] | None = None) -> dict[str, Any]:
+        """``_read_resource_checked`` with the tools' one error contract
+        (``_contained``, outermost), in a session of the call's own
+        (``_read_resource_in_session``)."""
+        return self._contained(
+            "Resource",
+            uri,
+            lambda: self._read_resource_in_session(uri, readable_kbs=readable_kbs),
+        )
+
+    def _read_resource_in_session(
+        self, uri: str, *, readable_kbs: set[str] | None
+    ) -> dict[str, Any]:
+        """``_read_resource_checked`` in a database session of the call's
+        own, closed with it (``session_for_call``), as a tool call is."""
+        with session_for_call(self._db):
+            return self._read_resource_checked(uri, readable_kbs=readable_kbs)
+
+    @staticmethod
+    def _contained(kind: str, name: str, call) -> dict[str, Any]:
+        """The error contract of a tool call (``_dispatch_tool``), for the
+        other two KB-content chokepoints, prompts and resources: a
+        ``PyriteError`` is its own refusal (a storage fault logged once, with
+        its traceback); any other exception is a fault, logged with its
+        traceback, and the client gets ``INTERNAL``, a fixed message and
+        ``retryable``, never the exception's text."""
+        try:
+            return call()
+        except PyriteError as e:
+            logged = isinstance(e, StorageError)
+            if logged:
+                logger.error("%s %s failed: %s", kind, name, e, exc_info=e)
+            return _refusal(e, already_logged=logged)
+        except Exception:
+            logger.exception("%s %s failed", kind, name)
+            return _error(
+                "INTERNAL", "Internal error; the server log has the details.", retryable=True
+            )
+
+    def _read_resource_checked(self, uri: str, *, readable_kbs: set[str] | None) -> dict[str, Any]:
         """Read a resource by URI and return contents.
 
         The **second** KB-content chokepoint: resources do not pass through
@@ -2608,27 +2834,30 @@ class PyriteMCPServer:
     # MCP Protocol
     # =========================================================================
 
-    def _handler_takes_readable_kbs(self, name: str) -> bool:
-        """Does this tool's handler opt in to receiving the readable set?
+    def _handler_takes(self, name: str, keyword: str) -> bool:
+        """Does this tool's handler opt in to receiving `keyword`?
 
-        Introspected once per tool and cached: a handler that spans KBs
-        declares `readable_kbs` and gets it; every other handler -- including
-        all plugin handlers -- is called with `args` alone, unchanged. Opting
-        in by signature rather than by a name list keeps the two from
-        drifting, and injecting a reserved key into `arguments` was rejected
-        for the same reason: a plugin handler that iterates its args would
-        see it.
+        Introspected once per tool and keyword, and cached: a handler that
+        spans KBs declares `readable_kbs` and gets it, one that records a
+        person declares `identity` and gets it; every other handler is called
+        with `args` alone, unchanged. Opting in by signature rather than by a
+        name list keeps the two from drifting, and injecting a reserved key
+        into `arguments` was rejected for the same reason: a plugin handler
+        that iterates its args would see it.
         """
-        cache = self.__dict__.setdefault("_scope_aware_handlers", {})
+        cache = self.__dict__.setdefault("_handler_keywords", {})
         if name not in cache:
             import inspect
 
             try:
-                params = inspect.signature(self.tools[name]["handler"]).parameters
-                cache[name] = READABLE_KBS_KWARG in params
+                cache[name] = frozenset(inspect.signature(self.tools[name]["handler"]).parameters)
             except (TypeError, ValueError):  # pragma: no cover - exotic callables
-                cache[name] = False
-        return cache[name]
+                cache[name] = frozenset()
+        return keyword in cache[name]
+
+    def _handler_takes_readable_kbs(self, name: str) -> bool:
+        """Does this tool's handler opt in to receiving the readable set?"""
+        return self._handler_takes(name, READABLE_KBS_KWARG)
 
     def get_tools_list(self) -> list[dict[str, Any]]:
         """Return list of available tools in MCP format."""
@@ -2657,22 +2886,48 @@ class PyriteMCPServer:
             return _refusal(e)
         return None
 
+    def _nobody_lands_in(self, kb_name: str) -> Any:
+        """Where a write by nobody (no principal, no operator bound) lands:
+        nowhere for a KB that lands writes for review, as written otherwise."""
+        from ..services.access_policy import Landing
+
+        try:
+            kb = self.svc.require_kb(kb_name)
+        except PyriteError:
+            return Landing.DENY
+        if getattr(kb, "landing", "canonical") == "review":
+            return Landing.DENY
+        return Landing.CANONICAL
+
     def _landing_target(
         self, tool: str, named_kbs: list[str], principal: Principal | None
     ) -> tuple[tuple | None, dict | None]:
         """Where a write tool's call lands: `(target, None)` -- the target to
         bind, None for canonical -- or `(None, refusal)`.
 
-        `principal` None is the local operator (stdio). One call lands in one
-        place: a call naming several KBs, one of which lands in a change set,
-        is refused. A change set that cannot be made is refused; nothing
-        falls back to the canonical files (ADR-0044 §1, L2).
+        `principal` None means what it means to the holder rule
+        (`services.acting`): the operator only where the caller bound
+        `OPERATOR` itself (an embedded caller's `acting_as(OPERATOR)`), else
+        nobody. Nobody is not the operator and owns no change set, so a KB
+        whose writes land for review gives its write no place to land, and
+        any other KB takes it as written (the policy's row for an
+        anonymous caller granted a write). stdio passes `Principal.local()`.
+
+        One call lands in one place: a call naming several KBs, one of which
+        lands in a change set, is refused. A change set that cannot be made
+        is refused; nothing falls back to the canonical files (ADR-0044 §1,
+        L2).
         """
         from ..services.access_policy import Landing
         from ..services.write_target import LandingRefusedError, write_target
 
+        # Only a signed-in user's write lands in a change set, so `who` is
+        # read below only when `principal` is one.
         who = principal if principal is not None else Principal.local()
-        landings = {kb: self._svc.lands_in(who, kb) for kb in named_kbs}
+        if principal is not None or acting() is OPERATOR:
+            landings = {kb: self._svc.lands_in(who, kb) for kb in named_kbs}
+        else:
+            landings = {kb: self._nobody_lands_in(kb) for kb in named_kbs}
         if any(landing is Landing.DENY for landing in landings.values()):
             return None, _refusal(LandingRefusedError("This write has no place to land"))
         moved = sorted(kb for kb, landing in landings.items() if landing is Landing.CHANGE_SET)
@@ -2742,6 +2997,63 @@ class PyriteMCPServer:
         writable_kbs: set[str] | None = None,
         principal: Principal | None = None,
     ) -> dict[str, Any]:
+        """Run one tool call through `_dispatch_tool_checked`, with one error
+        contract for the whole of it (ADR-0037).
+
+        A `PyriteError` raised anywhere -- a check, a default KB, the lookup
+        of an id, the handler -- is its own refusal (`_refusal`); a storage
+        fault is logged once with its traceback. Any other exception is a
+        fault: it goes to the log, and the client gets ``INTERNAL``, a fixed
+        message and ``retryable``, never the exception's text.
+
+        The whole call -- KB resolution, ``require_kb``, the landing rule and
+        the handler -- runs in one database session of its own, closed with
+        it (``session_for_call``): worker threads are reused by later calls,
+        and a thread's fallback session (and its identity map) must not carry
+        one call's reads into the next. Inside the error contract, so a fault
+        opening or closing it is contained too.
+        """
+        try:
+            with session_for_call(self._db):
+                return self._dispatch_tool_checked(
+                    name,
+                    arguments,
+                    client_id=client_id,
+                    client_kind=client_kind,
+                    readable_kbs=readable_kbs,
+                    writable_kbs=writable_kbs,
+                    principal=principal,
+                )
+        except PyriteError as e:
+            # A refused request, not a crash: the service said no for a reason
+            # the caller can act on, and it is not logged as an exception --
+            # except a storage fault, which is the server's problem and is
+            # logged once, with its traceback (#431). See _refusal for which
+            # refusals are retryable.
+            logged = isinstance(e, StorageError)
+            if logged:
+                logger.error("Tool %s failed: %s", name, e, exc_info=e)
+            return _refusal(e, already_logged=logged)
+        except Exception:
+            # Not a refusal: a fault. Its text (a driver's message, a server
+            # path) is the server's, so it goes to the log with its traceback
+            # and the client gets the code alone, as REST's 500 does.
+            logger.exception("Tool %s failed with args %s", name, arguments)
+            return _error(
+                "INTERNAL", "Internal error; the server log has the details.", retryable=True
+            )
+
+    def _dispatch_tool_checked(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        client_id: str,
+        client_kind: str | None,
+        readable_kbs: set[str] | None,
+        writable_kbs: set[str] | None,
+        principal: Principal | None,
+    ) -> dict[str, Any]:
         """Execute a tool and return result.
 
         `client_kind` is the caller's principal kind (`Principal.kind`) and
@@ -2774,6 +3086,16 @@ class PyriteMCPServer:
         every KB it names lands canonical for this principal. None is the
         local operator (stdio). A write that lands in a change set runs with
         that target bound for this call (`services.write_target.binding`).
+
+        `principal` (`access_policy.Principal`, None for a caller with no
+        session identity) is also who a person argument records. A tool
+        that records a person declares which arguments name one
+        (`PERSON_ARGUMENTS`); before its handler runs, each is set from the
+        principal by
+        `resolve_person_arguments` -- the signed-in user's key, never the
+        argument -- so no handler can trust a caller-supplied identity.
+        A scoped call with no account to record (``readable_kbs`` set, no
+        user principal) is refused for such a tool.
         """
         if name not in self.tools:
             required = self._tool_tiers.get(name)
@@ -2809,6 +3131,13 @@ class PyriteMCPServer:
                     retryable=True,
                 )
 
+        # Every KB argument has a shape the checks below can read, or the call
+        # is refused here: a value they cannot read would reach the handler
+        # unchecked.
+        malformed = _malformed_kb_argument(arguments)
+        if malformed is not None:
+            return _refusal(ValidationError(malformed))
+
         # A tool that takes an entry id declares `locates_entry` (#1310). The
         # KB its handler works in is `kb_name`, so with `kb_name` not named
         # the id is resolved to the KB that holds it HERE, before `named_kbs`
@@ -2836,6 +3165,28 @@ class PyriteMCPServer:
                 arguments = self._locate_entry_ids(spec, arguments, readable_kbs)
             except PyriteError as e:
                 return _refusal(e)
+
+        # A plugin tool above the read tier works in `kb_name`, and only there.
+        # Its KB is settled HERE, before any check: with
+        # `kb_name` not named, the tool's declared `default_kb` names it, and
+        # the KB it names is then a named KB like any other, so the read,
+        # write, read-only and landing checks below all run on the KB the
+        # handler writes. A KB named under another argument (`kb`,
+        # `source_kb`, ...) is checked but never chooses the handler's KB; a
+        # call left with no `kb_name` is refused below, after the checks, so a
+        # caller who may not write anywhere is told that first.
+        works_in_kb_name = (
+            name not in CORE_TOOL_NAMES and self._tool_tiers.get(name, "read") != "read"
+        )
+        if works_in_kb_name and named_kb(arguments.get("kb_name")) is None:
+            default = self.tools[name].get(DEFAULT_KB)
+            chosen = default(arguments, readable_kbs) if default is not None else None
+            # Only a KB the caller may read is a default: anything else is no
+            # default, so a refusal never names a KB the caller cannot see,
+            # whatever the plugin answered. (A readable KB the caller may not
+            # write is refused by the write check below, by its name.)
+            if named_kb(chosen) is not None and (readable_kbs is None or chosen in readable_kbs):
+                arguments = {**arguments, "kb_name": chosen}
 
         # Every KB the call names goes through the one resolver (#952),
         # for every caller: an unknown name, a KB outside a scoped caller's
@@ -2897,6 +3248,34 @@ class PyriteMCPServer:
                         f"Insufficient permissions on KB '{kb_name}': requires 'write' tier",
                     )
 
+        # The handler's KB was settled above or there is none: refused, never
+        # left to the handler to choose one no check ran on.
+        if works_in_kb_name and named_kb(arguments.get("kb_name")) is None:
+            return _refusal(
+                ValidationError(f"Tool '{name}' writes to one knowledge base: name it in kb_name")
+            )
+
+        # A KB the operator marked read-only takes no write, from any caller:
+        # roles say nothing about the flag, and a plugin tool writing its own
+        # tables never meets KBService's refusal. This covers every tool
+        # above the read tier -- write and admin, core and plugin -- and
+        # every KB a call names, except the admin actions declared in
+        # `_READ_ONLY_KB_SAFE` (indexing and reading a read-only KB). A
+        # `target_kb` is only referenced (a link is stored on its source), so
+        # linking to a read-only KB stays possible. Before the landing rule:
+        # a read-only KB takes no write in any place, a change set included
+        # (ADR-0044). Fails closed: a KB the check cannot look up is refused.
+        if self._tool_tiers.get(name, "read") != "read" and not _writes_no_kb_file(name, arguments):
+            written = {k: v for k, v in arguments.items() if k != "target_kb"}
+            for kb_name in _kbs_named_in(written):
+                # Already through the one resolver above, so the name is a
+                # KB's full name; KBService.require_kb also finds a KB
+                # registered after this config was loaded (#952).
+                try:
+                    self.svc.require_kb(kb_name).refuse_writes()
+                except PyriteError as e:
+                    return _refusal(e)
+
         # Where the write lands: asked of the one rule, for every write tool --
         # core or plugin -- by its registered tier. A change-set landing is
         # bound for this call only (`binding`, below): the handler's
@@ -2917,32 +3296,47 @@ class PyriteMCPServer:
         if refusal is not None:
             return refusal
 
-        try:
-            handler = self.tools[name]["handler"]
-            with binding(target):
-                if spec and kb_name_named:
-                    # Verifies each id in the `kb_name` the caller named (the
-                    # checks above ran on it); raises the refusal.
-                    arguments = self._locate_entry_ids(spec, arguments, readable_kbs)
-                if takes_readable:
-                    # A cross-KB handler: nothing was named to refuse, so it
-                    # must filter instead. Only handlers that declare the
-                    # keyword get it, so plugin handlers are called as before.
-                    return handler(arguments, readable_kbs=readable_kbs)
-                return handler(arguments)
-        except PyriteError as e:
-            # A refused request, not a crash: the service said no for a reason
-            # the caller can act on, and it is not logged as an exception --
-            # except a storage fault, which is the server's problem and is
-            # logged once, with its traceback (#431). See _refusal for which
-            # refusals are retryable.
-            logged = isinstance(e, StorageError)
-            if logged:
-                logger.error("Tool %s failed: %s", name, e, exc_info=e)
-            return _refusal(e, already_logged=logged)
-        except Exception as e:
-            logger.exception("Tool %s failed with args %s", name, arguments)
-            return _error("INTERNAL", str(e), retryable=True)
+        tool = self.tools[name]
+        handler = tool["handler"]
+        person_spec = tool.get(PERSON_ARGUMENTS)
+        if person_spec:
+            # Declared, not inspected: the handler's own signature plays
+            # no part, so a wrapped or partial handler is held the same.
+            scoped = principal.scoped if principal is not None else readable_kbs is not None
+            arguments = resolve_person_arguments(arguments, person_spec, principal, scoped=scoped)
+        # Only handlers that declare a keyword get it, so every other
+        # handler is called exactly as before.
+        kwargs: dict[str, Any] = {}
+        if takes_readable:
+            # A cross-KB handler: nothing was named to refuse, so it must
+            # filter instead.
+            kwargs[READABLE_KBS_KWARG] = readable_kbs
+        if tool.get(ACTING_KEYWORD):
+            kwargs["acting"] = person_key(principal)
+        # The account this call acts for, for the write pipeline's rules
+        # that depend on the caller (`services.acting`). With no principal
+        # the caller's own binding stands: an embedded caller that bound
+        # `OPERATOR` is the operator, one that bound nothing is nobody, the
+        # same answer `_landing_target` gave.
+        acting_ctx = (
+            acting_as(acting_for(principal)) if principal is not None else contextlib.nullcontext()
+        )
+        # Where the call comes from (`services.acting.is_local_process`): a
+        # principal says so (only the `local` kind, stdio, is the local
+        # process); with none, the caller's own binding stands (the CLI's for
+        # stdio under it; nothing, so not local, for an embedded caller).
+        local_ctx = (
+            local_process(principal.kind == "local")
+            if principal is not None
+            else contextlib.nullcontext()
+        )
+        # The call's own session is already open (``_dispatch_tool``).
+        with binding(target), acting_ctx, local_ctx:
+            if spec and kb_name_named:
+                # Verifies each id in the `kb_name` the caller named (the
+                # checks above ran on it); raises the refusal.
+                arguments = self._locate_entry_ids(spec, arguments, readable_kbs)
+            return handler(arguments, **kwargs)
 
     def build_sdk_server(
         self,
@@ -2984,7 +3378,12 @@ class PyriteMCPServer:
             by `api.kbs_for_user_at_tier(..., "write")`. Consulted only when
             `readable_kbs` is not None; a scoped connection without it can
             write nowhere.
+        principal : Principal | None
+            Who this connection is, from the credential `mcp_routes`
+            resolved; the tools that record a person record it. None -- the
+            default, and what `run_stdio()` passes -- is no session identity.
         """
+        import anyio.to_thread
         from mcp.server import Server
         from mcp.server.lowlevel.helper_types import ReadResourceContents
         from mcp.types import (
@@ -3023,14 +3422,22 @@ class PyriteMCPServer:
 
         @sdk.call_tool()
         async def _call_tool(name: str, arguments: dict):
-            result = mcp_server._dispatch_tool(
-                name,
-                arguments or {},
-                client_id=_client_id,
-                client_kind=_client_kind,
-                readable_kbs=_readable_kbs,
-                writable_kbs=_writable_kbs,
-                principal=_principal,
+            # A handler is synchronous and can run for seconds (a search, an
+            # index pass, a git call). On the event loop it held up every
+            # other session in the process, so it runs in a worker thread.
+            # `to_thread.run_sync` copies the caller's contextvars into the
+            # thread, which is how a per-call binding reaches the handler.
+            result = await anyio.to_thread.run_sync(
+                functools.partial(
+                    mcp_server._dispatch_tool,
+                    name,
+                    arguments or {},
+                    client_id=_client_id,
+                    client_kind=_client_kind,
+                    readable_kbs=_readable_kbs,
+                    writable_kbs=_writable_kbs,
+                    principal=_principal,
+                )
             )
             return [
                 TextContent(
@@ -3060,7 +3467,11 @@ class PyriteMCPServer:
         async def _get_prompt(name: str, arguments: dict[str, str] | None):
             if name not in mcp_server.prompts:
                 raise ValueError(f"Unknown prompt: {name}")
-            result = mcp_server._get_prompt(name, arguments or {}, readable_kbs=_readable_kbs)
+            result = await anyio.to_thread.run_sync(
+                functools.partial(
+                    mcp_server._get_prompt, name, arguments or {}, readable_kbs=_readable_kbs
+                )
+            )
             if "error" in result:
                 raise _protocol_refusal(result)
             return GetPromptResult(
@@ -3099,7 +3510,9 @@ class PyriteMCPServer:
 
         @sdk.read_resource()
         async def _read_resource(uri: AnyUrl):
-            result = mcp_server._read_resource(str(uri), readable_kbs=_readable_kbs)
+            result = await anyio.to_thread.run_sync(
+                functools.partial(mcp_server._read_resource, str(uri), readable_kbs=_readable_kbs)
+            )
             if "error" in result:
                 raise _protocol_refusal(result)
             return [
@@ -3114,7 +3527,9 @@ class PyriteMCPServer:
         import anyio
         from mcp.server.stdio import stdio_server
 
-        sdk = self.build_sdk_server(client_id="stdio", client_kind="local")
+        sdk = self.build_sdk_server(
+            client_id="stdio", client_kind="local", principal=Principal.local()
+        )
 
         async def _run():
             async with stdio_server() as (read_stream, write_stream):
