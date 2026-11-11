@@ -61,6 +61,7 @@ def _usage_error(output):
     [
         ("--limit", "-1"),
         ("--limit", "0"),
+        ("--min-importance", "-1"),
         ("--min-importance", "0"),
         ("--min-importance", "11"),
     ],
@@ -94,6 +95,20 @@ def test_timeline_limit_one_returns_exactly_one_event(timeline_cli):
 
 
 @pytest.mark.control(
+    reason="importance=1 is the valid lower boundary; invalid values are covered by the regression parametrization"
+)
+def test_timeline_min_importance_one_is_valid(timeline_cli):
+    result = runner.invoke(
+        timeline_cli,
+        ["timeline", "--min-importance", "1", "--format", "json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.output)
+    assert document["count"] == 3
+
+
+@pytest.mark.control(
     reason="importance=10 is a valid upper boundary; invalid values are covered by the regression parametrization"
 )
 def test_timeline_min_importance_ten_is_valid(timeline_cli):
@@ -106,6 +121,20 @@ def test_timeline_min_importance_ten_is_valid(timeline_cli):
     document = json.loads(result.output)
     assert document["count"] == 1
     assert document["events"][0]["importance"] == 10
+
+
+@pytest.mark.control(
+    reason="limit=500 is the REST timeline's documented upper boundary and is valid for the CLI under either cap decision"
+)
+def test_timeline_limit_five_hundred_is_valid(timeline_cli):
+    result = runner.invoke(
+        timeline_cli,
+        ["timeline", "--limit", "500", "--format", "json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.output)
+    assert document["count"] == 3
 
 
 @pytest.mark.control(
