@@ -240,6 +240,10 @@ def test_incremental_session_equals_a_files_only_rebuild(tmp_path):
         }
         duplicate = next(row for row in incremental["entry"] if row["id"] == "duplicate")
         assert duplicate["file_path"].endswith("duplicate-a.md")
+        assert any(
+            row["source_id"] == "missing-link" and row["target_id"] == "later-target"
+            for row in incremental["link"]
+        )
         assert incremental["entry_tag"]
         assert incremental["link"]
         for table in ("source", "entry_ref", "block", "edge_endpoint", "fts"):
