@@ -1,0 +1,1 @@
+- **`pyrite-read timeline` now refuses invalid `--min-importance` and `--limit` values (#1412). Importance must be 1–10 and the result limit must be at least 1; the CLI limit has no additional upper cap.
