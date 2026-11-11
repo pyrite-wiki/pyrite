@@ -1,0 +1,1 @@
+- **Minimum patched versions for four dependencies.** `certifi>=2026.10.19` and `anyio>=4.14.2` (core), and `python-multipart>=0.0.31` and `cryptography>=50.0.0` (the `server` extra), so an install from PyPI cannot resolve an older release with a published vulnerability.
