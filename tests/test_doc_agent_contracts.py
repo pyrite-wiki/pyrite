@@ -222,6 +222,25 @@ def test_operational_contracts_equal_what_orient_returns(tmp_path):
     )
 
 
+def test_the_error_contract_names_the_per_field_errors():
+    """A refusal about a field carries `errors` rows (#1447).
+
+    The orient summary is what a cold agent reads, so a key the refusal can
+    carry has to be named there: an agent that learns the contract from
+    `orient` must hear about the per-field rows.
+    """
+    from pyrite.services.kb_service import KBService
+
+    contract = KBService._operational_contracts()["error_contract"]
+    assert "errors" in contract, f"the contract has no `errors` key: {contract}"
+    assert "errors?" in contract["shape"], contract["shape"]
+    assert "field" in contract["errors"], contract["errors"]
+    for key in contract:
+        if key == "shape":
+            continue
+        assert key in contract["shape"], f"{key} is not in the shape: {contract['shape']}"
+
+
 def _format_table():
     text = (DOCS / "json-contracts.md").read_text(encoding="utf-8")
     start = text.index("## `--format` defaults")

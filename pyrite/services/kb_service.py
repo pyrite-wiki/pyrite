@@ -3353,10 +3353,15 @@ class KBService:
                 "and cheap, safe to run after every batch of writes."
             ),
             "error_contract": {
-                "shape": "{error, error_code, suggestion?, retryable}",
+                "shape": "{error, error_code, suggestion?, errors?, retryable}",
                 "error": "human-readable message",
                 "error_code": "machine-readable code, e.g. QUERY_SYNTAX, KB_NOT_FOUND",
                 "suggestion": "optional fix hint, omitted when not applicable",
+                "errors": (
+                    "optional list, one row per refused field "
+                    "({field, rule, message, ...}); absent when the refusal is "
+                    "not about a field"
+                ),
                 "retryable": "bool -- whether retrying the same request could succeed",
             },
             "search_quoting": (
