@@ -23,6 +23,7 @@ import io
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 from collections.abc import Callable, Sequence
@@ -393,6 +394,40 @@ def _tell_a_person(error: Any) -> None:
         pass
 
 
+#: Top-level commands the first-party extensions register, by extension
+#: directory. A user who types one without the extension installed gets its
+#: install line instead of a bare "try --help". The names are checked against
+#: the extensions' own ``get_cli_commands`` in
+#: tests/test_cli_usage_error_plain.py, so a renamed command cannot leave this
+#: table behind.
+_EXTENSION_COMMAND_INSTALLS = {
+    "sw": "software-kb",
+    "zettel": "zettelkasten",
+    "wiki": "encyclopedia",
+    "social": "social",
+    "investigation": "journalism-investigation",
+}
+
+
+def _extension_install_hint(ctx: Any, message: str) -> str | None:
+    """The install line for a first-party extension command typed without it.
+
+    Only a top-level unknown command on the ``pyrite`` root: a typo inside an
+    installed group (``pyrite sw adrz``) or on another root (``pyrite-admin``)
+    keeps the plain --help hint, because installing the extension would not
+    make that command exist there.
+    """
+    if ctx is None or ctx.parent is not None or ctx.command_path != "pyrite":
+        return None
+    match = re.fullmatch(r"No such command '([^']+)'\.", message)
+    if match is None:
+        return None
+    directory = _EXTENSION_COMMAND_INSTALLS.get(match.group(1))
+    if directory is None:
+        return None
+    return f"Install it with 'pip install -e extensions/{directory}'."
+
+
 def _print_click_error(error: Any, fmt: str) -> None:
     """Answer a click error raised while parsing: one refusal document on
     stdout in ``fmt``, one plain line on stderr. The caller exits with the
@@ -402,7 +437,9 @@ def _print_click_error(error: Any, fmt: str) -> None:
     is_usage = _is_a(error, "UsageError")
     message = error.format_message()
     ctx = getattr(error, "ctx", None)
-    suggestion = f"Try '{ctx.command_path} --help' for help." if ctx is not None else None
+    suggestion = _extension_install_hint(ctx, message)
+    if suggestion is None:
+        suggestion = f"Try '{ctx.command_path} --help' for help." if ctx is not None else None
     payload = {
         "outcome": REFUSED,
         **build_error(message, "USAGE_ERROR" if is_usage else "ERROR", suggestion=suggestion),
