@@ -1630,10 +1630,11 @@ is the error shape above in one line.
 {
   "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
   "error_contract": {
-    "shape": "{error, error_code, suggestion?, retryable}",
+    "shape": "{error, error_code, suggestion?, errors?, retryable}",
     "error": "human-readable message",
     "error_code": "machine-readable code, e.g. QUERY_SYNTAX, KB_NOT_FOUND",
     "suggestion": "optional fix hint, omitted when not applicable",
+    "errors": "optional list, one row per refused field ({field, rule, message, ...}); absent when the refusal is not about a field",
     "retryable": "bool -- whether retrying the same request could succeed"
   },
   "search_quoting": "Special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. '\"family separation\" \"cross-link\"') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).",
