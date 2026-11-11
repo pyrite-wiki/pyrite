@@ -223,7 +223,9 @@ register_search_command(app)
 def timeline(
     date_from: str = typer.Option(None, "--from", help="Start date (YYYY-MM-DD)"),
     date_to: str = typer.Option(None, "--to", help="End date (YYYY-MM-DD)"),
-    min_importance: int = typer.Option(1, "--min-importance", min=1, max=10, help="Minimum importance (1-10)"),
+    min_importance: int = typer.Option(
+        1, "--min-importance", min=1, max=10, help="Minimum importance (1-10)"
+    ),
     limit: int = typer.Option(50, "--limit", "-n", min=1, help="Max results"),
     output_format: str = typer.Option(
         "rich",
