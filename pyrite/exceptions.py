@@ -51,11 +51,26 @@ traceback fragment, a confined-root path -- alongside sites that already
 phrase themselves safely, which is exactly the trap: a class-level
 ``public_message=None`` looked correct until the next raise site embedded a
 path).
+
+**An exception that is not a ``PyriteError`` shows nothing of its own.** Its
+text was written for the operator -- an ``OSError`` names a path, a provider
+SDK names its endpoint, a stdlib ``ValueError`` quotes its input -- so
+``public_text`` answers ``INTERNAL_PUBLIC_MESSAGE`` for it and logs the real
+text, on every transport. Only the local operator's own process (the CLI,
+``local=True``) is shown it.
 """
 
+import datetime
 import logging
+import math
 
 logger = logging.getLogger(__name__)
+
+
+#: What a response shows for a fault that is not a ``PyriteError``: the
+#: exception's own text (a server path, a provider's or driver's message) is
+#: the operator's and goes to the log.
+INTERNAL_PUBLIC_MESSAGE = "Internal error; the server log has the details."
 
 
 def public_text(
@@ -63,10 +78,20 @@ def public_text(
     *,
     already_logged: bool = False,
     log: logging.Logger | None = None,
+    local: bool | None = None,
 ) -> str:
     """The text a response may show for ``exc``, and the one place that decides it.
 
-    Returns ``exc.public_message`` when the class sets one, else ``str(exc)``.
+    An exception that is not a ``PyriteError`` -- an ``OSError`` naming a
+    path, a provider SDK's error, a ``ValueError`` quoting its input -- shows
+    ``INTERNAL_PUBLIC_MESSAGE``: its text was not written for a caller. The
+    real text is logged at WARNING unless ``already_logged``. ``local``: the
+    caller is the operator's own process (the CLI), to whom the text belongs;
+    it is shown as it is. None, the default, asks ``acting.is_local_process``:
+    the CLI and stdio MCP get the text, a REST request or an MCP call over
+    HTTP the fixed message.
+
+    For a ``PyriteError``: ``exc.public_message`` when the class sets one, else ``str(exc)``.
     When it substitutes, the real ``str(exc)`` is logged at WARNING (#848), so
     the cause stays findable server-side -- on the CLI, stderr at the default
     level. A class that leaves ``public_message`` unset shows ``str(exc)`` and
@@ -82,12 +107,60 @@ def public_text(
     ``exc`` need not be a ``PyriteError`` (some call sites catch
     ``ValueError`` too), hence ``getattr``.
     """
+    if not isinstance(exc, PyriteError):
+        if local is None:
+            from .services.acting import is_local_process
+
+            local = is_local_process()
+        if local:
+            return str(exc)
+        if not already_logged:
+            (log or logger).warning("%s: %s", type(exc).__name__, exc)
+        return INTERNAL_PUBLIC_MESSAGE
     public = getattr(exc, "public_message", None)
     if public is None:
         return str(exc)
     if not already_logged:
         (log or logger).warning("%s: %s", type(exc).__name__, exc)
     return str(public)
+
+
+#: What a Pyrite message carries, for a network caller, in place of the text
+#: of an exception from outside Pyrite that it would otherwise name
+#: (``outside_text``).
+OUTSIDE_TEXT_WITHHELD = "the server log has the details"
+
+
+def outside_text(
+    exc: BaseException,
+    *,
+    already_logged: bool = False,
+    local: bool | None = None,
+) -> str:
+    """The text of ``exc`` for placing *inside* a Pyrite message (ADR-0052 N3).
+
+    ``public_text`` answers for a whole response; this is for a message
+    Pyrite writes around a cause (``f"Invalid YAML frontmatter: {...}"``).
+    The local process (``acting.is_local_process``: the CLI, stdio MCP) gets
+    the exception's own text, as it always did. A network caller gets a
+    ``PyriteError``'s ``public_text``, and for anything else
+    ``OUTSIDE_TEXT_WITHHELD``: an OS error, a library's or a provider's
+    message, a parser's quote of file content were not written for a caller.
+    The real text is logged at WARNING (on ``pyrite.exceptions``) unless
+    ``already_logged``. ``tests/test_response_text_is_pyrites.py`` holds
+    every message built in an ``except`` body to this or ``public_text``.
+    """
+    if isinstance(exc, PyriteError):
+        return public_text(exc, already_logged=already_logged)
+    if local is None:
+        from .services.acting import is_local_process
+
+        local = is_local_process()
+    if local:
+        return str(exc)
+    if not already_logged:
+        logger.warning("%s: %s", type(exc).__name__, exc)
+    return OUTSIDE_TEXT_WITHHELD
 
 
 class PyriteError(Exception):
@@ -141,10 +214,12 @@ class AmbiguousEntryError(PyriteError):
 #: public by construction. Every transport copies those an exception has into
 #: its error body under the same key, through ``refusal_fields``, so a class
 #: that adds one (#777's unreadable candidates) is mapped on REST, MCP and the
-#: CLI by naming it here. Not every extra goes through it yet:
+#: CLI by naming it here. ``errors`` (#1284) is the structured half of a
+#: validation refusal -- one row per refused field -- and reaches the same
+#: three surfaces by being named here. Not every extra goes through it yet:
 #: ``UndeclaredTypeError.declared_types`` is still copied by MCP's ``_refusal``
 #: and REST's write-refusal path themselves, with their own suggestion text.
-REFUSAL_FIELDS: tuple[str, ...] = ("candidate_kbs", "did_you_mean")
+REFUSAL_FIELDS: tuple[str, ...] = ("candidate_kbs", "did_you_mean", "errors")
 
 
 def refusal_fields(exc: BaseException) -> dict:
@@ -155,6 +230,66 @@ def refusal_fields(exc: BaseException) -> dict:
         if value is not None:
             out[name] = value
     return out
+
+
+def json_safe_value(value):
+    """A JSON-serialisable stand-in for a refused value (#1381 review).
+
+    A row's ``got`` is whatever the caller wrote, and the row travels as JSON:
+    a ``yaml`` date used to make the answer unrenderable on the CLI
+    (``NO_OUTCOME``) and an ``Infinity`` in a request body used to raise
+    ``ValueError: Out of range float values are not JSON compliant`` while
+    serialising a 400. A date becomes its ISO string and a non-finite float its
+    text, so the refusal still says what was refused.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)  # 'inf', '-inf', 'nan'
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+        return value.isoformat()
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).decode("utf-8", "replace")
+    if isinstance(value, (set, frozenset)):
+        return sorted((json_safe_value(item) for item in value), key=repr)
+    if isinstance(value, (list, tuple)):
+        return [json_safe_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): json_safe_value(item) for key, item in value.items()}
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    return str(value)
+
+
+#: The row keys whose values are the caller's own, and so the ones that can
+#: carry a date or a non-finite float into a JSON body.
+_VALUE_KEYS = ("got", "expected")
+
+
+def json_safe_row(row: dict) -> dict:
+    """``row`` with its refused values made JSON-safe, everything else untouched."""
+    safe = dict(row)
+    for key in _VALUE_KEYS:
+        if key in safe:
+            safe[key] = json_safe_value(safe[key])
+    return safe
+
+
+def refusal_row_text(row: dict | str) -> str:
+    """One sentence for a refusal row: its ``message``, else ``field: rule`` and the values.
+
+    ``pyrite add --validate-only`` joins rows into ``str(exc)``, and a row built
+    from a KB schema carries no ``message`` -- joining the dict printed
+    ``{'field': 'org_type', ...}`` where the sentence belonged (#1381 review).
+    """
+    if isinstance(row, str):
+        return row
+    message = row.get("message")
+    if message:
+        return str(message)
+    field = row.get("field") or "?"
+    rule = row.get("rule")
+    head = f"{field}: {rule}" if rule else str(field)
+    details = [f"{name} {row[name]!r}" for name in ("expected", "got") if row.get(name) is not None]
+    return f"{head} ({', '.join(details)})" if details else head
 
 
 class KBNotFoundError(PyriteError):
@@ -214,8 +349,16 @@ class ValidationError(PyriteError):
     error_code = "VALIDATION_FAILED"
     suggestion: str | None = None
 
-    def __init__(self, message: str, *, suggestion: str | None = None):
+    def __init__(
+        self, message: str, *, errors: list[dict] | None = None, suggestion: str | None = None
+    ):
         super().__init__(message)
+        #: One row per refused field, ``{field, rule, message, expected?, got?}``
+        #: (#1284). A transport copies it through ``refusal_fields``, so REST,
+        #: MCP and the CLI answer the same shape. ``None`` -- the key is then
+        #: absent from every body, never an empty list -- when the refusal is
+        #: not about a field (a truncated body, a stale id).
+        self.errors: list[dict] | None = [json_safe_row(row) for row in errors] if errors else None
         if suggestion is not None:
             self.suggestion = suggestion
 
@@ -241,13 +384,22 @@ class EntryExistsError(ValidationError):
 
 
 class SchemaViolationError(ValidationError):
-    """The KB schema or a plugin validator rejected the entry (enum, required, range...)."""
+    """The KB schema or a plugin validator rejected the entry (enum, required, range...).
+
+    Its rows are the schema path's own, ``{field, rule, expected, got?, message?}``
+    (``pyrite/schema``), so they carry the same ``field`` and ``rule`` the entry
+    model's rows do. Construction goes through :class:`ValidationError`, which
+    leaves ``errors`` ``None`` when there are no rows -- the key is then absent
+    from every body, never an empty list -- so a refusal that is not about a
+    field answers the same shape on REST, MCP and the CLI.
+    """
 
     error_code = "SCHEMA_VIOLATION"
 
     def __init__(self, message: str, errors: list[dict] | None = None):
-        super().__init__(message)
-        self.errors = errors or []
+        # Positional, because `services/kb_service.py` raises it that way; the
+        # base class keeps ``None`` for "not about a field".
+        super().__init__(message, errors=errors)
 
 
 class TruncatedBodyError(ValidationError):
@@ -273,6 +425,25 @@ class InvalidGitRefError(ValidationError):
     """
 
     error_code = "INVALID_REF"
+
+
+class RemoteNotAllowedError(ValidationError):
+    """A git remote Pyrite would clone from or push to for a caller is not an
+    https:// URL on a host in the operator's ``git_allowed_hosts`` setting.
+    The message names the setting and never echoes the URL (which can carry
+    credentials). Carries ``error_code`` ``REMOTE_NOT_ALLOWED``.
+    """
+
+    error_code = "REMOTE_NOT_ALLOWED"
+
+
+class UnsafeDestinationError(ValidationError):
+    """A path Pyrite would create or write does not resolve inside the
+    directory Pyrite chose for it (a link, or a name leading out of it).
+    Nothing is written. Carries ``error_code`` ``UNSAFE_DESTINATION``.
+    """
+
+    error_code = "UNSAFE_DESTINATION"
 
 
 class LandingRefusedError(ValidationError):
@@ -342,6 +513,14 @@ class EntryLoadError(FrontmatterError):
         self.rel_path = rel_path
         self.fields = dict(fields or {})
         self.loader_message = loader_message
+
+
+class YamlLimitError(FrontmatterError):
+    """A YAML document passes a fixed bound on aliases or expanded size.
+
+    Raised at load, before an entry is built, by ``pyrite.utils.yaml``. The
+    message is Pyrite's own and names only the bound, so it is safe to show.
+    """
 
 
 class PluginError(PyriteError):
@@ -536,6 +715,17 @@ class BrandingInvalidError(PyriteError):
     )
 
 
+class KBNameReservedError(ConfigError):
+    """A new KB's name is one an API route uses (``kb_names.RESERVED_KB_NAMES``).
+
+    The message names only the caller's own KB name, so it is shown on every
+    transport, unlike the base ``ConfigError``'s fixed sentence; the code
+    stays the base's.
+    """
+
+    public_message = None
+
+
 class KBAlreadyExistsError(ConfigError):
     """`KBRegistryService.add_kb` refused: a KB with this name is already
     registered (#506, narrowing #501's fixed `ConfigError.public_message`).
@@ -647,6 +837,13 @@ class ClipperBlockedHostError(PyriteError):
     error_code = "CLIPPER_BLOCKED_HOST"
 
 
+class ClipperTooLargeError(PyriteError):
+    """Raised when a page the web clipper fetches is larger than the byte cap,
+    counted after decompression. The message is Pyrite's own and safe to show."""
+
+    error_code = "CLIP_TOO_LARGE"
+
+
 class LastAdminError(ValidationError):
     """AuthService.set_role refused to demote the last global admin (#416).
 
@@ -690,6 +887,45 @@ class Forbidden(AccessDenied):
     """
 
     error_code = "FORBIDDEN"
+
+
+class EntryValueError(ValidationError, ValueError):
+    """An entry value Pyrite cannot store or index, said in Pyrite's words for
+    the caller (``metadata cannot be stored as JSON``, ``date is a list, not a
+    value the index can store``). A ``ValueError`` too, so code that caught
+    the built-in keeps working; a ``ValidationError`` so every surface shows
+    its text (``public_text``)."""
+
+
+class RefusedValueError(ValidationError, ValueError):
+    """A value Pyrite refuses, said in Pyrite's words for the caller (a field
+    path that names no field, a sign-up refused, a KB name that is not
+    allowed). A ``ValueError`` too, so code that caught the built-in keeps
+    working; a ``ValidationError`` so ``public_text`` shows its text to a
+    network caller, where a plain ``ValueError``'s text -- which may come
+    from anywhere -- is withheld (ADR-0052 N3)."""
+
+
+class EntryTypeError(ValidationError, TypeError):
+    """An entry value of a type Pyrite cannot use (``title must be a string,
+    got a list``; ``cannot derive an id: title is a list``). A ``TypeError``
+    too, so code that caught the built-in keeps working."""
+
+
+class KBNotInConfigError(KBNotFoundError, ValueError):
+    """``KB_NOT_FOUND`` from code that raised a ``ValueError`` before: the
+    message names only the KB the caller asked for."""
+
+
+class KBPathNotAllowedError(Forbidden):
+    """A network caller asked to register a KB at a path outside the
+    configured ``settings.kb_roots`` (``KBRegistryService.add_kb``). The local
+    operator registers any path; over the network (REST, MCP with a
+    principal) only a folder under a root. The message names the roots, so
+    the caller knows where a KB may go; it names nothing else on the server.
+    """
+
+    error_code = "KB_PATH_NOT_ALLOWED"
 
 
 class InvalidQATierError(ValidationError):

@@ -3,8 +3,10 @@
 A file is part of a KB only if it resolves, links followed, inside that KB's
 resolved root. :class:`KBFiles` decides that for one KB and makes the write
 itself, so the path it approves is the path it writes, with no window between
-them. This is the write side of the one KB-file opener; reads are not routed
-through it yet.
+them. Reads whose bytes may reach someone else go through ``read_bytes``
+too: every entry load in ``KBRepository`` (and so the indexer, which most
+exports write from) and the exports that read files directly. A read refuses
+a link out of the root and a file with more than one hard link.
 
 How a write stays inside, on POSIX (``dir_fd`` and ``O_NOFOLLOW``):
 
@@ -43,8 +45,23 @@ Limits, stated rather than claimed away:
 
 * off POSIX (no ``dir_fd``) the resolved path is used directly, which leaves
   the swap window open there;
-* the root itself is resolved once per write and opened by that path: a root
-  replaced mid-write is not detected (the root is the operator's);
+* the root itself is resolved once per ``KBFiles`` object (one per entry
+  write; one per batch for the reconcile) and opened by that path: a root
+  replaced meanwhile is not detected (the root is the operator's);
+* a hard link made to the file after the last check: the replace path puts
+  a new file at the name and leaves the other name as it was; the in-place
+  path checks the link count on the descriptor it writes through, so only a
+  link made after that ``fstat`` sees the write;
+* the replace path compares the bytes at the name and then renames over the
+  name: an editor that takes no lock and replaces the file in between loses
+  its save (ADR-0042 decision 10 states this window for every writer);
+* the in-place path has two such windows. An editor that saves by renaming a
+  new file over the name between the compare and the write leaves Pyrite
+  writing the unlinked old file: the name is looked at again after the
+  write's fsync, and the write is then ``FileChanged``, not done (closed).
+  An editor that writes into the same file between Pyrite's read and its
+  truncate loses that edit: no check can see it without the editor taking
+  the lock (stated, not closed);
 * a folder already opened that is then moved out of the root (a rename of
   the folder itself, not a link swapped in) keeps its descriptor, and the
   write lands where the folder went. Moving a KB folder out of the KB is a
@@ -92,6 +109,16 @@ _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _UNSUPPORTED = {errno.ENOTSUP, errno.ENOSYS, getattr(errno, "EOPNOTSUPP", errno.ENOTSUP)}
 
 
+#: Why a reader left a file out that it would not read: it may not be the
+#: KB's. One wording for every report that names such a file (the index's
+#: skipped list, an export's left-out list), true of both cases: a link
+#: resolves somewhere, a hard link does not. Follows "the file" or a path.
+OUTSIDE_KB_REASON = (
+    "may lead outside the KB's folder (a symbolic link out of it, or a file with "
+    "more than one hard link); not read"
+)
+
+
 class KBFileOutsideRootError(ValidationError):
     """A path left its KB's root; nothing was written. The message names no
     path."""
@@ -107,6 +134,20 @@ class KBFileOutsideRootError(ValidationError):
         self.suggestion = (
             "replace the link with the file or folder it points to, inside the KB, or "
             "correct the configured path, then retry"
+        )
+
+
+class KBFileReadOutsideRootError(KBFileOutsideRootError):
+    """A read (an export's) of a path that leaves its KB's root; nothing was
+    read. The same code, OUTSIDE_KB_ROOT, and no path in the message."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.args = (
+            "Refusing to read a KB file whose path may leave its KB's folder: a "
+            "symbolic link on the path (to a file or a folder) leads outside the KB, "
+            "or the file has more than one hard link, whose other names may be "
+            "outside it; nothing was read",
         )
 
 
@@ -191,9 +232,14 @@ class Folder:
         except FileNotFoundError:
             return None
 
-    def read(self, name: str) -> bytes | None:
+    def read(self, name: str, *, one_name: bool = False) -> bytes | None:
         """The file's bytes, read without following a link; None when absent.
-        A link where the file was is a refusal."""
+        A link where the file was is a refusal. With ``one_name``, so is a
+        file with more than one hard link, checked on the open descriptor:
+        its other name may be anywhere on the filesystem, and the inode
+        cannot say where (ADR-0042 A2, the write rule, applied to a read),
+        and a name that is not a regular file (a FIFO, a device) reads as
+        absent, None."""
         try:
             fd = os.open(self._p(name), os.O_RDONLY | _NOFOLLOW | os.O_NONBLOCK, **self._at(name))
         except FileNotFoundError:
@@ -203,6 +249,17 @@ class Folder:
                 raise KBFileOutsideRootError() from e
             raise
         try:
+            if one_name:
+                st = os.fstat(fd)
+                if not stat.S_ISREG(st.st_mode):
+                    # A FIFO or a device at the name holds no entry, and a
+                    # read of one could block or never end: absent.
+                    return None
+                if st.st_nlink > 1:
+                    logger.warning(
+                        "Refusing %s: it has %d hard links", self.label(name), st.st_nlink
+                    )
+                    raise KBFileReadOutsideRootError()
             chunks = []
             while chunk := os.read(fd, 1 << 16):
                 chunks.append(chunk)
@@ -225,7 +282,11 @@ class Folder:
         ``OSError``, or ``OwnerNotKeptError``), and no temp file is left."""
         # The temp name keeps at most 64 bytes of the entry's, so a long entry
         # name (230+ bytes) still has a temp name under the 255-byte limit.
-        stem = name.encode("utf-8")[:64].decode("utf-8", "ignore")
+        # Cut on the name's bytes as the filesystem holds them (``fsencode``
+        # undoes a non-UTF-8 name's surrogate escapes, which ``encode("utf-8")``
+        # refused), then keep only what is valid UTF-8, so the temp name is
+        # one every filesystem takes, APFS included.
+        stem = os.fsencode(name)[:64].decode("utf-8", "ignore")
         tmp = f".{stem}.{secrets.token_hex(8)}.tmp"
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW
         try:
@@ -270,17 +331,40 @@ class Folder:
             raise
         return tmp
 
-    def write_in_place(self, name: str, data: bytes, why: str, checked: os.stat_result) -> None:
+    def write_in_place(
+        self,
+        name: str,
+        data: bytes,
+        why: str,
+        checked: os.stat_result,
+        *,
+        expect: bytes | bytearray | memoryview | None = None,
+    ) -> None:
         """Write ``data`` into the file the caller checked (``checked``), and
-        only that inode. The name is opened ``O_NOFOLLOW | O_NONBLOCK`` (a
-        FIFO swapped in cannot hang the lock) and the descriptor must be a
-        regular file with one link and ``checked``'s ``st_dev``/``st_ino``:
-        a hard link to another file swapped in between the check and the
-        open is refused (``HardLinked``), any other file is ``FileChanged``.
-        Nothing is truncated before that."""
-        logger.warning("Writing %s in place, not atomically: %s", self.label(name), why)
+        only that inode, comparing ``expect`` in that same file: one
+        descriptor reads the bytes compared and takes the bytes written.
+
+        The name is opened ``O_NOFOLLOW | O_NONBLOCK`` (a FIFO swapped in
+        cannot hang the lock), read-write when there is a compare and
+        write-only when not (a file this process may write but not read is
+        written, as before). The descriptor must be a regular file with one
+        link and ``checked``'s ``st_dev``/``st_ino``: a hard link swapped in
+        between the check and the open is refused (``HardLinked``), any other
+        file is ``FileChanged``. Then ``O_NONBLOCK`` is cleared, the bytes are
+        read through the descriptor and compared with ``expect`` (any
+        bytes-like value; ``FileChanged`` with what is there), and only then
+        is the file truncated and written. Nothing is changed before every
+        check passes.
+
+        After the write and its fsync the name is looked at again: if it no
+        longer names the file written (an editor saved by renaming a new file
+        over it meanwhile, so the bytes went to the unlinked old file), or
+        that file gained a link, the write is ``FileChanged``, never reported
+        as done.
+        """
+        access = os.O_WRONLY if expect is None else os.O_RDWR
         try:
-            fd = os.open(self._p(name), os.O_WRONLY | _NOFOLLOW | os.O_NONBLOCK, **self._at(name))
+            fd = os.open(self._p(name), access | _NOFOLLOW | os.O_NONBLOCK, **self._at(name))
         except OSError as e:
             if e.errno == errno.ELOOP:
                 raise KBFileOutsideRootError() from e
@@ -296,14 +380,33 @@ class Folder:
                 checked.st_ino,
             ):
                 raise FileChanged(self.real / name, None)
+            if hasattr(os, "set_blocking"):
+                os.set_blocking(fd, True)  # a regular file now: plain blocking I/O
+            if expect is not None:
+                chunks = []
+                while chunk := os.read(fd, 1 << 16):
+                    chunks.append(chunk)
+                on_disk = b"".join(chunks)
+                if on_disk != bytes(expect):
+                    raise FileChanged(self.real / name, on_disk)
         except BaseException:
             os.close(fd)
             raise
-        with os.fdopen(fd, "wb") as f:
+        logger.warning("Writing %s in place, not atomically: %s", self.label(name), why)
+        with os.fdopen(fd, "r+b" if expect is not None else "wb") as f:
+            f.seek(0)
             f.truncate(0)
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
+            written = os.fstat(f.fileno())
+        now = self.lstat(name)
+        if (
+            now is None
+            or (now.st_dev, now.st_ino) != (written.st_dev, written.st_ino)
+            or now.st_nlink != 1
+        ):
+            raise FileChanged(self.real / name, None)
 
     def rename(self, tmp: str, name: str) -> None:
         """Put ``tmp`` at ``name``; never follows ``name``."""
@@ -430,8 +533,9 @@ class KBFiles:
 
     def __init__(self, root: str | os.PathLike[str]):
         self.root = Path(root)
-        #: The root resolved once, when this object is made (one per write):
-        #: every decision and every open of that write use the same answer.
+        #: The root resolved once, when this object is made: every decision
+        #: and every open made through this object use the same answer. The
+        #: entry writer makes one per write; the reconcile one per batch.
         self.real_root = os.path.realpath(self.root)
 
     def _absolute(self, path: str | os.PathLike[str]) -> Path:
@@ -531,6 +635,33 @@ class KBFiles:
         finally:
             os.close(fd)
 
+    # -- reading ------------------------------------------------------------
+
+    def read_bytes(self, path: str | os.PathLike[str]) -> bytes | None:
+        """The bytes of ``path``, read only where it resolves inside the root,
+        the way a write is placed: a link inside the KB that points out of
+        it is ``KBFileOutsideRootError`` and nothing is read. The file is
+        opened beneath the root without following a link. None when absent.
+
+        A file with more than one hard link is refused the same way: its
+        other names may be outside the KB, and nothing on the inode says
+        where, so it cannot be proven to be the KB's.
+
+        For every reader whose bytes may reach someone else: export, and the
+        indexer and repository loads that the index-backed exports and reads
+        serve from. What a link points at outside the KB is not the KB's to
+        give.
+        """
+        try:
+            with self.folder(path) as (d, name):
+                return d.read(name, one_name=True)
+        except FileNotFoundError:
+            return None
+        except KBFileReadOutsideRootError:
+            raise
+        except KBFileOutsideRootError as e:
+            raise KBFileReadOutsideRootError() from e
+
     # -- the write rules ----------------------------------------------------
 
     def require_writable(self, path: str | os.PathLike[str]) -> None:
@@ -568,11 +699,23 @@ class KBFiles:
     # -- the writes -----------------------------------------------------------
 
     @staticmethod
-    def _locked(real: list[Path], lock_timeout: float, step) -> bool:
+    def _locked(real: list[Path], folders: list[Folder], lock_timeout: float, step) -> bool:
         """Run ``step`` under the momentary lock of ``real``'s paths; outside
-        git, without it. Returns whether it ran locked."""
+        git, without it. Returns whether it ran locked.
+
+        Under the lock, first: each of ``folders`` (``real[i]``'s folder,
+        opened before the lock was taken) is the directory the held key names,
+        so a write goes only through a folder its lock covers. A folder
+        replaced between the open and the lock is ``KBFolderChanged`` and
+        ``step`` does not run."""
         try:
-            with file_lock(*real, timeout=lock_timeout):
+            with file_lock(*real, timeout=lock_timeout) as keys:
+                for key, folder, path in zip(keys, folders, real, strict=True):
+                    if folder.fd is None:
+                        continue
+                    st = os.fstat(folder.fd)
+                    if key.split("/", 1)[0] != f"{st.st_dev}:{st.st_ino}":
+                        raise KBFolderChanged(folder.label(path.name), None)
                 step()
             return True
         except NotInGitRepository:
@@ -604,6 +747,14 @@ class KBFiles:
         temp file that cannot be made, or given the original's owner and
         group, is a refusal (the ``OSError``, ``OwnerNotKeptError``) instead.
         """
+        if (
+            expect is not None
+            and expect is not ABSENT
+            and not isinstance(expect, (bytes, bytearray, memoryview))
+        ):
+            raise TypeError(
+                f"expect must be bytes-like, ABSENT or None, not {type(expect).__name__}"
+            )
         if expect is not None:
             check_timeout(lock_timeout)
         creating = expect is ABSENT
@@ -628,25 +779,32 @@ class KBFiles:
                     return
                 if st is not None:
                     self._refuse_unwritable(d, name, st)
+                if tmp is None:
+                    # In place: the compare and the write go through one
+                    # descriptor, so the file compared is the file written.
+                    if st is None:
+                        raise FileChanged(real, None)
+                    d.write_in_place(
+                        name,
+                        data,
+                        "the folder takes no new file, or the owner",
+                        checked=st,
+                        # ABSENT returned above; any bytes-like value is compared.
+                        expect=expect,  # type: ignore[arg-type]
+                    )
+                    return
                 if expect is not None:
                     on_disk = d.read(name)
                     if on_disk != expect:
                         raise FileChanged(real, on_disk)
-                if tmp is None:
-                    if st is None:
-                        raise FileChanged(real, None)
-                    d.write_in_place(
-                        name, data, "the folder takes no new file, or the owner", checked=st
-                    )
-                else:
-                    d.rename(tmp, name)
+                d.rename(tmp, name)
 
             try:
                 if expect is None:
                     step()
                     locked = False
                 else:
-                    locked = self._locked([real], lock_timeout, step)
+                    locked = self._locked([real], [d], lock_timeout, step)
             except BaseException:
                 if tmp is not None:
                     d.remove(tmp)
@@ -703,7 +861,7 @@ class KBFiles:
                 s.unlink(sname)
 
             try:
-                locked = self._locked([s.real / sname, t.real / tname], lock_timeout, step)
+                locked = self._locked([s.real / sname, t.real / tname], [s, t], lock_timeout, step)
             except BaseException:
                 t.remove(tmp)
                 raise

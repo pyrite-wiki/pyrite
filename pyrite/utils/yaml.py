@@ -16,7 +16,18 @@ from ruamel.yaml.error import YAMLError
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString
 from yaml.resolver import Resolver as _PyYAMLResolver
 
-from ..exceptions import FrontmatterError
+from ..exceptions import FrontmatterError, YamlLimitError, outside_text
+
+#: Fixed bounds on a YAML document, checked before anything is built:
+#:
+#: - ``MAX_YAML_ALIASES``: alias references in one document. KB files use a
+#:   handful (a shared ``&defaults`` merged into a few records); 1,000 is two
+#:   orders of magnitude above that.
+#: - ``MAX_YAML_EXPANDED_NODES``: scalars, sequences and mappings counted as if
+#:   every alias were copied out. A 10 MB file of plain data is about 1M nodes,
+#:   so a document past this is larger than any file Pyrite is meant to hold.
+MAX_YAML_ALIASES = 1000
+MAX_YAML_EXPANDED_NODES = 1_000_000
 
 
 def _pyyaml_regexes(tag: str) -> list[re.Pattern[str]]:
@@ -246,16 +257,132 @@ def _dumper_for(data: Any) -> YAML:
     return y
 
 
+def _measure_events(events: Any, ev: Any) -> None:
+    """Refuse a document whose events pass the bounds. ``ev`` is the events
+    module of the parser that made them (ruamel's or PyYAML's): the two have
+    the same event classes, and a bound holds only when it is measured on
+    the events of the parser that does the load.
+
+    Each node's expanded size comes from its events (an alias counts as the
+    size of its anchor, capped so the arithmetic stays small), so a bomb
+    nine levels deep is measured in a few hundred events, never expanded.
+    """
+    cap = MAX_YAML_EXPANDED_NODES
+    sizes: dict[str, int] = {}
+    stack: list[list[Any]] = []  # [anchor, size so far] per open collection
+    root = 0
+    aliases = 0
+
+    def add(n: int) -> None:
+        nonlocal root
+        if stack:
+            stack[-1][1] = min(cap + 1, stack[-1][1] + n)
+            total = stack[-1][1]
+        else:
+            root = min(cap + 1, root + n)
+            total = root
+        if total > cap:
+            raise YamlLimitError(
+                f"YAML document refused: its aliases expand to more than {cap:,} nodes"
+            )
+
+    for event in events:
+        if isinstance(event, ev.AliasEvent):
+            aliases += 1
+            if aliases > MAX_YAML_ALIASES:
+                raise YamlLimitError(
+                    f"YAML document refused: more than {MAX_YAML_ALIASES:,} aliases"
+                )
+            add(sizes.get(event.anchor, 1))
+        elif isinstance(event, ev.ScalarEvent):
+            if event.anchor:
+                sizes[event.anchor] = 1
+            add(1)
+        elif isinstance(event, ev.CollectionStartEvent):
+            stack.append([event.anchor, 1])
+        elif isinstance(event, ev.CollectionEndEvent) and stack:
+            anchor, size = stack.pop()
+            if anchor:
+                sizes[anchor] = size
+            add(size)
+
+
+def _check(text: str, events_of: Any, ev: Any, parse_error: type[Exception]) -> None:
+    """The bound on ``text``, measured by one parser (``events_of``, its
+    event stream; ``parse_error``, its own error for malformed YAML).
+
+    Malformed YAML is that same parser's error, and the load that follows
+    stops at the same event with it, so nothing unmeasured is built. Any
+    other exception (ruamel raises ``AssertionError`` on a ``%YAML 1.3``
+    directive) means the document cannot be measured: it is refused,
+    ``YamlLimitError``, never passed on to a load.
+
+    Skipped for text that can hold no alias (no ``&`` or no ``*``) and no
+    directive (no ``%``).
+    """
+    if ("*" not in text or "&" not in text) and "%" not in text:
+        return
+    try:
+        _measure_events(events_of(text), ev)
+    except YamlLimitError:
+        raise
+    except parse_error:
+        return  # the same parser's load stops at the same event and reports it
+    except Exception as e:
+        raise YamlLimitError(
+            f"YAML document refused: it could not be measured ({type(e).__name__})"
+        ) from e
+
+
+def check_yaml_limits(text: str) -> None:
+    """Refuse a document whose aliases pass the bounds, without building it,
+    measured on ruamel's parse events: for the loads ruamel makes
+    (``load_yaml``, ``load_yaml_document``, ``load_yaml_file`` and the
+    ``compose`` of ``storage.file_operations``). A PyYAML load is measured by
+    ``safe_load_bounded`` on PyYAML's own events instead: two parsers do not
+    agree on what text they can read (PyYAML reads U+2028 as a line break,
+    ruamel refuses it), so a bound measured by one does not hold for the
+    other.
+
+    Raises ``YamlLimitError``, also for a document ruamel cannot measure
+    without a parse error (``%YAML 1.3`` stops it with an ``AssertionError``);
+    malformed YAML is left for the load to report.
+    """
+    from ruamel.yaml import events
+
+    _check(text, _get_yaml().parse, events, YAMLError)
+
+
+def safe_load_bounded(text: str) -> Any:
+    """PyYAML ``safe_load`` (YAML 1.1 reading) of ``text`` within the alias bounds.
+
+    For the readers that want plain Python values rather than ruamel's
+    round-trip types (templates, alias lists, bulk spec files). The bound is
+    measured on PyYAML's own event stream, the parser that then loads, so
+    text ruamel would refuse to parse is measured too. Raises
+    ``YamlLimitError`` before anything is built when the bounds are passed or
+    the text cannot be measured, and ``yaml.YAMLError`` for malformed input.
+    """
+    import yaml
+    from yaml import events
+
+    _check(text, lambda t: yaml.parse(t, Loader=yaml.SafeLoader), events, yaml.YAMLError)
+    return yaml.safe_load(text)
+
+
 def load_yaml_document(text: str) -> Any:
     """Parse a YAML document, including bulk-import sequences and empty input.
 
     Entry frontmatter callers must use ``load_yaml`` for its mapping contract.
     Both paths use the same parser, scalar rules and public parse error.
     """
+    check_yaml_limits(text)
     try:
         return _get_yaml().load(text)
     except YAMLError as e:
-        raise FrontmatterError(f"Invalid YAML frontmatter: {e}") from e
+        # The parser's text quotes the file's own lines: the operator's, not
+        # a network caller's (ADR-0052 N3); the CLI still shows it.
+        raise FrontmatterError(f"Invalid YAML frontmatter: {outside_text(e)}") from e
 
 
 def load_yaml(text: str) -> dict[str, Any]:
@@ -295,15 +422,32 @@ def dump_yaml(data: Any) -> str:
     return stream.getvalue().rstrip("\n")
 
 
-def load_yaml_file(path: str | Path) -> dict[str, Any]:
+def load_yaml_file(path: str | Path, *, kb_root: str | Path | None = None) -> dict[str, Any]:
     """Load YAML from a file path.
 
     Returns a CommentedMap (dict-compatible) or empty dict.
+
+    ``kb_root``: the file is a KB's (``kb.yaml``, ``board.yaml``) and is read
+    only inside that root (``KBFiles.read_bytes``): a link out of it, or a
+    file with more than one hard link, raises ``KBFileReadOutsideRootError``
+    (``OUTSIDE_KB_ROOT``) and nothing is read. ``FileNotFoundError`` when it
+    is absent. Every reader of a KB's own YAML whose values reach a caller
+    passes it.
     """
     p = Path(path)
     y = _get_yaml()
-    with open(p) as f:
-        result = y.load(f)
+    if kb_root is not None:
+        from .kb_files import KBFiles
+
+        raw = KBFiles(kb_root).read_bytes(p)
+        if raw is None:
+            raise FileNotFoundError(str(p))
+        text = raw.decode("utf-8")
+    else:
+        with open(p) as f:
+            text = f.read()
+    check_yaml_limits(text)
+    result = y.load(text)
     return result if result is not None else {}
 
 

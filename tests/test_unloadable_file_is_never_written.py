@@ -34,6 +34,7 @@ from pathlib import Path
 import pytest
 
 from pyrite.config import KBConfig
+from pyrite.exceptions import OUTSIDE_TEXT_WITHHELD
 
 REPO = Path(__file__).resolve().parents[1]
 REL = "items/x.md"  # the file under test, KB-relative: messages name this, never the absolute path
@@ -474,7 +475,7 @@ def test_no_write_lands_and_no_guard_sees_the_entry(make_world, spies, shape, me
     assert f"`{entry_type}`" in message, message
     if spec.field:
         assert spec.field in message, message
-    assert spec.loader in message, message
+    _assert_loader_text(spec.loader, message, local=method.startswith("cli_"))
     after = _snapshot(root)
     if method == "bulk_link":
         assert after[REL] == before[REL]
@@ -483,6 +484,34 @@ def test_no_write_lands_and_no_guard_sees_the_entry(make_world, spies, shape, me
         assert after == before, sorted(k for k in after if after.get(k) != before.get(k))
     seen = [c for c in spies if c[1] == "x"]
     assert seen == [], f"a guard was handed the entry its type did not load: {seen}"
+
+
+def _assert_loader_text(loader: str, message: str, *, local: bool) -> None:
+    """The loader's own text is in the refusal for the local process (the CLI);
+    a network caller or a bare service call gets it only when the loader raised
+    a PyriteError, else Pyrite's withheld text (ADR-0052 N3, 0.26.2)."""
+    if local:
+        assert loader in message, message
+    else:
+        assert loader in message or OUTSIDE_TEXT_WITHHELD in message, message
+
+
+def test_a_network_refusal_withholds_the_loaders_text_and_the_cli_shows_it(make_world):
+    # backlog_item's own loader runs int() on `metadata.rank: .inf`: the text
+    # ("cannot convert float infinity to integer") is Python's, not Pyrite's.
+    spec = SHAPES["metadata-key"]["backlog_item"]
+    world = make_world(
+        {REL: _text("backlog_item", spec), "ok.md": _text("backlog_item", Shape(), "ok")}
+    )
+
+    rest = w_rest_patch(world)
+    cli = w_cli_update(world)
+
+    assert rest.code == "ENTRY_UNREADABLE" and rest.status == 422, rest
+    assert "float infinity" not in rest.message, rest.message
+    assert OUTSIDE_TEXT_WITHHELD in rest.message, rest.message
+    assert REL in rest.message, rest.message
+    assert "float infinity" in cli.message, cli.message
 
 
 @pytest.mark.control(reason="the spies fire on a file that loads: they can see a guard run")
@@ -615,8 +644,11 @@ CALL_SITES: dict[str, tuple[str, object]] = {
         WRITER,
         ["cli_delete", "rest_delete", "mcp_delete"],
     ),
-    "pyrite/services/kb_service.py::KBService.add_link": (WRITER, ["cli_link", "mcp_link"]),
-    "pyrite/services/kb_service.py::KBService.add_links": (WRITER, ["bulk_link"]),
+    # add_link's and add_links's source read: lets EntryLoadError through
+    "pyrite/services/kb_service.py::_load_link_source": (
+        WRITER,
+        ["cli_link", "mcp_link", "bulk_link"],
+    ),
     "pyrite/services/kb_service.py::KBService.claim_entry": (
         WRITER,
         ["cli_task_claim", "mcp_task_claim"],
@@ -682,8 +714,10 @@ CALL_SITES: dict[str, tuple[str, object]] = {
         "qa validation reports the file",
     ),
     "pyrite/services/file_search.py::search_kb_files": (READER, "search skips the file"),
-    "pyrite/cli/export_commands.py::_follow_links": (READER, "export"),
-    "pyrite/cli/export_commands.py::_load_entry_from_result": (READER, "export: counts it"),
+    "pyrite/cli/export_commands.py::_load_entry_with_reason": (
+        READER,
+        "export: left out with the loader's reason (#1325)",
+    ),
     "pyrite/cli/export_commands.py::export_collection": (READER, "export"),
     "pyrite/server/endpoints/daily.py::_load_existing_daily_note": (
         READER,

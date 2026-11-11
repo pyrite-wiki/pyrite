@@ -6,7 +6,10 @@ to avoid rechecking unchanged URLs.
 
 import json
 import logging
+import socket
 import sqlite3
+import urllib.error
+import urllib.request
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -15,8 +18,9 @@ from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from ..exceptions import StorageError
+from ..exceptions import ClipperBlockedHostError, StorageError, outside_text
 from ..storage.errors import storage_error_from
+from ..utils.public_destination import check_url_safe as _check_url_safe
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +56,14 @@ class URLCheckResult:
             checked_at=d.get("checked_at", ""),
             redirect_url=d.get("redirect_url", ""),
         )
+
+
+class _PublicDestinationRedirects(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only to a destination the clipper's rule allows."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        _check_url_safe(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 class URLChecker:
@@ -117,16 +129,21 @@ class URLChecker:
         return dict(url_entries)
 
     def _urlopen(self, req: Any) -> Any:
-        """The network edge: one urlopen, nothing else."""
+        """The network edge: one request, nothing else, to a public address.
+
+        The destination is checked before the request and again on every
+        redirect hop (a redirect is a new destination), with the rule the web
+        clipper applies: globally routable addresses only. A refusal raises
+        ``ClipperBlockedHostError``.
+        """
         import urllib.request
 
-        return urllib.request.urlopen(req, timeout=self.timeout)
+        _check_url_safe(req.full_url)
+        opener = urllib.request.build_opener(_PublicDestinationRedirects)
+        return opener.open(req, timeout=self.timeout)
 
     def check_url(self, url: str) -> URLCheckResult:
         """Check a single URL for liveness."""
-        import urllib.error
-        import urllib.request
-
         try:
             req = urllib.request.Request(url, method="HEAD")
             req.add_header("User-Agent", "Pyrite-QA/1.0 (URL liveness check)")
@@ -156,14 +173,26 @@ class URLChecker:
                 ok=False,
                 checked_at=datetime.now(UTC).isoformat(),
             )
+        except ClipperBlockedHostError as exc:
+            # In Pyrite's words: the address a name resolved to stays in the
+            # log, not in a report.
+            if isinstance(exc.__cause__, socket.gaierror):
+                logger.info("URL check could not resolve a host", exc_info=True)
+                return self._failed(url, "host could not be resolved")
+            logger.info("URL check refused a non-public destination", exc_info=True)
+            return self._failed(url, "destination is not a public address")
         except Exception as e:
-            return URLCheckResult(
-                url=url,
-                status_code=0,
-                ok=False,
-                error=str(e)[:200],
-                checked_at=datetime.now(UTC).isoformat(),
-            )
+            return self._failed(url, outside_text(e)[:200])
+
+    @staticmethod
+    def _failed(url: str, error: str) -> URLCheckResult:
+        return URLCheckResult(
+            url=url,
+            status_code=0,
+            ok=False,
+            error=error,
+            checked_at=datetime.now(UTC).isoformat(),
+        )
 
     def check_urls(
         self,

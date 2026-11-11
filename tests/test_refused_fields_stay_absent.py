@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from pyrite.config import KBConfig
+from pyrite.exceptions import OUTSIDE_TEXT_WITHHELD
 from tests.test_unloadable_file_is_never_written import (  # noqa: F401 - the autouse fixture
     REL,
     SHAPES,
@@ -130,7 +131,15 @@ def test_a_refused_field_is_absent_from_every_read_and_named(
     problem = data["load_problems"][0]
     assert set(problem) == {"field", "rule", "severity", "message"}
     assert problem["rule"] == "load"
-    assert spec.loader in problem["message"]
+    # The loader's own text for the local process; a network read gets it only
+    # when the loader raised a PyriteError, else Pyrite's withheld text (0.26.2).
+    # `pyrite-read` is local too, but binds no local process yet (#1460).
+    if surface == "cli":
+        assert spec.loader in problem["message"]
+    else:
+        assert spec.loader in problem["message"] or OUTSIDE_TEXT_WITHHELD in problem["message"], (
+            problem
+        )
 
 
 @pytest.mark.parametrize("surface", SURFACES)

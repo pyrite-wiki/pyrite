@@ -21,10 +21,10 @@ export const E2E_KB = 'e2e';
  *
  *   - `/login` and `/register` are not the app's operating mode; auth specs
  *     must either skip or run under their own auth-enabled project (package C);
- *   - every request has write tier, so `GET /daily/{date}` DOES create a note
- *     for a date that has none. The seed therefore pre-creates every date the
- *     specs navigate to (see `SEEDED_DAILY_DATES`), which makes those GETs
- *     reads and leaves the world unchanged by a read-only run.
+ *   - every request has write tier. `GET /daily/{date}` creates nothing for
+ *     any caller (it answers 404 for a date with no note; the page offers
+ *     "Start today's note", a POST), so the seed pre-creates every date the
+ *     specs navigate to (see `SEEDED_DAILY_DATES`) for them to find a note.
  */
 export const AUTH_ENABLED = false;
 
@@ -93,8 +93,8 @@ export function dateOffsetFromToday(offset: number): string {
 
 /**
  * Every date the daily specs can land on: today, and the days reachable by the
- * prev/next buttons they click. Seeding all of them keeps `GET /daily/{date}`
- * a read for the whole suite.
+ * prev/next buttons they click. Each has a note, so every daily page the
+ * suite opens shows one.
  */
 export const DAILY_OFFSETS_SEEDED = [-3, -2, -1, 0, 1, 2] as const;
 

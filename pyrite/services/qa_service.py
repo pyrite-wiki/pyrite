@@ -25,6 +25,7 @@ from ..exceptions import (
     InvalidQATierError,
     KBUnreadableError,
     PyriteError,
+    public_text,
 )
 from ..plugins.registry import get_registry
 from ..schema import validate_date, validate_importance
@@ -612,7 +613,8 @@ class QAService:
                     {
                         "entry_id": eid,
                         "error_code": getattr(exc, "error_code", "INTERNAL_ERROR"),
-                        "reason": getattr(exc, "reason", None) or f"{type(exc).__name__}: {exc}",
+                        "reason": getattr(exc, "reason", None)
+                        or public_text(exc, already_logged=True),
                     }
                 )
                 continue
@@ -692,7 +694,10 @@ class QAService:
             )
         except Exception as e:
             logger.warning("Task creation failed for %s: %s", entry_id, e, exc_info=True)
-            return {"entry_id": entry_id, "reason": f"{type(e).__name__}: {e}"}
+            return {
+                "entry_id": entry_id,
+                "reason": public_text(e, already_logged=True),
+            }
         return None
 
     # =========================================================================
@@ -1281,9 +1286,17 @@ class QAService:
         tagged, complex or duplicate key), with the line and the reason: the
         same walk ``index health`` reports (``storage.index.unmodellable_files``),
         on every file of the KB or on ``entry_id``'s file alone. A warning,
-        as it is to ``index health``: the file reads; no write reaches it."""
+        as it is to ``index health``: the file reads; no write reaches it.
+
+        For one id the cost is what the index allows, as for a read by id:
+        the file the index holds for it, else only the files the index may
+        have missed (``kb_service.files_the_index_may_miss``: no row, or a
+        changed stat; at most ``MISS_SCAN_MAX_FILES``, newest first). A file
+        no lookup can read (a duplicate key) never has a row, so it is among
+        them, and is listed under its stem as the KB walk lists it."""
         from ..storage.index import unmodellable_files
         from ..storage.repository import KBRepository
+        from .kb_service import files_the_index_may_miss
 
         kb_config = self.config.get_kb(kb_name)
         if kb_config is None:
@@ -1291,15 +1304,14 @@ class QAService:
         if entry_id is None:
             rows = unmodellable_files(kb_config)
         else:
-            only = KBRepository(kb_config).find_file(entry_id)
-            # A file no lookup can read (a duplicate key) is found by no id;
-            # the KB walk lists it under its stem, so the one-entry report
-            # takes the KB walk's own rows for that id and the two agree.
-            rows = (
-                unmodellable_files(kb_config, [only])
-                if only is not None
-                else [row for row in unmodellable_files(kb_config) if row["id"] == entry_id]
-            )
+            row = self.db.get_entry(entry_id, kb_name)
+            indexed = row.get("file_path") if row else None
+            if indexed:
+                rows = unmodellable_files(kb_config, [Path(indexed)])
+            else:
+                repo = KBRepository(kb_config)
+                may_miss = sorted(files_the_index_may_miss(self.db, repo))
+                rows = [r for r in unmodellable_files(kb_config, may_miss) if r["id"] == entry_id]
         for row in rows:
             issues.append(
                 {
@@ -1390,7 +1402,7 @@ class QAService:
                         "field": "file",
                         "message": (
                             f"Entry '{entry_id}': its file could not be loaded, so the "
-                            f"checks that read it did not run: {exc}"
+                            f"checks that read it did not run: {public_text(exc, log=logger)}"
                         ),
                     }
                 )
@@ -1513,16 +1525,18 @@ class QAService:
         at load (#704) and is not reported here. The path in the message is the
         handle to use: no index row exists for such a file.
         """
-        from ..storage.repository import _is_regular_file
+        from ..storage.repository import _is_regular_file, _text_of
         from ..utils.frontmatter import Frontmatter, split_frontmatter
+        from ..utils.kb_files import KBFileOutsideRootError
         from ..utils.yaml import load_yaml
 
         for file_path in repo.list_files():
             if not _is_regular_file(file_path):
                 continue  # a FIFO would block the read (#972; the dev-to-arch merge, #1026)
             try:
-                text = file_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+                # Only inside the KB, one name: what QA reports may quote it.
+                text = _text_of(repo._read_inside(file_path))
+            except (OSError, UnicodeDecodeError, KBFileOutsideRootError):
                 continue
             split = split_frontmatter(text)
             if not isinstance(split, Frontmatter):
@@ -1890,7 +1904,7 @@ class QAService:
                         "message": (
                             f"Rubric checker '{checker_name}' failed on this entry, so "
                             f"'{item.get('text', '')}' was not checked: "
-                            f"{type(exc).__name__}: {exc}"
+                            f"{public_text(exc, already_logged=True)}"
                         ),
                     }
                 )
@@ -1958,7 +1972,7 @@ class QAService:
             # Whatever the evaluator did not expect is still a check that did
             # not run: name it for this entry, never end the caller's run.
             logger.warning("Tier 2 evaluation of %s failed", entry["id"], exc_info=True)
-            raise EvaluationFailedError(entry["id"], f"{type(exc).__name__}: {exc}") from exc
+            raise EvaluationFailedError(entry["id"], public_text(exc, already_logged=True)) from exc
 
     def _run_evaluator(
         self, entry: dict[str, Any], judgment_items: list[str], guidelines: str
@@ -2012,7 +2026,7 @@ class QAService:
                         "severity": "error",
                         "field": "evaluation_rubric",
                         "message": f"Tier 2 did not run for '{row['id']}': "
-                        + getattr(exc, "reason", str(exc)),
+                        + (getattr(exc, "reason", None) or public_text(exc, log=logger)),
                     }
                 )
 

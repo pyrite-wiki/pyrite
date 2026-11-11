@@ -16,7 +16,7 @@ tags: [core, services, export, git]
 | Method | Description |
 |--------|-------------|
 | `export_kb_to_directory()` | Export all entries as markdown files with YAML frontmatter |
-| `export_kb_to_repo(kb_name, repo_url, github_token, branch, commit_message)` | Clone target repo, export entries into `kb_name/` subdirectory, commit, push. Full end-to-end export-to-GitHub flow |
+| `export_kb_to_repo(kb_name, repo_url, github_token, branch, commit_message)` | Clone target repo, export entries into `kb_name/` subdirectory, commit, push. `repo_url` must be `https://` on a host in `settings.git_allowed_hosts` (`REMOTE_NOT_ALLOWED`, before any git call); no write passes through a link in the clone (`UNSAFE_DESTINATION`, nothing committed or pushed) |
 | `commit_kb()` | Commit changes in a KB's git repository (delegates to `GitService`) |
 | `push_kb()` | Push KB commits to a remote repository (delegates to `GitService`) |
 

@@ -35,6 +35,19 @@ app = typer.Typer(
 )
 console = cli_console()
 
+
+@app.callback()
+def _root(ctx: typer.Context) -> None:
+    """Every pyrite-admin command is the operator's own process
+    (``services.acting``): bound here for the command, as ``pyrite``'s root
+    binds it, so an in-process invocation is the operator too, not only one
+    that went through ``main``."""
+    from .services.acting import OPERATOR, acting_as, local_process
+
+    ctx.with_resource(acting_as(OPERATOR))
+    ctx.with_resource(local_process(True))
+
+
 # =============================================================================
 # Sub-apps
 # =============================================================================
@@ -738,8 +751,13 @@ def user_create(
 
 
 def main():
+    from .services.acting import OPERATOR, acting_as, local_process
+
     configure_entry_point_logging(app=app)
-    app()
+    # The operator's own tool (`services.acting.OPERATOR`), bound explicitly,
+    # run as the local process (`services.acting.is_local_process`).
+    with acting_as(OPERATOR), local_process(True):
+        app()
 
 
 if __name__ == "__main__":

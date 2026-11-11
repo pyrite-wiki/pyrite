@@ -555,13 +555,21 @@ def start_investigation(
     require_kb(config, kb_name, output_format="json" if output_json else "rich")
     db = PyriteDB(config.settings.index_path)
     try:
-        result = create_investigation(
-            db=db,
-            kb_name=kb_name,
-            title=title,
-            scope=scope,
-            key_questions=questions if questions else None,
-        )
+        from pyrite.exceptions import KBReadOnlyError
+        from pyrite.services.kb_service import KBService
+
+        try:
+            result = create_investigation(
+                KBService(config, db),
+                kb_name=kb_name,
+                title=title,
+                scope=scope,
+                key_questions=questions if questions else None,
+            )
+        except KBReadOnlyError as e:
+            from pyrite.utils.errors import cli_error_from
+
+            cli_error_from(e, "json" if output_json else "rich")
 
         if output_json:
             _emit_json_result(result)
@@ -851,9 +859,9 @@ def bulk_edges(
             data = json_mod.loads(raw)
         except json_mod.JSONDecodeError:
             try:
-                import yaml
+                from pyrite.utils.yaml import safe_load_bounded
 
-                data = yaml.safe_load(raw)
+                data = safe_load_bounded(raw)
             except Exception:
                 console.print("[red]Error:[/red] Could not parse input as JSON or YAML")
                 raise typer.Exit(1)
@@ -867,7 +875,15 @@ def bulk_edges(
             console.print('[red]Error:[/red] Input must be a list of edges or {"edges": [...]}')
             raise typer.Exit(1)
 
-        result = create_edge_batch(db, kb_name, edges, dry_run=dry_run)
+        from pyrite.exceptions import KBNotFoundError, KBReadOnlyError
+        from pyrite.services.kb_service import KBService
+
+        try:
+            result = create_edge_batch(KBService(config, db), kb_name, edges, dry_run=dry_run)
+        except (KBNotFoundError, KBReadOnlyError) as e:
+            from pyrite.utils.errors import cli_error_from
+
+            cli_error_from(e, "json" if output_json else "rich")
 
         from pyrite.utils.errors import exit_unless_whole
 
@@ -958,7 +974,15 @@ def ftm_import(
                         )
                         raise typer.Exit(1)
 
-        result = import_ftm(db, kb_name, entities, dry_run=dry_run)
+        from pyrite.exceptions import KBNotFoundError, KBReadOnlyError
+        from pyrite.services.kb_service import KBService
+
+        try:
+            result = import_ftm(KBService(config, db), kb_name, entities, dry_run=dry_run)
+        except (KBNotFoundError, KBReadOnlyError) as e:
+            from pyrite.utils.errors import cli_error_from
+
+            cli_error_from(e, "json" if output_json else "rich")
 
         from pyrite.utils.errors import exit_unless_whole
 

@@ -86,6 +86,7 @@ NOT_AN_ENTRY_FILE: dict[tuple[str, str], str] = {
     ("pyrite/cli/__init__.py", "generate_readme_cmd"): "a generated README, not an entry",
     ("pyrite/cli/extension_commands.py", "extension_init"): "an extension scaffold",
     ("pyrite/cli/mcp_setup_command.py", "_setup_file"): "an MCP client's config file",
+    ("pyrite/utils/private_files.py", "write_private_text"): "the GitHub token file",
     ("pyrite/utils/yaml.py", "dump_yaml_file"): "config and schema files (kb.yaml, config.yaml)",
     (
         "pyrite/services/schema_service.py",

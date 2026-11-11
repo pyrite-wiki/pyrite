@@ -1,1 +1,0 @@
-- Fix CLI help text rendering across subcommands: escape wikilink brackets in `pyrite rename --help`, replace historical developer notes with user documentation in `sw new-adr` and `zettel new`, clarify `create -k` requirement, explain orphan vs missing-link counts in `qa validate` / `qa gaps`, and document review outcome state changes in `sw review` (#1290).

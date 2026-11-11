@@ -472,6 +472,25 @@ class TestOrientWithNoNameIsTheFirstCall:
         assert result.exit_code == 0, result.output
         assert json.loads(result.output) == one_kb.mcp("kb_orient")
 
+    @pytest.mark.parametrize("bad_limit", ["0", "-1", "101"])
+    def test_cli_limit_outside_1_to_100_is_a_usage_error(self, one_kb, monkeypatch, bad_limit):
+        """The help text promises a maximum of 100; the CLI refuses before the service."""
+        result = one_kb.cli(monkeypatch, "orient", "--limit", bad_limit)
+        assert result.exit_code == 2, result.output
+        assert "Invalid value for '--limit'" in result.output
+        assert "USAGE_ERROR" in result.output
+        assert "VALIDATION_FAILED" not in result.output
+
+    @pytest.mark.parametrize("good_limit", ["1", "100"])
+    def test_cli_limit_at_the_bounds_is_accepted(self, one_kb, monkeypatch, good_limit):
+        result = one_kb.cli(monkeypatch, "orient", "--limit", good_limit)
+        assert result.exit_code == 0, result.output
+        assert "knowledge_bases" in json.loads(result.output)
+
+    def test_cli_valid_limit_with_a_named_kb_still_works(self, one_kb, monkeypatch):
+        result = one_kb.cli(monkeypatch, "orient", "--kb", "notes", "--limit", "50")
+        assert result.exit_code == 0, result.output
+
     def test_detail_with_no_name_is_accepted_and_changes_nothing(self, one_kb):
         brief = one_kb.mcp("kb_orient", {"detail": "brief"})
         assert "knowledge_bases" in brief
@@ -730,7 +749,7 @@ class TestAKbNameThatIsNotAStringIsRefused:
         assert out.get("error_code") == "VALIDATION_FAILED", out
         assert "knowledge_bases" not in out
 
-    @pytest.mark.control(reason="a blank string is already 'no name' (named_kb, private #74)")
+    @pytest.mark.control(reason="a blank string is already 'no name' (named_kb)")
     @pytest.mark.parametrize("blank", ["", "   "])
     def test_a_blank_string_is_still_no_name(self, sw, blank):
         assert "knowledge_bases" in sw.dispatch("kb_orient", {"kb_name": blank})

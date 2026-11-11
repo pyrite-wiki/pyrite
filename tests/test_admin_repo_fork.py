@@ -55,7 +55,7 @@ def _bare_fork(tmp_path: Path) -> Path:
 @pytest.fixture
 def world(tmp_path, monkeypatch):
     """A config directory with a saved token and an empty config, and git
-    told to fetch the fork's GitHub URL (token included) from a local bare repo."""
+    told to fetch the fork's GitHub URL from a local bare repo."""
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     monkeypatch.setattr(config_module, "CONFIG_DIR", config_dir)
@@ -67,10 +67,20 @@ def world(tmp_path, monkeypatch):
 
     bare = _bare_fork(tmp_path)
     gitconfig = tmp_path / "gitconfig"
-    gitconfig.write_text(
-        f'[url "{bare}"]\n\tinsteadOf = https://oauth2:{TOKEN}@github.com/test/project.git\n'
-    )
+    gitconfig.write_text(f'[url "{bare}"]\n\tinsteadOf = https://github.com/test/project.git\n')
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
+    # The rewrite to a local path is what git_allowed_hosts refuses (git
+    # reaches only allowed https hosts): here it stands in for github.com, so
+    # the host rule is shown the
+    # URL the fork named, and git may use the local (file) transport.
+    from pyrite.services import git_service
+
+    monkeypatch.setattr(GitService, "_effective_url", staticmethod(lambda url, cwd=None: url))
+    monkeypatch.setattr(
+        git_service,
+        "_NETWORK_GUARD_ENV",
+        {**git_service._NETWORK_GUARD_ENV, "GIT_ALLOW_PROTOCOL": "https:file"},
+    )
     return config
 
 
@@ -99,6 +109,7 @@ def test_admin_fork_clones_the_fork_and_links_upstream(world, monkeypatch):
     clone = world.settings.workspace_path / "test" / "project"
     assert (clone / "note.md").is_file()
     assert _git(clone, "remote", "get-url", "upstream") == UPSTREAM_URL
+    assert TOKEN not in (clone / ".git" / "config").read_text()
     saved = config_module.load_config()
     assert [kb.name for kb in saved.knowledge_bases] == ["forked-kb"]
 

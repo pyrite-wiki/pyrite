@@ -410,23 +410,27 @@ class TestNoRefspecMeaning:
         assert r.json()["success"] is False
         assert _heads(repo["bare"]) == ""
 
+    @pytest.mark.control(reason="existing branch refusal; its destination is now an allowed host")
     def test_export_to_repo_refuses_a_forcing_branch(self, repo):
         pushed = _rewrite_history(repo)
         db = PyriteDB(repo["config"].settings.index_path)
         try:
             svc = ExportService(repo["config"], db)
             with pytest.raises(InvalidGitRefError):
-                svc.export_kb_to_repo(KB, str(repo["bare"]), branch="+main")
+                # An allowed destination, so the branch is what is refused;
+                # the refusal comes before any git call.
+                svc.export_kb_to_repo(KB, "https://github.com/o/r", branch="+main")
         finally:
             db.close()
         assert _remote_main(repo) == pushed
 
 
+@pytest.mark.control(reason="existing branch refusal; its destination is now an allowed host")
 def test_rest_export_answers_invalid_ref(repo):
     """POST /api/kbs/{kb}/export maps a rejected branch to 400 INVALID_REF."""
     pushed = _rewrite_history(repo)
     r = TestClient(create_app(config=repo["config"])).post(
-        f"/api/kbs/{KB}/export", json={"repo_url": str(repo["bare"]), "branch": "+main"}
+        f"/api/kbs/{KB}/export", json={"repo_url": "https://github.com/o/r", "branch": "+main"}
     )
     assert r.status_code == 400, r.text
     assert r.json()["detail"]["code"] == "INVALID_REF"

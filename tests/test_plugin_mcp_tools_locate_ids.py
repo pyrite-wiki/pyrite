@@ -266,8 +266,14 @@ def test_every_plugin_id_tool_declares_locates_entry(server):
 
 
 def _call(ctx, tool, args, *, readable=None, writable=None):
+    """A scoped call is an operator key's: scoped by its role, with no
+    account, so a person argument is the label it names. A scoped
+    call with no principal at all records no one and is refused."""
+    from pyrite.services.access_policy import Principal
+
+    principal = Principal.from_api_key("write") if readable is not None else None
     return ctx["server"]._dispatch_tool(
-        tool, args, readable_kbs=readable, writable_kbs=writable or readable
+        tool, args, readable_kbs=readable, writable_kbs=writable or readable, principal=principal
     )
 
 

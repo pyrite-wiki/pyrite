@@ -498,11 +498,17 @@ class QAFixService:
         the file, not the model's reading of it."""
         from ..storage.repository import KBRepository
         from ..utils.frontmatter import load_frontmatter
+        from ..utils.kb_files import KBFileOutsideRootError
 
         kb_config = self.config.get_kb(kb_name)
         if not kb_config:
             return None
-        found = KBRepository(kb_config).read_for_write(entry_id)
+        try:
+            # Read only inside the KB, one name: a link out or a hard link is
+            # no file this fix may read (and its write would be refused).
+            found = KBRepository(kb_config).read_for_write(entry_id)
+        except (OSError, KBFileOutsideRootError):
+            return None
         if found is None:
             return None
         _path, raw = found

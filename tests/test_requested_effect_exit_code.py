@@ -925,6 +925,7 @@ GUARDED = {
     "pyrite batch-read": "TestBatchRead",
     "pyrite create": "TestCreateWithFailedLink",
     "pyrite export collection": "TestExportCollection",
+    "pyrite export site": "TestExportSite",
     "pyrite extension install": "TestExtensionVerify",
     "pyrite import": "TestImportAndBulkLinks",
     "pyrite index embed": "TestEmbed",
@@ -962,7 +963,6 @@ SAFE = {
     "pyrite db backup": "one file copy; failure raises",
     "pyrite db restore": "one file copy; failure raises",
     "pyrite delete": "one entry; a missing id exits 1",
-    "pyrite export site": "one build; a failure raises",
     "pyrite extension init": "scaffold; failure raises",
     "pyrite extension uninstall": "one pip call; failure exits 1 (cli_error)",
     "pyrite ids missing": "exits 3 when files are left (ids_commands.OUTSIDE_CONTRACT)",
@@ -1639,11 +1639,11 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "a failed --bidi inverse is returned as Outcome.partial (exit 3): "
         "tests/test_cli_outcome_write_path.py",
     ),
-    ("pyrite/cli/export_commands.py", "_follow_links"): (
+    ("pyrite/cli/export_commands.py", "_load_entry_with_reason"): (
         "safe",
-        "a linked file its type cannot load is left out and named; export is a read (ADR-0042 8a)",
+        "an unloadable row is returned with its reason; the command prints it and "
+        "the caller exits through exit_unless_whole (#1325)",
     ),
-    ("pyrite/cli/export_commands.py", "_load_entry_from_result"): ("fixed", "TestExportCollection"),
     ("pyrite/cli/export_commands.py", "export_collection"): ("fixed", "TestExportCollection"),
     ("pyrite/cli/extension_commands.py", "_verify_distribution"): ("fixed", "TestExtensionVerify"),
     ("pyrite/cli/extension_commands.py", "extension_install"): ("fixed", "TestExtensionVerify"),
@@ -1912,5 +1912,18 @@ class TestExportCollection:
         cli.pyrite("index", "sync", "--no-embed")
         out = cli.pyrite("export", "collection", "stuff", "-k", "demo", "-o", str(cli.root / "out"))
         text = out.stdout + out.stderr
-        assert "Exported 1 entries" in text, text
+        assert "Exported 1 entry" in text, text
+        assert out.returncode == PARTIAL, text
+
+
+class TestExportSite:
+    def test_an_entry_that_could_not_be_loaded_exits_partial(self, cli):
+        (cli.kb / "good.md").write_text("---\nid: good\ntitle: Good\ntype: note\n---\nbody\n")
+        (cli.kb / "other.md").write_text("---\nid: other\ntitle: Other\ntype: note\n---\nbody\n")
+        cli.pyrite("index", "sync", "--no-embed")
+        (cli.kb / "good.md").write_text("---\nid: good\ntitle: [unclosed\ntype: note\n---\nbody\n")
+        out = cli.pyrite("export", "site", "-k", "demo", "-o", str(cli.root / "site"))
+        text = out.stdout + out.stderr
+        assert "1 entry left out" in text, text
+        assert "good" in text, text
         assert out.returncode == PARTIAL, text

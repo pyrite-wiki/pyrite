@@ -120,8 +120,15 @@ class TaskService:
             result["warnings"] = written.warnings
         return result
 
-    def update_task(self, task_id: str, kb_name: str, **updates) -> dict[str, Any]:
+    def update_task(
+        self, task_id: str, kb_name: str, *, acting: str | None = None, **updates
+    ) -> dict[str, Any]:
         """Update task fields.
+
+        ``acting`` is the signed-in caller's key (``user:<id>``) when there is
+        one. A task an account holds can then have its assignee changed --
+        taken or cleared -- only by that account; a label assignee, or
+        no assignee, may be changed as before.
 
         A ``comment`` (and optional ``by``) records *why* a status transition
         happened: when this update changes ``status`` and a comment is supplied,
@@ -134,6 +141,17 @@ class TaskService:
         """
         comment = updates.pop("comment", "") or ""
         by = updates.pop("by", "") or ""
+
+        if acting is not None and "assignee" in updates:
+            current = self.db.get_entry(task_id, kb_name) or {}
+            holder = current.get("assignee") or ""
+            if holder.startswith("user:") and holder != acting:
+                from ..exceptions import Forbidden
+
+                raise Forbidden(
+                    f"Task '{task_id}' is held by another account; only its holder "
+                    "can change its assignee"
+                )
 
         # Capture the prior status so we can record the transition.
         old_status = ""

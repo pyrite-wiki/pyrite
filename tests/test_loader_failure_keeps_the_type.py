@@ -32,6 +32,18 @@ from pyrite.plugins import get_registry
 from pyrite.storage.repository import KBRepository
 
 
+@pytest.fixture(autouse=True)
+def _as_the_local_process():
+    """These tests call the repository as the operator's own process does, so
+    the refusal carries the loader's text. A network caller gets Pyrite's
+    withheld text instead (ADR-0052 N3): pinned by
+    ``test_a_network_refusal_withholds_the_loaders_text_and_the_cli_shows_it``."""
+    from pyrite.services.acting import local_process
+
+    with local_process(True):
+        yield
+
+
 def _all_types() -> dict[str, tuple[str, type]]:
     """Every registered entry type: name -> (origin, class)."""
     types = {name: ("core", cls) for name, cls in ENTRY_TYPE_REGISTRY.items()}
@@ -489,7 +501,9 @@ def test_export_site_includes_an_empty_frontmatter_note_and_names_what_it_cannot
 
     result = world.cli("export", "site", "-k", "sw", "-o", str(out))
 
-    assert result.exit_code == 0, result.output
-    assert "Exported 1 entries" in result.output
-    said = result.output.replace("\n", " ")
-    assert "could not be loaded" in said and "exported: ok" in said
+    # Some exported, some left out: ADR-0046's partial exit (3), each left-out
+    # entry named on its own line with the loader's reason (#1438).
+    assert result.exit_code == 3, result.output
+    assert "Exported 1 entry" in result.output
+    assert "1 entry left out, could not be loaded:" in result.output
+    assert "  ok: " in result.output and "float infinity" in result.output

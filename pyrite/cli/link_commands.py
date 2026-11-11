@@ -31,7 +31,7 @@ console = cli_console()
 @links_app.command("check")
 def links_check(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB to check links from"),
-    limit: int = typer.Option(500, "--limit", help="Max missing targets to show"),
+    limit: int = typer.Option(500, "--limit", min=1, help="Max missing targets to show"),
     detail: bool = typer.Option(False, "--detail", help="Show per-link breakdown"),
     output_format: str = OUTPUT_FORMAT,
 ) -> Outcome:
@@ -108,9 +108,9 @@ def links_check(
 
 def _parse_link_specs(raw: str) -> list[dict]:
     """Parse YAML link specifications from a string."""
-    import yaml
+    from ..utils.yaml import safe_load_bounded
 
-    data = yaml.safe_load(raw)
+    data = safe_load_bounded(raw)
     if not isinstance(data, list):
         raise ValidationError("YAML input must be a list of link specs")
     return data
@@ -199,6 +199,10 @@ def links_bulk_create(
             item["error"] = r.get("error", "failed")
             if r.get("error_code"):
                 item["error_code"] = r["error_code"]
+            if r.get("errors"):
+                # The rows the service answered, on the item they belong to
+                # (#1381 review): a bulk caller fixes fields, not prose.
+                item["errors"] = r["errors"]
         items.append(item)
 
     def rich(console: Console, data: dict) -> None:
@@ -271,7 +275,7 @@ def links_suggest(
     target_kb: str | None = typer.Option(
         None, "--target-kb", help="KB to search for candidates (default: same as --kb)"
     ),
-    limit: int = typer.Option(10, "--limit", "-n", help="Max number of suggestions"),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, help="Max number of suggestions"),
     output_format: str = OUTPUT_FORMAT,
 ) -> Outcome:
     """Suggest related entries that could be linked.
@@ -387,7 +391,7 @@ def links_discover(
     target_kb: str | None = typer.Option(
         None, "--target-kb", help="KB to search (default: all KBs, including the source KB)"
     ),
-    limit: int = typer.Option(10, "--limit", "-n", help="Max results"),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, help="Max results"),
     mode: str = typer.Option(
         "hybrid", "--mode", "-m", help="Search mode: keyword, semantic, hybrid"
     ),

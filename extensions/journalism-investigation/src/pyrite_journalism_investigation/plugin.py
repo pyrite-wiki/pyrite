@@ -97,8 +97,42 @@ class JournalismInvestigationPlugin:
         return None
 
     def _resolve_kb(self, args: dict[str, Any]) -> str:
-        """Resolve kb_name from args, default investigation KB, or 'investigation'."""
+        """Resolve kb_name from args, default investigation KB, or 'investigation'.
+
+        A write tool's handler never falls back here: its tool declares
+        ``default_kb`` (``_default_write_kb``), and the MCP dispatcher sets
+        ``kb_name`` from it before its checks, so ``args["kb_name"]`` is always
+        the KB those checks ran on. The read tools still fall
+        back, through ``_readable_kb``.
+        """
         return args.get("kb_name") or self._default_investigation_kb() or "investigation"
+
+    def _default_write_kb(self, args: dict[str, Any], readable_kbs: set[str] | None) -> str | None:
+        """The KB a write tool works in when the call names none: the first
+        investigation KB the caller may read, else a KB named ``investigation``.
+
+        Asked by the MCP dispatcher before its read, write and landing checks
+        (the ``default_kb`` declaration), so the KB it names is
+        checked like a named one. Only KBs the caller may read are offered: a
+        default the caller cannot read would be refused by its name, which
+        would tell the caller that KB exists.
+        """
+        config = getattr(self.ctx, "config", None) if self.ctx is not None else None
+        if not config:
+            return None
+        for kb in config.knowledge_bases:
+            if getattr(kb, "kb_type", None) == "journalism-investigation" and (
+                readable_kbs is None or kb.name in readable_kbs
+            ):
+                return kb.name
+        # A KB named "investigation" of another type, if there is one. Never a
+        # name that matches no KB: the call is then refused for naming none,
+        # not answered "not found" for a name the caller never sent.
+        if config.get_kb("investigation") is not None and (
+            readable_kbs is None or "investigation" in readable_kbs
+        ):
+            return "investigation"
+        return None
 
     def _readable_kb(self, args: dict[str, Any], readable_kbs: set[str] | None) -> str:
         """The KB this call reads, or a name that matches nothing (#223).
@@ -645,6 +679,7 @@ class JournalismInvestigationPlugin:
                     "required": ["entity_type", "title"],
                 },
                 "handler": self._mcp_create_entity,
+                "default_kb": self._default_write_kb,
             }
             tools["investigation_create_event"] = {
                 "description": "Record a new event or incident in your investigation timeline. Specify a type, title, and date",
@@ -679,6 +714,7 @@ class JournalismInvestigationPlugin:
                     "required": ["event_type", "title", "date"],
                 },
                 "handler": self._mcp_create_event,
+                "default_kb": self._default_write_kb,
             }
             tools["investigation_create_claim"] = {
                 "description": "Document a claim or allegation that needs verification. Provide the assertion text and optionally link evidence",
@@ -713,6 +749,7 @@ class JournalismInvestigationPlugin:
                     "required": ["title", "assertion"],
                 },
                 "handler": self._mcp_create_claim,
+                "default_kb": self._default_write_kb,
             }
             tools["investigation_start"] = {
                 "description": "Start a new investigation — create the investigation entry with scope, key questions, and initial entities to research",
@@ -751,6 +788,7 @@ class JournalismInvestigationPlugin:
                     "required": ["title"],
                 },
                 "handler": self._mcp_investigation_start,
+                "default_kb": self._default_write_kb,
             }
             tools["investigation_promote_claim"] = {
                 "description": "Promote a corroborated or partially-verified claim to a structured edge-entity (ownership, membership, funding) in the investigation graph",
@@ -842,6 +880,7 @@ class JournalismInvestigationPlugin:
                     "required": ["title"],
                 },
                 "handler": self._mcp_log_source,
+                "default_kb": self._default_write_kb,
             }
             tools["investigation_bulk_edges"] = {
                 "description": "Create multiple connection entries (ownership, membership, funding) at once. Validates all edges before creating, skips duplicates, and auto-generates titles/IDs",
@@ -882,6 +921,7 @@ class JournalismInvestigationPlugin:
                     "required": ["edges"],
                 },
                 "handler": self._mcp_bulk_edges,
+                "default_kb": self._default_write_kb,
             }
             tools["investigation_ftm_import"] = {
                 "description": "Import FollowTheMoney (FtM) entities into the investigation KB for Aleph interop",
@@ -905,6 +945,7 @@ class JournalismInvestigationPlugin:
                     "required": ["entities"],
                 },
                 "handler": self._mcp_ftm_import,
+                "default_kb": self._default_write_kb,
             }
         for tool in tools.values():
             tool["description"] = f"{_EXPERIMENTAL_NOTICE} {tool['description']}"
@@ -1141,6 +1182,18 @@ class JournalismInvestigationPlugin:
             return self.ctx.kb_service
         return None
 
+    def _writing_kb_service(self, db):
+        """A KBService for the batch tools, which create every entry through
+        the pipeline: the context's when it carries one (it
+        honours a change-set landing, ADR-0044), else one over this plugin's
+        config (`_get_config`) and ``db``."""
+        kb_service = self._get_kb_service()
+        if kb_service is not None:
+            return kb_service
+        from pyrite.services.kb_service import KBService
+
+        return KBService(self._get_config(), db)
+
     def _mcp_create_entity(self, args: dict[str, Any]) -> dict[str, Any]:
         """Create an entity entry."""
         from pyrite.schema import generate_entry_id
@@ -1341,9 +1394,9 @@ class JournalismInvestigationPlugin:
         db, should_close = self._get_db()
         try:
             kb_name = self._resolve_kb(args)
-            # The KB through the server's config (#952): `create_investigation`
-            # inserts the entry row itself, so the read-only rule is applied
-            # here, before it, the way KBService applies it to every write.
+            # The KB through the server's config (#952). `create_investigation`
+            # writes through KBService and raises on a read-only KB; the
+            # refusal is answered here first, in this tool's own shape.
             # A KB that does not exist is left to `create_investigation`'s
             # own answer: the chokepoint has already refused a *named* one,
             # so this is the plugin's default KB, and its hint says so.
@@ -1357,13 +1410,12 @@ class JournalismInvestigationPlugin:
                 e = KBReadOnlyError(f"KB is read-only: {kb_name}")
                 return {"error": public_text(e), "error_code": e.error_code}
             return create_investigation(
-                db=db,
+                self._writing_kb_service(db),
                 kb_name=kb_name,
                 title=args.get("title", ""),
                 scope=args.get("scope", ""),
                 key_questions=args.get("key_questions"),
                 initial_entities=args.get("initial_entities"),
-                kb_service=self._get_kb_service(),
             )
         finally:
             if should_close:
@@ -1390,11 +1442,10 @@ class JournalismInvestigationPlugin:
         kb_name = self._resolve_kb(args)
         try:
             return create_edge_batch(
-                db=db,
+                self._writing_kb_service(db),
                 kb_name=kb_name,
                 edges=args.get("edges", []),
                 dry_run=args.get("dry_run", False),
-                kb_service=self._get_kb_service(),
             )
         finally:
             if should_close:
@@ -1452,13 +1503,13 @@ class JournalismInvestigationPlugin:
         from .ftm import import_ftm
 
         db, should_close = self._get_db()
+        kb_name = self._resolve_kb(args)
         try:
             return import_ftm(
-                db,
-                self._resolve_kb(args),
+                self._writing_kb_service(db),
+                kb_name,
                 args.get("entities", []),
                 dry_run=args.get("dry_run", False),
-                kb_service=self._get_kb_service(),
             )
         finally:
             if should_close:

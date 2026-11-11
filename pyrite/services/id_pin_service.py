@@ -34,7 +34,7 @@ from typing import Any
 
 from .. import config as pyrite_config
 from ..config import KBConfig, PyriteConfig
-from ..exceptions import ValidationError
+from ..exceptions import PyriteError, ValidationError, outside_text
 from ..models.core_types import explicit_entry_id, id_text, read_entry_id
 from ..storage.repository import KBRepository
 from ..utils.atomic_write import FileChanged, HardLinked
@@ -50,8 +50,9 @@ _PLAIN_ID = re.compile(r"[A-Za-z][A-Za-z0-9._-]*")
 _YAML11_WORDS = {"y", "n", "yes", "no", "on", "off", "true", "false", "null"}
 
 
-class PinRefusedError(Exception):
-    """One file cannot take the pin as a single added line; the reason."""
+class PinRefusedError(PyriteError):
+    """One file cannot take the pin as a single added line; the reason, in
+    Pyrite's words (a ``PyriteError``, so ``outside_text`` passes it on)."""
 
 
 class PinMetadataRefusedError(PinRefusedError):
@@ -72,6 +73,8 @@ class IdScan:
     # sha256 of each id-less file's bytes as scanned: a pin is written only
     # to a file that still holds exactly these bytes (so still this id)
     digests: dict[str, str] = field(default_factory=dict)
+    # the KB's config, so `apply` asks it whether the KB takes writes
+    kb_config: KBConfig | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -176,7 +179,7 @@ def write_refusal(root: Path, path: Path) -> str | None:
                 where = current.relative_to(root).as_posix()
                 return f"inside a symlinked directory ({where}); pin does not write through links"
     except OSError as e:
-        return f"cannot be inspected: {e.strerror or e}"
+        return f"cannot be inspected: {e.strerror or type(e).__name__}"
     if st is None or not stat.S_ISREG(st.st_mode):
         return "not a regular file"
     if st.st_nlink > 1:
@@ -221,7 +224,9 @@ def _write_pin(root: Path, path: Path, planned_original: bytes, new_text: str) -
     try:
         checked = os.lstat(path.parent)
     except OSError as e:
-        raise PinRefusedError(f"its folder cannot be inspected: {e.strerror or e}") from e
+        raise PinRefusedError(
+            f"its folder cannot be inspected: {e.strerror or type(e).__name__}"
+        ) from e
     refusal = write_refusal(root, path)
     if refusal:
         raise PinRefusedError(refusal)
@@ -256,7 +261,7 @@ def _write_pin(root: Path, path: Path, planned_original: bytes, new_text: str) -
     except LockDirError:
         raise
     except OSError as e:
-        raise PinRefusedError(f"could not be written: {e.strerror or e}") from e
+        raise PinRefusedError(f"could not be written: {e.strerror or type(e).__name__}") from e
 
 
 def _write_pin_locked(root: Path, path: Path, planned_original: bytes, new_text: str) -> None:
@@ -277,7 +282,7 @@ def scan(kb_config: KBConfig) -> IdScan:
     files that could not be read."""
     repo = KBRepository(kb_config)
     root = repo.path
-    result = IdScan(kb=kb_config.name, root=root)
+    result = IdScan(kb=kb_config.name, root=root, kb_config=kb_config)
     holders: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
     for path in sorted(repo.list_files()):
@@ -285,33 +290,42 @@ def scan(kb_config: KBConfig) -> IdScan:
         refusal = write_refusal(root, path)
         if refusal:
             # Not a file pin may write. Never read before this check: a FIFO
-            # named `x.md` would block the read. Its id (read through the
-            # link, as the index reads it) still counts as taken, but it is
-            # no claimant: a link to a file in the KB would otherwise collide
-            # with its own target.
+            # named `x.md` would block the read. A link that stays inside the
+            # KB is read through, as the index reads it: its id still counts
+            # as taken, but it is no claimant (it would otherwise collide
+            # with its own target). A link out of the KB, or a hard link, is
+            # not the KB's: nothing it holds is read or reported.
             if ("symbolic link" in refusal or "hard links" in refusal) and path.is_file():
-                current = repo.id_of_file(path)
+                text = repo._inside_text(path)
+                current = repo.read_id(path, text)[0] if text is not None else None
                 if current:
                     result.taken.add(current)
-                    try:
-                        has_id = explicit_entry_id(path.read_text(encoding="utf-8"))
-                    except (OSError, UnicodeDecodeError):
-                        has_id = None
-                    if has_id:
+                    if explicit_entry_id(text):
                         continue
                     refusal += f"; its id today is {current!r}: add the line by hand"
             result.skipped.append({"path": rel, "reason": refusal})
             continue
         try:
-            raw = path.read_bytes()
+            # Inside the KB and one name, decided on the descriptor that
+            # reads it: `write_refusal` above is a check, this is the read.
+            raw = KBFiles(root).read_bytes(path)
+            if raw is None:
+                raise FileNotFoundError(rel)
             text = raw.decode("utf-8")
+        except KBFileOutsideRootError as e:
+            result.skipped.append({"path": rel, "reason": str(e)})
+            continue
         except (OSError, UnicodeDecodeError) as e:
-            result.skipped.append({"path": rel, "reason": f"not readable as UTF-8: {e}"})
+            result.skipped.append(
+                {"path": rel, "reason": f"not readable as UTF-8: {outside_text(e)}"}
+            )
             continue
         try:
             parsed = load_frontmatter(text)
         except Exception as e:  # what the loader would raise: report, never repair
-            result.skipped.append({"path": rel, "reason": f"invalid frontmatter: {e}"})
+            result.skipped.append(
+                {"path": rel, "reason": f"invalid frontmatter: {outside_text(e)}"}
+            )
             continue
         if parsed is None:
             result.skipped.append({"path": rel, "reason": "no YAML frontmatter"})
@@ -444,8 +458,11 @@ def _prepared(found: IdScan, item: dict[str, str]) -> tuple[Path, bytes, str]:
     refusal = write_refusal(found.root, path)
     if refusal:
         raise PinRefusedError(refusal)
-    original = path.read_bytes()
-    if _digest(original) != found.digests.get(item["path"]):
+    try:
+        original = KBFiles(found.root).read_bytes(path)
+    except KBFileOutsideRootError as e:
+        raise PinRefusedError(str(e)) from e
+    if original is None or _digest(original) != found.digests.get(item["path"]):
         raise PinRefusedError("the file changed after it was scanned; run the command again")
     return path, original, insert_id_line(original.decode("utf-8"), item["id"])
 
@@ -453,6 +470,8 @@ def _prepared(found: IdScan, item: dict[str, str]) -> tuple[Path, bytes, str]:
 def apply(found: IdScan, the_plan: dict[str, Any]) -> dict[str, Any]:
     """Write each planned pin. A file that cannot take it moves from
     ``pinned`` to ``skipped`` with the reason; nothing else is written."""
+    if found.kb_config is not None:
+        found.kb_config.refuse_writes()  # a read-only KB takes no pin
     done: list[dict[str, str]] = []
     for item in the_plan["pinned"]:
         try:
@@ -460,9 +479,9 @@ def apply(found: IdScan, the_plan: dict[str, Any]) -> dict[str, Any]:
             _write_pin_locked(found.root, path, original, new_text)
         except (PinRefusedError, OSError, UnicodeDecodeError) as e:
             if isinstance(e, PinMetadataRefusedError):
-                the_plan["refused"].append({**item, "reason": str(e)})
+                the_plan["refused"].append({**item, "reason": outside_text(e)})
             else:
-                the_plan["skipped"].append({"path": item["path"], "reason": str(e)})
+                the_plan["skipped"].append({"path": item["path"], "reason": outside_text(e)})
             continue
         done.append(item)
     the_plan["pinned"] = done
@@ -477,7 +496,7 @@ def check(found: IdScan, the_plan: dict[str, Any]) -> dict[str, Any]:
         try:
             _prepared(found, item)
         except (PinRefusedError, OSError, UnicodeDecodeError) as e:
-            the_plan["skipped"].append({"path": item["path"], "reason": str(e)})
+            the_plan["skipped"].append({"path": item["path"], "reason": outside_text(e)})
             continue
         ok.append(item)
     the_plan["pinned"] = ok

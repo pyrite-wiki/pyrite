@@ -104,11 +104,14 @@ _STATUS_BY_CODE: dict[str, int] = {
     # through to 500 INTERNAL_ERROR -- this keeps that status, now under its
     # own code instead of the generic one.
     "CLIPPER_BLOCKED_HOST": 500,
+    # A page past the clipper's byte cap: the page is the problem, not the server.
+    "CLIP_TOO_LARGE": 413,
     "INTERNAL_ERROR": 500,
     # AccessDenied family (ADR-0037 §3). Not raised by any surface yet
     # (theme 1/3b's job) -- listed so the mapping is ready when they are.
     "UNAUTHENTICATED": 401,
     "FORBIDDEN": 403,
+    "KB_PATH_NOT_ALLOWED": 403,
 }
 
 

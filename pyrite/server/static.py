@@ -8,12 +8,18 @@ Serves the built SvelteKit app from web/dist/ with SPA fallback:
   the build ships the file
 - Everything else → index.html (SPA client-side routing)
 
-The app's responses carry a Content-Security-Policy built here
-(``build_site_csp``), which the operator extends with
-``settings.site_csp_extra``.
+Every non-API response -- the app, its files, branding assets, and the
+404s, redirects and refusals among them -- carries one set of headers,
+``security_headers``: the Content-Security-Policy built here
+(``build_site_csp``, which the operator extends with
+``settings.site_csp_extra``) and ``nosniff``. One middleware applies it
+(``install_security_headers``); a route's only way to differ is
+``add_csp_extra``. One classification (``API_PREFIXES``, ``API_PATHS``,
+``NON_SPA_PREFIXES``) decides both a path's routing and its headers.
 """
 
 import logging
+import os
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -134,26 +140,41 @@ def _spa_script_hash_extra(index_content: str) -> str:
     return "script-src " + " ".join(hashes)
 
 
-def _spa_csp_headers(index_content: str, site_csp_extra: str = "") -> dict[str, str]:
-    """Security headers for an SPA ``index.html`` response (P-B1).
+def security_headers(config, extra: str = "") -> dict[str, str]:
+    """The one set of framing and content-type headers every non-API response
+    carries: the Content-Security-Policy (with the operator's
+    ``site_csp_extra``) and ``nosniff``.
 
-    The baseline policy, plus the build's own inline-script hash(es) added
-    to ``script-src`` so the bootstrap SvelteKit itself emits still runs --
-    a header CSP and a page's ``<meta http-equiv>`` CSP combine with AND
-    semantics, so a header ``script-src 'self'`` with no hash would block it
-    even though the meta tag allows it. ``site_csp_extra`` is the operator's
-    per-request setting (``build_site_csp``); both are merged into one
-    ``script-src`` extra so an operator's directive and the build's own
-    hash don't clobber each other.
+    ``extra`` is the calling route's difference, in ``site_csp_extra`` syntax
+    (the SPA's inline-script hash, ``sandbox`` for operator-supplied files);
+    a route passes it with `add_csp_extra`, never by setting a header itself.
     """
-    parts = [p for p in (_spa_script_hash_extra(index_content), site_csp_extra) if p]
-    extra = "; ".join(parts)
+    operator = config.settings.site_csp_extra if config is not None else ""
+    merged = "; ".join(part for part in (operator, extra) if part)
     return {
-        "Content-Security-Policy": build_site_csp(extra),
+        "Content-Security-Policy": build_site_csp(merged),
         "X-Content-Type-Options": "nosniff",
     }
 
 
+_CSP_EXTRA_KEY = "pyrite.csp_extra"
+
+
+def add_csp_extra(request: Request, extra: str) -> None:
+    """Record this route's difference from the baseline policy; the
+    middleware applies it with everything else."""
+    parts = [request.scope.get(_CSP_EXTRA_KEY, ""), extra]
+    request.scope[_CSP_EXTRA_KEY] = "; ".join(p for p in parts if p)
+
+
+# ONE classification of the paths this server answers, read by the routing
+# (the reserved 404s, the SPA fallback) and by the header middleware, so a
+# prefix cannot be "API" to one and "SPA" to the other.
+#
+# The API's own responses: JSON, event streams and the generated docs pages
+# (whose gating is the API's, not this module's). Everything else the server
+# answers is a "non-API response" and carries `security_headers`.
+#
 #: Prefixes the API owns. With the SPA mounted, a request to one of these (or
 #: to any path under it) that no real route claims must not fall through to the
 #: SPA's catch-all and answer 200 with its HTML shell (#538).
@@ -161,7 +182,80 @@ def _spa_csp_headers(index_content: str, site_csp_extra: str = "") -> dict[str, 
 #: (tests/test_static_routes_with_a_built_dist.py checks it). They are a
 #: plain Starlette `Route` and a `Mount`, not `APIRoute`s, so the access-policy
 #: guard's inventory (which walks `APIRoute`s) does not see them.
-_API_SHAPED_PREFIXES: tuple[str, ...] = ("/api", "/mcp", "/auth", "/ws")
+API_PREFIXES: tuple[str, ...] = ("/api", "/mcp", "/auth", "/ws", "/config")
+API_PATHS = frozenset({"/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"})
+# Non-API paths the SPA's catch-all must never answer with its shell (their
+# own routes, or nothing: a 404 with the header set). A bare string prefix,
+# so "/healthz" is a 404 too.
+NON_SPA_PREFIXES: tuple[str, ...] = ("/docs", "/redoc", "/openapi.json", "/health")
+
+
+def is_api_path(path: str) -> bool:
+    return path in API_PATHS or any(
+        path == prefix or path.startswith(prefix + "/") for prefix in API_PREFIXES
+    )
+
+
+def spa_may_answer(path: str) -> bool:
+    """May the SPA's catch-all answer ``path`` with its shell? Only a path that
+    is neither the API's nor reserved."""
+    return not is_api_path(path) and not path.startswith(NON_SPA_PREFIXES)
+
+
+class SecurityHeadersMiddleware:
+    """ASGI middleware: `security_headers` on every non-API HTTP response --
+    404s, redirects, 304s and refusals included -- so a route cannot forget
+    them. Outermost, and reads the config per request, so a change to
+    ``site_csp_extra`` takes effect at once."""
+
+    def __init__(self, app, get_config) -> None:
+        self.app = app
+        self.get_config = get_config
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http" or is_api_path(scope.get("path", "")):
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message) -> None:
+            if message["type"] == "http.response.start":
+                headers = security_headers(self.get_config(), scope.get(_CSP_EXTRA_KEY, ""))
+                names = {h.lower() for h in headers}
+                raw = [
+                    (k, v)
+                    for k, v in message.get("headers", [])
+                    if k.decode("latin-1").lower() not in names
+                ]
+                raw.extend(
+                    (k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in headers.items()
+                )
+                message = {**message, "headers": raw}
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+def install_security_headers(app: FastAPI) -> None:
+    """Add `SecurityHeadersMiddleware` to ``app`` once."""
+    if getattr(app.state, "security_headers_installed", False):
+        return
+    app.state.security_headers_installed = True
+    app.add_middleware(
+        SecurityHeadersMiddleware,
+        get_config=lambda: getattr(app.state, "pyrite_config", None),
+    )
+
+
+def resolve_dist_dir() -> Path:
+    """Where the SPA bundle lives, resolved once at startup: ``PYRITE_STATIC_DIR``
+    when set (containerised deploys, where the package is installed as a
+    site-package), else the source tree's ``web/dist``. Absolute, so the
+    working directory never decides it."""
+    configured = os.environ.get("PYRITE_STATIC_DIR")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return (Path(__file__).parent.parent.parent / "web" / "dist").resolve()
+
 
 _ALL_METHODS = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
 
@@ -209,7 +303,7 @@ def _mount_api_shaped_404s(app: FastAPI) -> None:
     match its own bare prefix, hence the extra route -- for every method, or
     a POST would 405 against a GET-only route.
     """
-    for prefix in _API_SHAPED_PREFIXES:
+    for prefix in API_PREFIXES:
         slug = prefix.replace("/", "-")
         app.add_route(
             prefix,
@@ -228,6 +322,8 @@ def mount_static(app: FastAPI, dist_dir: Path) -> None:
         app: The FastAPI application instance.
         dist_dir: Path to web/dist/ directory containing built SvelteKit output.
     """
+    install_security_headers(app)
+    dist_dir = dist_dir.resolve()
     index_html = dist_dir / "index.html"
     if not index_html.exists():
         return
@@ -244,19 +340,6 @@ def mount_static(app: FastAPI, dist_dir: Path) -> None:
             "the app was built with adapter-static's prerendering."
         )
 
-    def _spa_response_headers(request: Request, *, index_page: bool) -> dict[str, str]:
-        # Read per request: `site_csp_extra` can change at runtime (a
-        # settings update), and combining it with the build's own hash here
-        # (rather than caching the merged header) keeps both current.
-        config = getattr(request.app.state, "pyrite_config", None)
-        site_extra = config.settings.site_csp_extra if config is not None else ""
-        if index_page:
-            return _spa_csp_headers(index_content, site_extra)
-        # A non-HTML file served from dist (JS/CSS/an image/robots.txt/a
-        # favicon): the SPA's CSP doesn't apply to it, but it must still not
-        # be sniffable into a different content type (P-B1, finding #1).
-        return {"X-Content-Type-Options": "nosniff"}
-
     # Mount the assets directory for hashed static files
     assets_dir = dist_dir / "_app"
     if assets_dir.is_dir():
@@ -270,43 +353,36 @@ def mount_static(app: FastAPI, dist_dir: Path) -> None:
     async def favicon(request: Request):
         favicon_path = dist_dir / "favicon.ico"
         if favicon_path.exists():
-            return FileResponse(
-                str(favicon_path), headers=_spa_response_headers(request, index_page=False)
-            )
+            return FileResponse(str(favicon_path))
         return HTMLResponse(status_code=404)
 
     # SPA fallback — catch all non-API routes
     @app.get("/{path:path}", include_in_schema=False)
     async def spa_fallback(request: Request, path: str):
-        if path.startswith(("api/", "docs", "redoc", "openapi.json", "health", "auth/")):
+        if not spa_may_answer("/" + path):
             return HTMLResponse(status_code=404)
 
-        file_path = dist_dir / path
-        if file_path.is_file() and file_path.resolve().is_relative_to(dist_dir.resolve()):
+        try:
+            served = (dist_dir / path).resolve()
+        except (ValueError, OSError):
+            served = None
+        if served is not None and served.is_file() and served.is_relative_to(dist_dir):
             # A direct request for a real file in dist -- including an
             # explicit `GET /index.html`, which is this same branch, not
-            # the "no route matched" fallback below. Without headers here
-            # that request bypasses the CSP/frame-ancestors entirely and
-            # the page can be framed (finding #1).
-            is_index = file_path.resolve() == index_html.resolve()
-            return FileResponse(
-                str(file_path),
-                headers=_spa_response_headers(request, index_page=is_index),
-            )
+            # the "no route matched" fallback below. The file served is the
+            # one that was checked, never the name looked up again.
+            if served == index_html.resolve():
+                add_csp_extra(request, hash_extra)
+            return FileResponse(str(served))
 
         if _is_removed_path(path):
             return HTMLResponse(status_code=404)
 
         # SPA index.html must not be cached — it references hashed JS chunks
         # that change on each build. Stale index.html = mismatched chunk errors.
-        # It carries the security headers (P-B1): a CSP so stored-content
-        # script (a sanitizer bypass anywhere in the app) still can't run,
-        # and nosniff so a served file can't be reinterpreted as a different
-        # content type.
-        return HTMLResponse(
-            content=index_content,
-            headers={
-                "Cache-Control": "no-cache",
-                **_spa_response_headers(request, index_page=True),
-            },
-        )
+        # Its difference from the baseline policy is the build's own inline
+        # script hash: a header CSP and the page's <meta http-equiv> CSP
+        # combine with AND semantics, so a header `script-src 'self'` with no
+        # hash would block the bootstrap SvelteKit itself emits.
+        add_csp_extra(request, hash_extra)
+        return HTMLResponse(content=index_content, headers={"Cache-Control": "no-cache"})

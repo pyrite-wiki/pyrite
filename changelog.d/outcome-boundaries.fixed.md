@@ -1,1 +1,0 @@
-The CLI outcome guard includes root-context cleanup, retains a refusal reason when stdout was also written, and refuses the shared format option under a standalone non-Pyrite root. Legacy plugin format and environment fallback limits are documented.

@@ -12,7 +12,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from ..config import PyriteConfig
-from ..exceptions import LastAdminError
+from ..exceptions import LastAdminError, public_text
 from ..services.access_policy import ROLES
 from ..services.auth_service import AuthService, RegistrationClosedError
 from ..services.oauth_providers import GitHubOAuthProvider
@@ -151,7 +151,9 @@ async def set_user_role(
     try:
         found = auth_service.set_role(user_id, role, global_access=global_access)
     except LastAdminError as e:
-        raise HTTPException(status_code=409, detail={"code": "LAST_ADMIN", "message": str(e)})
+        raise HTTPException(
+            status_code=409, detail={"code": "LAST_ADMIN", "message": public_text(e)}
+        )
     if not found:
         raise HTTPException(status_code=404, detail="User not found")
     return {"updated": True, "user_id": user_id, "role": role}
@@ -219,9 +221,11 @@ async def register(
     try:
         user = await run_in_threadpool(_register)
     except RegistrationClosedError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+        raise HTTPException(status_code=403, detail=public_text(e))
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # The service's own refusals are RefusedValueError (shown); any other
+        # ValueError's text is withheld and logged (ADR-0052 N3).
+        raise HTTPException(status_code=400, detail=public_text(e))
 
     # Auto-login after registration. Deliberately outside the try/except
     # above: a ValueError here is not a registration failure -- the account
@@ -673,4 +677,4 @@ async def delete_invite_code(
         auth_service.delete_invite_code(code)
         return {"ok": True}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=public_text(e))
