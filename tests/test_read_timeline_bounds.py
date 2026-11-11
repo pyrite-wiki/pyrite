@@ -18,9 +18,24 @@ class _FakeDB:
 class _TimelineService:
     def get_timeline(self, *, date_from=None, date_to=None, min_importance=1):
         events = [
-            {"date": "2026-01-01", "title": "Low", "importance": 3, "kb_name": "test"},
-            {"date": "2026-02-01", "title": "Medium", "importance": 5, "kb_name": "test"},
-            {"date": "2026-03-01", "title": "High", "importance": 10, "kb_name": "test"},
+            {
+                "date": "2026-01-01",
+                "title": "Low",
+                "importance": 3,
+                "kb_name": "test",
+            },
+            {
+                "date": "2026-02-01",
+                "title": "Medium",
+                "importance": 5,
+                "kb_name": "test",
+            },
+            {
+                "date": "2026-03-01",
+                "title": "High",
+                "importance": 10,
+                "kb_name": "test",
+            },
         ]
         return [event for event in events if event["importance"] >= min_importance]
 
