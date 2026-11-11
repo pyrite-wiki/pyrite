@@ -1282,7 +1282,11 @@ reset, and a plugin's write through `ctx.kb_service`. A request that would
 change nothing is refused the same way. No validator or hook is run, so none
 judges a value the file does not hold. The message names the file by its path
 relative to the KB, the declared type, the refused fields and the loader's
-message:
+message. The loader's message is shown to the local process (the CLI, stdio
+MCP); a network caller (REST, MCP over HTTP) gets `the server log has the
+details` in its place unless the loader raised a Pyrite error, as for any text
+Pyrite did not write (ADR-0052 N3), and the same holds for each
+`load_problems[].message`. Over the CLI:
 
 ```text
 items/x.md does not load as its type `backlog_item` (refused: rank; cannot
