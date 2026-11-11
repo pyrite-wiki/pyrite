@@ -649,7 +649,7 @@ def _find_orphans(
 def links_orphans(
     kb_name: str = typer.Option(..., "--kb", "-k", help="KB to check for orphans"),
     min_importance: int = typer.Option(5, "--min-importance", help="Minimum importance threshold"),
-    limit: int = typer.Option(20, "--limit", "-n", help="Max results"),
+    limit: int = typer.Option(20, "--limit", "-n", min=1, help="Max results"),
     output_format: str = OUTPUT_FORMAT,
 ) -> Outcome:
     """Find high-importance entries that lack cross-KB connections.

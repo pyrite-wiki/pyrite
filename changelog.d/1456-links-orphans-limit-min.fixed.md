@@ -1,0 +1,1 @@
+- `pyrite links orphans` now refuses `--limit 0` and negative limits as usage errors instead of reporting no orphans or silently dropping the last one (#1456).
