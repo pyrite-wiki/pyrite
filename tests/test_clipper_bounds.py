@@ -107,6 +107,12 @@ def test_extraction_does_not_hold_the_event_loop(monkeypatch):
     ].encode()
     _serve(monkeypatch, lambda request: httpx.Response(200, content=page))
 
+    from pyrite.services.clipper import _extract
+
+    started = time.monotonic()
+    _extract(page.decode("utf-8", errors="replace"))
+    parse_seconds = time.monotonic() - started  # what the loop would stall for, if it ran there
+
     async def go():
         gaps: list[float] = []
         stop = asyncio.Event()
@@ -126,7 +132,11 @@ def test_extraction_does_not_hold_the_event_loop(monkeypatch):
         await task
         return max(gaps)
 
-    assert asyncio.run(go()) < 1.0  # on the loop the gap is the whole parse (3 s+)
+    # On the loop the ticker's gap is the whole parse (>= parse_seconds). Off the loop it is
+    # only GIL contention from the worker, so it is relative to the parse, not a fixed second:
+    # a slow runner stretches both.
+    max_gap = asyncio.run(go())
+    assert max_gap < 0.5 * parse_seconds, (max_gap, parse_seconds)
 
 
 # --- byte cap after decompression -----------------------------------------------
