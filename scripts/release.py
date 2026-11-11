@@ -21,7 +21,8 @@ change the world come after every check:
                        yet (locally, on origin, or as a GitHub release) and
                        `origin/main` is an ancestor of the SHA, so step d can
                        only ever fast-forward; the version in pyproject.toml is
-                       <version>; CHANGELOG has a dated section with content
+                       <version>; README install tags match <version>;
+                       CHANGELOG has a dated section with content
                        and no stranded `[Unreleased]` entries; no open PR
                        labelled `release-blocker`
   b. ci             -- the commit is VERIFIED: the REQUIRED checks for that
@@ -331,6 +332,20 @@ def check_version_matches(repo: Path, version: str) -> None:
             f"{version!r}. The release commit belongs on dev: bump pyproject.toml "
             "and date the CHANGELOG section there first."
         )
+
+
+def check_readme_install_tag(repo: Path, version: str) -> None:
+    """Catch stale installation instructions before attempting a release."""
+    path = repo / "README.md"
+    try:
+        readme = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise ReleaseError("README.md is missing; cannot check the install tag.") from None
+    tags = re.findall(r"git\+https://github\.com/pyrite-wiki/pyrite@v([0-9][^\s\"']*)", readme)
+    if not tags:
+        raise ReleaseError("README.md has no git+...@v<version> install line.")
+    if set(tags) != {version}:
+        raise ReleaseError(f"README.md installs v{tags}, but requested version is {version!r}.")
 
 
 # ---------------------------------------------------------------------------
@@ -979,6 +994,9 @@ def step_preconditions(ctx: Context) -> None:
 
     if ctx.attempt(lambda: check_version_matches(ctx.repo, ctx.version)):
         ctx.runner.note(f"pyproject.toml version == {ctx.version}")
+
+    if ctx.attempt(lambda: check_readme_install_tag(ctx.repo, ctx.version)):
+        ctx.runner.note(f"README.md install tag == v{ctx.version}")
 
     if ctx.attempt(lambda: check_changelog(ctx.repo, ctx.version, ctx.day)):
         ctx.runner.note(f"CHANGELOG has `## [{ctx.version}] - {ctx.day.isoformat()}` with content")
