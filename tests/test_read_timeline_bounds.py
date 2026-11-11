@@ -67,7 +67,8 @@ def _usage_error(output):
 )
 def test_timeline_rejects_out_of_range_arguments(timeline_cli, option, value):
     result = runner.invoke(
-        timeline_cli, ["timeline", option, value, "--format", "json"]
+        timeline_cli,
+        ["timeline", option, value, "--format", "json"],
     )
 
     assert result.exit_code == 2, result.output
@@ -79,7 +80,8 @@ def test_timeline_rejects_out_of_range_arguments(timeline_cli, option, value):
 
 def test_timeline_limit_one_returns_exactly_one_event(timeline_cli):
     result = runner.invoke(
-        timeline_cli, ["timeline", "--limit", "1", "--format", "json"]
+        timeline_cli,
+        ["timeline", "--limit", "1", "--format", "json"],
     )
 
     assert result.exit_code == 0, result.output
@@ -102,7 +104,8 @@ def test_timeline_min_importance_ten_is_valid(timeline_cli):
 
 def test_timeline_limit_has_no_arbitrary_upper_bound(timeline_cli):
     result = runner.invoke(
-        timeline_cli, ["timeline", "--limit", "501", "--format", "json"]
+        timeline_cli,
+        ["timeline", "--limit", "501", "--format", "json"],
     )
 
     assert result.exit_code == 0, result.output
