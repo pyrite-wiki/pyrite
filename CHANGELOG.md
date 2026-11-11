@@ -13,6 +13,22 @@ asserts that `[Unreleased]` stays empty.
 
 ## [Unreleased]
 
+## [0.26.2] - 2026-11-11
+
+Security fixes, landing now. A network call (REST, MCP over HTTP) reaches the entries it holds a grant on and nothing else the server account holds (ADR-0052, proposed):
+- Its responses carry only text Pyrite wrote for it.
+- A git command run for it reads none of the account's git configuration or credential helpers.
+- Reads, exports and writes stay inside the KB.
+- Expensive work (link checks, rubric patterns, YAML aliases, the clipper, QA reads) is bounded.
+
+Secret files are written owner-only. Registering a KB over the network needs a configured set of allowed roots. The local CLI and stdio MCP keep the operator's full reach and detail.
+
+**Upgrade notes.**
+- Registering a KB over the network now needs `settings.kb_roots`. With no roots set, the web UI's create-KB answers 403 until you set them (see `docs/configuration.md`).
+- A git command the server runs for a network caller no longer reads your global or system git config, credential helpers or askpass. The CLI is unchanged.
+- A network caller now reads "the server log has the details" where a response used to quote an operating-system, library, parser or git message. The detail is in the server log.
+- Some of Pyrite's own refusals that surfaced as `INTERNAL` (MCP) or `ERROR` (CLI) are now `VALIDATION_FAILED`, not retryable. For example, a search with `limit` 0 no longer falls back to a file search.
+
 ## [0.26.1] - 2026-11-10
 
 Search, links and cross-KB reads. `pyrite search` takes repeatable `--type` and `--exclude-type`. Every link row carries `resolved`, and an unresolved outlink names the readable KBs that hold its id. MCP `kb_timeline` filters by KB and status. Inputs that cannot be honoured are refused instead of answered with nothing: an unreadable `since`, an unknown REST key, a blank id in a list, an out-of-range CLI bound. A rename keeps the file where it is and changes only its `id:`.
