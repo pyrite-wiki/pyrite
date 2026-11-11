@@ -78,6 +78,9 @@ def test_timeline_rejects_out_of_range_arguments(timeline_cli, option, value):
     assert "Traceback" not in result.output
 
 
+@pytest.mark.control(
+    reason="limit=1 is a valid boundary value; it documents accepted behavior rather than the regression"
+)
 def test_timeline_limit_one_returns_exactly_one_event(timeline_cli):
     result = runner.invoke(
         timeline_cli,
@@ -90,6 +93,9 @@ def test_timeline_limit_one_returns_exactly_one_event(timeline_cli):
     assert len(document["events"]) == 1
 
 
+@pytest.mark.control(
+    reason="importance=10 is a valid upper boundary; invalid values are covered by the regression parametrization"
+)
 def test_timeline_min_importance_ten_is_valid(timeline_cli):
     result = runner.invoke(
         timeline_cli,
@@ -102,6 +108,9 @@ def test_timeline_min_importance_ten_is_valid(timeline_cli):
     assert document["events"][0]["importance"] == 10
 
 
+@pytest.mark.control(
+    reason="the CLI intentionally has no arbitrary upper limit; the REST API's separate cap does not apply"
+)
 def test_timeline_limit_has_no_arbitrary_upper_bound(timeline_cli):
     result = runner.invoke(
         timeline_cli,
