@@ -29,6 +29,156 @@ Secret files are written owner-only. Registering a KB over the network needs a c
 - A network caller now reads "the server log has the details" where a response used to quote an operating-system, library, parser or git message. The detail is in the server log.
 - Some of Pyrite's own refusals that surfaced as `INTERNAL` (MCP) or `ERROR` (CLI) are now `VALIDATION_FAILED`, not retryable. For example, a search with `limit` 0 no longer falls back to a file search.
 
+### Changed
+
+- A write refused because a field is missing or out of range now names that
+  field on every surface (#1284). The CLI, MCP and REST answers carry
+  `errors: [{field, rule, message?, expected?}]` beside the existing message and
+  `suggestion`, so a caller can point at the field to fix instead of reading
+  prose. `str(exc)` is unchanged, and `errors` is absent when the refusal is
+  not about a field. `got` and `expected` are always JSON-safe: a date arrives
+  as its ISO string and a non-finite float as its text, so an unquoted value in
+  frontmatter cannot turn the refusal into an unrenderable answer. The CLI's
+  `add --validate-only` builds its sentence from the rows and carries them with
+  the refusal, instead of printing a row as a Python dict. The bulk answers keep
+  the rows on the record they refused -- `kb_bulk_create` and
+  `links bulk-create` results, REST `error_details` items -- and the link, update,
+  `--field` and unknown-key refusals that named a field in prose now carry a row
+  too, as do an enum value refused on an update and an update or create path no
+  parser reads. The software-kb, social and journalism-investigation tool handlers keep
+  those rows on the record they refused (`results[i].errors`,
+  `entity_errors[i].errors`, `entries[i].errors`) instead of answering a code
+  and a sentence. See
+  `docs/json-contracts.md`.
+
+Commits made through the REST API, MCP tools and `kb_service` no longer run the repository's git hooks, so a hook such as a pre-commit secret scanner does not run for an agent's commit. `pyrite kb commit` at the command line still runs them, and a hook that rejects the commit still fails the command.
+
+### Fixed
+
+- Add a test that the plugin capability map covers every `PyritePlugin` Protocol method, so a new method without a map entry (silently ungated) or a deleted map entry fails the suite instead of going unnoticed (#1383).
+
+- `pyrite orient --limit` now refuses values outside 1-100 as a usage error (exit 2), as its help text promises, instead of failing later with `VALIDATION_FAILED` (#1424).
+
+- `pyrite orient` and `kb_orient` now list `errors` in `operational_contracts.error_contract`: the shape reads `{error, error_code, suggestion?, errors?, retryable}`, and a new `errors` key describes the per-field rows a field refusal carries (#1447).
+
+### Security
+
+The web clipper's work is bounded. Extraction is linear in the page and runs off the event loop. A page is read as a stream and refused past 5 MiB counted after decoding, and memory is bounded at every decoding step: one gzip or deflate coding is decoded in 64 KiB steps; a response with a stack of codings, or br or zstd, is refused (`CLIP_TOO_LARGE`, 413, for size). Each request, including every redirect hop, is checked: its host must resolve only to globally routable addresses (IPv4-mapped IPv6 is judged as IPv4; NAT64 and 6to4 prefixes are refused). The check and the connection resolve the name separately. `CLIP_FAILED`, `CREATE_FAILED` and blocked-host answers carry Pyrite's own message; the detail goes to the log.
+
+Every byte an export hands out comes from a file whose real path is inside its KB. The indexer, which most exports write from (REST export to a repository, `GET /api/entries/export`, a read by id), reads a KB's files the way an export does: a file that is a symbolic link out of the KB, or that has more than one hard link, is not read, and the index holds nothing from it (`pyrite index sync` reports it as skipped). `pyrite export collection` and `pyrite export site` read only inside the KB too, and a folder collection whose folder lies outside its KB exports nothing from it. A read by id, a daily note, the pending changes (`GET /api/kbs/{kb}/changes`), QA and an export's lookup by id read only inside the KB too, and a signed-in user's pending change is read only inside their own working copy. A get, update, rename or delete by id never matches a file that links out of the KB or has a second hard link: the answer is not-found, the same whatever such a file holds. The same holds for every other reader whose bytes, or anything derived from them, reach a caller: templates (`GET /api/kbs/{kb}/templates` and the daily note built from `_templates/daily.md`), a KB's `kb.yaml` (its schema, types and policies) and `board.yaml`, the key and line a refusal of unreadable frontmatter names (`update`, a read by id, `qa validate`, `index health`), the blob hash a review records and compares, and the id and ADR-number lookups. A template that is not the KB's is left out of the list, and a read of it answers `OUTSIDE_KB_ROOT`; a `kb.yaml` that is not the KB's is not loaded, and an operation that needs the KB's schema answers `OUTSIDE_KB_ROOT`. An export names a file it leaves out for either reason with the indexer's wording.
+
+**Upgrade notes:** an entry file with more than one hard link (one file kept under two names with `ln`) is no longer indexed: it drops out of search and of reads by id, and `pyrite index sync` lists it as skipped. Replace the extra name with a copy, or with a symbolic link that stays inside the KB. The same holds for these files that link out of the KB (a symbolic link to a file outside it, or a hard link): a `kb.yaml` that links out now makes every operation that needs the KB's schema answer `OUTSIDE_KB_ROOT`; a daily note whose `_templates/daily.md` links out now fails with `OUTSIDE_KB_ROOT` instead of using the default body; and a review of a linked-out entry is now `NOT_FOUND`. An entry file that links out of the KB, or has a second hard link, can no longer be updated, renamed or deleted by id: each answers not-found (`NOT_FOUND`) where it used to answer `OUTSIDE_KB_ROOT` or `STORAGE_ERROR`, or to delete the name. Replace the link with the file it points to, inside the KB, or remove the extra name by hand. Whether a file that links out holds an id no longer decides anything either: a create or a rename to that id goes ahead, `pyrite ids missing` reports such a file without its id, and `pyrite schema migrate` lists it as an `OUTSIDE_KB_ROOT` error.
+
+A `GET` request writes nothing, for any caller. `GET /api/daily/{date}` answers 404 for a date with no daily note instead of creating one; `POST /api/daily/{date}` creates it, as the web view's "Start today's note" already does.
+
+**Upgrade notes:** a client that relied on the `GET` to create the day's note should `POST` to the same path.
+
+A git clone, pull or push made for a network caller (a REST request or an MCP call over HTTP) authenticates with that caller's own GitHub token or with nothing: no credential source of the server account is consulted, whatever the host and whether or not a token is given: its credential helpers (a system keychain, a credential store) are reset, its global and system git config (with any `core.askPass`, `http.extraHeader` or `url.*.insteadOf` rule) are not read, its `~/.netrc` is not found, and no prompt program (`GIT_ASKPASS`, `SSH_ASKPASS`) runs. A caller never authenticates with the server account's credential, and no helper is handed a caller's token to store. The repository's own config (a workspace Pyrite cloned) is still read. The local operator at the CLI (`pyrite repo subscribe`, `pyrite repo sync`, `pyrite kb push`) keeps their own helpers. A token reaches git only through an inline credential helper that exists for that one command, reads the token from the git process's environment and answers only for the GitHub origin the command contacts, as rewritten by the account's `insteadOf` rules; the token is never in a command line, a remote URL, a config file or a log. Credentials embedded in the remote URL of a registered workspace are removed when the REST server, the MCP server or a repo command starts; only the workspace's own repository is changed, never an enclosing one.
+
+**Upgrade notes:** a server that relied on its account's git setup (a credential helper, `~/.netrc`, an `http.extraHeader`, or a `url.*.insteadOf` rewrite to a mirror) to reach a repository for web or MCP users no longer uses it: those commands reach the repository with the signed-in user's GitHub token or anonymously. The CLI is unchanged.
+
+Every git network operation Pyrite makes for a caller -- the clone and push of export to repo, the clone of repository subscribe and fork, and the pull of repository sync, from the server and the CLI alike -- contacts only `https://` URLs on hosts in the new `git_allowed_hosts` setting (default `github.com`; env `PYRITE_GIT_ALLOWED_HOSTS`). The check is on the URL git will really contact, after any `insteadOf` rewriting, and git runs with only the https transport, with Git LFS transfers off and without following redirects. A refusal has the code `REMOTE_NOT_ALLOWED` (or `REMOTE_REDIRECTED`) and names the setting. The setting is validated when the configuration loads. Every path these operations create or write resolves inside the directory Pyrite chose: export never writes through a link in the cloned repository, repository owner and name segments refuse leading dots, and a clone lands only inside the workspace root.
+
+Pushing a KB's own repository (`pyrite kb push`, `POST /api/kbs/{kb}/push`, the `kb_push` MCP tool) is not covered, by design: it goes only to a remote already configured in that repository by whoever set the KB up, and a caller can name only such a remote, never a URL.
+
+**Upgrade note:**
+- Exporting to, subscribing to or forking from a local path, a `file://`, `ssh://` or `git@github.com:` URL, or a host other than github.com now stops. For export to another https host, add it to `git_allowed_hosts` (subscribe and fork remain GitHub-only); for GitHub over SSH, use the repository's `https://github.com/...` URL.
+- A sync now refuses a subscription whose stored remote is not allowed, such as one subscribed over SSH before this release. Unsubscribe it and subscribe again with its `https://github.com/...` URL.
+- If the account Pyrite runs as has a git `url.<base>.insteadOf` (or `pushInsteadOf`) rule that rewrites `https://github.com/` to SSH or another host -- a common setup for SSH-only GitHub access -- these operations are refused with a message naming the rule. Scope the rule so it does not match the URLs Pyrite uses, or run Pyrite as an account without it.
+- A renamed or moved repository, which GitHub answers with a redirect, is refused with `REMOTE_REDIRECTED`: use its current URL.
+- A `git_allowed_hosts` value that is not a list of bare host names now stops the configuration from loading, with an error naming the setting.
+- GitHub repositories whose name begins with `.` (such as `owner/.github`), and repository URLs with anything after the repository name, can no longer be subscribed to or forked.
+
+Pyrite starts each git process with `core.fsmonitor` off and with hooks off (`core.hooksPath` points at an empty directory), whatever the repository's own config says, and an inherited `GIT_CONFIG_PARAMETERS` or `GIT_CONFIG_COUNT` cannot change that. Pyrite's diffs run no external diff driver or textconv program. Pyrite trusts a repository's other local config as git does: clean and smudge filters (git-lfs is one), merge drivers and `gpg.program` are the repository's and run when a git command needs them.
+
+A write to a KB entry whose file name is not valid UTF-8 is either made or refused with a Pyrite error; it no longer ends in an uncaught exception. When a write has to be made in place, the file whose content was compared with what the writer expected is the file that is written: the comparison and the write go through one open file, and a file that changed, gained a link or was replaced by an editor meanwhile is reported as changed and kept as it is.
+
+KB health at read tier reuses a KB's report while its index is unchanged, for at most 60 seconds, and reads without merging registered KBs into the shared configuration or writing to the database. The CLI and the admin tool compute it fresh.
+
+Registering a knowledge base by path over the network (`POST /api/kbs` and the MCP tool `kb_registry_add` over HTTP, both admin tier) is limited to folders under the roots listed in the new setting `settings.kb_roots` (`PYRITE_KB_ROOTS`). The path and the roots are compared fully resolved, so a symbolic link or `..` cannot lead outside a root; a refused path answers `KB_PATH_NOT_ALLOWED` (HTTP 403) naming the configured roots, and nothing is created. The local operator (`pyrite kb add`, `pyrite-admin`, `pyrite mcp` over stdio) still registers any path. See docs/configuration.md, "Where a network caller may register a KB".
+
+**Upgrade notes:** `kb_roots` is empty by default, so after upgrading no network caller can register a KB path until the operator lists roots. **The web UI's "create knowledge base" returns 403 (`KB_PATH_NOT_ALLOWED`) until `kb_roots` is set.** To allow it, list the folders new KBs may go in, in `config.yaml`:
+
+```yaml
+settings:
+  kb_roots: [/srv/pyrite/kbs]
+```
+
+or set `PYRITE_KB_ROOTS=/srv/pyrite/kbs` (several roots separated by `:`, or `;` on Windows), then restart the server; a KB then goes in a folder under one of them. `pyrite kb add` at the server's own terminal works without it. An operator API key used over the network is held to the roots as well. Ephemeral KBs (`ephemeral: true`) are unaffected.
+
+Over an MCP session or a REST request signed in as a user, a tool that records a person records that user, and no argument can make it record anyone else. This covers the voter (`social_vote`), the author (`social_post`), the reviewer (`wiki_submit_review`, `sw_review`, `POST /api/reviews`) and the assignee (`sw_claim`, `task_claim`, `task_create`, `task_update`, `task_decompose`, `POST /api/tasks/{id}/claim`). A signed-in user is recorded as `user:<account id>`, never by a name, so no username, a digits-only one included, can be taken for another account. An argument that names anyone else, including the caller's own username, is refused with a `FORBIDDEN` error whose `suggestion` says to omit it. For `task_create`, `task_update` and `task_decompose`, leaving the assignee out still means no assignee. A task (or any entry) an account holds, its assignee being that account, can have its assignee changed, taken or cleared, only by that account, on every write path: the task tools, `kb_update`, `kb_create`, `kb_bulk_create`, the plugin tools and `POST`, `PUT` and `PATCH /api/entries`; and a signed-in caller cannot create an entry that names another account as its assignee. The rule is enforced in the KB write pipeline, so a new surface meets it too. Only the operator, bound as one (the CLI, stdio MCP, an operator API key, or auth disabled), is exempt; a caller with no identity, such as the anonymous visitor on an instance whose `anonymous_tier` grants a write, is never the operator and is refused wherever the rule applies. With no session identity (the local operator, an operator key, auth disabled) the argument is a label and is required where the tool needs one; an anonymous visitor records no one.
+
+**Upgrade notes:** an agent that signs in as a user and claims work under its own label (for example `agent:worker-1`) is now refused and should leave `assignee` out. Records written before this release hold whatever name the caller passed; they are labels, and no account inherits them, so a user's earlier vote under their username and a new one under their account count separately. Python code that embeds Pyrite (calling the MCP server's dispatch or `KBService` with no principal) is nobody, not the operator: to set or clear a `user:` assignee, or to write to a KB whose writes land for review, it binds the operator itself with `acting_as(OPERATOR)` from `pyrite.services.acting`.
+
+Plugin tools declare the arguments that name a person (`person_arguments` in the tool dict, alpha), and the dispatcher sets them from the session before the handler runs.
+
+A plugin MCP tool whose name matches a core tool's, after trimming whitespace and ignoring case, is refused at registration, and the core tool is served with its own tier. Between two plugins, the first to register a name owns it at every tier, and the tool is served under the tier its owner registered it at. Each refusal is logged.
+
+An MCP tool call, prompt or resource read resolves its knowledge bases, checks and handler in one database session of its own, so nothing one call read is carried into the next call on the same worker thread. A prompt or resource read that fails on the server's side is sent as a JSON-RPC internal error (`-32603`) with Pyrite's `INTERNAL` envelope in its data; a refusal stays an invalid-parameters error.
+
+Over MCP, a plugin tool that writes works in the knowledge base named by `kb_name` and in no other, and every check (read, write, read-only, where the write lands) runs on that knowledge base before the tool does. A tool whose knowledge base may be omitted names its default before the checks, chosen from the knowledge bases the caller may read (`investigation_*` write tools: the first investigation KB; `sw_create_adr`: the one ADR KB). A write call left with no `kb_name` is refused with `VALIDATION_FAILED`. Plugin tools declare the default as `default_kb` in the tool dict (alpha).
+
+Every KB argument of an MCP tool is a knowledge base name (a string), and `kb_names` is a list of non-blank names; any other value is refused with `VALIDATION_FAILED`. `kb_timeline` reads only the named knowledge bases the caller may read.
+
+An MCP tool that fails unexpectedly answers `INTERNAL` with a fixed message; the detail is in the server log.
+
+A plugin's `default_kb` answer is used only when it is a knowledge base the caller may read; anything else counts as no default. Any unexpected fault during an MCP tool call, before or in the tool, answers `INTERNAL` with the fixed message, and so does one in a prompt (`prompts/get`) or a resource read (`resources/read`); a refusal there keeps its own code.
+
+**Upgrade notes:**
+
+- A client that passed `kb_names` as a single string now gets `VALIDATION_FAILED`; pass a list.
+- Plugin authors: a read-tier MCP tool that takes a KB argument also takes `readable_kbs` and filters what it returns by it (every in-tree read tool does; a test holds new ones to it).
+- Plugin authors: a write-tier (or admin-tier) MCP tool works in `args["kb_name"]` only. A call that names its knowledge base under another argument (`kb`, `source_kb`, ...) or names none, to a tool that declares no default, is now refused with `VALIDATION_FAILED` before the handler runs. Take the knowledge base as `kb_name`. If the tool may run with the knowledge base omitted, declare `"default_kb": fn` beside its `handler`, where `fn(args, readable_kbs)` returns the name of a knowledge base in `readable_kbs` (`None` means an unscoped caller) or `None`; never choose a default inside the handler. See the `get_mcp_tools` docstring in `pyrite/plugins/protocol.py`.
+
+Reading an entry id the index does not know reads only the files the index lacks (a path with no row, or a file whose size or modification time moved): at most the 200 most recently modified, and none when the index is current. A hand-added or renamed file is found by its `id:`. Past 200 such files an older one is not found until `pyrite index sync`.
+
+`GET /api/qa/validate`, `GET /api/qa/status` and the MCP tools `kb_qa_validate` and `kb_qa_status` reuse a report while the index of the KBs it covers is unchanged, for at most 60 seconds. A report is kept per readable set. Validating one entry (`GET /api/qa/validate/{id}`, `kb_qa_validate` with an `entry_id`) reads the file the index holds for it, or, for an id the index lacks, only the files the index may have missed (at most 200, the newest first), never every file of the KB.
+
+The QA URL checker applies the web clipper's destination rule to the first request and to every redirect hop: only globally routable addresses are contacted, and an address the rule cannot read is refused. A host that does not resolve is reported as unresolvable.
+
+`POST /api/repos/{name}/sync` on a repository that holds a `landing: review` knowledge base needs the operator (a global admin, an operator API key, or the local process). A knowledge base counts when it is linked to the subscription or its folder lies inside the repository's checkout (or contains it). A repository whose knowledge bases all land canonical keeps the per-KB write rule.
+
+**Upgrade notes:** a user with write access who synced such a repository is now refused with 403; ask an administrator to run the sync (`pyrite repo sync` on the server, or the REST call as an admin). Repositories of canonical knowledge bases are unchanged.
+
+A response to a network call (REST, MCP over HTTP) carries only text Pyrite wrote for a caller. Text from outside Pyrite (an operating-system error, a library's, a parser's or a model provider's message, a subprocess's error) goes to the server log and is no longer shown in a REST body, an MCP result or a per-item `error`/`reason`, nor placed inside a Pyrite message: where a message named such a cause, a network caller now reads "the server log has the details" in its place. A `StorageError`, `ConfigError` or `PluginError` caught and re-answered by a route shows its fixed public message, as the central handler already did. HTTP statuses are unchanged. The CLI and stdio MCP still show the full text to their operator. A test reads every module for a new place that puts an exception's text into a response, and another calls every `/api` route and every MCP tool with a fault injected into the KB service and fails if its text comes back.
+
+**Upgrade notes:** a client that read a parser's or the operating system's detail from a REST or MCP error message (an invalid-YAML line and column, an FTS query's parse error, a path's OS error) finds it in the server log instead. A refusal of Pyrite's own that used to surface as a plain `ValueError` is now a `VALIDATION_FAILED` refusal, not retryable: for example, a search with `limit` 0 answered MCP with `INTERNAL` (retryable) and the CLI with `ERROR`, and `pyrite search --limit 0` fell back to a file search; it is now refused, and JSON output's `error_type` reads `RefusedValueError`.
+
+A REST response, an MCP result and a stream event no longer carry the text of an exception that is not one of Pyrite's own, nor git's raw error output: an expected fault answers Pyrite's fixed message with its error code (for example `AI_ERROR`, `EXPORT_FAILED`, `CREATE_FAILED`), and the exception's text, which can name a server path, a provider endpoint or a driver's message, goes to the server log only. This covers the AI routes (summarize, auto-tag, suggest-links, the chat stream and the connection test), the per-item results of an import, QA validation issues, export to a repository, the commit route's result and the pending worktree changes. A Pyrite refusal keeps its own message, including validation Pyrite writes for the caller (a title that is not a string, a value the index cannot store or the file cannot hold), and the local process (the CLI, `pyrite mcp` over stdio) still sees a fault's full text. A message no longer names the exception's class.
+
+A `body_has_pattern` rubric pattern that runs longer than one second is reported once as a checker error and skipped for the rest of the run. Pyrite now depends on the `regex` package for this.
+
+The index database, its `-wal` and `-shm` files and `pyrite db backup` output are owner-only (0600) from creation, as are the GitHub token file and a newly created `config.yaml`; `pyrite db restore` leaves the index 0600. An existing index, backup or token file is made 0600 when it is opened or written; an existing `config.yaml` keeps the mode its owner gave it. A directory Pyrite creates for these files is 0700; a directory that already exists is left as it is.
+
+The server resolves `PYRITE_STATIC_DIR` once at startup. Every non-API response, including 404s, redirects and refusals, carries one Content-Security-Policy (with the operator's `site_csp_extra`) and `nosniff`, applied in one place; `/branding` files add `sandbox`. One classification of paths decides both whether the API or the web UI answers a path and which headers it carries. A file served from the web UI's bundle is the one that was checked to lie inside it. Branding `site_url`, `support_url` and `footer_credit_url` keep only http and https URLs (and `mailto:` for the contact). Anonymous WebSocket connections are capped.
+
+**Upgrade actions.**
+
+- A `branding.yaml` whose `site_url` or `footer_credit_url` is not an absolute http(s) URL, or whose `support_url` is neither one nor a `mailto:` address (a schemeless or relative value, for example), is now invalid as a whole, like any other malformed field: the branding endpoints answer with the branding error until it is corrected.
+- Files served from the web UI's bundle other than its page (scripts, styles, images, `robots.txt`) now carry the Content-Security-Policy as well as `nosniff`.
+
+An MCP tool call, prompt and resource read, and a REST import (parse and write), run in a worker thread, so one slow call does not hold up other sessions. Per-call context, such as the write-target binding, reaches the handler. Each call, prompt and resource read has a database session of its own, and the shared index worker and per-target services are built once.
+
+A KB marked `read_only` takes no write to its files, from any surface and any caller. Every MCP tool above the read tier that names one, write and admin, core and plugin, is refused (`KB_READ_ONLY`) before its handler runs, which covers plugin tools that write their own tables; the exceptions write no file of the KB (`kb_index_sync`, and `kb_manage`'s `discover`, `validate` and `show_schema`). `kb_manage`'s `add_type`, `remove_type` and `set_schema`, `pyrite schema migrate`, `kb_commit`, `kb_push`, `pyrite ids pin`, `pyrite sw migrate-standards --apply`, `pyrite readme --write` and the admin merge of a user's change set are refused for a read-only KB by the code that performs them, so the CLI and the REST routes refuse them too (a `--dry-run` still reports). A link stored in a writable KB may still point into a read-only one. See `docs/configuration.md`, "A read-only KB". **Upgrade note:** this holds for the local operator too: Pyrite no longer commits, pushes, migrates, pins ids in, writes a README for, merges a change set into or edits the schema of a read-only KB. Clear `read_only` on the KB first, or use git and an editor directly.
+
+`investigation_start`, `investigation_bulk_edges` and `investigation_ftm_import` (and their `pyrite investigation` CLI commands) create every entry through the write pipeline: each is a file as well as an index row, a read-only KB refuses the call, an unknown KB is reported as not found, an imported id must be a plain filename, and an existing entry is kept rather than replaced. An edge whose `fields` use an entry's own field names (`title`, `body`, `entry_type`, `kb_name`, `id`, `entry_id`, `type`) is reported as an error for that edge. A malformed batch item (an edge or `fields` that is not an object, an entity that is not an object) is reported as an error for that item, and the rest of the batch goes on.
+
+An entry type is a plain name on every create path, declared types or not: word characters (letters and digits in any script, and `_`) and `-`, starting with a word character, at most 64 characters.
+
+One client holds at most 5 of the 100 anonymous WebSocket slots. A client is its network: the address for IPv4, the /64 for IPv6, hashed, the same key the rate limiter uses. Behind a reverse proxy the connection's address is the proxy's, so all visitors share one key unless the server is run to trust the proxy's forwarding headers (see docs/configuration.md).
+
+An entry write goes through the folder its momentary lock covers, or writes nothing (`KBFolderChanged`). Taking that lock again after its folder changed waits between attempts.
+
+A change set's raw SQL runs one statement that only reads: on a read-only connection to the index that admits no attached database and only reading actions and PRAGMAs, so no statement form writes the index or creates or changes any file.
+
+CORS allows credentials only when no item of `cors_origins` is `*`. Empty items in `cors_origins` and `PYRITE_CORS_ORIGINS` are ignored.
+
+Entry writes and the index sync leave a knowledge base's registry row (`source`, `path`, `description`) as the operator's registry operations set it; they only make the row when it is missing. A knowledge base defined in `config.yaml` stays protected from removal through the registry after users write to it.
+
+A tag filter in search, keyword or semantic, on SQLite or Postgres, matches an entry's own tags only, never those of an entry with the same id in another knowledge base.
+
+A YAML document is refused at load, before an entry is built, when it has more than 1,000 aliases or its aliases expand to more than 1,000,000 nodes. This holds for entry frontmatter, import, templates, the journalism alias reader and bulk link specs. Index sync reports the file as malformed, import answers 400 `PARSE_ERROR`, and a read of the file reports it as unreadable. The bound is measured by the parser that loads the document, so text one YAML parser cannot read and another can (a line separator ahead of it) is still measured, and a document that cannot be measured (a `%YAML 1.3` directive) is refused with the same error.
+
 ## [0.26.1] - 2026-11-10
 
 Search, links and cross-KB reads. `pyrite search` takes repeatable `--type` and `--exclude-type`. Every link row carries `resolved`, and an unresolved outlink names the readable KBs that hold its id. MCP `kb_timeline` filters by KB and status. Inputs that cannot be honoured are refused instead of answered with nothing: an unreadable `since`, an unknown REST key, a blank id in a list, an out-of-range CLI bound. A rename keeps the file where it is and changes only its `id:`.

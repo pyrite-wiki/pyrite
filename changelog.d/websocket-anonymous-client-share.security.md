@@ -1,1 +1,0 @@
-One client holds at most 5 of the 100 anonymous WebSocket slots. A client is its network: the address for IPv4, the /64 for IPv6, hashed, the same key the rate limiter uses. Behind a reverse proxy the connection's address is the proxy's, so all visitors share one key unless the server is run to trust the proxy's forwarding headers (see docs/configuration.md).
