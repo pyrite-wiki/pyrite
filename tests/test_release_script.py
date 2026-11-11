@@ -64,6 +64,7 @@ def repo(tmp_path):
     """A tmp checkout whose CHANGELOG and pyproject are release-ready."""
     (tmp_path / "CHANGELOG.md").write_text(GOOD_CHANGELOG.format(today=date.today().isoformat()))
     (tmp_path / "pyproject.toml").write_text(GOOD_PYPROJECT)
+    (tmp_path / "README.md").write_text("git+https://github.com/pyrite-wiki/pyrite@v0.24.2\n")
     return tmp_path
 
 
@@ -167,6 +168,7 @@ def dry_run(no_network, monkeypatch, tmp_path_factory):
         "- A release script.\n\n## [0.24.1] - 2026-09-17\n\n- Older.\n"
     )
     (fake_repo / "pyproject.toml").write_text(GOOD_PYPROJECT)
+    (fake_repo / "README.md").write_text("git+https://github.com/pyrite-wiki/pyrite@v0.24.2\n")
 
     def _go(argv=("0.24.2",)):
         args = release.parse_args([*argv, "--repo", str(fake_repo)])
@@ -269,6 +271,30 @@ class TestReadVersion:
     def test_missing_pyproject_is_an_error(self, tmp_path):
         with pytest.raises(release.ReleaseError, match="pyproject.toml"):
             release.read_pyproject_version(tmp_path)
+
+
+class TestReadmeInstallTag:
+    def test_matching_tag_passes(self, repo):
+        release.check_readme_install_tag(repo, "0.24.2")
+
+    def test_mismatched_tags_name_both_versions(self, repo):
+        (repo / "README.md").write_text(
+            "git+https://github.com/pyrite-wiki/pyrite@v0.24.2\n"
+            "git+https://github.com/pyrite-wiki/pyrite@v0.24.1\n"
+        )
+        with pytest.raises(release.ReleaseError) as excinfo:
+            release.check_readme_install_tag(repo, "0.24.2")
+        assert all(part in str(excinfo.value) for part in ("README.md", "0.24.1", "0.24.2"))
+
+    def test_missing_install_line_is_rejected(self, repo):
+        (repo / "README.md").write_text("No install instructions here.\n")
+        with pytest.raises(release.ReleaseError, match="README.md.*no"):
+            release.check_readme_install_tag(repo, "0.24.2")
+
+    def test_missing_readme_is_rejected(self, repo):
+        (repo / "README.md").unlink()
+        with pytest.raises(release.ReleaseError, match="README.md.*missing"):
+            release.check_readme_install_tag(repo, "0.24.2")
 
 
 class TestValidateVersionMatches:
@@ -1325,6 +1351,20 @@ class TestDryRunOverThisRepo:
         assert runner.planned == [], "a write was planned after a failed check"
         captured = capsys.readouterr()
         assert "gh release create" not in captured.out
+
+    def test_stale_readme_install_tag_fails_dry_run(self, dry_run, monkeypatch, capsys):
+        check = release.check_readme_install_tag
+
+        def stale_readme(repo, version):
+            (repo / "README.md").write_text("git+https://github.com/pyrite-wiki/pyrite@v0.24.1\n")
+            check(repo, version)
+
+        monkeypatch.setattr(release, "check_readme_install_tag", stale_readme)
+        code, runner, _calls = dry_run()
+        assert code != 0
+        assert runner.planned == []
+        out = capsys.readouterr().out
+        assert "README.md" in out and "0.24.1" in out and "0.24.2" in out
 
     def test_the_failure_reads_in_order_when_piped(self, tmp_path):
         """Found running it by hand: piped, stdout block-buffers while stderr
