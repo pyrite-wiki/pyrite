@@ -12,6 +12,7 @@ from ...config import PyriteConfig
 from ...exceptions import (
     AccessDenied,
     ConflictError,
+    EntryLoadError,
     EntryNotFoundError,
     KBReadOnlyError,
     PyriteError,
@@ -778,8 +779,17 @@ def get_entry(
             },
         )
 
-    result.setdefault("sources", [])
-    result.setdefault("tags", [])
+    # A column the file's type refused (ADR-0042 8a: a `load_problems` entry
+    # names it) is left out of the reply, never a default and never null: the
+    # model's `[]` or `{}` would read as the file's value, and a client that
+    # indexes `.length` on a list must not meet null. Every other column keeps
+    # the value the read gave it, or the model's default (round 4, B2).
+    refused = {
+        p["field"] for p in result.get("load_problems") or () if p["field"] in _DEFAULTED_COLUMNS
+    }
+    for key in ("sources", "tags"):
+        if key not in refused:
+            result.setdefault(key, [])
 
     # Apply field projection. One rule for every read surface (#193): the
     # identity pair always survives, and keys the entry does not have are not
@@ -795,10 +805,16 @@ def get_entry(
     neg = negotiate_response(request, result, single_entry=True)
     if neg is not None:
         return neg
+    if refused:
+        body = EntryResponse(**result).model_dump(mode="json")
+        return JSONResponse(content={k: v for k, v in body.items() if k not in refused})
     return EntryResponse(**result)
 
 
 _CREATE_DEFAULTED = frozenset({"participants", "tags", "metadata"})
+
+#: The EntryResponse columns that default to a placeholder (``[]``, ``{}``).
+_DEFAULTED_COLUMNS = ("tags", "participants", "sources", "metadata")
 
 
 @router.post(
@@ -1048,6 +1064,8 @@ def delete_entry(
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
     except KBReadOnlyError as e:
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
+    except EntryLoadError as e:
+        raise refusal_http(e)  # ENTRY_UNREADABLE 422: nothing deleted (ADR-0042 8a)
     except (ValidationError, PyriteError, ValueError) as e:
         raise HTTPException(
             status_code=400, detail={"code": "DELETE_FAILED", "message": public_text(e)}

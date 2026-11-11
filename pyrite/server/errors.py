@@ -59,6 +59,9 @@ _STATUS_BY_CODE: dict[str, int] = {
     "KB_READ_ONLY": 403,
     "KB_PROTECTED": 403,
     "INVALID_FRONTMATTER": 422,
+    # A file its declared type cannot load (ADR-0042 8a; the code chosen for
+    # #777 on 2026-10-14): a read that cannot be isolated, and every write.
+    "ENTRY_UNREADABLE": 422,
     "QUERY_TOO_LONG": 422,
     "QUERY_SYNTAX": 400,
     # The one route that raises LastAdminError (PUT /auth/users/{id}/role)

@@ -56,6 +56,14 @@ class PyritePlugin(Protocol):
         Returns:
             Dict mapping type name to Entry subclass.
             Example: {"investigation": InvestigationEntry}
+
+        A type's loader (``from_frontmatter``) should convert leniently
+        (``pyrite.utils.parse.safe_int``) or keep a value as written, and
+        leave the judgement to a validator, whose finding on a field a write
+        does not touch is a warning (ADR-0042 decision 8). A loader that
+        raises makes the file read-only through Pyrite until it is fixed by
+        hand: reads return the declared type without the refused fields, and
+        every write is refused with ``ENTRY_UNREADABLE`` (decision 8a).
         """
         ...
 

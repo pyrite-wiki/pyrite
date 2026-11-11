@@ -369,10 +369,10 @@ def software_plugin():
     PluginRegistry().register(SoftwareKBPlugin())
 
 
-def _migrate_standards(config: PyriteConfig) -> str:
+def _migrate_standards(config: PyriteConfig, *, exit_code: int = 0) -> str:
     with patch("pyrite_software_kb.cli.load_config", return_value=config):
         result = CliRunner().invoke(cli_app, ["sw", "migrate-standards", "--apply", "-k", KB])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == exit_code, result.output
     return result.output
 
 
@@ -392,6 +392,28 @@ def test_migrate_standards_sets_the_type_unsets_enforced_and_keeps_the_rest(
     assert "type: programmatic_validation   # legacy type\r\n" in after, after
     assert "enforced" not in after, after
     assert_only_changed(before, after, [Set("type", "programmatic_validation"), Unset("enforced")])
+
+
+@pytest.mark.parametrize("subdir", ["standards", "elsewhere"], ids=["moved", "in-place"])
+def test_migrate_standards_never_writes_a_file_its_type_can_no_longer_load(
+    tmp_path: Path, software_plugin, subdir
+):
+    # ADR-0042 8a: the migration is driven by index rows, and a row can be
+    # older than the file. A file hand-edited into something `standard` cannot
+    # load since the last sync keeps its bytes (neither moved nor rewritten),
+    # and the run says it skipped it.
+    config, kb_path = _kb(tmp_path, {f"{subdir}/s.md": STANDARD}, kb_type="software")
+    path = kb_path / subdir / "s.md"
+    path.write_text(STANDARD.replace("title: S   # keep", "title: [a, b]"), encoding="utf-8")
+    before = path.read_bytes()
+
+    out = _migrate_standards(config, exit_code=1)
+
+    assert path.read_bytes() == before
+    assert sorted(p.relative_to(kb_path).as_posix() for p in kb_path.rglob("*.md")) == [
+        f"{subdir}/s.md"
+    ]
+    assert "title must be a string" in out.replace("\n", " "), out
 
 
 # --------------------------------------------------------------------------

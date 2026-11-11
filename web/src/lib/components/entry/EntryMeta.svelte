@@ -40,21 +40,21 @@
 			<span class="ml-2 font-medium {entry.importance >= 8 ? 'text-amber-500' : ''}">{entry.importance}/10</span>
 		</div>
 	{/if}
-	{#if entry.tags.length > 0}
+	{#if (entry.tags ?? []).length > 0}
 		<div>
 			<span class="text-zinc-500">Tags:</span>
 			<div class="mt-1 flex flex-wrap gap-1">
-				{#each entry.tags as tag}
+				{#each entry.tags ?? [] as tag}
 					<TagBadge {tag} href="/entries?tag={encodeURIComponent(tag)}" />
 				{/each}
 			</div>
 		</div>
 	{/if}
-	{#if entry.participants.length > 0}
+	{#if (entry.participants ?? []).length > 0}
 		<div>
 			<span class="text-zinc-500">Participants:</span>
 			<div class="mt-1 flex flex-wrap gap-1">
-				{#each entry.participants as p}
+				{#each entry.participants ?? [] as p}
 					<a
 						href="/search?q={encodeURIComponent(p)}"
 						class="inline-flex items-center rounded-md bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"

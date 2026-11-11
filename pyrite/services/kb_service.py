@@ -27,6 +27,7 @@ from ..exceptions import (
     AmbiguousEntryError,
     ConflictError,
     EntryExistsError,
+    EntryLoadError,
     EntryNotFoundError,
     Forbidden,
     IndexSyncRecoveryHintError,
@@ -44,7 +45,7 @@ from ..exceptions import (
 )
 from ..models import Entry
 from ..models.base import _timestamp_instant
-from ..models.core_types import as_stored_text, id_text
+from ..models.core_types import as_stored_text, id_text, read_entry_id
 from ..models.factory import build_entry
 from ..plugins.context import PluginContext
 from ..schema import Link, Source
@@ -74,7 +75,7 @@ from ..storage.file_operations import (
     unmodellable_in_text,
 )
 from ..storage.index import IndexManager, content_hash
-from ..storage.repository import KBRepository
+from ..storage.repository import KBRepository, _text_of
 from ..utils.atomic_write import HardLinked
 from ..utils.file_lock import LOCK_TIMEOUT, LockDirError, LockTimeout
 from ..utils.frontmatter import Frontmatter, NoFrontmatter, describe, split_frontmatter
@@ -222,6 +223,9 @@ _INDEX_ONLY_KEYS = frozenset(
         "modified_by",
         "outlinks",
         "backlinks",
+        # A read of a file its type does not fully load names the fields it
+        # left out (ADR-0042 decision 8a); an update never writes it back.
+        "load_problems",
     }
 )
 
@@ -535,6 +539,10 @@ def _load_link_source(repo: KBRepository, entry_id: str) -> Entry | None:
         return None
     try:
         return repo.load_entry_from_bytes(*found)
+    except EntryLoadError:
+        # Its declared type cannot load it: refused, never "not found", so a
+        # link write never lands on it (ADR-0042 8a), as `KBRepository.load`.
+        raise
     except Exception as e:  # noqa: BLE001 - unloadable, as `KBRepository.load` reads it
         logger.warning("Could not load %s: %s", found[0], e)
         return None
@@ -1217,9 +1225,22 @@ class KBService:
         found = self._entry_file(kb_config, entry_id, row, scan=unindexed is None)
         if found is None:
             return None
-        path, digest, entry = found
+        path, digest, entry, problems = found
         try:
-            return self._index_mgr.read_fields(entry, kb_name, path, content_hash=digest, row=row)
+            result = self._index_mgr.read_fields(
+                entry,
+                kb_name,
+                path,
+                content_hash=digest,
+                row=row,
+                refused=[p["field"] for p in problems],
+            )
+            if problems:
+                # The declared type, its loader having refused these fields
+                # (left out above): the read names them rather than presenting
+                # a default or answering "not found" (ADR-0042 decision 8a).
+                result["load_problems"] = problems
+            return result
         except TypeError as exc:
             # A file with no readable fields: a tagged or complex key, or a
             # value JSON cannot hold (a `!!set`). Refused, not a traceback
@@ -1230,8 +1251,15 @@ class KBService:
 
     def _entry_file(
         self, kb_config: KBConfig, entry_id: str, row: dict[str, Any] | None, *, scan: bool
-    ) -> tuple[Path, str, Entry] | None:
-        """``(path, content_hash, entry)`` of the file holding ``entry_id``, or None.
+    ) -> tuple[Path, str, Entry, list[dict[str, str]]] | None:
+        """``(path, content_hash, entry, load_problems)`` of the file holding
+        ``entry_id``, or None.
+
+        THE one caller of ``KBRepository.load_for_read``, the partial read of a
+        file its declared type cannot fully load (ADR-0042 decision 8a; a
+        structural test pins it). Its entry never leaves ``_read_entry``,
+        which turns it into the read's dict: no writer, validator or hook can
+        be handed a model holding a default for a refused value.
 
         ``scan``: after the indexed file and the files named like the id, scan
         the KB (``_files_holding``); False stops at the names."""
@@ -1280,15 +1308,20 @@ class KBService:
                 continue
             try:
                 # One read: the entry is parsed from the bytes that are hashed.
-                entry = repo.load_entry_from_bytes(path, raw)
+                entry, problems = repo.load_for_read(path, raw)
             except Exception as exc:
                 # A file the loader refuses (a duplicate key, a root that is
                 # no mapping) is the unmodellable refusal, not a miss (#1035).
                 _refuse_unmodellable(raw, entry_id, "read")
+                if isinstance(exc, EntryLoadError) and _holds_id(raw, entry_id):
+                    # Its type cannot load it and the refusal is not isolated
+                    # to fields: the file is there, so the read says why it
+                    # cannot be answered, never "not found" (ADR-0042 8a).
+                    raise exc
                 unreadable = unreadable or (path, exc)
                 continue
             if id_text(entry.id) == entry_id:
-                return path, content_hash(raw), entry
+                return path, content_hash(raw), entry, problems
         if unreadable is not None:
             self._unreadable_entry_file(kb_config.name, entry_id, *unreadable)
         return None
@@ -2017,6 +2050,8 @@ class KBService:
         entry_type = row.get("entry_type") if row else None
         kb_config = self.config.get_kb(kb_name)
         if entry_type is None and kb_config is not None:
+            # Strict: its only caller splits an update (`split_echoed_update`),
+            # which a file its type cannot load refuses here, before the read.
             loaded = KBRepository(kb_config).load(entry_id)
             entry_type = loaded.entry_type if loaded else None
         if entry_type is None:
@@ -2211,7 +2246,11 @@ class KBService:
             path, raw = found
             _refuse_unmodellable(raw, entry_id, "update")
             try:
+                # Strict: a file its declared type cannot load is refused here,
+                # before any operation, validator or hook (ADR-0042 8a).
                 entry = repo.load_entry_from_bytes(path, raw)
+            except EntryLoadError:
+                raise
             except Exception as e:
                 logger.warning("Could not load %s: %s", path, e)
                 raise EntryNotFoundError(
@@ -2804,7 +2843,10 @@ class KBService:
         kb_config = self.require_kb(kb_name)
         kb_config.refuse_writes()
 
-        # Load entry for hooks before deleting
+        # Load entry for hooks before deleting. Strict: a file its declared
+        # type cannot load raises EntryLoadError here, so it is neither
+        # deleted nor handed to (or kept from) a before_delete hook
+        # (ADR-0042 8a). Only "no file" is None.
         repo = KBRepository(kb_config)
         entry = repo.load(entry_id)
         hook_ctx = PluginContext(
@@ -2985,6 +3027,7 @@ class KBService:
         kb_config.refuse_writes()
 
         repo = KBRepository(kb_config)
+        # Strict: EntryLoadError for a source its type cannot load (ADR-0042 8a).
         entry = _load_link_source(repo, source_id)
         if not entry:
             raise EntryNotFoundError(f"Entry not found: {source_id}")
@@ -3006,7 +3049,9 @@ class KBService:
             """
             if self.db.get_entry(target_id, tkb) is not None:
                 return True
-            return target_repo.load(target_id) is not None
+            # The file exists whether or not its type loads: a link to it is
+            # not a link to nothing (#1261).
+            return target_repo.find_file(target_id) is not None
 
         # Duplicates are checked before the target is validated: re-issuing a
         # link already recorded in the source's frontmatter must stay a no-op
@@ -3108,6 +3153,15 @@ class KBService:
             if source_id not in loaded:
                 try:
                     loaded[source_id] = _load_link_source(repo, source_id)
+                except EntryLoadError as e:
+                    # A source its type cannot load fails its own items, the
+                    # rest of the batch goes on (ADR-0042 8a).
+                    results[i] = {
+                        "status": "failed",
+                        "error": _safe_message(e),
+                        "error_code": e.error_code,
+                    }
+                    continue
                 except StorageError as e:
                     results[i] = {"status": "failed", "error": _safe_message(e)}
                     continue
@@ -3882,7 +3936,7 @@ class KBService:
         kb_config = self.require_kb(kb_name)
         if self.db.get_entry(entry_id, kb_name) is not None:
             return
-        if KBRepository(kb_config).load(entry_id) is not None:
+        if KBRepository(kb_config).find_file(entry_id) is not None:  # exists, loadable or not
             return
         # A link to a page that does not exist yet is stored and answered (a
         # red link, `[[ghost-page]]`): the subject is absent, but the question
@@ -3980,6 +4034,12 @@ class KBService:
         refusal = self._refuse_claim_of_complete_task(entry_id, kb_name)
         if refusal:
             return refusal
+        kb_config = self.get_kb(kb_name)
+        if kb_config is not None:
+            # A claim is a write: a file its declared type cannot load is
+            # refused (EntryLoadError) before the index's compare-and-swap,
+            # which a stale row would otherwise win (ADR-0042 8a).
+            KBRepository(kb_config).load(entry_id)
 
         # The holder rule before the compare-and-swap, so a refused claim
         # never touches the index row (the file write below checks again).
@@ -4457,6 +4517,15 @@ def _request_operations(updates: dict[str, Any]) -> list[Any]:
             f"Cannot read a field path in the update: {outside_text(e)}"
         ) from None
     return ops
+
+
+def _holds_id(raw: bytes, entry_id: str) -> bool:
+    """Whether a file's own bytes hold ``entry_id`` (``read_entry_id``), for a
+    file whose type cannot load it: then it is the entry asked for."""
+    try:
+        return read_entry_id(_text_of(raw)) == entry_id
+    except Exception:  # noqa: BLE001 - bytes that do not decode hold no id
+        return False
 
 
 def _refuse_unmodellable(raw: bytes, entry_id: str, verb: str) -> None:

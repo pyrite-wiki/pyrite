@@ -32,6 +32,8 @@ The exception hierarchy provides typed, domain-specific exceptions for all Pyrit
 | `KBNotFoundError` | Raised when a knowledge base cannot be found by name |
 | `KBReadOnlyError` | Raised when attempting to write to a read-only (subscribed) KB |
 | `ValidationError` | Raised when entry data fails validation (bad frontmatter, missing fields, etc.) |
+| `FrontmatterError` | A `ValidationError`: frontmatter that is missing, does not parse, or is not a mapping (`INVALID_FRONTMATTER`) |
+| `EntryLoadError` | A `FrontmatterError` with its own code, `ENTRY_UNREADABLE` (422): the file's declared type's loader raised (ADR-0042 8a, #1261). Every write to the file raises it before any validator or hook; a read raises it only when the refusal is not isolated to fields. Carries `path` (absolute, never in a message), `rel_path`, `entry_type`, `fields` (refused key -> loader message) and `loader_message`. #777 adds the files that do not parse under the same code |
 | `PluginError` | Raised when a plugin operation fails |
 | `StorageError` | Raised when a storage/database operation fails |
 | `ConfigError` | Raised when configuration is invalid |

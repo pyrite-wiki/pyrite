@@ -141,6 +141,8 @@ def from_frontmatter(cls, meta, body):
 
 If you forget a base field, it silently gets the dataclass default (often empty string or None), and the data appears to "vanish" on roundtrip.
 
+**Do not raise on a value a validator could report** (`int(meta["rank"])` on `rank: .inf`). A loader that raises makes the file read-only through Pyrite: reads return your type without the refused fields (`load_problems`), and every write is refused with `ENTRY_UNREADABLE` until the user fixes the file by hand (ADR-0042 decision 8a). Convert leniently (`pyrite.utils.parse.safe_int`) or keep the value as written, and report it from a validator instead. The opposite design, a model built with your default in place of the refused value, was tried twice in #1311 and let a hook-guarded write land: a dataclass cannot be missing a field, so every consumer of such a model has to know which values are fake.
+
 ## MCP Tool Handlers: Import Inside Handler
 
 MCP tool handlers run in a separate context. Import pyrite modules inside the handler, not at the top of the plugin file:

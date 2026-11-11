@@ -25,6 +25,7 @@ from ..exceptions import (
     BrandingInvalidError,
     ConfigError,
     ConflictError,
+    EntryLoadError,
     EntryNotFoundError,
     InvalidGitRefError,
     KBNotFoundError,
@@ -1792,6 +1793,8 @@ class PyriteMCPServer:
 
         try:
             deleted = self.svc.delete_entry(entry_id, kb_name, readable_kbs=readable_kbs)
+        except EntryLoadError as e:
+            return _refusal(e)  # ENTRY_UNREADABLE: nothing deleted (ADR-0042 8a)
         except PyriteError as e:
             return _error("DELETE_FAILED", _safe_message(e), retryable=True)
 
@@ -1837,6 +1840,8 @@ class PyriteMCPServer:
                 note=note,
                 allow_dangling=allow_dangling,
             )
+        except EntryLoadError as e:
+            return _refusal(e)  # ENTRY_UNREADABLE: the source is not written (ADR-0042 8a)
         except (EntryNotFoundError, KBNotFoundError) as e:
             # Both are deterministic: a missing entry or an unregistered KB does
             # not appear on retry. _DOMAIN_ERROR_CODES maps both to NOT_FOUND
@@ -2160,6 +2165,8 @@ class PyriteMCPServer:
                 confidence=args.get("confidence", 0.0),
                 partial_evidence=args.get("partial_evidence"),
             )
+        except EntryLoadError as e:
+            return _refusal(e)  # ENTRY_UNREADABLE (ADR-0042 8a)
         except (PyriteError, ValueError) as e:
             return _error("OPERATION_FAILED", _safe_message(e))
 

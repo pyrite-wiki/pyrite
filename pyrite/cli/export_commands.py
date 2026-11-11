@@ -10,6 +10,7 @@ from rich.markup import escape
 from pyrite.cli.output import cli_console, path_line
 
 from ..cli.context import cli_context
+from ..exceptions import EntryLoadError
 from ..services.access_policy import UNSCOPED
 from ..utils.errors import exit_unless_whole
 from ..utils.frontmatter import Frontmatter, split_frontmatter
@@ -148,7 +149,11 @@ def export_collection(
                     unreadable.append((_row_name(result), reason))
         else:
             # Collection ID mode — load collection, resolve its entries
-            collection = svc.load_entry_from_disk(collection_id, kb or "")
+            try:
+                collection = svc.load_entry_from_disk(collection_id, kb or "")
+            except EntryLoadError as e:
+                console.print(f"[red]{escape(str(e))}[/red]")
+                raise typer.Exit(1) from None
             if not collection:
                 console.print(f"[red]Collection not found: {collection_id}[/red]")
                 raise typer.Exit(1)
@@ -213,7 +218,8 @@ def export_collection(
 
         # Follow links to depth N
         if depth > 0 and entries:
-            entries = _follow_links(entries, svc, kb or "", depth)
+            entries, linked_left_out = _follow_links(entries, svc, kb or "", depth)
+            unreadable.extend(linked_left_out)
 
         _report_left_out(unreadable)
 
@@ -425,7 +431,8 @@ def _entry_from_file(path, root):
     split = split_frontmatter(text)
     if not isinstance(split, Frontmatter):
         return None
-    entry = entry_from_frontmatter(load_yaml(split.text), split.body)
+    # An empty frontmatter is an empty mapping, a note, as the loader reads it.
+    entry = entry_from_frontmatter(load_yaml(split.text) or {}, split.body)
     entry.file_path = path
     return entry
 
@@ -485,10 +492,19 @@ def _load_entry_with_reason(result: dict, svc, kb: str | None) -> tuple["Entry |
     return None, reason or "it is not on disk"
 
 
-def _follow_links(entries: list, svc, kb_name: str, depth: int) -> list:
-    """Follow links from entries to include linked entries up to depth N."""
+def _follow_links(
+    entries: list, svc, kb_name: str, depth: int
+) -> tuple[list, list[tuple[str, str]]]:
+    """Follow links from entries to include linked entries up to depth N.
+
+    Returns ``(entries, left_out)``: every linked entry that could not be
+    loaded is in ``left_out`` as ``(id, reason)``, for the caller to name and
+    count (ADR-0046, ``exit_unless_whole``), like a row of the collection
+    itself. A link to an id no file holds is a dangling link, not left out.
+    """
     seen_ids = {e.id for e in entries}
     all_entries = list(entries)
+    left_out: list[tuple[str, str]] = []
     frontier = list(entries)
 
     for _ in range(depth):
@@ -496,15 +512,34 @@ def _follow_links(entries: list, svc, kb_name: str, depth: int) -> list:
         for entry in frontier:
             for link in entry.links:
                 target_id = link.target
-                if target_id not in seen_ids:
+                if target_id in seen_ids:
+                    continue
+                # Once per id, whether it is exported, left out or dangling.
+                seen_ids.add(target_id)
+                try:
                     row = svc.get_entry(target_id, kb_name, readable_kbs=UNSCOPED)
-                    linked = _load_entry_from_result(row, svc, kb_name) if row else None
-                    if linked:
-                        all_entries.append(linked)
-                        next_frontier.append(linked)
-                        seen_ids.add(target_id)
+                except Exception as e:
+                    # The single-entry read refuses a file its type cannot
+                    # load when no field explains it (ADR-0042 8a): the file
+                    # holds the id, so it is left out, never dangling.
+                    left_out.append((target_id, _reason(e)))
+                    continue
+                if not row:
+                    # The read answers a file it cannot parse as a miss until
+                    # #777, but the index still holds the row it had: that
+                    # entry is left out. No row either: a dangling link.
+                    rows = svc.get_entries([(target_id, kb_name)])
+                    if not rows:
+                        continue
+                    row = rows[0]
+                linked, reason = _load_entry_with_reason(row, svc, kb_name)
+                if linked:
+                    all_entries.append(linked)
+                    next_frontier.append(linked)
+                else:
+                    left_out.append((target_id, reason))
         frontier = next_frontier
         if not frontier:
             break
 
-    return all_entries
+    return all_entries, left_out

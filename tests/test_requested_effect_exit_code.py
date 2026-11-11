@@ -1639,6 +1639,9 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "a failed --bidi inverse is returned as Outcome.partial (exit 3): "
         "tests/test_cli_outcome_write_path.py",
     ),
+    # A linked entry that cannot be loaded is returned as left out; the command
+    # names it and exits through exit_unless_whole.
+    ("pyrite/cli/export_commands.py", "_follow_links"): ("fixed", "TestExportCollection"),
     ("pyrite/cli/export_commands.py", "_load_entry_with_reason"): (
         "safe",
         "an unloadable row is returned with its reason; the command prints it and "
@@ -1914,6 +1917,75 @@ class TestExportCollection:
         text = out.stdout + out.stderr
         assert "Exported 1 entry" in text, text
         assert out.returncode == PARTIAL, text
+
+    # `--depth` follows links: a linked entry that cannot be loaded is left
+    # out like any other, named with its reason, and the exit is partial
+    # (ADR-0046). A link to an id no file holds is a dangling link, not a
+    # left-out entry.
+    def _linking_collection(self, cli, linked_text: str | None, *, before_sync: bool) -> None:
+        folder = cli.kb / "stuff"
+        folder.mkdir()
+        (folder / "ok.md").write_text(
+            "---\nid: ok\ntitle: Ok\ntype: note\n"
+            "links:\n- target: linked\n  relation: related_to\n---\nbody\n"
+        )
+        (cli.kb / "stuff.md").write_text(
+            "---\nid: stuff\ntitle: Stuff\ntype: collection\nsource_type: folder\n"
+            "folder_path: stuff\n---\n"
+        )
+        good = "---\nid: linked\ntitle: Linked\ntype: note\n---\nbody\n"
+        (cli.kb / "linked.md").write_text(linked_text if before_sync else good)
+        cli.pyrite("index", "sync", "--no-embed")
+        if not before_sync:
+            (cli.kb / "linked.md").write_text(linked_text)
+
+    def _export_following(self, cli):
+        out = cli.pyrite(
+            "export", "collection", "stuff", "-k", "demo", "--depth", "1",
+            "-o", str(cli.root / "out"),
+        )  # fmt: skip
+        return out, out.stdout + out.stderr
+
+    def test_a_linked_entry_whose_file_broke_after_the_sync_exits_partial(self, cli):
+        # Indexed, then hand-edited into YAML that does not parse.
+        self._linking_collection(
+            cli, "---\nid: linked\ntitle: [unclosed\ntype: note\n---\nbody\n", before_sync=False
+        )
+        out, text = self._export_following(cli)
+        assert "Exported 1 entry" in text, text
+        assert "1 entry left out" in text, text
+        assert "  linked: " in text, text
+        assert out.returncode == PARTIAL, text
+
+    def test_a_linked_entry_its_type_cannot_load_exits_partial(self, cli):
+        # Parses, but the type refuses it, so the sync indexes no row for it
+        # (ADR-0042 8a): the link is not dangling, a file holds its id.
+        self._linking_collection(
+            cli, "---\nid: linked\ntitle: [a, b]\ntype: note\n---\nbody\n", before_sync=True
+        )
+        out, text = self._export_following(cli)
+        assert "Exported 1 entry" in text, text
+        assert "1 entry left out" in text, text
+        assert "  linked: " in text and "title must be a string" in text, text
+        assert out.returncode == PARTIAL, text
+
+    @pytest.mark.control(reason="a dangling link was never a left-out entry")
+    def test_a_dangling_link_is_not_an_entry_left_out(self, cli):
+        folder = cli.kb / "stuff"
+        folder.mkdir()
+        (folder / "ok.md").write_text(
+            "---\nid: ok\ntitle: Ok\ntype: note\n"
+            "links:\n- target: nowhere\n  relation: related_to\n---\nbody\n"
+        )
+        (cli.kb / "stuff.md").write_text(
+            "---\nid: stuff\ntitle: Stuff\ntype: collection\nsource_type: folder\n"
+            "folder_path: stuff\n---\n"
+        )
+        cli.pyrite("index", "sync", "--no-embed")
+        out, text = self._export_following(cli)
+        assert "Exported 1 entry" in text, text
+        assert "left out" not in text, text
+        assert out.returncode == 0, text
 
 
 class TestExportSite:
