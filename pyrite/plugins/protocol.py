@@ -89,7 +89,33 @@ class PyritePlugin(Protocol):
         Returns:
             Dict mapping tool name to tool definition.
             Each tool has "description", "inputSchema", "handler", and,
-            for a tool that takes an entry id, "locates_entry".
+            for a tool that takes an entry id, "locates_entry"; a write
+            tool whose KB may be omitted, "default_kb".
+
+        A tool registered at the read tier that takes a KB argument (any name
+        in ``mcp_server.KB_ARGUMENT_NAMES``) also takes ``readable_kbs`` as a
+        keyword: the caller's readable set, None for an unscoped caller. The
+        dispatcher checks only the KB the call names; what the handler reads
+        after that (backlinks, a search, a graph, a report that crosses KBs)
+        it filters by this set itself, so nothing from a KB the caller cannot
+        read reaches the answer. A read tool that names no KB and does not
+        take the set is refused to a scoped caller.
+        ``tests/test_plugin_read_tools_take_the_readable_set.py`` holds every
+        registered read tool to this rule.
+
+        A tool registered above the read tier works in ``args["kb_name"]``
+        and nowhere else: the MCP dispatcher hands its handler a ``kb_name``
+        that its read, write, read-only and landing checks ran on, or refuses
+        the call. ``default_kb``: ``(args, readable_kbs) -> str
+        | None``, the KB the tool works in when the call names none. The
+        dispatcher asks it before its checks and sets ``kb_name`` to the
+        answer; ``readable_kbs`` is the caller's readable set (None for an
+        unscoped caller), and the answer must be one of them, so a refusal
+        never names a KB the caller cannot read. None, or no ``default_kb``,
+        and a call with no ``kb_name`` is refused ``VALIDATION_FAILED``. A KB
+        named under another argument (``kb``, ``source_kb``) is checked but
+        never chooses the handler's KB. The handler never falls back to a
+        default of its own.
 
         ``locates_entry`` (#1310): ``{"id_args": [...], "entry_type": ...}``.
         ``id_args`` names every argument that carries an entry id (a string

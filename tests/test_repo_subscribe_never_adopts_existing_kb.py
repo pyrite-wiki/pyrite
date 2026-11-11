@@ -106,7 +106,9 @@ def env(tmp_path, monkeypatch):
 
     sources: dict[str, Path] = {}
 
-    def clone_from_local(remote_url, local_path, branch="main", depth=1, token=None):
+    def clone_from_local(
+        remote_url, local_path, branch="main", depth=1, token=None, allowed_hosts=None
+    ):
         src = sources[remote_url]
         cmd = ["git", "clone", "-q", "--branch", branch, "--", str(src), str(local_path)]
         subprocess.run(cmd, check=True, capture_output=True, env=_git_env(), timeout=120)

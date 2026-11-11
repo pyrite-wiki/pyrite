@@ -139,6 +139,26 @@ class TestOverlayListEntries:
             main_db.close()
             diff_db.close()
 
+    def test_kb_names_filters_both_halves(self, tmp_path):
+        # Regression for #1373: the entries route passes kb_names (the
+        # caller's readable set) and the overlay rejected the argument.
+        main_db = _make_db(tmp_path / "main.db")
+        diff_db = _make_db(tmp_path / "diff.db")
+        try:
+            _insert_entry(main_db, "e1", "kb-a", "Main A")
+            _insert_entry(main_db, "e2", "kb-b", "Main B")
+            _insert_entry(diff_db, "e3", "kb-a", "Diff A")
+            _insert_entry(diff_db, "e4", "kb-b", "Diff B")
+
+            overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
+            results = overlay.list_entries(kb_names={"kb-a"}, limit=10000)
+
+            assert {r["id"] for r in results} == {"e1", "e3"}
+            assert all(r["kb_name"] == "kb-a" for r in results)
+        finally:
+            main_db.close()
+            diff_db.close()
+
 
 class TestOverlayCountEntries:
     def test_count_includes_new_diff_entries(self, tmp_path):
@@ -163,6 +183,23 @@ class TestOverlayCountEntries:
             overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
             count = overlay.count_entries(kb_name="test")
             assert count == 3
+        finally:
+            main_db.close()
+            diff_db.close()
+
+    def test_kb_names_filters_count(self, tmp_path):
+        # Same #1373 gap in count_entries: the route calls it with
+        # kb_names right after list_entries.
+        main_db = _make_db(tmp_path / "main.db")
+        diff_db = _make_db(tmp_path / "diff.db")
+        try:
+            _insert_entry(main_db, "e1", "kb-a", "Main A")
+            _insert_entry(main_db, "e2", "kb-b", "Main B")
+            _insert_entry(diff_db, "e3", "kb-a", "Diff A")
+
+            overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
+            assert overlay.count_entries(kb_names={"kb-a"}) == 2
+            assert overlay.count_entries(kb_names={"kb-b"}) == 1
         finally:
             main_db.close()
             diff_db.close()

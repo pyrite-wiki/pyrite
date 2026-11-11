@@ -21,7 +21,7 @@ class DocumentManager:
     """Coordinates file storage and index updates for KB entries.
 
     Encapsulates the write-path pattern:
-        KBRepository.save() → PyriteDB.register_kb() → IndexManager.index_entry()
+        KBRepository.save() → PyriteDB.ensure_kb() → IndexManager.index_entry()
 
     Read paths remain on PyriteDB / KBService directly.
     """
@@ -107,7 +107,8 @@ class DocumentManager:
         if old_path and old_path.resolve() != file_path.resolve() and old_path.exists():
             self._remove_old_file(old_path, kb_config.path)
 
-        self._db.register_kb(
+        # Make the KB's row if it has none; never rewrite one.
+        self._db.ensure_kb(
             name=kb_name,
             kb_type=kb_config.kb_type,
             path=str(kb_config.path),
@@ -150,6 +151,7 @@ class DocumentManager:
         Only a name inside ``kb_root`` is removed."""
         import subprocess
 
+        from ..utils.git_hardening import git_env
         from ..utils.kb_files import KBFiles
 
         files = KBFiles(kb_root)
@@ -162,6 +164,7 @@ class DocumentManager:
                 cwd=str(kb_root),
                 capture_output=True,
                 timeout=5,
+                env=git_env(),
             )
             if result.returncode == 0:
                 subprocess.run(
@@ -169,6 +172,7 @@ class DocumentManager:
                     cwd=str(kb_root),
                     capture_output=True,
                     timeout=10,
+                    env=git_env(),
                 )
             else:
                 files.unlink(old_path)

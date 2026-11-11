@@ -37,21 +37,42 @@ class TestParseGithubUrl:
         assert result is None
 
 
-class TestTokenInjection:
-    """Tests for _inject_token (no mocks needed)."""
+class TestCredentialsAreOfferedOnlyToGitHub:
+    """`_credentials` hands git a token only for https GitHub URLs."""
 
-    def test_inject_https(self):
-        url = GitService._inject_token("https://github.com/org/repo.git", "mytoken")
-        assert url == "https://oauth2:mytoken@github.com/org/repo.git"
+    def test_https_github_gets_a_scoped_helper(self):
+        creds = GitService._credentials("mytoken", ["https://github.com/org/repo.git"])
+        assert creds.env["PYRITE_GIT_TOKEN"] == "mytoken"
+        config = dict(creds.config)
+        assert config["credential.helper"] == ""  # configured helpers reset
+        assert "credential.https://github.com.helper" in config
+        assert "mytoken" not in str(creds.config)
 
-    def test_inject_ssh_converted(self):
-        url = GitService._inject_token("git@github.com:org/repo.git", "mytoken")
-        assert "oauth2:mytoken" in url
-        assert "github.com" in url
+    # No token offered: for a network caller (the default, nothing bound) the
+    # server account's helpers are still reset; the local operator keeps them.
+    # (and the account's other sources are closed: see
+    # tests/test_git_credentials_never_leak.py, "every credential source").
+    _RESET = (("credential.helper", ""), ("core.askPass", ""))
 
-    def test_no_token(self):
-        url = GitService._inject_token("https://github.com/org/repo.git", None)
-        assert url == "https://github.com/org/repo.git"
+    def test_a_non_https_url_gets_nothing(self):
+        creds = GitService._credentials("mytoken", ["git@github.com:org/repo.git"])
+        assert "PYRITE_GIT_TOKEN" not in creds.env and creds.config == self._RESET
+
+    def test_no_token_gets_nothing(self):
+        creds = GitService._credentials(None, ["https://github.com/org/repo.git"])
+        assert "PYRITE_GIT_TOKEN" not in creds.env and creds.config == self._RESET
+
+    @pytest.mark.control(reason="the operator keeps their helpers, as before")
+    def test_no_token_for_the_local_operator_leaves_their_helpers(self):
+        from pyrite.services.acting import local_process
+
+        with local_process(True):
+            creds = GitService._credentials(None, ["https://github.com/org/repo.git"])
+        assert creds.env == {} and creds.config == ()
+
+    def test_one_foreign_url_among_several_withholds_it(self):
+        urls = ["https://github.com/o/r", "https://evil.example/o/r"]
+        assert "PYRITE_GIT_TOKEN" not in GitService._credentials("mytoken", urls).env
 
 
 class TestSanitizeOutput:
@@ -69,6 +90,14 @@ class TestSanitizeOutput:
 
 class TestClone:
     """Tests for clone() with subprocess mocked."""
+
+    @pytest.fixture(autouse=True)
+    def _urls_already_checked(self, monkeypatch):
+        """These tests are about the git command; the host rule's own calls to
+        git are tested in tests/test_git_destinations_are_allowed.py."""
+        monkeypatch.setattr(GitService, "_effective_url", staticmethod(lambda url, cwd=None: url))
+        monkeypatch.setattr(GitService, "_check_remote_urls", staticmethod(lambda *a, **k: None))
+        monkeypatch.setattr(GitService, "_pull_remote", staticmethod(lambda path: "origin"))
 
     @patch("pyrite.services.git_service.subprocess.run")
     def test_clone_success(self, mock_run):
@@ -110,6 +139,14 @@ class TestClone:
 
 class TestPull:
     """Tests for pull() with subprocess mocked."""
+
+    @pytest.fixture(autouse=True)
+    def _urls_already_checked(self, monkeypatch):
+        """These tests are about the git command; the host rule's own calls to
+        git are tested in tests/test_git_destinations_are_allowed.py."""
+        monkeypatch.setattr(GitService, "_effective_url", staticmethod(lambda url, cwd=None: url))
+        monkeypatch.setattr(GitService, "_check_remote_urls", staticmethod(lambda *a, **k: None))
+        monkeypatch.setattr(GitService, "_pull_remote", staticmethod(lambda path: "origin"))
 
     @patch("pyrite.services.git_service.subprocess.run")
     def test_pull_success(self, mock_run):
@@ -416,15 +453,18 @@ class TestGitHubHostMatching:
     ]
 
     @pytest.mark.parametrize("url", HOSTILE)
-    def test_token_never_injected_for_non_github_host(self, url):
-        assert "SECRET" not in GitService._inject_token(url, "SECRET")
+    def test_token_never_offered_for_non_github_host(self, url):
+        assert "PYRITE_GIT_TOKEN" not in GitService._credentials("SECRET", [url]).env
 
     @pytest.mark.parametrize("url", HOSTILE)
     def test_non_github_host_does_not_parse(self, url):
         assert GitService.parse_github_url(url) is None
 
     def test_http_scheme_never_gets_token(self):
-        assert "SECRET" not in GitService._inject_token("http://github.com/org/repo", "SECRET")
+        assert (
+            "PYRITE_GIT_TOKEN"
+            not in GitService._credentials("SECRET", ["http://github.com/org/repo"]).env
+        )
 
     def test_www_and_case_variants_still_work(self):
         assert GitService.parse_github_url("https://GitHub.com/org/repo") == ("org", "repo")

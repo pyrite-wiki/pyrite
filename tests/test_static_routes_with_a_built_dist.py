@@ -95,11 +95,13 @@ def test_a_client_route_still_gets_the_spa_shell(stub_dist):
     "this PR's behaviour"
 )
 def test_top_level_sveltekit_routes_do_not_collide_with_api_prefixes():
-    """The guard's API-shaped prefixes (api, mcp, auth, ws) must not shadow
+    """The guard's API-shaped prefixes (`static.API_PREFIXES` and `NON_SPA_PREFIXES`) must not shadow
     a real client-side route. If SvelteKit ever grows a top-level route
     starting with one of these, it would 404 instead of loading the SPA."""
     routes_dir = Path(__file__).resolve().parents[1] / "web" / "src" / "routes"
-    api_shaped = ("api", "mcp", "auth", "ws")
+    from pyrite.server.static import API_PREFIXES, NON_SPA_PREFIXES
+
+    api_shaped = tuple(p.lstrip("/") for p in (*API_PREFIXES, *NON_SPA_PREFIXES))
     top_level = {
         p.name
         for p in routes_dir.iterdir()

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ...services.access_policy import Action, AnyKB, ReadScope
+from ...services.access_policy import Action, AnyKB, ReadScope, is_operator
 from ...services.git_service import GitService
 from ...services.repo_service import RepoService
 from ..api import (
@@ -15,7 +15,7 @@ from ..api import (
     get_repo_service,
     requires_tier,
 )
-from ..authz import authorize
+from ..authz import authorize, get_principal
 from ..schemas import ForkRequest, PRRequest, RepoInfo, RepoListResponse, SubscribeRequest
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,8 @@ _PUBLIC_ERROR_CODES = frozenset(
         "KB_NAME_CONFLICT",
         "INVALID_KB_NAME",
         "REPO_NAME_CONFLICT",
+        "REMOTE_NOT_ALLOWED",
+        "REMOTE_REDIRECTED",
     }
 )
 
@@ -131,7 +133,43 @@ def _repo_is_readable(kb_names: list[str], scope: ReadScope) -> bool:
     return all(scope.permits(kb) for kb in kb_names)
 
 
-def _repo_kb_guard(tier: str, missing_status: int, missing_code: str, missing_error: str):
+def _holds_a_review_kb(repo: dict, kb_names: list[str], config) -> bool:
+    """Whether a pull into ``repo`` can change a ``landing: review`` KB's files.
+
+    A pull writes everything under the checkout (``local_path``), so the KBs
+    that count are every KB whose folder is inside it or contains it -- a
+    ``config.yaml`` KB placed inside a subscribed checkout included -- and not
+    only the KBs the subscription linked. Paths are compared resolved.
+    """
+    for name in kb_names:
+        if getattr(config.get_kb(name), "landing", "canonical") == "review":
+            return True
+    try:
+        checkout = Path(repo.get("local_path") or "").expanduser().resolve()
+    except (OSError, RuntimeError):
+        checkout = None
+    for kb in getattr(config, "knowledge_bases", []) or []:
+        if getattr(kb, "landing", "canonical") != "review":
+            continue
+        if checkout is None or not repo.get("local_path"):
+            continue
+        try:
+            folder = Path(kb.path).expanduser().resolve()
+        except (OSError, RuntimeError):
+            continue
+        if folder.is_relative_to(checkout) or checkout.is_relative_to(folder):
+            return True
+    return False
+
+
+def _repo_kb_guard(
+    tier: str,
+    missing_status: int,
+    missing_code: str,
+    missing_error: str,
+    *,
+    review_needs_operator: bool = False,
+):
     """Dependency: the caller needs `tier` on **every** KB the repository holds.
 
     A repository is a container of KBs, so the per-KB rule applies to it
@@ -147,10 +185,20 @@ def _repo_kb_guard(tier: str, missing_status: int, missing_code: str, missing_er
     A repository that does not exist passes through to the handler, which
     answers as it always has. One that holds no KBs has nothing to scope and
     is governed by the router's global `write` tier alone.
+
+    ``review_needs_operator``: a repository holding a ``landing: review`` KB
+    needs an operator with the admin role (403 for anyone else, after the
+    per-KB checks): the local process, an admin operator API key, or a
+    signed-in global admin. A write-role operator key is refused. A pull
+    writes that KB's canonical checkout, which only the operator's writes
+    reach (ADR-0044 §1). Decided 2026-10-27 (the operator) and 2026-11-10
+    (admin role only); a capability between write and admin may grant it
+    later.
     """
 
     async def _check(
         name: str,
+        request: Request,
         scope: ReadScope = Depends(authorize(Action.KB_READ, AnyKB)),
         role_of: KBRoleResolver = Depends(get_kb_role_resolver),
         svc: RepoService = Depends(get_repo_service),
@@ -175,6 +223,23 @@ def _repo_kb_guard(tier: str, missing_status: int, missing_code: str, missing_er
                     status_code=403,
                     detail=f"Insufficient permissions on KB '{kb}': requires '{tier}' tier",
                 )
+        principal = get_principal(request)
+        admin_operator = (
+            is_operator(principal) and principal is not None and principal.role == "admin"
+        )
+        if (
+            review_needs_operator
+            and not admin_operator
+            and _holds_a_review_kb(repo, kb_names, svc.config)
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "This repository holds a knowledge base that lands writes for "
+                    "review; pulling into it needs the admin role (a global admin, "
+                    "an admin API key, or the local operator)"
+                ),
+            )
 
     return _check
 
@@ -183,7 +248,9 @@ def _repo_kb_guard(tier: str, missing_status: int, missing_code: str, missing_er
 # `RepoService` returns for an unknown name -- which is also what a caller
 # gets for one whose KBs it may not read.
 _GUARD_GET = _repo_kb_guard("read", 404, "REPO_NOT_FOUND", "Repo '{name}' not found")
-_GUARD_SYNC = _repo_kb_guard("write", 400, "SYNC_FAILED", "No repos found")
+_GUARD_SYNC = _repo_kb_guard(
+    "write", 400, "SYNC_FAILED", "No repos found", review_needs_operator=True
+)
 _GUARD_PR = _repo_kb_guard("write", 400, "PR_FAILED", "Repo '{name}' not found")
 # Admin, not write: unsubscribing removes the repository's KBs from the
 # instance, which is what `DELETE /api/kbs/{name}` does at admin tier.
@@ -394,10 +461,12 @@ def list_github_repos(
                 )
             repos_data = resp.json()
     except httpx.HTTPError as e:
+        # httpx's text names the URL and the transport's own words: the log's.
+        logger.warning("GitHub repo listing failed: %s", e)
         raise HTTPException(
             status_code=502,
-            detail={"code": "GITHUB_API_ERROR", "message": str(e)},
-        )
+            detail={"code": "GITHUB_API_ERROR", "message": "The GitHub API request failed."},
+        ) from e
 
     repos = [
         {

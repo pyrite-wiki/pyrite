@@ -17,8 +17,10 @@ from typing import Any
 import yaml
 
 from ..config import PyriteConfig
-from ..exceptions import FrontmatterError, KBNotFoundError
+from ..exceptions import FrontmatterError, KBNotFoundError, outside_text
 from ..utils.frontmatter import Frontmatter, NoFrontmatter, describe, split_frontmatter
+from ..utils.kb_files import KBFileOutsideRootError, KBFiles
+from ..utils.yaml import safe_load_bounded
 
 # Pattern for {{variable}} placeholders
 _VAR_PATTERN = re.compile(r"\{\{(\w+)\}\}")
@@ -50,13 +52,23 @@ class TemplateService:
         return self._kb_path(kb_name) / "_templates"
 
     @staticmethod
-    def _parse_template_file(path: Path) -> dict[str, Any]:
+    def _parse_template_file(path: Path, root: Path) -> dict[str, Any]:
         """Parse a template markdown file into its components.
 
         Returns a dict with keys:
             name, description, entry_type, frontmatter (dict), body (str)
+
+        Read only inside the KB at ``root`` (``KBFiles.read_bytes``): a
+        template that is a link out of the KB, or a file with more than one
+        hard link, raises ``KBFileReadOutsideRootError`` (``OUTSIDE_KB_ROOT``)
+        and nothing is read, so neither a template route nor a note built
+        from it (the daily note) holds bytes from outside. ``FileNotFoundError``
+        when it is gone.
         """
-        text = path.read_text(encoding="utf-8")
+        raw = KBFiles(root).read_bytes(path)
+        if raw is None:
+            raise FileNotFoundError(path.name)
+        text = raw.decode("utf-8")
 
         frontmatter: dict[str, Any] = {}
         body = text
@@ -64,10 +76,10 @@ class TemplateService:
         split = split_frontmatter(text)
         if isinstance(split, Frontmatter):
             try:
-                frontmatter = yaml.safe_load(split.text) or {}
+                frontmatter = safe_load_bounded(split.text) or {}
             except yaml.YAMLError as e:
                 raise FrontmatterError(
-                    f"Template {path.name}: invalid YAML frontmatter: {e}"
+                    f"Template {path.name}: invalid YAML frontmatter: {outside_text(e)}"
                 ) from e
             if not isinstance(frontmatter, dict):
                 raise FrontmatterError(f"Template {path.name}: frontmatter is not a mapping")
@@ -95,16 +107,24 @@ class TemplateService:
 
         Returns a list of dicts with ``name``, ``description``, and ``entry_type`` keys.
         """
-        tpl_dir = self._templates_dir(kb_name)
+        root = self._kb_path(kb_name)
+        tpl_dir = root / "_templates"
         if not tpl_dir.is_dir():
             return []
 
         templates: list[dict[str, Any]] = []
         for path in sorted(tpl_dir.glob("*.md")):
             try:
-                parsed = self._parse_template_file(path)
-            except (FrontmatterError, yaml.YAMLError, UnicodeDecodeError) as e:
-                # One unreadable template must not hide the others.
+                parsed = self._parse_template_file(path, root)
+            except (
+                FrontmatterError,
+                yaml.YAMLError,
+                UnicodeDecodeError,
+                FileNotFoundError,
+                KBFileOutsideRootError,
+            ) as e:
+                # One unreadable template must not hide the others; one that
+                # is not the KB's (a link out, a hard link) is not listed.
                 logger.warning("Skipping template %s: %s", path.name, e)
                 continue
             templates.append(
@@ -124,11 +144,11 @@ class TemplateService:
 
         Raises ``FileNotFoundError`` if the template does not exist.
         """
-        tpl_dir = self._templates_dir(kb_name)
-        path = tpl_dir / f"{template_name}.md"
+        root = self._kb_path(kb_name)
+        path = root / "_templates" / f"{template_name}.md"
         if not path.is_file():
             raise FileNotFoundError(f"Template '{template_name}' not found in KB '{kb_name}'")
-        return self._parse_template_file(path)
+        return self._parse_template_file(path, root)
 
     def render_template(
         self,

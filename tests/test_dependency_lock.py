@@ -136,6 +136,9 @@ class TestDependabotKeepsTheLockCurrent:
         entry = [u for u in updates if u["package-ecosystem"] == "uv"]
         assert len(entry) == 1 and entry[0]["target-branch"] == "dev"
         assert entry[0]["directory"] == "/" and entry[0]["groups"]
+        # Lock bumps only: a PR that rewrote pyproject.toml ranges would change
+        # what `pip install pyrite` accepts.
+        assert entry[0]["versioning-strategy"] == "lockfile-only"
         # `pip` cannot read uv.lock; keeping both would open two PRs for one set.
         assert not [u for u in updates if u["package-ecosystem"] == "pip"]
 

@@ -599,3 +599,25 @@ taken as deliberate. Reading a field more leniently (a task's word
 `priority`, `tags: Foo` as `['Foo']`) is safe for the file for the same
 reason: the kept-key rule writes the file's own value back until the field
 is assigned.
+
+## A rewrite of a stacked branch commits stale files unless you check the base moved
+
+When a branch is stacked on another branch that other sessions push to, the base
+can move while you work, and a rewrite then turns the new base commits into
+reverts. Three ways it has happened (three times in the security batches):
+
+- `git reset --soft <base>` followed by `git add <explicit paths>` after the
+  shared base ref had advanced: the working tree still held the old base's
+  content for the files you touched, and committing them whole reverted the
+  newer base commits in those files.
+- `git apply --3way` stages every file it touches. A later `git add <paths>` and
+  `git commit` of "one group" commits everything the patch staged, so six
+  planned commits became one. Run `git reset -q` after `git apply --3way`, then
+  commit by explicit paths.
+- `git fetch` in any worktree moves the remote-tracking refs for all of them.
+
+Before a rewrite: `git fetch <remote>` and `git merge-base --is-ancestor
+<base> HEAD`; after it: `git diff <base> HEAD --stat` must list only your
+files, and `git diff <old-head> HEAD` must be empty. If the base moved,
+re-apply your diff (`git diff <old-base> <old-head>`) onto the new base rather
+than resetting onto it with a stale working tree.

@@ -124,6 +124,18 @@ def _fake_failing_run(stderr: str):
 
 
 @pytest.fixture
+def git_url_lookups_answered_directly(monkeypatch):
+    """For the classes below whose subprocess stubs fail every git command:
+    the host rule's own local lookups (insteadOf expansion, a remote's
+    configured URLs) are answered from the URL itself, so the stubbed failure
+    is the clone/pull/push's. The rule still checks every URL string; its
+    lookups are tested in tests/test_git_destinations_are_allowed.py."""
+    monkeypatch.setattr(GitService, "_effective_url", staticmethod(lambda url, cwd=None: url))
+    monkeypatch.setattr(GitService, "_check_remote_urls", staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(GitService, "_pull_remote", staticmethod(lambda path: "origin"))
+
+
+@pytest.fixture
 def workspace(tmp_path):
     """A workspace root under tmp_path — never ``~/.pyrite``."""
     path = tmp_path / "workspace"
@@ -311,6 +323,7 @@ class TestErrorClassification:
         assert "credentials cannot see it" not in message
 
 
+@pytest.mark.usefixtures("git_url_lookups_answered_directly")
 class TestCloneLogsFullStderr:
     """Criterion 4: the operator still gets everything the body omits."""
 
@@ -342,6 +355,7 @@ class TestCloneLogsFullStderr:
         assert raw.strip().splitlines()[-1] in logged
 
 
+@pytest.mark.usefixtures("git_url_lookups_answered_directly")
 class TestPullAndPushReturnGitsOwnWords:
     """Finding 1: `pull`/`push` must return git's own text (token- and
     path-redacted), not a canned "Git operation failed — see the server log"
@@ -424,6 +438,7 @@ class TestPullAndPushReturnGitsOwnWords:
         assert "could not lock config file" in message
 
 
+@pytest.mark.usefixtures("git_url_lookups_answered_directly")
 class TestSubscribeEndpointDisclosure:
     """Criterion 2 + 3, end to end through the REST endpoint."""
 
@@ -855,6 +870,7 @@ def test_no_second_pull_implementation_returning_raw_stderr():
     assert not hasattr(github_auth, "pull_repo")
 
 
+@pytest.mark.usefixtures("git_url_lookups_answered_directly")
 class TestErrorDetailHygiene:
     """Should-fix items: the public code set is closed, and messages are not
     double-prefixed."""

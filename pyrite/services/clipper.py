@@ -1,93 +1,21 @@
 """Web Clipper service — fetch URL, extract content, convert to Markdown."""
 
-import ipaddress
 import logging
 import re
-import socket
+import zlib
 from dataclasses import dataclass
-from html.parser import HTMLParser
-from urllib.parse import urlparse
 
+import anyio.to_thread
 import httpx
+from bs4 import BeautifulSoup
 
-from ..exceptions import ClipperBlockedHostError
+from ..exceptions import ClipperTooLargeError
+from ..utils.public_destination import check_url_safe as _check_url_safe
 
 logger = logging.getLogger(__name__)
 
-
-def _check_url_safe(url: str) -> None:
-    """Reject one URL that would let the clipper act as an SSRF gadget.
-
-    This validates the URL it is handed and nothing else: it does not see
-    redirects. The fetch path applies it to every hop through
-    ``_reject_blocked_request`` (#219).
-
-    Raises ClipperBlockedHostError if:
-      - the scheme is not http(s);
-      - the URL has no host;
-      - the host resolves to a loopback, link-local, private, reserved,
-        unspecified, or multicast IPv4/IPv6 address.
-
-    All resolved IPs for the host are checked. If ANY resolved IP is
-    blocked, the URL is rejected — that prevents the trivial DNS-mixed
-    case where a host returns both a public and a private A record.
-    (Full DNS-rebinding defense — pinning the connection to the resolved
-    IP — is a follow-up; see follow-up ticket
-    clipper-ssrf-defense-followups.)
-    """
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        raise ClipperBlockedHostError(
-            f"Refusing scheme {parsed.scheme!r}; only http(s) is permitted"
-        )
-    host = parsed.hostname
-    if not host:
-        raise ClipperBlockedHostError(f"URL {url!r} has no host")
-
-    # Try parsing the host directly as an IP literal first; that catches
-    # http://127.0.0.1/ and http://[::1]/ without a DNS lookup.
-    try:
-        ip = ipaddress.ip_address(host)
-        _reject_if_blocked(ip, host)
-        return
-    except ValueError:
-        pass  # not an IP literal — resolve via DNS
-
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror as exc:
-        raise ClipperBlockedHostError(f"Could not resolve host {host!r}: {exc}") from exc
-
-    seen: set[str] = set()
-    for info in infos:
-        addr = info[4][0]
-        if addr in seen:
-            continue
-        seen.add(addr)
-        try:
-            ip = ipaddress.ip_address(addr)
-        except ValueError:
-            continue  # unparseable; skip rather than fail open
-        _reject_if_blocked(ip, host)
-
-
-def _reject_if_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address, host: str) -> None:
-    """Raise ClipperBlockedHostError if `ip` is on the SSRF blocklist."""
-    # The stdlib classifiers cover loopback (127.0.0.0/8, ::1/128),
-    # link-local (169.254.0.0/16 incl. AWS metadata, fe80::/10),
-    # private (RFC1918 v4, fc00::/7), unspecified (0.0.0.0, ::),
-    # reserved, and multicast.
-    if (
-        ip.is_loopback
-        or ip.is_link_local
-        or ip.is_private
-        or ip.is_unspecified
-        or ip.is_reserved
-        or ip.is_multicast
-    ):
-        raise ClipperBlockedHostError(
-            f"Refusing to fetch {host!r}: resolved IP {ip} is on the SSRF blocklist"
-        )
+#: The most decoded bytes of a page the clipper reads (see ``clip_url``).
+MAX_CLIP_BYTES = 5 * 1024 * 1024
 
 
 async def _reject_blocked_request(request: httpx.Request) -> None:
@@ -99,7 +27,8 @@ async def _reject_blocked_request(request: httpx.Request) -> None:
     ``ClipperBlockedHostError`` a directly blocked URL raises, so a caller
     cannot tell "blocked directly" from "blocked after a redirect".
     """
-    _check_url_safe(str(request.url))
+    # Name resolution blocks; keep it off the event loop.
+    await anyio.to_thread.run_sync(_check_url_safe, str(request.url))
 
 
 @dataclass
@@ -112,65 +41,42 @@ class ClipResult:
     description: str = ""
 
 
-class _TitleExtractor(HTMLParser):
-    """Minimal HTML parser to extract <title> text."""
-
-    def __init__(self):
-        super().__init__()
-        self._in_title = False
-        self.title = ""
-
-    def handle_starttag(self, tag, attrs):
-        if tag.lower() == "title":
-            self._in_title = True
-
-    def handle_endtag(self, tag):
-        if tag.lower() == "title":
-            self._in_title = False
-
-    def handle_data(self, data):
-        if self._in_title:
-            self.title += data
+#: Elements dropped before conversion: they are page chrome, not content.
+_DROPPED = ["script", "style", "nav", "footer", "header", "aside", "noscript"]
 
 
-def _extract_title(html: str) -> str:
-    """Extract <title> from HTML."""
-    parser = _TitleExtractor()
+def _meta_content(soup: BeautifulSoup, attr: str, value: str) -> str:
+    for tag in soup.find_all("meta"):
+        if str(tag.get(attr, "")).lower() == value:
+            content = tag.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+    return ""
+
+
+def _extract(html: str) -> tuple[str, str, str]:
+    """``(title, description, markdown)`` of a page, in one linear parse.
+
+    The page is parsed once into a tree (``html.parser`` through
+    BeautifulSoup, linear in the input), the title and meta description are
+    read from it, the chrome elements are removed, and what is left is
+    converted. Time is linear in the page: no step backtracks.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    title = soup.title.get_text().strip() if soup.title else ""
+    description = _meta_content(soup, "name", "description") or _meta_content(
+        soup, "property", "og:description"
+    )
+    for tag in soup.find_all(_DROPPED):
+        if not tag.decomposed:  # an outer drop already took its inner ones
+            tag.decompose()
     try:
-        parser.feed(html)
-    except Exception:
-        logger.warning("HTML title extraction failed", exc_info=True)
-    return parser.title.strip()
+        from markdownify import MarkdownConverter
 
-
-def _extract_description(html: str) -> str:
-    """Extract meta description from HTML."""
-    match = re.search(
-        r'<meta[^>]+name=["\']description["\'][^>]+content=["\'](.*?)["\']',
-        html,
-        re.IGNORECASE,
-    )
-    if match:
-        return match.group(1).strip()
-    # Try og:description
-    match = re.search(
-        r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\'](.*?)["\']',
-        html,
-        re.IGNORECASE,
-    )
-    return match.group(1).strip() if match else ""
-
-
-def _strip_elements(html: str) -> str:
-    """Remove script, style, nav, footer, header, and aside elements."""
-    for tag in ("script", "style", "nav", "footer", "header", "aside", "noscript"):
-        html = re.sub(
-            rf"<{tag}[^>]*>.*?</{tag}>",
-            "",
-            html,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-    return html
+        body = MarkdownConverter(heading_style="ATX", strip=["img"]).convert_soup(soup)
+    except ImportError:
+        body = soup.get_text()
+    return title, description, re.sub(r"\n{3,}", "\n\n", body).strip()
 
 
 class ClipperService:
@@ -195,41 +101,121 @@ class ClipperService:
                 reserved address. The check runs before the first request, and
                 again for every redirect hop via ``_reject_blocked_request``.
         """
-        _check_url_safe(url)
+        await anyio.to_thread.run_sync(_check_url_safe, url)
 
-        async with httpx.AsyncClient(
-            timeout=self.timeout,
-            follow_redirects=True,
-            headers={"User-Agent": "Pyrite-Clipper/1.0"},
-            event_hooks={"request": [_reject_blocked_request]},
-        ) as client:
-            response = await client.get(url)
-            response.raise_for_status()
+        # One deadline for the whole fetch: the client's timeout is per read,
+        # and a server that trickles bytes would otherwise hold it open.
+        with anyio.fail_after(self.timeout * 2):
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                follow_redirects=True,
+                # Only codings `_read_capped` decodes within the cap.
+                headers={"User-Agent": "Pyrite-Clipper/1.0", "Accept-Encoding": "gzip, deflate"},
+                event_hooks={"request": [_reject_blocked_request]},
+            ) as client:
+                async with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    raw = await _read_capped(response)
+                    encoding = response.encoding or "utf-8"
 
-        html = response.text
-
-        # Extract metadata before stripping
-        extracted_title = title or _extract_title(html) or url
-        description = _extract_description(html)
-
-        # Strip non-content elements
-        cleaned = _strip_elements(html)
-
-        # Convert to Markdown
-        try:
-            from markdownify import markdownify
-
-            body = markdownify(cleaned, heading_style="ATX", strip=["img"])
-        except ImportError:
-            # Fallback: strip all HTML tags
-            body = re.sub(r"<[^>]+>", "", cleaned)
-
-        # Clean up excessive whitespace
-        body = re.sub(r"\n{3,}", "\n\n", body).strip()
+        html = raw.decode(encoding, errors="replace")
+        # Parsing and conversion scale with the page: off the event loop.
+        extracted_title, description, body = await anyio.to_thread.run_sync(_extract, html)
 
         return ClipResult(
-            title=extracted_title,
+            title=title or extracted_title or url,
             body=body,
             source_url=url,
             description=description,
         )
+
+
+_WINDOW_BITS = {"gzip": 31, "x-gzip": 31, "deflate": 15}
+_STEP = 64 * 1024
+
+
+def _too_large() -> ClipperTooLargeError:
+    return ClipperTooLargeError(
+        f"The page is larger than {MAX_CLIP_BYTES // (1024 * 1024)} MiB and was not clipped"
+    )
+
+
+async def _raw_chunks(response: httpx.Response):
+    """The response body as it came off the wire, chunk by chunk. A response
+    built in memory (a test transport) has no stream left to read; its content
+    is the one chunk."""
+    if response.is_stream_consumed:
+        yield response.content
+        return
+    async for chunk in response.aiter_raw():
+        yield chunk
+
+
+async def _read_capped(response: httpx.Response) -> bytes:
+    """The response body, read as a stream and refused past ``MAX_CLIP_BYTES``.
+
+    The cap counts decoded bytes and bounds memory at every step. The body is
+    read raw and decoded here, in ``_STEP``-byte outputs
+    (``zlib.decompressobj.decompress(data, max_length)``), so no input chunk
+    inflates beyond ``_STEP`` before the cap is checked. One coding is
+    supported (gzip or deflate, as requested); a response with a stack of
+    codings, or one this does not decode (br, zstd), is refused with a
+    ``ValueError`` (the endpoint answers ``CLIP_FAILED``).
+    """
+    # A response built in memory (a test transport) arrives already decoded.
+    codings = (
+        []
+        if response.is_stream_consumed
+        else [
+            c.strip().lower()
+            for c in response.headers.get("content-encoding", "").split(",")
+            if c.strip() and c.strip().lower() != "identity"
+        ]
+    )
+    if len(codings) > 1 or (codings and codings[0] not in _WINDOW_BITS):
+        raise ValueError(f"unsupported content-encoding {codings!r}")
+
+    parts: list[bytes] = []
+    total = 0
+
+    def take(chunk: bytes) -> None:
+        nonlocal total
+        total += len(chunk)
+        if total > MAX_CLIP_BYTES:
+            raise _too_large()
+        parts.append(chunk)
+
+    if not codings:
+        async for chunk in _raw_chunks(response):
+            take(chunk)
+        return b"".join(parts)
+
+    bits = _WINDOW_BITS[codings[0]]
+    decoder = zlib.decompressobj(bits)
+    first = True
+    async for chunk in _raw_chunks(response):
+        data = chunk
+        while True:
+            try:
+                out = decoder.decompress(data, _STEP)
+            except zlib.error:
+                if not (first and bits == 15):
+                    raise
+                # "deflate" is sent both zlib-wrapped and raw.
+                bits = -15
+                decoder = zlib.decompressobj(bits)
+                out = decoder.decompress(data, _STEP)
+            first = False
+            if out:
+                take(out)
+            data = decoder.unconsumed_tail
+            if not data and len(out) < _STEP:
+                break
+        if decoder.eof:
+            break
+    while not decoder.eof:  # output the decoder still holds
+        out = decoder.decompress(b"", _STEP)
+        if not out:
+            break
+        take(out)
+    return b"".join(parts)

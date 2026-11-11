@@ -20,6 +20,17 @@ left alone: an older build may still read them. Tables the model does not
 declare (FTS, sqlite-vec, plugin tables, the raw-SQL tables of migrations
 v19/v22/v23) are not its business.
 
+**A non-constant default needs an empty table.** SQLite's ``ALTER TABLE ADD
+COLUMN`` accepts ``DEFAULT CURRENT_TIMESTAMP``/``CURRENT_DATE``/``CURRENT_TIME``
+and a parenthesised expression that is not a literal while the table is empty,
+then refuses them once it has a row (``Cannot add a column with non-constant
+default``); a ``STORED`` generated column is refused the same way (``cannot add
+a STORED column``). The
+model's timestamps declare ``CURRENT_TIMESTAMP``, so a missing one on a table
+with rows is detected while planning and refused with the rebuild suggestion
+(#1318). Counting a table's rows happens only when the plan has such a column
+for it, and an empty table still takes the column.
+
 **After the migrations, never before.** Run first, it would add
 ``starred_entry.user_id`` to a pre-v24 table, and v24 (which rebuilds the
 table to change its unique constraint) would see the column and skip the
@@ -79,14 +90,15 @@ import contextlib
 import errno
 import logging
 import os
+import re
 import sqlite3
 import time
 from collections.abc import Iterator
 from pathlib import Path
 
-from sqlalchemy import MetaData
+from sqlalchemy import Column, MetaData
 from sqlalchemy.dialects import sqlite as sqlite_dialect
-from sqlalchemy.schema import CreateColumn, CreateIndex
+from sqlalchemy.schema import CreateColumn, CreateIndex, DefaultClause
 
 from ..exceptions import IndexSchemaRefusedError, StorageBusyError
 from .errors import INDEX_ONLY_STATE, storage_error_from
@@ -127,6 +139,83 @@ REPAIR_FAILED_SUGGESTION = (
 )
 
 _DIALECT = sqlite_dialect.dialect()
+
+#: A DEFAULT SQLite calls constant: a literal, optionally in parentheses.
+#: ``CURRENT_TIMESTAMP``/``DATE``/``TIME`` are not literals to ALTER TABLE ADD
+#: COLUMN, and neither is a function call such as ``(datetime('now'))``.
+_LITERAL_DEFAULT = re.compile(
+    r"""(?ix)
+    (?: NULL | TRUE | FALSE
+      | [+-]? (?: \d+(?:\.\d*)? | \.\d+ ) (?: e [+-]? \d+ )?
+      | 0x[0-9a-f]+
+      | '(?:[^']|'')*'
+      | x'[0-9a-f]*'
+    )
+    """
+)
+
+
+def _unparenthesized(value: str) -> str:
+    """``value`` without balanced parentheses that wrap the whole expression.
+
+    ``((1))`` becomes ``1``; ``(1) + (2)`` stays as it is, since its first
+    parenthesis closes before the end. A quote is skipped, so a parenthesis in
+    a string literal does not count.
+    """
+    value = value.strip()
+    while len(value) > 1 and value[0] == "(" and value[-1] == ")":
+        depth = 0
+        in_string = False
+        for position, char in enumerate(value):
+            if in_string:
+                if char == "'":
+                    in_string = False
+                continue
+            if char == "'":
+                in_string = True
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0 and position != len(value) - 1:
+                    return value
+        if depth != 0:
+            return value
+        value = value[1:-1].strip()
+    return value
+
+
+def _has_constant_default(column: Column) -> bool:
+    """Whether SQLite accepts this column's DEFAULT on a table that has rows.
+
+    A ``server_default`` string is quoted by SQLAlchemy (``"active"`` renders
+    ``DEFAULT 'active'``), so it is always a literal. A raw SQL default
+    (``text(...)``) counts only when it is a literal, optionally parenthesised.
+    Any other SQL expression is treated as non-constant: the repair refuses
+    rather than meet SQLite's refusal mid-transaction.
+    """
+    default = column.server_default
+    if default is None:
+        return True
+    if not isinstance(default, DefaultClause):
+        # `FetchedValue` marks a value the database supplies on insert or
+        # update; it emits no DEFAULT in this column's DDL.
+        return True
+    arg = default.arg
+    if isinstance(arg, str):
+        return True
+    sql = getattr(arg, "text", None)
+    if not isinstance(sql, str):
+        return False
+    return _LITERAL_DEFAULT.fullmatch(_unparenthesized(sql)) is not None
+
+
+def _needs_empty_table(column: Column) -> bool:
+    """SQLite refuses this ALTER only while the table it alters has rows."""
+    computed = column.computed
+    if computed is not None:
+        return bool(computed.persisted)
+    return not _has_constant_default(column)
 
 
 def _models() -> MetaData:
@@ -189,7 +278,19 @@ def repair_schema(
 
     add_columns: list[tuple[str, str, str]] = []  # (table, column, DDL)
     cannot_add: list[str] = []
+    # Non-constant defaults and STORED generated columns are addable only to an
+    # empty table; keep them apart so the refusal can say why.
+    cannot_add_to_rows: list[str] = []
     add_indexes: list[tuple[str, str]] = []  # (name, DDL)
+    has_rows: dict[str, bool] = {}
+
+    def table_has_rows(name: str) -> bool:
+        if name not in has_rows:
+            has_rows[name] = (
+                conn.execute(f'SELECT EXISTS(SELECT 1 FROM "{name}")').fetchone()[0] == 1
+            )
+        return has_rows[name]
+
     for table in metadata.sorted_tables:
         if table.name not in tables_on_disk:
             continue
@@ -206,6 +307,9 @@ def repair_schema(
             if not addable:
                 cannot_add.append(f"{table.name}.{column.name}")
                 continue
+            if _needs_empty_table(column) and table_has_rows(table.name):
+                cannot_add_to_rows.append(f"{table.name}.{column.name}")
+                continue
             ddl = str(CreateColumn(column).compile(dialect=_DIALECT))
             add_columns.append((table.name, column.name, ddl))
         for index in sorted(table.indexes, key=lambda i: i.name or ""):
@@ -213,12 +317,18 @@ def repair_schema(
                 ddl = str(CreateIndex(index, if_not_exists=True).compile(dialect=_DIALECT))
                 add_indexes.append((index.name, ddl))
 
-    if cannot_add:
+    if cannot_add or cannot_add_to_rows:
         state = describe_state(conn, version_at_open)
         verb = "lacks" if state.startswith("The index (") else "found it lacks"
+        why = ""
+        if cannot_add_to_rows:
+            why = (
+                " SQLite cannot add a column with a non-constant default, or a "
+                "stored generated column, to a table that has rows."
+            )
         err = IndexSchemaRefusedError(
-            f"{state} {verb} {', '.join(cannot_add)}, which this Pyrite version cannot "
-            "add in place, so the index is refused."
+            f"{state} {verb} {', '.join(cannot_add + cannot_add_to_rows)}, which this "
+            f"Pyrite version cannot add in place, so the index is refused.{why}"
         )
         err.suggestion = REBUILD_SUGGESTION
         raise err

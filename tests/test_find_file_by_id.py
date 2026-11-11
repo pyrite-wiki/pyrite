@@ -401,4 +401,9 @@ def test_704_skip_reason_is_one_line_and_kb_relative(kb, monkeypatch):
         raise ValueError(f"bad value in {f}\n  line 2 detail\n  line 3")
 
     monkeypatch.setattr(repository_module, "read_entry_id", boom)
-    assert repo.read_id(f) == (None, "bad value in x.md")
+    from pyrite.services.acting import local_process
+
+    with local_process(True):  # the operator's `pyrite ids missing`
+        assert repo.read_id(f) == (None, "bad value in x.md")
+    # A network caller never sees the loader's text (ADR-0052 N3).
+    assert repo.read_id(f) == (None, "the server log has the details")

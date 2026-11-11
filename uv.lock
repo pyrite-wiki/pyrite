@@ -2476,7 +2476,7 @@ wheels = [
 
 [[package]]
 name = "pyrite"
-version = "0.26.0"
+version = "0.26.2"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
@@ -2485,6 +2485,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
+    { name = "regex" },
     { name = "ruamel-yaml" },
     { name = "sqlalchemy" },
 ]
@@ -2594,6 +2595,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "python-multipart", marker = "extra == 'server'", specifier = ">=0.0.31" },
     { name = "pyyaml", specifier = ">=6.0.1" },
+    { name = "regex", specifier = ">=2024.4.16" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13.7.1" },
     { name = "ruamel-yaml", specifier = ">=0.18.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.0,<0.16" },
@@ -2601,7 +2603,7 @@ requires-dist = [
     { name = "slowapi", marker = "extra == 'server'", specifier = ">=0.1.9" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "sqlite-vec", marker = "extra == 'semantic'", specifier = ">=0.1.0" },
-    { name = "typer", extras = ["all"], marker = "extra == 'cli'", specifier = ">=0.12.3" },
+    { name = "typer", extras = ["all"], marker = "extra == 'cli'", specifier = ">=0.12.3,<0.29" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.30.1" },
     { name = "watchdog", marker = "extra == 'server'", specifier = ">=4.0.1" },
 ]

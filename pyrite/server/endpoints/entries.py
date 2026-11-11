@@ -4,17 +4,20 @@ import io
 import logging
 from typing import Any
 
+import anyio.to_thread
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ...config import PyriteConfig
 from ...exceptions import (
+    AccessDenied,
     ConflictError,
     EntryNotFoundError,
     KBReadOnlyError,
     PyriteError,
     StorageError,
     ValidationError,
+    public_text,
 )
 from ...services.access_policy import KB, AccessPolicy, Action, AnyKB, ReadScope
 from ...services.block_service import BlockService
@@ -649,8 +652,13 @@ async def import_entries(
     # settings.max_request_body_bytes (server/body_limit.py): a larger upload
     # is answered 413 before this handler runs past the form parse.
     content = await file.read()
+    # The importer and the bulk write are synchronous and scale with the
+    # upload, so they run in a worker thread: on this coroutine's loop they
+    # held up every other request. `to_thread` carries the contextvars over.
     try:
-        parsed = importer(content, stream=True) if stream else importer(content)
+        parsed = await anyio.to_thread.run_sync(
+            lambda: list(importer(content, stream=True)) if stream else importer(content)
+        )
     except Exception:
         # The exception's text is the operator's, not the caller's: it can
         # quote internals (paths, parser state). It goes to the log; the
@@ -677,9 +685,12 @@ async def import_entries(
     # Every per-record decision (the ADR-0034 truncated-body refusal, the
     # declared type, an existing id, schema and plugin validation) is the
     # service's write pipeline, the same one POST /entries uses (#378).
-    results = svc.bulk_create_entries(
-        kb, parsed, allow_undeclared=allow_undeclared, drop_managed=True
-    )
+    def _create() -> list[dict[str, Any]]:
+        return svc.bulk_create_entries(
+            kb, parsed, allow_undeclared=allow_undeclared, drop_managed=True
+        )
+
+    results = await anyio.to_thread.run_sync(_create)
 
     created = []
     errors = []
@@ -694,7 +705,12 @@ async def import_entries(
                 }
             )
         else:
-            errors.append({"title": title, "error": r["error"], "error_code": r["error_code"]})
+            detail = {"title": title, "error": r["error"], "error_code": r["error_code"]}
+            if r.get("errors"):
+                # Rows stay per record: the top-level `errors` is a count, so a
+                # row belongs beside the record it refused (#1381 review).
+                detail["errors"] = r["errors"]
+            errors.append(detail)
 
     return {
         "imported": len(created),
@@ -841,8 +857,12 @@ def create_entry(
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
     except ValidationError as e:
         raise refusal_http(e)
+    except AccessDenied:
+        raise  # the central handler's 403 FORBIDDEN
     except (PyriteError, ValueError) as e:
-        raise HTTPException(status_code=400, detail={"code": "CREATE_FAILED", "message": str(e)})
+        raise HTTPException(
+            status_code=400, detail={"code": "CREATE_FAILED", "message": public_text(e, log=logger)}
+        )
     entry = written.entry
 
     # Broadcast WebSocket event
@@ -920,8 +940,12 @@ def update_entry(
         # `STORAGE_ERROR` 500 with the class's public text, not a 400 that
         # would show the path.
         raise
+    except AccessDenied:
+        raise  # the central handler's 403 FORBIDDEN
     except (PyriteError, ValueError) as e:
-        raise HTTPException(status_code=400, detail={"code": "UPDATE_FAILED", "message": str(e)})
+        raise HTTPException(
+            status_code=400, detail={"code": "UPDATE_FAILED", "message": public_text(e, log=logger)}
+        )
 
     # Broadcast WebSocket event
     from ..websocket import broadcast_event
@@ -982,8 +1006,12 @@ def patch_entry_field(
         raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": str(e)})
     except StorageError:
         raise  # the central handler's STORAGE_ERROR 500, as on PUT
+    except AccessDenied:
+        raise  # the central handler's 403 FORBIDDEN
     except (PyriteError, ValueError) as e:
-        raise HTTPException(status_code=400, detail={"code": "UPDATE_FAILED", "message": str(e)})
+        raise HTTPException(
+            status_code=400, detail={"code": "UPDATE_FAILED", "message": public_text(e, log=logger)}
+        )
 
     return UpdateResponse(
         updated=True,
@@ -1021,7 +1049,9 @@ def delete_entry(
     except KBReadOnlyError as e:
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
     except (ValidationError, PyriteError, ValueError) as e:
-        raise HTTPException(status_code=400, detail={"code": "DELETE_FAILED", "message": str(e)})
+        raise HTTPException(
+            status_code=400, detail={"code": "DELETE_FAILED", "message": public_text(e)}
+        )
 
     if not deleted:
         raise HTTPException(

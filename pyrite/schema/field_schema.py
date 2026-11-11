@@ -265,7 +265,7 @@ class TypeSchema:
         """
         if not self.file_pattern:
             return None
-        from ..exceptions import ValidationError
+        from ..exceptions import ValidationError, outside_text
         from ..schema import generate_entry_id
 
         fixed = {
@@ -345,7 +345,7 @@ class TypeSchema:
         except (ValueError, TypeError, IndexError, KeyError) as e:
             raise ValidationError(
                 f"file_pattern {self.file_pattern!r} could not be resolved for entry "
-                f"{entry.id!r}: {e}"
+                f"{entry.id!r}: {outside_text(e)}"
             ) from e
 
         if "\x00" in result:

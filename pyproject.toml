@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyrite"
-version = "0.26.0"
+version = "0.26.2"
 description = "Knowledge-as-Code for you and your agents"
 readme = "README.md"
 license = {text = "MIT"}
@@ -30,6 +30,8 @@ dependencies = [
     "SQLAlchemy>=2.0.0",
     "certifi>=2026.10.19",  # minimum patched version
     "anyio>=4.14.2",  # minimum patched version
+    # kb.yaml rubric patterns run with a time limit, which `re` cannot give.
+    "regex>=2024.4.16",
     # pyrite/server/mcp_server.py's build_sdk_server() uses the mcp SDK's
     # 1.x low-level Server API (e.g. Server.list_tools() as a decorator),
     # which the SDK's 2.0.0 release removed/renamed. An unbounded install
@@ -65,7 +67,7 @@ server = [
     "cryptography>=50.0.0",  # minimum patched version (auth_service.py imports it)
 ]
 cli = [
-    "typer[all]>=0.12.3",
+    "typer[all]>=0.12.3,<0.29",  # 0.29.0 (2026-11-09) breaks CLI introspection; #1432
     "rich>=13.7.1",
 ]
 ai = [

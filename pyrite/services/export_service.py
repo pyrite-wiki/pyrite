@@ -5,13 +5,19 @@ KB export and git operations, including export-to-repo (clone, export, commit, p
 """
 
 import logging
+import os
 import re
 import tempfile
 from pathlib import Path
 
 from ..config import PyriteConfig
-from ..exceptions import PyriteError
+from ..exceptions import (
+    PyriteError,
+    RemoteNotAllowedError,
+    UnsafeDestinationError,
+)
 from ..storage.database import PyriteDB
+from ..utils.kb_files import KBFileOutsideRootError, KBFiles
 from ..utils.sanitize import sanitize_filename, unique_path_component
 
 logger = logging.getLogger(__name__)
@@ -38,6 +44,22 @@ def _yaml_quote(value: str) -> str:
     return value
 
 
+def _no_link(path: Path) -> Path:
+    """Return `path` if nothing in it is a link, else raise.
+
+    `path` is built from an already-resolved root plus sanitised components,
+    so its real path differs from it only when an existing component (the
+    last one included, even a dangling one) is a link. Checked before each
+    mkdir and write: a directory Pyrite did not create itself -- a cloned
+    repository -- decides nothing about where the export lands.
+    """
+    if os.path.realpath(path) != str(path):
+        raise UnsafeDestinationError(
+            "The export destination contains a link where the export writes; nothing was written"
+        )
+    return path
+
+
 class ExportService:
     """Service for KB export and git operations."""
 
@@ -55,16 +77,20 @@ class ExportService:
         Returns:
             Summary dict with entries_exported and files_created
         """
-        import shutil
 
         kb_config = self.config.require_kb(kb_name, db=self.db)  # the one resolver (#952)
 
+        # The caller chose target_dir (it may itself be a link); everything
+        # created or written beneath it must resolve inside it.
+        target_dir = Path(os.path.realpath(target_dir))
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        # Copy kb.yaml if it exists
-        kb_yaml_src = kb_config.kb_yaml_path
-        if kb_yaml_src.exists():
-            shutil.copy2(kb_yaml_src, target_dir / "kb.yaml")
+        # Copy kb.yaml if it exists, read only where it resolves inside the
+        # KB: a kb.yaml that is a link out of the KB is refused
+        # (`KBFileOutsideRootError`, OUTSIDE_KB_ROOT), never copied.
+        kb_yaml = KBFiles(kb_config.path).read_bytes(kb_config.kb_yaml_path)
+        if kb_yaml is not None:
+            _no_link(target_dir / "kb.yaml").write_bytes(kb_yaml)
 
         # Get all entries from the KB
         entries = self.db.list_entries(kb_name=kb_name, limit=100000)
@@ -81,7 +107,7 @@ class ExportService:
             # for GenericEntry/plugin support) -- sanitize it before it
             # becomes a path component so an absolute or `..`-bearing type
             # cannot write outside target_dir (#221).
-            type_dir = target_dir / sanitize_filename(entry_type)
+            type_dir = _no_link(target_dir / sanitize_filename(entry_type))
             type_dir.mkdir(parents=True, exist_ok=True)
 
             # Build YAML frontmatter
@@ -114,7 +140,7 @@ class ExportService:
             # distinct ids that sanitize alike (e.g. "a/b" and "a_b") get
             # distinct filenames instead of one silently overwriting the
             # other (#221 redispatch cold read).
-            file_path = type_dir / f"{unique_path_component(entry_id)}.md"
+            file_path = _no_link(type_dir / f"{unique_path_component(entry_id)}.md")
             file_path.write_text(content, encoding="utf-8")
             files_created += 1
 
@@ -146,30 +172,50 @@ class ExportService:
         Returns:
             Summary dict with entries_exported, commit_hash, etc.
 
+        The destination must be an https:// URL on a host in the operator's
+        ``git_allowed_hosts`` setting (refused before any git call, with
+        ``error_code`` ``REMOTE_NOT_ALLOWED``), and every path the export
+        creates or writes resolves inside the temporary clone without passing
+        through a link the cloned repository contains (refused, nothing
+        committed or pushed, ``UNSAFE_DESTINATION``).
+
         Raises:
             InvalidGitRefError: `branch` is not a plain branch name.
         """
         from .git_service import GitService
 
         self.config.require_kb(kb_name, db=self.db)  # the one resolver (#952)
+        allowed_hosts = self.config.settings.git_allowed_hosts
+        try:
+            GitService.check_remote_allowed(repo_url, allowed_hosts)
+        except RemoteNotAllowedError as e:
+            return {"success": False, "error_code": e.error_code, "error": str(e)}
         # The branch is cloned and then pushed: refuse a value that is not a
         # plain branch name before either runs.
         GitService.validate_branch_name(branch)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            clone_path = Path(tmpdir) / "repo"
+            clone_path = Path(os.path.realpath(tmpdir)) / "repo"
 
             # Clone the target repo
             success, msg = GitService.clone(
-                repo_url, clone_path, branch=branch, depth=None, token=github_token
+                repo_url,
+                clone_path,
+                branch=branch,
+                depth=None,
+                token=github_token,
+                allowed_hosts=allowed_hosts,
             )
             if not success:
                 return {"success": False, "error": f"Clone failed: {msg}"}
 
             # Export entries into kb_name/ subdirectory
-            export_dir = clone_path / kb_name
-            export_dir.mkdir(parents=True, exist_ok=True)
-            result = self.export_kb_to_directory(kb_name, export_dir)
+            try:
+                export_dir = _no_link(clone_path / sanitize_filename(kb_name))
+                export_dir.mkdir(parents=True, exist_ok=True)
+                result = self.export_kb_to_directory(kb_name, export_dir)
+            except (UnsafeDestinationError, KBFileOutsideRootError) as e:
+                return {"success": False, "error_code": e.error_code, "error": str(e)}
 
             if result["entries_exported"] == 0:
                 return {"success": True, "entries_exported": 0, "message": "No entries to export"}
@@ -187,7 +233,11 @@ class ExportService:
 
             # Push
             push_ok, push_msg = GitService.push(
-                clone_path, remote="origin", branch=branch, token=github_token
+                clone_path,
+                remote="origin",
+                branch=branch,
+                token=github_token,
+                allowed_hosts=allowed_hosts,
             )
             if not push_ok:
                 return {"success": False, "error": push_msg}
@@ -206,6 +256,7 @@ class ExportService:
         message: str,
         paths: list[str] | None = None,
         sign_off: bool = False,
+        run_hooks: bool = False,
     ) -> dict:
         """
         Commit changes in a KB's git repository.
@@ -215,6 +266,8 @@ class ExportService:
             message: Commit message
             paths: Specific file paths to stage (all changes if None)
             sign_off: Add Signed-off-by line
+            run_hooks: run the repository's own commit hooks (the operator's own
+                CLI command only; see ``GitService.commit``)
 
         Returns:
             dict with success, commit_hash, files_changed, etc.
@@ -232,11 +285,14 @@ class ExportService:
         from .git_service import GitService
 
         kb = self.config.require_kb(kb_name, db=self.db)  # the one resolver (#952)
+        kb.refuse_writes()  # a read-only KB takes no write, its git state included
 
         if not GitService.is_git_repo(kb.path):
             raise PyriteError(f"KB '{kb_name}' is not in a git repository")
 
-        success, result = GitService.commit(kb.path, message, paths=paths, sign_off=sign_off)
+        success, result = GitService.commit(
+            kb.path, message, paths=paths, sign_off=sign_off, run_hooks=run_hooks
+        )
 
         if success:
             # Record entry_version rows for this commit so the version list
@@ -351,6 +407,7 @@ class ExportService:
         from .git_service import GitService
 
         kb = self.config.require_kb(kb_name, db=self.db)  # the one resolver (#952)
+        kb.refuse_writes()  # a read-only KB takes no write, its git state included
 
         if not GitService.is_git_repo(kb.path):
             raise PyriteError(f"KB '{kb_name}' is not in a git repository")

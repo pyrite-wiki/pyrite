@@ -58,9 +58,9 @@ rendering of the brand name.
 | `name` | Display name. Replaces "Pyrite" in the sidebar, page titles, login/register headings, the entry pages' JSON-LD publisher, KB export footer. |
 | `tagline` | Optional subtitle. Surfaced on the landing page. |
 | `primary_color` | Hex color. Drives the `--brand-primary` CSS custom property used for accent coloring. |
-| `site_url` | Canonical URL for `<meta>` / `og:url`. |
-| `support_url` | Optional support/contact URL shown in the UI. Accepts `mailto:` URIs. |
-| `footer_credit_url` | Where the "Powered by Pyrite" footer link points. Default: `https://pyrite.wiki`. |
+| `site_url` | Canonical URL for `<meta>` / `og:url`. An absolute `http(s)` URL or empty. |
+| `support_url` | Optional support/contact URL shown in the UI. An absolute `http(s)` URL, a `mailto:` URI, or empty. |
+| `footer_credit_url` | Where the "Powered by Pyrite" footer link points. An absolute `http(s)` URL or empty. Default: `https://pyrite.wiki`. |
 | `logo` | Filename of the square icon (relative to the branding folder). |
 | `wordmark` | Filename of the horizontal wordmark. |
 | `favicon` | Filename of the browser-tab favicon. |
@@ -102,6 +102,10 @@ The frontend picks the variant matching the active theme.
 
 ## Operational notes
 
+- **Branding URLs.** A `branding.yaml` whose `site_url`, `support_url` or
+  `footer_credit_url` uses any other scheme is rejected as invalid, like any
+  other malformed field. Files under `/branding/` are served with `nosniff`
+  and the server's Content-Security-Policy plus `sandbox`.
 - **CDN caching.** `/config/branding` and `/branding/{file}` are
   public endpoints with no explicit cache headers in V1. Behind a CDN,
   assume these may be cached for a few minutes after edits.

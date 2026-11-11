@@ -155,6 +155,30 @@
       "status": 500
     }
   },
+  "ClipperTooLargeError": {
+    "cli": {
+      "error": "characterization message for ClipperTooLargeError",
+      "error_code": "CLIP_TOO_LARGE",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for ClipperTooLargeError",
+      "error_code": "CLIP_TOO_LARGE",
+      "legacy_error_code": "REQUEST_REFUSED",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "CLIP_TOO_LARGE",
+          "message": "characterization message for ClipperTooLargeError",
+          "retryable": false
+        }
+      },
+      "status": 413
+    }
+  },
   "ConfigError": {
     "cli": {
       "error": "The configuration is invalid. An administrator needs to check the server log for the file and the problem.",
@@ -320,6 +344,52 @@
         }
       },
       "status": 404
+    }
+  },
+  "EntryTypeError": {
+    "cli": {
+      "error": "characterization message for EntryTypeError",
+      "error_code": "VALIDATION_FAILED",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for EntryTypeError",
+      "error_code": "VALIDATION_FAILED",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "VALIDATION_FAILED",
+          "message": "characterization message for EntryTypeError",
+          "retryable": false
+        }
+      },
+      "status": 422
+    }
+  },
+  "EntryValueError": {
+    "cli": {
+      "error": "characterization message for EntryValueError",
+      "error_code": "VALIDATION_FAILED",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for EntryValueError",
+      "error_code": "VALIDATION_FAILED",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "VALIDATION_FAILED",
+          "message": "characterization message for EntryValueError",
+          "retryable": false
+        }
+      },
+      "status": 422
     }
   },
   "EvaluationFailedError": {
@@ -534,6 +604,30 @@
       "status": 409
     }
   },
+  "KBNameReservedError": {
+    "cli": {
+      "error": "characterization message for KBNameReservedError",
+      "error_code": "CONFIG_CONFLICT",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for KBNameReservedError",
+      "error_code": "CONFIG_CONFLICT",
+      "legacy_error_code": "CONFIG_ERROR",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "CONFIG_CONFLICT",
+          "message": "characterization message for KBNameReservedError",
+          "retryable": false
+        }
+      },
+      "status": 409
+    }
+  },
   "KBNotFoundError": {
     "cli": {
       "error": "characterization message for KBNotFoundError",
@@ -556,6 +650,53 @@
         }
       },
       "status": 404
+    }
+  },
+  "KBNotInConfigError": {
+    "cli": {
+      "error": "characterization message for KBNotInConfigError",
+      "error_code": "KB_NOT_FOUND",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for KBNotInConfigError",
+      "error_code": "KB_NOT_FOUND",
+      "legacy_error_code": "NOT_FOUND",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "KB_NOT_FOUND",
+          "message": "characterization message for KBNotInConfigError",
+          "retryable": false
+        }
+      },
+      "status": 404
+    }
+  },
+  "KBPathNotAllowedError": {
+    "cli": {
+      "error": "characterization message for KBPathNotAllowedError",
+      "error_code": "KB_PATH_NOT_ALLOWED",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for KBPathNotAllowedError",
+      "error_code": "KB_PATH_NOT_ALLOWED",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "KB_PATH_NOT_ALLOWED",
+          "message": "characterization message for KBPathNotAllowedError",
+          "retryable": false
+        }
+      },
+      "status": 403
     }
   },
   "KBProtectedError": {
@@ -791,22 +932,87 @@
       "status": 422
     }
   },
+  "RefusedValueError": {
+    "cli": {
+      "error": "characterization message for RefusedValueError",
+      "error_code": "VALIDATION_FAILED",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for RefusedValueError",
+      "error_code": "VALIDATION_FAILED",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "VALIDATION_FAILED",
+          "message": "characterization message for RefusedValueError",
+          "retryable": false
+        }
+      },
+      "status": 422
+    }
+  },
+  "RemoteNotAllowedError": {
+    "cli": {
+      "error": "characterization message for RemoteNotAllowedError",
+      "error_code": "REMOTE_NOT_ALLOWED",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for RemoteNotAllowedError",
+      "error_code": "REMOTE_NOT_ALLOWED",
+      "legacy_error_code": "VALIDATION_FAILED",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "REMOTE_NOT_ALLOWED",
+          "message": "characterization message for RemoteNotAllowedError",
+          "retryable": false
+        }
+      },
+      "status": 422
+    }
+  },
   "SchemaViolationError": {
     "cli": {
       "error": "schema violation",
       "error_code": "SCHEMA_VIOLATION",
+      "errors": [
+        {
+          "error": "required",
+          "field": "title"
+        }
+      ],
       "outcome": "error",
       "retryable": false
     },
     "mcp": {
       "error": "schema violation",
       "error_code": "SCHEMA_VIOLATION",
+      "errors": [
+        {
+          "error": "required",
+          "field": "title"
+        }
+      ],
       "retryable": false
     },
     "rest": {
       "body": {
         "detail": {
           "code": "SCHEMA_VIOLATION",
+          "errors": [
+            {
+              "error": "required",
+              "field": "title"
+            }
+          ],
           "message": "schema violation",
           "retryable": false
         }
@@ -917,6 +1123,30 @@
       "status": 422
     }
   },
+  "UnsafeDestinationError": {
+    "cli": {
+      "error": "characterization message for UnsafeDestinationError",
+      "error_code": "UNSAFE_DESTINATION",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for UnsafeDestinationError",
+      "error_code": "UNSAFE_DESTINATION",
+      "legacy_error_code": "VALIDATION_FAILED",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "UNSAFE_DESTINATION",
+          "message": "characterization message for UnsafeDestinationError",
+          "retryable": false
+        }
+      },
+      "status": 422
+    }
+  },
   "ValidationError": {
     "cli": {
       "error": "characterization message for ValidationError",
@@ -934,6 +1164,30 @@
         "detail": {
           "code": "VALIDATION_FAILED",
           "message": "characterization message for ValidationError",
+          "retryable": false
+        }
+      },
+      "status": 422
+    }
+  },
+  "YamlLimitError": {
+    "cli": {
+      "error": "characterization message for YamlLimitError",
+      "error_code": "INVALID_FRONTMATTER",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for YamlLimitError",
+      "error_code": "INVALID_FRONTMATTER",
+      "legacy_error_code": "VALIDATION_FAILED",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "INVALID_FRONTMATTER",
+          "message": "characterization message for YamlLimitError",
           "retryable": false
         }
       },

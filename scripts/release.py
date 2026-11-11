@@ -21,9 +21,12 @@ change the world come after every check:
                        yet (locally, on origin, or as a GitHub release) and
                        `origin/main` is an ancestor of the SHA, so step d can
                        only ever fast-forward; the version in pyproject.toml is
-                       <version>; CHANGELOG has a dated section with content
+                       <version>; `uv lock --check` passes (a version bump leaves uv.lock
+                       stale until `scripts/lock-deps.sh`); CHANGELOG has a dated section with content
                        and no stranded `[Unreleased]` entries; no open PR
-                       labelled `release-blocker`
+                       labelled `release-blocker`; the private fixes
+                       repository's `dev` (`--private-remote`, default
+                       `security`) holds no change the SHA lacks
   b. ci             -- the commit is VERIFIED: the REQUIRED checks for that
                        exact SHA concluded `success` (default `gate`;
                        `--require-check` to change it; exact names, runs
@@ -331,6 +334,30 @@ def check_version_matches(repo: Path, version: str) -> None:
             f"{version!r}. The release commit belongs on dev: bump pyproject.toml "
             "and date the CHANGELOG section there first."
         )
+
+
+def check_lock_is_current(repo: Path) -> None:
+    """`uv.lock` agrees with `pyproject.toml` on the commit being released.
+
+    `uv.lock` records the project's own version, so the bump that makes a
+    release commit leaves the lock stale until `scripts/lock-deps.sh` is run
+    and committed (#1357). CI's `lock` job would say so, but only on a PR;
+    this asks again of the exact commit that is about to be tagged. `uv lock
+    --check` writes nothing and does not look for newer releases.
+    """
+    try:
+        _check_output(["uv", "lock", "--check"], cwd=repo)
+    except FileNotFoundError as exc:
+        raise ReleaseError(
+            "`uv` is not on PATH, so whether uv.lock is current cannot be checked. "
+            "Install it (https://docs.astral.sh/uv/) and re-run."
+        ) from exc
+    except ReleaseError as exc:
+        raise ReleaseError(
+            "uv.lock is stale: it no longer matches pyproject.toml (a version bump "
+            "does this). Run `scripts/lock-deps.sh`, commit uv.lock on dev, and "
+            f"release from that commit.\n{exc}"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -837,6 +864,69 @@ def check_main_can_fast_forward(repo: Path, sha: str) -> None:
         ) from exc
 
 
+DEFAULT_PRIVATE_REMOTE = "security"
+
+
+def check_private_fixes_are_on_dev(repo: Path, sha: str, remote: str) -> None:
+    """Every change on the private fixes repository's `dev` is on ``sha``.
+
+    The rule: a release stops while the private fixes branch holds commits
+    dev lacks. Security fixes are made in a private repository (the remote
+    ``remote``) and carried to `dev` before a release. A commit counts as
+    carried when ``sha`` holds it or a commit with the same change (git's
+    patch id, so a cherry-pick counts); a fix re-applied in another form is
+    not, and once it is on `dev` the private `dev` is reset to `dev`.
+
+    A checkout without the remote is refused, not passed: a check that
+    passes because it could not look checks nothing. A project that keeps no
+    private fixes says so with ``--no-private-remote``.
+    """
+    remotes = _check_output(["git", "-C", str(repo), "remote"]).split()
+    if remote not in remotes:
+        raise ReleaseError(
+            f"this checkout has no `{remote}` remote, so whether the private fixes "
+            "repository holds changes dev lacks cannot be checked. Add it (`git remote "
+            f"add {remote} <url>`), name another with --private-remote, or pass "
+            "--no-private-remote if this project keeps no private fixes."
+        )
+    # Into FETCH_HEAD only (`--refmap=` updates no remote-tracking ref): a
+    # dry run writes no ref.
+    _check_output(["git", "-C", str(repo), "fetch", "--refmap=", remote, "refs/heads/dev"])
+    private_dev = rev_parse(repo, "FETCH_HEAD")
+    stranded = _check_output(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "log",
+            "--no-merges",
+            "--right-only",
+            "--cherry-pick",
+            "--format=%h %s",
+            f"{sha}...{private_dev}",
+        ]
+    ).splitlines()
+    stranded = [line for line in stranded if line.strip()]
+    if stranded:
+        listed = "\n".join(f"    {line}" for line in stranded)
+        raise ReleaseError(
+            f"{remote}/dev holds {len(stranded)} commit(s) whose change is not on "
+            f"{sha[:12]}; a release stops while the private fixes branch holds "
+            f"commits dev lacks:\n{listed}\nCarry each to dev; once dev holds them, "
+            f"reset {remote}/dev to dev."
+        )
+
+
+def step_private_fixes(ctx: Context) -> None:
+    """Step (a)'s question about the private fixes repository."""
+    remote = ctx.private_remote
+    if remote is None:
+        ctx.runner.note("private fixes repository: not checked (--no-private-remote)")
+        return
+    if ctx.attempt(lambda: check_private_fixes_are_on_dev(ctx.repo, ctx.sha, remote)):
+        ctx.runner.note(f"{remote}/dev holds no change {ctx.sha[:12]} lacks")
+
+
 def check_no_local_changes(repo: Path) -> None:
     """Nothing uncommitted and nothing untracked.
 
@@ -909,6 +999,9 @@ class Context:
     skip_install_check: bool = False
     rehearse_install_check: bool = False
     docker_check: bool = False
+    # The remote holding private (security) fixes; None when the project keeps
+    # none (`--no-private-remote`).
+    private_remote: str | None = DEFAULT_PRIVATE_REMOTE
     sha: str = ""
     notes: str = ""
     # `owner/name` from `origin`, resolved once at startup. Every `gh --repo`
@@ -982,6 +1075,9 @@ def step_preconditions(ctx: Context) -> None:
 
     if ctx.attempt(lambda: check_changelog(ctx.repo, ctx.version, ctx.day)):
         ctx.runner.note(f"CHANGELOG has `## [{ctx.version}] - {ctx.day.isoformat()}` with content")
+    if ctx.attempt(lambda: check_lock_is_current(ctx.repo)):
+        ctx.runner.note("uv.lock matches pyproject.toml (uv lock --check)")
+
     # Asked unconditionally, as before: the notes are read out of the CHANGELOG
     # section, and `_print_notes` stays silent when there is no section to read,
     # so a missing section is still named once, by the check above (#889). Every
@@ -1019,6 +1115,8 @@ def step_preconditions(ctx: Context) -> None:
 
     if ctx.attempt(lambda: _check_blockers(ctx)):
         ctx.runner.note(f"no open PRs labelled {BLOCKER_LABEL}")
+
+    step_private_fixes(ctx)
 
 
 def _print_notes(ctx: Context) -> None:
@@ -1790,6 +1888,21 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="in a dry run, actually perform step c instead of printing it. Takes "
         "minutes (a real install from GitHub plus the tutorial); harmless.",
     )
+    private = parser.add_mutually_exclusive_group()
+    private.add_argument(
+        "--private-remote",
+        default=DEFAULT_PRIVATE_REMOTE,
+        metavar="REMOTE",
+        help="the remote holding private (security) fixes; the release stops while "
+        f"its dev holds a change the commit lacks (default: {DEFAULT_PRIVATE_REMOTE}).",
+    )
+    private.add_argument(
+        "--no-private-remote",
+        dest="private_remote",
+        action="store_const",
+        const=None,
+        help="this project keeps no private fixes repository: skip that check.",
+    )
     parser.add_argument(
         "--repo",
         type=Path,
@@ -1825,6 +1938,7 @@ def run_release(args: argparse.Namespace) -> tuple[int, Runner]:
         skip_install_check=args.skip_install_check,
         rehearse_install_check=args.install_check,
         docker_check=args.docker_check,
+        private_remote=args.private_remote,
     )
 
     mode = "EXECUTE" if args.execute else "DRY RUN"

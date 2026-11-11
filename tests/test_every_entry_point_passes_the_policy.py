@@ -328,8 +328,11 @@ MCP_NOT_YET_MIGRATED_SIZE = 106  # lower it with every entry removed; never rais
 
 #: Where a tool handler may be read out of the registry: (file, function).
 HANDLER_READ_SITES = {
-    ("pyrite/server/mcp_server.py", "PyriteMCPServer._dispatch_tool"): "the chokepoint: calls it",
-    ("pyrite/server/mcp_server.py", "PyriteMCPServer._handler_takes_readable_kbs"): (
+    ("pyrite/server/mcp_server.py", "PyriteMCPServer._dispatch_tool_checked"): (
+        "the chokepoint's checks, reached only through _dispatch_tool, which holds "
+        "its one error contract: calls it"
+    ),
+    ("pyrite/server/mcp_server.py", "PyriteMCPServer._handler_takes"): (
         "inspect.signature only; calls nothing"
     ),
 }

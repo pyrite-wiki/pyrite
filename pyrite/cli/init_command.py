@@ -255,10 +255,18 @@ BUILTIN_TEMPLATES = {
                 "optional": ["org_type", "jurisdiction"],
                 "subdirectory": "organizations/",
             },
+            # #1384: a research KB needs a place for the works it cites, with
+            # the same shape the intellectual-biography template already uses.
+            "source": {
+                "description": "Reference material",
+                "required": ["title"],
+                "optional": ["source_type", "author", "date", "url"],
+                "subdirectory": "sources/",
+            },
         },
         "policies": {},
         "validation": {"enforce": False},
-        "directories": ["notes", "events", "people", "organizations"],
+        "directories": ["notes", "events", "people", "organizations", "sources"],
     },
     "intellectual-biography": {
         "name": "my-biography",

@@ -2,23 +2,37 @@
 
 Each checker receives an entry dict, optional KBSchema, and optional params dict.
 Checkers are matched by name via the NAMED_CHECKERS registry.
-Parameterized checkers raise ValueError for missing or empty required parameters
-and invalid regex patterns, so QA reports that the check could not run.
+Parameterized checkers raise ``CheckerConfigError`` (a ``ValueError`` and a
+Pyrite ``ValidationError``) for missing or empty required parameters and
+invalid regex patterns, so QA reports that the check could not run, in the
+checker's own words: the text names the kb.yaml item, nothing on the server.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+import regex
+
+from ..exceptions import ValidationError, outside_text
 from ..utils.metadata import parse_metadata
 
 if TYPE_CHECKING:
     from ..schema import KBSchema
 
 logger = logging.getLogger(__name__)
+
+#: The longest one kb.yaml pattern may spend on one body.
+PATTERN_TIMEOUT_SECONDS = 1.0
+
+#: How long a pattern that timed out is skipped, so one bad pattern costs one
+#: timeout per run rather than one per entry. A QA run is shorter than this.
+PATTERN_QUARANTINE_SECONDS = 900.0
+_timed_out_patterns: dict[str, float] = {}
 
 # Type alias for checker functions — params is optional for backward compatibility
 RubricChecker = Callable[
@@ -44,6 +58,12 @@ GENERIC_TITLES = frozenset(
         "wip",
     }
 )
+
+
+class CheckerConfigError(ValidationError, ValueError):
+    """A rubric item a checker cannot run: a parameter missing or empty, a
+    pattern that does not compile or takes too long. Its text is Pyrite's,
+    about the kb.yaml item, so every surface shows it (``public_text``)."""
 
 
 # =========================================================================
@@ -180,7 +200,7 @@ def check_has_field(
 ) -> dict[str, Any] | None:
     """Check that a specific metadata field is present. Params: {field: "role"}."""
     if not params or not params.get("field"):
-        raise ValueError("has_field requires a non-empty 'field' parameter")
+        raise CheckerConfigError("has_field requires a non-empty 'field' parameter")
     field_name = params["field"]
     meta_dict = _parse_metadata(entry)
     if meta_dict.get(field_name):
@@ -203,7 +223,7 @@ def check_has_any_field(
 ) -> dict[str, Any] | None:
     """Check that at least one of several metadata fields is present. Params: {fields: ["url", "author"]}."""
     if not params or not params.get("fields"):
-        raise ValueError("has_any_field requires a non-empty 'fields' parameter")
+        raise CheckerConfigError("has_any_field requires a non-empty 'fields' parameter")
     field_names = params["fields"]
     meta_dict = _parse_metadata(entry)
     for fn in field_names:
@@ -227,7 +247,7 @@ def check_body_has_section(
 ) -> dict[str, Any] | None:
     """Check that body contains a markdown heading. Params: {heading: "Problem"}."""
     if not params or not params.get("heading"):
-        raise ValueError("body_has_section requires a non-empty 'heading' parameter")
+        raise CheckerConfigError("body_has_section requires a non-empty 'heading' parameter")
     heading = params["heading"]
     body = entry.get("body", "") or ""
     pattern = re.compile(rf"^##\s+{re.escape(heading)}", re.IGNORECASE | re.MULTILINE)
@@ -251,15 +271,33 @@ def check_body_has_pattern(
 ) -> dict[str, Any] | None:
     """Check that body matches a regex pattern. Params: {pattern: "Sources?:"}."""
     if not params or not params.get("pattern"):
-        raise ValueError("body_has_pattern requires a non-empty 'pattern' parameter")
+        raise CheckerConfigError("body_has_pattern requires a non-empty 'pattern' parameter")
     body = entry.get("body", "") or ""
     try:
-        compiled = re.compile(params["pattern"], re.IGNORECASE | re.MULTILINE)
-    except re.error as exc:
-        raise ValueError(
-            f"body_has_pattern has invalid regex {params['pattern']!r}: {exc}"
+        compiled = regex.compile(params["pattern"], regex.IGNORECASE | regex.MULTILINE)
+    except regex.error as exc:
+        raise CheckerConfigError(
+            f"body_has_pattern has invalid regex {params['pattern']!r}: {outside_text(exc)}"
         ) from exc
-    if compiled.search(body):
+    # A kb.yaml pattern is written by whoever can edit the KB and runs against
+    # every body: the matcher gives up after a fixed time rather than run to
+    # completion on a pattern with catastrophic backtracking. A pattern that
+    # timed out is reported once and then skipped for the rest of the run.
+    pattern = params["pattern"]
+    quarantined_at = _timed_out_patterns.get(pattern)
+    if quarantined_at is not None:
+        if time.monotonic() - quarantined_at < PATTERN_QUARANTINE_SECONDS:
+            return None
+        del _timed_out_patterns[pattern]
+    try:
+        found = compiled.search(body, timeout=PATTERN_TIMEOUT_SECONDS)
+    except TimeoutError:
+        _timed_out_patterns[pattern] = time.monotonic()
+        raise CheckerConfigError(
+            f"body_has_pattern pattern {params['pattern']!r} took too long to match "
+            f"(more than {PATTERN_TIMEOUT_SECONDS:g}s); simplify it"
+        ) from None
+    if found:
         return None
     return {
         "entry_id": entry["id"],

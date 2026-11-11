@@ -8,10 +8,12 @@ Configuration is loaded from:
 3. Individual kb.yaml files in each KB root
 """
 
+import contextlib
 import copy
 import errno
 import logging
 import os
+import re
 import threading
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -27,6 +29,7 @@ from pyrite.exceptions import (
     ConfigSaveRefusedError,
     ValidationError,
 )
+from pyrite.utils.private_files import create_private_file
 from pyrite.utils.yaml import dump_yaml_file, load_yaml_file
 
 logger = logging.getLogger(__name__)
@@ -95,6 +98,21 @@ class KBConfig:
         if self.ephemeral and self.landing != "canonical":
             raise ConfigError(f"KB '{self.name}': an ephemeral KB's landing is canonical")
 
+    def refuse_writes(self) -> None:
+        """Raise `KBReadOnlyError` if this KB is marked ``read_only``.
+
+        The one check every writer of a KB's files asks before it writes:
+        `KBService` (every entry write), `SchemaService`, `ExportService`'s
+        commit and push, `pyrite ids pin`, `sw migrate-standards`, `pyrite
+        readme --write`, the admin merge of a change set, and the MCP
+        dispatcher for a tool above the read tier.
+        `tests/test_read_only_kb_refuses_every_writer.py` drives each.
+        """
+        if self.read_only:
+            from pyrite.exceptions import KBReadOnlyError
+
+            raise KBReadOnlyError(f"KB is read-only: {self.name}")
+
     @property
     def kb_yaml_path(self) -> Path:
         """Path to kb.yaml config file."""
@@ -125,9 +143,25 @@ class KBConfig:
         return pyrite_dir / "index.db"
 
     def load_kb_yaml(self) -> bool:
-        """Load kb.yaml if it exists. Returns True if loaded."""
+        """Load kb.yaml if it exists. Returns True if loaded.
+
+        Read only inside the KB (``load_yaml_file(kb_root=...)``): a kb.yaml
+        that is a link out of the KB, or has more than one hard link, is not
+        the KB's, and is left unloaded with a warning here, where every
+        registered KB is loaded at once. ``kb_schema`` refuses it
+        (``OUTSIDE_KB_ROOT``) for the operations that need it."""
         if self.kb_yaml_path.exists():
-            data = load_yaml_file(self.kb_yaml_path)
+            from .utils.kb_files import KBFileOutsideRootError
+
+            try:
+                data = load_yaml_file(self.kb_yaml_path, kb_root=self.path)
+            except KBFileOutsideRootError:
+                logger.warning(
+                    "KB %s: kb.yaml may lead outside the KB's folder (a symbolic link out "
+                    "of it, or a file with more than one hard link); not read",
+                    self.name,
+                )
+                return False
             self.schema = data.get("schema")
             self.types = data.get("types")
             self.policies = data.get("policies")
@@ -371,6 +405,102 @@ def _positive_int(value: object, name: str) -> int:
     return number
 
 
+DEFAULT_GIT_ALLOWED_HOSTS = ("github.com",)
+
+
+# A bare host name (or IPv4 address), optionally with :port. Nothing else can
+# ever equal the host of an https URL, so anything else is refused at load
+# rather than silently allowing nothing.
+_GIT_HOST_ENTRY_RE = re.compile(
+    r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?::(\d{1,5}))?"
+)
+
+
+def _kind_of(value: Any) -> str:
+    """A YAML reader's word for a value's shape (ruamel's own type names,
+    such as CommentedMap, mean nothing to the person editing the file)."""
+    if value is None:
+        return "an empty value"
+    if isinstance(value, bool):
+        return "true/false"
+    if isinstance(value, (int, float)):
+        return f"the number {value}"
+    if isinstance(value, dict):
+        return "a mapping"
+    if isinstance(value, (list, tuple)):
+        return "a nested list"
+    return type(value).__name__
+
+
+def normalize_kb_roots(value: Any, source: str = "settings.kb_roots") -> list[Path]:
+    """The validated ``kb_roots``: each a folder, fully resolved (``~``
+    expanded, symbolic links and ``..`` followed), so a path is compared with
+    what the root really is. A list (config.yaml) or an ``os.pathsep``-separated
+    string (the environment); an empty entry or a relative one raises
+    ValueError naming the setting."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items: list[Any] = [v for v in value.split(os.pathsep) if v.strip()]
+    elif isinstance(value, (list, tuple)):
+        items = list(value)
+    else:
+        raise ValueError(f"{source} must be a list of folders, not {_kind_of(value)}")
+    roots: list[Path] = []
+    for item in items:
+        if not isinstance(item, (str, os.PathLike)) or not str(item).strip():
+            raise ValueError(f"{source}: {item!r} is not a folder path")
+        path = Path(str(item).strip()).expanduser()
+        if not path.is_absolute():
+            raise ValueError(f"{source}: {str(item)!r} is not an absolute path")
+        roots.append(path.resolve())
+    return roots
+
+
+def normalize_git_allowed_hosts(
+    value: Any, source: str = "settings.git_allowed_hosts"
+) -> list[str]:
+    """The validated `git_allowed_hosts`: lower-case `host` / `host:port` entries.
+
+    A list (from config.yaml) or a comma-separated string (from the
+    environment). Anything else, or an entry that is not a bare host name,
+    raises ValueError naming the setting and the entry, so a typo is one clear
+    error at load instead of a host that can never match. `[]` is valid and
+    allows no host.
+    """
+    if isinstance(value, str):
+        items: list[Any] = value.split(",")
+    elif isinstance(value, (list, tuple)):
+        items = list(value)
+    else:
+        raise ValueError(
+            f"{source} must be a list of host names (for example [github.com]), "
+            f"got {_kind_of(value)}"
+        )
+    hosts: list[str] = []
+    for item in items:
+        if not isinstance(item, str):
+            raise ValueError(f"{source} entries must be host names, got {_kind_of(item)}")
+        entry = item.strip().lower()
+        if not entry and isinstance(value, str):
+            continue  # "a.example, b.example," from the environment
+        match = _GIT_HOST_ENTRY_RE.fullmatch(entry)
+        port = match.group(1) if match else None
+        if not match or (port is not None and not 0 < int(port) < 65536):
+            if "/" in entry or "@" in entry:
+                hint = " (write the host alone, without a scheme, user or path: github.com)"
+            elif "*" in entry:
+                hint = " (wildcards are not supported: list each host)"
+            elif any(c.isspace() for c in entry):
+                hint = " (one host per entry; no spaces)"
+            else:
+                hint = ""
+            raise ValueError(f"{source} entry {item!r} is not a host name or host:port{hint}")
+        if entry not in hosts:
+            hosts.append(entry)
+    return hosts
+
+
 @dataclass
 class Settings:
     """Global application settings."""
@@ -402,6 +532,11 @@ class Settings:
     # and a non-wildcard `host`. Requests addressed to any other Host get 421
     # (pyrite/server/request_guard.py).
     allowed_hosts: list[str] = field(default_factory=list)
+    # Hosts a git clone or push Pyrite runs for a caller may reach: export to
+    # repo, repo subscribe and fork, from the server and the CLI alike. https
+    # only; an entry is a hostname, or host:port for a non-default port.
+    # Env: PYRITE_GIT_ALLOWED_HOSTS (comma-separated).
+    git_allowed_hosts: list[str] = field(default_factory=lambda: list(DEFAULT_GIT_ALLOWED_HOSTS))
     api_key: str = ""  # Empty = auth disabled (backwards-compatible)
     api_keys: list[dict[str, str]] = field(default_factory=list)  # [{key_hash, role, label}]
     auth: AuthConfig = field(default_factory=AuthConfig)
@@ -420,6 +555,12 @@ class Settings:
     search_backend: str = "sqlite"  # "sqlite" or "postgres"
     database_url: str = ""  # PostgreSQL connection string (for postgres backend)
     workspace_path: Path = field(default_factory=lambda: default_data_dir() / "repos")
+    # The folders under which a network caller (REST, MCP over HTTP; admin
+    # tier) may register a KB path. Empty, the default: no network caller may
+    # register a path until the operator lists roots. The local operator (the
+    # CLI, stdio MCP) registers any path. Env: PYRITE_KB_ROOTS (paths
+    # separated by os.pathsep, as PATH is).
+    kb_roots: list[Path] = field(default_factory=list)
     strict_plugins: bool = False  # Raise on plugin load failures (dev/CI mode)
     prewarm_embeddings: bool = False  # Pre-load embedding model on server startup
     # Embed entries on write. Off = keyword search only, no torch import, no
@@ -446,6 +587,9 @@ class Settings:
         )
         self.index_path = Path(self.index_path).expanduser().resolve()
         self.workspace_path = Path(self.workspace_path).expanduser().resolve()
+        self.kb_roots = normalize_kb_roots(self.kb_roots)
+        self.git_allowed_hosts = normalize_git_allowed_hosts(self.git_allowed_hosts)
+        self.cors_origins = cors_origin_list(self.cors_origins)
         if self.branding_dir is not None:
             self.branding_dir = Path(self.branding_dir).expanduser().resolve()
         # Load from environment if not set
@@ -891,6 +1035,16 @@ class PyriteConfig:
                 else {}
             ),
             **(
+                {"git_allowed_hosts": self.settings.git_allowed_hosts}
+                if self.settings.git_allowed_hosts != list(DEFAULT_GIT_ALLOWED_HOSTS)
+                else {}
+            ),
+            **(
+                {"kb_roots": [str(p) for p in self.settings.kb_roots]}
+                if self.settings.kb_roots
+                else {}
+            ),
+            **(
                 {"site_csp_extra": self.settings.site_csp_extra}
                 if self.settings.site_csp_extra
                 else {}
@@ -1049,11 +1203,17 @@ class PyriteConfig:
             enable_mcp=settings_data.get("enable_mcp", True),
             host=settings_data.get("host", "127.0.0.1"),
             port=settings_data.get("port", 8088),
-            cors_origins=settings_data.get(
-                "cors_origins",
-                ["http://localhost:3000", "http://localhost:5173", "http://localhost:8088"],
+            cors_origins=cors_origin_list(
+                settings_data.get(
+                    "cors_origins",
+                    ["http://localhost:3000", "http://localhost:5173", "http://localhost:8088"],
+                )
             ),
             allowed_hosts=list(settings_data.get("allowed_hosts") or []),
+            git_allowed_hosts=settings_data.get(
+                "git_allowed_hosts", list(DEFAULT_GIT_ALLOWED_HOSTS)
+            ),
+            kb_roots=settings_data.get("kb_roots") or [],
             api_key=settings_data.get("api_key", ""),
             api_keys=settings_data.get("api_keys", []),
             auth=AuthConfig(
@@ -1204,6 +1364,13 @@ def ensure_config_dir() -> Path:
     return CONFIG_DIR
 
 
+def cors_origin_list(values) -> list[str]:
+    """The origins a ``cors_origins`` setting names: each item stripped, and an
+    empty one dropped -- it is no origin, and would match an empty ``Origin``.
+    Read the same from ``PYRITE_CORS_ORIGINS`` and the config file."""
+    return [v.strip() for v in values or [] if isinstance(v, str) and v.strip()]
+
+
 def _apply_env_overrides(config: PyriteConfig) -> None:
     """Apply PYRITE_* environment variable overrides to config.
 
@@ -1241,9 +1408,15 @@ def _apply_env_overrides(config: PyriteConfig) -> None:
     if val := env("PYRITE_AUTH_REGISTER_RATE_LIMIT"):
         config.settings.auth.register_rate_limit = val
     if val := env("PYRITE_CORS_ORIGINS"):
-        config.settings.cors_origins = [s.strip() for s in val.split(",")]
+        config.settings.cors_origins = cors_origin_list(val.split(","))
     if val := env("PYRITE_ALLOWED_HOSTS"):
         config.settings.allowed_hosts = [s.strip() for s in val.split(",") if s.strip()]
+    if val := env("PYRITE_KB_ROOTS"):
+        config.settings.kb_roots = normalize_kb_roots(val, source="PYRITE_KB_ROOTS")
+    if val := env("PYRITE_GIT_ALLOWED_HOSTS"):
+        config.settings.git_allowed_hosts = normalize_git_allowed_hosts(
+            val, source="PYRITE_GIT_ALLOWED_HOSTS"
+        )
     if val := env("PYRITE_API_KEY"):
         config.settings.api_key = val
     if val := env("PYRITE_AI_PROVIDER"):
@@ -1675,6 +1848,10 @@ def _write_config(config: PyriteConfig) -> None:
             data = current
         else:
             data = _file_plus_changes(_read_config_mapping(config_file), config._as_loaded, current)
+        # config.yaml holds API keys: a new file is created 0600. An existing
+        # file keeps the mode its owner gave it (the atomic write preserves it).
+        with contextlib.suppress(OSError):
+            create_private_file(config_file, tighten=False)
         dump_yaml_file(data, config_file, atomic=True)
         if config._as_loaded is not None:
             config._as_loaded = copy.deepcopy(current)
@@ -1794,7 +1971,10 @@ def auto_discover_kbs(search_paths: list[Path] | None = None) -> list[KBConfig]:
         # Look for kb.yaml files
         for kb_yaml in search_path.rglob("kb.yaml"):
             try:
-                data = load_yaml_file(kb_yaml)
+                # Read inside the folder it names as a KB: a kb.yaml that is
+                # a link out of it, or a hard link, is not that KB's (a
+                # subscribed repository's files are anyone's).
+                data = load_yaml_file(kb_yaml, kb_root=kb_yaml.parent)
 
                 name = data.get("name", kb_yaml.parent.name)
                 kb_type_str = data.get("kb_type", "generic")

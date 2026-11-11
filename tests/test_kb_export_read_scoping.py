@@ -63,6 +63,29 @@ def _bare_repo_history(bare: Path) -> str:
 
 
 @pytest.fixture
+def operator_allows_local_push_targets(monkeypatch):
+    """For the tests below that push to a local bare repository: they are
+    about who may export, not where. Production allows only https on
+    `git_allowed_hosts` hosts (tests/test_git_destinations_are_allowed.py);
+    here, and only in the tests that ask for this fixture, the host rule and
+    git's transport allowlist admit local paths, standing in for an operator
+    who allowed the target."""
+    from pyrite.services import git_service
+
+    monkeypatch.setattr(
+        git_service.GitService, "check_remote_allowed", staticmethod(lambda *a, **k: None)
+    )
+    monkeypatch.setattr(
+        git_service.GitService, "_check_remote_urls", staticmethod(lambda *a, **k: None)
+    )
+    monkeypatch.setattr(
+        git_service,
+        "_NETWORK_GUARD_ENV",
+        {**git_service._NETWORK_GUARD_ENV, "GIT_ALLOW_PROTOCOL": "https:file"},
+    )
+
+
+@pytest.fixture
 def env():
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
@@ -110,7 +133,7 @@ def env():
             db.close()
 
 
-def test_write_user_without_read_cannot_export_private_kb(env):
+def test_write_user_without_read_cannot_export_private_kb(env, operator_allows_local_push_targets):
     bare = _seed_bare_repo(env["tmp"])
     before = _bare_repo_history(bare)
 
@@ -129,7 +152,7 @@ def test_write_user_without_read_cannot_export_private_kb(env):
     assert SECRET not in after
 
 
-def test_write_user_with_read_grant_can_export(env):
+def test_write_user_with_read_grant_can_export(env, operator_allows_local_push_targets):
     bare = _seed_bare_repo(env["tmp"])
     AuthService(env["db"], env["config"].settings.auth).grant_kb_permission(
         env["writer_id"], PRIVATE, "read", granted_by=1
@@ -142,7 +165,7 @@ def test_write_user_with_read_grant_can_export(env):
     assert SECRET in _bare_repo_history(bare)
 
 
-def test_admin_can_export_private_kb(env):
+def test_admin_can_export_private_kb(env, operator_allows_local_push_targets):
     bare = _seed_bare_repo(env["tmp"])
 
     r = env["admin"].post(f"/api/kbs/{PRIVATE}/export", json={"repo_url": f"file://{bare}"})

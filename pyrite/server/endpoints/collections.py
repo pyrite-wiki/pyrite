@@ -185,7 +185,7 @@ def get_collection(
 ):
     """Get collection metadata.
 
-    A blank ``kb`` names no KB (private #74); the lookup is bounded by the
+    A blank ``kb`` names no KB; the lookup is bounded by the
     caller's scope either way.
     """
     result = svc.get_entry(collection_id, kb_name=kb, readable_kbs=scope.as_set())
