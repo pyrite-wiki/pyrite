@@ -22,6 +22,7 @@ shapes: the model's `date` row (`VALIDATION_FAILED`) and the KB schema's
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -233,6 +234,20 @@ class TestMcpRefusal:
 
         assert result["error_code"] == "VALIDATION_FAILED", result
         assert result["errors"][0]["field"] == "date"
+
+
+class TestOrientNamesTheErrorsKey:
+    def test_the_error_shape_names_every_key_a_field_refusal_carries(self, event_kb):
+        """An agent learns the refusal shape from orient (#1447)."""
+        service = KBService(event_kb.config, event_kb.db)
+        with pytest.raises(ValidationError) as caught:
+            service.create_entry("ev", "no-date", "No date event", "event", "x")
+
+        contract = service.orient("ev")["operational_contracts"]["error_contract"]
+        named = set(re.findall(r"\w+", contract["shape"]))
+        assert set(refusal_fields(caught.value)) == {"errors"}
+        assert "errors" in named
+        assert "errors" in contract
 
 
 class TestNonFieldRefusal:

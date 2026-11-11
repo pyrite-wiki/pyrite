@@ -1,0 +1,1 @@
+- `pyrite orient` and `kb_orient` now list `errors` in `operational_contracts.error_contract`: the shape reads `{error, error_code, suggestion?, errors?, retryable}`, and a new `errors` key describes the per-field rows a field refusal carries (#1447).
