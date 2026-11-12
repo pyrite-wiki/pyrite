@@ -13,7 +13,7 @@ tags:
 
 SQLite-backed embed_queue plus EmbeddingWorker. Despite the name it is a **queue, not a thread**: constructing one is a CREATE TABLE IF NOT EXISTS (~50 ms cold, zero threads spawned, no torch imported), and process_batch()/drain() are plain synchronous methods a caller must invoke.
 
-Under ADR-0035 every write with auto_embed: true goes through KBService._auto_embed, which builds a worker lazily and enqueues one pending row; a write never loads the embedding model. That is what makes a fresh install usable (#13) -- the entry is keyword-searchable immediately and the embedding is owed, not skipped.
+Under [[adr-0035]] every write with auto_embed: true goes through KBService._auto_embed, which builds a worker lazily and enqueues one pending row; a write never loads the embedding model. That is what makes a fresh install usable (#13) -- the entry is keyword-searchable immediately and the embedding is owed, not skipped.
 
 settle_embed_queue(db) is the single drain, shared by every surface: pyrite-server on every startup and at the end of POST /api/index/sync?wait=true, and pyrite index embed / sync / build. One implementation on purpose -- two that differ in correctness is how a KB comes to mean different things depending on which command touched it last. It is cheap when nothing is owed (has_pending() is one indexed COUNT and builds no EmbeddingService), which is what makes draining on every startup affordable rather than only under prewarm_embeddings -- that setting defaults to False, so gating on it would mean a stock install never embedded anything.
 

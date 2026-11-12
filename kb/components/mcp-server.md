@@ -76,7 +76,7 @@ When triggered, the `_maybe_validate()` helper runs structural QA and appends `q
 
 ## Configuration and Startup
 
-- CLI: `pyrite mcp --tier <tier>` or `pyrite-admin mcp --tier <tier>`; both default to `write` (ADR-0006) and reject an unknown tier with `INVALID_TIER`. `pyrite-admin mcp` defaulted to `admin` until #582.
+- CLI: `pyrite mcp --tier <tier>` or `pyrite-admin mcp --tier <tier>`; both default to `write` ([[adr-0006]]) and reject an unknown tier with `INVALID_TIER`. `pyrite-admin mcp` defaulted to `admin` until #582.
 - Entry point: `main()` in `mcp_server.py` (`python -m pyrite.server.mcp_server`, no installed script) parses `--tier`, default `write` since #582; so does the separately published `pyrite-mcp serve` (`pyrite-mcp/`). The `PyriteMCPServer(tier="read")` constructor default is library API, and every caller passes a tier.
 - The server creates its own `PyriteDB` and `KBService` instances
 - `close()` must be called to release the DB connection
@@ -138,4 +138,4 @@ Each client is all or nothing on its own. An exception while a client is set up 
 - [[kb-service]] — business logic layer used by all tool handlers
 - [[storage-layer]] — database access
 - [[schema-validation]] — `kb_schema` tool uses `KBSchema.to_agent_schema()`
-- [ADR-0006: MCP Three-Tier Tool Model](../adrs/0006-mcp-three-tier-tool-model.md) — defines the read/write/admin tier architecture
+- [[adr-0006]] — defines the read/write/admin tier architecture

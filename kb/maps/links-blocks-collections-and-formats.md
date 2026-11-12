@@ -30,7 +30,7 @@ relationship an entry?", "what formats does Pyrite emit?". Layer 2 under
 2. Backlinks, outlinks and edge endpoints are index rows rebuilt from the
    files; no save rewrites another entry's frontmatter. **decided**
    [[adr-0022]]; the save hooks that write links today are replaced by
-   derivation in ADR-0042 and ADR-0045 (**decided**).
+   derivation in [[adr-0042]] and [[adr-0045]] (**decided**).
    The index holds one link row per link the file writes, keyed by the
    target as the text an id is stored as, the resolved KB, the relation and
    the prefix as written: `[[ka:x]] [[kb:x]]` are two rows (two entries),
@@ -57,9 +57,9 @@ relationship an entry?", "what formats does Pyrite emit?". Layer 2 under
    not link into an ephemeral KB. A QA rule enforces it. **accepted, not built**
    [[adr-0029]] section 3.
 10. A rename rewrites inbound links as operations on the other files, under
-    their locks. **decided** ADR-0042 decision 12.
+    their locks. **decided** [[adr-0042]] decision 12.
 11. Publishing to a static-site generator is an export; what that generator
-    reserves is the exporter's concern. **decided** ADR-0041 decision 1. The
+    reserves is the exporter's concern. **decided** [[adr-0041]] decision 1. The
     `/site/` cache of [[adr-0023]] was removed in #953.
 
 ## Invariants a test could check
@@ -104,7 +104,7 @@ Paths: `pyrite/services/block_service.py`, `pyrite/services/wikilink_service.py`
 - The import pipeline of [[adr-0010]] section 7 is "future"; the link rule is
   unbuilt.
 - A hook still writes links (journalism-investigation's connection types); until
-  ADR-0042 and ADR-0045 are accepted, a save can add links the caller did not
+  [[adr-0042]] and [[adr-0045]] are accepted, a save can add links the caller did not
   send.
 - Not decided: path spelling of an id with `/`, which wikilinks and routes
-  would need to accept (ADR-0042 question 4).
+  would need to accept ([[adr-0042]] question 4).

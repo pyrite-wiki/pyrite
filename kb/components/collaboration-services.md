@@ -33,4 +33,4 @@ Business logic layer providing stateless service classes that eliminate duplicat
 
 - [[kb-service]] — central orchestrator
 - [[search-service]] — search dispatch
-- [[rest-api-server]] — HTTP surface consuming services
+- [[rest-api]] — HTTP surface consuming services
