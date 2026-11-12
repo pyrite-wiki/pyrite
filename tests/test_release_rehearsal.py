@@ -163,6 +163,7 @@ def checkout(tmp_path: Path) -> Path:
     root = tmp_path / "checkout"
     _write(root, ".gitignore", ".venv/\n__pycache__/\n")
     _write(root, "pyproject.toml", f'[project]\nname = "widget"\nversion = "{VERSION}"\n')
+    _write(root, "README.md", f"git+https://github.com/pyrite-wiki/pyrite@v{VERSION}\n")
     _write(root, "CHANGELOG.md", "# Changelog\n")
     _write(root, "pyrite/__init__.py", "")
     _write(root, "pyrite/b.py", "def func():\n    return 1\n")
