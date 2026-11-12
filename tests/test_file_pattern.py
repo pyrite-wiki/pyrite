@@ -65,6 +65,16 @@ class TestTypeSchemaFilePattern:
         result = schema.resolve_filename(entry)
         assert result == "2026-11-12--upgrade-notes.md"
 
+    def test_generic_entry_without_any_date_falls_back_to_the_id_name(self):
+        # The other half of #1467: a kb.yaml-only type whose metadata has no
+        # `date` either must fall back to the plain `<id>.md` name (the None
+        # return), not format an empty `{date}` into `--<slug>.md`.
+        schema = TypeSchema(name="timeline_event", file_pattern="{date}--{slug}.md")
+        from pyrite.models.factory import build_entry
+
+        entry = build_entry("timeline_event", title="Undated", body="")
+        assert schema.resolve_filename(entry) is None
+
     def test_to_dict_includes_file_pattern(self):
         schema = TypeSchema(name="event", file_pattern="{date}--{slug}.md")
         d = schema.to_dict()
