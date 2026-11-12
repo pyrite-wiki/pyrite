@@ -308,10 +308,18 @@ class TypeSchema:
                     value = getattr(entry, "date", None)
                     if _is_missing(value):
                         value = meta.get("date")
+                    if _is_missing(value):
+                        return None
                 else:
+                    # The fixed placeholders carry the entry's identity
+                    # verbatim and do NOT go through the missing-value
+                    # fallback: an id of `..` is not an ordinarily-absent
+                    # field, it is a traversal attempt the `..`-component
+                    # check below must see and refuse. Routing it through
+                    # `_is_missing` (it starts with `.`) swallowed it into
+                    # a `None` fallback and broke the pre-existing
+                    # test_a_resolved_filename_of_exactly_dotdot_is_refused.
                     value = fixed[field_name]
-                if _is_missing(value):
-                    return None
                 values[field_name] = value
                 continue
             if not self._PLACEHOLDER_NAME_RE.match(field_name):
