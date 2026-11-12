@@ -38,13 +38,20 @@ ACTOR = "---\nid: jane-doe\ntitle: Jane Doe\ntype: actor\n---\n\nShe testifies.\
 NOTE = "---\nid: n1\ntitle: A note\ntype: note\n---\n\nText.\n"
 
 
-def _env(tmp_path, kb_type: str, *, plain: bool = False):
-    """A KB of ``kb_type`` holding cascade-typed files, or (``plain``) only a note."""
+def _env(tmp_path, kb_type: str, *, plain: bool = False, declared: tuple[str, ...] = ()):
+    """A KB of ``kb_type`` holding cascade-typed files, or (``plain``) only a note.
+
+    ``declared`` are the types its kb.yaml declares itself.
+    """
     kb_path = tmp_path / "kb"
     (kb_path / "events").mkdir(parents=True)
     (kb_path / "actors").mkdir()
-    # A kb.yaml with no types, as the cascade KBs had: the plugin declared them.
-    (kb_path / "kb.yaml").write_text(f"name: old-timeline\nkb_type: {kb_type}\n", encoding="utf-8")
+    # By default a kb.yaml with no types, as the cascade KBs had: the plugin declared them.
+    types = "".join(f"  {name}:\n    description: {name}\n" for name in declared)
+    (kb_path / "kb.yaml").write_text(
+        f"name: old-timeline\nkb_type: {kb_type}\n" + (f"types:\n{types}" if types else ""),
+        encoding="utf-8",
+    )
     if plain:
         (kb_path / "n1.md").write_text(NOTE, encoding="utf-8")
     else:
@@ -168,6 +175,49 @@ class TestIndexHealthNamesTheRemovedExtension:
         body = json.loads(result.output)
         assert body["removed_extensions"] == []
         assert body["checks"]["removed_extensions"] == []
+
+
+class TestTypesTheKBDeclaresAreItsOwn:
+    """A type the KB declares in kb.yaml is its own (#1468): only the undeclared
+    ones a removed extension used to declare are reported, by health and orient alike."""
+
+    def _health_rows(self, config):
+        result = _cli(config, "index", "health", "--format", "json")
+        assert result.exit_code == 0, result.output
+        return json.loads(result.output)["removed_extensions"]
+
+    def _notices(self, config):
+        return _mcp(config, "kb_orient", {"kb_name": "old-timeline"}).get("notices", [])
+
+    def test_a_generic_kb_that_declares_the_types_it_holds_is_not_told(self, tmp_path):
+        config = _env(tmp_path, "generic", declared=("actor", "timeline_event"))
+        assert self._health_rows(config) == []
+        assert self._notices(config) == []
+
+    def test_the_same_kb_without_the_declarations_is_still_told(self, tmp_path):
+        config = _env(tmp_path, "generic")
+        [row] = self._health_rows(config)
+        assert row["entry_types"] == ["actor", "timeline_event"]
+        [notice] = self._notices(config)
+        assert "holds entries of type actor, timeline_event" in notice, notice
+
+    def test_only_the_undeclared_type_is_named(self, tmp_path):
+        config = _env(tmp_path, "generic", declared=("timeline_event",))
+        [row] = self._health_rows(config)
+        assert row["entry_types"] == ["actor"]
+        assert "holds entries of type actor," in row["message"], row["message"]
+        assert "timeline_event" not in row["message"]
+        [notice] = self._notices(config)
+        assert notice == row["message"]
+
+    def test_a_cascade_kb_type_is_told_whatever_it_declares(self, tmp_path):
+        config = _env(tmp_path, "cascade-timeline", declared=("actor", "timeline_event"))
+        [row] = self._health_rows(config)
+        assert row["kb_type"] == "cascade-timeline"
+        assert row["entry_types"] == []
+        assert _is_the_notice(row["message"]), row["message"]
+        [notice] = self._notices(config)
+        assert "kb_type 'cascade-timeline'" in notice, notice
 
 
 def test_the_table_is_the_one_place_and_names_every_cascade_kb_type():
