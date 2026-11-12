@@ -1604,15 +1604,15 @@ class IndexManager:
         # of the report and leave the rest global.
         kbs = [kb for kb in self.config.all_kbs() if kb_name is None or kb.name == kb_name]
 
+        # Each kb.yaml is loaded once here, never again below: a schema that
+        # fails to load is reported in `schema_errors` and its KB counts as
+        # declaring no types, so health still answers for the broken KB.
+        schemas = self._load_schemas(kbs)
+
         # A KB whose type belonged to an extension Pyrite has deleted (#953):
         # its types are undeclared for a reason the user should be told. The
         # rule is `plugins/removed.py`'s; this report only shows it.
-        from ..plugins.removed import (
-            removed_entry_types_held,
-            removed_extension_for_entry_types,
-            removed_extension_for_kb_type,
-            removed_extension_notice,
-        )
+        from ..plugins.removed import removed_extension_report
 
         for kb in kbs:
             held_types = [
@@ -1623,18 +1623,12 @@ class IndexManager:
                 )
                 if row["entry_type"]
             ]
-            ext = removed_extension_for_kb_type(kb.kb_type) or removed_extension_for_entry_types(
-                held_types
-            )
-            if ext is not None:
+            kb_schema = schemas[kb.name][0]
+            declared = kb_schema.declared_types() if kb_schema else []
+            report = removed_extension_report(kb.name, kb.kb_type, held_types, declared)
+            if report is not None:
                 health["removed_extensions"].append(
-                    {
-                        "kb": kb.name,
-                        "kb_type": kb.kb_type,
-                        "extension": ext.name,
-                        "entry_types": removed_entry_types_held(ext, held_types),
-                        "message": removed_extension_notice(kb.name, kb.kb_type, held_types),
-                    }
+                    {"kb": kb.name, "kb_type": kb.kb_type, **report}
                 )
 
         for kb in kbs:
@@ -1815,11 +1809,6 @@ class IndexManager:
             for row in self.db.execute_sql(stale_sql, stale_params)
             if self._link_kb(row["written"], row["target_kb"]) != row["target_kb"]
         )
-
-        # Each kb.yaml is loaded once here, never again below: a schema that
-        # fails to load is reported in `schema_errors` and its KB counts as
-        # declaring no types, so health still answers for the broken KB.
-        schemas = self._load_schemas(kbs)
 
         # The schema owns the type vocabulary; an empty declaration is
         # unrestricted, including plugin types and core types.
