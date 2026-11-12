@@ -11,7 +11,7 @@ The [documentation index](docs/README.md) groups guides and contracts by reader 
 
 ## Start here
 
-1. Read `kb/design.md`: Pyrite's design on one page, nine principles and the
+1. Read `kb/design.md` by path before indexed lookups: Pyrite's design on one page, nine principles and the
    questions to ask of any ticket or change. Judge your work against it.
 2. Read [CONTRIBUTING.md](CONTRIBUTING.md), "Branches, hooks and pull
    requests" and "Running the tests". They are the only statement of the
@@ -45,24 +45,45 @@ The [documentation index](docs/README.md) groups guides and contracts by reader 
 
 ## Using the KB for project context
 
-This project has a knowledge base in `kb/`, indexed by Pyrite's own tools.
-The CLI is faster and cheaper than reading files by hand.
+Read `kb/design.md` and the [documentation index](docs/README.md) by path
+before indexed lookups. Follow the design's topic-map links to binding ADRs.
+Run an incremental sync before trusting indexed context, in this worktree as
+well as the main checkout. The examples use each command's default output.
+
+### Quick Context Lookups
 
 ```bash
-.venv/bin/pyrite search "<topic>" -k pyrite                  # keyword
-.venv/bin/pyrite search "<question>" -k pyrite --mode semantic
-.venv/bin/pyrite get <entry-id> -k pyrite                    # one entry
-.venv/bin/pyrite sw components    # core modules and services
-.venv/bin/pyrite sw adrs          # architecture decision records
-.venv/bin/pyrite sw backlog       # top 50 backlog items (--limit/--offset, --limit 0 for all)
-.venv/bin/pyrite sw standards     # coding standards and conventions
-.venv/bin/pyrite backlinks <entry-id> -k pyrite              # what links here
-.venv/bin/pyrite tags -k pyrite
+# Reconcile the files before indexed lookups; no embeddings needed
+.venv/bin/pyrite index sync -k pyrite --no-embed
+# Search binding decisions and living module docs separately
+.venv/bin/pyrite search "<topic>" -k pyrite --type adr
+.venv/bin/pyrite search "<topic>" -k pyrite --type component
+.venv/bin/pyrite get design -k pyrite
+.venv/bin/pyrite get adr-0042 -k pyrite
+.venv/bin/pyrite sw components -k pyrite
+.venv/bin/pyrite sw adrs -k pyrite
+.venv/bin/pyrite backlinks <entry-id> -k pyrite
 ```
+
+### When to Use KB Tools
 
 Before a feature, search for its backlog item, ADRs and component docs. Before
 modifying a shared file, search for its path to see what docs reference it.
-`pyrite kb list` must show the `pyrite` KB at *this* worktree's `kb/`.
+
+Other useful lookups (semantic search requires configured embeddings):
+
+```bash
+.venv/bin/pyrite sw backlog -k pyrite
+.venv/bin/pyrite sw standards -k pyrite
+.venv/bin/pyrite tags -k pyrite
+.venv/bin/pyrite search "<question>" -k pyrite --mode semantic
+```
+
+For binding context, search ADRs and component docs separately with their
+type filters. An untyped search can also return closed backlog items;
+a result is not a current decision just because it matched. Before modifying
+a shared file, search for its path to find the docs that reference it.
+`pyrite kb list` must show `pyrite` at *this* worktree's `kb/`.
 
 After work that changes architecture, adds a component or completes a backlog
 item, update the KB with the CLI (never by hand-editing frontmatter):
