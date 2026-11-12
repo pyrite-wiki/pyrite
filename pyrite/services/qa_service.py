@@ -1371,6 +1371,7 @@ class QAService:
         pass to read typed attributes as the file wrote them.
         """
 
+        from ..models.base import lifecycle_validation_error
         from ..storage.repository import KBRepository
         from ..utils.frontmatter import leaked_frontmatter_line
 
@@ -1416,6 +1417,17 @@ class QAService:
             self._check_reserved_key_collisions(issues, kb_name, entry, shown)
             self._check_task_priority(issues, kb_name, entry, shown)
             self._check_double_spellings(issues, kb_name, entry, shown)
+            if problem := lifecycle_validation_error(entry.lifecycle):
+                issues.append(
+                    {
+                        **problem,
+                        "entry_id": entry.id,
+                        "kb_name": kb_name,
+                        "rule": "invalid_lifecycle",
+                        "severity": "error",
+                        "message": f"{shown}: {problem['message']}",
+                    }
+                )
             if entry._source_frontmatter is not None:
                 leaked = leaked_frontmatter_line(entry._source_frontmatter, entry.body or "")
                 if leaked is not None:
