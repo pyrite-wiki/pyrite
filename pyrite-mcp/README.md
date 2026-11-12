@@ -6,8 +6,11 @@ Provides a lightweight package for running the Pyrite MCP server without the ful
 
 ## Installation
 
+`pyrite-mcp` is not published on PyPI. Install it from the release tag, the
+same way the [main README](../README.md) installs Pyrite:
+
 ```bash
-pip install pyrite-mcp
+pip install "pyrite-mcp @ git+https://github.com/pyrite-wiki/pyrite@v0.26.0#subdirectory=pyrite-mcp"
 ```
 
 ## Usage

@@ -32,7 +32,7 @@ default_stages: [pre-commit]
 repos:
   # Ruff - fast Python linter and formatter
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.4
+    rev: a27a2e47c7751b639d2b5badf0ef6ff11fee893f  # v0.15.4
     hooks:
       # Linter
       - id: ruff
@@ -44,7 +44,7 @@ repos:
 
   # Basic file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b  # v5.0.0
     hooks:
       # `stages` is pinned on every hook: default_stages does not apply to hooks
       # whose upstream manifest declares its own stages, and these fixers list
