@@ -1,0 +1,1 @@
+- `pyrite search` now refuses `--limit 0` and negative limits as usage errors instead of returning every result or a messy error (#1397).
