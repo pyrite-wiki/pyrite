@@ -747,6 +747,42 @@ class PluginRegistry:
         result.update(plugin_presets)
         return result
 
+    def get_kb_type_for_preset(self, preset_name: str) -> str | None:
+        """KB type a plugin-supplied preset registers as, or None.
+
+        A preset supplied by a plugin registers with that plugin's KB type
+        when the preset name is one of the plugin's declared KB types
+        (e.g. software-kb supplies the "software" preset and declares
+        the "software" KB type), so the plugin's validators and orient
+        supplement run on KBs made from its template. Returns None when
+        no plugin supplies the preset, or when it names no declared KB
+        type, in which case the KB stays "generic".
+        """
+        self.discover()
+        for plugin in self._plugins.values():
+            if not hasattr(plugin, "get_kb_presets"):
+                continue
+            if not _plugin_declares(plugin, "get_kb_presets"):
+                continue
+            try:
+                presets = plugin.get_kb_presets() or {}
+            except Exception as e:
+                logger.warning("Plugin %s get_kb_presets failed: %s", plugin.name, e)
+                continue
+            if preset_name not in presets:
+                continue
+            if not hasattr(plugin, "get_kb_types") or not _plugin_declares(
+                plugin, "get_kb_types"
+            ):
+                return None
+            try:
+                kb_types = plugin.get_kb_types() or []
+            except Exception as e:
+                logger.warning("Plugin %s get_kb_types failed: %s", plugin.name, e)
+                return None
+            return preset_name if preset_name in kb_types else None
+        return None
+
     def get_type_default_subdirectory(self, entry_type: str, kb_type: str = "") -> str | None:
         """Default subdirectory a KB preset declares for ``entry_type``.
 
