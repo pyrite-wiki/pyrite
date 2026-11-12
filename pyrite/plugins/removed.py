@@ -83,7 +83,7 @@ def removed_extension_report(
 ) -> dict | None:
     """What a KB's health row and orient notice say about a removed extension,
     or None when the KB has nothing of one: ``extension``, ``entry_types`` (the
-    held types it declared) and ``message``.
+    held types the extension declared and the KB's kb.yaml does not) and ``message``.
 
     ``entry_types`` is what the KB holds (the index's distinct types): a
     generic KB that still has ``timeline_event`` files gets the same notice
