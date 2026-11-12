@@ -431,7 +431,7 @@ def kb_create(
         None, "--shortname", "-s", help="Short alias for cross-KB links"
     ),
     ephemeral: bool = typer.Option(False, "--ephemeral", help="Create as ephemeral KB"),
-    ttl: int = typer.Option(3600, "--ttl", help="TTL in seconds for ephemeral KBs"),
+    ttl: int = typer.Option(3600, "--ttl", min=0, help="TTL in seconds for ephemeral KBs"),
 ):
     """Create a new knowledge base."""
     with cli_registry_context() as (config, db, svc, registry):
