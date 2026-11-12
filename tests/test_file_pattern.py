@@ -61,9 +61,7 @@ class TestTypeSchemaFilePattern:
         schema = TypeSchema(name="timeline_event", file_pattern="{date}--{slug}.md")
         from pyrite.models.factory import build_entry
 
-        entry = build_entry(
-            "timeline_event", title="Upgrade Notes", body="", date="2026-11-12"
-        )
+        entry = build_entry("timeline_event", title="Upgrade Notes", body="", date="2026-11-12")
         result = schema.resolve_filename(entry)
         assert result == "2026-11-12--upgrade-notes.md"
 
