@@ -3751,10 +3751,7 @@ class KBService:
         # but `index health`; the rule is `plugins/removed.py`'s.
         from ..plugins.removed import removed_extension_notice
 
-        try:
-            declared = kb_config.kb_schema.declared_types()
-        except Exception:
-            declared = []  # a kb.yaml that does not load declares no types, as in health
+        declared = kb_config.kb_schema.declared_types()
         notice = removed_extension_notice(kb_name, kb_config.kb_type, distinct_types, declared)
         if notice:
             result["notices"] = [notice]
