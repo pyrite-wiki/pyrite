@@ -47,13 +47,25 @@ class TestTypeSchemaFilePattern:
         result = schema.resolve_filename(entry)
         assert result == "event--2026-03-30--test.md"
 
-    def test_missing_date_uses_empty_string(self):
+    def test_missing_date_falls_back_to_the_default_filename(self):
         schema = TypeSchema(name="note", file_pattern="{date}--{slug}.md")
         from pyrite.models.factory import build_entry
 
         entry = build_entry("note", title="No Date Note", body="")
+        assert schema.resolve_filename(entry) is None
+
+    def test_date_placeholder_reads_metadata_for_generic_types(self):
+        # A kb.yaml-declared type (GenericEntry) keeps `date` in metadata,
+        # not on the entry; `{date}` must resolve from there instead of
+        # formatting an empty string into the name (#1467).
+        schema = TypeSchema(name="timeline_event", file_pattern="{date}--{slug}.md")
+        from pyrite.models.factory import build_entry
+
+        entry = build_entry(
+            "timeline_event", title="Upgrade Notes", body="", date="2026-11-12"
+        )
         result = schema.resolve_filename(entry)
-        assert result == "--no-date-note.md"
+        assert result == "2026-11-12--upgrade-notes.md"
 
     def test_to_dict_includes_file_pattern(self):
         schema = TypeSchema(name="event", file_pattern="{date}--{slug}.md")

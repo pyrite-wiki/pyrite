@@ -271,7 +271,6 @@ class TypeSchema:
         fixed = {
             "id": entry.id,
             "slug": entry.id,
-            "date": getattr(entry, "date", "") or "",
             "title": generate_entry_id(entry.title),
             "type": entry.entry_type,
         }
@@ -298,8 +297,22 @@ class TypeSchema:
         for _literal, field_name, _format_spec, conversion in Formatter().parse(self.file_pattern):
             if field_name is None:
                 continue
-            if field_name in fixed:
-                values[field_name] = fixed[field_name]
+            if field_name in fixed or field_name == "date":
+                if field_name == "date":
+                    # `date` is a dataclass field on typed entries but lives
+                    # in metadata on kb.yaml-declared ones (GenericEntry has
+                    # no date attribute), so resolve it like any other
+                    # placeholder instead of reading one location (#1467 --
+                    # a kb.yaml-only type formatted an empty `{date}` into
+                    # the filename).
+                    value = getattr(entry, "date", None)
+                    if _is_missing(value):
+                        value = meta.get("date")
+                else:
+                    value = fixed[field_name]
+                if _is_missing(value):
+                    return None
+                values[field_name] = value
                 continue
             if not self._PLACEHOLDER_NAME_RE.match(field_name):
                 raise ValidationError(
