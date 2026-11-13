@@ -27,6 +27,7 @@ from ..exceptions import (
     PyriteError,
     public_text,
 )
+from ..models.base import lifecycle_validation_error
 from ..plugins.registry import get_registry
 from ..schema import validate_date, validate_importance
 from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata
@@ -1371,7 +1372,6 @@ class QAService:
         pass to read typed attributes as the file wrote them.
         """
 
-        from ..models.base import lifecycle_validation_error
         from ..storage.repository import KBRepository
         from ..utils.frontmatter import leaked_frontmatter_line
 
@@ -1423,6 +1423,9 @@ class QAService:
                         **problem,
                         "entry_id": entry.id,
                         "kb_name": kb_name,
+                        # QA groups findings by issue category; writes name
+                        # the failed constraint (enum). Both identify the
+                        # same field for callers filtering across surfaces.
                         "rule": "invalid_lifecycle",
                         "severity": "error",
                         "message": f"{shown}: {problem['message']}",

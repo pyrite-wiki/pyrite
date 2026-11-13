@@ -203,6 +203,7 @@ def test_qa_reports_invalid_file_lifecycle_without_changing_files(world, value, 
     issues = [row for row in body["issues"] if row.get("field") == "lifecycle"]
     assert len(issues) == 1, body
     assert issues[0]["entry_id"] == "base"
+    assert issues[0]["rule"] == "invalid_lifecycle"
     assert issues[0]["severity"] == "error"
     assert "lifecycle" in issues[0]["message"].lower()
     assert _files(world) == before
@@ -248,6 +249,7 @@ def test_rest_qa_serializes_non_finite_lifecycle_from_the_file(world, surface, l
         json.dumps(body, allow_nan=False)
         issues = [row for row in body["issues"] if row.get("field") == "lifecycle"]
         assert len(issues) == 1, body
+        assert issues[0]["rule"] == "invalid_lifecycle"
         assert issues[0]["severity"] == "error"
         assert issues[0]["got"] == shown
         assert issues[0]["expected"] == ["active", "archived"]
