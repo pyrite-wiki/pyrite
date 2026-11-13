@@ -61,6 +61,7 @@ def _usage_error(output):
     [
         ("--limit", "-1"),
         ("--limit", "0"),
+        ("--limit", "501"),
         ("--min-importance", "-1"),
         ("--min-importance", "0"),
         ("--min-importance", "11"),
@@ -124,26 +125,12 @@ def test_timeline_min_importance_ten_is_valid(timeline_cli):
 
 
 @pytest.mark.control(
-    reason="limit=500 is the REST timeline's documented upper boundary and is valid for the CLI under either cap decision"
+    reason="limit=500 is the valid maximum, matching pyrite timeline and the REST timeline"
 )
 def test_timeline_limit_five_hundred_is_valid(timeline_cli):
     result = runner.invoke(
         timeline_cli,
         ["timeline", "--limit", "500", "--format", "json"],
-    )
-
-    assert result.exit_code == 0, result.output
-    document = json.loads(result.output)
-    assert document["count"] == 3
-
-
-@pytest.mark.control(
-    reason="the CLI intentionally has no arbitrary upper limit; the REST API's separate cap does not apply"
-)
-def test_timeline_limit_has_no_arbitrary_upper_bound(timeline_cli):
-    result = runner.invoke(
-        timeline_cli,
-        ["timeline", "--limit", "501", "--format", "json"],
     )
 
     assert result.exit_code == 0, result.output

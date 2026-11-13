@@ -226,7 +226,7 @@ def timeline(
     min_importance: int = typer.Option(
         1, "--min-importance", min=1, max=10, help="Minimum importance (1-10)"
     ),
-    limit: int = typer.Option(50, "--limit", "-n", min=1, help="Max results"),
+    limit: int = typer.Option(50, "--limit", "-n", min=1, max=500, help="Max results"),
     output_format: str = typer.Option(
         "rich",
         "--format",
