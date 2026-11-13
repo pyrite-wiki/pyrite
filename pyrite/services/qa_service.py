@@ -27,6 +27,7 @@ from ..exceptions import (
     PyriteError,
     public_text,
 )
+from ..models.base import lifecycle_validation_error
 from ..plugins.registry import get_registry
 from ..schema import validate_date, validate_importance
 from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata
@@ -1416,6 +1417,20 @@ class QAService:
             self._check_reserved_key_collisions(issues, kb_name, entry, shown)
             self._check_task_priority(issues, kb_name, entry, shown)
             self._check_double_spellings(issues, kb_name, entry, shown)
+            if problem := lifecycle_validation_error(entry.lifecycle):
+                issues.append(
+                    {
+                        **problem,
+                        "entry_id": entry.id,
+                        "kb_name": kb_name,
+                        # QA groups findings by issue category; writes name
+                        # the failed constraint (enum). Both identify the
+                        # same field for callers filtering across surfaces.
+                        "rule": "invalid_lifecycle",
+                        "severity": "error",
+                        "message": f"{shown}: {problem['message']}",
+                    }
+                )
             if entry._source_frontmatter is not None:
                 leaked = leaked_frontmatter_line(entry._source_frontmatter, entry.body or "")
                 if leaked is not None:
