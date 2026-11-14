@@ -28,7 +28,13 @@ from pathlib import Path
 import pytest
 
 from pyrite.config import KBConfig, KBType
-from pyrite.exceptions import SchemaViolationError, ValidationError, refusal_fields
+from pyrite.exceptions import (
+    OUTSIDE_TEXT_WITHHELD,
+    SchemaViolationError,
+    ValidationError,
+    refusal_fields,
+)
+from pyrite.models.core_types import NoteEntry
 from pyrite.services.kb_service import KBService, check_link_spec
 from tests._world import build_world
 from tests.characterization.world import build_world as build_characterization_world
@@ -401,6 +407,62 @@ def test_every_surface_names_the_field_and_the_rule(surface_world, shape):
     assert row["field"] == case["field"], body
     assert row["rule"] == case["rule"], body
     assert row["expected"] == case["expected"], body
+
+
+@pytest.mark.parametrize("value", ["field-refusal", "cross-field-refusal"])
+def test_refused_update_reports_why_the_candidate_did_not_load(surface_world, monkeypatch, value):
+    surface, world = surface_world
+    path = world.add_entry(
+        "ev", f"---\nid: {value}\ntype: note\ntitle: Original\n---\nOriginal body\n"
+    )
+    original = path.read_bytes()
+
+    load = NoteEntry.from_frontmatter
+
+    def refuse_candidate(cls, meta, body):
+        if meta.get("summary") == "field-refusal":
+            raise ValueError("invalid summary")
+        if meta.get("summary") == "cross-field-refusal" and body.startswith("Original body"):
+            raise ValueError("summary conflicts with body")
+        return load(meta, body)
+
+    monkeypatch.setattr(NoteEntry, "from_frontmatter", classmethod(refuse_candidate))
+
+    if surface == "cli":
+        result = world.cli(
+            "update", value, "-k", "ev", "-f", f"summary={value}", "--format", "json"
+        )
+        detail = _json_body(result)
+    elif surface == "mcp":
+        detail = world.mcp()._dispatch_tool(
+            "kb_update", {"entry_id": value, "kb_name": "ev", "summary": value}
+        )
+    else:
+        response = world.client.patch(
+            f"/api/entries/{value}", json={"kb": "ev", "field": "summary", "value": value}
+        )
+        detail = response.json()["detail"]
+
+    assert path.read_bytes() == original
+    assert detail["retryable"] is False
+    if surface == "rest":
+        assert detail["code"] == "VALIDATION_FAILED", detail
+        message = detail["message"]
+    else:
+        assert detail["error_code"] == "VALIDATION_FAILED", detail
+        message = detail["error"]
+    assert "nothing was written" in message
+    assert "fixed by hand" not in message
+    if value == "field-refusal":
+        assert "summary" in message
+        expected = OUTSIDE_TEXT_WITHHELD if surface != "cli" else "invalid summary"
+        assert detail["errors"] == [{"field": "summary", "rule": "entry_load", "message": expected}]
+    else:
+        assert "errors" not in detail
+        expected = OUTSIDE_TEXT_WITHHELD if surface != "cli" else "summary conflicts with body"
+        assert expected in message
+    if surface == "rest":
+        assert response.status_code == 422
 
 
 def test_a_schema_refusal_without_rows_leaves_the_key_out():
