@@ -1,0 +1,1 @@
+- Rejected updates that would produce an unloadable entry now say the file is unchanged and include structured details for any fields the loader could identify (#1472).
