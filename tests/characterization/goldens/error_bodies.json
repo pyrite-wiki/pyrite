@@ -1171,6 +1171,50 @@
       "status": 422
     }
   },
+  "UpdateWouldNotLoadError": {
+    "cli": {
+      "error": "Cannot update 'characterization-entry': the result would not load (rank (rank must be an integer)), so nothing was written. The file is unchanged.",
+      "error_code": "VALIDATION_FAILED",
+      "errors": [
+        {
+          "field": "rank",
+          "message": "rank must be an integer",
+          "rule": "entry_load"
+        }
+      ],
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "Cannot update 'characterization-entry': the result would not load (rank (rank must be an integer)), so nothing was written. The file is unchanged.",
+      "error_code": "VALIDATION_FAILED",
+      "errors": [
+        {
+          "field": "rank",
+          "message": "rank must be an integer",
+          "rule": "entry_load"
+        }
+      ],
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "VALIDATION_FAILED",
+          "errors": [
+            {
+              "field": "rank",
+              "message": "rank must be an integer",
+              "rule": "entry_load"
+            }
+          ],
+          "message": "Cannot update 'characterization-entry': the result would not load (rank (rank must be an integer)), so nothing was written. The file is unchanged.",
+          "retryable": false
+        }
+      },
+      "status": 422
+    }
+  },
   "ValidationError": {
     "cli": {
       "error": "characterization message for ValidationError",
