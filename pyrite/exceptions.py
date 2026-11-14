@@ -515,6 +515,25 @@ class EntryLoadError(FrontmatterError):
         self.loader_message = loader_message
 
 
+class UpdateWouldNotLoadError(ValidationError):
+    """The proposed update failed to load before it could be written."""
+
+    def __init__(self, entry_id: str, cause: EntryLoadError):
+        # The repository already filters loader details for network callers.
+        errors = [
+            {"field": field, "rule": "entry_load", "message": message}
+            for field, message in cause.fields.items()
+        ]
+        reason = cause.loader_message
+        if cause.fields:
+            reason = f"{', '.join(cause.fields)} ({reason})"
+        super().__init__(
+            f"Cannot update '{entry_id}': the result would not load ({reason}), "
+            "so nothing was written. The file is unchanged.",
+            errors=errors,
+        )
+
+
 class YamlLimitError(FrontmatterError):
     """A YAML document passes a fixed bound on aliases or expanded size.
 
