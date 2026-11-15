@@ -1,0 +1,1 @@
+- `pyrite links orphans --min-importance` now refuses values outside 1-10 as a usage error (exit 2), instead of returning an empty or unfiltered orphan list (#1474).

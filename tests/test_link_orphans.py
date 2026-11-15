@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from click import unstyle
 from typer.testing import CliRunner
 
 from pyrite.cli import app
@@ -231,3 +232,74 @@ class TestOrphansCLI:
             assert "fts-orphan-concept" in orphan_ids
         finally:
             orphan_env["db"].close = orig_close
+
+    @pytest.mark.cli
+    @pytest.mark.parametrize("bad_importance", ["-1", "0", "11"])
+    def test_cli_min_importance_out_of_range_is_usage_error(self, cli_world, bad_importance):
+        """Out-of-range --min-importance (< 1 or > 10) is refused as USAGE_ERROR (#1474)."""
+        world = cli_world()
+        result = world.cli(
+            "links",
+            "orphans",
+            "--kb",
+            "test-kb",
+            "--min-importance",
+            bad_importance,
+            "--format",
+            "json",
+        )
+        output = unstyle(result.output)
+
+        assert result.exit_code == 2, result.output
+        assert "Traceback" not in output
+        document = json.loads(next(line for line in output.splitlines() if line.startswith("{")))
+        assert document["outcome"] == "error"
+        assert document["error_code"] == "USAGE_ERROR"
+        assert "--min-importance" in document["error"]
+        assert bad_importance in document["error"]
+
+    @pytest.mark.cli
+    @pytest.mark.control(
+        reason="inclusive 1..10 bounds and default 5 already ran before #1474 and must stay accepted"
+    )
+    @pytest.mark.parametrize(
+        ("extra_args", "expected_min", "expected_ids"),
+        [
+            (["--min-importance", "1"], 1, {"low-orphan", "high-orphan"}),
+            ([], 5, {"high-orphan"}),
+            (["--min-importance", "10"], 10, set()),
+        ],
+    )
+    def test_cli_min_importance_inclusive_bounds_and_default(
+        self, cli_world, tmp_path, extra_args, expected_min, expected_ids
+    ):
+        """Inclusive bounds 1 and 10 and default 5 run cleanly (#1474)."""
+        world = cli_world(
+            kbs=[
+                KBConfig(name="kb-a", path=tmp_path / "kb-a", kb_type=KBType.GENERIC),
+                KBConfig(name="kb-b", path=tmp_path / "kb-b", kb_type=KBType.GENERIC),
+            ]
+        )
+        world.add_entry(
+            "kb-a",
+            "---\nid: low-orphan\ntype: concept\ntitle: Low Orphan\nimportance: 2\n"
+            "tags: [systems]\n---\nSystems feedback dynamics.\n",
+        )
+        world.add_entry(
+            "kb-a",
+            "---\nid: high-orphan\ntype: concept\ntitle: High Orphan\nimportance: 8\n"
+            "tags: [systems]\n---\nSystems feedback dynamics.\n",
+        )
+        world.add_entry(
+            "kb-b",
+            "---\nid: peer-match\ntype: concept\ntitle: Peer Match\nimportance: 7\n"
+            "tags: [systems]\n---\nSystems feedback dynamics.\n",
+        )
+
+        result = world.cli("links", "orphans", "--kb", "kb-a", *extra_args, "--format", "json")
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["outcome"] == "done"
+        assert data["min_importance"] == expected_min
+        assert {o["id"] for o in data["orphans"]} == expected_ids
