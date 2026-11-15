@@ -648,7 +648,9 @@ def _find_orphans(
 @links_app.command("orphans")
 def links_orphans(
     kb_name: str = typer.Option(..., "--kb", "-k", help="KB to check for orphans"),
-    min_importance: int = typer.Option(5, "--min-importance", help="Minimum importance threshold"),
+    min_importance: int = typer.Option(
+        5, "--min-importance", min=1, max=10, help="Minimum importance threshold (1-10)"
+    ),
     limit: int = typer.Option(20, "--limit", "-n", help="Max results"),
     output_format: str = OUTPUT_FORMAT,
 ) -> Outcome:
