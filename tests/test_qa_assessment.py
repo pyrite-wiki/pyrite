@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
+from pyrite.exceptions import EntryNotFoundError
 from pyrite.models import NoteEntry
 from pyrite.models.core_types import QAAssessmentEntry, get_entry_class
 from pyrite.models.factory import build_entry
@@ -202,6 +203,23 @@ class TestQAAssessmentEntryType:
 
 
 class TestAssessEntry:
+    @pytest.mark.parametrize("create_task_on_fail", [False, True])
+    def test_assess_missing_entry_writes_nothing(self, qa_env, create_task_on_fail):
+        kb_path = qa_env["kb_config"].path
+        before = {p: p.read_bytes() for p in kb_path.rglob("*") if p.is_file()}
+
+        with pytest.raises(EntryNotFoundError, match="Entry 'nope' not found") as exc:
+            qa_env["qa"].assess_entry(
+                "nope",
+                "test-kb",
+                create_task_on_fail=create_task_on_fail,
+                readable_kbs=UNSCOPED,
+            )
+
+        assert exc.value.error_code == "ENTRY_NOT_FOUND"
+        assert {p: p.read_bytes() for p in kb_path.rglob("*") if p.is_file()} == before
+        assert qa_env["qa"].get_assessments("test-kb") == []
+
     def test_assess_valid_entry_returns_pass(self, qa_env):
         """Assessing a valid entry produces qa_status='pass'."""
         result = qa_env["qa"].assess_entry("good-note", "test-kb", readable_kbs=UNSCOPED)
@@ -383,6 +401,24 @@ class TestGetCoverage:
 
 
 class TestMCPTools:
+    def test_kb_qa_assess_missing_entry_writes_nothing(self, qa_env):
+        from pyrite.server.mcp_server import PyriteMCPServer
+
+        kb_path = qa_env["kb_config"].path
+        before = {p: p.read_bytes() for p in kb_path.rglob("*") if p.is_file()}
+        server = PyriteMCPServer(config=qa_env["config"], tier="write")
+        try:
+            result = server._dispatch_tool(
+                "kb_qa_assess", {"kb_name": "test-kb", "entry_id": "nope"}
+            )
+        finally:
+            server.db.close()
+
+        assert result["error_code"] == "ENTRY_NOT_FOUND", result
+        assert "Entry 'nope' not found" in result["error"]
+        assert {p: p.read_bytes() for p in kb_path.rglob("*") if p.is_file()} == before
+        assert qa_env["qa"].get_assessments("test-kb") == []
+
     def test_kb_qa_assess_in_write_tier(self, qa_env):
         """kb_qa_assess is available in write tier, not read tier."""
         from pyrite.server.mcp_server import PyriteMCPServer
