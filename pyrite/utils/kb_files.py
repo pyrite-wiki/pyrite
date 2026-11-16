@@ -106,6 +106,8 @@ _HAS_DIR_FD = (
 )
 _DIR_FLAGS = getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+# The errors ``pathlib.Path.exists`` answers False for; any other raises.
+_ABSENT_ERRNOS = {errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP}
 _UNSUPPORTED = {errno.ENOTSUP, errno.ENOSYS, getattr(errno, "EOPNOTSUPP", errno.ENOTSUP)}
 
 
@@ -684,7 +686,16 @@ class KBFiles:
         """
         if not self.contains(path):
             return True
-        return os.path.exists(self._absolute(path))
+        # ``Path.exists``'s answer, not ``os.path.exists``'s: a folder this
+        # process cannot search raises, never "absent" (index health then
+        # reports the file unreadable, not missing).
+        try:
+            os.stat(self._absolute(path))
+        except OSError as e:
+            if e.errno in _ABSENT_ERRNOS:
+                return False
+            raise
+        return True
 
     def make_dirs(self, path: str | os.PathLike[str]) -> None:
         """Make the folder ``path`` and any missing folders above it,
