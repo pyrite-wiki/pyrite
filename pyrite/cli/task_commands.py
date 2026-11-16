@@ -250,9 +250,7 @@ def task_create(
         if result.get("due_date"):
             console.print(f"  Due: {result['due_date']}")
         for done_link in result.get("linked", []):
-            console.print(
-                f"  [dim]Linked to {done_link['target']} ({done_link['relation']})[/dim]"
-            )
+            console.print(f"  [dim]Linked to {done_link['target']} ({done_link['relation']})[/dim]")
         for failed in result.get("failed_links", []):
             console.print(f"  [yellow]Link failed:[/yellow] {failed['error']}")
         for warning in result.get("warnings", []):

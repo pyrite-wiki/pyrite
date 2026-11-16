@@ -151,7 +151,10 @@ class TestCreateTask:
         # Verify kb_get returns links
         entry = svc.kb_svc.get_entry(result["entry_id"], "test-tasks", readable_kbs=None)
         assert entry is not None
-        assert any(l.get("target_id") == target_id or l.get("target") == target_id for l in entry.get("links", []))
+        assert any(
+            l.get("target_id") == target_id or l.get("target") == target_id
+            for l in entry.get("links", [])
+        )
 
         # Verify target entry shows the task in backlinks
         backlinks = svc.db.get_backlinks(target_id, "test-tasks", readable_kbs=None)
