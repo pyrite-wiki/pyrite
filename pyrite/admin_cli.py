@@ -655,7 +655,7 @@ def schema_show(kb_name: str = typer.Argument(..., help="KB name")):
         raise typer.Exit(1)
 
     schema = kb.kb_schema
-    agent_schema = schema.to_agent_schema()
+    agent_schema = schema.to_agent_schema(kb.kb_type)
 
     typer.echo(json.dumps(agent_schema, indent=2))
 

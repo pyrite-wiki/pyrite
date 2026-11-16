@@ -198,10 +198,15 @@ class KBSchema:
         """
         return sorted(self.types)
 
-    def to_agent_schema(self) -> dict[str, Any]:
+    def to_agent_schema(self, kb_type: str | None = None) -> dict[str, Any]:
         """Export schema in agent-friendly format for kb_schema MCP tool.
 
         Lists the types `create` accepts in this KB: see `declared_types`.
+        ``type_mappings`` is ``{core type: stored type}`` from the one
+        resolver the write path uses (``schema.type_mapping``, #468), so an
+        agent can predict the type a create stores. ``kb_type`` is the KB's
+        registered type (``KBConfig.kb_type``, what the write path reads);
+        callers with a KBConfig pass it. None falls back to kb.yaml's.
         """
         types_dict = {}
         declared = self.declared_types()
@@ -260,7 +265,14 @@ class KBSchema:
                     type_dict["evaluation_rubric"] = metadata["evaluation_rubric"]
                 types_dict[type_name] = type_dict
 
-        result: dict[str, Any] = {"types": types_dict}
+        from .type_mapping import resolve_type_mappings
+
+        result: dict[str, Any] = {
+            "types": types_dict,
+            "type_mappings": resolve_type_mappings(
+                self.kb_type if kb_type is None else kb_type, self
+            ),
+        }
 
         # KB-level intent: merge system defaults with KB overrides
         merged_guidelines = dict(SYSTEM_INTENT.get("guidelines", {}))

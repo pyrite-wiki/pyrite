@@ -1159,7 +1159,7 @@ class PyriteMCPServer:
             return _error("NOT_FOUND", f"KB '{kb_name}' not found")
 
         schema = kb_config.kb_schema
-        return schema.to_agent_schema()
+        return schema.to_agent_schema(kb_config.kb_type)
 
     def _kb_qa_validate(
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None

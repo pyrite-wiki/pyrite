@@ -533,7 +533,10 @@ def _rest_for(env):
 
 
 def test_cli_add_keeps_the_files_declared_type_in_a_plugin_kb(software_env):
-    """Review blocker 1: `pyrite add` must not rewrite `type: note` to `adr` (#197)."""
+    """Review blocker 1: `pyrite add` must not rewrite `type: note` to `adr` (#197).
+
+    Since #468 this holds because no plugin declares a `note` mapping, not
+    because `add` switches resolution off: every surface takes one rule."""
     src = software_env["tmp_path"] / "meeting.md"
     src.write_text("---\ntype: note\ntitle: Meeting notes\n---\nhello\n")
     result = _cli(software_env, ["add", str(src), "-k", "sw", "--allow-undeclared"])
@@ -550,14 +553,9 @@ def test_rest_create_accepts_the_web_forms_default_payload_in_pyrites_own_kb(sof
     create (web/src/lib/api/client.ts), so the form keeps dev's behaviour in a
     KB that declares types. API callers that do not send it are refused.
 
-    The exact-path assertion below is red without #391's fix for an incidental
-    reason worth naming: this KB's `note` -> most-derived-NoteEntry-subtype
-    resolution silently resolves the entry to an ADREntry (#468, filed,
-    out of scope for #391), so the file only lands under `adrs/` with the
-    `0000-` prefix once the `adr` type's `file_pattern` entry-field
-    placeholder support (this PR) exists at all; on dev, `{adr_number:04d}`
-    is unrecognized and `resolve_filename` falls back to the default
-    `<id>.md`, landing at `adrs/from-the-form.md` instead."""
+    The entry is stored as the `note` the form named (#468): before, the
+    software plugin's most-derived `NoteEntry` subclass won and the note was
+    written as an ADR at `adrs/0000-from-the-form.md`."""
     client, close = _rest_for(software_env)
     try:
         form = {"kb": "sw", "entry_type": "note", "title": "From the form", "body": ""}
@@ -567,17 +565,14 @@ def test_rest_create_accepts_the_web_forms_default_payload_in_pyrites_own_kb(sof
 
         resp = client.post("/api/entries", json={**form, "allow_undeclared": True})
         assert resp.status_code == 200, resp.text
-        # Exact path, not a substring match: #468 (filed, out of scope for
-        # #391) means this KB's `note` -> most-derived-NoteEntry-subtype
-        # resolution silently resolves this to an ADREntry, so the file
-        # lands under adrs/ with the adr type's file_pattern
-        # (adr_number defaults to 0 since this create never sets it).
         assert resp.json()["id"] == "from-the-form"
-        expected = software_env["kb_path"] / "adrs" / "0000-from-the-form.md"
-        assert expected.exists(), (
-            f"expected {expected} (see #468: `note` resolves to ADREntry here); "
-            f"found: {sorted(p.relative_to(software_env['kb_path']) for p in software_env['kb_path'].rglob('*.md'))}"
+        written = sorted(
+            p.relative_to(software_env["kb_path"]).as_posix()
+            for p in software_env["kb_path"].rglob("*.md")
         )
+        assert [p for p in written if "from-the-form" in p] == ["notes/from-the-form.md"], written
+        text = (software_env["kb_path"] / "notes" / "from-the-form.md").read_text()
+        assert "type: note" in text and "adr_number" not in text, text
     finally:
         close()
 

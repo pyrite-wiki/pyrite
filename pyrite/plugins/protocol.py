@@ -67,6 +67,26 @@ class PyritePlugin(Protocol):
         """
         ...
 
+    def get_type_mappings(self) -> dict[str, str]:
+        """
+        Return the core types this plugin stores as one of its own (#468).
+
+        Optional. Returns:
+            Dict mapping a core type name to one of this plugin's entry types.
+            Example: {"event": "investigation_event"}
+
+        A create that names the core type in a KB this plugin is active for
+        (``get_kb_types``) stores the plugin's type instead. Nothing else
+        maps a type: subclassing a core class does NOT (a ``NoteEntry``
+        subclass that only reuses its fields leaves ``note`` alone). Checked
+        at load: the key must be a core type, the value one of this plugin's
+        ``get_entry_types``, and no two plugins active for an overlapping KB
+        type may map the same core type (``PluginError``, naming both).
+        ``orient`` and ``kb_schema`` show the result as ``type_mappings``.
+        Needs the SCHEMA capability.
+        """
+        ...
+
     def get_kb_types(self) -> list[str]:
         """
         Return custom KB type identifiers.

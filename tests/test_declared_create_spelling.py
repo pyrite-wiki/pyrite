@@ -79,7 +79,7 @@ def test_prepared_create_serializes_declared_values_canonically(world, entry_typ
     if entry_type in {"event", "investigation_event", "legal_action", "transaction"}:
         spec["date"] = "2026-01-01"
     original_request = copy.deepcopy(spec)
-    entry, _ = svc._prepare("notes", kb, spec, allow_undeclared=False, resolve_type=False)
+    entry, _ = svc._prepare("notes", kb, spec, allow_undeclared=False)
     metadata_before = copy.deepcopy(entry.metadata)
     parsed = load_frontmatter(new_entry_text(entry))
     assert parsed is not None
