@@ -71,6 +71,14 @@ def test_the_old_keys_still_answer_for_one_release(svc):
     assert result["schema"]["types"]["note"]["ai_instructions"] == INJECTED
 
 
+def test_the_notice_says_the_old_keys_carry_the_same_text(svc):
+    """The deprecated keys must stay for a release (additions only), and they
+    mix this KB's text with Pyrite's defaults. The label on the KB's text says
+    where else it appears, so it is not read there as Pyrite's guidance."""
+    notice = svc.orient("k")["kb_authored"]["notice"]
+    assert "schema" in notice and "guidelines" in notice and "deprecated" in notice
+
+
 def test_a_kb_under_the_workspace_is_a_subscription(tmp_path):
     s = _service(tmp_path, workspace_kb=True, read_only=True)
     try:

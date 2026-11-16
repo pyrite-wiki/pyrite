@@ -710,8 +710,8 @@ them with the other write-side blocks.
   KB inherits, never anything a KB wrote.
 - Deprecated, removed in 0.27: the mixed `schema.guidelines`,
   `schema.evaluation_rubric`, `schema.goals`, `schema.types.*.ai_instructions`
-  and the top-level `guidelines` still answer, merged as before. New callers
-  read the two keys above.
+  and the top-level `guidelines` still answer, merged as before; the
+  `kb_authored.notice` says so. New callers read the two keys above.
 
 **Update fields.** An update applies the fields it names: the entry type's
 own fields (its model's fields and every field its `kb.yaml` names for the
