@@ -24,10 +24,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
-from typer.testing import CliRunner
 
 from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.services.index_health import health_verdict
@@ -200,12 +198,14 @@ def test_an_id_less_aliased_file_is_one_entry(env):
     assert [a["path"] for a in result["aliases"]] == ["o/alias.md"]
 
 
-def test_cli_index_sync_prints_the_alias_and_no_duplicate(env):
-    from pyrite.cli import app
+def _cli_world(cli_world, env: Env):
+    """The real CLI (real ``load_config``) over this test's KB folder."""
+    return cli_world(kbs=[KBConfig(name=KB, path=env.root, kb_type="generic")])
 
+
+def test_cli_index_sync_prints_the_alias_and_no_duplicate(env, cli_world):
     _build(env, "another folder", absolute=False)
-    with patch("pyrite.cli.context.load_config", return_value=env.config):
-        result = CliRunner().invoke(app, ["index", "sync", "-k", KB, "--no-embed"])
+    result = _cli_world(cli_world, env).cli("index", "sync", "-k", KB, "--no-embed")
 
     assert result.exit_code == 0, result.output
     assert "Duplicate ids" not in result.output
@@ -318,15 +318,13 @@ def test_a_linked_folder_is_not_walked(env):
     assert env.rows() == {"x": TARGET}
 
 
-def test_cli_index_health_reports_the_alias_and_is_healthy(env):
+def test_cli_index_health_reports_the_alias_and_is_healthy(env, cli_world):
     import json
 
-    from pyrite.cli import app
-
     _build(env, "another folder", absolute=True)
-    env.im.sync_incremental(KB)
-    with patch("pyrite.cli.context.load_config", return_value=env.config):
-        result = CliRunner().invoke(app, ["index", "health", "-k", KB, "--format", "json"])
+    world = _cli_world(cli_world, env)
+    assert world.cli("index", "sync", "-k", KB, "--no-embed").exit_code == 0
+    result = world.cli("index", "health", "-k", KB, "--format", "json")
 
     assert result.exit_code == 0, result.output
     report = json.loads(result.output)
