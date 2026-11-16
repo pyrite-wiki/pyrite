@@ -383,6 +383,12 @@ a warning once per class.
   `db.execute_sql()` for read-only queries.
 - **`FRONTMATTER_ALIASES`** leaves in 0.27. Declare `field_aliases` in the
   type's schema instead.
+- **orient's `schema.guidelines`**, `schema.goals`, `schema.evaluation_rubric`,
+  the per-type `ai_instructions`, `guidelines`, `goals` and
+  `evaluation_rubric` under `schema.types`, and the top-level `guidelines`
+  (always `{}`) leave orient in 0.27. Read `kb_authored` (the KB's own text,
+  as written) and `pyrite_guidance` (Pyrite's defaults) instead; added in
+  0.26.4 (#1369).
 
 The table in [JSON contracts](json-contracts.md#format-defaults) says which
 commands take `--format`.

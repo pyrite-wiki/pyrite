@@ -16,9 +16,11 @@ permissions:
 # The build runs with no `id-token`: anything it installs or executes cannot
 # mint a PyPI upload credential. The publish jobs hold the token and do
 # nothing but download what the build produced and run the pinned publish
-# action (tests/test_publish_workflow_separation.py). The `pypi` environment
-# carries the tag restriction and required reviewer, set in repository
-# settings.
+# action (tests/test_publish_workflow_separation.py). They name the `pypi`
+# environment so it can gate them; this file cannot create it. Until the
+# maintainer creates that environment in repository settings, with a tag
+# restriction and a required reviewer, before the first publish, it gates
+# nothing.
 
 jobs:
   build:

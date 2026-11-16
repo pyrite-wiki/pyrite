@@ -62,6 +62,7 @@ def test_removal_versions_follow_the_maintainer_decision(page, heading):
         "`task status`",
         "`db.conn`",
         "`FRONTMATTER_ALIASES`",
+        "orient's `schema.guidelines`",
     ):
         matching = [bullet for bullet in bullets if name in bullet]
         assert matching, name

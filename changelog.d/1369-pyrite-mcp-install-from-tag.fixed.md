@@ -1,0 +1,1 @@
+- The pyrite-mcp README told you to `pip install pyrite-mcp`, a project that is not on PyPI. It now installs `pyrite` and `pyrite-mcp` together from the release tag's git URL, so `pyrite` is never looked up on PyPI, where the name is not this project's; pyrite-mcp's own dependency on `pyrite` now names the git tag too (#1369).

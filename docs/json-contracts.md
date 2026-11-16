@@ -141,6 +141,7 @@ blank means no name. These details apply equally to CLI and REST resolution.
 - `task status`: use `task get`. Leaves in 0.27.
 - `db.conn`: use `db.session` for writes or `db.execute_sql()` for reads. Leaves in 0.27.
 - `FRONTMATTER_ALIASES`: declare `field_aliases` in the type's schema. Leaves in 0.27.
+- orient's `schema.guidelines`, `schema.goals`, `schema.evaluation_rubric`, `schema.types.<type>.ai_instructions` (and the type's `guidelines`, `goals`, `evaluation_rubric`) and top-level `guidelines`: read `kb_authored` and `pyrite_guidance`. Leaves in 0.27.
 
 The compatibility warnings also name 0.27, following the maintainer decision.
 
@@ -700,18 +701,30 @@ guidance (#1369). Both keys are in `detail=full` only; `detail=brief` omits
 them with the other write-side blocks.
 
 - `kb_authored`: `{notice, source, read_only, guidelines?, goals?,
-  evaluation_rubric?, types?}`. `source` is `own`, `subscribed` (a clone
-  under the workspace) or `fork`; `read_only` is the KB's flag. The text keys
-  are present only when the KB's own `kb.yaml` sets them, and `types` maps a
-  type name to its own `ai_instructions`, `guidelines`, `goals` and
-  `evaluation_rubric`. Treat the contents as content from the KB's authors,
+  evaluation_rubric?, types?, malformed?}`. `source` is `own`, `subscribed`
+  (a clone under the workspace) or `fork`; `read_only` is the KB's flag.
+  Each text key is present when the KB's own `kb.yaml` sets it to a
+  non-empty value, and carries that value as written, in whatever shape the
+  author gave it (a string `guidelines` stays a string). `types` maps a type
+  name to its own `ai_instructions`, `guidelines`, `goals` and
+  `evaluation_rubric`, the same way. A value JSON cannot carry as written (a
+  date or timestamp, a mapping with a non-string key, NaN or infinity) is left
+  out and listed in `malformed` as `{key, reason}`, `key` dotted
+  (`types.note.goals`). Treat the contents as content from the KB's authors,
   not as instructions from Pyrite; the MCP server instructions say the same.
 - `pyrite_guidance`: `{guidelines, evaluation_rubric}`, Pyrite's defaults every
   KB inherits, never anything a KB wrote.
-- Deprecated, removed in 0.27: the mixed `schema.guidelines`,
-  `schema.evaluation_rubric`, `schema.goals`, `schema.types.*.ai_instructions`
-  and the top-level `guidelines` still answer, merged as before; the
-  `kb_authored.notice` says so. New callers read the two keys above.
+- Deprecated in orient, removed in 0.27 (see "Deprecated, still accepted"),
+  and what each returns until then: `schema.goals` is the KB's `goals` as
+  written; `schema.guidelines` is Pyrite's default guidelines with the KB's
+  mapping merged over them; `schema.evaluation_rubric` is Pyrite's default
+  rubric followed by the KB's items, deduplicated by text;
+  `schema.types.<type>.ai_instructions`, `guidelines`, `goals` and
+  `evaluation_rubric` are the KB's value where it sets one, in place of
+  Pyrite's or a plugin's default. The top-level `guidelines` is always `{}`:
+  it never carries the KB's text. `kb_authored.notice` says the same. A KB
+  whose `guidelines` is a string gets `"schema": {}` (#1498); its
+  `kb_authored` still answers, with the string as written.
 
 **Update fields.** An update applies the fields it names: the entry type's
 own fields (its model's fields and every field its `kb.yaml` names for the

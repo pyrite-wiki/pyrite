@@ -3622,8 +3622,10 @@ class KBService:
         """Where a KB came from: `own`, `subscribed` or `fork`.
 
         A clone Pyrite made (`repo subscribe`, `repo fork`) lives under the
-        workspace path; one made by `repo fork` has a repo row marked as a
-        fork. Everything else is the operator's own.
+        workspace path. `repo fork` marks the KB's repo row as a fork when
+        Pyrite has a row for the upstream (`set_repo_upstream`); a fork whose
+        upstream it never recorded reads as `subscribed`. Everything else is
+        the operator's own.
 
         Decided from the configured paths alone: `KBConfig.path` and
         `Settings.workspace_path` are resolved when the config loads, so this
@@ -3796,9 +3798,10 @@ class KBService:
             except Exception:
                 logger.warning("Failed schema-to-agent conversion", exc_info=True)
 
-        # Guidelines from config (if available). Kept one release for callers
-        # that read it; it mixes Pyrite's defaults with the KB's own text, so
-        # `kb_authored` and `pyrite_guidance` are the keys to read (#1369).
+        # `KBConfig` has no `guidelines`, so this is always `{}`: it never
+        # carried the KB's text. Deprecated with the mixed `schema.*` keys and
+        # kept until 0.27 for callers that read it; `kb_authored` and
+        # `pyrite_guidance` are the keys to read (#1369).
         guidelines = getattr(kb_config, "guidelines", None) or {}
 
         result = {

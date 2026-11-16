@@ -2,8 +2,10 @@
 
 `.gitignore` is the only thing keeping editor autoload files out of a clone,
 and `git add -f` bypasses it. Hook revisions are tags a repository owner can
-move. CODEOWNERS names the maintainer for every path that executes without
-being asked to or that an agent reads as instructions.
+move. CODEOWNERS names the maintainer for the paths #1369 lists (hooks, CI,
+agent instructions, editor autoload files, test collection) and every script
+session start runs; GitHub then requests the maintainer's review on a pull
+request that changes one.
 """
 
 import fnmatch
