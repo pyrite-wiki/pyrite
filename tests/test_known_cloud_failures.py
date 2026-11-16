@@ -113,16 +113,28 @@ def test_no_registry_text_leaves_a_data_line(tmp_path):
         b"42",
         b"[{,}",
         b"\xff\xfe not utf-8",
+        None,
     ],
-    ids=["object", "list-of-strings", "missing-keys", "number", "invalid-json", "not-utf-8"],
+    ids=[
+        "object",
+        "list-of-strings",
+        "missing-keys",
+        "number",
+        "invalid-json",
+        "not-utf-8",
+        "missing",
+    ],
 )
-def test_a_malformed_registry_is_reported_in_one_line_and_does_not_stop_the_hook(tmp_path, content):
+def test_a_malformed_or_missing_registry_is_one_line_and_no_traceback(tmp_path, content):
     path = tmp_path / "registry.json"
-    path.write_bytes(content)
+    if content is not None:
+        path.write_bytes(content)
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(path)], capture_output=True, text=True, timeout=10
     )
-    assert result.returncode == 0, result.stderr
+    # Exit 2: the hook prints its own warning and goes on
+    # (test_dev_process_config: test_a_broken_optional_brief_does_not_prevent_session_setup).
+    assert result.returncode == 2, result.stderr
     assert "Traceback" not in result.stderr
     assert "registry is malformed" in result.stdout
     assert "CI remains required" in result.stdout

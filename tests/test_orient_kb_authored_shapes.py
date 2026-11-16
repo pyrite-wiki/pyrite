@@ -19,7 +19,6 @@ import math
 
 import pytest
 import yaml
-from fastapi.testclient import TestClient
 
 from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.services.kb_service import KBService
@@ -123,34 +122,23 @@ def test_each_value_comes_back_as_written_or_is_reported(tmp_path, field, shape)
 
 @pytest.mark.parametrize("shape", SHAPES)
 def test_every_surface_returns_the_same_kb_authored(tmp_path, shape):
-    from pyrite.cli.browse_commands import _format_output as format_output
-    from pyrite.server.api import create_app, get_config, get_db
-    from pyrite.server.mcp_server import PyriteMCPServer
+    from tests._world import build_world
 
-    config = _config(tmp_path, _all_fields_yaml(shape))
-    db = PyriteDB(config.settings.index_path)
+    kb_dir = tmp_path / "kb"
+    kb_dir.mkdir()
+    (kb_dir / "kb.yaml").write_text(_all_fields_yaml(shape))
+    world = build_world(tmp_path / "world", kbs=[KBConfig(name="k", path=kb_dir)])
     try:
-        service = KBService(config, db).orient("k")["kb_authored"]
-
-        mcp = PyriteMCPServer(config=config, tier="read")
-        try:
-            # The transport's own encoding (mcp_server: json.dumps(..., default=str)).
-            raw = mcp._kb_orient({"kb_name": "k"})
-            via_mcp = json.loads(json.dumps(raw, default=str))["kb_authored"]
-        finally:
-            mcp.close()
-
-        app = create_app(config=config)
-        app.dependency_overrides[get_config] = lambda: config
-        app.dependency_overrides[get_db] = lambda: db
-        with TestClient(app) as client:
-            via_rest = client.get("/api/kbs/k/orient").json()["kb_authored"]
-
-        via_cli = json.loads(format_output(KBService(config, db).orient("k"), "json"))[
-            "kb_authored"
-        ]
+        service = KBService(world.config, world.db).orient("k")["kb_authored"]
+        # MCP, through the transport's own encoding (json.dumps(..., default=str)).
+        raw = world.mcp("read")._kb_orient({"kb_name": "k"})
+        via_mcp = json.loads(json.dumps(raw, default=str))["kb_authored"]
+        via_rest = world.client.get("/api/kbs/k/orient").json()["kb_authored"]
+        cli = world.cli("orient", "-k", "k", "--format", "json")
+        assert cli.exit_code == 0, cli.output
+        via_cli = json.loads(cli.stdout)["kb_authored"]
     finally:
-        db.close()
+        world.close()
 
     assert via_mcp == via_rest == via_cli == service
     for value in (via_mcp, via_rest, via_cli):

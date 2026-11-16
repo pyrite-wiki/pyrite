@@ -8,8 +8,10 @@ not to the raw file. Every value an entry carries that the brief prints
 so each prints on a line of its own that starts with the field's name and
 "(data):", as one JSON string, with control characters and newlines flattened
 and its length capped: none of it can start a line of the brief or carry a
-terminal escape (#1369). A registry that is not a list of entries with those
-three string fields is reported in one line, and the hook goes on.
+terminal escape (#1369). A registry that is missing, or is not a list of
+entries with those three string fields, is reported in one line with exit
+status 2 and no traceback; the session start hook then prints its own warning
+and goes on.
 """
 
 import json
@@ -49,13 +51,16 @@ def _entries(path: Path) -> list[dict[str, str]] | None:
     return failures
 
 
+MALFORMED = (
+    "Known cloud-only failures: the registry is malformed and was not read "
+    f"(expected a JSON list of entries with string {', '.join(FIELDS)}).\n{TRAILER}\n"
+)
+
+
 def render(path) -> str:
     failures = _entries(Path(path))
     if failures is None:
-        return (
-            f"Known cloud-only failures: the registry is malformed and was not read "
-            f"(expected a JSON list of entries with string {', '.join(FIELDS)}).\n{TRAILER}\n"
-        )
+        return MALFORMED
     if not failures:
         return ""
     lines = [
@@ -76,4 +81,6 @@ if __name__ == "__main__":
         if len(sys.argv) > 1
         else Path(__file__).with_name("known-cloud-failures.json")
     )
-    sys.stdout.write(render(path))
+    text = render(path)
+    sys.stdout.write(text)
+    sys.exit(2 if text == MALFORMED else 0)
