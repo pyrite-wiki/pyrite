@@ -27,6 +27,7 @@ OWNED_PATHS = [
     "scripts/cloud-session-start.sh",
     "scripts/cloud-env-setup.sh",
     "scripts/setup-checkout.sh",
+    "scripts/lock-constraints.sh",
     "scripts/cloud-postgres.sh",
     "scripts/known-cloud-failures.json",
     "conftest.py",
@@ -78,14 +79,41 @@ def test_an_ordinary_file_is_not_owned_by_the_rule():
     assert _owners("pyrite/cli/__init__.py") == []
 
 
+def scripts_run_from(start: str, root: Path = ROOT) -> set[str]:
+    """Every `scripts/*.sh|py` named on a non-comment line of `start`, and of
+    each script that names in turn: the whole chain a session start runs.
+
+    One level was not enough: 0.26.3 (#1366) made `setup-checkout.sh` run
+    `lock-constraints.sh`, so session start runs it and nothing owned it.
+    """
+    seen = {start}
+    todo = [start]
+    while todo:
+        path = root / "scripts" / todo.pop()
+        if not path.is_file():
+            continue
+        lines = path.read_text().splitlines()
+        code = "\n".join(line for line in lines if not line.lstrip().startswith("#"))
+        for name in re.findall(r"scripts/([\w.-]+\.(?:sh|py))", code):
+            if name not in seen:
+                seen.add(name)
+                todo.append(name)
+    return seen
+
+
 def test_scripts_the_cloud_hook_runs_are_owned():
-    lines = (ROOT / "scripts" / "cloud-session-start.sh").read_text().splitlines()
-    hook = "\n".join(line for line in lines if not line.lstrip().startswith("#"))
-    called = set(re.findall(r"scripts/([\w.-]+\.(?:sh|py))", hook))
-    called.add("cloud-session-start.sh")
-    assert called
-    for name in sorted(called):
-        assert _owners(f"scripts/{name}") == ["@markramm"], name
+    called = scripts_run_from("cloud-session-start.sh")
+    assert len(called) > 1
+    unowned = [name for name in sorted(called) if _owners(f"scripts/{name}") != ["@markramm"]]
+    assert unowned == [], "add these to .github/CODEOWNERS"
+
+
+def test_the_chain_is_followed_past_the_first_script(tmp_path):
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "a.sh").write_text("# scripts/ignored.sh\nscripts/b.sh\n")
+    (tmp_path / "scripts" / "b.sh").write_text('x="$(scripts/c.py)"\n')
+    (tmp_path / "scripts" / "c.py").write_text("print(1)\n")
+    assert scripts_run_from("a.sh", tmp_path) == {"a.sh", "b.sh", "c.py"}
 
 
 # --- editor autoload files -------------------------------------------------

@@ -9,6 +9,7 @@
 /scripts/cloud-session-start.sh             @markramm
 /scripts/cloud-env-setup.sh                 @markramm
 /scripts/setup-checkout.sh                  @markramm
+/scripts/lock-constraints.sh                @markramm
 /scripts/cloud-postgres.sh                  @markramm
 /scripts/check_checkout_imports.py          @markramm
 /scripts/known_cloud_failures.py            @markramm
