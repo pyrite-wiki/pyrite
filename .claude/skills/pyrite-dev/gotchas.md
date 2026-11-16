@@ -623,3 +623,28 @@ Before a rewrite: `git fetch <remote>` and `git merge-base --is-ancestor
 files, and `git diff <old-head> HEAD` must be empty. If the base moved,
 re-apply your diff (`git diff <old-base> <old-head>`) onto the new base rather
 than resetting onto it with a stale working tree.
+
+## A New Error Class or Message: Run the Source-Reading Tests
+
+Some tests read the source tree instead of driving a surface, and a branch's
+own behaviour tests never touch them; CI is the first place they fail. A
+change that adds an exception class, a refusal message, a key in a result,
+or a catch-all exclusion must run them before the push (#1542 round 2: two
+went red in CI after two rounds of local runs and a cold read):
+
+- `tests/test_response_text_is_pyrites.py`: a caught exception's text may
+  reach a response, a raise or a result dict only through `public_text(...)`
+  (ADR-0052 N3), even when it is your own error's fixed `MESSAGE`.
+- `tests/test_public_message_logged_once.py`: a class that sets
+  `public_message` must be on its reviewed masking list. A class whose
+  `str()` is already fixed does not set one.
+- `tests/test_json_contracts_transitions.py` (a new code needs a row in
+  `docs/json-contracts.md` and in `_STATUS_BY_CODE`),
+  `tests/test_requested_effect_exit_code.py` (a command that now prints a
+  failure must exit non-zero and name its guard),
+  `tests/test_kb_reads_are_one_function.py` (a new probe or read is
+  classified by hand), and `tests/characterization/` (goldens for MCP
+  result keys; regenerate serially with
+  `PYRITE_CHARACTERIZATION_REGENERATE=1`).
+
+To find the rest: `grep -lE 'ast\.parse|rglob\("\*\.py"\)|inspect\.getsource' tests/*.py`.
