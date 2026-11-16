@@ -30,6 +30,9 @@ def json_console(request, monkeypatch):
     return Console(width=40)
 
 
+@pytest.mark.control(
+    reason="pre-existing; #468 only gave the stub KB the kb_type a real KBConfig has"
+)
 def test_admin_schema_json_preserves_long_values(monkeypatch, json_console):
     expected = {"description": "[bold]schema[/bold] " + "description " * 20}
     kb = SimpleNamespace(

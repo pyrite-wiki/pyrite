@@ -407,12 +407,26 @@ def test_a_subclass_with_no_declaration_is_not_chosen(tmp_path, kb_type, named):
     assert _stored_type(env, "Named") == named
 
 
-def test_a_kb_with_no_kb_type_context_applies_no_mapping():
-    """An empty kb_type means no KB in hand: no plugin's mapping applies (before
-    #468 it matched every plugin)."""
-    from pyrite.schema.type_mapping import resolve_type_mappings
+def test_a_kb_with_no_kb_type_context_applies_no_mapping(tmp_path):
+    """An empty kb_type means no KB type in hand: no plugin's mapping applies.
+    Before #468 it matched every plugin, so `note` became some plugin's
+    most-derived NoteEntry subclass (an `adr`)."""
+    from pyrite.services.kb_service import KBService
 
-    assert resolve_type_mappings("") == {}
+    kb_path = tmp_path / "bare"
+    kb_path.mkdir()
+    config = PyriteConfig(
+        knowledge_bases=[KBConfig(name="bare", path=kb_path, kb_type="")],
+        settings=Settings(index_path=tmp_path / "bare.db", auto_embed=False),
+    )
+    db = PyriteDB(tmp_path / "bare.db")
+    try:
+        entry = KBService(config, db).create("bare", {"entry_type": "note", "title": "Bare"}).entry
+    finally:
+        db.close()
+    assert entry.entry_type == "note"
+    written = list(kb_path.rglob("*.md"))
+    assert len(written) == 1 and "type: note" in written[0].read_text(), written
 
 
 # ---------------------------------------------------------------------------

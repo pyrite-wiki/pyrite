@@ -533,10 +533,7 @@ def _rest_for(env):
 
 
 def test_cli_add_keeps_the_files_declared_type_in_a_plugin_kb(software_env):
-    """Review blocker 1: `pyrite add` must not rewrite `type: note` to `adr` (#197).
-
-    Since #468 this holds because no plugin declares a `note` mapping, not
-    because `add` switches resolution off: every surface takes one rule."""
+    """Review blocker 1: `pyrite add` must not rewrite `type: note` to `adr` (#197)."""
     src = software_env["tmp_path"] / "meeting.md"
     src.write_text("---\ntype: note\ntitle: Meeting notes\n---\nhello\n")
     result = _cli(software_env, ["add", str(src), "-k", "sw", "--allow-undeclared"])
