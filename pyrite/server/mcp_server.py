@@ -32,6 +32,7 @@ from ..exceptions import (
     KBPathNotAllowedError,
     KBProtectedError,
     KBReadOnlyError,
+    KBUnreadableError,
     PyriteError,
     QuerySyntaxError,
     QueryTooLongError,
@@ -1653,7 +1654,9 @@ class PyriteMCPServer:
             )
         except KBReadOnlyError:
             return _error("READ_ONLY", f"KB '{kb_name}' is read-only")
-        except (ValidationError, AccessDenied) as e:
+        except (ValidationError, AccessDenied, KBUnreadableError) as e:
+            # KBUnreadableError: a KB whose files cannot be read (#1542) keeps
+            # its own code, never retryable, not this handler's catch-all.
             return _refusal(e)
         except PyriteError as e:
             return _error("CREATE_FAILED", _safe_message(e), retryable=True)
@@ -1691,6 +1694,8 @@ class PyriteMCPServer:
             results = self.svc.bulk_create_entries(
                 kb_name, entries, allow_undeclared=bool(args.get("allow_undeclared"))
             )
+        except KBUnreadableError as e:
+            return _refusal(e)  # its own code, never retryable (#1542)
         except PyriteError as e:
             return _error("BULK_CREATE_FAILED", _safe_message(e), retryable=True)
 
@@ -1804,6 +1809,8 @@ class PyriteMCPServer:
             deleted = self.svc.delete_entry(entry_id, kb_name, readable_kbs=readable_kbs)
         except EntryLoadError as e:
             return _refusal(e)  # ENTRY_UNREADABLE: nothing deleted (ADR-0042 8a)
+        except KBUnreadableError as e:
+            return _refusal(e)  # KB_UNREADABLE, never retryable: nothing deleted (#1542)
         except PyriteError as e:
             return _error("DELETE_FAILED", _safe_message(e), retryable=True)
 
@@ -2200,6 +2207,9 @@ class PyriteMCPServer:
             "updated": results["updated"],
             "removed": results["removed"],
             "skipped": results["skipped"],
+            # Not synced, rows kept (#1542); a sync of one named KB that
+            # cannot be read is a KB_UNREADABLE refusal instead.
+            "unreadable_kbs": results.get("unreadable_kbs", []),
         }
 
     def _kb_index_job_status(self, args: dict[str, Any]) -> dict[str, Any]:

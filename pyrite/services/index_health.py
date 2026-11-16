@@ -35,6 +35,9 @@ def health_verdict(health: dict[str, Any]) -> dict[str, Any]:
         # other is invisible to search (ADR-0038 decided question 3).
         or health.get("duplicates")
         or health.get("unreadable_files")
+        # A KB whose kb.yaml could not be checked or read: what the index
+        # holds for it cannot be compared with its files (#1542).
+        or health.get("unreadable_kbs")
         or health.get("orphaned_entries")
         or "error" in off_list_severities
     )

@@ -722,3 +722,30 @@ def test_progress_is_reported_once_at_the_end_even_for_an_empty_kb(env, path):
     else:
         env.im.sync_incremental(KB, progress_callback=lambda c, t: calls.append((c, t)))
     assert calls == [(0, 0)]
+
+
+def test_attribution_since_commit_goes_on_past_a_folder_it_cannot_search(env):
+    """git names a changed file inside a folder this process cannot search:
+    ``KBFiles.present`` cannot tell whether it is there (#1542). That file is
+    not forced; the sync goes on and attributes the rest, as it did before
+    f8cbbe1d made the probe raise."""
+    from pyrite.services.git_service import GitService
+
+    _git(env.root, "init", "-q", "-b", "main")
+    a = env.write("a.md", _note("a", "A"))
+    b = env.write("shut/b.md", _note("b", "B"))
+    _git(env.root, "add", "-A")
+    _git(env.root, "commit", "-qm", "one")
+    old_head = _git(env.root, "rev-parse", "HEAD")
+    a.write_text(_note("a", "A", body="edited"))
+    b.write_text(_note("b", "B", body="edited"))
+    _git(env.root, "commit", "-qam", "two")
+    shut = env.root / "shut"
+    shut.chmod(0o600)
+    try:
+        if os.access(shut, os.X_OK):
+            pytest.skip(f"running as a user (uid {os.getuid()}) who can search a mode-600 folder")
+        assert env.im.index_with_attribution(KB, GitService(), since_commit=old_head) >= 1
+        assert sorted(v["message"] for v in env.db.get_entry_versions("a", KB)) == ["one", "two"]
+    finally:
+        shut.chmod(0o755)
