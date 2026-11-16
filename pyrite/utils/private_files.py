@@ -41,7 +41,7 @@ def tighten_file(path: Path) -> None:
         st = os.stat(path, follow_symlinks=False)
     except OSError:
         return
-    if not stat.S_ISREG(st.st_mode) or (hasattr(os, "getuid") and st.st_uid != os.getuid()):
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
         return
     if not st.st_mode & stat.S_IWUSR:
         return  # read-only on purpose: not ours to make writable
