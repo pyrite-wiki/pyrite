@@ -17,6 +17,7 @@
       "id": "characterization-disposable-write_key-no-default-role-kb",
       "inbound_link_count": 0,
       "inbound_links": [],
+      "links_left": [],
       "warnings": []
     },
     "status": 200
@@ -27,6 +28,7 @@
       "id": "characterization-disposable-write_key-private-kb",
       "inbound_link_count": 0,
       "inbound_links": [],
+      "links_left": [],
       "warnings": []
     },
     "status": 200
@@ -37,6 +39,7 @@
       "id": "characterization-disposable-write_key-readable-kb",
       "inbound_link_count": 0,
       "inbound_links": [],
+      "links_left": [],
       "warnings": []
     },
     "status": 200
