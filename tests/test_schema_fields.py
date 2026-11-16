@@ -485,7 +485,7 @@ class TestAgentSchemaWithFields:
                 },
             }
         )
-        agent = schema.to_agent_schema()
+        agent = schema.to_agent_schema(kb_type="generic")
         meeting = agent["types"]["meeting"]
         assert "fields" in meeting
         assert meeting["fields"]["date"]["type"] == "date"
@@ -495,7 +495,7 @@ class TestAgentSchemaWithFields:
 
     def test_core_types_still_present(self):
         schema = KBSchema.from_dict({"name": "test"})
-        agent = schema.to_agent_schema()
+        agent = schema.to_agent_schema(kb_type="generic")
         assert "note" in agent["types"]
         assert "person" in agent["types"]
         assert "event" in agent["types"]

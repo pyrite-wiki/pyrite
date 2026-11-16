@@ -24,6 +24,14 @@ from .protocol import PyritePlugin
 logger = logging.getLogger(__name__)
 
 
+class TypeMappingRefusedError(Exception):
+    """A plugin's type mapping refused at load (#468), as held in
+    ``aggregate_failures``. Not a ``PyriteError``: its text (Pyrite's own,
+    naming plugins and types) is the operator's, so ``HeldFault`` shows it to
+    the local process (the CLI prints it) and withholds it from a network
+    caller. ``register`` and ``discover(strict=True)`` raise ``PluginError``."""
+
+
 def load_plugin_entry_point(ep: EntryPoint) -> PyritePlugin:
     """Instantiate an entry point using the discovery contract."""
     plugin = ep.load()()
@@ -331,13 +339,15 @@ class PluginRegistry:
         previous = self._plugins.get(plugin.name)
         self._plugins[plugin.name] = plugin
         try:
-            self._load_type_mappings(strict=True)
+            # Raises only for a refusal that involves this plugin; a refusal
+            # between plugins already loaded stays recorded, not raised here.
+            # A raise leaves the mappings and the recorded failures as they were.
+            self._load_type_mappings(strict=True, involving=plugin.name)
         except PluginError:
             if previous is None:
                 del self._plugins[plugin.name]
             else:
                 self._plugins[plugin.name] = previous
-            self._load_type_mappings(strict=False)
             raise
         self._aliases_changed()
         # A re-register (e.g. a test replacing a plugin instance under the
@@ -1039,13 +1049,12 @@ class PluginRegistry:
 
         The unscoped get_all_entry_types() returns every installed plugin's
         types regardless of which KB is being written to. That is correct for
-        the factory (it must be able to build any declared type) but wrong
-        for type *resolution*, where picking the first subclass of a core
-        type out of a globally-merged dict makes the answer depend on
-        site-packages enumeration order. Concretely: two plugins' PersonEntry
-        subclasses (the former cascade `actor` and social's `user_profile`)
-        made `person` resolve to whichever plugin happened to be discovered
-        first -- `actor` on one machine, `user_profile` on another, for the same code.
+        the factory (it must be able to build any declared type); a question
+        about one KB asks this instead. The write path no longer picks a type
+        from these classes at all (#468: only declared mappings retype, see
+        ``type_mappings_for_kb``); when it picked the first subclass of a core
+        type out of the globally-merged dict, `person` resolved to the former
+        cascade `actor` on one machine and social's `user_profile` on another.
         See plugin-type-resolution-scoping.
         """
         return self._aggregate_dict_for_kb("get_entry_types", kb_type)
@@ -1065,30 +1074,36 @@ class PluginRegistry:
             return frozenset()  # fails closed, as _plugin_matches_kb_type does
         return frozenset(kb_types) if kb_types else None
 
-    def _load_type_mappings(self, strict: bool) -> None:
+    def _load_type_mappings(self, strict: bool, involving: str | None = None) -> None:
         """Read and check every plugin's ``get_type_mappings``, once, at load.
 
         Refused: a key that is not a core type; a value that is not one of
-        that plugin's own entry types; and one core type mapped by two
-        plugins active for an overlapping KB type (naming both). Nothing is
-        inferred from subclassing -- a mapping exists only where declared.
+        that plugin's own entry types; a mapping from a plugin with no (or an
+        empty) ``get_kb_types``, which would rewrite a core type in every KB;
+        and one core type mapped by two plugins active for an overlapping KB
+        type (naming both). Nothing is inferred from subclassing -- a mapping
+        exists only where declared.
 
-        ``strict`` (``register``, ``discover(strict=True)``) raises
-        ``PluginError`` on the first refusal. Otherwise (ordinary discovery,
-        where one bad pair must not take every plugin down) the refused
-        mapping is dropped -- for a conflict, from BOTH plugins, so neither
-        wins by discovery order and the caller's named type is stored -- and
-        each refusal is logged and kept in ``aggregate_failures``.
+        ``strict`` raises ``PluginError`` for the first refusal that involves
+        ``involving`` (``register``: the plugin being registered) or, with no
+        ``involving`` (``discover(strict=True)``), any refusal -- and a raise
+        changes nothing: the checked mappings and the recorded failures stay
+        as they were. Otherwise (ordinary discovery, where one bad pair must
+        not take every plugin down) the refused mapping is dropped -- for a
+        conflict, from BOTH plugins, so neither wins by discovery order and the
+        caller's named type is stored -- and the refusals replace the previous
+        ``get_type_mappings`` rows of ``aggregate_failures`` (as ``HeldFault``;
+        the CLI prints them), so a reload never records one twice.
         """
         from ..models.core_types import ENTRY_TYPE_REGISTRY
 
-        def refuse(plugin_names: tuple[str, ...], message: str) -> None:
-            error = PluginError(message)
-            if strict:
-                raise error
-            logger.error("%s", message)
-            for name in plugin_names:
-                self.aggregate_failures.append((name, "get_type_mappings", error))
+        #: (plugins involved, message, the fault the CLI shows)
+        refusals: list[tuple[tuple[str, ...], str, HeldFault]] = []
+
+        def refuse(
+            names: tuple[str, ...], message: str, fault: BaseException | None = None
+        ) -> None:
+            refusals.append((names, message, held_fault(fault or TypeMappingRefusedError(message))))
 
         checked: dict[str, dict[str, str]] = {}
         for plugin in self._plugins.values():
@@ -1102,7 +1117,21 @@ class PluginRegistry:
                     (plugin.get_entry_types() or {}) if hasattr(plugin, "get_entry_types") else ()
                 )
             except Exception as e:
-                refuse((plugin.name,), f"Plugin '{plugin.name}' get_type_mappings failed: {e}")
+                # The plugin's own exception text is held, not embedded: the
+                # HeldFault decides at display who may see it.
+                refuse(
+                    (plugin.name,),
+                    f"Plugin '{plugin.name}' get_type_mappings failed ({type(e).__name__}); "
+                    "its mappings do not apply.",
+                    e,
+                )
+                continue
+            if declared and self._plugin_kb_types(plugin) is None:
+                refuse(
+                    (plugin.name,),
+                    f"Plugin '{plugin.name}' declares type mappings but no KB types "
+                    "(get_kb_types); a mapping applies only to the KB types a plugin names.",
+                )
                 continue
             kept: dict[str, str] = {}
             for core, target in declared.items():
@@ -1123,16 +1152,17 @@ class PluginRegistry:
             if kept:
                 checked[plugin.name] = kept
 
-        # One core type, two plugins whose KB types overlap (None = every
-        # KB type): refused, naming both. Sorted so the message and the
-        # outcome do not depend on discovery order.
+        # One core type, two plugins whose KB types overlap: refused, naming
+        # both. Sorted so the message and the outcome do not depend on
+        # discovery order. (Every plugin here names its KB types: one that
+        # names none was refused above.)
         names = sorted(checked)
         conflicted: set[tuple[str, str]] = set()
         for i, first in enumerate(names):
             for second in names[i + 1 :]:
-                a = self._plugin_kb_types(self._plugins[first])
-                b = self._plugin_kb_types(self._plugins[second])
-                if a is not None and b is not None and not (a & b):
+                a = self._plugin_kb_types(self._plugins[first]) or frozenset()
+                b = self._plugin_kb_types(self._plugins[second]) or frozenset()
+                if not (a & b):
                     continue
                 for core in sorted(checked[first].keys() & checked[second].keys()):
                     refuse(
@@ -1142,9 +1172,28 @@ class PluginRegistry:
                         f"an overlapping KB type; neither mapping applies.",
                     )
                     conflicted |= {(first, core), (second, core)}
+
+        if strict:
+            for refused_names, message, _fault in refusals:
+                if involving is None or involving in refused_names:
+                    raise PluginError(message)
+
         for name, core in conflicted:
             checked[name].pop(core, None)
         self._type_mappings = {name: m for name, m in checked.items() if m}
+        previous = {
+            (name, fault.type_name, fault.text(local=True))
+            for name, method, fault in self.aggregate_failures
+            if method == "get_type_mappings"
+        }
+        self.aggregate_failures = [
+            row for row in self.aggregate_failures if row[1] != "get_type_mappings"
+        ]
+        for refused_names, message, fault in refusals:
+            for name in refused_names:
+                if (name, fault.type_name, fault.text(local=True)) not in previous:
+                    logger.error("%s", message)
+                self.aggregate_failures.append((name, "get_type_mappings", fault))
 
     def type_mappings_for_kb(self, kb_type: str = "") -> dict[str, str]:
         """``{core type: plugin type}`` declared by the plugins active for this

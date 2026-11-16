@@ -76,13 +76,15 @@ class PyritePlugin(Protocol):
             Example: {"event": "investigation_event"}
 
         A create that names the core type in a KB this plugin is active for
-        (``get_kb_types``) stores the plugin's type instead. Nothing else
+        (``get_kb_types``) stores the plugin's type instead -- in a KB whose
+        ``kb.yaml`` declares types, only when it declares both. Nothing else
         maps a type: subclassing a core class does NOT (a ``NoteEntry``
         subclass that only reuses its fields leaves ``note`` alone). Checked
         at load: the key must be a core type, the value one of this plugin's
-        ``get_entry_types``, and no two plugins active for an overlapping KB
-        type may map the same core type (``PluginError``, naming both).
-        ``orient`` and ``kb_schema`` show the result as ``type_mappings``.
+        ``get_entry_types``, the plugin must name at least one KB type, and
+        no two plugins active for an overlapping KB type may map the same
+        core type (refused, naming both). ``orient`` and ``kb_schema`` show
+        the pairs a KB applies as ``type_mappings``.
         Needs the SCHEMA capability.
         """
         ...

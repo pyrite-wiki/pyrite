@@ -1432,11 +1432,12 @@ class KBService:
         """Refuse a type the KB's kb.yaml does not declare, when it declares any.
 
         Core types are NOT exempt (#197): a KB that declares a schema declares
-        the vocabulary for that KB, and exempting core names is how `-t note`
-        against a software KB skipped this refusal and then had plugin type
-        resolution rewrite it to its most-derived `note` subtype -- an ADR with
-        `adr_number: 0` under `kb/adrs/`. Checked on the type as the caller
-        named it, before that resolution.
+        the vocabulary for that KB (exempting core names once let `-t note`
+        into a software KB, where the subclass inference #468 removed wrote it
+        as an ADR). Checked on the type as the caller named it, before a
+        declared mapping applies; the stored type is checked by
+        :meth:`_refuse_undeclared_mapping_target`, and the resolver never
+        offers a pair whose key or target the vocabulary leaves out.
         """
         schema = kb_config.kb_schema
         declared = schema.declared_types() if schema else []
@@ -3727,7 +3728,7 @@ class KBService:
         schema_info = {}
         if kb_config.kb_schema:
             try:
-                schema_info = kb_config.kb_schema.to_agent_schema(kb_config.kb_type)
+                schema_info = kb_config.kb_schema.to_agent_schema(kb_type=kb_config.kb_type)
             except Exception:
                 logger.warning("Failed schema-to-agent conversion", exc_info=True)
 
