@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
-from ...exceptions import ValidationError, public_text, refusal_fields
+from ...exceptions import ValidationError, public_attribute, public_text, refusal_fields
 from ...services.body_bounds import MARKER_KEYS, ensure_not_truncated
 
 
@@ -43,10 +43,10 @@ def refusal_http(exc: ValidationError) -> HTTPException:
     # ``server/errors.py`` already copies them for the refusals it sees. One
     # mapper, three surfaces.
     detail.update(refusal_fields(exc))
-    suggestion = getattr(exc, "suggestion", None)
+    suggestion = public_attribute(exc, "suggestion")
     if suggestion:
         detail["hint"] = suggestion
-    declared = getattr(exc, "declared_types", None)
+    declared = public_attribute(exc, "declared_types")
     if declared is not None:
         detail["declared_types"] = declared
         detail.setdefault(

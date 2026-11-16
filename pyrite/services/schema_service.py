@@ -54,7 +54,7 @@ class SchemaService:
         KB: a kb.yaml that is a link out of it, or a hard link, raises
         ``KBFileReadOutsideRootError`` (``OUTSIDE_KB_ROOT``), so no schema
         command shows it or writes it back into the KB."""
-        if kb.kb_yaml_path.exists():
+        if kb.kb_yaml_present:
             return load_yaml_file(kb.kb_yaml_path, kb_root=kb.path)
         return {}
 

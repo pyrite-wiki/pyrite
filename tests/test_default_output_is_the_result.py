@@ -599,11 +599,16 @@ class TestTheTraceAndTheWarningAgree:
 
     @staticmethod
     def _trace(db, mode):
+        """The search as the CLI runs it: the local process, which is shown a
+        loader fault's text (a network caller is shown its class only:
+        tests/test_caller_owned_text.py)."""
+        from pyrite.services.acting import local_process
         from pyrite.services.search_service import SearchService
 
         trace: dict = {}
         warnings: list[str] = []
-        SearchService(db).search("falcon", mode=mode, warnings=warnings, trace=trace)
+        with local_process(True):
+            SearchService(db).search("falcon", mode=mode, warnings=warnings, trace=trace)
         return trace, warnings
 
     def test_semantic_without_the_extra(self, indexed, no_extra):
@@ -631,7 +636,9 @@ class TestTheTraceAndTheWarningAgree:
             "importlib.util.find_spec",
             lambda name, *args: object() if name == "sqlite_vec" else real_find_spec(name, *args),
         )
-        monkeypatch.setattr(db, "vec_load_error", load_error, raising=False)
+        from pyrite.exceptions import held_fault
+
+        monkeypatch.setattr(db, "vec_load_error", held_fault(load_error), raising=False)
         trace, warnings = self._trace(db, "semantic")
         assert trace["reason"] == "semantic_sqlite_vec_not_loaded", trace
         assert "RuntimeError: simulated sqlite-vec loader failure" in warnings[0]
@@ -702,7 +709,7 @@ class TestTheTraceAndTheWarningAgree:
         self._installed_sqlite_vec(monkeypatch, lambda conn: conn.load_extension("vec0"))
         db = PyriteDB(tmp_path / "second.db")
         try:
-            assert isinstance(db.vec_load_error, AttributeError), db.vec_load_error
+            assert db.vec_load_error.type_name == "AttributeError", db.vec_load_error
             trace, warnings = self._trace(db, "semantic")
         finally:
             db.close()
@@ -730,10 +737,13 @@ class TestTheTraceAndTheWarningAgree:
     def test_only_a_refused_extension_load_names_the_python(
         self, monkeypatch, error, names_the_python
     ):
+        from pyrite.exceptions import held_fault
+        from pyrite.services.acting import local_process
         from pyrite.services.embedding_service import semantic_unavailable
 
         self._installed_sqlite_vec(monkeypatch, lambda conn: None)
-        code, cause, remedy = semantic_unavailable(False, error)
+        with local_process(True):
+            code, cause, remedy = semantic_unavailable(False, held_fault(error))
         assert code == "sqlite_vec_not_loaded"
         assert f"{type(error).__name__}: {error}" in cause
         assert ("use a Python whose sqlite3 allows extensions" in remedy) is names_the_python
@@ -821,11 +831,13 @@ class TestIndexEmbedAccounting:
 
         from pyrite.cli import app, index_commands
 
+        from pyrite.exceptions import held_fault
+
         load_error = OSError("simulated loadable-extension failure")
         db = type(
             "UnavailableDB",
             (),
-            {"vec_available": False, "vec_load_error": load_error},
+            {"vec_available": False, "vec_load_error": held_fault(load_error)},
         )()
         real_find_spec = importlib.util.find_spec
         monkeypatch.setattr(

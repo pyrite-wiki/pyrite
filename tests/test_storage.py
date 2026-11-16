@@ -2522,7 +2522,7 @@ class TestVecExtensionLoadFailure:
 
         assert connection.vec_available is False
         assert connection._raw_conn.extension_loading == [True, False]
-        assert connection.vec_load_error is load_error
+        assert connection.vec_load_error.matches(lambda held: held is load_error)
         assert "OSError" in caplog.text
         assert str(load_error) in caplog.text
 

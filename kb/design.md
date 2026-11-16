@@ -166,9 +166,9 @@ code follows it; check, and treat a mismatch as the work to do.
 - Entry classes and protocol mixins serialise themselves (principle 6).
 - KBs can exist only as database rows; grants and secrets are not in a
   reviewable config file (principle 7).
-- Network reach is enforced per call site for reads, git and response text,
-  and the ssh agent and identities stay reachable to a network git command
-  until N2 lands (ADR-0052).
+- Network reach is enforced per call site for reads and response text
+  until N1 and N3's next step land (ADR-0052); git's environment is decided
+  from the reach at one point (N2).
 - Several rules are enforced per call site (principle 8).
 - The supported-surface list is approved but not yet reflected in the
   README, `--help` and tool descriptions, and experimental tests are not yet

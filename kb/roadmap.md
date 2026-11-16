@@ -49,7 +49,8 @@ community needs and feedback.
 | 0.26.0 | Your files, exactly | 2026-10-22 |
 | 0.26.1 | Search flags, link resolution and cross-KB tools | 2026-11-10 |
 | 0.26.2 | A network call borrows nothing of the server account | 2026-11-11 |
-| 0.26.3 | Symlink identity and note typing | undated |
+| 0.26.3 | A network call borrows nothing of the server account, continued | 2026-11-16 |
+| 0.26.4 | Symlink identity and note typing | undated |
 | 0.27 | One operator, many users | undated |
 | 0.28 | Alpha plugin and API contracts | undated |
 
@@ -79,7 +80,11 @@ milestones carry the issues; this table carries the promise and the gate.
 - **0.26.2 (shipped).** Security fixes: a network call reaches the entries it
   holds a grant on and nothing else the server account holds (ADR-0052,
   proposed). Release notes in `CHANGELOG.md`.
-- **0.26.3.** What slipped from 0.26.1: #468 (note entries in a software KB
+- **0.26.3 (shipped).** Security fixes continuing 0.26.2: network git
+  borrows no credential or configuration of the server account, reads come
+  only from files inside the KB, and parser text is shown only to a caller
+  who may read it (ADR-0052, proposed). Release notes in `CHANGELOG.md`.
+- **0.26.4.** What slipped from 0.26.1: #468 (note entries in a software KB
   resolve to ADREntry) and #1262 (the duplicate-id half of the symlink case
   from #637; the rename half went to #811).
 - **0.27: one operator, many users.** Design first: the authorization model

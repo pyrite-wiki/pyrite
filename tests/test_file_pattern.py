@@ -248,15 +248,17 @@ class TestResolveFilenameEntryFieldPlaceholders:
             schema.resolve_filename(entry)
 
     @pytest.mark.control(
-        reason="the refusal is unchanged; the fixture's method moved from the deleted Entry.save to Entry.load (#955 P4)"
+        reason="the refusal is unchanged; the fixture's method moved from the deleted Entry.save "
+        "and Entry.load to Entry.add_link (#955 P4)"
     )
     def test_non_data_attribute_placeholder_is_refused(self):
-        """#391 cold read item 4: `{load}` (a method, not a data field)
+        """#391 cold read item 4: `{add_link}` (a method, not a data field)
         currently puts a bound-method repr in the filename -- refused.
-        (It was `{save}` until #955 B6 P4 deleted `Entry.save`.)"""
+        (It was `{save}` until #955 B6 P4 deleted `Entry.save`, then `{load}`
+        until `Entry.load`, a raw reader of any path, was deleted.)"""
         from pyrite.exceptions import ValidationError
 
-        schema = TypeSchema(name="adr", file_pattern="{load}.md")
+        schema = TypeSchema(name="adr", file_pattern="{add_link}.md")
         entry = self._adr_entry()
         with pytest.raises(ValidationError):
             schema.resolve_filename(entry)

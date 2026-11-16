@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from pyrite.exceptions import FrontmatterError
+from pyrite.services.acting import local_process
 
 
 def _mod():
@@ -256,10 +257,12 @@ def test_schema_check_reads_quoted_dashes(tmp_path):
     assert body == "Body here."
 
 
+@pytest.mark.control(reason="unchanged for the local process, which the test now binds")
 def test_add_entry_from_file_reads_quoted_dashes(kb_service, tmp_path):
-    entry, result = kb_service.add_entry_from_file(
-        "test-events", _write(tmp_path, TRICKY), validate_only=True
-    )
+    with local_process():  # the CLI's `pyrite add`, the local process only
+        entry, result = kb_service.add_entry_from_file(
+            "test-events", _write(tmp_path, TRICKY), validate_only=True
+        )
     assert entry.title == "Rental --- Chicago"
     assert entry.body == "Body here."
 
@@ -270,7 +273,7 @@ def test_add_entry_from_file_reads_quoted_dashes(kb_service, tmp_path):
 def test_add_entry_from_file_unterminated_is_refused(kb_service, tmp_path):
     from pyrite.exceptions import ValidationError
 
-    with pytest.raises(ValidationError, match="closing"):
+    with local_process(), pytest.raises(ValidationError, match="closing"):
         kb_service.add_entry_from_file(
             "test-events", _write(tmp_path, "---\ntype: note\ntitle: A\n"), validate_only=True
         )
@@ -855,7 +858,8 @@ def _readers(tmp_path, kb_service):
         return ("refused", "errors") if errors else ("loaded", fm["title"], body)
 
     def add_from_file(text):
-        e, _ = kb_service.add_entry_from_file("test-events", path_of(text), validate_only=True)
+        with local_process():
+            e, _ = kb_service.add_entry_from_file("test-events", path_of(text), validate_only=True)
         return ("loaded", e.title, e.body)
 
     def extract(text):

@@ -723,10 +723,12 @@ def sw_conventions(
 
 def _link_reason(e: Exception) -> str:
     """Why a standard was not migrated, without a path."""
+    from pyrite.exceptions import outside_text
+
     links = getattr(e, "links", None)
     if links is not None:
         return f"its file has {links} hard links; break the link, then run again"
-    return str(e)
+    return outside_text(e)
 
 
 @sw_app.command("migrate-standards")

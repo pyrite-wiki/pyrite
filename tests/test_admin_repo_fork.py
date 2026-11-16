@@ -76,18 +76,14 @@ def world(tmp_path, monkeypatch):
     from pyrite.services import git_service
 
     monkeypatch.setattr(GitService, "_effective_url", staticmethod(lambda url, cwd=None: url))
-    monkeypatch.setattr(
-        git_service,
-        "_NETWORK_GUARD_ENV",
-        {**git_service._NETWORK_GUARD_ENV, "GIT_ALLOW_PROTOCOL": "https:file"},
-    )
+    monkeypatch.setattr(git_service, "_ALLOWED_GIT_PROTOCOLS", "https:file")
     return config
 
 
 def _fork_api(monkeypatch, *, success: bool):
     calls = []
 
-    def fork_repo(owner, repo, token):
+    def fork_repo(owner, repo, token, proxy=None):
         calls.append((owner, repo, token))
         if not success:
             return False, {"error": "fork refused"}

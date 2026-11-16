@@ -13,6 +13,7 @@ from pathlib import Path
 from ..config import PyriteConfig
 from ..exceptions import InvalidGitRefError
 from ..storage.database import PyriteDB
+from ..utils.git_hardening import git_env
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +181,7 @@ class VersionService:
                 capture_output=True,
                 text=True,
                 timeout=10,
-                env=GitService.subprocess_env(),
+                env=git_env(),
             )
             return result.stdout.strip() if result.returncode == 0 else None
 

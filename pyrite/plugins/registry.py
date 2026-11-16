@@ -15,7 +15,7 @@ from collections.abc import Callable
 from importlib.metadata import EntryPoint
 from typing import Any, cast
 
-from ..exceptions import PluginError
+from ..exceptions import HeldFault, PluginError, held_fault
 from ..services.access_policy import ROLES
 from .capabilities import Capability
 from .context import PluginContext
@@ -255,7 +255,7 @@ class PluginRegistry:
         # raised from. The "pyrite" logger has a NullHandler, so the logger.error
         # alone is invisible in the CLI (#900); callers that can show the user
         # (pyrite.cli) read this.
-        self.aggregate_failures: list[tuple[str, str, Exception]] = []
+        self.aggregate_failures: list[tuple[str, str, HeldFault]] = []
         # Signature-conformance is checked once per plugin (coordinator
         # blocker 3, #379 follow-up: "checked at registration" wasn't true --
         # the filter re-ran, and re-warned, on every call). Keyed by plugin
@@ -526,7 +526,8 @@ class PluginRegistry:
                     method_name,
                     e,
                 )
-                self.aggregate_failures.append((plugin.name, method_name, e))
+                # Held: its text is the operator's (the CLI prints it).
+                self.aggregate_failures.append((plugin.name, method_name, held_fault(e)))
                 continue
             if not items:
                 continue

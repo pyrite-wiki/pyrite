@@ -25,6 +25,8 @@ from ..exceptions import (
     InvalidQATierError,
     KBUnreadableError,
     PyriteError,
+    os_reason,
+    public_attribute,
     public_text,
 )
 from ..models.base import lifecycle_validation_error
@@ -33,6 +35,7 @@ from ..schema import validate_date, validate_importance
 from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
+from ..utils.kb_files import KBFileOutsideRootError, KBFiles
 from ..utils.metadata import parse_metadata
 
 logger = logging.getLogger(__name__)
@@ -375,11 +378,17 @@ class QAService:
                 return "its path is not a folder"
             with os.scandir(path) as listing:
                 next(listing, None)
+            # Read as the KB reads it: a kb.yaml that is a link out of the KB
+            # is not opened here (``kb_schema`` refuses it, OUTSIDE_KB_ROOT),
+            # so no error text from a file outside the KB reaches the caller.
             kb_yaml = path / "kb.yaml"
-            if kb_yaml.exists():
-                kb_yaml.open("rb").close()
+            if KBFiles(path).present(kb_yaml):
+                try:
+                    KBFiles(path).read_bytes(kb_yaml)
+                except KBFileOutsideRootError:
+                    pass
         except OSError as exc:
-            return f"its folder cannot be read ({exc.strerror or type(exc).__name__})"
+            return f"its folder cannot be read ({os_reason(exc)})"
         return None
 
     def validate_all(
@@ -614,7 +623,9 @@ class QAService:
                     {
                         "entry_id": eid,
                         "error_code": getattr(exc, "error_code", "INTERNAL_ERROR"),
-                        "reason": getattr(exc, "reason", None)
+                        # A Pyrite error's reason (EvaluationFailedError's);
+                        # the same name on another exception is not Pyrite's.
+                        "reason": public_attribute(exc, "reason")
                         or public_text(exc, already_logged=True),
                     }
                 )
@@ -1224,7 +1235,7 @@ class QAService:
         if not kb_config:
             return
 
-        if not kb_config.kb_yaml_path.exists():
+        if not kb_config.kb_yaml_present:
             return
 
         schema = kb_config.kb_schema
@@ -1385,7 +1396,9 @@ class QAService:
         else:
             row = self.db.get_entry(entry_id, kb_name)
             path = row.get("file_path") if row else None
-            if not path or not Path(path).is_file():
+            # The KB's own probe: a link out is there, and refused by the
+            # load below, whatever it points at.
+            if not path or not KBFiles(kb_config.path).present(path):
                 return sources
             try:
                 entries = [(repo.load_entry_from_file(Path(path)), Path(path))]
@@ -1466,7 +1479,7 @@ class QAService:
         Naming the kb.yaml and the field says where to fix it.
         """
         kb_config = self.config.get_kb(kb_name)
-        if not kb_config or not kb_config.kb_yaml_path.exists():
+        if not kb_config or not kb_config.kb_yaml_present:
             return
         for type_name, field_name, expected in _CORE_TYPED_FIELDS:
             type_schema = kb_config.kb_schema.types.get(type_name)
@@ -1666,7 +1679,7 @@ class QAService:
         if not kb_config:
             return
 
-        if not kb_config.kb_yaml_path.exists():
+        if not kb_config.kb_yaml_present:
             return
 
         schema = kb_config.kb_schema
@@ -2041,7 +2054,7 @@ class QAService:
                         "severity": "error",
                         "field": "evaluation_rubric",
                         "message": f"Tier 2 did not run for '{row['id']}': "
-                        + (getattr(exc, "reason", None) or public_text(exc, log=logger)),
+                        + (public_attribute(exc, "reason") or public_text(exc, log=logger)),
                     }
                 )
 

@@ -106,6 +106,8 @@ _HAS_DIR_FD = (
 )
 _DIR_FLAGS = getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+# The errors ``pathlib.Path.exists`` answers False for; any other raises.
+_ABSENT_ERRNOS = {errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP}
 _UNSUPPORTED = {errno.ENOTSUP, errno.ENOSYS, getattr(errno, "EOPNOTSUPP", errno.ENOTSUP)}
 
 
@@ -661,6 +663,52 @@ class KBFiles:
             raise
         except KBFileOutsideRootError as e:
             raise KBFileReadOutsideRootError() from e
+
+    def present(self, path: str | os.PathLike[str]) -> bool:
+        """Whether ``path`` is taken, as this KB answers it: the probe for a
+        caller that then reads, writes or lists through ``KBFiles``
+        (ADR-0052 N1, N4).
+
+        It answers True for a path that resolves outside the root (a link
+        out, dangling or not, or a folder on the way that is one): the read
+        or write that follows refuses it (``OUTSIDE_KB_ROOT``), so that
+        refusal is the answer whichever way the link points, and never
+        "absent" because a file outside is missing. For a path that resolves
+        inside, it answers whether that path exists, which only the KB's own
+        files decide. ``Path.exists`` follows a link out, and so answers what
+        lies outside.
+
+        Limit: where a path resolves is decided by ``os.path.realpath``,
+        which follows every link on the way. A link out of the KB whose
+        target outside is itself a link back into the KB resolves inside, so
+        that answer depends on the outside link (the same limit applies to
+        ``read_bytes`` and to every write).
+        """
+        if not self.contains(path):
+            return True
+        # ``Path.exists``'s answer, not ``os.path.exists``'s: a folder this
+        # process cannot search raises, never "absent" (index health then
+        # reports the file unreadable, not missing).
+        try:
+            os.stat(self._absolute(path))
+        except OSError as e:
+            if e.errno in _ABSENT_ERRNOS:
+                return False
+            raise
+        return True
+
+    def make_dirs(self, path: str | os.PathLike[str]) -> None:
+        """Make the folder ``path`` and any missing folders above it,
+        beneath the root, each opened without following a link
+        (``_open_dir(create=True)``, as a write makes a file's folder). A
+        path that resolves outside the root, or a folder on the way swapped
+        for a link, is ``KBFileOutsideRootError`` and nothing is made,
+        whatever lies outside."""
+        parts = self._rel_resolved(path)
+        if not _HAS_DIR_FD:
+            Path(self.real_root, *parts).mkdir(parents=True, exist_ok=True)
+            return
+        os.close(self._open_dir(parts, create=True))
 
     # -- the write rules ----------------------------------------------------
 

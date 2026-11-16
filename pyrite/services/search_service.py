@@ -19,6 +19,7 @@ from ..exceptions import (
     QueryTooLongError,
     RefusedValueError,
     ValidationError,
+    caller_owned,
     outside_text,
 )
 from ..storage.errors import storage_error_from
@@ -43,6 +44,35 @@ _QUERY_SYNTAX_ERROR_MARKERS = (
     "unknown special query",
     "expected integer",  # NEAR(a b, <not an int>)
 )
+
+
+#: The FTS5 parser's messages, as SQLite writes them; ``q`` is the part it
+#: quotes from the MATCH query. A message is the caller's to see only when it
+#: is one of these whole and ``q`` is a substring of the caller's own query
+#: (``_quotes_only_the_callers_query``): an expanded query carries provider
+#: terms, and any other text is the driver's.
+_FTS_PARSE_TEMPLATES = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r'fts5: syntax error near "(?P<q>.*)"',
+        r"unterminated string",
+        r"unknown special query: (?P<q>.*)",
+        r'expected integer, got "(?P<q>.*)"',
+        r"no such column: (?P<q>.*)",
+    )
+)
+
+
+def _quotes_only_the_callers_query(message: str, caller_query: str | None) -> bool:
+    """Whether ``message`` is one of the parser's templates whose quoted part
+    is a substring of ``caller_query`` (None: no caller query known, so no)."""
+    if caller_query is None:
+        return False
+    for template in _FTS_PARSE_TEMPLATES:
+        match = template.fullmatch(message)
+        if match is not None:
+            return (match.groupdict().get("q") or "") in caller_query
+    return False
 
 
 def _looks_like_query_syntax_error(message: str, query: str) -> bool:
@@ -472,8 +502,13 @@ class SearchService:
         allowed = set(kb_names)
         return [r for r in results if r.get("kb_name") in allowed][:limit]
 
-    def _db_search(self, **kwargs: Any) -> list[dict[str, Any]]:
+    def _db_search(self, *, caller_query: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
         """Call ``self.db.search`` and classify any sqlite failure.
+
+        ``caller_query`` is the query as the caller wrote it, before any
+        expansion; ``kwargs["query"]`` is what reaches MATCH and may carry the
+        expansion provider's terms. Only text the caller wrote is named back
+        to them: a token, or a parser message that quotes only their query.
 
         ``sanitize_fts_query`` skips quoting when the query already contains
         an FTS5 operator (uppercase AND/OR/NOT) or a quote — it assumes the
@@ -501,7 +536,9 @@ class SearchService:
             query = str(kwargs.get("query") or "")
             if not _looks_like_query_syntax_error(str(e), query):
                 raise storage_error_from(e) from e
-            token = self._offending_token(query, e)
+            # Named only from the caller's own query: a token of an expanded
+            # query may be the provider's.
+            token = self._offending_token(caller_query, e) if caller_query else None
             if token:
                 raise QuerySyntaxError(
                     f"Query could not be parsed: the token '{token}' was read as a "
@@ -509,8 +546,13 @@ class SearchService:
                     "only between plain words (sanitization is skipped once you "
                     "use operators or quotes)."
                 ) from e
+            # The parser's message is the caller's to see only when it is one
+            # of its templates quoting nothing but the caller's own query; any
+            # other text (an expanded term, the driver's) is withheld.
+            cause = caller_owned(e) if _quotes_only_the_callers_query(str(e), caller_query) else e
             raise QuerySyntaxError(
-                f"Query could not be parsed: {outside_text(e)}. If your query uses AND/OR/NOT "
+                f"Query could not be parsed: {outside_text(cause)}. If your query "
+                "uses AND/OR/NOT "
                 "or phrase quotes, quote any tokens containing - : . yourself "
                 "(sanitization is skipped once you use operators or quotes)."
             ) from e
@@ -607,6 +649,7 @@ class SearchService:
         warnings: list[str] | None = None,
         semantic_query: str | None = None,
         non_empty: bool = False,
+        caller_wrote_query: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Search across entries.
@@ -653,6 +696,13 @@ class SearchService:
                 ``"a" OR "b"`` (#431). ``None`` (the default): both legs use
                 ``query``. Refused over ``MAX_SEARCH_QUERY_LENGTH`` like
                 ``query``; ignored in keyword mode.
+            caller_wrote_query: ``query`` is the words the caller wrote, as
+                they wrote them (REST ``/api/search``, MCP ``kb_search``, the
+                CLI's ``search``). Only then may the FTS parser's message about
+                it be shown to a network caller (``_db_search``'s
+                ``caller_query``). False, the default, for a query Pyrite
+                builds: from an entry's title and tags (suggest-links), from a
+                chat message's words, or a plugin's.
 
         **What a search response owes its caller** (#56) — the one statement
         of the convention; the REST schema, the REST route and the ``kb_search``
@@ -847,6 +897,7 @@ class SearchService:
                     kb_names=kb_names,
                     signal=signal,
                     non_empty=non_empty,
+                    caller_query=query if caller_wrote_query else None,
                 )
                 results = self._restrict(results, kb_names, limit)
             else:
@@ -857,6 +908,7 @@ class SearchService:
 
                 def _run(q: str, page: tuple[int, int] = (limit, offset)) -> list[dict[str, Any]]:
                     return self._db_search(
+                        caller_query=query if caller_wrote_query else None,
                         query=q,
                         kb_name=kb_name,
                         kb_names=kb_names,
@@ -1278,6 +1330,7 @@ class SearchService:
         kb_names: set[str] | list[str] | None = None,
         signal: dict[str, Any] | None = None,
         non_empty: bool = False,
+        caller_query: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Hybrid search using Reciprocal Rank Fusion (RRF).
@@ -1299,6 +1352,7 @@ class SearchService:
             # (#668): filtering the fused list afterwards let nearer rows the
             # caller cannot read use up the fetch.
             return self._db_search(
+                caller_query=caller_query,
                 query=q,
                 kb_name=kb_name,
                 kb_names=kb_names,

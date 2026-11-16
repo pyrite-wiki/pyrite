@@ -1,0 +1,1 @@
+- **`git_credentials` and `git_identity` settings.** `git_credentials` grants network git a token (`token_env` or `token_file`) or an ssh key (`ssh_key` with `known_hosts`) for a host, optionally for one KB; `git_identity` names the identity commits made for network callers carry. See `docs/configuration.md`.

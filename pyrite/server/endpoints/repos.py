@@ -441,7 +441,9 @@ def list_github_repos(
     try:
         import httpx
 
-        with httpx.Client() as client:
+        from ...utils.egress import github_client
+
+        with github_client(proxy=svc.config.settings.git_proxy) as client:
             resp = client.get(
                 "https://api.github.com/user/repos",
                 params={"per_page": 100, "sort": "updated", "affiliation": "owner"},

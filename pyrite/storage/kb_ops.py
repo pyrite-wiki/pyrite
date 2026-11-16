@@ -48,7 +48,13 @@ class KBOpsMixin:
         source: str = "user",
         default_role: str | None = None,
     ) -> None:
-        """Register a KB in the index."""
+        """Register a KB in the index, as these arguments describe it.
+
+        ``default_role`` is written as given, None included: the seed of a
+        config.yaml KB passes the file's value, and a line the operator
+        removed must clear the row, not leave the role an earlier load
+        stored.
+        """
         type_str = kb_type.value if hasattr(kb_type, "value") else kb_type
         existing = self.session.get(KB, name)
         if existing:
@@ -56,8 +62,7 @@ class KBOpsMixin:
             existing.path = path
             existing.description = description
             existing.source = source
-            if default_role is not None:
-                existing.default_role = default_role
+            existing.default_role = default_role
         else:
             kb = KB(
                 name=name,
@@ -178,13 +183,9 @@ class KBOpsMixin:
                 except (OSError, RuntimeError, ValueError):
                     # A path that cannot be resolved (an unknown ~user, a
                     # symlink loop) must not stop the load, and fails closed:
-                    # private for this process, nothing written back.
-                    logger.warning(
-                        "Could not resolve the path of KB %r (%s); loading it private ('none')",
-                        name,
-                        path,
-                        exc_info=True,
-                    )
+                    # private for this process, nothing written back. The
+                    # loader then leaves the KB out and says so, once
+                    # (`PyriteConfig.kb_config_from_registry_row`).
                     default_role = "none"
                     orphan = False
                 if orphan:
@@ -235,7 +236,14 @@ class KBOpsMixin:
             )
 
     def update_kb_default_role(self, name: str, default_role: str | None) -> bool:
-        """Update a KB's default_role. Returns True if KB was found."""
+        """Update a KB's default_role. Returns True if KB was found.
+
+        Through the one validator (`validate_kb_default_role`, `ConfigError`
+        otherwise), so no write stores a value the role check would refuse.
+        """
+        from ..config import validate_kb_default_role
+
+        validate_kb_default_role(default_role, f"KB '{name}'")
         kb = self.session.get(KB, name)
         if not kb:
             return False
