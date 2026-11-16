@@ -62,6 +62,8 @@ _FIELD_OWN_OPTION: dict[str, str] = {
     "priority": "--priority",
     "assignee": "--assignee",
     "tags": "--tags",
+    "due_date": "--due-date",
+    "links": "--link",
 }
 
 #: `--field` keys refused because `TaskService.create_task` forwards
@@ -79,13 +81,11 @@ _FIELD_CREATE_ENTRY_COLLISION: frozenset[str] = frozenset(
 )
 
 #: `--field` keys `task create` owns or builds another way: the id comes from
-#: the title, and a task's links and sources are made with `link` (which
-#: checks the target) -- `--field links=[{"target": "ghost"}]` created a task
-#: already linked to a target that does not exist. Not a managed-field list:
-#: what Pyrite or the task manages is refused by `KBService.create` (#1010).
+#: the title, and a task's sources are made with `update --append` (which
+#: checks the target). Not a managed-field list: what Pyrite or the task
+#: manages is refused by `KBService.create` (#1010).
 _FIELD_CREATE_OWNED_HINT: dict[str, str] = {
     "id": "`task create` sets the id from the title.",
-    "links": "add links after creating, with `pyrite link`.",
     "sources": "add sources after creating, with `pyrite update --append sources=...`.",
 }
 _FIELD_CREATE_OWNED: frozenset[str] = frozenset(_FIELD_CREATE_OWNED_HINT)
@@ -189,6 +189,13 @@ def task_create(
     ),
     body: str | None = typer.Option(None, "--body", "-b", help="Task description"),
     tags: str = typer.Option("", "--tags", help="Comma-separated tags"),
+    due_date: str | None = typer.Option(None, "--due-date", "-d", help="Due date (YYYY-MM-DD)"),
+    link: list[str] | None = typer.Option(
+        None,
+        "--link",
+        "-l",
+        help="Link to target entry (format: target-id or target-id:relation)",
+    ),
     field: list[str] | None = typer.Option(
         None, "--field", help="Extra field as key=value (repeatable)"
     ),
@@ -226,6 +233,8 @@ def task_create(
             assignee=assignee or "",
             tags=[t.strip() for t in tags.split(",")] if tags else None,
             fields=fields or None,
+            due_date=due_date or "",
+            links=link,
         )
     finally:
         db.close()
@@ -238,6 +247,14 @@ def task_create(
             console.print(f"  Parent: {parent}")
         if assignee:
             console.print(f"  Assignee: {assignee}")
+        if result.get("due_date"):
+            console.print(f"  Due: {result['due_date']}")
+        for done_link in result.get("linked", []):
+            console.print(
+                f"  [dim]Linked to {done_link['target']} ({done_link['relation']})[/dim]"
+            )
+        for failed in result.get("failed_links", []):
+            console.print(f"  [yellow]Link failed:[/yellow] {failed['error']}")
         for warning in result.get("warnings", []):
             console.print("[yellow]Warning:[/yellow]", json.dumps(warning, default=str))
 
@@ -392,7 +409,7 @@ def _task_get_impl(task_id: str, kb_name: str | None) -> Outcome:
             "parent": meta.get("parent", ""),
             "dependencies": meta.get("dependencies", []),
             "evidence": meta.get("evidence", []),
-            "due_date": meta.get("due_date", ""),
+            "due_date": task.get("due_date") or meta.get("due_date", ""),
             "agent_context": meta.get("agent_context", {}),
             "children": children,
             "kb_name": task_kb,

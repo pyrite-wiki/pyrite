@@ -106,6 +106,7 @@ _HAS_DIR_FD = (
 )
 _DIR_FLAGS = getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
 # The errors ``pathlib.Path.exists`` answers False for; any other raises.
 _ABSENT_ERRNOS = {errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP}
 _UNSUPPORTED = {errno.ENOTSUP, errno.ENOSYS, getattr(errno, "EOPNOTSUPP", errno.ENOTSUP)}
@@ -243,7 +244,7 @@ class Folder:
         and a name that is not a regular file (a FIFO, a device) reads as
         absent, None."""
         try:
-            fd = os.open(self._p(name), os.O_RDONLY | _NOFOLLOW | os.O_NONBLOCK, **self._at(name))
+            fd = os.open(self._p(name), os.O_RDONLY | _NOFOLLOW | _NONBLOCK, **self._at(name))
         except FileNotFoundError:
             return None
         except OSError as e:
@@ -306,7 +307,8 @@ class Folder:
         try:
             try:
                 if like is not None:
-                    os.fchmod(fd, stat.S_IMODE(like.st_mode))
+                    if hasattr(os, "fchmod"):
+                        os.fchmod(fd, stat.S_IMODE(like.st_mode))
                     mine = os.fstat(fd)
                     if hasattr(os, "fchown") and (
                         os.geteuid() == 0
@@ -366,7 +368,7 @@ class Folder:
         """
         access = os.O_WRONLY if expect is None else os.O_RDWR
         try:
-            fd = os.open(self._p(name), access | _NOFOLLOW | os.O_NONBLOCK, **self._at(name))
+            fd = os.open(self._p(name), access | _NOFOLLOW | _NONBLOCK, **self._at(name))
         except OSError as e:
             if e.errno == errno.ELOOP:
                 raise KBFileOutsideRootError() from e

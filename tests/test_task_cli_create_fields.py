@@ -483,3 +483,81 @@ def test_task_create_validation_error_lists_only_declared_types(task_cli_env):
     error = json.loads(result.output)["error"]
     assert "expected ['note']" in error
     assert "'document'" not in error
+
+
+@pytest.mark.cli
+def test_task_create_cli_due_date(task_cli_env):
+    """`task create --due-date YYYY-MM-DD` records due_date in frontmatter."""
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "create",
+            "Task with due date",
+            "-k",
+            "test-tasks",
+            "--due-date",
+            "2026-11-20",
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["due_date"] == "2026-11-20"
+    fm = _task_frontmatter(task_cli_env["config"], "test-tasks", data["entry_id"], "tasks")
+    assert fm["due_date"] == "2026-11-20"
+
+
+@pytest.mark.cli
+def test_task_create_cli_invalid_due_date_fails(task_cli_env):
+    """`task create --due-date invalid` raises validation error."""
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "create",
+            "Bad due date",
+            "-k",
+            "test-tasks",
+            "--due-date",
+            "2026-02-30",
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code != 0
+    data = json.loads(result.output)
+    assert data["error_code"] == "VALIDATION_FAILED"
+    assert "due_date" in data["error"].lower()
+
+
+@pytest.mark.cli
+def test_task_create_cli_link(task_cli_env):
+    """`task create --link target` attaches link to target entry."""
+    # First create target
+    target_res = runner.invoke(
+        app,
+        ["task", "create", "Target entry", "-k", "test-tasks", "--format", "json"],
+    )
+    assert target_res.exit_code == 0
+    target_id = json.loads(target_res.output)["entry_id"]
+
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "create",
+            "Source entry",
+            "-k",
+            "test-tasks",
+            "--link",
+            f"{target_id}:blocks",
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["links"] == [{"target": target_id, "relation": "blocks"}]
+    assert data["linked"] == [{"target": target_id, "relation": "blocks"}]

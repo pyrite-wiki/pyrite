@@ -103,6 +103,74 @@ class TestCreateTask:
         assert row is not None
         assert row["title"] == "Indexed task"
 
+    def test_create_task_with_due_date(self, task_env):
+        svc = task_env["svc"]
+        result = svc.create_task(
+            kb_name="test-tasks",
+            title="Due task",
+            due_date="2026-11-20",
+        )
+        assert result["created"] is True
+        assert result["due_date"] == "2026-11-20"
+
+        # Check DB index row
+        task = svc.get_task(result["entry_id"], "test-tasks", readable_kbs=None)
+        assert task is not None
+        assert task["due_date"] == "2026-11-20"
+
+        # Check find_overdue detects past due date
+        overdue = svc.find_overdue(as_of="2026-11-25", kb_name="test-tasks")
+        assert any(t["id"] == result["entry_id"] for t in overdue)
+
+    def test_create_task_invalid_due_date_raises_validation_error(self, task_env):
+        from pyrite.exceptions import ValidationError
+
+        svc = task_env["svc"]
+        with pytest.raises(ValidationError) as exc_info:
+            svc.create_task(
+                kb_name="test-tasks",
+                title="Bad date task",
+                due_date="2026-02-30",
+            )
+        assert exc_info.value.error_code == "VALIDATION_FAILED"
+        assert "due_date" in str(exc_info.value).lower()
+
+    def test_create_task_with_links(self, task_env):
+        svc = task_env["svc"]
+        target = svc.create_task(kb_name="test-tasks", title="Target entry")
+        target_id = target["entry_id"]
+
+        result = svc.create_task(
+            kb_name="test-tasks",
+            title="Linking task",
+            links=[{"target": target_id, "relation": "blocks"}],
+        )
+        assert result["created"] is True
+        assert result["links"] == [{"target": target_id, "relation": "blocks"}]
+
+        # Verify kb_get returns links
+        entry = svc.kb_svc.get_entry(result["entry_id"], "test-tasks", readable_kbs=None)
+        assert entry is not None
+        assert any(l.get("target_id") == target_id or l.get("target") == target_id for l in entry.get("links", []))
+
+        # Verify target entry shows the task in backlinks
+        backlinks = svc.db.get_backlinks(target_id, "test-tasks", readable_kbs=None)
+        assert any(b["id"] == result["entry_id"] for b in backlinks)
+
+    def test_create_task_invalid_link_spec_raises_validation_error(self, task_env):
+        from pyrite.exceptions import ValidationError
+
+        svc = task_env["svc"]
+        with pytest.raises(ValidationError):
+            svc.create_task(
+                kb_name="test-tasks",
+                title="Bad link task",
+                links=[{"target": ""}],
+            )
+        # Entry should not have been created
+        tasks = svc.list_tasks(kb_name="test-tasks")
+        assert not any(t["title"] == "Bad link task" for t in tasks)
+
 
 class TestUpdateTask:
     def test_update_task(self, task_env):

@@ -290,3 +290,22 @@ def pytest_runtest_teardown(item, nextitem):
     clear.
     """
     clear_fastapi_caches()
+
+
+@pytest.fixture(autouse=True)
+def _windows_file_lock_shim(request, monkeypatch):
+    """On Windows where fcntl is absent, allow writes by treating file_lock as NotInGitRepository."""
+    if sys.platform != "win32":
+        return
+    if "test_file_lock" in request.node.nodeid:
+        return
+    import contextlib
+    from pyrite.utils import file_lock as fl
+    from pyrite.utils import kb_files as kbf
+
+    @contextlib.contextmanager
+    def _noop_file_lock(*args, **kwargs):
+        raise fl.NotInGitRepository("windows-no-flock")
+
+    monkeypatch.setattr(fl, "file_lock", _noop_file_lock)
+    monkeypatch.setattr(kbf, "file_lock", _noop_file_lock)
