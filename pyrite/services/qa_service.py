@@ -35,7 +35,7 @@ from ..schema import validate_date, validate_importance
 from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
-from ..utils.kb_files import KBFileOutsideRootError, KBFiles
+from ..utils.kb_files import KBFileOutsideRootError, KBFiles, KBPresenceUnknownError
 from ..utils.metadata import parse_metadata
 
 logger = logging.getLogger(__name__)
@@ -387,6 +387,10 @@ class QAService:
                     KBFiles(path).read_bytes(kb_yaml)
                 except KBFileOutsideRootError:
                     pass
+        except KBPresenceUnknownError:
+            # Not an OSError (#1542): a fixed reason, the same whatever the
+            # OS refused, since this text can reach an MCP or REST caller.
+            return "its folder cannot be read (could not tell whether its kb.yaml is there)"
         except OSError as exc:
             return f"its folder cannot be read ({os_reason(exc)})"
         return None

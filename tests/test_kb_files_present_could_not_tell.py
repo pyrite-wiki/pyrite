@@ -33,7 +33,7 @@ import pytest
 
 from pyrite.config import KBConfig
 from pyrite.exceptions import PyriteError
-from pyrite.utils.kb_files import KBFiles, KBPresenceUnknownError
+from pyrite.utils.kb_files import KBFiles
 
 
 def _skip_if_mode_does_not_stop_us(folder: Path) -> None:
@@ -108,13 +108,14 @@ def test_an_unsearchable_folder_is_could_not_tell_as_one_typed_error(tmp_path, m
     sub.chmod(mode)
     try:
         _skip_if_mode_does_not_stop_us(sub)
-        with pytest.raises(KBPresenceUnknownError) as caught:
+        with pytest.raises(PyriteError) as caught:
             KBFiles(tmp_path).present(sub / "d.md")
         err = caught.value
-        assert isinstance(err, PyriteError) and not isinstance(err, OSError)
-        # One answer whatever the cause: the text names no path and no errno.
-        assert str(sub) not in str(err) and str(tmp_path) not in str(err)
-        assert str(err) == KBPresenceUnknownError().args[0]
+        assert type(err).__name__ == "KBPresenceUnknownError" and not isinstance(err, OSError)
+        # One answer whatever the cause: the text names no path, no errno and
+        # no OS text.
+        assert str(tmp_path) not in str(err) and "13" not in str(err)
+        assert "Permission denied" not in str(err)
         assert isinstance(err.__cause__, PermissionError)  # kept for local reports
     finally:
         sub.chmod(0o755)
@@ -158,7 +159,8 @@ def test_load_config_keeps_every_kb_and_marks_the_unreadable_one(two_kbs, mode):
         by_name = {kb.name: kb for kb in config.knowledge_bases}
         assert set(by_name) == {"good", "locked"}
         assert by_name["good"].unreadable is None
-        assert by_name["locked"].unreadable == KBPresenceUnknownError().args[0]
+        reason = by_name["locked"].unreadable
+        assert reason and str(locked) not in reason and "Permission denied" not in reason
     finally:
         locked.chmod(0o755)
 
@@ -200,13 +202,36 @@ def test_commands_on_another_kb_work_and_the_unreadable_kb_is_named(two_kbs):
         assert listed.exit_code == 0, listed.output
         kbs = {kb["name"]: kb for kb in json.loads(listed.output)["kbs"]}
         assert set(kbs) == {"good", "locked"}
-        assert kbs["locked"]["unreadable"] == KBPresenceUnknownError().args[0]
+        reason = kbs["locked"]["unreadable"]
+        assert reason and str(locked) not in reason
         assert "unreadable" not in kbs["good"]
 
         health = world.cli("index", "health", "--format", "json")
         assert not isinstance(health.exception, OSError), repr(health.exception)
         data = json.loads(health.stdout)
         assert data["status"] == "unhealthy"
-        assert {"kb": "locked", "error": KBPresenceUnknownError().args[0]} in data["unreadable_kbs"]
+        assert data["unreadable_kbs"] == [{"kb": "locked", "error": reason}]
+    finally:
+        locked.chmod(0o755)
+
+
+def test_qa_on_the_unreadable_kb_reports_it_and_goes_on(two_kbs):
+    """QA's folder check (``_kb_folder_problem``) caught the raw
+    PermissionError f8cbbe1d let out; "could not tell" is no OSError, so it
+    is caught by name and reported, with a fixed reason, as the folder
+    problem every other file check then skips for."""
+    world, good, locked = two_kbs
+    try:
+        _locked(locked, 0o600)
+        result = world.cli("qa", "validate", "locked", "--format", "json")
+        assert result.exception is None or isinstance(result.exception, SystemExit), repr(
+            result.exception
+        )
+        assert "its folder cannot be read (could not tell whether its kb.yaml is there)" in (
+            result.output
+        )
+        everything = world.cli("qa", "validate", "--format", "json")
+        assert everything.exception is None or isinstance(everything.exception, SystemExit)
+        assert "could not tell whether a file is in the knowledge base" not in everything.output
     finally:
         locked.chmod(0o755)

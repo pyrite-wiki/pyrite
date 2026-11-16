@@ -2337,7 +2337,16 @@ class IndexManager:
                 if rel_path is None:  # another KB's file in the same repo
                     continue
                 full_path = kb_path / rel_path
-                if KBFiles(kb_path).present(full_path) and full_path.suffix == ".md":
+                if full_path.suffix != ".md":
+                    continue
+                try:
+                    there = KBFiles(kb_path).present(full_path)
+                except KBPresenceUnknownError:
+                    # A folder this process cannot search (#1542): not forced,
+                    # so one such file never ends the sync; the reconcile's
+                    # walk reports what it cannot reach.
+                    continue
+                if there:
                     force.add(full_path)
 
         attributed = 0

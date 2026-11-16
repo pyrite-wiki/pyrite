@@ -397,7 +397,8 @@ class TestFolderTheProcessCannotSearch:
         version."""
         import os
 
-        from pyrite.utils.kb_files import KBFiles, KBPresenceUnknownError
+        from pyrite.exceptions import PyriteError
+        from pyrite.utils.kb_files import KBFiles
 
         sub = tmp_path / "sub"
         sub.mkdir()
@@ -406,8 +407,9 @@ class TestFolderTheProcessCannotSearch:
         try:
             if os.access(sub / "d.md", os.R_OK):
                 pytest.skip(f"running as a user that can read through a mode-{mode:o} folder")
-            with pytest.raises(KBPresenceUnknownError):
+            with pytest.raises(PyriteError) as caught:
                 KBFiles(tmp_path).present(sub / "d.md")
+            assert type(caught.value).__name__ == "KBPresenceUnknownError"
             assert KBFiles(tmp_path).present(tmp_path / "gone.md") is False
         finally:
             sub.chmod(0o755)
