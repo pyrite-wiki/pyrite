@@ -563,6 +563,18 @@ def test_kb_schema_and_orient_show_the_declared_mappings(tmp_path):
     assert rest["type_mappings"] == expected
 
 
+def test_kb_schema_shows_the_mappings_when_the_kb_declares_core_types(tmp_path):
+    """The journalism preset declares `person` and `organization` (core types):
+    the schema export still reads the KB's kb_type for its mappings."""
+    kb_yaml = (
+        "name: inv\ntypes:\n  person:\n    description: A person\n"
+        "  investigation_event:\n    description: An event\n"
+    )
+    env = _kb_env(tmp_path, "inv", "journalism-investigation", kb_yaml)
+    expected = {"event": "investigation_event", "document": "document_source"}
+    assert _mcp(env, "kb_schema", {"kb_name": "inv"})["type_mappings"] == expected
+
+
 def test_kb_schema_shows_no_mapping_in_a_software_kb(tmp_path):
     env = _kb_env(tmp_path, "sw", "software", SOFTWARE_KB_YAML)
     assert _mcp(env, "kb_schema", {"kb_name": "sw"})["type_mappings"] == {}

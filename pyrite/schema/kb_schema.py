@@ -222,11 +222,11 @@ class KBSchema:
             }
             # Apply KB customizations
             if type_name in self.types:
-                kb_type = self.types[type_name]
-                if kb_type.required != ["title"]:
-                    type_info["required"] = kb_type.required
-                if kb_type.optional:
-                    type_info["optional"] = kb_type.optional
+                declared_type = self.types[type_name]
+                if declared_type.required != ["title"]:
+                    type_info["required"] = declared_type.required
+                if declared_type.optional:
+                    type_info["optional"] = declared_type.optional
 
             # Include resolved type metadata
             metadata = resolve_type_metadata(type_name, self)
