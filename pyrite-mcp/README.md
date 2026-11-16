@@ -10,7 +10,7 @@ Provides a lightweight package for running the Pyrite MCP server without the ful
 same way the [main README](../README.md) installs Pyrite:
 
 ```bash
-pip install "pyrite-mcp @ git+https://github.com/pyrite-wiki/pyrite@v0.26.0#subdirectory=pyrite-mcp"
+pip install "pyrite-mcp @ git+https://github.com/pyrite-wiki/pyrite@v0.26.3#subdirectory=pyrite-mcp"
 ```
 
 ## Usage
