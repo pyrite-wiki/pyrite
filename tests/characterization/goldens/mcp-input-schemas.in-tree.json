@@ -1867,10 +1867,12 @@
           },
           "limit": {
             "description": "Maximum tags to return (default 100)",
+            "minimum": 1,
             "type": "integer"
           },
           "offset": {
             "description": "Pagination offset (default 0)",
+            "minimum": 0,
             "type": "integer"
           },
           "prefix": {
@@ -2061,7 +2063,7 @@
       "inputSchema": {
         "properties": {
           "author_id": {
-            "description": "Author user ID",
+            "description": "Author: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "body": {
@@ -2098,8 +2100,7 @@
         "required": [
           "kb_name",
           "title",
-          "body",
-          "author_id"
+          "body"
         ],
         "type": "object"
       }
@@ -2165,7 +2166,7 @@
             "type": "string"
           },
           "user_id": {
-            "description": "Voter user ID",
+            "description": "Voter: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "value": {
@@ -2179,7 +2180,6 @@
         },
         "required": [
           "entry_id",
-          "user_id",
           "value"
         ],
         "type": "object"
@@ -2346,7 +2346,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Who is claiming the item",
+            "description": "Who is claiming the item: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "item_id": {
@@ -2359,8 +2359,7 @@
           }
         },
         "required": [
-          "item_id",
-          "assignee"
+          "item_id"
         ],
         "type": "object"
       }
@@ -2775,14 +2774,13 @@
             "type": "string"
           },
           "reviewer": {
-            "description": "Who is reviewing",
+            "description": "Who is reviewing: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           }
         },
         "required": [
           "item_id",
-          "outcome",
-          "reviewer"
+          "outcome"
         ],
         "type": "object"
       }
@@ -3007,7 +3005,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "description": "Who claims the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
           "kb_name": {
@@ -3021,8 +3019,7 @@
         },
         "required": [
           "task_id",
-          "kb_name",
-          "assignee"
+          "kb_name"
         ],
         "type": "object"
       }
@@ -3035,7 +3032,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "description": "Assignee, optional; over a signed-in session it must be you (leave it out; any other value is refused) (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
           "body": {
@@ -3116,6 +3113,7 @@
             "items": {
               "properties": {
                 "assignee": {
+                  "description": "Optional; over a signed-in session it must be you",
                   "type": "string"
                 },
                 "body": {
@@ -3179,7 +3177,8 @@
               "blocked",
               "review",
               "done",
-              "failed"
+              "failed",
+              "cancelled"
             ],
             "type": "string"
           }
@@ -3238,7 +3237,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "New assignee",
+            "description": "New assignee; over a signed-in session it must be you (leave it out; any other value is refused); empty clears it",
             "type": "string"
           },
           "kb_name": {
@@ -3260,7 +3259,8 @@
               "blocked",
               "review",
               "done",
-              "failed"
+              "failed",
+              "cancelled"
             ],
             "type": "string"
           },
@@ -3423,13 +3423,12 @@
             "type": "string"
           },
           "reviewer_id": {
-            "description": "Reviewer user ID",
+            "description": "Reviewer: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           }
         },
         "required": [
           "entry_id",
-          "reviewer_id",
           "action"
         ],
         "type": "object"
@@ -4529,10 +4528,12 @@
           },
           "limit": {
             "description": "Maximum tags to return (default 100)",
+            "minimum": 1,
             "type": "integer"
           },
           "offset": {
             "description": "Pagination offset (default 0)",
+            "minimum": 0,
             "type": "integer"
           },
           "prefix": {
@@ -5163,7 +5164,8 @@
               "blocked",
               "review",
               "done",
-              "failed"
+              "failed",
+              "cancelled"
             ],
             "type": "string"
           }
@@ -6971,10 +6973,12 @@
           },
           "limit": {
             "description": "Maximum tags to return (default 100)",
+            "minimum": 1,
             "type": "integer"
           },
           "offset": {
             "description": "Pagination offset (default 0)",
+            "minimum": 0,
             "type": "integer"
           },
           "prefix": {
@@ -7165,7 +7169,7 @@
       "inputSchema": {
         "properties": {
           "author_id": {
-            "description": "Author user ID",
+            "description": "Author: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "body": {
@@ -7202,8 +7206,7 @@
         "required": [
           "kb_name",
           "title",
-          "body",
-          "author_id"
+          "body"
         ],
         "type": "object"
       }
@@ -7269,7 +7272,7 @@
             "type": "string"
           },
           "user_id": {
-            "description": "Voter user ID",
+            "description": "Voter: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "value": {
@@ -7283,7 +7286,6 @@
         },
         "required": [
           "entry_id",
-          "user_id",
           "value"
         ],
         "type": "object"
@@ -7450,7 +7452,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Who is claiming the item",
+            "description": "Who is claiming the item: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "item_id": {
@@ -7463,8 +7465,7 @@
           }
         },
         "required": [
-          "item_id",
-          "assignee"
+          "item_id"
         ],
         "type": "object"
       }
@@ -7879,14 +7880,13 @@
             "type": "string"
           },
           "reviewer": {
-            "description": "Who is reviewing",
+            "description": "Who is reviewing: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           }
         },
         "required": [
           "item_id",
-          "outcome",
-          "reviewer"
+          "outcome"
         ],
         "type": "object"
       }
@@ -8111,7 +8111,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "description": "Who claims the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
           "kb_name": {
@@ -8125,8 +8125,7 @@
         },
         "required": [
           "task_id",
-          "kb_name",
-          "assignee"
+          "kb_name"
         ],
         "type": "object"
       }
@@ -8139,7 +8138,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "description": "Assignee, optional; over a signed-in session it must be you (leave it out; any other value is refused) (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
           "body": {
@@ -8220,6 +8219,7 @@
             "items": {
               "properties": {
                 "assignee": {
+                  "description": "Optional; over a signed-in session it must be you",
                   "type": "string"
                 },
                 "body": {
@@ -8283,7 +8283,8 @@
               "blocked",
               "review",
               "done",
-              "failed"
+              "failed",
+              "cancelled"
             ],
             "type": "string"
           }
@@ -8342,7 +8343,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "New assignee",
+            "description": "New assignee; over a signed-in session it must be you (leave it out; any other value is refused); empty clears it",
             "type": "string"
           },
           "kb_name": {
@@ -8364,7 +8365,8 @@
               "blocked",
               "review",
               "done",
-              "failed"
+              "failed",
+              "cancelled"
             ],
             "type": "string"
           },
@@ -8494,13 +8496,12 @@
             "type": "string"
           },
           "reviewer_id": {
-            "description": "Reviewer user ID",
+            "description": "Reviewer: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           }
         },
         "required": [
           "entry_id",
-          "reviewer_id",
           "action"
         ],
         "type": "object"

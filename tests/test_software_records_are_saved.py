@@ -93,7 +93,10 @@ def test_a_refused_log_does_not_report_creation_or_change_the_schema(
         result = world.mcp()._dispatch_tool(
             "sw_log", {"kb_name": "project", "item_id": "item", "summary": "Notes"}
         )
-        assert result.get("created") is False, result
+        # A read-only KB is refused at the dispatcher, before the handler
+        # could report anything; the handler's own refusal
+        # says created: False.
+        assert result.get("created") in (False, None), result
         assert result["error_code"] == code, result
         if mode == "legacy":
             assert "work_log" in result["suggestion"] and "types:" in result["suggestion"]

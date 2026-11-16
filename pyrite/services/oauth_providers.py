@@ -9,7 +9,9 @@ from dataclasses import dataclass, field
 from typing import Protocol
 from urllib.parse import urlencode
 
-import httpx
+import httpx  # noqa: F401 (the module this provider talks through)
+
+from ..utils.egress import github_async_client
 
 
 @dataclass
@@ -58,9 +60,11 @@ class GitHubOAuthProvider:
     API_BASE = "https://api.github.com"
     SCOPES = "read:user read:org"
 
-    def __init__(self, client_id: str, client_secret: str):
+    def __init__(self, client_id: str, client_secret: str, proxy: str | None = None):
         self.client_id = client_id
         self.client_secret = client_secret
+        #: The operator's ``git_proxy`` (``egress.github_async_client``).
+        self.proxy = proxy
 
     def get_authorize_url(self, redirect_uri: str, state: str) -> str:
         params = {
@@ -72,7 +76,7 @@ class GitHubOAuthProvider:
         return f"{self.AUTHORIZE_URL}?{urlencode(params)}"
 
     async def exchange_code(self, code: str, redirect_uri: str) -> OAuthToken:
-        async with httpx.AsyncClient() as client:
+        async with github_async_client(proxy=self.proxy) as client:
             resp = await client.post(
                 self.TOKEN_URL,
                 data={
@@ -101,7 +105,7 @@ class GitHubOAuthProvider:
             "Accept": "application/json",
         }
 
-        async with httpx.AsyncClient() as client:
+        async with github_async_client(proxy=self.proxy) as client:
             # Fetch user info
             user_resp = await client.get(f"{self.API_BASE}/user", headers=headers)
             user_resp.raise_for_status()

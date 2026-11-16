@@ -265,13 +265,12 @@ class TypeSchema:
         """
         if not self.file_pattern:
             return None
-        from ..exceptions import ValidationError
+        from ..exceptions import ValidationError, outside_text
         from ..schema import generate_entry_id
 
         fixed = {
             "id": entry.id,
             "slug": entry.id,
-            "date": getattr(entry, "date", "") or "",
             "title": generate_entry_id(entry.title),
             "type": entry.entry_type,
         }
@@ -298,8 +297,30 @@ class TypeSchema:
         for _literal, field_name, _format_spec, conversion in Formatter().parse(self.file_pattern):
             if field_name is None:
                 continue
-            if field_name in fixed:
-                values[field_name] = fixed[field_name]
+            if field_name in fixed or field_name == "date":
+                if field_name == "date":
+                    # `date` is a dataclass field on typed entries but lives
+                    # in metadata on kb.yaml-declared ones (GenericEntry has
+                    # no date attribute), so resolve it like any other
+                    # placeholder instead of reading one location (#1467 --
+                    # a kb.yaml-only type formatted an empty `{date}` into
+                    # the filename).
+                    value = getattr(entry, "date", None)
+                    if _is_missing(value):
+                        value = meta.get("date")
+                    if _is_missing(value):
+                        return None
+                else:
+                    # The fixed placeholders carry the entry's identity
+                    # verbatim and do NOT go through the missing-value
+                    # fallback: an id of `..` is not an ordinarily-absent
+                    # field, it is a traversal attempt the `..`-component
+                    # check below must see and refuse. Routing it through
+                    # `_is_missing` (it starts with `.`) swallowed it into
+                    # a `None` fallback and broke the pre-existing
+                    # test_a_resolved_filename_of_exactly_dotdot_is_refused.
+                    value = fixed[field_name]
+                values[field_name] = value
                 continue
             if not self._PLACEHOLDER_NAME_RE.match(field_name):
                 raise ValidationError(
@@ -345,7 +366,7 @@ class TypeSchema:
         except (ValueError, TypeError, IndexError, KeyError) as e:
             raise ValidationError(
                 f"file_pattern {self.file_pattern!r} could not be resolved for entry "
-                f"{entry.id!r}: {e}"
+                f"{entry.id!r}: {outside_text(e)}"
             ) from e
 
         if "\x00" in result:

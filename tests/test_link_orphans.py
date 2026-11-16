@@ -231,3 +231,36 @@ class TestOrphansCLI:
             assert "fts-orphan-concept" in orphan_ids
         finally:
             orphan_env["db"].close = orig_close
+
+    def _invoke_orphans(self, orphan_env, monkeypatch, *args):
+        monkeypatch.setattr(
+            "pyrite.cli.link_commands.get_config_and_db",
+            lambda: (orphan_env["config"], orphan_env["db"]),
+        )
+        # Prevent db.close() from being called by the function
+        orphan_env["db"].close = lambda: None
+        return runner.invoke(app, ["links", "orphans", "--kb", "kb-a", "--format", "json", *args])
+
+    @pytest.mark.parametrize("bad_limit", ["0", "-1"])
+    def test_cli_orphans_limit_below_one_is_usage_error(self, orphan_env, monkeypatch, bad_limit):
+        """#1456: --limit 0 reported no orphans and -1 dropped the last one."""
+        orig_close = orphan_env["db"].close
+        try:
+            result = self._invoke_orphans(orphan_env, monkeypatch, "--limit", bad_limit)
+            assert result.exit_code == 2
+            assert "Invalid value for '--limit'" in result.output
+        finally:
+            orphan_env["db"].close = orig_close
+
+    # The fixture has three orphans in kb-a: a limit above that returns them all.
+    @pytest.mark.parametrize(("limit", "expected"), [("1", 1), ("3", 3), ("20", 3)])
+    def test_cli_orphans_limit_in_range(self, orphan_env, monkeypatch, limit, expected):
+        orig_close = orphan_env["db"].close
+        try:
+            result = self._invoke_orphans(orphan_env, monkeypatch, "--limit", limit)
+            assert result.exit_code == 0
+            data = json.loads(result.output)
+            assert data["count"] == expected
+            assert len(data["orphans"]) == expected
+        finally:
+            orphan_env["db"].close = orig_close

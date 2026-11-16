@@ -70,8 +70,7 @@ pyrite-backup-*.db
 /*.gif
 /*.bmp
 
-# Lock files (uv, pip-tools)
-uv.lock
+# Lock files (pip-tools). uv.lock IS committed: it is the dependency lock (#1357).
 *.pip-lock
 
 # Benchmark output

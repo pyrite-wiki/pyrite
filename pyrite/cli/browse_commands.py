@@ -47,8 +47,8 @@ def register_browse_commands(app: typer.Typer) -> None:
             help="Sort column: title, updated_at, created_at, entry_type",
         ),
         sort_order: str = typer.Option("desc", "--sort-order", help="Sort direction: asc, desc"),
-        limit: int = typer.Option(50, "--limit", "-n", help="Max entries (max 200)"),
-        offset: int = typer.Option(0, "--offset", help="Pagination offset"),
+        limit: int = typer.Option(50, "--limit", "-n", min=0, help="Max entries (max 200)"),
+        offset: int = typer.Option(0, "--offset", min=0, help="Pagination offset"),
         fields: str = typer.Option(None, "--fields", help="Comma-separated fields to return"),
         output_format: str = typer.Option(
             "json",
@@ -207,7 +207,11 @@ def register_browse_commands(app: typer.Typer) -> None:
             help="full (default) or brief. brief omits the write-side schema blocks.",
         ),
         overview_limit: int = typer.Option(
-            50, "--limit", help="KBs per no-name overview page (maximum 100)."
+            50,
+            "--limit",
+            min=1,
+            max=100,
+            help="KBs per no-name overview page (maximum 100).",
         ),
         overview_offset: int = typer.Option(
             0, "--offset", min=0, help="KB offset for a no-name overview page."
@@ -362,7 +366,7 @@ def register_browse_commands(app: typer.Typer) -> None:
     def recent_entries(
         kb_name: str | None = typer.Option(None, "--kb", "-k", help="Filter by KB"),
         entry_type: str | None = typer.Option(None, "--type", "-t", help="Filter by entry type"),
-        limit: int = typer.Option(20, "--limit", "-n", help="Max entries"),
+        limit: int = typer.Option(20, "--limit", "-n", min=0, help="Max entries"),
         since: str = typer.Option(
             None,
             "--since",
@@ -447,8 +451,10 @@ def register_browse_commands(app: typer.Typer) -> None:
         kb_name: str = typer.Option(None, "--kb", "-k", help="Filter to a specific knowledge base"),
         date_from: str = typer.Option(None, "--from", help="Start date (YYYY-MM-DD)"),
         date_to: str = typer.Option(None, "--to", help="End date (YYYY-MM-DD)"),
-        min_importance: int = typer.Option(1, "--min-importance", help="Minimum importance (1-10)"),
-        limit: int = typer.Option(50, "--limit", "-n", help="Max results"),
+        min_importance: int = typer.Option(
+            1, "--min-importance", min=1, max=10, help="Minimum importance (1-10)"
+        ),
+        limit: int = typer.Option(50, "--limit", "-n", min=1, max=500, help="Max results (1-500)"),
         sort: str = typer.Option(
             "desc", "--sort", "-s", help="Sort order: asc or desc (default: desc)"
         ),
@@ -499,7 +505,7 @@ def register_browse_commands(app: typer.Typer) -> None:
     def tags_cmd(
         kb_name: str = typer.Option(None, "--kb", "-k", help="Filter by KB"),
         prefix: str = typer.Option(None, "--prefix", "-p", help="Filter tags by prefix"),
-        limit: int = typer.Option(100, "--limit", "-n", help="Max tags to show"),
+        limit: int = typer.Option(100, "--limit", "-n", min=1, help="Max tags to show"),
         output_format: str = typer.Option(
             "json",
             "--format",

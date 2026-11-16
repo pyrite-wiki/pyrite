@@ -5,8 +5,9 @@ from collections.abc import Callable
 from datetime import UTC
 from typing import Any, ClassVar
 
-from pyrite.exceptions import PyriteError, SchemaViolationError, public_text
+from pyrite.exceptions import PyriteError, SchemaViolationError, public_text, refusal_fields
 from pyrite.plugins.capabilities import Capability
+from pyrite.plugins.identity import CALLER, PERSON_ARGUMENTS
 from pyrite.plugins.scoping import kb_scope_clause
 
 from .adr_listing import adr_relations, adr_sort_key
@@ -517,6 +518,7 @@ class SoftwareKBPlugin:
                     "required": ["title"],
                 },
                 "handler": self._mcp_create_adr,
+                "default_kb": self._default_adr_kb,
             }
             tools["sw_claim"] = {
                 "description": "Claim a backlog item: transition to in_progress and set assignee (atomic CAS)",
@@ -525,12 +527,16 @@ class SoftwareKBPlugin:
                     "properties": {
                         "item_id": {"type": "string", "description": "Backlog item ID"},
                         "kb_name": {"type": "string", "description": "KB name"},
-                        "assignee": {"type": "string", "description": "Who is claiming the item"},
+                        "assignee": {
+                            "type": "string",
+                            "description": "Who is claiming the item: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
+                        },
                     },
-                    "required": ["item_id", "kb_name", "assignee"],
+                    "required": ["item_id", "kb_name"],
                 },
                 "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_claim,
+                PERSON_ARGUMENTS: {"assignee": CALLER},
             }
             tools["sw_review"] = {
                 "description": "Record review outcome for a backlog item in review status",
@@ -545,12 +551,16 @@ class SoftwareKBPlugin:
                             "description": "Review outcome",
                         },
                         "feedback": {"type": "string", "description": "Review notes/feedback"},
-                        "reviewer": {"type": "string", "description": "Who is reviewing"},
+                        "reviewer": {
+                            "type": "string",
+                            "description": "Who is reviewing: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
+                        },
                     },
-                    "required": ["item_id", "kb_name", "outcome", "reviewer"],
+                    "required": ["item_id", "kb_name", "outcome"],
                 },
                 "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_review,
+                PERSON_ARGUMENTS: {"reviewer": CALLER},
             }
             tools["sw_submit"] = {
                 "description": "Submit an in-progress item for review",
@@ -1062,7 +1072,7 @@ class SoftwareKBPlugin:
                     if link.get("relation") == "has_subtask":
                         epic_subtask_ids.add(link["id"])
                 for link in db.get_backlinks(epic_filter, kb_name, readable_kbs=readable_kbs):
-                    if link.get("relation") == "subtask_of":
+                    if link.get("relation") == "has_subtask":
                         epic_subtask_ids.add(link["id"])
 
             query = "SELECT * FROM entry WHERE entry_type = 'backlog_item'"
@@ -1176,14 +1186,22 @@ class SoftwareKBPlugin:
         item_to_epic: dict[str, str] = {}
         epic_titles: dict[str, str] = {}
         for item in items:
-            for link in db.get_outlinks(
-                item["id"], item.get("kb_name", kb_name), readable_kbs=readable_kbs
+            for links in (
+                db.get_outlinks(
+                    item["id"], item.get("kb_name", kb_name), readable_kbs=readable_kbs
+                ),
+                db.get_backlinks(
+                    item["id"], item.get("kb_name", kb_name), readable_kbs=readable_kbs
+                ),
             ):
-                if link.get("relation") == "subtask_of":
-                    item_to_epic[item["id"]] = link["id"]
-                    if link["id"] not in epic_titles:
-                        # `or`: a target with no entry row has the key, as None.
-                        epic_titles[link["id"]] = link.get("title") or link["id"]
+                for link in links:
+                    if link.get("relation") == "subtask_of":
+                        item_to_epic[item["id"]] = link["id"]
+                        if link["id"] not in epic_titles:
+                            # `or`: a target with no entry row has the key, as None.
+                            epic_titles[link["id"]] = link.get("title") or link["id"]
+                        break
+                if item["id"] in item_to_epic:
                     break
 
         # Group items
@@ -1766,6 +1784,17 @@ class SoftwareKBPlugin:
             if should_close:
                 db.close()
 
+    def _default_adr_kb(self, args: dict[str, Any], readable_kbs: set[str] | None) -> str | None:
+        """The KB ``sw_create_adr`` writes when the call names none: the one
+        ADR KB the caller may read (``resolve_adr_kb``), or None when there is
+        no single one. Asked by the MCP dispatcher before its checks (the
+        ``default_kb`` declaration), so the handler's ``kb_name``
+        is always a KB those checks ran on."""
+        from .adr_listing import resolve_adr_kb
+
+        kb_conf = resolve_adr_kb(self._get_config(), None, readable_kbs=readable_kbs)
+        return kb_conf.name if kb_conf is not None else None
+
     def _mcp_create_adr(
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
     ) -> dict[str, Any]:
@@ -1825,7 +1854,12 @@ class SoftwareKBPlugin:
                 "deciders": args.get("deciders", []),
             }
         except PyriteError as exc:
-            return {"created": False, "error": _safe_error(exc), "error_code": exc.error_code}
+            return {
+                "created": False,
+                "error": _safe_error(exc),
+                "error_code": exc.error_code,
+                **refusal_fields(exc),
+            }
         finally:
             if should_close:
                 db.close()
@@ -1935,79 +1969,63 @@ class SoftwareKBPlugin:
     ) -> dict[str, Any]:
         """Return dependency info for a backlog item.
 
-        Returns dict with blocked_by, blocks, and is_blocked. Within
-        `readable_kbs` (`None`: unscoped): a blocker the caller cannot read is
-        reported as a missing one is -- no title, status unknown, unresolved
-        -- and an item it cannot read that this one blocks is left out.
+        The storage layer reports a relation from the perspective of the
+        entry being queried for both outlinks and backlinks. Keep the caller's
+        read scope on each lookup: an unreadable blocker is reported without a
+        title, with unknown status, and remains unresolved; an unreadable item
+        this one blocks is omitted.
         """
         import json
 
-        blocked_by: list[dict[str, Any]] = []
-        blocks: list[dict[str, Any]] = []
+        dependencies: dict[str, dict[tuple[str, str], dict[str, Any]]] = {
+            "blocked_by": {},
+            "blocks": {},
+        }
 
-        # Outlinks with relation "blocked_by" → this item is blocked by those targets
-        for link in db.get_outlinks(item_id, kb_name, readable_kbs=readable_kbs):
-            if link.get("relation") != "blocked_by":
-                continue
-            dep_entry = self._readable_entry(
-                db, link["id"], link.get("kb_name", kb_name), readable_kbs=readable_kbs
-            )
-            if dep_entry:
-                meta = {}
-                if dep_entry.get("metadata"):
-                    try:
-                        meta = (
-                            json.loads(dep_entry["metadata"])
-                            if isinstance(dep_entry["metadata"], str)
-                            else dep_entry["metadata"]
-                        )
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                dep_status = dep_entry.get("status") or meta.get("status", "proposed")
-            else:
-                dep_status = "unknown"
-            blocked_by.append(
-                {
-                    "id": link["id"],
-                    "title": link.get("title", ""),
-                    "status": dep_status,
-                    "resolved": dep_status in self._RESOLVED_STATUSES,
-                }
-            )
+        for links in (
+            db.get_outlinks(item_id, kb_name, readable_kbs=readable_kbs),
+            db.get_backlinks(item_id, kb_name, readable_kbs=readable_kbs),
+        ):
+            for link in links:
+                relation = link.get("relation")
+                if relation not in dependencies:
+                    continue
 
-        # Backlinks with relation "blocked_by" → the source item is blocked by *this* item,
-        # meaning this item blocks that source.
-        for link in db.get_backlinks(item_id, kb_name, readable_kbs=readable_kbs):
-            if link.get("relation") != "blocked_by":
-                continue
-            dep_entry = self._readable_entry(
-                db, link["id"], link.get("kb_name", kb_name), readable_kbs=readable_kbs
-            )
-            if dep_entry:
-                meta = {}
-                if dep_entry.get("metadata"):
-                    try:
-                        meta = (
-                            json.loads(dep_entry["metadata"])
-                            if isinstance(dep_entry["metadata"], str)
-                            else dep_entry["metadata"]
-                        )
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                dep_status = dep_entry.get("status") or meta.get("status", "proposed")
-            else:
-                dep_status = "unknown"
-            blocks.append(
-                {
-                    "id": link["id"],
+                dep_kb = link.get("kb_name", kb_name)
+                dep_id = link["id"]
+                key = (dep_kb, dep_id)
+                if key in dependencies[relation]:
+                    continue
+
+                dep_entry = self._readable_entry(db, dep_id, dep_kb, readable_kbs=readable_kbs)
+                if dep_entry:
+                    meta = {}
+                    if dep_entry.get("metadata"):
+                        try:
+                            meta = (
+                                json.loads(dep_entry["metadata"])
+                                if isinstance(dep_entry["metadata"], str)
+                                else dep_entry["metadata"]
+                            )
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    dep_status = dep_entry.get("status") or meta.get("status", "proposed")
+                else:
+                    dep_status = "unknown"
+
+                dependency = {
+                    "id": dep_id,
                     "title": link.get("title", ""),
                     "status": dep_status,
                 }
-            )
+                if relation == "blocked_by":
+                    dependency["resolved"] = dep_status in self._RESOLVED_STATUSES
+                dependencies[relation][key] = dependency
 
+        blocked_by = list(dependencies["blocked_by"].values())
         return {
             "blocked_by": blocked_by,
-            "blocks": blocks,
+            "blocks": list(dependencies["blocks"].values()),
             "is_blocked": any(not dep["resolved"] for dep in blocked_by),
         }
 
@@ -2664,17 +2682,21 @@ class SoftwareKBPlugin:
                 db.close()
 
     def _mcp_claim(
-        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+        self,
+        args: dict[str, Any],
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> dict[str, Any]:
-        """Claim a backlog item: transition to in_progress and set assignee."""
+        """Claim a backlog item: transition to in_progress and set the
+        assignee, a person argument the dispatcher has set from the session."""
         import json
 
         from .workflows import BACKLOG_WORKFLOW, can_transition, get_allowed_transitions
 
+        assignee = args["assignee"]
         db, should_close = self._get_db()
         item_id = args["item_id"]
         kb_name = args["kb_name"]
-        assignee = args["assignee"]
 
         try:
             # Get current entry
@@ -2951,19 +2973,23 @@ class SoftwareKBPlugin:
                 db.close()
 
     def _mcp_review(
-        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+        self,
+        args: dict[str, Any],
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> dict[str, Any]:
-        """Record review outcome for a backlog item in review status."""
+        """Record review outcome for a backlog item in review status. The
+        reviewer is a person argument the dispatcher has set from the session."""
         import json
 
         from .workflows import BACKLOG_WORKFLOW, can_transition, get_allowed_transitions
 
+        reviewer = args["reviewer"]
         db, should_close = self._get_db()
         item_id = args["item_id"]
         kb_name = args["kb_name"]
         outcome = args["outcome"]
         feedback = args.get("feedback")
-        reviewer = args["reviewer"]
 
         try:
             # Get current entry
@@ -3193,7 +3219,12 @@ class SoftwareKBPlugin:
                 "filename": _saved_filename(kb_config, saved),
             }
         except PyriteError as exc:
-            refused = {"created": False, "error": _safe_error(exc), "error_code": exc.error_code}
+            refused = {
+                "created": False,
+                "error": _safe_error(exc),
+                "error_code": exc.error_code,
+                **refusal_fields(exc),
+            }
             if isinstance(exc, SchemaViolationError):
                 schema = kb_config.kb_schema
                 if "work_log" not in schema.types:

@@ -369,7 +369,15 @@ def test_one_failure_in_the_middle_does_not_stop_the_rest(with_model, surface):
     with _model(fake):
         _refused, _code, body = run_surface(surface, with_model, kb=JUDGED, tier=2, entry=None)
     assert [f["entry_id"] for f in body["failed"]] == ["beta"]
-    assert "provider unreachable" in body["failed"][0]["reason"]
+    reason = body["failed"][0]["reason"]
+    assert "the model call failed" in reason
+    if surface.startswith("mcp"):
+        # A network caller (MCP over HTTP; `_dispatch_tool` with no local
+        # binding) never sees the provider's own text (ADR-0052 N3).
+        assert "provider unreachable" not in reason
+        assert "the server log has the details" in reason
+    else:
+        assert "provider unreachable" in reason  # the CLI's operator does
     assert sorted(r["target_entry"] for r in body["results"]) == ["alpha", "gamma"]
     assert _records(with_model, JUDGED, "beta") == []
     for eid in ("alpha", "gamma"):
@@ -727,7 +735,7 @@ def test_every_assess_output_mode_shows_the_task_not_created(no_model, fmt):
     ):
         result = _invoke(no_model, run)
         shown = result.stdout + result.stderr
-        assert "EntryExistsError" in shown, (fmt, run, shown)
+        assert "already exists" in shown, (fmt, run, shown)  # the refusal's own words
 
 
 @needs_permissions

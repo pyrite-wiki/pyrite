@@ -112,13 +112,12 @@ COMPOSITION_ROOTS: dict[tuple[str, str], tuple[int, str]] = {
     ("pyrite/server/mcp_server.py::<module>", "storage"): (1, _MCP_ROOT + " (IndexManager)"),
     (f"{_MCP}.__init__", "PyriteDB"): (1, _MCP_ROOT),
     (f"{_MCP}.__init__", "storage"): (1, _MCP_ROOT),
-    (f"{_MCP}.__init__", ".db"): (7, _MCP_ROOT),
+    (f"{_MCP}.__init__", ".db"): (8, _MCP_ROOT),  # 8th: RepoService for the start scrub
     (f"{_MCP}.close", ".db"): (1, "closes what __init__ opened"),
     # The one place the shared server's index is read: the instance's own, or
     # the call's bound write target (ADR-0044 §1); every service builds on it.
     (f"{_MCP}.db", ".db"): (1, _MCP_ROOT + " (or the call's bound write target)"),
     (f"{_MCP}.db", "db."): (1, _MCP_ROOT + " (or the call's bound write target)"),
-    (f"{_MCP}._get_index_worker", ".db"): (1, _MCP_ROOT),
     (f"{_MCP}._register_plugin_tools", ".db"): (1, _MCP_ROOT + " (the plugins' PluginContext)"),
     (f"{_CTX}::<module>", "PyriteDB"): (1, _CLI_ROOT),
     (f"{_CTX}::<module>", "sqlite3"): (1, _CLI_ROOT + " (sqlite3.Error, caught)"),
@@ -143,7 +142,7 @@ COMPOSITION_ROOTS: dict[tuple[str, str], tuple[int, str]] = {
         "the return annotation of _get_service, the task commands' get_config_and_db wrapper",
     ),
 }
-COMPOSITION_ROOTS_SIZE = 34  # a new root is a design decision: raise it only with one
+COMPOSITION_ROOTS_SIZE = 33  # a new root is a design decision: raise it only with one
 
 # -- Not yet moved: (function, rule) -> (count, why and where it moves) --------
 

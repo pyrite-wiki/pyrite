@@ -21,7 +21,7 @@ from typing import Any
 from sqlalchemy import exc as sa_exc
 
 from ..config import KBConfig, PyriteConfig, load_config
-from ..exceptions import StorageError
+from ..exceptions import EntryValueError, KBNotInConfigError, StorageError, outside_text
 from ..models import Entry
 from ..models.core_types import as_stored_text, id_text
 from ..models.protocols import (
@@ -32,13 +32,25 @@ from ..models.protocols import (
     Statusable,
     Temporal,
 )
-from ..schema.field_aliases import lift_declared_fields, read_metadata, read_view
+from ..schema.field_aliases import (
+    NotAFieldError,
+    class_field_aliases,
+    field_at,
+    lift_declared_fields,
+    read_metadata,
+    read_view,
+)
+from ..utils.kb_files import OUTSIDE_KB_REASON, KBFileOutsideRootError, KBFiles
 from ..utils.metadata import parse_metadata
 from .database import PyriteDB
 from .errors import driver_error, storage_error_from
 from .repository import KBRepository
 
 logger = logging.getLogger(__name__)
+
+#: Why the reconcile skipped a file it would not read: the index holds only
+#: bytes read inside the KB's root (``KBFiles.read_bytes``).
+_OUTSIDE_REASON = OUTSIDE_KB_REASON
 
 # Errors from writing a row that are the database's, not the file's (#1260):
 # ``OperationalError`` is SQLite's class for a missing column or table, a
@@ -124,16 +136,21 @@ def content_hash(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def _hash_file(file_path: Path) -> str | None:
+def _hash_file(file_path: Path, root: Path) -> str | None:
     """``content_hash`` of a file, or None if it can't be read.
 
     Used for content-based staleness detection: mtime alone misses
-    same-second edits and coarse-resolution filesystems.
+    same-second edits and coarse-resolution filesystems. Read inside the KB
+    at ``root`` (``KBFiles.read_bytes``), as the row's bytes were: the hash a
+    row records, and a read returns, is never of a file outside the KB (a
+    link out, swapped in after the read, or a file with more than one hard
+    link); such a file has no hash here, None.
     """
     try:
-        return content_hash(file_path.read_bytes())
-    except OSError:
+        raw = KBFiles(root).read_bytes(file_path)
+    except (OSError, KBFileOutsideRootError):
         return None
+    return None if raw is None else content_hash(raw)
 
 
 #: The entry columns of a read, in the order the backend's row puts them
@@ -435,11 +452,14 @@ def unmodellable_files(kb: KBConfig, paths: Iterable[Path] | None = None) -> lis
     repo = KBRepository(kb)
     found: list[dict[str, Any]] = []
     for path in sorted(repo.list_files()) if paths is None else paths:
+        # Read inside the KB (``_read_inside``): the row names a key and a
+        # line, so a file that is not the KB's (a link out, a hard link) is
+        # skipped, as the reconcile skips it, never described.
         try:
             if not stat_module.S_ISREG(path.stat().st_mode):
                 continue
-            text = path.read_bytes().decode("utf-8")
-        except (OSError, UnicodeDecodeError):
+            text = repo._read_inside(path).decode("utf-8")
+        except (OSError, UnicodeDecodeError, KBFileOutsideRootError):
             continue
         try:
             why = unmodellable_in_text(text)
@@ -449,11 +469,35 @@ def unmodellable_files(kb: KBConfig, paths: Iterable[Path] | None = None) -> lis
         if why is None:
             continue
         reason, line = why
-        entry_id = repo.read_id(path)[0] or path.stem
+        # From the text read inside above, never a second (raw) read of the
+        # path, which may name something else by now.
+        entry_id = repo.read_id(path, text)[0] or path.stem
         found.append(
             {"kb": kb.name, "id": entry_id, "path": str(path), "line": line, "reason": reason}
         )
     return found
+
+
+def _leave_out(result: dict[str, Any], cls: type, entry_type: str, key: str) -> None:
+    """Drop the field a refused file key denotes from a single-entry read
+    (``read_fields(refused=)``): its own name and every alias of it, at the
+    top level and in ``metadata``; for the key ``metadata`` itself (not a
+    field: ``field_at`` says so), the whole ``metadata``."""
+    try:
+        field, _rest = field_at(cls, entry_type, key)
+    except NotAFieldError:
+        result.pop("metadata", None)
+        return
+    except ValueError:
+        return
+    names = {field} | {
+        alias for alias, target in class_field_aliases(cls, entry_type).items() if target == field
+    }
+    metadata = result.get("metadata")
+    for name in names:
+        result.pop(name, None)
+        if isinstance(metadata, dict):
+            metadata.pop(name, None)
 
 
 class IndexManager:
@@ -495,6 +539,13 @@ class IndexManager:
             return link
         return {**link, "kb": self._link_kb(written, kb_name), "prefix": written}
 
+    def _root_of(self, kb_name: str, file_path: Path) -> Path:
+        """The root ``file_path`` is read inside: its KB's, or, for a KB the
+        config does not name, the file's own folder (still one name, and no
+        link out of that folder)."""
+        kb = self.config.get_kb(kb_name)
+        return kb.path if kb is not None else file_path.parent
+
     def _entry_to_dict(
         self,
         entry: Entry,
@@ -523,7 +574,8 @@ class IndexManager:
             "body": entry.body,
             "summary": entry.summary,
             "file_path": str(file_path),
-            "content_hash": content_hash or _hash_file(file_path),
+            "content_hash": content_hash
+            or _hash_file(file_path, self._root_of(kb_name, file_path)),
             "file_mtime_ns": stat.st_mtime_ns if stat else None,
             "file_size": stat.st_size if stat else None,
             # A tag is a name: bound as the index's one text for it
@@ -776,7 +828,7 @@ class IndexManager:
         refs = []
         try:
             kb_config = self.config.get_kb(kb_name)
-            if kb_config and kb_config.kb_yaml_path.exists():
+            if kb_config and kb_config.kb_yaml_present:
                 schema = kb_config.kb_schema
                 entry_type_name = entry.entry_type
                 type_schema = schema.types.get(entry_type_name)
@@ -814,7 +866,7 @@ class IndexManager:
         edge_endpoints = []
         try:
             kb_config = self.config.get_kb(kb_name)
-            if kb_config and kb_config.kb_yaml_path.exists():
+            if kb_config and kb_config.kb_yaml_present:
                 schema = kb_config.kb_schema
                 entry_type_name = entry.entry_type
                 type_schema = schema.types.get(entry_type_name)
@@ -859,8 +911,16 @@ class IndexManager:
         *,
         content_hash: str,
         row: dict[str, Any] | None,
+        refused: Iterable[str] = (),
     ) -> dict[str, Any]:
         """A single-entry read of ``entry``, parsed from ``file_path`` just now.
+
+        ``refused``: the file keys the declared type's loader refused
+        (``KBRepository.load_for_read``; ADR-0042 decisions 8a and 9). The
+        model holds the type's default for each (``rank: 0``, ``status:
+        open``), which is not the file's value, so each is left out of the
+        read: the field it denotes, at every spelling, and the whole
+        ``metadata`` when that key itself was refused.
 
         The same keys, in the same order, with the same values a row indexed
         from this parse would return (``PyriteDB.get_entry``): the entry is
@@ -931,6 +991,8 @@ class IndexManager:
         result["sources"] = _read_sources(data["sources"], entry.id, kb_name, row)
         result["links"] = row.get("links", [])
         result["content_hash"] = content_hash
+        for key in refused:
+            _leave_out(result, type(entry), entry.entry_type, key)
         return result
 
     # -----------------------------------------------------------------
@@ -982,30 +1044,47 @@ class IndexManager:
             files.append((rel, file_path))
         files.sort()
 
+        # The index holds only bytes read inside the KB's root: most exports
+        # write from it (REST export to a repo, GET /api/entries/export).
+        # A file that resolves outside the root, or has more than one hard
+        # link, is skipped before its stat can let a known row stand for it,
+        # and the parse reads through the contained read (``KBFiles.read_bytes``
+        # via ``KBRepository._read_inside``), which refuses both again on the
+        # descriptor it reads. tests/test_indexed_bytes_stay_inside_the_kb.py.
+        inside = KBFiles(kb_config.path)
         for rel, file_path in files:
             plan.walked += 1
+            if not inside.contains(file_path):
+                plan.skipped.append({"path": str(file_path), "reason": _OUTSIDE_REASON})
+                logger.warning("Skipping %s: it resolves outside the KB's folder", file_path)
+                continue
             try:
-                # Follow symlinks to preserve existing reads from regular-file targets.
+                # Follow symlinks to preserve existing reads from regular-file
+                # targets inside the KB (a link out was skipped above).
                 file_stat = file_path.stat()
             except OSError as e:
                 # Not "removed while walking": a dangling symlink, a symlink
                 # loop or a folder this process cannot search is listed by the
                 # walk and cannot be read. Health must say so (#1119); sync
                 # already reports it as malformed.
-                error = f"{type(e).__name__}: {e}"
+                logger.warning("Could not stat %s: %s", file_path, e)
+                error = f"{type(e).__name__}: {outside_text(e, already_logged=True)}"
                 plan.malformed.append({"path": str(file_path), "error": error})
                 plan.unreadable[str(file_path)] = error
-                logger.warning("Could not stat %s: %s", file_path, e)
                 continue
             if not stat_module.S_ISREG(file_stat.st_mode):
                 plan.skipped.append({"path": str(file_path), "reason": "not a regular file"})
                 logger.warning("Skipping %s: not a regular file", file_path)
                 continue
+            if file_stat.st_nlink > 1:
+                plan.skipped.append({"path": str(file_path), "reason": _OUTSIDE_REASON})
+                logger.warning("Skipping %s: it has more than one hard link", file_path)
+                continue
             known = path_to_row.get(str(file_path))
             must_read = force is True or (forced is not None and file_path in forced)
             stat_changed = known is None or _file_changed(known[1], file_stat)
             if known and not must_read and not stat_changed and verify:
-                current_hash = _hash_file(file_path)
+                current_hash = _hash_file(file_path, kb_config.path)
                 if current_hash is None:
                     error = (
                         "Could not hash file for verification; keeping the existing indexed entry"
@@ -1021,13 +1100,19 @@ class IndexManager:
             else:
                 try:
                     entry = repo.load_entry_from_file(file_path)
+                except KBFileOutsideRootError:
+                    # Became a link out, or gained a name, since the checks above.
+                    plan.skipped.append({"path": str(file_path), "reason": _OUTSIDE_REASON})
+                    logger.warning("Skipping %s: it resolves outside the KB's folder", file_path)
+                    continue
                 except Exception as e:
                     # An unparseable file is content drift, not a Pyrite bug:
                     # reported in the result, one log line, and it holds no id.
-                    plan.malformed.append({"path": str(file_path), "error": str(e)})
-                    if isinstance(e, OSError | UnicodeError):
-                        plan.unreadable[str(file_path)] = f"{type(e).__name__}: {e}"
                     logger.warning("Could not parse %s: %s", file_path, e)
+                    why = outside_text(e, already_logged=True)
+                    plan.malformed.append({"path": str(file_path), "error": why})
+                    if isinstance(e, OSError | UnicodeError):
+                        plan.unreadable[str(file_path)] = f"{type(e).__name__}: {why}"
                     continue
                 claim = _Claim(rel, file_path, id_text(entry.id), file_stat, entry)
             plan.holders.setdefault(claim.entry_id, []).append(claim)
@@ -1088,7 +1173,9 @@ class IndexManager:
         if not isinstance(force, bool):
             force = {Path(p) for p in force}
 
-        self.db.register_kb(
+        # The row exists for the index's rows to belong to; an existing one is
+        # the operator's and is left as it is.
+        self.db.ensure_kb(
             name=kb_config.name,
             kb_type=kb_config.kb_type,
             path=str(kb_config.path),
@@ -1127,7 +1214,9 @@ class IndexManager:
                     logger.warning("Could not index %s", claim.path, exc_info=True)
                     # First line only: a driver error carries the SQL and
                     # every bound value, the file's body among them.
-                    error = (str(e).splitlines() or [type(e).__name__])[0]
+                    error = (
+                        outside_text(e, already_logged=True).splitlines() or [type(e).__name__]
+                    )[0]
                     results["malformed"].append({"path": str(claim.path), "error": error})
                     unwritable.add(entry_id)
             if progress_callback and done % 10 == 0 and done < total:
@@ -1155,7 +1244,7 @@ class IndexManager:
         results: dict[str, Any],
     ) -> None:
         """Write one winning file's row if the reconcile rule says so."""
-        content_hash = _hash_file(claim.path)
+        content_hash = _hash_file(claim.path, self._root_of(kb_name, claim.path))
         if row is None:
             counter = "added"
         elif row.get("file_path") != str(claim.path) or row.get("content_hash") != content_hash:
@@ -1189,7 +1278,7 @@ class IndexManager:
         """
         kb_config = self.config.get_kb(kb_name)
         if not kb_config:
-            raise ValueError(f"KB '{kb_name}' not found in config")
+            raise KBNotInConfigError(f"KB '{kb_name}' not found in config")
         result = self.reconcile_kb(kb_config, force=True, progress_callback=progress_callback)
         if result["malformed"]:
             logger.warning("%d files could not be parsed", len(result["malformed"]))
@@ -1253,16 +1342,16 @@ class IndexManager:
         try:
             json.dumps(bound.get("metadata") or {}, cls=SafeEncoder)
         except (TypeError, ValueError) as e:
-            raise ValueError(f"metadata cannot be stored as JSON: {e}") from e
+            raise EntryValueError(f"metadata cannot be stored as JSON: {outside_text(e)}") from e
         for key in _SCALAR_COLUMNS:
             value = bound.get(key)
             if not isinstance(value, str | int | float | bool | type(None)):
-                raise ValueError(
+                raise EntryValueError(
                     f"{key} is a {type(value).__name__}, not a value the index can store"
                 )
         for tag in bound.get("tags") or []:
             if not isinstance(tag, str | int | float | bool):
-                raise ValueError(
+                raise EntryValueError(
                     f"a tag is a {type(tag).__name__}, not a value the index can store"
                 )
         return data
@@ -1371,9 +1460,16 @@ class IndexManager:
                 continue
 
             repo = KBRepository(kb)
+            inside = KBFiles(kb.path)
             newest_mtime: datetime | None = None
             for file_path in repo.list_files():
-                mtime = datetime.fromtimestamp(file_path.stat().st_mtime, tz=UTC)
+                # A link out is never indexed; its target's time says nothing.
+                if not inside.contains(file_path):
+                    continue
+                try:
+                    mtime = datetime.fromtimestamp(file_path.stat().st_mtime, tz=UTC)
+                except OSError:
+                    continue
                 if newest_mtime is None or mtime > newest_mtime:
                     newest_mtime = mtime
 
@@ -1515,15 +1611,15 @@ class IndexManager:
         # of the report and leave the rest global.
         kbs = [kb for kb in self.config.all_kbs() if kb_name is None or kb.name == kb_name]
 
+        # Each kb.yaml is loaded once here, never again below: a schema that
+        # fails to load is reported in `schema_errors` and its KB counts as
+        # declaring no types, so health still answers for the broken KB.
+        schemas = self._load_schemas(kbs)
+
         # A KB whose type belonged to an extension Pyrite has deleted (#953):
         # its types are undeclared for a reason the user should be told. The
         # rule is `plugins/removed.py`'s; this report only shows it.
-        from ..plugins.removed import (
-            removed_entry_types_held,
-            removed_extension_for_entry_types,
-            removed_extension_for_kb_type,
-            removed_extension_notice,
-        )
+        from ..plugins.removed import removed_extension_report
 
         for kb in kbs:
             held_types = [
@@ -1534,18 +1630,12 @@ class IndexManager:
                 )
                 if row["entry_type"]
             ]
-            ext = removed_extension_for_kb_type(kb.kb_type) or removed_extension_for_entry_types(
-                held_types
-            )
-            if ext is not None:
+            kb_schema = schemas[kb.name][0]
+            declared = kb_schema.declared_types() if kb_schema else []
+            report = removed_extension_report(kb.name, kb.kb_type, held_types, declared)
+            if report is not None:
                 health["removed_extensions"].append(
-                    {
-                        "kb": kb.name,
-                        "kb_type": kb.kb_type,
-                        "extension": ext.name,
-                        "entry_types": removed_entry_types_held(ext, held_types),
-                        "message": removed_extension_notice(kb.name, kb.kb_type, held_types),
-                    }
+                    {"kb": kb.name, "kb_type": kb.kb_type, **report}
                 )
 
         for kb in kbs:
@@ -1647,7 +1737,7 @@ class IndexManager:
                     )
                 indexed_hash = row.get("content_hash")
                 if indexed_hash:
-                    current_hash = _hash_file(file_path)
+                    current_hash = _hash_file(file_path, kb.path)
                     if current_hash and current_hash != indexed_hash:
                         health["content_changed"].append(
                             {"kb": kb.name, "id": entry_id, "path": str(file_path)}
@@ -1660,7 +1750,9 @@ class IndexManager:
                     continue  # an index-only row has no file to be missing
                 indexed_path = Path(info["file_path"])
                 try:
-                    present = indexed_path.exists()
+                    # The KB's answer: a link out is there (and unreadable)
+                    # whatever it points at, never "missing" for that.
+                    present = KBFiles(kb.path).present(indexed_path)
                 except OSError as e:
                     # A folder this process cannot search (Python 3.13 raises
                     # PermissionError where 3.12 said "absent"): the file may
@@ -1671,7 +1763,7 @@ class IndexManager:
                             {
                                 "kb": kb.name,
                                 "path": str(indexed_path),
-                                "error": f"{type(e).__name__}: {e}",
+                                "error": f"{type(e).__name__}: {outside_text(e)}",
                             }
                         )
                     continue
@@ -1727,15 +1819,10 @@ class IndexManager:
             if self._link_kb(row["written"], row["target_kb"]) != row["target_kb"]
         )
 
-        # Each kb.yaml is loaded once here, never again below: a schema that
-        # fails to load is reported in `schema_errors` and its KB counts as
-        # declaring no types, so health still answers for the broken KB.
-        schemas = self._load_schemas(kbs)
-
         # The schema owns the type vocabulary; an empty declaration is
         # unrestricted, including plugin types and core types.
         for kb in kbs:
-            if not kb.path.exists() or not kb.kb_yaml_path.exists():
+            if not kb.path.exists() or not kb.kb_yaml_present:
                 continue
 
             kb_schema = schemas[kb.name][0]
@@ -1761,7 +1848,7 @@ class IndexManager:
         # compare each entry against its type's `required:` list (default
         # ["title"]) and its `subdirectory:` hint. Skip KBs with no kb.yaml.
         for kb in kbs:
-            if not kb.path.exists() or not kb.kb_yaml_path.exists():
+            if not kb.path.exists() or not kb.kb_yaml_present:
                 continue
             kb_schema = schemas[kb.name][0]
             if not kb_schema or not kb_schema.types:
@@ -1853,13 +1940,13 @@ class IndexManager:
         """
         loaded: dict[str, tuple[Any, str | None]] = {}
         for kb in kbs:
-            if not kb.kb_yaml_path.exists():
+            if not kb.kb_yaml_present:
                 loaded[kb.name] = (None, None)
                 continue
             try:
                 loaded[kb.name] = (kb.kb_schema, None)
             except Exception as exc:
-                loaded[kb.name] = (None, str(exc) or type(exc).__name__)
+                loaded[kb.name] = (None, outside_text(exc) or type(exc).__name__)
         return loaded
 
     def _type_name_drift(
@@ -2202,7 +2289,7 @@ class IndexManager:
 
         kb_config = self.config.get_kb(kb_name)
         if not kb_config:
-            raise ValueError(f"KB '{kb_name}' not found in config")
+            raise KBNotInConfigError(f"KB '{kb_name}' not found in config")
 
         kb_path = kb_config.path
         is_git = git_service.is_git_repo(kb_path)
@@ -2223,7 +2310,7 @@ class IndexManager:
                 if rel_path is None:  # another KB's file in the same repo
                     continue
                 full_path = kb_path / rel_path
-                if full_path.exists() and full_path.suffix == ".md":
+                if KBFiles(kb_path).present(full_path) and full_path.suffix == ".md":
                     force.add(full_path)
 
         attributed = 0

@@ -47,7 +47,10 @@ community needs and feedback.
 | 0.25.7 | The first hour works; the alpha announcement | 2026-10-13 |
 | 0.25.8 | The CLI contract for agents | 2026-10-16 |
 | 0.26.0 | Your files, exactly | 2026-10-22 |
-| 0.26.1 | Search flags, link resolution, cross-KB tools and symlink identity | undated |
+| 0.26.1 | Search flags, link resolution and cross-KB tools | 2026-11-10 |
+| 0.26.2 | A network call borrows nothing of the server account | 2026-11-11 |
+| 0.26.3 | A network call borrows nothing of the server account, continued | 2026-11-16 |
+| 0.26.4 | Symlink identity and note typing; bugs and dependency alerts | 2026-11-19 |
 | 0.27 | One operator, many users | undated |
 | 0.28 | Alpha plugin and API contracts | undated |
 
@@ -72,9 +75,20 @@ milestones carry the issues; this table carries the promise and the gate.
   queued entries pending without consuming attempts when the model cannot
   load (#594). The release also includes cross-KB link and read support
   (#124, #622, #623).
-- **0.26.1.** What is left from the 0.25.9 / 0.26 line: #627, #64, #468 (on
-  the 0.26.1 milestone), #62 and #1262 (the remaining symlink identity/rename
-  case from #637 after the fix in #1249).
+- **0.26.1 (shipped).** What was left from the 0.25.9 / 0.26 line: #627,
+  #64 and #62.
+- **0.26.2 (shipped).** Security fixes: a network call reaches the entries it
+  holds a grant on and nothing else the server account holds (ADR-0052,
+  proposed). Release notes in `CHANGELOG.md`.
+- **0.26.3 (shipped).** Security fixes continuing 0.26.2: network git
+  borrows no credential or configuration of the server account, reads come
+  only from files inside the KB, and parser text is shown only to a caller
+  who may read it (ADR-0052, proposed). Release notes in `CHANGELOG.md`.
+- **0.26.4.** What slipped from 0.26.1: #468 (note entries in a software KB
+  resolve to ADREntry) and #1262 (the duplicate-id half of the symlink case
+  from #637; the rename half went to #811). A short train (maintainer,
+  2026-11-16): also the milestone's bugs, the high Dependabot alerts and the
+  open CodeQL error; what is not done by Thursday moves on.
 - **0.27: one operator, many users.** Design first: the authorization model
   and its executable matrix (#587), the security review (#586), and one
   operator-owned KB registry ([[adr-0039]]; #539, #602, #382).

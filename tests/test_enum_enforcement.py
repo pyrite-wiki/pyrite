@@ -165,7 +165,7 @@ class TestReading:
         assert fs.allowed_values() == ["b"]
 
     def test_the_agent_schema_sees_the_values_list_as_options(self):
-        agent = schema().to_agent_schema()
+        agent = schema().to_agent_schema(kb_type="generic")
         assert agent["types"]["org"]["fields"]["org_type"]["options"] == ["ngo", "company"]
 
 

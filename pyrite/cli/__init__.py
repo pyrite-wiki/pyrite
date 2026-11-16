@@ -104,11 +104,19 @@ class _LazyPluginTyper(typer.Typer):
             # A plugin whose get_cli_commands raised would vanish from `app`;
             # say so on stderr rather than only in a logger nobody listens to
             # (#900).
+            # A refused type mapping (#468) leaves that core type stored as
+            # named: say so too, or the dropped mapping is invisible.
             for plugin, method, exc in registry.aggregate_failures:
                 if method == "get_cli_commands":
                     print(
                         f"pyrite: plugin '{plugin}' CLI commands are unavailable: "
-                        f"{type(exc).__name__}: {exc}",
+                        f"{exc.type_name}: {exc.text(local=True)}",
+                        file=sys.stderr,
+                    )
+                elif method == "get_type_mappings":
+                    print(
+                        f"pyrite: plugin '{plugin}' type mappings refused: "
+                        f"{exc.type_name}: {exc.text(local=True)}",
                         file=sys.stderr,
                     )
             for name, command in commands:
@@ -149,6 +157,7 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def _main(
+    ctx: typer.Context,
     version: bool = typer.Option(
         None,
         "--version",
@@ -170,6 +179,15 @@ def _main(
     ),
 ) -> None:
     # No docstring: `TAGLINE` is the help text.
+    # The CLI is the operator (`services.acting.OPERATOR`), bound explicitly
+    # for the command it runs and released when it returns. A server it
+    # starts unbinds it per request (`api.NobodyActingMiddleware`), and an MCP
+    # call binds its own principal.
+    from ..services.acting import OPERATOR, acting_as, local_process
+
+    ctx.with_resource(acting_as(OPERATOR))
+    # And the call is the local process (`services.acting.is_local_process`).
+    ctx.with_resource(local_process(True))
     return None
 
 
@@ -1052,6 +1070,7 @@ def generate_readme_cmd(
             from ..utils.kb_files import KBFiles
 
             try:
+                kb_config.refuse_writes()  # a read-only KB takes no README either
                 # A README.md that is a link out of the KB is not written through.
                 KBFiles(readme_path.parent).write_bytes(readme_path, readme.encode("utf-8"))
             except PyriteError as e:

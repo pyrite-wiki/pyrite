@@ -11,9 +11,13 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
-  - package-ecosystem: pip
+  # Bumps uv.lock only, the one lock CI and contributor installs use (#1357);
+  # pyproject.toml's ranges are the published contract and change by hand.
+  # `scripts/lock-deps.sh --check` and the `lock` CI job verify the pair.
+  - package-ecosystem: uv
     directory: /
     target-branch: dev
+    versioning-strategy: lockfile-only
     schedule:
       interval: weekly
     open-pull-requests-limit: 1

@@ -16,9 +16,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import click
 import pytest
 from typer.testing import CliRunner
+
+from tests.outcome_walk import param_choices
 
 sys.path.insert(0, str(Path(__file__).parent))
 from cli_help import plain  # noqa: E402
@@ -63,8 +64,9 @@ def _required_args(cmd) -> list[str]:
     for p in cmd.params:
         if not p.required or p.name in ("help",):
             continue
-        value = p.type.choices[0] if isinstance(p.type, click.Choice) else "x"
-        if isinstance(p, click.Argument):
+        choices = param_choices(p)
+        value = choices[0] if choices else "x"
+        if p.param_type_name == "argument":
             args.append(value)
         else:
             args += [p.opts[0], value]

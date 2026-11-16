@@ -41,6 +41,7 @@ from ..exceptions import (
     PyriteError,
     StorageError,
     ValidationError,
+    public_attribute,
     public_text,
     refusal_fields,
 )
@@ -59,6 +60,9 @@ _STATUS_BY_CODE: dict[str, int] = {
     "KB_READ_ONLY": 403,
     "KB_PROTECTED": 403,
     "INVALID_FRONTMATTER": 422,
+    # A file its declared type cannot load (ADR-0042 8a; the code chosen for
+    # #777 on 2026-10-14): a read that cannot be isolated, and every write.
+    "ENTRY_UNREADABLE": 422,
     "QUERY_TOO_LONG": 422,
     "QUERY_SYNTAX": 400,
     # The one route that raises LastAdminError (PUT /auth/users/{id}/role)
@@ -101,11 +105,14 @@ _STATUS_BY_CODE: dict[str, int] = {
     # through to 500 INTERNAL_ERROR -- this keeps that status, now under its
     # own code instead of the generic one.
     "CLIPPER_BLOCKED_HOST": 500,
+    # A page past the clipper's byte cap: the page is the problem, not the server.
+    "CLIP_TOO_LARGE": 413,
     "INTERNAL_ERROR": 500,
     # AccessDenied family (ADR-0037 §3). Not raised by any surface yet
     # (theme 1/3b's job) -- listed so the mapping is ready when they are.
     "UNAUTHENTICATED": 401,
     "FORBIDDEN": 403,
+    "KB_PATH_NOT_ALLOWED": 403,
 }
 
 
@@ -176,7 +183,7 @@ def error_response(exc: PyriteError) -> tuple[int, dict]:
     # refusal, where nothing else logs it (#848).
     message = public_text(exc, already_logged=status_code >= 500, log=logger)
     detail: dict = {"code": code, "message": message, "retryable": _retryable(exc)}
-    suggestion = getattr(exc, "suggestion", None)
+    suggestion = public_attribute(exc, "suggestion")
     if suggestion:
         detail["hint"] = suggestion
     # A refusal's public extras (AMBIGUOUS's candidate_kbs, #528), mapped

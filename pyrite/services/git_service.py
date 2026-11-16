@@ -2,26 +2,116 @@
 Git Service — Low-level git operations via subprocess.
 
 Pure git plumbing wrapper with no DB or config dependencies.
-Token handling is done by injecting credentials into URLs or environment.
+A token reaches git only through an inline credential helper (never argv, a remote URL or
+a config file).
 """
 
 import logging
 import os
 import re
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
-from typing import TypedDict
-from urllib.parse import urlparse
+from typing import NamedTuple, TypedDict
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
-from ..exceptions import InvalidGitRefError
+from ..config import DEFAULT_GIT_ALLOWED_HOSTS, GitCredential, GitIdentity
+from ..exceptions import InvalidGitRefError, RemoteNotAllowedError, outside_text
+from ..utils.egress import github_client
+from ..utils.git_hardening import CLOSED_SSH_OPTIONS, compose_git_env, git_env, ssh_command
+from .acting import is_local_process
+
+__all__ = ["GitService", "RemoteNotAllowedError"]
 
 logger = logging.getLogger(__name__)
 
 _GITHUB_HOSTS = frozenset({"github.com", "www.github.com"})
 _GITHUB_SSH_PREFIX = "git@github.com:"
+
+# The environment variable that carries a token to the inline helper.
+_TOKEN_ENV = "PYRITE_GIT_TOKEN"
+# An inline credential helper: answers ``get`` from the command's environment
+# and ignores ``store`` and ``erase``, so a token is never kept anywhere.
+_USERNAME_ENV = "PYRITE_GIT_USERNAME"
+_CREDENTIAL_HELPER = (
+    '!f() { test "$1" = get && echo "username=${'
+    + _USERNAME_ENV
+    + ':-oauth2}" && echo "password=$'
+    + _TOKEN_ENV
+    + '"; }; f'
+)
+
+
+#: What a result says in place of git's stderr or an OS error: that text names
+#: server paths and is the operator's (it is logged, ``_log_git_failure``).
+_GIT_SEE_LOG = "The server log has git's message."
+
+_IDENTITY_FALLBACK_WARNED = False
+
+
+def _log_git_failure(what: str, where: Path | str, text: str) -> None:
+    """Log the text git (or the OS) gave for a failed command, for the operator."""
+    logger.warning("%s failed in %s: %s", what, where, (text or "").strip())
+
+
+#: Held by the two constructors of a `_NetworkPlan` alone (`_network_plan`,
+#: `_exempt_plan`); `_network_git_env` refuses a plan without it, so a plan
+#: assembled anywhere else never becomes an environment.
+#: ``tests/test_kb_repo_git_commands_are_hardened.py`` checks no other code
+#: names it or builds a plan.
+_PLAN_SEAL = object()
+
+
+class _NetworkPlan(NamedTuple):
+    """What one git network command (clone, pull, push) runs with, built only
+    by `GitService._network_plan` after the host rule passed: the transport
+    guards and the one credential it may use. `_network_git_env` turns it
+    into the command's environment."""
+
+    env: dict[str, str]
+    config: tuple[tuple[str, str], ...]
+    #: Which credential the command carries: "none", "caller-token",
+    #: "operator-token", "operator-ssh-key" or "operator-exempt" (the local
+    #: operator's own push, with their own git setup).
+    credential: str
+    seal: object = None
+
+
 # GitHub owner/repo names: alphanumerics plus . _ - and never a leading "-",
-# which git would read as an option.
-_GITHUB_NAME_RE = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9_.-]*")
+# which git would read as an option, nor a leading ".": the names become
+# directories under the workspace root, and "." / ".." / hidden names must
+# not.
+_GITHUB_NAME_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
+
+# Every git network operation Pyrite runs (clone, pull, push; only the local
+# operator's own `pyrite kb push` is exempt) is checked against the host rule
+# before git runs (`GitService._network_plan`), and git then runs with:
+#  * its own transports limited to https (or ssh, for an operator ssh key);
+#  * Git LFS transfers off: Pyrite reads and writes plain files, never LFS
+#    objects;
+#  * HTTP redirects not followed (-c http.followRedirects=false, written out
+#    in each command) and, for a network caller, http.proxy set to the
+#    operator's git_proxy or reset to none.
+# These are generic -c settings. A URL-specific setting in the repository's
+# own config (http.<url>.followRedirects, http.<url>.proxy, and
+# remote.<name>.proxy) ranks above them, and that config is still read
+# (ADR-0052 "Limits"): a repository whose local config says otherwise for its
+# own remote is followed. What the rule holds is the host and transport of the
+# URL git is given and the credential sent with it, not every hop after.
+_ALLOWED_GIT_PROTOCOLS = "https"
+# An ssh remote: a user name and a host name as git's own ssh transport
+# accepts them, never one that ssh could read as an option.
+_SSH_USER_RE = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._-]*")
+_SSH_HOST_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*")
+# A path segment that is "." or "..", spelled literally or percent-encoded:
+# git normalises them away, so the repository fetched would not be the one
+# the URL appears to name.
+_DOT_SEGMENT_RE = re.compile(r"(?:^|/)(?:\.|%2e){1,2}(?:/|$)", re.IGNORECASE)
+_REDIRECT_RE = re.compile(r"The requested URL returned error: 30[0-8]\b")
+_REDIRECT_MESSAGE = (
+    "The remote answered with a redirect, which Pyrite does not follow; "
+    "use the repository's current URL"
+)
 
 # --- Error disclosure control (CodeQL py/stack-trace-exposure #51/#52/#53) ---
 #
@@ -74,6 +164,7 @@ _ABS_PATH_RE = re.compile(
 # are the specific ones ("Remote branch X not found in upstream origin" would
 # otherwise be swallowed by a looser "not found" reading).
 _GIT_ERROR_PATTERNS: tuple[tuple[str, re.Pattern[str], str], ...] = (
+    ("REMOTE_REDIRECTED", _REDIRECT_RE, _REDIRECT_MESSAGE),
     (
         "BRANCH_NOT_FOUND",
         re.compile(
@@ -110,37 +201,36 @@ _GIT_ERROR_PATTERNS: tuple[tuple[str, re.Pattern[str], str], ...] = (
 )
 _GIT_ERROR_FALLBACK = ("CLONE_FAILED", "Git operation failed — see the server log for details")
 
-# Env vars a parent git process (e.g. a pre-commit hook, itself a child of
-# `git commit`) sets for its own subprocesses. If a GitService call inherits
-# these while operating on a *different* repository (a different `cwd`), a
-# relative GIT_INDEX_FILE resolves against the wrong repo -- corrupting or
-# misdirecting the operation entirely (reproduced directly: pytest run as a
-# pre-commit hook subprocess, itself a `git commit` child, failed `git init`
-# in an unrelated tmp_path repo because GIT_INDEX_FILE=".git/index" pointed
-# at the outer pyrite repo's relative path instead).
-_LEAKABLE_GIT_ENV_VARS = (
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_AUTHOR_NAME",
-    "GIT_AUTHOR_EMAIL",
-    "GIT_AUTHOR_DATE",
-    "GIT_COMMITTER_NAME",
-    "GIT_COMMITTER_EMAIL",
-    "GIT_COMMITTER_DATE",
-    "GIT_EDITOR",
-)
+
+def _git_env(*, hooks: bool = False, identity: GitIdentity | None = None) -> dict[str, str]:
+    """Environment for a git subprocess: decided by the reach and hardened
+    against the repository's own config and hooks (``git_hardening.git_env``).
+    `identity` is the operator's `git_identity`, for a command that commits:
+    a network caller's git reads it from Pyrite's own global config, so a
+    repository's own ``user.*`` still wins (D-U5)."""
+    return git_env(hooks=hooks, identity=identity)
 
 
-def _git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
-    """Environment for a git subprocess, isolated from any parent git
-    process's repo-scoped state. Pass `extra` to layer in e.g. token vars."""
-    env = os.environ.copy()
-    for var in _LEAKABLE_GIT_ENV_VARS:
-        env.pop(var, None)
-    if extra:
-        env.update(extra)
-    return env
+def _network_git_env(plan: _NetworkPlan) -> dict[str, str]:
+    """The environment of a git network command: `git_env` for the reach,
+    with the plan's transport guards and credential layered on. Only a plan
+    `GitService._network_plan` built is accepted."""
+    if not isinstance(plan, _NetworkPlan) or plan.seal is not _PLAN_SEAL:
+        raise TypeError("a network git command needs a plan from GitService._network_plan")
+    return compose_git_env(plan.env, plan.config)
+
+
+def _warn_identity_fallback() -> None:
+    """Once per process: a network caller's commit with no `git_identity`
+    falls back to the account's global identity, until 0.27.0."""
+    global _IDENTITY_FALLBACK_WARNED
+    if not _IDENTITY_FALLBACK_WARNED:
+        _IDENTITY_FALLBACK_WARNED = True
+        logger.warning(
+            "settings.git_identity is unset: commits made for network callers use "
+            "the server account's global git user.name/user.email. That fallback "
+            "is removed in 0.27.0; set git_identity in config.yaml."
+        )
 
 
 # Verdicts of the version-servability check (#453). REFUSED is a positive
@@ -397,11 +487,231 @@ class GitService:
         return blocks
 
     @staticmethod
-    def subprocess_env(extra: dict[str, str] | None = None) -> dict[str, str]:
-        """Public entry point for other modules that shell out to git
-        directly (e.g. WorktreeService) to get the same leak-isolated
-        environment GitService's own subprocess calls use."""
-        return _git_env(extra)
+    def check_remote_allowed(
+        url: object,
+        allowed_hosts: Sequence[str] | None = None,
+        *,
+        allow_userinfo: bool = False,
+    ) -> None:
+        """Raise RemoteNotAllowedError unless `url` is an https:// URL on a host
+        in `allowed_hosts` (the operator's `git_allowed_hosts` setting; None
+        means the default, github.com).
+
+        An entry is a hostname, matched case-insensitively against a URL with
+        no explicit port, or `host:port` for a URL that names a port. The URL
+        must name its host directly: userinfo, a query, a fragment and "." or
+        ".." path segments are refused. `allow_userinfo` exists only for
+        checking a URL Pyrite built or configured itself (a clone's origin
+        carries the token Pyrite injected).
+        """
+        allowed = GitService._allowed_set(allowed_hosts)
+        if GitService._remote_host_key(url, allow_userinfo) not in allowed:
+            raise GitService._refusal(allowed)
+
+    @staticmethod
+    def _allowed_set(allowed_hosts: Sequence[str] | None) -> set[str]:
+        hosts = list(DEFAULT_GIT_ALLOWED_HOSTS if allowed_hosts is None else allowed_hosts)
+        return {h.strip().lower() for h in hosts if isinstance(h, str) and h.strip()}
+
+    @staticmethod
+    def _refusal(
+        allowed: set[str], *, rewritten: bool = False, ssh: bool = False
+    ) -> RemoteNotAllowedError:
+        """The refusal: names the setting and what to change, never the URL,
+        and never the allowed hosts (they can name internal servers; they go
+        to the log for the operator)."""
+        logger.info("Git remote refused; git_allowed_hosts is %s", sorted(allowed))
+        if ssh:
+            return RemoteNotAllowedError(
+                "Git remote refused: an ssh remote is used only with an ssh_key the "
+                "operator configured for its host in git_credentials (and the host "
+                "in git_allowed_hosts). An operator adds that entry, or the remote "
+                "uses https://."
+            )
+        if rewritten:
+            return RemoteNotAllowedError(
+                "Git remote refused: the git configuration of the account Pyrite "
+                "runs as rewrites this URL (a url.<base>.insteadOf rule) to one "
+                "that is not https:// on a host in the git_allowed_hosts setting. "
+                "An operator removes or changes that rule, or adds the rewritten "
+                "host to git_allowed_hosts."
+            )
+        if not allowed:
+            return RemoteNotAllowedError(
+                "Git remote refused: the git_allowed_hosts setting is empty, so no "
+                "host may be cloned from or pushed to. To allow one, an operator "
+                "adds it to git_allowed_hosts in config.yaml or "
+                "PYRITE_GIT_ALLOWED_HOSTS."
+            )
+        return RemoteNotAllowedError(
+            "Git remote refused: only https:// URLs on a host listed in the "
+            "git_allowed_hosts setting may be cloned from or pushed to. To use "
+            "another host, an operator adds it to git_allowed_hosts in "
+            "config.yaml or PYRITE_GIT_ALLOWED_HOSTS."
+        )
+
+    @staticmethod
+    def _remote_host_key(url: object, allow_userinfo: bool) -> str | None:
+        """`host` or `host:port` of an acceptable https URL, else None."""
+        if not isinstance(url, str) or not url:
+            return None
+        if any(c.isspace() or ord(c) < 32 or c in "\\?#" for c in url):
+            return None
+        try:
+            parts = urlsplit(url)
+            port = parts.port
+        except ValueError:
+            return None
+        if parts.scheme != "https" or not parts.hostname:
+            return None
+        if not allow_userinfo and (parts.username is not None or parts.password is not None):
+            return None
+        if _DOT_SEGMENT_RE.search(parts.path):
+            return None
+        host = parts.hostname.lower()
+        return host if port is None else f"{host}:{port}"
+
+    @staticmethod
+    def _endpoint(url: object, allow_userinfo: bool) -> tuple[str, str] | None:
+        """``(scheme, host key)`` of a remote git could contact: an https URL
+        (`_remote_host_key`), or an ssh one, ``ssh://[user@]host[:port]/path``
+        or ``[user@]host:path``. None for anything else. An ssh remote is only
+        ever used with an operator ssh key (`_network_plan`)."""
+        key = GitService._remote_host_key(url, allow_userinfo)
+        if key is not None:
+            return "https", key
+        if not isinstance(url, str) or not url:
+            return None
+        if any(c.isspace() or ord(c) < 32 or c in "\\?#" for c in url):
+            return None
+        if url.startswith("ssh://"):
+            try:
+                parts = urlsplit(url)
+                port = parts.port
+            except ValueError:
+                return None
+            user, host, path = parts.username, parts.hostname, parts.path
+            if parts.password is not None:
+                return None
+        elif "://" not in url and ":" in url.split("/", 1)[0]:
+            login, _, path = url.partition(":")
+            user, _, host = login.rpartition("@") if "@" in login else (None, "", login)
+            port = None
+            if "[" in login or not host:
+                return None
+            host = host.lower()
+        else:
+            return None
+        if not host or not _SSH_HOST_RE.fullmatch(host):
+            return None
+        if user is not None and not _SSH_USER_RE.fullmatch(user):
+            return None
+        if not path or path.lstrip("/").startswith("-") or _DOT_SEGMENT_RE.search(path):
+            return None
+        return "ssh", host if port in (None, 22) else f"{host}:{port}"
+
+    @staticmethod
+    def _effective_url(url: str, cwd: Path | None = None) -> str | None:
+        """The URL git will actually contact for `url`, after the
+        url.<base>.insteadOf rules of the config this reach reads (the
+        account's for the local operator; for a network caller, none but the
+        repository's own)."""
+        try:
+            result = subprocess.run(
+                ["git", "ls-remote", "--get-url", "--", url],
+                cwd=str(cwd) if cwd else None,
+                capture_output=True,
+                text=True,
+                # The same config the network command will read.
+                env=_git_env(),
+                timeout=10,
+            )
+        except (subprocess.SubprocessError, OSError):
+            logger.warning("Could not expand a git URL", exc_info=True)
+            return None
+        effective = result.stdout.strip()
+        return effective if result.returncode == 0 and effective else None
+
+    @staticmethod
+    def _remote_plan(
+        local_path: Path,
+        remote: str,
+        *,
+        push: bool,
+        token: str | None,
+        allowed_hosts: Sequence[str] | None,
+        credentials: Sequence[GitCredential] | None,
+        kb_name: str | None,
+        registered_remote: bool,
+        proxy: str | None,
+    ) -> _NetworkPlan:
+        """`_network_plan` for every URL git would contact for `remote` (every
+        push URL, or every fetch URL). Raises RemoteNotAllowedError.
+
+        `git remote get-url` reports URLs after insteadOf rewriting, so the
+        check is on what git will contact; the configured URLs are read too,
+        only to say whether a rewrite is what made the remote unacceptable.
+        """
+        allowed = GitService._allowed_set(allowed_hosts)
+        get_url = ["git", "remote", "get-url", "--all"]
+        if push:
+            get_url.append("--push")
+        configured = [f"remote.{remote}.url"] + ([f"remote.{remote}.pushurl"] if push else [])
+        try:
+            effective = subprocess.run(
+                [*get_url, "--", remote],
+                cwd=str(local_path),
+                capture_output=True,
+                text=True,
+                env=_git_env(),
+                timeout=10,
+            )
+            raw = [
+                subprocess.run(
+                    ["git", "config", "--get-all", "--", key],
+                    cwd=str(local_path),
+                    capture_output=True,
+                    text=True,
+                    env=_git_env(),
+                    timeout=10,
+                ).stdout.split()
+                for key in configured
+            ]
+        except (subprocess.SubprocessError, OSError):
+            logger.warning("Could not read the URLs of remote %s", remote, exc_info=True)
+            raise GitService._refusal(allowed) from None
+        urls = effective.stdout.split() if effective.returncode == 0 else []
+        try:
+            return GitService._network_plan(
+                urls,
+                token=token,
+                allowed_hosts=allowed_hosts,
+                credentials=credentials,
+                kb_name=kb_name,
+                allow_userinfo=True,
+                registered_remote=registered_remote,
+                proxy=proxy,
+            )
+        except RemoteNotAllowedError as refused:
+            # push URLs replace the fetch URL when set; either way the
+            # configured set is what git rewrote into `urls`.
+            raw_urls = (raw[1] or raw[0]) if push else raw[0]
+            if raw_urls and raw_urls != urls:
+                try:
+                    GitService._network_plan(
+                        raw_urls,
+                        token=None,
+                        allowed_hosts=allowed_hosts,
+                        credentials=credentials,
+                        kb_name=kb_name,
+                        allow_userinfo=True,
+                        registered_remote=registered_remote,
+                        proxy=proxy,
+                    )
+                except RemoteNotAllowedError:
+                    raise refused from None
+                raise GitService._refusal(allowed, rewritten=True) from None
+            raise
 
     @staticmethod
     def clone(
@@ -410,16 +720,26 @@ class GitService:
         branch: str = "main",
         depth: int | None = 1,
         token: str | None = None,
+        allowed_hosts: Sequence[str] | None = None,
+        credentials: Sequence[GitCredential] | None = None,
+        kb_name: str | None = None,
+        proxy: str | None = None,
     ) -> tuple[bool, str]:
         """
         Clone a repository.
 
         Args:
-            remote_url: HTTPS or SSH URL
+            remote_url: https:// URL on an allowed host
             local_path: Where to clone to
             branch: Branch to clone
             depth: Shallow clone depth (None for full clone)
             token: GitHub OAuth token for private repos
+            allowed_hosts: the operator's `git_allowed_hosts` (None: github.com)
+            credentials: the operator's `git_credentials` (a clone's URL is
+                one a caller named: an entry serves it only through its
+                url_prefixes, D-U1)
+            kb_name: the KB the command is for, if any (a KB-scoped credential)
+            proxy: the operator's `git_proxy` (None: no proxy for a network caller)
 
         Returns:
             (success, message) — the message is caller-safe (no tokens, no
@@ -427,7 +747,15 @@ class GitService:
             should use `clone_with_code`.
         """
         success, _code, message = GitService.clone_with_code(
-            remote_url, local_path, branch=branch, depth=depth, token=token
+            remote_url,
+            local_path,
+            branch=branch,
+            depth=depth,
+            token=token,
+            allowed_hosts=allowed_hosts,
+            credentials=credentials,
+            kb_name=kb_name,
+            proxy=proxy,
         )
         return success, message
 
@@ -438,11 +766,22 @@ class GitService:
         branch: str = "main",
         depth: int | None = 1,
         token: str | None = None,
+        allowed_hosts: Sequence[str] | None = None,
+        credentials: Sequence[GitCredential] | None = None,
+        kb_name: str | None = None,
+        proxy: str | None = None,
     ) -> tuple[bool, str, str]:
         """Clone a repository, returning `(success, code, message)`.
 
+        The remote must be on a host in `allowed_hosts` (the operator's
+        `git_allowed_hosts`; None means github.com), over https, or over ssh
+        when the operator configured an ssh key for the host; checked before
+        git runs (`_network_plan`), and git itself runs with only that
+        transport enabled and LFS transfers and redirects off.
+
         `code` is a stable identifier a caller can branch on (REPO_NOT_FOUND /
-        AUTH_REQUIRED / BRANCH_NOT_FOUND / CLONE_FAILED / CLONE_TIMEOUT), and
+        AUTH_REQUIRED / BRANCH_NOT_FOUND / CLONE_FAILED / CLONE_TIMEOUT /
+        REMOTE_NOT_ALLOWED), and
         `message` never carries a filesystem path or a token. The full,
         unredacted stderr goes to the log at WARNING so the operator loses
         nothing (CodeQL py/stack-trace-exposure #51).
@@ -452,17 +791,47 @@ class GitService:
         # positionals; --branch's value is an option argument, so refuse it.
         if remote_url.startswith("-") or branch.startswith("-"):
             return False, "INVALID_REQUEST", "Invalid repository URL or branch"
+        plan_args = {
+            "token": token,
+            "allowed_hosts": allowed_hosts,
+            "credentials": credentials,
+            "kb_name": kb_name,
+            # A clone's URL is always one a caller named (subscribe, fork,
+            # export), never a remote a registered KB already has.
+            "registered_remote": False,
+            "proxy": proxy,
+        }
+        try:
+            plan = GitService._network_plan([remote_url], allow_userinfo=False, **plan_args)
+            url = remote_url
+            # The URL git will really use -- after the insteadOf rules of the
+            # config this reach reads -- must pass the same check as the one
+            # named, and is the one the credential is chosen for.
+            effective = GitService._effective_url(url)
+            if effective != url:
+                try:
+                    if effective is None:
+                        raise RemoteNotAllowedError("unknown")
+                    plan = GitService._network_plan([effective], allow_userinfo=True, **plan_args)
+                except RemoteNotAllowedError:
+                    raise GitService._refusal(
+                        GitService._allowed_set(allowed_hosts), rewritten=effective is not None
+                    ) from None
+        except RemoteNotAllowedError as e:
+            return False, RemoteNotAllowedError.error_code, str(e)
 
-        url = GitService._inject_token(remote_url, token)
-
-        cmd = ["git", "clone", "--branch", branch]
+        cmd = ["git", "-c", "http.followRedirects=false", "clone", "--branch", branch]
         if depth is not None:
             cmd.extend(["--depth", str(depth)])
         cmd.extend(["--", url, str(local_path)])
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=120, env=_git_env()
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=_network_git_env(plan),
             )
             if result.returncode == 0:
                 return True, "OK", f"Cloned to {local_path}"
@@ -483,26 +852,56 @@ class GitService:
             return (
                 False,
                 "CLONE_FAILED",
-                f"Clone failed: {GitService.sanitize_error(str(e), token)}",
+                f"Clone failed: {GitService.sanitize_error(outside_text(e), token)}",
             )
 
     @staticmethod
-    def pull(local_path: Path, token: str | None = None) -> tuple[bool, str]:
-        """Pull latest changes. Returns (success, message)."""
-        extra = {}
-        if token:
-            extra["GIT_ASKPASS"] = "echo"
-            extra["GIT_USERNAME"] = "oauth2"
-            extra["GIT_PASSWORD"] = token
-        env = _git_env(extra)
+    def pull(
+        local_path: Path,
+        token: str | None = None,
+        allowed_hosts: Sequence[str] | None = None,
+        credentials: Sequence[GitCredential] | None = None,
+        kb_name: str | None = None,
+        registered_remote: bool = False,
+        proxy: str | None = None,
+    ) -> tuple[bool, str]:
+        """Pull latest changes. Returns (success, message).
+
+        `registered_remote`: `local_path` is a registered KB's repository (a
+        subscribed clone) and its remote is the one already configured there,
+        so an unscoped `git_credentials` entry may serve it (D-U1).
+
+        Every fetch URL of the remote the pull uses must be https on a host in
+        `allowed_hosts` (the operator's `git_allowed_hosts`; None means
+        github.com), checked before git fetches, with the same transport, LFS
+        and redirect restrictions as a clone. A remote that is not allowed --
+        an ssh remote from before the setting existed, or a host since removed
+        from it -- is refused with a message naming the setting.
+        """
+        try:
+            remote = GitService._pull_remote(local_path)
+            GitService.scrub_remote_credentials(local_path)
+            plan = GitService._remote_plan(
+                local_path,
+                remote,
+                push=False,
+                token=token,
+                allowed_hosts=allowed_hosts,
+                credentials=credentials,
+                kb_name=kb_name,
+                registered_remote=registered_remote,
+                proxy=proxy,
+            )
+        except RemoteNotAllowedError as e:
+            return False, f"Pull refused: {e}"
 
         try:
             result = subprocess.run(
-                ["git", "pull"],
+                ["git", "-c", "http.followRedirects=false", "pull"],
                 cwd=str(local_path),
                 capture_output=True,
                 text=True,
-                env=env,
+                env=_network_git_env(plan),
                 timeout=60,
             )
             if result.returncode == 0:
@@ -520,13 +919,35 @@ class GitService:
             # server log", which the CLI user — who *is* the operator, with
             # no server log — cannot act on, and which the web UI renders
             # verbatim (web/src/routes/changes/+page.svelte).
+            if _REDIRECT_RE.search(result.stderr):
+                return False, f"Pull failed: {_REDIRECT_MESSAGE}"
             message = GitService.sanitize_error(result.stderr, token)
             return False, f"Pull failed: {message}" if message else "Pull failed"
         except subprocess.TimeoutExpired:
             return False, "Pull timed out"
         except (subprocess.SubprocessError, OSError) as e:
             logger.warning("git pull in %s raised", local_path, exc_info=True)
-            return False, f"Pull failed: {GitService.sanitize_error(str(e), token)}"
+            return False, f"Pull failed: {GitService.sanitize_error(outside_text(e), token)}"
+
+    @staticmethod
+    def _pull_remote(local_path: Path) -> str:
+        """The remote a bare `git pull` fetches from: the checked-out branch's
+        configured remote, else origin."""
+        branch = GitService._checked_out_branch(local_path)
+        if not branch:
+            return "origin"
+        try:
+            configured = subprocess.run(
+                ["git", "config", "--get", "--", f"branch.{branch}.remote"],
+                cwd=str(local_path),
+                capture_output=True,
+                text=True,
+                env=_git_env(),
+                timeout=10,
+            ).stdout.strip()
+        except (subprocess.SubprocessError, OSError):
+            configured = ""
+        return configured or "origin"
 
     @staticmethod
     def get_remote_url(local_path: Path) -> str | None:
@@ -718,6 +1139,8 @@ class GitService:
                 [
                     "git",
                     "show",
+                    "--no-ext-diff",
+                    "--no-textconv",
                     "--no-patch",
                     "--format=%H|%an|%ae|%aI|%s",
                     "--end-of-options",
@@ -766,6 +1189,8 @@ class GitService:
                 [
                     "git",
                     "show",
+                    "--no-ext-diff",
+                    "--no-textconv",
                     "--name-status",
                     "--format=",
                     "-z",
@@ -837,6 +1262,8 @@ class GitService:
             cmd = [
                 "git",
                 "diff",
+                "--no-ext-diff",
+                "--no-textconv",
                 "--name-only",
                 f"{since_commit}..HEAD",
                 "--",
@@ -877,11 +1304,28 @@ class GitService:
             return False
 
     @staticmethod
-    def add_remote(local_path: Path, name: str, url: str) -> tuple[bool, str]:
-        """Add a git remote."""
+    def add_remote(
+        local_path: Path,
+        name: str,
+        url: str,
+        allowed_hosts: Sequence[str] | None = None,
+    ) -> tuple[bool, str]:
+        """Add a git remote.
+
+        The URL must be https on a host in `allowed_hosts` (the operator's
+        `git_allowed_hosts`; None means github.com), so a later fetch from
+        this remote can pass the same check; neither value is ever read as an
+        option.
+        """
+        if not isinstance(name, str) or not name or name.startswith("-"):
+            return False, "Invalid remote name"
+        try:
+            GitService.check_remote_allowed(url, allowed_hosts)
+        except RemoteNotAllowedError as e:
+            return False, str(e)
         try:
             result = subprocess.run(
-                ["git", "remote", "add", name, url],
+                ["git", "remote", "add", "--", name, url],
                 cwd=str(local_path),
                 capture_output=True,
                 text=True,
@@ -891,22 +1335,23 @@ class GitService:
                 return True, f"Added remote '{name}'"
             return False, result.stderr.strip()
         except (subprocess.SubprocessError, OSError) as e:
-            return False, str(e)
+            return False, outside_text(e)
 
     @staticmethod
-    def fork_repo(owner: str, repo: str, token: str) -> tuple[bool, dict]:
+    def fork_repo(owner: str, repo: str, token: str, proxy: str | None = None) -> tuple[bool, dict]:
         """
-        Fork a repo on GitHub via the API.
+        Fork a repo on GitHub via the API, with the caller's `token`; `proxy`
+        is the operator's `git_proxy` (``egress.github_client``).
 
         Returns (success, response_dict).
         """
         try:
-            import httpx
+            import httpx  # noqa: F401 (only to say it is missing)
         except ImportError:
             return False, {"error": "httpx required for GitHub API operations"}
 
         try:
-            with httpx.Client() as client:
+            with github_client(proxy=proxy) as client:
                 response = client.post(
                     f"https://api.github.com/repos/{owner}/{repo}/forks",
                     headers={
@@ -922,7 +1367,7 @@ class GitService:
                     "message": response.text,
                 }
         except (subprocess.SubprocessError, OSError) as e:
-            return False, {"error": str(e)}
+            return False, {"error": outside_text(e)}
 
     @staticmethod
     def create_pull_request(
@@ -933,6 +1378,7 @@ class GitService:
         head: str,
         base: str,
         token: str,
+        proxy: str | None = None,
     ) -> tuple[bool, dict]:
         """
         Create a pull request on GitHub via the API.
@@ -945,17 +1391,18 @@ class GitService:
             head: Head branch (e.g. "user:branch" for cross-fork PRs)
             base: Base branch to merge into
             token: GitHub OAuth token
+            proxy: the operator's `git_proxy` (``egress.github_client``)
 
         Returns:
             (success, response_dict)
         """
         try:
-            import httpx
+            import httpx  # noqa: F401 (only to say it is missing)
         except ImportError:
             return False, {"error": "httpx required for GitHub API operations"}
 
         try:
-            with httpx.Client() as client:
+            with github_client(proxy=proxy) as client:
                 response = client.post(
                     f"https://api.github.com/repos/{owner}/{repo}/pulls",
                     json={
@@ -981,7 +1428,7 @@ class GitService:
                     "message": response.text,
                 }
         except (subprocess.SubprocessError, OSError) as e:
-            return False, {"error": str(e)}
+            return False, {"error": outside_text(e)}
 
     @staticmethod
     def parse_github_url(url: str) -> tuple[str, str] | None:
@@ -1000,7 +1447,10 @@ class GitService:
         if path.endswith(".git"):
             path = path[:-4]
         parts = path.split("/")
-        if len(parts) < 2:
+        # Exactly owner/repo: any further segment ("..", or a browser page
+        # such as /tree/main) would make the repository git fetches differ
+        # from the owner/repo used for the workspace path and the name.
+        if len(parts) != 2:
             return None
         owner, repo = parts[0], parts[1]
         if not _GITHUB_NAME_RE.fullmatch(owner) or not _GITHUB_NAME_RE.fullmatch(repo):
@@ -1016,7 +1466,7 @@ class GitService:
         The host is compared for equality after real URL parsing. Searching
         the string for "github.com" is not a host check: it also matches
         https://evil.example/github.com/x, github.com.evil.example, query
-        strings and fragments -- and _inject_token trusted that match enough
+        strings and fragments -- and the token injector trusted that match enough
         to hand over the caller's OAuth token.
         """
         if url.startswith(_GITHUB_SSH_PREFIX):
@@ -1038,6 +1488,8 @@ class GitService:
         message: str,
         paths: list[str] | None = None,
         sign_off: bool = False,
+        run_hooks: bool = False,
+        identity: GitIdentity | None = None,
     ) -> tuple[bool, dict]:
         """
         Stage and commit changes in a git repository.
@@ -1047,6 +1499,13 @@ class GitService:
             message: Commit message
             paths: Specific file paths to stage (stages all if None)
             sign_off: Add Signed-off-by line
+            run_hooks: run the repository's own commit hooks. Off unless the
+                caller is the operator's own command: a hook is a program the
+                repository supplies.
+            identity: the operator's `git_identity`, which a commit made for
+                a network caller carries unless the repository sets its own
+                ``user.*`` (it is written into Pyrite's own global config,
+                D-U5).
 
         Returns:
             (success, result_dict) where result_dict contains
@@ -1055,6 +1514,8 @@ class GitService:
         """
         if not GitService.is_git_repo(local_path):
             return False, {"error": "Not a git repository"}
+        if identity is None and not is_local_process():
+            _warn_identity_fallback()
 
         try:
             # Stage files
@@ -1065,28 +1526,30 @@ class GitService:
                         cwd=str(local_path),
                         capture_output=True,
                         text=True,
-                        env=_git_env(),
+                        env=_git_env(hooks=run_hooks),
                     )
                     if result.returncode != 0:
-                        return False, {"error": f"Failed to stage {p}: {result.stderr.strip()}"}
+                        _log_git_failure("git add", local_path, result.stderr)
+                        return False, {"error": f"Failed to stage {p}. {_GIT_SEE_LOG}"}
             else:
                 result = subprocess.run(
                     ["git", "add", "-A"],
                     cwd=str(local_path),
                     capture_output=True,
                     text=True,
-                    env=_git_env(),
+                    env=_git_env(hooks=run_hooks),
                 )
                 if result.returncode != 0:
-                    return False, {"error": f"Failed to stage: {result.stderr.strip()}"}
+                    _log_git_failure("git add", local_path, result.stderr)
+                    return False, {"error": f"Failed to stage the changes. {_GIT_SEE_LOG}"}
 
             # Check if there's anything to commit
             status_result = subprocess.run(
-                ["git", "diff", "--cached", "--name-only"],
+                ["git", "diff", "--no-ext-diff", "--no-textconv", "--cached", "--name-only"],
                 cwd=str(local_path),
                 capture_output=True,
                 text=True,
-                env=_git_env(),
+                env=_git_env(hooks=run_hooks),
             )
             staged_files = [f for f in status_result.stdout.strip().split("\n") if f]
             if not staged_files:
@@ -1103,10 +1566,11 @@ class GitService:
                 capture_output=True,
                 text=True,
                 timeout=30,
-                env=_git_env(),
+                env=_git_env(hooks=run_hooks, identity=identity),
             )
             if result.returncode != 0:
-                return False, {"error": f"Commit failed: {result.stderr.strip()}"}
+                _log_git_failure("git commit", local_path, result.stderr)
+                return False, {"error": f"Commit failed. {_GIT_SEE_LOG}"}
 
             # Get the commit hash
             commit_hash = GitService.get_head_commit(local_path)
@@ -1120,7 +1584,8 @@ class GitService:
         except subprocess.TimeoutExpired:
             return False, {"error": "Commit timed out"}
         except (subprocess.SubprocessError, OSError) as e:
-            return False, {"error": str(e)}
+            _log_git_failure("git commit", local_path, str(e))
+            return False, {"error": f"Commit failed. {_GIT_SEE_LOG}"}
 
     # =========================================================================
     # Caller-supplied ref and remote names
@@ -1199,6 +1664,12 @@ class GitService:
         remote: str = "origin",
         branch: str | None = None,
         token: str | None = None,
+        allowed_hosts: Sequence[str] | None = None,
+        credentials: Sequence[GitCredential] | None = None,
+        kb_name: str | None = None,
+        operator_push: bool = False,
+        registered_remote: bool = False,
+        proxy: str | None = None,
     ) -> tuple[bool, str]:
         """
         Push commits to a remote repository.
@@ -1208,6 +1679,23 @@ class GitService:
             remote: Remote name (default: origin)
             branch: Branch to push (default: current branch)
             token: OAuth token for authentication
+            allowed_hosts: the operator's `git_allowed_hosts` (None means the
+                default, github.com, as on every git operation): every push
+                URL of `remote` must be on one of these hosts, over https (or
+                ssh with an operator ssh key), and git runs with the same
+                transport, LFS and redirect restrictions as a clone.
+            credentials: the operator's `git_credentials`.
+            kb_name: the KB being pushed, if any (a KB-scoped credential).
+            registered_remote: `local_path` is a registered KB's repository
+                and `remote` one already configured there (the push of a KB),
+                so an unscoped `git_credentials` entry may serve it; False for
+                a remote cloned from a URL a caller named (export), D-U1.
+            proxy: the operator's `git_proxy`.
+            operator_push: a push of the operator's own KB to its configured
+                remote (``pyrite kb push``). For the local process only, it is
+                exempt from the host rule and runs with the operator's own git
+                setup; for a network caller it changes nothing (ADR-0052 N2,
+                no exemption for operator-configured remotes).
 
         Returns:
             (success, message)
@@ -1234,25 +1722,52 @@ class GitService:
                 )
         GitService.validate_remote_name(local_path, remote)
         GitService.validate_branch_name(branch)
+        if token:
+            # An operator's own push (no token) keeps whatever remote they set.
+            GitService.scrub_remote_credentials(local_path)
         # The refspec is built here, never taken from the caller: a branch
         # value names that branch on both sides and nothing else (not a tag
         # of the same name, not a forced update).
         refspec = f"refs/heads/{branch}:refs/heads/{branch}"
 
-        extra = {}
-        if token:
-            extra["GIT_ASKPASS"] = "echo"
-            extra["GIT_USERNAME"] = "oauth2"
-            extra["GIT_PASSWORD"] = token
-        env = _git_env(extra)
+        try:
+            if operator_push and is_local_process():
+                plan = GitService._exempt_plan(token)
+            else:
+                plan = GitService._remote_plan(
+                    local_path,
+                    remote,
+                    push=True,
+                    token=token,
+                    allowed_hosts=allowed_hosts,
+                    credentials=credentials,
+                    kb_name=kb_name,
+                    registered_remote=registered_remote,
+                    proxy=proxy,
+                )
+        except RemoteNotAllowedError as e:
+            return False, f"Push failed: {e}"
+        if plan.credential == "operator-exempt":
+            cmd = ["git", "push", "-u", "--end-of-options", remote, refspec]
+        else:
+            cmd = [
+                "git",
+                "-c",
+                "http.followRedirects=false",
+                "push",
+                "-u",
+                "--end-of-options",
+                remote,
+                refspec,
+            ]
 
         try:
             result = subprocess.run(
-                ["git", "push", "-u", "--end-of-options", remote, refspec],
+                cmd,
                 cwd=str(local_path),
                 capture_output=True,
                 text=True,
-                env=env,
+                env=_network_git_env(plan),
                 timeout=60,
             )
             if result.returncode == 0:
@@ -1273,7 +1788,7 @@ class GitService:
             return False, "Push timed out"
         except (subprocess.SubprocessError, OSError) as e:
             logger.warning("git push to %s/%s raised", remote, branch, exc_info=True)
-            return False, f"Push failed: {GitService.sanitize_error(str(e), token)}"
+            return False, f"Push failed: {GitService.sanitize_error(outside_text(e), token)}"
 
     @staticmethod
     def get_status(local_path: Path) -> GitWorkingTreeStatus:
@@ -1334,19 +1849,326 @@ class GitService:
             return result
 
     @staticmethod
-    def _inject_token(url: str, token: str | None) -> str:
-        """Inject OAuth token into HTTPS URL for authentication."""
-        if not token:
+    def _is_github_url(url: str) -> bool:
+        try:
+            parts = urlsplit(url)
+        except ValueError:
+            return False
+        return parts.scheme == "https" and (parts.hostname or "").lower() in _GITHUB_HOSTS
+
+    @staticmethod
+    def _remote_path(url: str) -> str:
+        """The path of a remote URL, as written (``https://h/p``,
+        ``ssh://h/p`` or ``user@h:p``)."""
+        return urlsplit(url).path if "://" in url else url.partition(":")[2]
+
+    @staticmethod
+    def _repo_segments(url: str) -> tuple[str, ...]:
+        """The path of a remote URL as segments, without a trailing ``.git``."""
+        path = GitService._remote_path(url)
+        segments = [s for s in path.split("/") if s]
+        if segments and segments[-1].endswith(".git"):
+            segments[-1] = segments[-1][: -len(".git")]
+        return tuple(segments)
+
+    @staticmethod
+    def _under_prefix(url: str, prefix: str) -> bool:
+        """Whether remote `url` is a repository under `prefix` (one of an
+        entry's url_prefixes): the same transport and host, and the prefix's
+        path segments lead the URL's. A prefix ending in "/" names a folder
+        and covers only what is inside it; otherwise it also covers itself."""
+        here, there = GitService._endpoint(url, True), GitService._endpoint(prefix, True)
+        if here is None or there is None or here != there:
+            return False
+        # Any "%" in either path: a server may decode it once, twice, or as
+        # overlong UTF-8 into a separator or a dot segment, so the path
+        # compared here would not be the path served. Not decoded, refused.
+        if "%" in GitService._remote_path(url) or "%" in GitService._remote_path(prefix):
+            return False
+        url_segments = GitService._repo_segments(url)
+        prefix_segments = GitService._repo_segments(prefix)
+        if not prefix_segments or url_segments[: len(prefix_segments)] != prefix_segments:
+            return False
+        return len(url_segments) > len(prefix_segments) or not prefix.endswith("/")
+
+    @staticmethod
+    def _operator_credential(
+        credentials: Sequence[GitCredential] | None,
+        host: str,
+        transport: str,
+        kb_name: str | None,
+        urls: Sequence[str],
+        registered_remote: bool,
+    ) -> GitCredential | None:
+        """The operator's `git_credentials` entry for this command, chosen by
+        (host, KB, transport) and scope; the KB's own first, then the host's
+        unscoped one, else None.
+
+        An entry applies when its host and transport are the remote's, its
+        `kb` (if set) is `kb_name`, and either the remote is one already
+        configured in a registered KB's repository (`registered_remote`) or
+        every URL lies under one of its `url_prefixes` (a URL a caller named,
+        D-U1). The local process never gets one (D-U6): it uses the
+        operator's own git setup."""
+        if is_local_process():
+            return None
+        entries = [
+            c
+            for c in credentials or ()
+            if c.host == host
+            and c.transport == transport
+            and (
+                registered_remote
+                or all(any(GitService._under_prefix(u, p) for p in c.url_prefixes) for u in urls)
+            )
+        ]
+        # An entry for another KB is never chosen: only the KB's own, then an
+        # unscoped one.
+        for entry in entries:
+            if kb_name is not None and entry.kb == kb_name:
+                return entry
+        return next((c for c in entries if c.kb is None), None)
+
+    @staticmethod
+    def _token_helper(token: str, username: str, urls: Sequence[str]) -> tuple[dict, list]:
+        """The inline helper that hands `token` to git for the origins of
+        `urls` alone: nothing is written to disk, and the token is not in argv,
+        a remote URL or a config file. Every other configured helper is reset
+        for the command, so none is consulted and none is handed the token."""
+        origins = []
+        for url in urls:
+            parts = urlsplit(url)
+            origin = f"https://{parts.hostname}" + (f":{parts.port}" if parts.port else "")
+            if origin not in origins:
+                origins.append(origin)
+        config = [("credential.helper", ""), ("core.askPass", "")]
+        config += [(f"credential.{origin}.helper", _CREDENTIAL_HELPER) for origin in origins]
+        return {_TOKEN_ENV: token, _USERNAME_ENV: username}, config
+
+    @staticmethod
+    def _exempt_plan(token: str | None) -> _NetworkPlan:
+        """The local operator's own push (``operator_push``): their git setup,
+        no host rule. Only `push` builds it, and only for the local process."""
+        if not is_local_process():
+            raise RemoteNotAllowedError("an exempt push is for the local process only")
+        return _NetworkPlan({}, (), "operator-exempt", _PLAN_SEAL)
+
+    @staticmethod
+    def _network_plan(
+        urls: Sequence[str],
+        *,
+        token: str | None,
+        allowed_hosts: Sequence[str] | None,
+        credentials: Sequence[GitCredential] | None,
+        kb_name: str | None,
+        allow_userinfo: bool,
+        registered_remote: bool,
+        proxy: str | None = None,
+    ) -> _NetworkPlan:
+        """The one constructor of a git network command (clone, pull, push),
+        for every reach. In order:
+
+        1. **Host rule.** Every URL in `urls` (what git will contact, after
+           insteadOf) is on a host in `allowed_hosts` (None means the
+           default), over https, or over ssh when the operator's credential
+           for that host is an ssh key. Otherwise RemoteNotAllowedError,
+           before git runs.
+        2. **Transport.** Only that protocol (``GIT_ALLOW_PROTOCOL``), Git LFS
+           transfers off, no terminal prompt; the commands also pass
+           ``http.followRedirects=false``. For a network caller, ``http.proxy``
+           is the operator's `proxy` (``git_proxy``) or reset to none (D-U2).
+        3. **Credential** (D3): the caller's own `token`, when every URL is
+           https on GitHub; else, for a network caller, the operator's
+           `git_credentials` entry chosen by host, KB, transport and scope
+           (`_operator_credential`; D-U1); else none. A token reaches git
+           only through the inline helper; an ssh key through an ssh command
+           that reads no other identity, agent, ssh config or known_hosts.
+
+        The account's own stores are closed for a network caller by the
+        environment itself (``git_hardening.git_env``); the local operator's
+        stay open, and are the only ones it uses besides its own token
+        (D-U6).
+        """
+        allowed = GitService._allowed_set(allowed_hosts)
+        endpoints = [GitService._endpoint(u, allow_userinfo) for u in urls]
+        if not urls or any(e is None or e[1] not in allowed for e in endpoints):
+            raise GitService._refusal(allowed)
+        hosts = {host for _, host in endpoints}  # type: ignore[misc]
+        schemes = {scheme for scheme, _ in endpoints}  # type: ignore[misc]
+        operator = (
+            GitService._operator_credential(
+                credentials,
+                next(iter(hosts)),
+                next(iter(schemes)),
+                kb_name,
+                urls,
+                registered_remote,
+            )
+            if len(hosts) == 1 and len(schemes) == 1
+            else None
+        )
+        if "ssh" in schemes and (
+            schemes != {"ssh"} or operator is None or operator.ssh_key is None
+        ):
+            raise GitService._refusal(allowed, ssh=True)
+
+        network = not is_local_process()
+        base_config = (("http.proxy", proxy or ""),) if network else ()
+        env = {
+            "GIT_ALLOW_PROTOCOL": "ssh" if schemes == {"ssh"} else _ALLOWED_GIT_PROTOCOLS,
+            "GIT_LFS_SKIP_SMUDGE": "1",
+            "GIT_LFS_SKIP_PUSH": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+        if token and all(GitService._is_github_url(u) for u in urls):
+            extra, config = GitService._token_helper(token, "oauth2", urls)
+            return _NetworkPlan(
+                {**env, **extra}, (*base_config, *config), "caller-token", _PLAN_SEAL
+            )
+        if operator is not None and operator.ssh_key is not None:
+            key = Path(operator.ssh_key)
+            if not key.is_file() or not os.access(key, os.R_OK):
+                # Refused here, with a clear reason, rather than handed to ssh:
+                # the grant cannot be used, and nothing takes its place.
+                logger.warning(
+                    "git_credentials: the ssh_key for %s cannot be read: %s", operator.host, key
+                )
+                raise RemoteNotAllowedError(
+                    "Git remote refused: the ssh_key configured for this host in "
+                    "git_credentials cannot be read. An operator fixes its path or "
+                    "permissions; Pyrite does not fall back to any other key."
+                )
+            env["GIT_SSH_COMMAND"] = ssh_command(
+                *CLOSED_SSH_OPTIONS,
+                "-i",
+                str(key),
+                # Should the key become unreadable after this check, ssh falls
+                # back to ~/.ssh/id_* unless the default identities are off
+                # (`ssh -G` lists them for a missing -i).
+                "-o",
+                "IdentityFile=none",
+                "-o",
+                f"UserKnownHostsFile={operator.known_hosts}",
+            )
+            return _NetworkPlan(env, base_config, "operator-ssh-key", _PLAN_SEAL)
+        operator_token = operator.token() if operator is not None else None
+        if operator is not None and operator_token:
+            extra, config = GitService._token_helper(operator_token, operator.username, urls)
+            return _NetworkPlan(
+                {**env, **extra}, (*base_config, *config), "operator-token", _PLAN_SEAL
+            )
+        return _NetworkPlan(env, base_config, "none", _PLAN_SEAL)
+
+    @staticmethod
+    def _without_userinfo(url: str) -> str:
+        try:
+            parts = urlsplit(url)
+        except ValueError:
             return url
-        path = GitService._github_repo_path(url)
-        if path is None:
+        if (
+            parts.scheme != "https"
+            or "@" not in parts.netloc
+            or (parts.hostname or "").lower() not in _GITHUB_HOSTS
+        ):
             return url
-        path = "/" + path.lstrip("/")
-        if url.startswith(_GITHUB_SSH_PREFIX) and not path.endswith(".git"):
-            path += ".git"
-        # Rebuilt from the verified host rather than string-replaced into the
-        # caller's URL, so the token can only ever be sent to github.com.
-        return f"https://oauth2:{token}@github.com{path}"
+        netloc = parts.netloc.rpartition("@")[2]
+        return urlunsplit((parts.scheme, netloc, parts.path, parts.query, ""))
+
+    @staticmethod
+    def _is_repository_root(local_path: Path) -> bool:
+        """Whether ``local_path`` is the top level of a repository of its own:
+        it has a ``.git`` and git's ``--show-toplevel`` from it is the same
+        folder (``os.path.samefile``). A folder nested in another repository
+        without its own ``.git`` is not (git would walk up to that one)."""
+        try:
+            if not (Path(local_path) / ".git").exists():
+                return False
+            out = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=str(local_path),
+                capture_output=True,
+                text=True,
+                env=_git_env(),
+                timeout=10,
+            )
+        except (subprocess.SubprocessError, OSError):
+            return False
+        if out.returncode != 0 or not out.stdout.strip():
+            return False
+        # The same folder, however it is spelled (letter case on a
+        # case-insensitive filesystem, a link on the way): compared by identity.
+        try:
+            return os.path.samefile(out.stdout.strip(), local_path)
+        except OSError:
+            return False
+
+    @staticmethod
+    def scrub_remote_credentials(local_path: Path) -> int:
+        """Remove user information from every remote URL of the repository.
+
+        A workspace cloned by an earlier version carries the token in
+        ``remote.<name>.url``. Run before a pull or push so the next use
+        removes it; returns the number of URLs rewritten. Only the userinfo
+        changes: scheme, host, port and path stay as they were. Only https GitHub
+        URLs are touched, the ones this service put a token into; a remote an
+        operator configured elsewhere keeps what they set.
+
+        Only the repository whose top level is ``local_path`` itself is
+        changed: a folder with no repository of its own is left alone, never
+        the enclosing repository git would find by walking up from it
+        (``_is_repository_root``). Each key is rewritten in place
+        (``--replace-all`` with the first clean URL, then ``--add`` for the
+        rest), so a failure part way never leaves a remote with no URL.
+        """
+        scrubbed = 0
+        if not GitService._is_repository_root(local_path):
+            return 0
+        try:
+            listing = subprocess.run(
+                ["git", "config", "--local", "--get-regexp", r"^remote\..*\.(push)?url$"],
+                cwd=str(local_path),
+                capture_output=True,
+                text=True,
+                env=_git_env(),
+                timeout=10,
+            )
+        except (subprocess.SubprocessError, OSError):
+            logger.warning("Could not read the remotes of a repository", exc_info=True)
+            return 0
+        urls_by_key: dict[str, list[str]] = {}
+        for line in listing.stdout.splitlines():
+            key, _, url = line.partition(" ")
+            urls_by_key.setdefault(key, []).append(url)
+        for key, urls in urls_by_key.items():
+            clean_urls = [GitService._without_userinfo(u) for u in urls]
+            if clean_urls == urls:
+                continue
+            try:
+                # Replaced, not unset then added: the key holds a URL at every
+                # step, so a failed command leaves the old value or the new one.
+                subprocess.run(
+                    ["git", "config", "--local", "--replace-all", "--", key, clean_urls[0]],
+                    cwd=str(local_path),
+                    capture_output=True,
+                    text=True,
+                    env=_git_env(),
+                    timeout=10,
+                    check=True,
+                )
+                for url in clean_urls[1:]:
+                    subprocess.run(
+                        ["git", "config", "--local", "--add", "--", key, url],
+                        cwd=str(local_path),
+                        capture_output=True,
+                        text=True,
+                        env=_git_env(),
+                        timeout=10,
+                        check=True,
+                    )
+                scrubbed += len(urls)
+            except (subprocess.SubprocessError, OSError):
+                logger.warning("Could not remove credentials from a remote URL", exc_info=True)
+        return scrubbed
 
     @staticmethod
     def _sanitize_output(output: str, token: str | None) -> str:
@@ -1437,7 +2259,7 @@ class GitService:
                 return True, f"Created worktree at {worktree_path} on existing branch {branch}"
             return False, result.stderr.strip()
         except (subprocess.SubprocessError, OSError) as e:
-            return False, str(e)
+            return False, outside_text(e)
 
     @staticmethod
     def worktree_list(repo_path: Path) -> list[dict[str, str]]:
@@ -1496,10 +2318,12 @@ class GitService:
                 return True, f"Removed worktree at {worktree_path}"
             return False, result.stderr.strip()
         except (subprocess.SubprocessError, OSError) as e:
-            return False, str(e)
+            return False, outside_text(e)
 
     @staticmethod
-    def merge_branch(repo_path: Path, branch: str, into: str = "main") -> tuple[bool, str]:
+    def merge_branch(
+        repo_path: Path, branch: str, into: str = "main", identity: GitIdentity | None = None
+    ) -> tuple[bool, str]:
         """Merge a branch into another (typically main).
 
         Performs checkout + merge in the repo_path working directory.
@@ -1520,12 +2344,14 @@ class GitService:
                 return False, f"Failed to checkout {into}: {result.stderr.strip()}"
 
             # Merge
+            if identity is None and not is_local_process():
+                _warn_identity_fallback()
             result = subprocess.run(
                 ["git", "merge", "--no-edit", "--end-of-options", branch],
                 cwd=str(repo_path),
                 capture_output=True,
                 text=True,
-                env=_git_env(),
+                env=_git_env(identity=identity),
             )
             if result.returncode == 0:
                 return True, f"Merged {branch} into {into}"
@@ -1541,7 +2367,7 @@ class GitService:
             )
             return False, f"Merge conflict: {conflict_info}"
         except (subprocess.SubprocessError, OSError) as e:
-            return False, str(e)
+            return False, outside_text(e)
 
     @staticmethod
     def diff_branches(
@@ -1560,7 +2386,7 @@ class GitService:
         """
         if not (GitService.is_valid_branch_name(base) and GitService.is_valid_branch_name(head)):
             return False, "Invalid branch name"
-        cmd = ["git", "diff"]
+        cmd = ["git", "diff", "--no-ext-diff", "--no-textconv"]
         if stat_only:
             cmd.append("--stat")
         cmd.extend(["--end-of-options", f"{base}...{head}"])
@@ -1575,8 +2401,10 @@ class GitService:
             )
             if result.returncode == 0:
                 return True, result.stdout
-            return False, result.stderr.strip()
+            _log_git_failure("git diff", repo_path, result.stderr)
+            return False, f"Diff failed. {_GIT_SEE_LOG}"
         except subprocess.TimeoutExpired:
             return False, "Diff timed out"
         except (subprocess.SubprocessError, OSError) as e:
-            return False, str(e)
+            _log_git_failure("git diff", repo_path, str(e))
+            return False, f"Diff failed. {_GIT_SEE_LOG}"

@@ -14,7 +14,7 @@ import bcrypt as _bcrypt
 from sqlalchemy.exc import IntegrityError
 
 from ..config import AuthConfig, OAuthProviderConfig
-from ..exceptions import LastAdminError
+from ..exceptions import LastAdminError, RefusedValueError
 from ..services.oauth_providers import OAuthProfile
 from ..storage.database import PyriteDB
 from .access_policy import ROLES, kb_role, role_at_least, role_level
@@ -33,7 +33,7 @@ VALID_ROLES = ROLES
 _DUMMY_PASSWORD_HASH = _bcrypt.hashpw(secrets.token_bytes(16), _bcrypt.gensalt()).decode()
 
 
-class RegistrationClosedError(ValueError):
+class RegistrationClosedError(RefusedValueError):
     """Sign-up refused because the instance has no admin yet."""
 
     def __init__(self) -> None:
@@ -116,7 +116,7 @@ class AuthService:
             commit=False,
         )
         if claimed != 1:
-            raise ValueError("Invalid or expired invite code")
+            raise RefusedValueError("Invalid or expired invite code")
         rows = self.db.execute_sql(
             "SELECT role FROM invite_code WHERE code = :code", {"code": code}
         )
@@ -130,7 +130,7 @@ class AuthService:
         if not rows:
             return False
         if rows[0].get("used_by"):
-            raise ValueError("Cannot delete a used invite code")
+            raise RefusedValueError("Cannot delete a used invite code")
         self.db.execute_write_sql("DELETE FROM invite_code WHERE code = :code", {"code": code})
         return True
 
@@ -240,9 +240,9 @@ class AuthService:
     @staticmethod
     def _check_credentials(username: str, password: str) -> None:
         if not username or not password:
-            raise ValueError("Username and password are required")
+            raise RefusedValueError("Username and password are required")
         if len(password) < 8:
-            raise ValueError("Password must be at least 8 characters")
+            raise RefusedValueError("Password must be at least 8 characters")
 
     def _insert_local_user(
         self,
@@ -277,7 +277,7 @@ class AuthService:
                 },
             )
         except IntegrityError:
-            raise ValueError("Username already taken") from None
+            raise RefusedValueError("Username already taken") from None
         return rows[0]["id"]
 
     def _create_local_user(
@@ -331,7 +331,9 @@ class AuthService:
         need an existing admin -- it is how the first admin is made.
         """
         if role not in VALID_ROLES:
-            raise ValueError(f"Invalid role: {role} (expected one of {', '.join(VALID_ROLES)})")
+            raise RefusedValueError(
+                f"Invalid role: {role} (expected one of {', '.join(VALID_ROLES)})"
+            )
         self._check_credentials(username, password)
         return self._create_local_user(username, password, role, display_name, global_access=True)
 
@@ -353,12 +355,12 @@ class AuthService:
         invite code is required but invalid.
         """
         if not self.config.allow_registration:
-            raise ValueError("Registration is disabled")
+            raise RefusedValueError("Registration is disabled")
         if not self.admin_exists():
             raise RegistrationClosedError()
 
         if self.config.require_invite_code and not invite_code:
-            raise ValueError("An invite code is required to register")
+            raise RefusedValueError("An invite code is required to register")
 
         self._check_credentials(username, password)
 
@@ -385,7 +387,7 @@ class AuthService:
             # Pay for a password check anyway, so the response time does not
             # say whether the username exists.
             self._verify_password(password, _DUMMY_PASSWORD_HASH)
-            raise ValueError("Invalid username or password")
+            raise RefusedValueError("Invalid username or password")
 
         row = rows[0]
         user_id = row["id"]
@@ -399,10 +401,10 @@ class AuthService:
         # Block password login for OAuth-only users
         if auth_provider != "local":
             self._verify_password(password, _DUMMY_PASSWORD_HASH)  # same cost as a miss
-            raise ValueError("This account uses external authentication")
+            raise RefusedValueError("This account uses external authentication")
 
         if not self._verify_password(password, password_hash):
-            raise ValueError("Invalid username or password")
+            raise RefusedValueError("Invalid username or password")
 
         raw_token = self._create_session(user_id)
 
@@ -426,7 +428,9 @@ class AuthService:
         # 1. Check org restrictions
         if provider_config.allowed_orgs:
             if not set(profile.orgs) & set(provider_config.allowed_orgs):
-                raise ValueError("Your GitHub account is not a member of an allowed organization")
+                raise RefusedValueError(
+                    "Your GitHub account is not a member of an allowed organization"
+                )
 
         # 2. Determine role from org_tier_map or default_tier
         role = provider_config.default_tier
@@ -479,7 +483,7 @@ class AuthService:
             if not vetted and (
                 not self.config.allow_registration or self.config.require_invite_code
             ):
-                raise ValueError(
+                raise RefusedValueError(
                     "Registration is closed: this GitHub account is not in an organization "
                     "the operator allows"
                 )
@@ -656,7 +660,7 @@ class AuthService:
                 cannot both succeed.
         """
         if role not in ROLES:
-            raise ValueError(f"Invalid role: {role}")
+            raise RefusedValueError(f"Invalid role: {role}")
         # Atomic only because the auth tables live in SQLite: SQLite
         # serializes writers, so the COUNT(*) subquery and the UPDATE it
         # gates always see a consistent snapshot within this one statement.
@@ -848,7 +852,7 @@ class AuthService:
     def grant_kb_permission(self, user_id: int, kb_name: str, role: str, granted_by: int) -> None:
         """Grant or update a per-KB permission."""
         if role not in ROLES:
-            raise ValueError(f"Invalid role: {role}")
+            raise RefusedValueError(f"Invalid role: {role}")
         now = datetime.now(UTC).isoformat()
         self.db.execute_write_sql(
             """INSERT INTO kb_permission (user_id, kb_name, role, granted_by, created_at)
@@ -1112,20 +1116,22 @@ class AuthService:
             {"user_id": user_id},
         )
         if not rows:
-            raise ValueError("User not found")
+            raise RefusedValueError("User not found")
 
         user_role = rows[0]["role"]
         current_count = rows[0]["ephemeral_kb_count"] or 0
 
         min_tier = self.config.ephemeral_min_tier
         if not role_at_least(user_role, min_tier):
-            raise ValueError(
+            raise RefusedValueError(
                 f"Insufficient tier: requires '{min_tier}', your role is '{user_role}'"
             )
 
         # Check per-user limit
         if current_count >= self.config.ephemeral_max_per_user:
-            raise ValueError(f"Ephemeral KB limit reached ({self.config.ephemeral_max_per_user})")
+            raise RefusedValueError(
+                f"Ephemeral KB limit reached ({self.config.ephemeral_max_per_user})"
+            )
 
         # Generate name if not provided
         if not name:

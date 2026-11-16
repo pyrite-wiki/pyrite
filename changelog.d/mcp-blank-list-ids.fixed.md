@@ -1,1 +1,0 @@
-- MCP tools that locate entries now reject blank or non-string IDs inside a list, even when other IDs are valid. The error names the argument and element before any KB check or handler runs (#1321).

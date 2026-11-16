@@ -9,6 +9,7 @@ already uses -- no service-layer duplication.
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
+from ...plugins.identity import CALLER, resolve_person_arguments
 from ...services.access_policy import KB, Action, ReadScope
 from ...services.task_service import TaskService
 from ..api import (
@@ -16,7 +17,7 @@ from ..api import (
     limiter,
     requires_kb_tier,
 )
-from ..authz import authorize
+from ..authz import authorize, get_principal
 
 router = APIRouter(tags=["Tasks"])
 
@@ -51,9 +52,14 @@ def list_tasks(
 
 
 class TaskClaimRequest(BaseModel):
-    """Request body for claiming a task."""
+    """Request body for claiming a task.
 
-    assignee: str
+    ``assignee`` names who claims it. A signed-in caller is recorded as
+    themselves (``user:<id>``), and naming anyone else is refused; with no
+    session identity (an operator key, auth disabled) it is a label and
+    required (the rule MCP's task_claim follows)."""
+
+    assignee: str | None = None
 
 
 @router.post("/tasks/{task_id}/claim", dependencies=[Depends(requires_kb_tier("write"))])
@@ -69,4 +75,7 @@ def claim_task(
     error) for expected non-claim outcomes -- already claimed, or the
     task doesn't exist -- matching the underlying CAS's own contract
     (see KBService.claim_entry)."""
-    return svc.claim_task(task_id=task_id, kb_name=kb, assignee=req.assignee)
+    resolved = resolve_person_arguments(
+        {"assignee": req.assignee}, {"assignee": CALLER}, get_principal(request)
+    )
+    return svc.claim_task(task_id=task_id, kb_name=kb, assignee=resolved["assignee"])

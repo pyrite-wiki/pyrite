@@ -32,7 +32,7 @@ def test_seeded_entry_is_searchable(live_server):
     assert "Analytical Engine" in titles, titles
 
 
-def test_kb_created_over_rest_accepts_a_write_without_a_restart(live_server, tmp_path):
+def test_kb_created_over_rest_accepts_a_write_without_a_restart(live_server, seeded_data_dir):
     """PR #4's bug class, end to end.
 
     Three requests against ONE server process:
@@ -44,7 +44,8 @@ def test_kb_created_over_rest_accepts_a_write_without_a_restart(live_server, tmp
     If this fails with 404 KB_NOT_FOUND on step 2, the registry cache is stale
     again -- the fourth occurrence of that class (issues #1, #2, 37a37c9, #4).
     """
-    kb_path = tmp_path / "created-over-rest"
+    # Under the server's kb_roots (see the live_server fixture).
+    kb_path = seeded_data_dir / "created-over-rest"
 
     created = live_server.client.post(
         "/api/kbs",

@@ -120,8 +120,15 @@ class TaskService:
             result["warnings"] = written.warnings
         return result
 
-    def update_task(self, task_id: str, kb_name: str, **updates) -> dict[str, Any]:
+    def update_task(
+        self, task_id: str, kb_name: str, *, acting: str | None = None, **updates
+    ) -> dict[str, Any]:
         """Update task fields.
+
+        ``acting`` is the signed-in caller's key (``user:<id>``) when there is
+        one. A task an account holds can then have its assignee changed --
+        taken or cleared -- only by that account; a label assignee, or
+        no assignee, may be changed as before.
 
         A ``comment`` (and optional ``by``) records *why* a status transition
         happened: when this update changes ``status`` and a comment is supplied,
@@ -134,6 +141,17 @@ class TaskService:
         """
         comment = updates.pop("comment", "") or ""
         by = updates.pop("by", "") or ""
+
+        if acting is not None and "assignee" in updates:
+            current = self.db.get_entry(task_id, kb_name) or {}
+            holder = current.get("assignee") or ""
+            if holder.startswith("user:") and holder != acting:
+                from ..exceptions import Forbidden
+
+                raise Forbidden(
+                    f"Task '{task_id}' is held by another account; only its holder "
+                    "can change its assignee"
+                )
 
         # Capture the prior status so we can record the transition.
         old_status = ""
@@ -1041,6 +1059,11 @@ def _task_validate_transition(entry: Entry, context: dict) -> Entry:
 
     old_status = context.get("old_status")
     new_status = getattr(entry, "status", None)
+    # Fails OPEN on a missing old status. That is safe only because every
+    # update hands this hook the old status of a fully loaded file: a file its
+    # type cannot load is refused before any hook (ADR-0042 8a), never given
+    # a context without one (#1311 round 2 did, and `open -> done` landed).
+    # tests/test_unloadable_file_is_never_written.py pins it.
     if not old_status or not new_status or old_status == new_status:
         return entry
 
@@ -1080,7 +1103,7 @@ def _task_validate_transition(entry: Entry, context: dict) -> Entry:
                 f"Allowed next: {allowed_msg} "
                 f"Tasks follow open → claimed → in_progress → done/failed/blocked/review; "
                 f"walk through the intermediate states rather than skipping "
-                f"(or use 'cancelled' to retire an obsolete task from any state)."
+                f"(or use 'cancelled' to retire an obsolete task from any unfinished state)."
             )
             if (
                 entry.entry_type == "task"

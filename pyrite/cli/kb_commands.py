@@ -597,7 +597,9 @@ def kb_commit(
 
         export_svc = ExportService(config, db)
         try:
-            result = export_svc.commit_kb(kb_name, message=message, paths=paths, sign_off=sign_off)
+            result = export_svc.commit_kb(
+                kb_name, message=message, paths=paths, sign_off=sign_off, run_hooks=True
+            )
             if result["success"]:
                 console.print(f"[green]Committed:[/green] {result['commit_hash'][:8]}")
                 console.print(f"  {result['files_changed']} file(s) changed")

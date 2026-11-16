@@ -1,1 +1,0 @@
-- `CURRENT_TIMESTAMP` server defaults on the index tables are emitted as SQL rather than a quoted string literal, so a row that omits `link.created_at` (or another timestamp column) stores a real timestamp instead of the text `CURRENT_TIMESTAMP` (#1304).

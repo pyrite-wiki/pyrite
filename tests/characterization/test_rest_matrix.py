@@ -82,12 +82,12 @@ def _golden_routes_for(principal_name: str, golden: dict) -> set[tuple[str, str]
 
 _WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
-# A GET route whose handler mutates as a side effect of reading -- HTTP
+# A GET route whose handler mutated as a side effect of reading -- HTTP
 # method is otherwise a reliable enough proxy for "runs against `world`
-# unmutated" (#476 round-2 blocker 1's fix), but this one is a documented
-# exception: `GET /api/daily/{date_str}` auto-creates the day's note if it
-# doesn't exist yet (`get_or_create_daily_note`, see rest_calls.py's own
-# comment on `_unique_date`). Routed to `write_world` like any write method,
+# unmutated" (#476 round-2 blocker 1's fix). `GET /api/daily/{date_str}`
+# auto-created the day's note until 0.26.1 (it now creates nothing, and
+# `test_no_get_route_writes` holds every GET to that); it stays routed to
+# `write_world`, where its goldens were recorded. Routed there like any write method,
 # so its creation can never permanently add a `daily-<date>` entry to the
 # read-only world's listings -- which is exactly what happened before this
 # override existed: the golden recorded during a serial regenerate carried

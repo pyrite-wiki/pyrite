@@ -2882,8 +2882,9 @@
         "error_contract": {
           "error": "human-readable message",
           "error_code": "machine-readable code, e.g. QUERY_SYNTAX, KB_NOT_FOUND",
+          "errors": "optional list, one row per refused field ({field, rule, message, ...}); absent when the refusal is not about a field",
           "retryable": "bool -- whether retrying the same request could succeed",
-          "shape": "{error, error_code, suggestion?, retryable}",
+          "shape": "{error, error_code, suggestion?, errors?, retryable}",
           "suggestion": "optional fix hint, omitted when not applicable"
         },
         "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
@@ -3023,6 +3024,7 @@
           "wikilink": "Inline wikilink reference",
           "wikilinked_by": "Referenced by inline wikilink"
         },
+        "type_mappings": {},
         "types": {
           "collection": {
             "ai_instructions": "A folder-backed collection that groups related entries. Created automatically from __collection.yaml files in KB folders. Use to organize entries into browsable groups with list or table views.",
@@ -3248,8 +3250,9 @@
         "error_contract": {
           "error": "human-readable message",
           "error_code": "machine-readable code, e.g. QUERY_SYNTAX, KB_NOT_FOUND",
+          "errors": "optional list, one row per refused field ({field, rule, message, ...}); absent when the refusal is not about a field",
           "retryable": "bool -- whether retrying the same request could succeed",
-          "shape": "{error, error_code, suggestion?, retryable}",
+          "shape": "{error, error_code, suggestion?, errors?, retryable}",
           "suggestion": "optional fix hint, omitted when not applicable"
         },
         "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
@@ -3389,6 +3392,7 @@
           "wikilink": "Inline wikilink reference",
           "wikilinked_by": "Referenced by inline wikilink"
         },
+        "type_mappings": {},
         "types": {
           "collection": {
             "ai_instructions": "A folder-backed collection that groups related entries. Created automatically from __collection.yaml files in KB folders. Use to organize entries into browsable groups with list or table views.",
@@ -3730,6 +3734,7 @@
         "wikilink": "Inline wikilink reference",
         "wikilinked_by": "Referenced by inline wikilink"
       },
+      "type_mappings": {},
       "types": {
         "collection": {
           "ai_instructions": "A folder-backed collection that groups related entries. Created automatically from __collection.yaml files in KB folders. Use to organize entries into browsable groups with list or table views.",
@@ -4043,6 +4048,7 @@
         "wikilink": "Inline wikilink reference",
         "wikilinked_by": "Referenced by inline wikilink"
       },
+      "type_mappings": {},
       "types": {
         "collection": {
           "ai_instructions": "A folder-backed collection that groups related entries. Created automatically from __collection.yaml files in KB folders. Use to organize entries into browsable groups with list or table views.",

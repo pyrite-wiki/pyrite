@@ -1427,5 +1427,10 @@ def test_migrations_run_on_the_files_own_spellings_before_the_lift():
     source = (ROOT / "pyrite/storage/repository.py").read_text(encoding="utf-8")
     node = next(n for n in _functions(source) if n.name == "_load_entry")
     calls = _calls(node)
-    assert calls.index("_maybe_migrate") < calls.index("entry_from_frontmatter")
+    # The parse and the migration are `_frontmatter_of`, which the strict load
+    # and the partial read share (ADR-0042 8a).
+    helper = next(n for n in _functions(source) if n.name == "_frontmatter_of")
+    assert "_maybe_migrate" in _calls(helper)
+    assert "entry_from_frontmatter" not in _calls(helper)
+    assert calls.index("_frontmatter_of") < calls.index("entry_from_frontmatter")
     assert "read_view" not in calls, "the lift belongs to the loader, not the repository"

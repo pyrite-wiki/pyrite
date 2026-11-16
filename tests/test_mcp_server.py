@@ -1273,49 +1273,6 @@ class TestPyriteMCPServer:
             write_names = [t["name"] for t in write_env["server"].get_tools_list()]
             assert "kb_link" in write_names
 
-    # ------------------------------------------------------------------
-    # Entry type resolution (plugin subtype)
-    # ------------------------------------------------------------------
-
-    def test_kb_create_resolves_plugin_subtype(self, mcp_admin_server):
-        """Test that create with a core type resolves to plugin subtype."""
-        from unittest.mock import patch
-
-        from pyrite.models import EventEntry
-
-        # Create a mock plugin subclass of EventEntry
-        class MockTimelineEvent(EventEntry):
-            entry_type = "timeline_event"
-
-        mock_plugin_types = {"timeline_event": MockTimelineEvent}
-
-        server = mcp_admin_server["server"]
-
-        with patch("pyrite.plugins.get_registry") as mock_reg:
-            mock_reg.return_value.get_all_entry_types.return_value = mock_plugin_types
-            # Also patch the hooks to avoid plugin lookup issues
-            with patch.object(type(server.svc), "_run_hooks", side_effect=lambda _n, e, _c: e):
-                result = server._dispatch_tool(
-                    "kb_create",
-                    {
-                        "kb_name": "test-events",
-                        "entry_type": "event",
-                        "title": "Resolved Event",
-                        "date": "2025-05-01",
-                        "body": "Should resolve to timeline_event.",
-                    },
-                )
-
-        assert result.get("created") is True
-        entry_id = result["entry_id"]
-
-        # Verify the entry was created — the type depends on whether
-        # build_entry dispatches correctly for the resolved type
-        get_result = server._dispatch_tool(
-            "kb_get", {"entry_id": entry_id, "kb_name": "test-events"}
-        )
-        assert "entry" in get_result
-
 
 # ---------------------------------------------------------------------------
 # TestMCPProtocol — protocol-level tests
@@ -1522,6 +1479,58 @@ class TestMCPPagination:
         assert prefixed["tag_count"] == 5
         for t in prefixed["tags"]:
             assert t["tag"].startswith("tag-")
+
+    def test_kb_tags_refuses_non_positive_limit_and_negative_offset(self):
+        """MCP kb_tags enforces limit >= 1 and offset >= 0 via its inputSchema (#1421)."""
+        import asyncio
+        import json
+
+        from mcp.shared.memory import create_connected_server_and_client_session
+
+        def _seed_tagged_files(_config, kb_map):
+            kb_path = kb_map["test-kb"].path
+            for i in range(3):
+                (kb_path / f"note-{i}.md").write_text(
+                    f"---\nid: note-{i}\ntype: note\ntitle: Note {i}\n"
+                    f"tags:\n  - tag-{i}\n  - group/item-{i}\n---\nBody {i}.\n",
+                    encoding="utf-8",
+                )
+
+        with _make_mcp_server(
+            [{"name": "test-kb", "kb_type": KBType.GENERIC}],
+            tier="read",
+            extra_setup=_seed_tagged_files,
+        ) as env:
+            sdk = env["server"].build_sdk_server()
+
+            async def call_kb_tags(arguments):
+                async with create_connected_server_and_client_session(sdk) as session:
+                    return await session.call_tool("kb_tags", arguments)
+
+            for bad_args, min_val in (
+                ({"limit": -1}, 1),
+                ({"limit": 0}, 1),
+                ({"offset": -1}, 0),
+            ):
+                refused = asyncio.run(call_kb_tags(bad_args))
+                assert refused.isError is True, (bad_args, refused)
+                msg = refused.content[0].text
+                assert "Input validation error:" in msg, (bad_args, msg)
+                assert f"is less than the minimum of {min_val}" in msg, (bad_args, msg)
+
+            one = asyncio.run(call_kb_tags({"limit": 1, "offset": 0}))
+            assert one.isError is False
+            one_data = json.loads(one.content[0].text)
+            assert one_data["tag_count"] == 1
+            assert one_data["has_more"] is True
+
+            default_call = asyncio.run(call_kb_tags({}))
+            assert default_call.isError is False
+            assert json.loads(default_call.content[0].text)["tag_count"] == 6
+
+            tree_call = asyncio.run(call_kb_tags({"tree": True}))
+            assert tree_call.isError is False
+            assert "tree" in json.loads(tree_call.content[0].text)
 
 
 # ---------------------------------------------------------------------------

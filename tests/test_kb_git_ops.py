@@ -248,7 +248,17 @@ class TestPushKBNoRemote:
 
 
 class TestPushKBWithRemote:
-    """Test push_kb with a local bare repo as the remote."""
+    """Test push_kb with a local bare repo as the remote: the operator's own
+    ``pyrite kb push`` (the local process), the one push exempt from the host
+    rule (ADR-0052 N2, D2). A network caller's push is held to it:
+    tests/test_network_git_gets_only_the_operator_credential.py."""
+
+    @pytest.fixture(autouse=True)
+    def _the_operators_own_process(self):
+        from pyrite.services.acting import local_process
+
+        with local_process(True):
+            yield
 
     def test_push_to_local_bare_repo(self, git_kb, tmp_path):
         export_svc, kb_path = git_kb["export_svc"], git_kb["kb_path"]

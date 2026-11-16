@@ -11,14 +11,21 @@ from __future__ import annotations
 import logging
 import mimetypes
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from ..config import PyriteConfig
 from ..services.branding_service import BrandingService
 from .api import get_config
+from .static import add_csp_extra
 
 logger = logging.getLogger(__name__)
+
+# Operator-supplied files differ from the baseline policy only by `sandbox`:
+# opened directly, they have no script, form or plugin capability. The
+# headers themselves come from `static.security_headers`, applied to every
+# non-API response.
+BRANDING_ASSET_CSP_EXTRA = "sandbox"
 
 branding_router = APIRouter(tags=["Branding"])
 
@@ -45,6 +52,7 @@ def get_branding_config(
 
 @branding_router.get("/branding/{filename}")
 def get_branding_asset(
+    request: Request,
     filename: str,
     svc: BrandingService = Depends(get_branding_service),
 ) -> FileResponse:
@@ -57,5 +65,6 @@ def get_branding_asset(
     if path is None:
         raise HTTPException(status_code=404, detail="Asset not found")
 
+    add_csp_extra(request, BRANDING_ASSET_CSP_EXTRA)
     mime, _ = mimetypes.guess_type(path.name)
     return FileResponse(path, media_type=mime or "application/octet-stream")

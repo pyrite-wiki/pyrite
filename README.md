@@ -192,7 +192,7 @@ Eleven built-in entry types: `note`, `person`, `organization`, `event`, `documen
 
 ## Plugin Protocol
 
-Extensions implement a Python protocol class with up to 19 methods:
+Extensions implement a Python protocol class with up to 20 methods:
 
 - `get_entry_types()` — custom entry types with serialization
 - `get_type_metadata()` — field definitions, AI instructions, presets
@@ -354,7 +354,7 @@ cd web && npm ci && npm run build && cd ..   # the web UI (optional)
 Or straight from a release tag, no clone:
 
 ```bash
-pip install "pyrite[server,cli] @ git+https://github.com/pyrite-wiki/pyrite@v0.26.0"
+pip install "pyrite[server,cli] @ git+https://github.com/pyrite-wiki/pyrite@v0.26.3"
 ```
 
 That gives you the CLI, the REST API and the MCP server, but **not the web

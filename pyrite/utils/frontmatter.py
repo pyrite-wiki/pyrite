@@ -58,7 +58,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
-from ..exceptions import FrontmatterError
+from ..exceptions import FrontmatterError, TextOrigin
 
 _BODY_FIELD_LINE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):[ \t]*")
 
@@ -198,11 +198,11 @@ def require_frontmatter(text: str) -> Frontmatter:
     return split
 
 
-def load_frontmatter(text: str) -> tuple[dict[str, Any], str] | None:
+def load_frontmatter(text: str, *, origin: TextOrigin = None) -> tuple[dict[str, Any], str] | None:
     """(metadata, body) of an entry file's text; None when it has no frontmatter
     or none that closes. A file that is refused (``Malformed``, ``Unsupported``),
     YAML that does not parse and YAML that is not a mapping raise
-    ``FrontmatterError``."""
+    ``FrontmatterError``. ``origin``: whose bytes (``yaml.load_yaml_document``)."""
     from .yaml import load_yaml
 
     split = split_frontmatter(text)
@@ -210,7 +210,7 @@ def load_frontmatter(text: str) -> tuple[dict[str, Any], str] | None:
         raise FrontmatterError(f"Invalid entry format: {describe(split)}")
     if not isinstance(split, Frontmatter):
         return None
-    return load_yaml(split.text), split.body
+    return load_yaml(split.text, origin=origin), split.body
 
 
 def leaked_frontmatter_line(frontmatter: dict[str, Any], body: str) -> tuple[str, str] | None:

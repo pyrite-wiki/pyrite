@@ -699,7 +699,7 @@ class TestRelationshipTypes:
 
     def test_agent_schema_includes_plugin_rels(self, patched_registry):
         schema = KBSchema(name="test")
-        agent = schema.to_agent_schema()
+        agent = schema.to_agent_schema(kb_type="generic")
         rels = agent.get("relationship_types", {})
         assert "elaborates" in rels
         assert "branches_from" in rels
@@ -1343,6 +1343,29 @@ class TestMethodCapabilitiesMap:
         assert m.get("get_relationship_types") == Capability.DOMAIN
         # CONTEXT
         assert m.get("set_context") == Capability.CONTEXT
+
+    def test_capability_map_matches_protocol_methods(self):
+        """ADR-0002: the map must cover every PyritePlugin Protocol
+        method, and nothing else. A method missing from the map is
+        silently ungated (_plugin_declares returns True for unmapped
+        methods), so a new Protocol method without a map entry, or a
+        map entry deleted by accident, must fail this test."""
+        import inspect
+
+        from pyrite.plugins import registry as registry_mod
+        from pyrite.plugins.protocol import PyritePlugin
+
+        protocol_methods = {
+            name
+            for name, member in inspect.getmembers(PyritePlugin, predicate=inspect.isfunction)
+            if not name.startswith("_")
+        }
+        mapping = registry_mod._METHOD_CAPABILITIES
+        assert set(mapping) == protocol_methods, (
+            "capability map and Protocol disagree: "
+            f"unmapped methods={sorted(protocol_methods - set(mapping))}, "
+            f"stale entries={sorted(set(mapping) - protocol_methods)}"
+        )
 
 
 class TestRegistryDispatchSkip:

@@ -25,12 +25,17 @@ from ..exceptions import (
     InvalidQATierError,
     KBUnreadableError,
     PyriteError,
+    os_reason,
+    public_attribute,
+    public_text,
 )
+from ..models.base import lifecycle_validation_error
 from ..plugins.registry import get_registry
 from ..schema import validate_date, validate_importance
 from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
+from ..utils.kb_files import KBFileOutsideRootError, KBFiles
 from ..utils.metadata import parse_metadata
 
 logger = logging.getLogger(__name__)
@@ -373,11 +378,17 @@ class QAService:
                 return "its path is not a folder"
             with os.scandir(path) as listing:
                 next(listing, None)
+            # Read as the KB reads it: a kb.yaml that is a link out of the KB
+            # is not opened here (``kb_schema`` refuses it, OUTSIDE_KB_ROOT),
+            # so no error text from a file outside the KB reaches the caller.
             kb_yaml = path / "kb.yaml"
-            if kb_yaml.exists():
-                kb_yaml.open("rb").close()
+            if KBFiles(path).present(kb_yaml):
+                try:
+                    KBFiles(path).read_bytes(kb_yaml)
+                except KBFileOutsideRootError:
+                    pass
         except OSError as exc:
-            return f"its folder cannot be read ({exc.strerror or type(exc).__name__})"
+            return f"its folder cannot be read ({os_reason(exc)})"
         return None
 
     def validate_all(
@@ -612,7 +623,10 @@ class QAService:
                     {
                         "entry_id": eid,
                         "error_code": getattr(exc, "error_code", "INTERNAL_ERROR"),
-                        "reason": getattr(exc, "reason", None) or f"{type(exc).__name__}: {exc}",
+                        # A Pyrite error's reason (EvaluationFailedError's);
+                        # the same name on another exception is not Pyrite's.
+                        "reason": public_attribute(exc, "reason")
+                        or public_text(exc, already_logged=True),
                     }
                 )
                 continue
@@ -692,7 +706,10 @@ class QAService:
             )
         except Exception as e:
             logger.warning("Task creation failed for %s: %s", entry_id, e, exc_info=True)
-            return {"entry_id": entry_id, "reason": f"{type(e).__name__}: {e}"}
+            return {
+                "entry_id": entry_id,
+                "reason": public_text(e, already_logged=True),
+            }
         return None
 
     # =========================================================================
@@ -1218,7 +1235,7 @@ class QAService:
         if not kb_config:
             return
 
-        if not kb_config.kb_yaml_path.exists():
+        if not kb_config.kb_yaml_present:
             return
 
         schema = kb_config.kb_schema
@@ -1281,9 +1298,17 @@ class QAService:
         tagged, complex or duplicate key), with the line and the reason: the
         same walk ``index health`` reports (``storage.index.unmodellable_files``),
         on every file of the KB or on ``entry_id``'s file alone. A warning,
-        as it is to ``index health``: the file reads; no write reaches it."""
+        as it is to ``index health``: the file reads; no write reaches it.
+
+        For one id the cost is what the index allows, as for a read by id:
+        the file the index holds for it, else only the files the index may
+        have missed (``kb_service.files_the_index_may_miss``: no row, or a
+        changed stat; at most ``MISS_SCAN_MAX_FILES``, newest first). A file
+        no lookup can read (a duplicate key) never has a row, so it is among
+        them, and is listed under its stem as the KB walk lists it."""
         from ..storage.index import unmodellable_files
         from ..storage.repository import KBRepository
+        from .kb_service import files_the_index_may_miss
 
         kb_config = self.config.get_kb(kb_name)
         if kb_config is None:
@@ -1291,15 +1316,14 @@ class QAService:
         if entry_id is None:
             rows = unmodellable_files(kb_config)
         else:
-            only = KBRepository(kb_config).find_file(entry_id)
-            # A file no lookup can read (a duplicate key) is found by no id;
-            # the KB walk lists it under its stem, so the one-entry report
-            # takes the KB walk's own rows for that id and the two agree.
-            rows = (
-                unmodellable_files(kb_config, [only])
-                if only is not None
-                else [row for row in unmodellable_files(kb_config) if row["id"] == entry_id]
-            )
+            row = self.db.get_entry(entry_id, kb_name)
+            indexed = row.get("file_path") if row else None
+            if indexed:
+                rows = unmodellable_files(kb_config, [Path(indexed)])
+            else:
+                repo = KBRepository(kb_config)
+                may_miss = sorted(files_the_index_may_miss(self.db, repo))
+                rows = [r for r in unmodellable_files(kb_config, may_miss) if r["id"] == entry_id]
         for row in rows:
             issues.append(
                 {
@@ -1372,7 +1396,9 @@ class QAService:
         else:
             row = self.db.get_entry(entry_id, kb_name)
             path = row.get("file_path") if row else None
-            if not path or not Path(path).is_file():
+            # The KB's own probe: a link out is there, and refused by the
+            # load below, whatever it points at.
+            if not path or not KBFiles(kb_config.path).present(path):
                 return sources
             try:
                 entries = [(repo.load_entry_from_file(Path(path)), Path(path))]
@@ -1390,7 +1416,7 @@ class QAService:
                         "field": "file",
                         "message": (
                             f"Entry '{entry_id}': its file could not be loaded, so the "
-                            f"checks that read it did not run: {exc}"
+                            f"checks that read it did not run: {public_text(exc, log=logger)}"
                         ),
                     }
                 )
@@ -1404,6 +1430,20 @@ class QAService:
             self._check_reserved_key_collisions(issues, kb_name, entry, shown)
             self._check_task_priority(issues, kb_name, entry, shown)
             self._check_double_spellings(issues, kb_name, entry, shown)
+            if problem := lifecycle_validation_error(entry.lifecycle):
+                issues.append(
+                    {
+                        **problem,
+                        "entry_id": entry.id,
+                        "kb_name": kb_name,
+                        # QA groups findings by issue category; writes name
+                        # the failed constraint (enum). Both identify the
+                        # same field for callers filtering across surfaces.
+                        "rule": "invalid_lifecycle",
+                        "severity": "error",
+                        "message": f"{shown}: {problem['message']}",
+                    }
+                )
             if entry._source_frontmatter is not None:
                 leaked = leaked_frontmatter_line(entry._source_frontmatter, entry.body or "")
                 if leaked is not None:
@@ -1439,7 +1479,7 @@ class QAService:
         Naming the kb.yaml and the field says where to fix it.
         """
         kb_config = self.config.get_kb(kb_name)
-        if not kb_config or not kb_config.kb_yaml_path.exists():
+        if not kb_config or not kb_config.kb_yaml_present:
             return
         for type_name, field_name, expected in _CORE_TYPED_FIELDS:
             type_schema = kb_config.kb_schema.types.get(type_name)
@@ -1513,16 +1553,18 @@ class QAService:
         at load (#704) and is not reported here. The path in the message is the
         handle to use: no index row exists for such a file.
         """
-        from ..storage.repository import _is_regular_file
+        from ..storage.repository import _is_regular_file, _text_of
         from ..utils.frontmatter import Frontmatter, split_frontmatter
+        from ..utils.kb_files import KBFileOutsideRootError
         from ..utils.yaml import load_yaml
 
         for file_path in repo.list_files():
             if not _is_regular_file(file_path):
                 continue  # a FIFO would block the read (#972; the dev-to-arch merge, #1026)
             try:
-                text = file_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+                # Only inside the KB, one name: what QA reports may quote it.
+                text = _text_of(repo._read_inside(file_path))
+            except (OSError, UnicodeDecodeError, KBFileOutsideRootError):
                 continue
             split = split_frontmatter(text)
             if not isinstance(split, Frontmatter):
@@ -1637,7 +1679,7 @@ class QAService:
         if not kb_config:
             return
 
-        if not kb_config.kb_yaml_path.exists():
+        if not kb_config.kb_yaml_present:
             return
 
         schema = kb_config.kb_schema
@@ -1890,7 +1932,7 @@ class QAService:
                         "message": (
                             f"Rubric checker '{checker_name}' failed on this entry, so "
                             f"'{item.get('text', '')}' was not checked: "
-                            f"{type(exc).__name__}: {exc}"
+                            f"{public_text(exc, already_logged=True)}"
                         ),
                     }
                 )
@@ -1958,7 +2000,7 @@ class QAService:
             # Whatever the evaluator did not expect is still a check that did
             # not run: name it for this entry, never end the caller's run.
             logger.warning("Tier 2 evaluation of %s failed", entry["id"], exc_info=True)
-            raise EvaluationFailedError(entry["id"], f"{type(exc).__name__}: {exc}") from exc
+            raise EvaluationFailedError(entry["id"], public_text(exc, already_logged=True)) from exc
 
     def _run_evaluator(
         self, entry: dict[str, Any], judgment_items: list[str], guidelines: str
@@ -2012,7 +2054,7 @@ class QAService:
                         "severity": "error",
                         "field": "evaluation_rubric",
                         "message": f"Tier 2 did not run for '{row['id']}': "
-                        + getattr(exc, "reason", str(exc)),
+                        + (public_attribute(exc, "reason") or public_text(exc, log=logger)),
                     }
                 )
 

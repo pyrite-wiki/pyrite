@@ -444,10 +444,9 @@ _register(
 _register(
     "GET",
     "/api/daily/{date_str}",
-    # A call-key-unique date -- NOT a fixed reserved one. This route's
-    # handler (`get_or_create_daily_note`) auto-creates the note as a side
-    # effect for any WRITE-tier caller (its own docstring: "auto-creating it
-    # only for a write-tier caller"), so a fixed date still collided: one
+    # A call-key-unique date -- NOT a fixed reserved one. Until 0.26.1 this
+    # route's handler auto-created the note for a WRITE-tier caller (it now
+    # answers 404 and creates nothing), so a fixed date collided: one
     # principal's write-tier GET silently created it, and a later, different
     # principal's read-tier GET on the SAME date then saw 200-with-a-note in
     # the golden but 404 on an isolated re-run (worker composition changed

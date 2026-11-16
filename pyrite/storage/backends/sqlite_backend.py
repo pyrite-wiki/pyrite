@@ -306,9 +306,11 @@ class SQLiteBackend(BaseBackend):
             params.append(date_to)
         if tags:
             tag_placeholders = ",".join(["?"] * len(tags))
+            # By (id, kb_name): an id is unique within one KB only, so an id
+            # alone matched another KB's entry's tags.
             sql += f"""
-                AND e.id IN (
-                    SELECT et.entry_id FROM entry_tag et
+                AND (e.id, e.kb_name) IN (
+                    SELECT et.entry_id, et.kb_name FROM entry_tag et
                     JOIN tag t ON et.tag_id = t.id
                     WHERE t.name IN ({tag_placeholders})
                     GROUP BY et.entry_id, et.kb_name
@@ -701,9 +703,11 @@ class SQLiteBackend(BaseBackend):
             params.append(date_to)
         if tags:
             placeholders = ",".join(["?"] * len(tags))
+            # By (id, kb_name): an id is unique within one KB only, so an id
+            # alone matched another KB's entry's tags.
             sql += f"""
-                AND e.id IN (
-                    SELECT et.entry_id FROM entry_tag et
+                AND (e.id, e.kb_name) IN (
+                    SELECT et.entry_id, et.kb_name FROM entry_tag et
                     JOIN tag t ON et.tag_id = t.id
                     WHERE t.name IN ({placeholders})
                     GROUP BY et.entry_id, et.kb_name

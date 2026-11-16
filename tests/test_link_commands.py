@@ -152,6 +152,38 @@ class TestLinksCheck:
             assert "detail-target" in result.output
             assert "detail-src" in result.output
 
+    @pytest.mark.parametrize("bad_limit", ["0", "-1"])
+    def test_check_limit_below_one_is_usage_error(self, link_env, bad_limit):
+        """--limit 0 or negative is refused, not answered with a short list."""
+        with _patch_config(link_env):
+            result = runner.invoke(app, ["links", "check", "--limit", bad_limit])
+            assert result.exit_code == 2
+            assert "Invalid value for '--limit'" in result.output
+
+    @pytest.mark.parametrize(("limit", "expected"), [("1", 1), ("3", 3), ("500", 3)])
+    def test_check_limit_caps_missing_targets(self, link_env, limit, expected):
+        """--limit N returns at most N of the missing targets."""
+        from pyrite.services.kb_service import KBService
+
+        config = link_env["config"]
+        db = PyriteDB(config.settings.index_path)
+        svc = KBService(config, db)
+        svc.create_entry(
+            "test-events",
+            "src-many",
+            "Source Many",
+            "note",
+            body="See [[missing-a]], [[missing-b]] and [[missing-c]].",
+        )
+        IndexManager(db, config).sync_incremental("test-events")
+        db.close()
+
+        with _patch_config(link_env):
+            result = runner.invoke(app, ["links", "check", "--limit", limit, "--format", "json"])
+            assert result.exit_code == 1  # broken links still fail the check
+            data = json.loads(result.output)
+            assert len(data["targets"]) == expected
+
 
 @pytest.mark.cli
 class TestIndexHealthBrokenLinks:

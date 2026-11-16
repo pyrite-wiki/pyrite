@@ -16,7 +16,9 @@ from pyrite.services.url_checker import URLChecker
         pytest.param(404, marks=pytest.mark.control(reason="a real missing source remains broken")),
     ],
 )
-def test_method_refusal_retries_get_but_missing_sources_do_not(head_status):
+def test_method_refusal_retries_get_but_missing_sources_do_not(head_status, monkeypatch):
+    # The server is on loopback; the destination rule has its own tests.
+    monkeypatch.setattr("pyrite.services.url_checker._check_url_safe", lambda url: None)
     calls = []
 
     class Handler(BaseHTTPRequestHandler):

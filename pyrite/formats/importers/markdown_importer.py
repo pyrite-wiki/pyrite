@@ -4,7 +4,7 @@ import logging
 import re
 from typing import Any
 
-from pyrite.exceptions import FrontmatterError
+from pyrite.exceptions import CALLER_REQUEST, FrontmatterError, caller_owned
 from pyrite.utils.frontmatter import (
     Frontmatter,
     NoFrontmatter,
@@ -43,7 +43,10 @@ def import_markdown(data: str | bytes, *, stream: bool = False) -> list[dict[str
     has been parsed.
     """
     if isinstance(data, bytes):
-        data = data.decode("utf-8")
+        try:
+            data = data.decode("utf-8")
+        except UnicodeDecodeError as e:  # the caller's upload: its bytes, its detail
+            raise caller_owned(e) from None
 
     entries = []
     remaining = data.strip()
@@ -85,7 +88,8 @@ def _next_entry(text: str, pos: int) -> tuple[int, str] | None:
                     f"Invalid entry format: the entry after the separator on line "
                     f"{text.count(chr(10), 0, start) + 1}: {describe(nxt)}"
                 )
-            load_yaml(nxt.text)  # raises FrontmatterError unless it is a mapping
+            # Raises FrontmatterError unless it is a mapping; the caller's upload.
+            load_yaml(nxt.text, origin=CALLER_REQUEST)
             return start, block
         pos = end
     return None
@@ -120,7 +124,7 @@ def _parse_single_md(text: str) -> dict[str, Any] | None:
 
     # YAML that does not parse raises FrontmatterError: an entry with its frontmatter
     # dropped is a different entry, so the import refuses instead of carrying on.
-    fm = load_yaml(frontmatter_text)
+    fm = load_yaml(frontmatter_text, origin=CALLER_REQUEST)  # the caller's upload
 
     if not isinstance(fm, dict):
         fm = {}

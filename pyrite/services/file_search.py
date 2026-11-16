@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass, field
 
 from ..config import KBConfig
-from ..storage.repository import KBRepository
+from ..storage.repository import KBRepository, _text_of
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,9 @@ def search_kb_files(
         repo = KBRepository(kb)
         for md_file in repo.list_files():
             try:
-                content = md_file.read_text(encoding="utf-8")
+                # Only inside the KB, one name, as every entry load reads: a
+                # link out of the KB is unreadable here, never matched.
+                content = _text_of(repo._read_inside(md_file))
                 out.scanned += 1
                 if needle in content.lower():
                     entry = repo._load_entry(md_file)

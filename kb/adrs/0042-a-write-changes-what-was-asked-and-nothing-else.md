@@ -543,9 +543,12 @@ file that does not parse (#777) and from a loaded entry that fails validation
 5. **The single-entry read** (see the decision 9 paragraph below) returns the
    entry as its declared type. It carries the fields the loader accepts and a
    `load_problems` list that names each refused field with the loader's
-   message. A refused field is absent from the fields (`null` in a REST
-   response model's fixed columns). It never appears as a default or as a
-   placeholder such as `[]` or `{}`. If the refusal cannot be isolated to
+   message. A refused field is absent from the fields: a REST response
+   model's scalar columns carry `null`, and its list and mapping columns
+   (`tags`, `participants`, `sources`, `metadata`) are left out of the
+   response. It never appears as a default or as a placeholder such as `[]`
+   or `{}`. (Amended 2026-11-11 by the maintainer to match the code and
+   `docs/json-contracts.md` after #1367; the decision is unchanged.) If the refusal cannot be isolated to
    fields (a base field, a cross-field rule, a missing key the loader
    requires), the read answers `ENTRY_UNREADABLE` instead. Lists, search and
    counts have no row for the file. `index sync` and `index health` list it

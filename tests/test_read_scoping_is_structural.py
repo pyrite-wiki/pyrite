@@ -26,7 +26,7 @@ in `SECONDARY_KB_PARAMETERS` with what is known about it. The entries that
 used to be listed there are resolved rather than recorded now: `source_kb`
 and `target_kb` (`links.py`) joined `KB_PARAM_NAMES` in #186, and
 `center_kb` (`/api/graph`) joined it when a private centre was found to
-answer differently from a missing one (private #57).
+answer differently from a missing one.
 
 **What the walk cannot see -- recorded, not reviewed.** It visits
 `APIRoute`s under `/api` only. Two surfaces are therefore absent rather

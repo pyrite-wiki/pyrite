@@ -488,7 +488,11 @@ def _print_rubric_line(text: str, kind: str, item: str | dict) -> None:
 def qa_gaps(
     kb_name: str = typer.Option(..., "--kb", "-k", help="KB to analyze"),
     threshold: int = typer.Option(
-        3, "--threshold", "-t", help="Minimum entries per type to not flag as sparse"
+        3,
+        "--threshold",
+        "-t",
+        min=0,
+        help="Minimum entries per type to not flag as sparse",
     ),
     output_format: str = typer.Option(
         "rich",
@@ -724,7 +728,7 @@ def qa_fix(
 def qa_stale(
     kb_name: str = typer.Argument(..., help="KB to check for stale entries"),
     max_age: int = typer.Option(
-        90, "--max-age", "-a", help="Days since last update to consider stale"
+        90, "--max-age", "-a", min=0, help="Days since last update to consider stale"
     ),
     output_format: str = typer.Option(
         "rich",
@@ -778,7 +782,9 @@ def qa_stale(
 @qa_app.command("compact")
 def qa_compact(
     kb_name: str = typer.Argument(..., help="KB to check for archival candidates"),
-    min_age: int = typer.Option(90, "--min-age", "-a", help="Minimum days old to be a candidate"),
+    min_age: int = typer.Option(
+        90, "--min-age", "-a", min=0, help="Minimum days old to be a candidate"
+    ),
     output_format: str = typer.Option(
         "rich",
         "--format",
@@ -843,7 +849,9 @@ def qa_compact(
 @qa_app.command("check-urls")
 def qa_check_urls(
     kb_name: str = typer.Argument(..., help="KB to check source URLs"),
-    sample: int = typer.Option(0, "--sample", "-s", help="Check a random sample of N URLs (0=all)"),
+    sample: int = typer.Option(
+        0, "--sample", "-s", min=0, help="Check a random sample of N URLs (0=all)"
+    ),
     cache_file: str = typer.Option("", "--cache", help="Path to URL check cache file"),
     output_format: str = typer.Option(
         "rich",

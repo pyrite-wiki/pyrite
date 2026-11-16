@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from ..config import PyriteConfig
+from ..exceptions import EntryLoadError, outside_text
 from ..storage.database import PyriteDB
 
 logger = logging.getLogger(__name__)
@@ -95,7 +96,10 @@ class QAFixService:
                 not_applied = write()
             except Exception as e:
                 logger.warning("Failed to apply a fix to %s: %s", fixes[0]["entry_id"], e)
-                not_applied = f"update_failed: {type(e).__name__}: {e}"
+                # Logged above; the fault's text is the operator's (ADR-0052 N3).
+                not_applied = (
+                    f"update_failed: {type(e).__name__}: {outside_text(e, already_logged=True)}"
+                )
             if not_applied:
                 failed.extend({**fix, "reason": not_applied} for fix in fixes)
             else:
@@ -435,7 +439,13 @@ class QAFixService:
             return None
         if field_name in ("type", "entry_type"):
             return "field_fixed_once_created"
-        entry = KBRepository(kb_config).load(entry_id)
+        try:
+            entry = KBRepository(kb_config).load(entry_id)
+        except EntryLoadError as e:
+            # Called outside `attempt()`, so a raise would end the whole run:
+            # the file its type cannot load is a hand fix, named, and the run
+            # goes on (ADR-0042 8a: no write lands on it).
+            return f"{e.error_code}: {e}"
         source = getattr(entry, "_source_frontmatter", None)
         if entry is None or not isinstance(source, dict):
             return None
@@ -491,11 +501,17 @@ class QAFixService:
         the file, not the model's reading of it."""
         from ..storage.repository import KBRepository
         from ..utils.frontmatter import load_frontmatter
+        from ..utils.kb_files import KBFileOutsideRootError
 
         kb_config = self.config.get_kb(kb_name)
         if not kb_config:
             return None
-        found = KBRepository(kb_config).read_for_write(entry_id)
+        try:
+            # Read only inside the KB, one name: a link out or a hard link is
+            # no file this fix may read (and its write would be refused).
+            found = KBRepository(kb_config).read_for_write(entry_id)
+        except (OSError, KBFileOutsideRootError):
+            return None
         if found is None:
             return None
         _path, raw = found

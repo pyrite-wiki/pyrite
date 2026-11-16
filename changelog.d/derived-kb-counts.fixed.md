@@ -1,1 +1,0 @@
-- KB details, health reports and stats now derive entry counts from the index. Registry health uses the same verdict as `index health`, so writes and non-entry Markdown files no longer produce misleading results (#1267).

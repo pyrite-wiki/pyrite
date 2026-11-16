@@ -1,9 +1,12 @@
 """QA review endpoints."""
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from ...exceptions import LandingRefusedError
+from ...exceptions import LandingRefusedError, public_text
+from ...plugins.identity import CALLER, resolve_person_arguments
 from ...services.access_policy import KB, Action
 from ...services.review_service import ReviewService
 from ..api import (
@@ -13,18 +16,24 @@ from ..api import (
     limiter,
     requires_kb_tier,
 )
-from ..authz import authorize
+from ..authz import authorize, get_principal
 
 router = APIRouter(tags=["Reviews"])
+
+logger = logging.getLogger(__name__)
 
 
 # -- Request / Response models ------------------------------------------------
 
 
 class CreateReviewRequest(BaseModel):
+    """``reviewer`` names who reviewed. A signed-in caller is recorded as
+    themselves (``user:<id>``), and naming anyone else is refused; with no
+    session identity it is a label and required."""
+
     entry_id: str
     kb_name: str
-    reviewer: str
+    reviewer: str | None = None
     reviewer_type: str  # "user" or "agent"
     result: str  # "pass", "fail", "partial"
     details: str | None = None
@@ -71,11 +80,14 @@ def create_review(
         raise HTTPException(status_code=422, detail="reviewer_type must be 'user' or 'agent'")
     if body.result not in ("pass", "fail", "partial"):
         raise HTTPException(status_code=422, detail="result must be 'pass', 'fail', or 'partial'")
+    reviewer = resolve_person_arguments(
+        {"reviewer": body.reviewer}, {"reviewer": CALLER}, get_principal(request)
+    )["reviewer"]
     try:
         review = review_svc.create_review(
             entry_id=body.entry_id,
             kb_name=body.kb_name,
-            reviewer=body.reviewer,
+            reviewer=reviewer,
             reviewer_type=body.reviewer_type,
             result=body.result,
             details=body.details,
@@ -83,7 +95,9 @@ def create_review(
     except LandingRefusedError:
         raise  # LANDING_REFUSED through the central handler, not a 404
     except Exception as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        # A refusal's own text (an entry not found) or, for a fault, Pyrite's
+        # fixed message: the exception's text is the operator's (logged).
+        raise HTTPException(status_code=404, detail=public_text(exc, log=logger)) from exc
     return ReviewResponse(**review)
 
 

@@ -18,6 +18,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from ..exceptions import BrandingInvalidError
 from ..utils.yaml import load_yaml_file
@@ -47,6 +48,18 @@ DEFAULT_FOOTER_CREDIT_URL = "https://pyrite.wiki"
 # grows without bound. A cache hit constructs a fresh BrandingInvalidError
 # from the stored message instead.
 _failure_cache: dict[str, tuple[tuple[int, int], str]] = {}
+
+
+def _is_web_url(value: str | None, *, allow_mailto: bool = False) -> bool:
+    """Only http and https URLs are kept (and, for a contact, ``mailto:``);
+    an empty value is kept as empty. ``value`` must already be stripped, so
+    what is checked is what is stored."""
+    if not value:
+        return True
+    parsed = urlsplit(value)
+    if parsed.scheme in ("http", "https"):
+        return bool(parsed.netloc)
+    return allow_mailto and parsed.scheme == "mailto" and bool(parsed.path)
 
 
 @dataclass
@@ -268,6 +281,21 @@ class BrandingService:
                     f"{yaml_path}: '{field_name}' must be a string, got {type(value).__name__}"
                 )
 
+        urls: dict[str, str | None] = {}
+        for field_name, allow_mailto in (
+            ("site_url", False),
+            ("support_url", True),
+            ("footer_credit_url", False),
+        ):
+            raw = data.get(field_name)
+            urls[field_name] = raw.strip() if isinstance(raw, str) else raw
+            if not _is_web_url(urls[field_name], allow_mailto=allow_mailto):
+                raise BrandingInvalidError(
+                    f"{yaml_path}: '{field_name}' must be an http(s) URL"
+                    + (" or mailto: address" if allow_mailto else "")
+                    + " or empty"
+                )
+
         name = data.get("name", DEFAULT_BRAND_NAME)
         mcp_brand = mcp.get("agent_prompt_brand") or name
 
@@ -275,9 +303,13 @@ class BrandingService:
             name=name,
             tagline=data.get("tagline", ""),
             primary_color=data.get("primary_color", DEFAULT_PRIMARY_COLOR),
-            site_url=data.get("site_url", ""),
-            support_url=data.get("support_url", ""),
-            footer_credit_url=data.get("footer_credit_url", DEFAULT_FOOTER_CREDIT_URL),
+            site_url="" if urls["site_url"] is None else urls["site_url"],
+            support_url="" if urls["support_url"] is None else urls["support_url"],
+            footer_credit_url=(
+                DEFAULT_FOOTER_CREDIT_URL
+                if urls["footer_credit_url"] is None
+                else urls["footer_credit_url"]
+            ),
             logo=data.get("logo"),
             wordmark=data.get("wordmark"),
             favicon=data.get("favicon"),

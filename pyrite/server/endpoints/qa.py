@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request
 
 from ...services.access_policy import KB, Action, ReadScope
+from ...services.qa_cache import cached_report
 from ...services.qa_service import QAService
 from ..api import (
     get_qa_service,
@@ -31,7 +32,15 @@ def get_qa_status(
     neither.
     """
     readable = scope.as_set()
-    return svc.get_status(kb_name=kb, kb_names=None if kb else readable, readable_kbs=readable)
+    return cached_report(
+        svc,
+        f"status:{kb or ''}",
+        [kb] if kb else readable,
+        readable,
+        lambda: svc.get_status(
+            kb_name=kb, kb_names=None if kb else readable, readable_kbs=readable
+        ),
+    )
 
 
 @router.get("/qa/validate/{entry_id}")
@@ -68,8 +77,20 @@ def validate_kb(
     """
     readable = scope.as_set()
     if kb:
-        return svc.validate_kb(kb, readable_kbs=readable)
-    return svc.validate_all(kb_names=readable, readable_kbs=readable)
+        return cached_report(
+            svc,
+            f"validate:{kb}",
+            [kb],
+            readable,
+            lambda: svc.validate_kb(kb, readable_kbs=readable),
+        )
+    return cached_report(
+        svc,
+        "validate:all",
+        readable,
+        readable,
+        lambda: svc.validate_all(kb_names=readable, readable_kbs=readable),
+    )
 
 
 @router.get("/qa/coverage", dependencies=[Depends(authorize(Action.KB_READ, KB))])

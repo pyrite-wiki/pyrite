@@ -49,11 +49,17 @@ class KBSchema:
 
     @classmethod
     def from_yaml(cls, path: Path) -> "KBSchema":
-        """Load schema from kb.yaml file."""
-        if not path.exists():
+        """Load schema from kb.yaml file, read only inside the KB's folder (the
+        file's own): a link out of it, or a file with more than one hard
+        link, raises ``KBFileReadOutsideRootError`` (``OUTSIDE_KB_ROOT``)."""
+        from ..utils.kb_files import KBFiles
+
+        # The KB's own probe: a link out is there, and refused by the read,
+        # whatever it points at.
+        if not KBFiles(path.parent).present(path):
             return cls()
 
-        data = load_yaml_file(path)
+        data = load_yaml_file(path, kb_root=path.parent)
 
         return cls.from_dict(data)
 
@@ -188,9 +194,13 @@ class KBSchema:
         no vocabulary of its own, and every type is allowed -- so an empty
         answer means "not restricted", never "nothing allowed".
 
-        Read by the write path's refusal (`KBService._refuse_undeclared_type`),
-        by `to_agent_schema` (orient, `kb_schema`, `GET /kbs/{kb}/schema`,
-        `pyrite-admin schema`) and by the web type picker's route. They used
+        Read by the write path's refusals (`KBService._refuse_undeclared_type`
+        and `_refuse_undeclared_mapping_target`), by the type-mapping resolver
+        (`schema.type_mapping.resolve_type_mappings`, which offers a pair only
+        when both its types are declared here), by `to_agent_schema` -- whose
+        output is MCP `kb_schema` and `kb_orient`, REST `GET /kbs/{kb}/schema`
+        and `GET /kbs/{kb}/orient`, CLI `pyrite orient --format json`, and
+        `pyrite-admin schema` -- and by the web type picker's route. They used
         to hold a copy each, and orient's copy listed all core types for a KB
         whose `create` refused them.
         """
@@ -225,10 +235,15 @@ class KBSchema:
             out["types"] = types
         return out
 
-    def to_agent_schema(self) -> dict[str, Any]:
+    def to_agent_schema(self, *, kb_type: str) -> dict[str, Any]:
         """Export schema in agent-friendly format for kb_schema MCP tool.
 
         Lists the types `create` accepts in this KB: see `declared_types`.
+        ``type_mappings`` is ``{core type: stored type}`` from the one
+        resolver the write path uses (``schema.type_mapping``, #468), so an
+        agent can predict the type a create stores. ``kb_type`` is required
+        and is the KB's registered type (``KBConfig.kb_type``), the one the
+        write path reads -- never this file's ``kb_type``, which can differ.
         """
         types_dict = {}
         declared = self.declared_types()
@@ -244,11 +259,11 @@ class KBSchema:
             }
             # Apply KB customizations
             if type_name in self.types:
-                kb_type = self.types[type_name]
-                if kb_type.required != ["title"]:
-                    type_info["required"] = kb_type.required
-                if kb_type.optional:
-                    type_info["optional"] = kb_type.optional
+                declared_type = self.types[type_name]
+                if declared_type.required != ["title"]:
+                    type_info["required"] = declared_type.required
+                if declared_type.optional:
+                    type_info["optional"] = declared_type.optional
 
             # Include resolved type metadata
             metadata = resolve_type_metadata(type_name, self)
@@ -287,7 +302,12 @@ class KBSchema:
                     type_dict["evaluation_rubric"] = metadata["evaluation_rubric"]
                 types_dict[type_name] = type_dict
 
-        result: dict[str, Any] = {"types": types_dict}
+        from .type_mapping import resolve_type_mappings
+
+        result: dict[str, Any] = {
+            "types": types_dict,
+            "type_mappings": resolve_type_mappings(kb_type, self),
+        }
 
         # KB-level intent: merge system defaults with KB overrides
         merged_guidelines = dict(SYSTEM_INTENT.get("guidelines", {}))

@@ -236,6 +236,7 @@ def register_search_command(app: typer.Typer):
             # `results` goes into the JSON payload as it is.
             response = search_svc.search_response(
                 query=query,
+                caller_wrote_query=True,  # the caller's own words, as written
                 kb_name=kb_name,
                 entry_types=entry_types or None,
                 exclude_types=exclude_types or None,

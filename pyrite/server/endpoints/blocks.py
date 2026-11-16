@@ -30,7 +30,7 @@ def get_entry_blocks(
 ):
     """Get blocks extracted from an entry.
 
-    A blank ``kb`` names no KB (private #74): the lookup then walks only the
+    A blank ``kb`` names no KB: the lookup then walks only the
     caller's readable KBs, so a private id answers exactly as a missing one.
     """
     entry = svc.get_entry(entry_id, kb_name=kb, readable_kbs=scope.as_set())
