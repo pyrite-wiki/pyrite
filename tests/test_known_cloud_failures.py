@@ -159,14 +159,18 @@ def test_every_registered_test_exists():
 
 
 def _issue_state(url):
-    """`OPEN` or `CLOSED`, or a skip reason when gh or the network is not there."""
+    """`OPEN`, `CLOSED`, `NOT_FOUND` (the API answered 404: no such issue) or
+    `NOT_A_GITHUB_ISSUE_URL`; a skip only when the question cannot be asked:
+    gh missing, not authenticated, or no network. Where it runs: a cloud
+    session or a checkout where gh is logged in. CI's test step sets no
+    GH_TOKEN, so there it skips."""
+    m = re.fullmatch(r"https://github\.com/([^/]+)/([^/]+)/issues/(\d+)", url)
+    if m is None:
+        return "NOT_A_GITHUB_ISSUE_URL"
     if shutil.which("gh") is None:
         pytest.skip("gh is not installed; cannot check the tracking issue")
     # REST, not `gh issue view`: that is GraphQL, which cloud sessions (where
     # this registry is read) refuse, so the check skipped there every time.
-    m = re.fullmatch(r"https://github\.com/([^/]+)/([^/]+)/issues/(\d+)", url)
-    if m is None:
-        pytest.skip(f"not a GitHub issue URL: {url}")
     try:
         out = subprocess.run(
             ["gh", "api", f"repos/{m[1]}/{m[2]}/issues/{m[3]}", "--jq", ".state"],
@@ -177,6 +181,8 @@ def _issue_state(url):
     except subprocess.TimeoutExpired:
         pytest.skip("gh timed out; cannot check the tracking issue")
     if out.returncode != 0:
+        if "HTTP 404" in out.stderr:
+            return "NOT_FOUND"
         pytest.skip(f"gh could not read {url}: {out.stderr.strip()[:200]}")
     return out.stdout.strip().upper()
 
@@ -207,7 +213,7 @@ def test_a_closed_issue_is_caught(tmp_path, monkeypatch):
 def test_without_gh_the_check_skips_with_a_reason(monkeypatch):
     monkeypatch.setenv("PATH", "/nonexistent")
     with pytest.raises(pytest.skip.Exception, match="gh is not installed"):
-        _issue_state("https://example.test/1")
+        _issue_state("https://github.com/example/repo/issues/1")
 
 
 @pytest.mark.control(
@@ -231,3 +237,30 @@ def test_the_check_works_where_graphql_is_refused(tmp_path, monkeypatch):
     except pytest.skip.Exception as skipped:
         pytest.fail(f"the check skipped where REST answers: {skipped}")
     assert found == [url]
+
+
+def test_a_mistyped_issue_number_fails_where_the_api_says_404(tmp_path, monkeypatch):
+    """A 404 is an answer: the number names no issue. Only gh missing, no auth
+    or no network (CI's test step sets no GH_TOKEN) is a skip."""
+    gh = tmp_path / "gh"
+    gh.write_text("#!/bin/sh\necho 'gh: Not Found (HTTP 404)' >&2; exit 1\n")
+    gh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:/usr/bin:/bin")
+    url = "https://github.com/pyrite-wiki/pyrite/issues/999999"
+    try:
+        found = closed_entries([{"issue": url}])
+    except pytest.skip.Exception as skipped:
+        pytest.fail(f"a 404 was skipped: {skipped}")
+    assert found == [url]
+
+
+def test_an_entry_that_is_not_a_github_issue_url_fails(tmp_path, monkeypatch):
+    gh = tmp_path / "gh"
+    gh.write_text("#!/bin/sh\necho open\n")
+    gh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:/usr/bin:/bin")
+    try:
+        found = closed_entries([{"issue": "https://example.test/1"}])
+    except pytest.skip.Exception as skipped:
+        pytest.fail(f"a malformed issue URL was skipped: {skipped}")
+    assert found == ["https://example.test/1"]
