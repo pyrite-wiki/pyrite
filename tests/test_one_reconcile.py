@@ -303,6 +303,7 @@ def test_non_regular_entry_is_reported_before_parse(env, sync):
 
 
 @pytest.mark.skipif(os.name == "nt", reason="symlink creation is not reliable on Windows")
+@pytest.mark.control(reason="a link to a file the walk skips is followed and indexed, as before")
 def test_symlink_to_regular_markdown_remains_indexable(env):
     """A link is followed to the regular file it names, not skipped as
     non-regular. The target sits where the walk does not look, so the link is
