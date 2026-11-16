@@ -45,12 +45,15 @@ def _kb_error(exc: Exception, fmt: str = "rich") -> None:
         EntryNotFoundError,
         KBNotFoundError,
         KBProtectedError,
+        KBUnreadableError,
         ValidationError,
     )
     from ..utils.errors import cli_error
 
     code = "ERROR"
-    if isinstance(exc, EntryNotFoundError):
+    if isinstance(exc, KBUnreadableError):
+        code = exc.error_code  # KB_UNREADABLE, as on every surface (#1542)
+    elif isinstance(exc, EntryNotFoundError):
         code = "NOT_FOUND"
     elif isinstance(exc, KBNotFoundError):
         code = "KB_NOT_FOUND"

@@ -10,11 +10,13 @@ filesystem's name limit was a traceback instead of NOT_FOUND
 
 The property, the same on every Python version:
 
-- exists: True; a path that resolves outside the root: True, with no stat;
+- exists: True; a path that resolves outside the root: True, whatever lies
+  there;
 - absent: False, and a name the filesystem cannot hold (too long) is
   absent, because no file can have it;
-- could not tell: one typed Pyrite error, ``KBPresenceUnknownError``. No raw
-  ``OSError`` leaves ``present``.
+- could not tell: one typed Pyrite error, ``KBPresenceUnknownError`` (a
+  ``KBFilesUnreadableError``: code ``KB_UNREADABLE``, one fixed message). No
+  raw ``OSError`` leaves ``present``.
 
 The unsearchable-folder cases need a user the folder's mode stops; as root
 they skip with a reason that shows in the report (``-rs``), never pass.
@@ -73,11 +75,11 @@ def test_a_symlink_loop_inside_the_kb_is_absent(tmp_path):
     assert KBFiles(tmp_path).present(tmp_path / "x" / "f.md") is False
 
 
-@pytest.mark.parametrize("length", [300, 5000], ids=["name-too-long", "path-too-long"])
-def test_a_name_the_filesystem_cannot_hold_is_absent(tmp_path, length):
+def test_a_name_the_filesystem_cannot_hold_is_absent(tmp_path):
     """ENAMETOOLONG: no file can have the name, so it is not there. The
-    folder on the way exists, or the OS may answer ENOENT first."""
-    assert KBFiles(tmp_path).present(tmp_path / ("a" * length + ".md")) is False
+    folder on the way exists, or the OS may answer ENOENT first. (A longer
+    whole path is not tested: macOS answers it ENOENT, so it proves nothing.)"""
+    assert KBFiles(tmp_path).present(tmp_path / ("a" * 300 + ".md")) is False
 
 
 @pytest.mark.control(reason="the outside-root answer the fix keeps")
@@ -227,11 +229,9 @@ def test_qa_on_the_unreadable_kb_reports_it_and_goes_on(two_kbs):
         assert result.exception is None or isinstance(result.exception, SystemExit), repr(
             result.exception
         )
-        assert "its folder cannot be read (could not tell whether its kb.yaml is there)" in (
-            result.output
-        )
+        assert "its files cannot be read (the operating system refused)" in (result.output)
         everything = world.cli("qa", "validate", "--format", "json")
         assert everything.exception is None or isinstance(everything.exception, SystemExit)
-        assert "could not tell whether a file is in the knowledge base" not in everything.output
+        assert "Traceback" not in everything.output
     finally:
         locked.chmod(0o755)

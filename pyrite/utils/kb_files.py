@@ -80,7 +80,7 @@ import stat
 from collections.abc import Iterator
 from pathlib import Path
 
-from ..exceptions import StorageError, ValidationError
+from ..exceptions import KBUnreadableError, ValidationError
 from .atomic_write import ABSENT, FileChanged, HardLinked
 from .containment import inside_or_warn
 from .file_lock import LOCK_TIMEOUT, NotInGitRepository, check_timeout, file_lock
@@ -91,6 +91,7 @@ __all__ = [
     "KBFileIsLinkError",
     "KBFileOutsideRootError",
     "KBFiles",
+    "KBFilesUnreadableError",
     "KBFolderChanged",
     "KBPresenceUnknownError",
     "OwnerNotKeptError",
@@ -175,27 +176,38 @@ class OwnerNotKeptError(Exception):
         self.gid = gid
 
 
-class KBPresenceUnknownError(StorageError):
-    """``KBFiles.present`` could not tell whether a path is there: the OS
-    refused to say (a folder the process cannot search, an I/O error, a stale
-    mount), so neither "there" nor "absent" would be true (#1542).
+class KBFilesUnreadableError(KBUnreadableError):
+    """A KB's files cannot be read: the OS refused (a KB folder the process
+    cannot list or search, a ``kb.yaml`` it cannot open, an I/O error), so
+    Pyrite cannot say what the KB holds (#1542).
 
-    One answer whatever the cause: the message names no path, no errno and
-    no OS text, so a network caller learns nothing about the server's
-    filesystem from it. The ``OSError`` is kept as ``__cause__`` for a local
-    report that names the file (index health's ``unreadable_files``).
+    One answer whatever the cause and wherever it is raised: one code
+    (``KB_UNREADABLE``), never retryable, and a fixed message that names no
+    path, no errno and no OS text, so a network caller learns nothing about
+    the server's filesystem from it. The ``OSError`` is kept as ``__cause__``
+    for a local report that names the file (index health's
+    ``unreadable_files``). A KB in this state is never read as empty or as
+    having no schema: whatever needs its files stops with this error, and
+    nothing derived from them (its index rows) is removed.
     """
 
     MESSAGE = (
-        "Pyrite could not tell whether a file is in the knowledge base: the "
-        "operating system refused to say (for example, a folder Pyrite may not "
-        "search)."
+        "Pyrite could not read this knowledge base's files: the operating "
+        "system refused (for example, a folder or file Pyrite may not open)."
     )
     #: The message is fixed and safe, so every transport shows it as is.
     public_message = MESSAGE
+    retryable = False
 
     def __init__(self) -> None:
         super().__init__(self.MESSAGE)
+
+
+class KBPresenceUnknownError(KBFilesUnreadableError):
+    """``KBFiles.present`` could not tell whether a path is there (a folder
+    the process cannot search, an I/O error, a stale mount), so neither
+    "there" nor "absent" would be true. The same code and message as every
+    ``KBFilesUnreadableError``."""
 
 
 class KBFileIsLinkError(ValidationError):
@@ -707,11 +719,12 @@ class KBFiles:
         files decide. ``Path.exists`` follows a link out, and so answers what
         lies outside.
 
-        A name no file can have (longer than the filesystem allows) is
-        absent. Where the OS will not say (a folder this process
-        cannot search, an I/O error) the answer is
-        ``KBPresenceUnknownError``, one typed error with a fixed message:
-        each caller handles it or lets it stop the operation (#1542).
+        A name no file can have (a component longer than the filesystem
+        allows, ENAMETOOLONG) is absent. Where the OS will not say (a folder
+        this process cannot search, an I/O error) the answer is
+        ``KBPresenceUnknownError`` (code ``KB_UNREADABLE``, never retryable,
+        one fixed message): each caller handles it or lets it stop the
+        operation (#1542).
 
         Limit: where a path resolves is decided by ``os.path.realpath``,
         which follows every link on the way. A link out of the KB whose

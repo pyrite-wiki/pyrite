@@ -190,6 +190,7 @@ CLI and MCP report the code without an HTTP status.
 | `CLIP_TOO_LARGE` | Clipper, central REST mapping 413 | The page is larger than the clipper's 5 MiB cap, counted after decompression; clip a smaller page. |
 | `BRANDING_INVALID` | Branding configuration, REST 500 | Ask the operator to repair `branding.yaml`; repeating the request will not fix configuration. |
 | `INTERNAL_ERROR` | Unclassified domain failure, REST 500 | Consult the server log; do not assume retrying is safe. |
+| `KB_UNREADABLE` | A KB whose files Pyrite cannot read (its folder cannot be listed or searched, its `kb.yaml` cannot be opened): every operation that needs that KB's files, on every verb (get, create, update, delete, schema, sync of that KB). CLI exit 1, MCP refusal, central REST mapping 500. Always `retryable: false`, always the same message, whatever the operating system refused; it names no path. The KB's index rows are kept, and every other KB still works. | Fix the folder's or `kb.yaml`'s permissions, then `pyrite index sync`. |
 
 ## MCP operation codes
 
@@ -1769,6 +1770,26 @@ returns the columns `id,kb_name,status,title`, including an empty `status`
 cell if a hit has no status. A requested field does not make search acquire
 data its result records do not otherwise carry.
 
+## A KB whose files cannot be read
+
+When a registered KB's folder cannot be listed or searched, or its `kb.yaml`
+cannot be opened, every command on every other KB still works, and that KB is
+named rather than dropped:
+
+- `pyrite kb list --format json` gives its row an `unreadable` key holding
+  the fixed `KB_UNREADABLE` message; a readable KB's row has no such key.
+  REST `GET /api/kbs` and MCP `kb_list` do not carry it.
+- `pyrite index health` lists it in `unreadable_kbs` (`{kb, error}`), and the
+  status is `unhealthy`.
+- `pyrite index sync` (every KB) does not sync it and keeps its index rows;
+  it prints `Not synced: <kb>: <message>` and exits 3 when other KBs synced
+  (1 when none did). The sync result's `unreadable_kbs` list (REST
+  `POST /api/index/sync`, MCP `kb_index_sync`) names it the same way. A sync,
+  rebuild or reindex of that one KB answers `KB_UNREADABLE` and changes
+  nothing. `pyrite index build` skips it, names it, and exits 3 or 1 the same
+  way.
+- Every operation that needs its files answers `KB_UNREADABLE`.
+
 ## Operational contracts
 
 Not JSON shapes, but part of the same "don't relearn this the hard way"
@@ -1823,7 +1844,9 @@ The codes:
   `ai_model`, or use tier 1.
 - `KB_UNREADABLE`: `qa assess` / `kb_qa_assess` on a KB whose folder is
   missing or cannot be read. The message names the KB and the reason, not
-  the path. Restore the folder, or its permissions.
+  the path. Restore the folder, or its permissions. (The same code answers
+  every other operation on a KB whose files cannot be read; see "Server and
+  account codes".)
 - `EVALUATION_FAILED`: `qa assess --entry`, or `kb_qa_assess` with `entry_id`,
   and the model did not answer. The call raised, or the reply was empty, not
   JSON, not a JSON list, or did not judge every rubric item with a boolean

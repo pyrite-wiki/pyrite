@@ -44,6 +44,7 @@ from ..utils.kb_files import (
     OUTSIDE_KB_REASON,
     KBFileOutsideRootError,
     KBFiles,
+    KBFilesUnreadableError,
     KBPresenceUnknownError,
 )
 from ..utils.metadata import parse_metadata
@@ -1175,6 +1176,10 @@ class IndexManager:
         }
         if not kb_config.path.exists():
             return results
+        # A KB whose files cannot be read is not a KB with no files: the walk
+        # below would find nothing and the removal pass would retire every
+        # row (#1542). Refused before anything is planned, so its rows stay.
+        kb_config.check_readable()
         if not isinstance(force, bool):
             force = {Path(p) for p in force}
 
@@ -1315,7 +1320,13 @@ class IndexManager:
 
                 return kb_progress
 
-            count = self.index_kb(kb.name, make_kb_progress(kb.name))
+            try:
+                count = self.index_kb(kb.name, make_kb_progress(kb.name))
+            except KBFilesUnreadableError as e:
+                # One unreadable KB does not stop the others; its rows are
+                # kept (the reconcile refused before planning) (#1542).
+                logger.warning("Skipping %s: %s", kb.name, e.MESSAGE)
+                continue
             results[kb.name] = count
 
         return results
@@ -1625,11 +1636,10 @@ class IndexManager:
         # declaring no types, so health still answers for the broken KB.
         schemas = self._load_schemas(kbs)
         for kb in kbs:
-            reason = kb.unreadable  # set when the config was loaded
-            if reason is None and schemas[kb.name][1] == KBPresenceUnknownError.MESSAGE:
-                reason = KBPresenceUnknownError.MESSAGE  # a KB the config load did not see
-            if reason is not None:
-                health["unreadable_kbs"].append({"kb": kb.name, "error": reason})
+            try:
+                kb.check_readable()  # asked now: a server's config is loaded once
+            except KBFilesUnreadableError as e:
+                health["unreadable_kbs"].append({"kb": kb.name, "error": e.MESSAGE})
 
         # A KB whose type belonged to an extension Pyrite has deleted (#953):
         # its types are undeclared for a reason the user should be told. The
@@ -1962,7 +1972,7 @@ class IndexManager:
         for kb in kbs:
             try:
                 present = kb.kb_yaml_present
-            except KBPresenceUnknownError as exc:
+            except KBFilesUnreadableError as exc:
                 # A root this process cannot search (#1542): reported here,
                 # and in ``unreadable_kbs``; never the end of the report.
                 loaded[kb.name] = (None, exc.MESSAGE)
@@ -2232,6 +2242,10 @@ class IndexManager:
             "malformed": [],
             "skipped": [],
             "duplicates": [],
+            # KBs whose files could not be read (#1542): not synced, their
+            # rows kept, named here. Only a sync of every KB collects them; a
+            # sync of one named KB raises ``KBFilesUnreadableError``.
+            "unreadable_kbs": [],
         }
         kbs = [self.config.get_kb(kb_name)] if kb_name else self.config.all_kbs()
         kbs = [kb for kb in kbs if kb and kb.path.exists()]
@@ -2240,10 +2254,17 @@ class IndexManager:
             callback = None
             if progress_callback and len(kbs) == 1:
                 callback = progress_callback
-            if verify:
-                one = self.reconcile_kb(kb, progress_callback=callback, verify=True)
-            else:
-                one = self.reconcile_kb(kb, progress_callback=callback)
+            try:
+                if verify:
+                    one = self.reconcile_kb(kb, progress_callback=callback, verify=True)
+                else:
+                    one = self.reconcile_kb(kb, progress_callback=callback)
+            except KBFilesUnreadableError as e:
+                if kb_name:
+                    raise
+                logger.warning("Not syncing %s: %s", kb.name, e.MESSAGE)
+                results["unreadable_kbs"].append({"kb": kb.name, "error": e.MESSAGE})
+                continue
             for key in ("added", "updated", "removed"):
                 results[key] += one[key]
             results["malformed"].extend(one["malformed"])

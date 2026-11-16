@@ -76,12 +76,6 @@ def validate_kb_default_role(value: Any, where: str) -> str | None:
     )
 
 
-#: What ``pyrite kb list`` and index health say for a KB whose kb.yaml is
-#: there and could not be read (``KBConfig.unreadable``). Fixed: it names no
-#: path and no OS text.
-KB_YAML_UNREADABLE = "Pyrite could not read this knowledge base's kb.yaml."
-
-
 @dataclass
 class KBConfig:
     """Configuration for a single knowledge base."""
@@ -186,6 +180,38 @@ class KBConfig:
         pyrite_dir.mkdir(exist_ok=True)
         return pyrite_dir / "index.db"
 
+    def check_readable(self) -> None:
+        """Raise ``KBFilesUnreadableError`` (``KB_UNREADABLE``) when this KB's
+        files cannot be read: its folder cannot be listed, whether it has a
+        kb.yaml cannot be told, or its kb.yaml is there and cannot be read.
+        A missing folder (or a path that is not one) is not this answer; its
+        callers already handle that. A kb.yaml that leads outside the KB is
+        not either: the read that needs it refuses it (OUTSIDE_KB_ROOT).
+
+        The gate in front of anything that would read the KB's absence of
+        files as a fact: the reconcile asks it before it may remove a row
+        (#1542), so a KB the process cannot read keeps its index rows.
+        """
+        import os
+
+        from .utils.kb_files import KBFileOutsideRootError, KBFiles, KBFilesUnreadableError
+
+        try:
+            with os.scandir(self.path) as listing:
+                next(listing, None)
+        except (FileNotFoundError, NotADirectoryError):
+            return
+        except OSError as e:
+            raise KBFilesUnreadableError() from e
+        if not self.kb_yaml_present:  # KBPresenceUnknownError when it cannot tell
+            return
+        try:
+            KBFiles(self.path).read_bytes(self.kb_yaml_path)
+        except KBFileOutsideRootError:
+            return
+        except OSError as e:
+            raise KBFilesUnreadableError() from e
+
     def load_kb_yaml(self) -> bool:
         """Load kb.yaml if it exists. Returns True if loaded.
 
@@ -195,16 +221,18 @@ class KBConfig:
         registered KB is loaded at once. ``kb_schema`` refuses it
         (``OUTSIDE_KB_ROOT``) for the operations that need it.
 
-        Every registered KB is loaded here at once, so a kb.yaml this process
-        cannot check or read (a root it may not search, a file it may not
-        open) marks this KB ``unreadable`` and is logged by name; it never
-        stops the load, or one such KB would stop every command on every
-        other KB (#1542). The operations on this KB that need its kb.yaml
-        stop with that same answer when they ask for it."""
-        from .utils.kb_files import KBFileOutsideRootError, KBPresenceUnknownError
+        Every registered KB is loaded here at once, so a KB whose files this
+        process cannot read (``check_readable``: a folder it may not list or
+        search, a kb.yaml it may not open) is marked ``unreadable`` and
+        logged by name; it never stops the load, or one such KB would stop
+        every command on every other KB (#1542). Every operation on this KB
+        that needs its files then stops with ``KBFilesUnreadableError``,
+        whose fixed message ``unreadable`` holds."""
+        from .utils.kb_files import KBFileOutsideRootError, KBFilesUnreadableError
 
         self.unreadable = None
         try:
+            self.check_readable()
             if not self.kb_yaml_present:
                 return False
             data = load_yaml_file(self.kb_yaml_path, kb_root=self.path)
@@ -215,11 +243,8 @@ class KBConfig:
                 self.name,
             )
             return False
-        except KBPresenceUnknownError as e:
+        except KBFilesUnreadableError as e:
             self.unreadable = e.MESSAGE
-        except OSError:
-            self.unreadable = KB_YAML_UNREADABLE
-        if self.unreadable is not None:
             logger.warning("KB %s is unreadable: %s", self.name, self.unreadable)
             return False
         self.schema = data.get("schema")
