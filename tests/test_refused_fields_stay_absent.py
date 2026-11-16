@@ -243,6 +243,12 @@ def test_load_for_read_has_one_caller_the_single_entry_read():
     assert sites == ["pyrite/services/kb_service.py::_entry_file"], sites
 
 
+def test_entry_file_has_one_caller_the_single_entry_read():
+    # Innermost scopes only: the function, not the class around it.
+    sites = sorted(set(_calls_to("_entry_file")) - {"pyrite/services/kb_service.py::KBService"})
+    assert sites == ["pyrite/services/kb_service.py::_read_entry"], sites
+
+
 @pytest.mark.control(
     reason="a ratchet against #1311 rounds 1-2 (Entry.load_problems); dev never had it"
 )
