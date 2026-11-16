@@ -1,6 +1,7 @@
 """The brief is executable, shared by cloud startup and worker guidance."""
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -82,9 +83,14 @@ def _issue_state(url):
     """`OPEN` or `CLOSED`, or a skip reason when gh or the network is not there."""
     if shutil.which("gh") is None:
         pytest.skip("gh is not installed; cannot check the tracking issue")
+    # REST, not `gh issue view`: that is GraphQL, which cloud sessions (where
+    # this registry is read) refuse, so the check skipped there every time.
+    m = re.fullmatch(r"https://github\.com/([^/]+)/([^/]+)/issues/(\d+)", url)
+    if m is None:
+        pytest.skip(f"not a GitHub issue URL: {url}")
     try:
         out = subprocess.run(
-            ["gh", "issue", "view", url, "--json", "state", "--jq", ".state"],
+            ["gh", "api", f"repos/{m[1]}/{m[2]}/issues/{m[3]}", "--jq", ".state"],
             capture_output=True,
             text=True,
             timeout=20,
@@ -93,7 +99,7 @@ def _issue_state(url):
         pytest.skip("gh timed out; cannot check the tracking issue")
     if out.returncode != 0:
         pytest.skip(f"gh could not read {url}: {out.stderr.strip()[:200]}")
-    return out.stdout.strip()
+    return out.stdout.strip().upper()
 
 
 def closed_entries(records):
@@ -113,10 +119,31 @@ def test_a_closed_issue_is_caught(tmp_path, monkeypatch):
     gh.write_text("#!/bin/sh\necho CLOSED\n")
     gh.chmod(0o755)
     monkeypatch.setenv("PATH", f"{tmp_path}:/usr/bin:/bin")
-    assert closed_entries([{"issue": "https://example.test/1"}]) == ["https://example.test/1"]
+    url = "https://github.com/example/repo/issues/1"
+    assert closed_entries([{"issue": url}]) == [url]
 
 
 def test_without_gh_the_check_skips_with_a_reason(monkeypatch):
     monkeypatch.setenv("PATH", "/nonexistent")
     with pytest.raises(pytest.skip.Exception, match="gh is not installed"):
         _issue_state("https://example.test/1")
+
+
+def test_the_check_works_where_graphql_is_refused(tmp_path, monkeypatch):
+    """Cloud sessions, the place this registry is read, refuse GitHub GraphQL
+    (`gh issue view`) and allow REST (`gh api`). A check that asks over
+    GraphQL skips there every time and never sees a closed issue."""
+    gh = tmp_path / "gh"
+    gh.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = api ] && [ "$2" = repos/pyrite-wiki/pyrite/issues/1110 ]; then echo closed; exit 0; fi\n'
+        "echo 'HTTP 403: GitHub GraphQL is not available' >&2; exit 1\n"
+    )
+    gh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:/usr/bin:/bin")
+    url = "https://github.com/pyrite-wiki/pyrite/issues/1110"
+    try:
+        found = closed_entries([{"issue": url}])
+    except pytest.skip.Exception as skipped:
+        pytest.fail(f"the check skipped where REST answers: {skipped}")
+    assert found == [url]
