@@ -503,6 +503,9 @@ class QAService:
         self._require_readable_kb(kb_name)
         result = self.validate_entry(entry_id, kb_name, readable_kbs=readable_kbs)
         issues = result["issues"]
+        for issue in issues:
+            if issue.get("rule") == "entry_not_found":
+                raise EntryNotFoundError(issue["message"])
 
         # Tier 2: LLM rubric evaluation, before anything is written
         if tier >= 2:
