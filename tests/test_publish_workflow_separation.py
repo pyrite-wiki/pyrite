@@ -149,6 +149,9 @@ PLANTED = {
 }
 
 
+@pytest.mark.control(
+    reason="self-test of the allowlist in this file; all ten shapes passed the old checker"
+)
 @pytest.mark.parametrize("shape", PLANTED)
 def test_the_check_refuses_every_other_step_in_a_token_job(shape):
     assert _token_job_violations(PLANTED[shape]) != [], shape
@@ -243,6 +246,9 @@ def behind_the_rest(publish_text, other_texts):
     return bad
 
 
+@pytest.mark.control(
+    reason="dev's publish.yml has no artifact steps; seen red with this branch's old v4 upload pin"
+)
 def test_publish_is_not_behind_the_rest_on_any_shared_action():
     """Dependabot bumps the workflows it can see together; a workflow on a pull
     request branch is invisible to a bump on dev, and a release workflow left
@@ -254,6 +260,7 @@ def test_publish_is_not_behind_the_rest_on_any_shared_action():
     assert behind_the_rest(PUBLISH.read_text(), others) == {}
 
 
+@pytest.mark.control(reason="self-test of behind_the_rest, which lives in this file")
 def test_moving_publish_back_to_an_older_pin_still_used_elsewhere_fails():
     new = "a" * 40
     old = "b" * 40

@@ -239,6 +239,9 @@ def test_the_check_works_where_graphql_is_refused(tmp_path, monkeypatch):
     assert found == [url]
 
 
+@pytest.mark.control(
+    reason="self-test of _issue_state in this file; seen red against its skip-on-any-failure version"
+)
 def test_a_mistyped_issue_number_fails_where_the_api_says_404(tmp_path, monkeypatch):
     """A 404 is an answer: the number names no issue. Only gh missing, no auth
     or no network (CI's test step sets no GH_TOKEN) is a skip."""
@@ -254,6 +257,9 @@ def test_a_mistyped_issue_number_fails_where_the_api_says_404(tmp_path, monkeypa
     assert found == [url]
 
 
+@pytest.mark.control(
+    reason="self-test of _issue_state in this file; seen red against its skip-on-any-failure version"
+)
 def test_an_entry_that_is_not_a_github_issue_url_fails(tmp_path, monkeypatch):
     gh = tmp_path / "gh"
     gh.write_text("#!/bin/sh\necho open\n")
