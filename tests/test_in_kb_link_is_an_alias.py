@@ -48,7 +48,7 @@ def _note(id_: str | None, title: str, body: str = "body") -> str:
 class Env:
     def __init__(self, tmp_path: Path):
         self.root = tmp_path / KB
-        self.root.mkdir(parents=True)
+        self.root.mkdir(parents=True, exist_ok=True)
         self.outside = tmp_path / "outside"
         self.outside.mkdir()
         self.config = PyriteConfig(
@@ -267,23 +267,40 @@ def test_a_link_that_leaves_the_kb_is_skipped_not_an_alias(env):
     assert env.rows() == {}
 
 
-@pytest.mark.control(reason="a dangling or looping link is malformed, as before")
-@pytest.mark.parametrize("form", ["dangling", "loop"])
-def test_a_dangling_or_looping_link_is_malformed_not_an_alias(env, form):
-    if form == "dangling":
-        (env.root / "gone.md").symlink_to("nowhere.md")
-        expected = ["gone.md"]
-    else:
-        (env.root / "l1.md").symlink_to("l2.md")
-        (env.root / "l2.md").symlink_to("l1.md")
-        expected = ["l1.md", "l2.md"]
+@pytest.mark.control(reason="a looping link is malformed and unreadable, as before")
+def test_a_looping_link_is_malformed_not_an_alias(env):
+    (env.root / "l1.md").symlink_to("l2.md")
+    (env.root / "l2.md").symlink_to("l1.md")
 
     result = env.im.sync_incremental(KB)
     health = env.im.check_health(kb_name=KB)
 
     assert result.get("aliases", []) == [] and health.get("aliases", []) == []
-    assert sorted(Path(m["path"]).name for m in result["malformed"]) == expected
+    assert result.get("dangling_links", []) == []
+    assert sorted(Path(m["path"]).name for m in result["malformed"]) == ["l1.md", "l2.md"]
     assert env.rows() == {}
+
+
+def test_a_dangling_in_kb_link_is_reported_as_dangling_and_is_a_warning(env):
+    """A link inside the KB whose file is gone holds no entry, so the index
+    answers from the files exactly: it is not an unreadable entry and does
+    not make health unhealthy (the verdict's own rule: unhealthy means a read
+    would answer from something other than the files). It is listed under
+    ``dangling_links`` (``{kb, path, target}``, the KB-relative name it
+    points at), and health is ``warning``. The link is left as it is."""
+    env.write("b.md", _note("b", "B"))
+    env.link("sub/gone.md", "t/nowhere.md", absolute=False)
+
+    result = env.im.sync_incremental(KB)
+    health = env.im.check_health(kb_name=KB)
+
+    want = [{"kb": KB, "path": "sub/gone.md", "target": "t/nowhere.md"}]
+    assert result["malformed"] == [] and result["skipped"] == []
+    assert result["dangling_links"] == want
+    assert health["unreadable_files"] == [] and health["malformed_frontmatter"] == []
+    assert health["dangling_links"] == want
+    assert health_verdict(health)["status"] == "warning"
+    assert (env.root / "sub" / "gone.md").is_symlink()
 
 
 @pytest.mark.control(reason="a hard link has no real name to prefer: both are skipped, as before")
@@ -422,3 +439,153 @@ def test_a_name_outside_the_kb_is_never_probed_as_an_alias(env):
     assert env.repo.alias_target(env.root / ".." / "outside" / "x.md") is None
     with patch("os.path.islink", side_effect=AssertionError("probed")):
         assert env.repo.alias_target(env.root / ".." / "outside" / "x.md") is None
+
+
+# --- writes that remove or move a real file --------------------------------
+
+
+@pytest.mark.parametrize(
+    "link", ["sub/alias.md", "x.md"], ids=["other folder", "named like the id"]
+)
+def test_a_delete_keeps_the_link_and_reports_it_left(env, link):
+    """The link is the user's file (guest standard): a delete removes the
+    entry's real file only, and the result names every in-KB link it left
+    pointing at nothing (``links_left``). The next sync and health report it
+    as a dangling link, a warning, never an unreadable entry."""
+    from pyrite.services.kb_service import KBService
+
+    env.write(TARGET, _note("x", "X"))
+    env.link(link, TARGET, absolute=False)
+    env.im.sync_incremental(KB)
+    said = os.readlink(env.root / link)
+
+    deleted = KBService(env.config, env.db).delete_entry("x", KB, readable_kbs={KB})
+
+    assert deleted.deleted is True
+    assert not (env.root / TARGET).exists()
+    assert (env.root / link).is_symlink() and os.readlink(env.root / link) == said
+    left = [{"path": link, "target": TARGET}]
+    assert deleted.links_left == left
+    body = deleted.as_dict()
+    assert body["links_left"] == left
+    assert any(link in w for w in body["warnings"]), body["warnings"]
+
+    result = env.im.sync_incremental(KB)
+    health = env.im.check_health(kb_name=KB)
+    assert result["malformed"] == []
+    assert result["dangling_links"] == [{"kb": KB, **left[0]}]
+    assert health["unreadable_files"] == []
+    assert health_verdict(health)["status"] == "warning"
+
+
+def test_a_delete_with_no_link_leaves_none(env):
+    from pyrite.services.kb_service import KBService
+
+    env.write(TARGET, _note("x", "X"))
+    env.im.sync_incremental(KB)
+
+    deleted = KBService(env.config, env.db).delete_entry("x", KB, readable_kbs={KB})
+
+    assert deleted.deleted is True and deleted.links_left == []
+    assert deleted.as_dict()["links_left"] == [] and deleted.as_dict()["warnings"] == []
+
+
+def test_the_rest_delete_response_carries_the_links_left():
+    """``DELETE /api/entries/{id}`` returns ``EntryDeleteResponse(id=...,
+    **deleted.as_dict())``: a model without the field would drop it."""
+    from pyrite.server.schemas import EntryDeleteResponse
+    from pyrite.services.kb_service import DeleteResult
+
+    left = [{"path": "sub/alias.md", "target": TARGET}]
+    response = EntryDeleteResponse(id="x", **DeleteResult(True, [], left).as_dict())
+
+    assert response.links_left == left
+
+
+def test_the_cli_delete_prints_the_links_left(env, cli_world):
+    env.write(TARGET, _note("x", "X"))
+    env.link("sub/alias.md", TARGET, absolute=False)
+    world = _cli_world(cli_world, env)
+    assert world.cli("index", "sync", "-k", KB, "--no-embed").exit_code == 0
+
+    result = world.cli("delete", "x", "-k", KB, "--force")
+
+    assert result.exit_code == 0, result.output
+    assert "sub/alias.md" in result.output
+    assert (env.root / "sub" / "alias.md").is_symlink()
+
+
+TEMPLATED_KB_YAML = (
+    "name: k\nkb_type: generic\ntypes:\n  thing:\n"
+    "    subdirectory: things/{status}\n    fields:\n      status:\n        type: text\n"
+)
+
+
+def _templated(tmp_path: Path, status_on_disk: str, folder: str) -> Env:
+    """A KB whose `thing` type is filed by status, one pinned thing at
+    ``things/<folder>/t.md`` holding ``status_on_disk``, and an in-KB link
+    ``sub/alias.md`` to it; indexed."""
+    root = tmp_path / KB
+    root.mkdir(parents=True)
+    (root / "kb.yaml").write_text(TEMPLATED_KB_YAML)
+    e = Env(tmp_path)
+    e.write(
+        f"things/{folder}/t.md",
+        f"---\nid: t\ntitle: T\ntype: thing\nstatus: {status_on_disk}\n---\n\nText.\n",
+    )
+    e.link("sub/alias.md", f"things/{folder}/t.md", absolute=False)
+    e.im.sync_incremental(KB)
+    return e
+
+
+def test_an_update_does_not_move_a_file_an_in_kb_link_names(tmp_path):
+    """A templated move would leave the user's link pointing at nothing, so
+    the file keeps its place, the update is written in place, and
+    ``not_moved`` names the link (as it names a hard link or a taken
+    target)."""
+    from pyrite.services.kb_service import KBService
+
+    e = _templated(tmp_path, "open", "open")
+    try:
+        written = KBService(e.config, e.db).update("t", KB, {"status": "done"})
+        assert written.not_moved is not None and "sub/alias.md" in written.not_moved
+        assert "status: done" in (e.root / "things/open/t.md").read_text()
+        assert not (e.root / "things/done/t.md").exists()
+        assert (e.root / "sub/alias.md").resolve() == (e.root / "things/open/t.md").resolve()
+    finally:
+        e.db.close()
+
+
+def test_the_templated_reconcile_does_not_move_a_file_an_in_kb_link_names(tmp_path):
+    """On dev the reconcile planned the link as an entry of its own (refused
+    by the move) and moved the real file, leaving the link dangling. Now the
+    real file stays, and the result says why, naming the link."""
+    from pyrite.services.kb_service import KBService
+
+    e = _templated(tmp_path, "done", "open")  # misplaced: done, under open/
+    try:
+        result = KBService(e.config, e.db).reconcile_templated_subdirectories(KB, apply=True)
+        assert result.moved == 0
+        assert [eid for eid, _ in result.errors] == ["t"]
+        assert "sub/alias.md" in result.errors[0][1]
+        assert (e.root / "things/open/t.md").is_file()
+        assert (e.root / "sub/alias.md").resolve() == (e.root / "things/open/t.md").resolve()
+    finally:
+        e.db.close()
+
+
+def test_the_cli_prints_aliases_and_dangling_links_in_sync_and_kb_reindex(env, cli_world):
+    env.write(TARGET, _note("x", "X"))
+    env.link("o/alias.md", TARGET, absolute=False)
+    env.link("o/gone.md", "t/nowhere.md", absolute=False)
+    world = _cli_world(cli_world, env)
+
+    synced = world.cli("index", "sync", "-k", KB, "--no-embed")
+    reindexed = world.cli("kb", "reindex", "-k", KB, "--format", "rich")
+
+    for result in (synced, reindexed):
+        assert result.exit_code == 0, result.output
+        assert "Aliases: 1" in result.output and "o/alias.md -> t/target.md" in result.output
+        assert "Dangling links: 1" in result.output
+        assert "o/gone.md -> t/nowhere.md" in result.output
+        assert "Malformed" not in result.output

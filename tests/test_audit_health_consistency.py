@@ -64,15 +64,45 @@ def test_unreadable_new_path_is_never_healthy(cli_world, monkeypatch, surface, k
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX symlinks/FIFO required")
 @pytest.mark.parametrize("surface", ["cli", "admin", "qa"])
-@pytest.mark.parametrize("kind", ["dangling", "loop", "fifo"])
+@pytest.mark.parametrize("kind", ["loop", "fifo"])
 def test_unreadable_posix_paths_do_not_pass_or_block(cli_world, surface, kind):
     world, folder = _world(cli_world)
     bad = folder / "unreadable.md"
     if kind == "fifo":
         os.mkfifo(bad)
     else:
-        bad.symlink_to(bad.name if kind == "loop" else "missing-target")
+        bad.symlink_to(bad.name)
     _assert_unhealthy(world, surface, unreadable=bad)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlinks required")
+@pytest.mark.parametrize("surface", ["cli", "admin", "qa"])
+def test_a_dangling_in_kb_link_is_a_warning_everywhere_never_unhealthy(cli_world, surface):
+    """#1119 put a dangling link with the unreadable files (it was silently
+    dropped before). #1262: a link inside the KB with nothing there holds no
+    entry, so the index answers from the files exactly; it is reported on
+    every surface as a dangling link, a warning, never unhealthy. A delete
+    that keeps the user's link to the removed file leaves exactly this."""
+    world, folder = _world(cli_world)
+    bad = folder / "dangling.md"
+    bad.symlink_to("missing-target.md")
+    if surface == "qa":
+        result = QAService(world.config, world.db).validate_kb(KB, readable_kbs=UNSCOPED)
+        assert not any(
+            row["field"] == "index" and row["severity"] == "error" for row in result["issues"]
+        ), result
+        return
+    result = CliRunner().invoke(admin_app if surface == "admin" else app, ["index", "health"])
+    assert result.exit_code == 0, (result.output, result.exception)
+    if surface == "cli":
+        report = json.loads(result.stdout)
+        assert report["status"] == "warning"
+        assert report["unreadable_files"] == []
+        assert [row["path"] for row in report["dangling_links"]] == [
+            bad.relative_to(world.config.knowledge_bases[0].path).as_posix()
+        ]
+    else:
+        assert "warnings" in result.output
 
 
 @pytest.mark.parametrize("surface", ["cli", "admin", "qa"])

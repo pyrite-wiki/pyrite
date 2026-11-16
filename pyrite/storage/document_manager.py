@@ -10,6 +10,7 @@ from pathlib import Path
 
 from ..config import KBConfig
 from ..models import Entry
+from ..utils.kb_files import KBFiles
 from .database import PyriteDB
 from .index import IndexManager
 from .repository import KBRepository
@@ -201,6 +202,17 @@ class DocumentManager:
         Returns:
             True if the file was deleted, False if not found.
         """
+        return self.delete_entry_leaving(entry_id, kb_name, kb_config)[0]
+
+    def delete_entry_leaving(
+        self, entry_id: str, kb_name: str, kb_config: KBConfig
+    ) -> tuple[bool, list[dict[str, str]]]:
+        """``delete_entry``, and the in-KB links it left pointing at nothing
+        (#1262): ``[{"path", "target"}]``, KB-relative. A link is the user's
+        file (guest standard), so the delete removes the entry's real file
+        only and keeps every link to it; the caller reports them. They come
+        from the plan the delete already makes (its ``aliases``): each alias
+        whose target is no longer there once the delete is done."""
         repo = KBRepository(kb_config)
         # The index row's file is a candidate the repository verifies before
         # it walks the KB (ADR-0038 step 1). Every file holding the id comes
@@ -213,7 +225,15 @@ class DocumentManager:
         holders = [claim.path for claim in plan.holders.get(entry_id, [])]
         file_deleted = repo.delete(entry_id, indexed_path=indexed, holders=holders)
         self._db.delete_entry(entry_id, kb_name)
-        return file_deleted
+        left: list[dict[str, str]] = []
+        if file_deleted:
+            files = KBFiles(kb_config.path)
+            left = [
+                {"path": alias["path"], "target": alias["target"]}
+                for alias in plan.aliases
+                if not files.present(kb_config.path / alias["target"])
+            ]
+        return file_deleted, left
 
     def index_entry(self, entry: Entry, kb_name: str, file_path: Path) -> None:
         """Index an entry without writing to disk (re-index from existing file).

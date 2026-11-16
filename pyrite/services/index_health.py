@@ -54,6 +54,10 @@ def health_verdict(health: dict[str, Any]) -> dict[str, Any]:
         # A link row a rebuild would point at a different KB (a shortname
         # renamed since the file was indexed, or a row from before #980).
         or health.get("links_stale_kb")
+        # An in-KB link with nothing at the path it names (hand-made, or left
+        # by a delete that keeps the user's link): no entry is there, so no
+        # read answers from anything but the files; the user should know (#1262).
+        or health.get("dangling_links")
     )
     status = "unhealthy" if is_unhealthy else ("warning" if has_warning else "healthy")
     return {"status": status, "is_unhealthy": is_unhealthy, "has_warning": has_warning}

@@ -413,6 +413,10 @@ class ReconcilePlan:
     # ``{"kb", "path", "target"}``, KB-relative, sorted by path. Not read and
     # not a claim: the entry is its target's (#1262).
     aliases: list[dict[str, str]] = field(default_factory=list)
+    # In-KB links with nothing at the path they name
+    # (``KBRepository.dangling_target``): ``{"kb", "path", "target"}``,
+    # KB-relative, in walk order. They hold no entry (#1262).
+    dangling: list[dict[str, str]] = field(default_factory=list)
     holders: dict[str, list[_Claim]] = field(default_factory=dict)
     # path -> "ExcType: detail" for the ``malformed`` files whose bytes could not
     # be read or decoded (OSError, UnicodeError), whatever the file's kind:
@@ -1076,10 +1080,24 @@ class IndexManager:
                 # targets inside the KB (a link out was skipped above).
                 file_stat = file_path.stat()
             except OSError as e:
-                # Not "removed while walking": a dangling symlink, a symlink
-                # loop or a folder this process cannot search is listed by the
-                # walk and cannot be read. Health must say so (#1119); sync
-                # already reports it as malformed.
+                # A link inside the KB with nothing there (hand-made, or left
+                # by a delete that keeps the user's link) holds no entry: it
+                # is a dangling link, a warning, never an unreadable file
+                # (#1262). Only the failure path asks, so the walk pays nothing.
+                gone_to = repo.dangling_target(file_path)
+                if gone_to is not None:
+                    plan.dangling.append(
+                        {
+                            "kb": kb_config.name,
+                            "path": rel,
+                            "target": gone_to.relative_to(kb_config.path).as_posix(),
+                        }
+                    )
+                    continue
+                # Not "removed while walking": a symlink loop or a folder this
+                # process cannot search is listed by the walk and cannot be
+                # read. Health must say so (#1119); sync reports it as
+                # malformed.
                 logger.warning("Could not stat %s: %s", file_path, e)
                 error = f"{type(e).__name__}: {outside_text(e, already_logged=True)}"
                 plan.malformed.append({"path": str(file_path), "error": error})
@@ -1182,6 +1200,7 @@ class IndexManager:
             "skipped": [],
             "duplicates": [],
             "aliases": [],
+            "dangling_links": [],
             "written": 0,
         }
         if not kb_config.path.exists():
@@ -1206,6 +1225,7 @@ class IndexManager:
         results["skipped"] = plan.skipped
         results["duplicates"] = plan.duplicates
         results["aliases"] = plan.aliases
+        results["dangling_links"] = plan.dangling
 
         total = len(plan.winners)
         unwritable: set[str] = set()
@@ -1573,6 +1593,10 @@ class IndexManager:
         - aliases: in-KB links to a walked entry file, ``{"kb", "path",
           "target"}`` as ``index sync`` reports them; information, neither a
           warning nor unhealthy (#1262).
+        - dangling_links: in-KB links with nothing at the path they name,
+          ``{"kb", "path", "target"}``; a warning (they hold no entry, so no
+          read answers from anything but the files), never an unreadable
+          file (#1262).
         """
         health: dict[str, Any] = {
             "missing_files": [],
@@ -1591,6 +1615,7 @@ class IndexManager:
             "off_list_values": [],
             "duplicates": [],
             "aliases": [],
+            "dangling_links": [],
             "removed_extensions": [],
             # Files whose frontmatter Pyrite cannot model (#760 (b)): a
             # tagged, complex or duplicate key. No write reaches them, so
@@ -1671,6 +1696,8 @@ class IndexManager:
             health["duplicates"].extend(plan.duplicates)
             # Reported, not a problem: a hand-made shape the index models (#1262).
             health["aliases"].extend(plan.aliases)
+            # A warning, not unreadable: no entry is there to miss (#1262).
+            health["dangling_links"].extend(plan.dangling)
             # A path sync lists and skips because it is not a regular file
             # (a directory named `x.md`, a FIFO) used to vanish from health
             # while sync reported it in `skipped` (#1119).
@@ -2230,6 +2257,7 @@ class IndexManager:
             "skipped": [],
             "duplicates": [],
             "aliases": [],
+            "dangling_links": [],
         }
         kbs = [self.config.get_kb(kb_name)] if kb_name else self.config.all_kbs()
         kbs = [kb for kb in kbs if kb and kb.path.exists()]
@@ -2248,6 +2276,7 @@ class IndexManager:
             results["skipped"].extend(one["skipped"])
             results["duplicates"].extend(one["duplicates"])
             results["aliases"].extend(one["aliases"])
+            results["dangling_links"].extend(one["dangling_links"])
             if progress_callback and len(kbs) > 1:
                 progress_callback(n, len(kbs))
         return results

@@ -276,9 +276,21 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         {"repo.present": 1},
         "present, then read_id",
     ),
+    ("pyrite/storage/document_manager.py", "DocumentManager.delete_entry_leaving"): (
+        {"KBFiles.present": 1},
+        "KBFiles.present of each alias's target once the delete is done: which in-KB links it left pointing at nothing (#1262)",
+    ),
+    ("pyrite/storage/repository.py", "KBRepository._in_kb_link"): (
+        {"KBFiles.resolved": 1, "os.path.islink": 1},
+        "where an in-KB link leads (#1262): the name is decided under the root lexically first; islink is the lstat of that name itself, never followed; where it leads, and whether that is out of the KB, is KBFiles.resolved (the rule behind contains). Nothing is read",
+    ),
     ("pyrite/storage/repository.py", "KBRepository.alias_target"): (
-        {"KBFiles.resolved": 1, "_is_regular_file": 1, "os.path.islink": 1},
-        "is a walked name an in-KB link to another walked file (#1262): islink is the lstat of the name itself, never followed; where it leads, and whether that is out of the KB, is KBFiles.resolved (the rule behind contains); the regular-file stat is only of a target KBFiles placed inside. Nothing is read: the entry is read at the target through KBFiles",
+        {"_is_regular_file": 1},
+        "_in_kb_link (KBFiles.resolved), then a stat of a target KBFiles placed inside: is it a regular file. Nothing is read: the entry is read at the target through KBFiles",
+    ),
+    ("pyrite/storage/repository.py", "KBRepository.dangling_target"): (
+        {"os.path.lexists": 1},
+        "_in_kb_link (KBFiles.resolved), then lexists of the name KBFiles placed inside the root: is anything there. A link out is never asked (None first), so no answer depends on outside",
     ),
     ("pyrite/storage/repository.py", "KBRepository.list_collection_files"): (
         {"repo._named": 1},
@@ -717,7 +729,7 @@ LOCAL_ONLY: dict[Site, Entry] = {
 }
 
 SIZES = {
-    "DECIDED_INSIDE": 54,
+    "DECIDED_INSIDE": 57,
     "SAME_ANSWER": 19,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,

@@ -1512,34 +1512,19 @@ class KBRepository:
         of links ends at its last target.
 
         Not an alias, and walked as before: a path that is not a link; a link
-        that leaves the KB (the reader refuses it); a dangling or looping link
-        (malformed); a link to a file the walk skips (a hidden folder,
-        ``_templates``, a README), which is then the only walked name. A hard
-        link is not a symbolic link: no name is the real one, and the
-        reconcile skips both (nlink > 1).
+        that leaves the KB (the reader refuses it); a dangling link
+        (``dangling_target``) or a looping one (malformed); a link to a file
+        the walk skips (a hidden folder, ``_templates``, a README), which is
+        then the only walked name. A hard link is not a symbolic link: no name
+        is the real one, and the reconcile skips both (nlink > 1).
 
         Where the link leads, and whether that is out of the KB, is
-        ``KBFiles``'s answer (``KBFiles.resolved``, the rule behind
-        ``contains`` and every read and write), never a second rule here.
-        Nothing is read: ``islink`` is one ``lstat`` per walked file, only a
-        link is resolved, and the target's kind is a ``stat``. The entry's
-        bytes are read later, at the target, through ``KBFiles.read_bytes``.
-        Nothing is written: the link is the user's file.
+        ``KBFiles``'s answer (``_in_kb_link``). Nothing is read; the target's
+        kind is a ``stat``. The entry's bytes are read later, at the target,
+        through ``KBFiles.read_bytes``. Nothing is written: the link is the
+        user's file.
         """
-        # The name first, before any probe: ``_filename_candidates`` asks
-        # about names built from a caller's id, and a name not under the
-        # root is no walked name, so it is never ``lstat``-ed (lexical).
-        top = os.path.normpath(os.path.abspath(self.path))
-        name = os.path.normpath(os.path.abspath(md_file))
-        if not name.startswith(top + os.sep):
-            return None
-        if not os.path.islink(name):
-            return None
-        # None: leads out of the KB (the reader refuses it, as before).
-        target = KBFiles(self.path).resolved(name)
-        # A dangling or looping link resolves to a name that is no regular
-        # file, so the last test below turns it away: the reconcile reports
-        # it malformed, as before.
+        target = self._in_kb_link(md_file)
         if target is None or (
             not fnmatch.fnmatch(target.name, "*.md")
             or not self._lexically_listed(target)
@@ -1547,6 +1532,51 @@ class KBRepository:
         ):
             return None
         return target
+
+    def dangling_target(self, md_file: Path) -> Path | None:
+        """The KB path ``md_file`` names, when it is a link inside the KB with
+        nothing there (#1262): a hand-made link to a missing file, or one a
+        delete left, which keeps the user's link. It holds no entry, so the
+        reconcile reports it as a dangling link, not as an unreadable file.
+        None for anything else: a link out of the KB, a loop (its target is
+        there, and unreadable), a path that is not a link. ``lexists`` is a
+        probe of a name ``KBFiles`` placed inside the root; nothing is read."""
+        target = self._in_kb_link(md_file)
+        if target is None or os.path.lexists(target):
+            return None
+        return target
+
+    def _in_kb_link(self, md_file: Path) -> Path | None:
+        """Where ``md_file`` leads, spelled under ``self.path``, when it is a
+        symbolic link under the root that does not lead out of the KB; None
+        otherwise. Where it leads is ``KBFiles.resolved`` (the rule behind
+        ``KBFiles.contains`` and every read and write), never a second rule.
+
+        The name is decided first, before any probe: ``_filename_candidates``
+        asks about names built from a caller's id, and a name not under the
+        root is no walked name, so it is never ``lstat``-ed. That check is
+        lexical and covers the name, not its folders: a folder on the way
+        that is a link is followed by the probe. No caller passes one: the
+        walk (``rglob``) does not enter a linked folder, and a lookup's name
+        is the root plus a plain stem."""
+        top = os.path.normpath(os.path.abspath(self.path))
+        name = os.path.normpath(os.path.abspath(md_file))
+        if not name.startswith(top + os.sep):
+            return None
+        # One lstat of the name itself, never followed.
+        if not os.path.islink(name):
+            return None
+        return KBFiles(self.path).resolved(name)
+
+    def aliases_by_target(self) -> dict[Path, list[Path]]:
+        """Every alias in the KB, by the walked file it names (one walk):
+        what a write that would move or remove a file asks first, so it does
+        not leave the user's link pointing at nothing without saying so."""
+        found: dict[Path, list[Path]] = {}
+        for md_file, target in self.walk_files():
+            if target is not None:
+                found.setdefault(target, []).append(md_file)
+        return found
 
     def _listed(self, md_file: Path) -> bool:
         """Whether ``list_files`` walks ``md_file``; ``find_file`` uses the

@@ -441,10 +441,15 @@ class WriteResult:
 
 @dataclass
 class DeleteResult:
-    """A deletion and the readable index links it left dangling."""
+    """A deletion, the readable index links it left dangling, and the in-KB
+    file links (symbolic links to the removed file) it left as they were."""
 
     deleted: bool
     inbound_links: list[dict[str, Any]] = field(default_factory=list)
+    #: ``[{"path", "target"}]``, KB-relative: symbolic links inside the KB to
+    #: the file the delete removed. They are the user's files, so the delete
+    #: keeps them, and says so (#1262).
+    links_left: list[dict[str, str]] = field(default_factory=list)
 
     def __bool__(self) -> bool:
         return self.deleted
@@ -452,11 +457,20 @@ class DeleteResult:
     def as_dict(self) -> dict[str, Any]:
         count = len(self.inbound_links)
         noun = "link" if count == 1 else "links"
+        warnings = [f"Deletion leaves {count} indexed inbound {noun}."] if count else []
+        if self.links_left:
+            n = len(self.links_left)
+            names = ", ".join(link["path"] for link in self.links_left)
+            warnings.append(
+                f"Deletion leaves {n} in-KB file {'link' if n == 1 else 'links'} pointing "
+                f"at the removed file, kept as {'it is' if n == 1 else 'they are'}: {names}."
+            )
         return {
             "deleted": self.deleted,
             "inbound_links": self.inbound_links,
             "inbound_link_count": count,
-            "warnings": [f"Deletion leaves {count} indexed inbound {noun}."] if count else [],
+            "links_left": self.links_left,
+            "warnings": warnings,
         }
 
 
@@ -468,6 +482,23 @@ class ReconcileResult:
     errors: list[tuple[str, str]] = field(default_factory=list)
     moved: int = 0
     read_only: bool = False
+
+
+def _links_naming(
+    repo: KBRepository, path: Path, aliases: dict[Path, list[Path]] | None = None
+) -> str | None:
+    """Why ``path`` must not move, when symbolic links inside the KB name it:
+    the links are the user's files, and a move would leave them pointing at
+    nothing (#1262). Names each link KB-relative; None when there is none.
+    ``aliases``: ``repo.aliases_by_target()``, when the caller has it."""
+    if aliases is None:
+        aliases = repo.aliases_by_target()
+    links = aliases.get(path, [])
+    if not links:
+        return None
+    names = ", ".join(sorted(link.relative_to(repo.path).as_posix() for link in links))
+    noun = "link" if len(links) == 1 else "links"
+    return f"the in-KB {noun} {names} {'names' if len(links) == 1 else 'name'} it; move or remove {'it' if len(links) == 1 else 'them'} by hand first"
 
 
 def _safe_message(exc: Exception) -> str:
@@ -2814,6 +2845,11 @@ class KBService:
             return path, None
         if "id" not in file_values:
             return path, "no id pin: the file keeps its place; add an `id:` line to let it move"
+        held = _links_naming(repo, path)
+        if held:
+            # The links are the user's files: a move would leave them pointing
+            # at nothing, so the file stays, as for a hard link (#1262).
+            return path, f"the file keeps its place: {held}"
         try:
             KBFiles(kb_config.path).require_movable(path, target)
         except HardLinked as e:
@@ -2899,13 +2935,13 @@ class KBService:
         ]
 
         # Delete from file system and index
-        file_deleted = self._doc_mgr.delete_entry(entry_id, kb_name, kb_config)
+        file_deleted, links_left = self._doc_mgr.delete_entry_leaving(entry_id, kb_name, kb_config)
 
         # Run after_delete hooks
         if entry:
             self._run_hooks("after_delete", entry, hook_ctx)
 
-        return DeleteResult(file_deleted, inbound_links if file_deleted else [])
+        return DeleteResult(file_deleted, inbound_links if file_deleted else [], links_left)
 
     def rename_entry(
         self,
@@ -4218,6 +4254,7 @@ class KBService:
         planned: list[tuple[Entry, Path, Path]] = []
         result = ReconcileResult()
 
+        aliases: dict[Path, list[Path]] | None = None
         for entry, current_path in repo.list_entries():
             if current_path.name == "__collection.yaml":
                 continue
@@ -4228,6 +4265,15 @@ class KBService:
                 expected_dir = repo._get_file_path(entry.id, inferred_subdir).parent
                 target_path = repo._contained(expected_dir / current_path.name)
                 if current_path.parent.resolve() != expected_dir.resolve():
+                    # A file an in-KB link names stays: moving it would leave
+                    # the user's link pointing at nothing (#1262). The walk
+                    # for links runs once, and only when a move is planned.
+                    if aliases is None:
+                        aliases = repo.aliases_by_target()
+                    held = _links_naming(repo, current_path, aliases)
+                    if held:
+                        result.errors.append((entry.id, f"not moved: {held}"))
+                        continue
                     planned.append((entry, current_path, target_path))
             except Exception as exc:
                 # A bad template (such as a directory symlink outside the KB)

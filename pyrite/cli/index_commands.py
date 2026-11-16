@@ -68,6 +68,34 @@ def _embed_counts(stats: dict, from_queue: int, force: bool) -> tuple[int, int, 
     return stats["embedded"] + from_queue, max(0, skipped), max(0, -skipped)
 
 
+def _print_file_links(results: dict) -> None:
+    """The in-KB symbolic links a reconcile reported (#1262), for `index sync`
+    and `kb reindex`: aliases (another name for an entry file, never indexed
+    themselves) and dangling links (nothing at the path they name). Both are
+    the user's files and are left as they are."""
+    for key, heading, style in (
+        ("aliases", "Aliases: {n} (in-KB links to an entry file; not indexed themselves)", ""),
+        (
+            "dangling_links",
+            "Dangling links: {n} (in-KB links to a missing file; left as they are)",
+            "yellow",
+        ),
+    ):
+        rows = results.get(key, [])
+        if not rows:
+            continue
+        line = heading.format(n=len(rows))
+        console.print(f"  [{style}]{line}[/{style}]" if style else f"  {line}")
+        for row in rows[:5]:
+            console.print(
+                f"    • {row['kb']}: {row['path']} -> {row['target']}",
+                markup=False,
+                highlight=False,
+            )
+        if len(rows) > 5:
+            console.print(f"    [dim]… and {len(rows) - 5} more[/dim]")
+
+
 def _duplicate_lines(duplicates: list[dict], limit: int = 10) -> list[str]:
     """One line per id held by several files, the indexed file first.
 
@@ -275,18 +303,7 @@ def index_sync(
         for line in _duplicate_lines(duplicates):
             console.print(f"    • {line}", markup=False, highlight=False)
 
-    # In-KB links to an entry file: indexed once, at the target (#1262).
-    aliases = results.get("aliases", [])
-    if aliases:
-        console.print(f"  Aliases: {len(aliases)} (links indexed once, at their target)")
-        for alias in aliases[:5]:
-            console.print(
-                f"    • {alias['kb']}: {alias['path']} -> {alias['target']}",
-                markup=False,
-                highlight=False,
-            )
-        if len(aliases) > 5:
-            console.print(f"    [dim]… and {len(aliases) - 5} more[/dim]")
+    _print_file_links(results)
 
     # Auto-embed new/updated entries if embeddings are available.
     #
@@ -567,6 +584,7 @@ def index_health(
             "off_list_values": off_list_values,
             "duplicates": duplicates,
             "aliases": health.get("aliases", []),
+            "dangling_links": health.get("dangling_links", []),
             "removed_extensions": removed_extensions,
             "type_name_drift": health.get("type_name_drift", []),
             "type_name_drift_total": health.get("type_name_drift_total", 0),
@@ -627,10 +645,10 @@ def _report_health(
 
     console.print("\n[bold]Index Health Check[/bold]\n")
 
-    # Information, not a finding: in-KB links indexed once, at their target (#1262).
+    # Information, not a finding: in-KB links to an entry file (#1262).
     aliases = health.get("aliases", [])
     if aliases:
-        console.print(f"{len(aliases)} alias(es): links indexed once, at their target")
+        console.print(f"{len(aliases)} alias(es): in-KB links to an entry file, not indexed")
 
     if not is_unhealthy and not has_warning:
         console.print("[green]✓ Index is healthy[/green]")
@@ -638,6 +656,17 @@ def _report_health(
 
     if not is_unhealthy and has_warning:
         console.print("[green]✓ Index is healthy[/green]")
+
+    dangling = health.get("dangling_links") or []
+    if dangling:
+        console.print(
+            f"[yellow]⚠ {len(dangling)} in-KB file link(s) point at a missing file"
+            " (left as they are):[/yellow]"
+        )
+        for row in dangling[:10]:
+            console.print(
+                f"  • {row['kb']}: {row['path']} -> {row['target']}", markup=False, highlight=False
+            )
 
     if broken_links:
         console.print(
