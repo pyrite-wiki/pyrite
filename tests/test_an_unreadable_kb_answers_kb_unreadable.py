@@ -203,3 +203,38 @@ def test_a_sync_or_rebuild_of_the_unreadable_kb_alone_changes_nothing(unreadable
     assert "locked" in build.output
     assert _rows(world, "locked") == ["x"]
     assert _rows(world, "good") == ["g"]
+
+
+def test_a_rebuild_of_every_kb_skips_the_unreadable_one_and_keeps_its_rows(unreadable):
+    world, locked = unreadable
+    from pyrite.storage.index import IndexManager
+
+    with world.pointed():
+        config = load_config()
+    counts = IndexManager(world.db, config).index_all()
+    assert counts == {"good": 1}
+    assert _rows(world, "locked") == ["x"]
+
+
+def test_a_kb_folder_that_can_be_searched_but_not_listed_keeps_its_rows(tmp_path):
+    """Mode 100: each file can be opened by name, so kb.yaml reads, but the
+    folder cannot be listed. The walk would find nothing; the reconcile must
+    not read that as "every file is gone"."""
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    (locked / "kb.yaml").write_text("name: locked\ntypes: {}\n", encoding="utf-8")
+    (locked / "x.md").write_text(ENTRY, encoding="utf-8")
+    world = build_world(
+        tmp_path / "w", kbs=[KBConfig(name="locked", path=locked, kb_type="generic")], rest=False
+    )
+    locked.chmod(0o100)
+    try:
+        if os.access(locked, os.R_OK):
+            pytest.skip(f"running as a user (uid {os.getuid()}) who can list a mode-100 folder")
+        result = world.cli("index", "sync", "--no-embed")
+        assert result.exit_code == 1, result.output
+        assert "Not synced: locked" in result.output
+        assert _rows(world, "locked") == ["x"]
+    finally:
+        locked.chmod(0o755)
+        world.close()
