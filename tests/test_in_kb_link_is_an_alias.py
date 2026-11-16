@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -407,3 +408,17 @@ def test_alias_target_agrees_with_kbfiles_on_every_link(env):
                 files.read_bytes(link)
     # The real file and a non-link are never aliases.
     assert env.repo.alias_target(env.root / TARGET) is None
+
+
+def test_a_name_outside_the_kb_is_never_probed_as_an_alias(env):
+    """``alias_target`` is asked about names ``_filename_candidates`` builds
+    from a caller's id, so it decides on the name first: a name that is not
+    under the KB's root is no alias, and is never ``lstat``-ed, even when it
+    is a link that leads to a KB file."""
+    env.write(TARGET, _note("x", "X"))
+    (env.outside / "x.md").symlink_to(env.root / TARGET)
+
+    assert env.repo.alias_target(env.outside / "x.md") is None
+    assert env.repo.alias_target(env.root / ".." / "outside" / "x.md") is None
+    with patch("os.path.islink", side_effect=AssertionError("probed")):
+        assert env.repo.alias_target(env.root / ".." / "outside" / "x.md") is None

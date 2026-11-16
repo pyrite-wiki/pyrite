@@ -1526,10 +1526,17 @@ class KBRepository:
         bytes are read later, at the target, through ``KBFiles.read_bytes``.
         Nothing is written: the link is the user's file.
         """
-        if not os.path.islink(md_file):
+        # The name first, before any probe: ``_filename_candidates`` asks
+        # about names built from a caller's id, and a name not under the
+        # root is no walked name, so it is never ``lstat``-ed (lexical).
+        top = os.path.normpath(os.path.abspath(self.path))
+        name = os.path.normpath(os.path.abspath(md_file))
+        if not name.startswith(top + os.sep):
+            return None
+        if not os.path.islink(name):
             return None
         # None: leads out of the KB (the reader refuses it, as before).
-        target = KBFiles(self.path).resolved(md_file)
+        target = KBFiles(self.path).resolved(name)
         # A dangling or looping link resolves to a name that is no regular
         # file, so the last test below turns it away: the reconcile reports
         # it malformed, as before.
