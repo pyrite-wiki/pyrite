@@ -1277,23 +1277,26 @@ class TestPyriteMCPServer:
     # Entry type resolution (plugin subtype)
     # ------------------------------------------------------------------
 
-    def test_kb_create_resolves_plugin_subtype(self, mcp_admin_server):
-        """Test that create with a core type resolves to plugin subtype."""
+    def test_kb_create_stores_the_named_type_when_only_a_subclass_exists(self, mcp_admin_server):
+        """A plugin subclass of a core type, with no declared mapping, does not
+        change the stored type (#468: nothing is inferred from subclassing)."""
         from unittest.mock import patch
 
         from pyrite.models import EventEntry
 
-        # Create a mock plugin subclass of EventEntry
         class MockTimelineEvent(EventEntry):
             entry_type = "timeline_event"
-
-        mock_plugin_types = {"timeline_event": MockTimelineEvent}
 
         server = mcp_admin_server["server"]
 
         with patch("pyrite.plugins.get_registry") as mock_reg:
-            mock_reg.return_value.get_all_entry_types.return_value = mock_plugin_types
-            # Also patch the hooks to avoid plugin lookup issues
+            mock_reg.return_value.get_all_entry_types.return_value = {
+                "timeline_event": MockTimelineEvent
+            }
+            mock_reg.return_value.get_all_entry_types_for_kb.return_value = {
+                "timeline_event": MockTimelineEvent
+            }
+            mock_reg.return_value.type_mappings_for_kb.return_value = {}
             with patch.object(type(server.svc), "_run_hooks", side_effect=lambda _n, e, _c: e):
                 result = server._dispatch_tool(
                     "kb_create",
@@ -1302,19 +1305,15 @@ class TestPyriteMCPServer:
                         "entry_type": "event",
                         "title": "Resolved Event",
                         "date": "2025-05-01",
-                        "body": "Should resolve to timeline_event.",
+                        "body": "Stays an event.",
                     },
                 )
 
-        assert result.get("created") is True
-        entry_id = result["entry_id"]
-
-        # Verify the entry was created — the type depends on whether
-        # build_entry dispatches correctly for the resolved type
+        assert result.get("created") is True, result
         get_result = server._dispatch_tool(
-            "kb_get", {"entry_id": entry_id, "kb_name": "test-events"}
+            "kb_get", {"entry_id": result["entry_id"], "kb_name": "test-events"}
         )
-        assert "entry" in get_result
+        assert get_result["entry"]["entry_type"] == "event", get_result
 
 
 # ---------------------------------------------------------------------------

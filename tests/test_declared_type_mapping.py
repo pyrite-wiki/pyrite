@@ -116,24 +116,35 @@ def probe_registry():
 # ---------------------------------------------------------------------------
 
 
+_WORLDS: list = []
+
+
+@pytest.fixture(autouse=True)
+def _close_worlds():
+    yield
+    while _WORLDS:
+        _WORLDS.pop().close()
+
+
 def _kb_env(tmp_path: Path, name: str, kb_type: str, kb_yaml: str) -> dict:
+    """One KB in a world (tests/_world.py): the production wiring on every surface."""
+    from tests._world import build_world
+
     kb_path = tmp_path / name
     kb_path.mkdir()
     (kb_path / "kb.yaml").write_text(kb_yaml)
-    db_path = tmp_path / f"{name}.db"
-    config = PyriteConfig(
-        knowledge_bases=[KBConfig(name=name, path=kb_path, kb_type=kb_type)],
-        settings=Settings(index_path=db_path, auto_embed=False),
+    world = build_world(
+        tmp_path / f"{name}-world",
+        kbs=[KBConfig(name=name, path=kb_path, kb_type=kb_type)],
+        settings={"auto_embed": False},
     )
-    db = PyriteDB(db_path)
-    IndexManager(db, config).index_all()
-    db.close()
+    _WORLDS.append(world)
     return {
         "name": name,
-        "config": config,
+        "world": world,
+        "config": world.config,
         "kb_path": kb_path,
         "tmp_path": tmp_path,
-        "db_path": db_path,
     }
 
 
@@ -156,47 +167,15 @@ def _stored_type(env: dict, title: str) -> str:
 
 
 def _cli(env: dict, args: list[str]):
-    with (
-        patch("pyrite.cli.load_config", return_value=env["config"]),
-        patch("pyrite.cli.context.load_config", return_value=env["config"]),
-    ):
-        return runner.invoke(cli_app, args)
+    return env["world"].cli(*args)
 
 
 def _rest(env: dict):
-    from starlette.testclient import TestClient
-
-    from pyrite.server.api import create_app, get_config, get_db, get_index_worker
-    from pyrite.services.index_worker import IndexWorker
-
-    config = env["config"]
-    application = create_app(config=config)
-    db = PyriteDB(env["db_path"])
-    application.dependency_overrides[get_config] = lambda: config
-    application.dependency_overrides[get_db] = lambda: db
-    worker = IndexWorker(db, config)
-    application.dependency_overrides[get_index_worker] = lambda: worker
-    closers = [db]
-    state_db = getattr(application.state, "pyrite_db", None)
-    if state_db is not None and state_db is not db:
-        closers.append(state_db)
-
-    def close():
-        worker.wait_for_idle(timeout=10)
-        for d in closers:
-            d.close()
-
-    return TestClient(application), close
+    return env["world"].client, lambda: None
 
 
 def _mcp(env: dict, tool: str, args: dict) -> dict:
-    from pyrite.server.mcp_server import PyriteMCPServer
-
-    server = PyriteMCPServer(env["config"], tier="admin")
-    try:
-        return server._dispatch_tool(tool, args)
-    finally:
-        server.close()
+    return env["world"].mcp()._dispatch_tool(tool, args)
 
 
 def _frontmatter_file(env: dict, entry_type: str, title: str, extra: dict) -> Path:
@@ -422,12 +401,8 @@ def test_a_subclass_with_no_declaration_is_not_chosen(tmp_path, kb_type, named):
     from pyrite.services.kb_service import KBService
 
     env = _kb_env(tmp_path, "k", kb_type, "name: k\n")
-    db = PyriteDB(env["db_path"])
-    try:
-        svc = KBService(env["config"], db)
-        entry = svc.create("k", {"entry_type": named, "title": "Named"}).entry
-    finally:
-        db.close()
+    svc = KBService(env["config"], env["world"].db)
+    entry = svc.create("k", {"entry_type": named, "title": "Named"}).entry
     assert entry.entry_type == named
     assert _stored_type(env, "Named") == named
 

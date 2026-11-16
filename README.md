@@ -192,7 +192,7 @@ Eleven built-in entry types: `note`, `person`, `organization`, `event`, `documen
 
 ## Plugin Protocol
 
-Extensions implement a Python protocol class with up to 19 methods:
+Extensions implement a Python protocol class with up to 20 methods:
 
 - `get_entry_types()` — custom entry types with serialization
 - `get_type_metadata()` — field definitions, AI instructions, presets
