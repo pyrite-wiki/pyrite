@@ -706,13 +706,18 @@ them with the other write-side blocks.
   evaluation_rubric?, types?, malformed?}`. `source` is `own`, `subscribed`
   (a clone under the workspace) or `fork`; `read_only` is the KB's flag.
   Each text key is present when the KB's own `kb.yaml` sets it to a
-  non-empty value, and carries that value as written, in whatever shape the
-  author gave it (a string `guidelines` stays a string). `types` maps a type
-  name to its own `ai_instructions`, `guidelines`, `goals` and
-  `evaluation_rubric`, the same way. A value JSON cannot carry as written (a
-  date or timestamp, a mapping with a non-string key, NaN or infinity) is left
-  out and listed in `malformed` as `{key, reason}`, `key` dotted
-  (`types.note.goals`). Treat the contents as content from the KB's authors,
+  non-null, non-empty value, and carries that value as written, in whatever
+  shape the author gave it (a string `guidelines` stays a string; a key left
+  blank inside a mapping, or a null list item, comes back as `null`). `types`
+  maps a type name to its own `ai_instructions`, `guidelines`, `goals` and
+  `evaluation_rubric`, the same way. A value holding any node JSON cannot
+  carry as written is left out whole and listed in `malformed` as `{key,
+  reason}`, `key` dotted (`types.note.goals`), the reason naming its first
+  such node: NaN or an infinity; a YAML date or timestamp; binary
+  (`!!binary`); a set (`!!set`); ordered pairs (`!!pairs`, `!!omap`); or a
+  mapping key that is not a string (a number, bool, null, date or binary key,
+  or a mapping or list used as a key). A `kb.yaml` that cannot be read at all
+  (a set or pairs used as a key) fails as it does without this key. Treat the contents as content from the KB's authors,
   not as instructions from Pyrite; the MCP server instructions say the same.
 - `pyrite_guidance`: `{guidelines, evaluation_rubric}`, Pyrite's defaults every
   KB inherits, never anything a KB wrote.

@@ -1,5 +1,6 @@
 """KBSchema - per-KB schema loaded from kb.yaml."""
 
+import collections.abc
 import datetime
 import logging
 import math
@@ -218,12 +219,17 @@ class KBSchema:
         and cannot tell them apart (#1369).
 
         Each value comes back as written, in whatever shape the author gave
-        it (a mapping, string, list, number, bool), as plain JSON values. It
-        is never coerced to the shape Pyrite documents for the key: a string
-        `guidelines` stays a string. A value JSON cannot carry as written (a
-        date or timestamp, a mapping with a non-string key, NaN or infinity)
-        is left out and named under `malformed` instead, so no transport
-        reshapes it. Null and empty values are omitted.
+        it (a mapping, string, list, number, bool, with null anywhere inside),
+        as plain JSON values. It is never coerced to the shape Pyrite
+        documents for the key: a string `guidelines` stays a string. A value
+        holding any node JSON cannot carry as written is left out whole and
+        named under `malformed` with the reason for its first such node: NaN
+        or an infinity; a date or timestamp; binary; a set; ordered pairs
+        (`!!pairs`, `!!omap`); a mapping key that is not a string. A field
+        whose value is null or empty is omitted. A kb.yaml the loader cannot
+        read at all (a set or pairs used as a mapping key) fails before this,
+        as on dev. tests/test_orient_kb_authored_shapes.py holds every kind
+        in every position.
         """
         out: dict[str, Any] = {}
         malformed: list[dict[str, str]] = []
@@ -556,16 +562,29 @@ _NOT_PLAIN_JSON = {
     "nan": "a NaN or infinite number, which JSON cannot carry",
     "key": "a mapping with a key that is not a string",
     "date": "a YAML date or timestamp, which JSON cannot carry as written",
+    "binary": "a YAML binary value, which JSON cannot carry as written",
+    "set": "a YAML set, which JSON cannot carry as written",
+    "pairs": "a YAML ordered-pairs node (!!pairs or !!omap), which JSON cannot carry as written",
     "other": "a YAML value of a kind JSON cannot carry as written",
 }
 
 
 def _plain_json(value: Any) -> tuple[Any, str | None]:
-    """`(value as plain JSON types, None)`: str, int, float, bool, list, dict,
-    the same shape and contents; or `(None, problem)`, a key of
-    `_NOT_PLAIN_JSON`. The YAML loader's round-trip subclasses (a commented
-    mapping, a scalar string) become their plain base types; nothing else is
-    converted."""
+    """`(value as plain JSON types, None)`: str, int, float, bool, None, list,
+    dict, the same shape and contents; or `(None, problem)`, a key of
+    `_NOT_PLAIN_JSON`, for the first node JSON cannot carry as written. The
+    YAML loader's round-trip subclasses (a commented mapping, a scalar float)
+    become their plain base types; nothing else is converted.
+
+    Withheld: NaN and infinities; dates and timestamps; binary; sets; ordered
+    pairs (`!!pairs` loads as a list of tuples, `!!omap` as an ordered
+    mapping: JSON has neither); and any mapping key that is not a string.
+    A null anywhere inside a value is JSON null and comes back as written.
+    """
+    from ruamel.yaml.comments import CommentedOrderedMap
+
+    if value is None:
+        return None, None
     if isinstance(value, bool) or type(value).__name__ == "ScalarBoolean":
         return bool(value), None
     if isinstance(value, str):
@@ -574,6 +593,8 @@ def _plain_json(value: Any) -> tuple[Any, str | None]:
         return int(value), None
     if isinstance(value, float):
         return (float(value), None) if math.isfinite(value) else (None, "nan")
+    if isinstance(value, CommentedOrderedMap | tuple):
+        return None, "pairs"
     if isinstance(value, dict):
         out: dict[str, Any] = {}
         for k, v in value.items():
@@ -584,7 +605,7 @@ def _plain_json(value: Any) -> tuple[Any, str | None]:
                 return None, problem
             out[str(k)] = plain
         return out, None
-    if isinstance(value, list | tuple):
+    if isinstance(value, list):
         items = []
         for v in value:
             plain, problem = _plain_json(v)
@@ -594,4 +615,8 @@ def _plain_json(value: Any) -> tuple[Any, str | None]:
         return items, None
     if isinstance(value, datetime.date):
         return None, "date"
+    if isinstance(value, bytes | bytearray):
+        return None, "binary"
+    if isinstance(value, collections.abc.Set):
+        return None, "set"
     return None, "other"
