@@ -1,1 +1,0 @@
-- **The global git identity for network commits.** With `git_identity` unset, commits made for network callers (worktree submit, admin merge, export) use the server account's global `user.name`/`user.email`; this fallback is removed in 0.27.0. Set `git_identity` (`name`, `email`) in `config.yaml`.

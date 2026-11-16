@@ -1,1 +1,0 @@
-- **`git_proxy` setting, and `url_prefixes` on a `git_credentials` entry.** `git_proxy` (or `PYRITE_GIT_PROXY`) is the one proxy network git and the GitHub API calls made for network callers go through; without it they use none. `url_prefixes` lets an entry also serve repositories a caller names (subscribe, fork, export) under those URLs. See `docs/configuration.md`.

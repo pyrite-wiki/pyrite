@@ -1,1 +1,0 @@
-- `pyrite qa stale --max-age` (`-a`) now refuses a negative number of days as a usage error (exit 2); `0` is still accepted (#1403).
