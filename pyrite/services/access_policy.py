@@ -489,15 +489,49 @@ class AccessPolicy:
         )
 
     def kb_default_role(self, kb_name: str) -> str | None:
-        """A KB's default_role: config first, then the registry.
+        """A KB's default_role, from the KB's one source.
+
+        - A KB declared in config.yaml: the file's value, validated at load;
+          None (the line absent) is the instance default. The registry row,
+          which an earlier load may have left with a value the file no longer
+          holds, counts only when it is "none" and the file has no line: an
+          upgrade never opens a KB that was closed.
+        - A registry KB: the value loaded from its row, else the row as it is
+          now, through the same validator (`validate_kb_default_role`); a
+          value it refuses gives no access.
+        - A name the load left out (its path cannot be resolved, its row is
+          refused) or that names no KB: "none", decided here and not only by
+          each route's existence check.
 
         Under an untrusted config the index belongs to the tree: a registry
         value that opens a KB is ignored (`PyriteConfig.confined_default_role`).
         """
-        kb_config = self.config.get_kb(kb_name)
-        if kb_config and kb_config.default_role is not None:
+        from ..config import validate_kb_default_role
+        from ..exceptions import ConfigError
+
+        declared = self.config.yaml_kb(kb_name)
+        registry = self._kb_registry()
+        if declared is not None:
+            if declared.default_role is not None:
+                return declared.default_role
+            # An upgrade never opens a KB that was closed: with no line in
+            # the file, a stored "none" stays (the seed keeps it too,
+            # `KBRegistryService._seeded_default_role`); any other stored
+            # value is not the file's and is ignored.
+            if registry.registered_default_role(kb_name) == "none":
+                return "none"
+            return None
+        kb_config = self.config.get_kb(kb_name) or registry.user_kb_config(kb_name)
+        if kb_config is None:
+            return "none"
+        if kb_config.default_role is not None:
             return kb_config.default_role
-        stored = self._kb_registry().registered_default_role(kb_name)
+        try:
+            stored = validate_kb_default_role(
+                registry.registered_default_role(kb_name), f"KB '{kb_name}' (registry row)"
+            )
+        except ConfigError:
+            return "none"
         if stored is None:
             return None
         return self.config.confined_default_role(stored)

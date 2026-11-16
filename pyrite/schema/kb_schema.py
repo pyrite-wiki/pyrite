@@ -52,7 +52,11 @@ class KBSchema:
         """Load schema from kb.yaml file, read only inside the KB's folder (the
         file's own): a link out of it, or a file with more than one hard
         link, raises ``KBFileReadOutsideRootError`` (``OUTSIDE_KB_ROOT``)."""
-        if not path.exists():
+        from ..utils.kb_files import KBFiles
+
+        # The KB's own probe: a link out is there, and refused by the read,
+        # whatever it points at.
+        if not KBFiles(path.parent).present(path):
             return cls()
 
         data = load_yaml_file(path, kb_root=path.parent)

@@ -108,7 +108,7 @@ class _LazyPluginTyper(typer.Typer):
                 if method == "get_cli_commands":
                     print(
                         f"pyrite: plugin '{plugin}' CLI commands are unavailable: "
-                        f"{type(exc).__name__}: {exc}",
+                        f"{exc.type_name}: {exc.text(local=True)}",
                         file=sys.stderr,
                     )
             for name, command in commands:

@@ -39,18 +39,23 @@ class UserService:
         """Get the sentinel 'local' user for non-authenticated setups."""
         return self.db.get_local_user()
 
-    def get_current_user(self) -> dict:
+    def get_current_user(self, token: str | None = None, proxy: str | None = None) -> dict:
         """
         Get the current user — GitHub user if authenticated, else local sentinel.
 
-        Checks for a valid GitHub token and fetches user info if available.
+        `token` is the caller's own GitHub token. Without one, the token
+        ``pyrite auth github-login`` stored is used only by the local process:
+        it is the operator's, and a network caller is never identified by it
+        (ADR-0052 N2). `proxy` is the operator's ``git_proxy``.
         """
         try:
             from ..github_auth import get_github_token, get_github_user_info
+            from .acting import is_local_process
 
-            token = get_github_token()
+            if not token and is_local_process():
+                token = get_github_token()
             if token:
-                info = get_github_user_info(token)
+                info = get_github_user_info(token, proxy=proxy)
                 if info:
                     return self.get_or_create_from_github(
                         github_login=info["login"],

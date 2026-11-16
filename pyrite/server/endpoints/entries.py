@@ -18,6 +18,7 @@ from ...exceptions import (
     PyriteError,
     StorageError,
     ValidationError,
+    outside_text,
     public_text,
 )
 from ...services.access_policy import KB, AccessPolicy, Action, AnyKB, ReadScope
@@ -660,10 +661,10 @@ async def import_entries(
         parsed = await anyio.to_thread.run_sync(
             lambda: list(importer(content, stream=True)) if stream else importer(content)
         )
-    except Exception:
-        # The exception's text is the operator's, not the caller's: it can
-        # quote internals (paths, parser state). It goes to the log; the
-        # caller gets Pyrite's own message.
+    except Exception as e:
+        # The importer marks what its parser says about the upload as the
+        # caller's; anything else it raised is the operator's, logged
+        # here, and answered with Pyrite's own words (ADR-0052 N3).
         logger.warning(
             "Import into %r: the uploaded %s file %r did not parse",
             kb,
@@ -676,7 +677,8 @@ async def import_entries(
             detail={
                 "code": "PARSE_ERROR",
                 "message": (
-                    f"The file could not be read as {fmt}. Check that it is UTF-8 "
+                    f"The file could not be read as {fmt}: "
+                    f"{outside_text(e, already_logged=True)}. Check that it is UTF-8 "
                     f"text in the {fmt} import format."
                 ),
                 "retryable": False,

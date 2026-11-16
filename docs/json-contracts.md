@@ -228,6 +228,39 @@ to be a built-in `TypeError`/`ValueError` included (`title must be a string,
 got a list`, `cannot derive an id: title is a list`, a value the index cannot
 store, a value the file cannot hold): those are `VALIDATION_FAILED`.
 
+**Detail that is the caller's own is shown to that caller (0.26.3).** Two
+kinds of outside text are the caller's, each marked where the text is made
+(`pyrite.exceptions.caller_owned` / `kb_owned`), never at a distant catch:
+
+- *Detail about the caller's own request*: a parser's message about bytes the
+  caller sent -- the JSON, CSV, YAML or markdown of an import (REST
+  `POST /api/entries/import` answers `PARSE_ERROR` with `The file could not be
+  read as json: <the parser's words>. ...`), a field path, and a search
+  query's syntax error (`QUERY_SYNTAX`: `Query could not be parsed: <the FTS
+  parser's words>. ...`) when the parser's message is one of its fixed
+  templates quoting nothing but the query as the caller wrote it (REST
+  `/api/search`, MCP `kb_search`). A query Pyrite builds is not the caller's
+  -- one expanded with a provider's terms, or one derived from an entry's
+  title and tags (suggest-links) or a chat message's words: a message quoting
+  it, or any other driver text, reads `the server log has the details`. The parser is given only the bytes, never a file name.
+- *Bytes of a KB the caller holds a read grant on*: the YAML parser's quote of
+  an entry file in that KB that does not parse (a QA issue, a load refusal),
+  and of the file an update edits (`Cannot update ...: the frontmatter does
+  not parse: ...`), before or after the caller's edit is applied. For a
+  signed-in caller the grant is the routes' own rule, access through a KB's
+  `default_role` included; an anonymous caller (REST or MCP over HTTP) is
+  never shown text quoted from a KB file, whatever its `default_role` allows.
+  A call with no grant bound (a job, an embedded MCP caller with no
+  principal) is not shown it either.
+
+Anything else outside stays the operator's: a fault that is not the parser's
+(an import that fails for another reason still reads `the server log has the
+details`), an operating-system error, a library's or a provider's message,
+git's output, and the bytes of a KB the caller cannot read. An OS error is
+named by the C library's text for its code (`Permission denied`), never by the
+exception's own `strerror`. The search `warnings` name a sqlite-vec load
+failure by its class and the remedy; its text reaches the local process only.
+
 ## Write refusals (create, import, update)
 
 Entry deletion on MCP `kb_delete`, REST `DELETE /api/entries/{id}` and CLI
@@ -1287,7 +1320,8 @@ relative to the KB, the declared type, the refused fields and the loader's
 message. The loader's message is shown to the local process (the CLI, stdio
 MCP); a network caller (REST, MCP over HTTP) gets `the server log has the
 details` in its place unless the loader raised a Pyrite error, as for any text
-Pyrite did not write (ADR-0052 N3), and the same holds for each
+Pyrite did not write (ADR-0052 N3): a type's loader is code (a plugin's, a
+library's), not a parser given only the file's bytes. The same holds for each
 `load_problems[].message`. Over the CLI:
 
 ```text

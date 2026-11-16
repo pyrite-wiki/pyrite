@@ -5,6 +5,8 @@ import io
 import logging
 from typing import Any
 
+from pyrite.exceptions import caller_owned
+
 logger = logging.getLogger(__name__)
 
 
@@ -16,7 +18,10 @@ def import_csv(data: str | bytes) -> list[dict[str, Any]]:
     Tags can be semicolon-separated within the column.
     """
     if isinstance(data, bytes):
-        data = data.decode("utf-8")
+        try:
+            data = data.decode("utf-8")
+        except UnicodeDecodeError as e:  # the caller's upload: its bytes, its detail
+            raise caller_owned(e) from None
 
     # Spreadsheet UTF-8 exports prefix the document, not its first field name.
     # Remove only that marker: a BOM inside an entry's text is content.
@@ -25,7 +30,12 @@ def import_csv(data: str | bytes) -> list[dict[str, Any]]:
     reader = csv.DictReader(io.StringIO(data))
     entries = []
 
-    for row in reader:
+    try:
+        rows = list(reader)
+    except csv.Error as e:  # csv's text quotes only the caller's upload
+        raise caller_owned(e) from None
+
+    for row in rows:
         entry: dict[str, Any] = {
             "id": row.get("id", ""),
             "title": row.get("title", "Untitled"),

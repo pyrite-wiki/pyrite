@@ -333,7 +333,9 @@ def github_oauth_start(
     if not gh_config or not gh_config.client_id:
         raise HTTPException(status_code=404, detail="GitHub OAuth is not configured")
 
-    provider = GitHubOAuthProvider(gh_config.client_id, gh_config.client_secret)
+    provider = GitHubOAuthProvider(
+        gh_config.client_id, gh_config.client_secret, proxy=config.settings.git_proxy
+    )
     state, binding = auth_service.create_oauth_state()
 
     # Build callback URL from request
@@ -411,7 +413,9 @@ async def _github_oauth_callback(
             logger.warning("GitHub connect callback without the initiating user's session")
             return RedirectResponse(url="/settings/kbs?error=connect_failed", status_code=302)
 
-    provider = GitHubOAuthProvider(gh_config.client_id, gh_config.client_secret)
+    provider = GitHubOAuthProvider(
+        gh_config.client_id, gh_config.client_secret, proxy=config.settings.git_proxy
+    )
     callback_url = str(request.url_for("github_oauth_callback"))
 
     try:
@@ -477,7 +481,9 @@ def github_connect_start(
     if not user:
         raise HTTPException(status_code=401, detail="Session expired")
 
-    provider = GitHubOAuthProvider(gh_config.client_id, gh_config.client_secret)
+    provider = GitHubOAuthProvider(
+        gh_config.client_id, gh_config.client_secret, proxy=config.settings.git_proxy
+    )
     state, binding = auth_service.create_oauth_state(flow="connect", user_id=user["id"])
 
     callback_url = str(request.url_for("github_oauth_callback"))
@@ -525,7 +531,7 @@ def github_connection_status(
     try:
         from ..github_auth import get_github_user_info
 
-        info = get_github_user_info(gh_token)
+        info = get_github_user_info(gh_token, proxy=config.settings.git_proxy)
         if info:
             username = info.get("login")
         else:

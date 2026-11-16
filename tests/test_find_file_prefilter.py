@@ -440,6 +440,9 @@ def test_the_walk_skips_what_it_always_skipped(tmp_path):
         (b"---\ntitle: Derived On Disk\n---\n\nx\n", "derived-on-disk"),
     ],
 )
+@pytest.mark.control(
+    reason="the scan reads as before; it now reads through _inside_text, not the deleted raw reader"
+)
 def test_a_file_on_disk_is_found_by_the_id_it_holds(tmp_path, raw, held):
     """The scan reads each file as ``read_text`` does (UTF-8, universal
     newlines) before the prefilter and the parse see it."""
@@ -448,7 +451,7 @@ def test_a_file_on_disk_is_found_by_the_id_it_holds(tmp_path, raw, held):
         f = kb_path / "sub" / "on-disk.md"
         f.parent.mkdir()
         f.write_bytes(raw)
-        assert repo_mod._regular_file_text(f) == f.read_text(encoding="utf-8")
+        assert repo._inside_text(f) == f.read_text(encoding="utf-8")
         assert repo.find_file(held) == f
         assert repo.files_to_delete(held) == [f]
         assert repo.find_file("no-such-id") is None
@@ -475,8 +478,10 @@ def test_a_fifo_or_undecodable_file_is_passed_over(tmp_path):
 @pytest.mark.parametrize("n", [5, 40])
 def test_an_update_of_an_id_named_file_reads_no_other_file(tmp_path, parses, monkeypatch, n):
     reads: list[Path] = []
-    real = repo_mod._regular_file_text
-    monkeypatch.setattr(repo_mod, "_regular_file_text", lambda p: reads.append(p) or real(p))
+    real = repo_mod.KBRepository._inside_text
+    monkeypatch.setattr(
+        repo_mod.KBRepository, "_inside_text", lambda self, p: reads.append(p) or real(self, p)
+    )
     kb_path, svc, _repo, db = _kb(tmp_path, n)
     try:
         svc.update_entry("n-1", KB, body="changed")

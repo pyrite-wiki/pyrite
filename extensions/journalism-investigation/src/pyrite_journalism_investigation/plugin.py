@@ -1386,8 +1386,7 @@ class JournalismInvestigationPlugin:
 
     def _mcp_investigation_start(self, args: dict[str, Any]) -> dict[str, Any]:
         """Create a new investigation."""
-        from pyrite.exceptions import KBNotFoundError, KBReadOnlyError, PyriteError
-        from pyrite.utils.errors import public_text
+        from pyrite.exceptions import KBNotFoundError, KBReadOnlyError, PyriteError, public_text
 
         from .investigation_setup import create_investigation
 

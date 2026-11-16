@@ -828,7 +828,7 @@ class IndexManager:
         refs = []
         try:
             kb_config = self.config.get_kb(kb_name)
-            if kb_config and kb_config.kb_yaml_path.exists():
+            if kb_config and kb_config.kb_yaml_present:
                 schema = kb_config.kb_schema
                 entry_type_name = entry.entry_type
                 type_schema = schema.types.get(entry_type_name)
@@ -866,7 +866,7 @@ class IndexManager:
         edge_endpoints = []
         try:
             kb_config = self.config.get_kb(kb_name)
-            if kb_config and kb_config.kb_yaml_path.exists():
+            if kb_config and kb_config.kb_yaml_present:
                 schema = kb_config.kb_schema
                 entry_type_name = entry.entry_type
                 type_schema = schema.types.get(entry_type_name)
@@ -1460,9 +1460,16 @@ class IndexManager:
                 continue
 
             repo = KBRepository(kb)
+            inside = KBFiles(kb.path)
             newest_mtime: datetime | None = None
             for file_path in repo.list_files():
-                mtime = datetime.fromtimestamp(file_path.stat().st_mtime, tz=UTC)
+                # A link out is never indexed; its target's time says nothing.
+                if not inside.contains(file_path):
+                    continue
+                try:
+                    mtime = datetime.fromtimestamp(file_path.stat().st_mtime, tz=UTC)
+                except OSError:
+                    continue
                 if newest_mtime is None or mtime > newest_mtime:
                     newest_mtime = mtime
 
@@ -1743,7 +1750,9 @@ class IndexManager:
                     continue  # an index-only row has no file to be missing
                 indexed_path = Path(info["file_path"])
                 try:
-                    present = indexed_path.exists()
+                    # The KB's answer: a link out is there (and unreadable)
+                    # whatever it points at, never "missing" for that.
+                    present = KBFiles(kb.path).present(indexed_path)
                 except OSError as e:
                     # A folder this process cannot search (Python 3.13 raises
                     # PermissionError where 3.12 said "absent"): the file may
@@ -1813,7 +1822,7 @@ class IndexManager:
         # The schema owns the type vocabulary; an empty declaration is
         # unrestricted, including plugin types and core types.
         for kb in kbs:
-            if not kb.path.exists() or not kb.kb_yaml_path.exists():
+            if not kb.path.exists() or not kb.kb_yaml_present:
                 continue
 
             kb_schema = schemas[kb.name][0]
@@ -1839,7 +1848,7 @@ class IndexManager:
         # compare each entry against its type's `required:` list (default
         # ["title"]) and its `subdirectory:` hint. Skip KBs with no kb.yaml.
         for kb in kbs:
-            if not kb.path.exists() or not kb.kb_yaml_path.exists():
+            if not kb.path.exists() or not kb.kb_yaml_present:
                 continue
             kb_schema = schemas[kb.name][0]
             if not kb_schema or not kb_schema.types:
@@ -1931,7 +1940,7 @@ class IndexManager:
         """
         loaded: dict[str, tuple[Any, str | None]] = {}
         for kb in kbs:
-            if not kb.kb_yaml_path.exists():
+            if not kb.kb_yaml_present:
                 loaded[kb.name] = (None, None)
                 continue
             try:
@@ -2301,7 +2310,7 @@ class IndexManager:
                 if rel_path is None:  # another KB's file in the same repo
                     continue
                 full_path = kb_path / rel_path
-                if full_path.exists() and full_path.suffix == ".md":
+                if KBFiles(kb_path).present(full_path) and full_path.suffix == ".md":
                     force.add(full_path)
 
         attributed = 0

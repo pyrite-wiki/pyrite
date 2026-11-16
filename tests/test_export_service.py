@@ -141,7 +141,12 @@ class TestCommitKB:
 
         # A commit made for a caller runs no repository hook unless asked.
         mock_git_svc.commit.assert_called_once_with(
-            Path("/fake/kb"), "my commit", paths=None, sign_off=False, run_hooks=False
+            Path("/fake/kb"),
+            "my commit",
+            paths=None,
+            sign_off=False,
+            run_hooks=False,
+            identity=mock_config.settings.git_identity,
         )
         assert result["success"] is True
         assert result["commit_hash"] == "abc123"
@@ -434,7 +439,19 @@ class TestPushKB:
 
         result = export_svc.push_kb("test")
 
-        mock_git_svc.push.assert_called_once_with(Path("/fake/kb"), remote="origin", branch=None)
+        # Held to the operator's host rule and credentials; only the local
+        # process's own push is exempt (operator_push, decided in GitService).
+        mock_git_svc.push.assert_called_once_with(
+            Path("/fake/kb"),
+            remote="origin",
+            branch=None,
+            allowed_hosts=mock_config.settings.git_allowed_hosts,
+            credentials=mock_config.settings.git_credentials,
+            kb_name="test",
+            operator_push=True,
+            registered_remote=True,
+            proxy=mock_config.settings.git_proxy,
+        )
         assert result["success"] is True
         assert result["message"] == "pushed successfully"
 

@@ -98,23 +98,56 @@ the property one layer further out than the last.
   REST is `tests/test_rest_bodies_carry_no_fault_text.py`; the full canary
   test of decision 4 is still owed.
 - N1 and N2 are refactors of `KBFiles` and the id locators, and of `git_env`;
-  they follow in 0.26.3. Until then a few raw reads remain that are safe only
-  because of who calls them, ssh identities and the agent are open to a
-  network git command, and the git environment is the server's environment
-  minus a list.
+  they follow in 0.26.3. Until N1 lands a few raw reads remain that are safe
+  only because of who calls them. N2 landed in 0.26.3 (theme T1a): the git
+  environment of a network caller is built from an allow-list, every clone,
+  pull and push is built by `GitService._network_plan`, and the operator's
+  `git_credentials` entry is the only credential besides the caller's own
+  token. Fix round 1 scoped that entry: it serves remotes already configured
+  in a registered KB's repository, and a URL a caller names only through its
+  `url_prefixes` (D-U1); it is chosen by host, KB and transport; the local
+  CLI ignores it (D-U6); `git_proxy` is the one proxy network git and the
+  GitHub API use for a network caller (D-U2); and the stored CLI GitHub token
+  identifies only the local process.
 - A fault a network caller sees is less specific: the detail is in the server
-  log, which the operator reads. This includes detail about the caller's own
-  input (a query's parse error, a YAML line in an upload). Whether text the
-  caller supplied, or text from a KB the caller holds a grant on, may be
-  shown is open, and is decided with N1 and N4.
+  log, which the operator reads. Decided in 0.26.3 (maintainer, D4 and the
+  caller-input decision): text that is the caller's own is shown to that caller.
+  Provenance is marked where the text is made (`exceptions.caller_owned`,
+  `kb_owned`, a parser's `origin=`): bytes of the caller's own request, and
+  bytes of a KB the acting caller holds a read grant on. The grant
+  (`acting.read_grant`) is bound by REST's `bind_acting_account` and MCP's
+  dispatcher to the caller's own KBs, and is absent (deny) everywhere else;
+  `tests/test_read_grant_is_the_callers.py` lists every binding and holds each
+  to the caller's KBs. A signed-in caller's grant includes access through a
+  KB's `default_role`; an anonymous caller is granted no KB, so it never sees
+  text quoted from a KB file (maintainer decision on D4, 2026-11-16; revisit
+  with the 0.27 authorization model). Every mark is listed in the N3 ratchet
+  (`MARKS`) with its class and the test that fails without it; a held
+  exception (`HeldFault`) honours no caller-request mark. D4 holds because N1
+  reads KB bytes only through `KBFiles`.
 - What 0.26.2's N3 does not yet hold:
   - Git output that a function returns rather than raises (push, pull, merge)
     reaches a network caller with paths and credentials removed by a deny
     list, not by this rule.
-  - The ratchet reads `except` bodies only. Text passed to a helper, appended
-    to a list, set on an attribute or taken from a traceback is held by review,
-    not by the test.
-  - `OSError.strerror` is treated as fixed system text.
+  - Closed in 0.26.3, as far as `tests/test_response_text_is_pyrites.py`
+    holds it: the ratchet follows an exception object into the helper it is
+    handed to, by name, to a fixpoint across modules, and text derived from
+    one into a helper in the same module; it counts text returned, yielded,
+    raised, stored in a dict (`d[k] =`, `setdefault`, `update`), appended to
+    a list, set on an attribute or a global, read with `getattr`, taken from
+    `traceback.format_*`, `sys.exc_info()` or a future's `exception()`, or
+    bound in a handler and used after it. An exception kept for a later
+    message is a `HeldFault`, its text decided when it is shown. Held by
+    review, not by the test (the test's stated limits): text handed to a
+    helper in another module; a `lambda` or `functools.partial` called later;
+    an exception returned for its caller to stringify; a logging handler's
+    capture; names bound by `for`, `with` or a comprehension; a value written
+    to the database (the one found, `embed_queue.error`, is read back by
+    nothing, and a test holds that); and an origin set through `importlib`,
+    `globals()`, `eval`, or a wrapper that forwards `**kwargs`.
+  - Closed in 0.26.3: `strerror` is no longer a safe attribute (D5); an OS
+    error is named by `os_reason`, the C library's text for its errno.
+- What N2 does not yet hold is stated here when the security release that closes it ships.
 
 ## Limits
 
@@ -122,5 +155,6 @@ These stay as `kb_files.py` states them (off POSIX, root swap). The
 repository's own local config is still read. This ADR does not claim Pyrite
 is a service for users who do not trust each other (design.md, "What Pyrite
 is not").
-Until N2 lands in 0.26.3, the ssh agent and identities remain reachable to a
-network git command.
+The repository's own `.git/config` is still read by a network git command
+(filters, merge drivers), though no credential helper or askpass program from
+any config runs.

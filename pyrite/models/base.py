@@ -713,14 +713,6 @@ class Entry(ABC):
             capture_extra_frontmatter(entry, meta)
         return entry
 
-    @classmethod
-    def load(cls, path: Path) -> "Entry":
-        """Load entry from file."""
-        text = path.read_text(encoding="utf-8")
-        entry = cls.from_markdown(text)
-        entry.file_path = path
-        return entry
-
     def add_link(self, target: str, relation: str, note: str = "", kb: str = "") -> None:
         """Add a link to another entry."""
         self.links.append(Link(target=target, relation=relation, note=note, kb=kb))

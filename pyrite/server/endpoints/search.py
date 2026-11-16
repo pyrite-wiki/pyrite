@@ -99,6 +99,7 @@ def search(
         response = search_svc.search_response(
             kb_names=None if kb else scope.as_set(),
             query=q,
+            caller_wrote_query=True,  # the caller's own words, as written
             kb_name=kb,
             entry_type=type,
             tags=tag_list,
