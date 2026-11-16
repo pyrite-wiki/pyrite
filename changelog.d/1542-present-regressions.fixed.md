@@ -1,0 +1,2 @@
+- One registered KB whose folder Pyrite may not search no longer stops every command (a v0.26.3 regression): the other KBs load and work, and `pyrite kb list` and `pyrite index health` (new `unreadable_kbs` key) name the unreadable one (#1542).
+- An entry id, or template name, longer than the filesystem allows answers `NOT_FOUND` again on the CLI, MCP and REST, like any other missing id, instead of a traceback, `NO_OUTCOME` or a 500 (a v0.26.3 regression) (#1542).
