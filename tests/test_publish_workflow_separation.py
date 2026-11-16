@@ -108,3 +108,29 @@ def test_pyrite_mcp_still_waits_for_pyrite():
         needs = jobs[name].get("needs", [])
         needs = [needs] if isinstance(needs, str) else needs
         assert any(n.startswith("publish-pyrite") and "mcp" not in n for n in needs), name
+
+
+def _pins(path):
+    """{action: {sha}} for every `uses: owner/action@sha` in one workflow."""
+    out: dict[str, set[str]] = {}
+    for action, sha in re.findall(r"uses:\s*([\w.-]+/[\w./-]+)@([0-9a-f]{40})", path.read_text()):
+        out.setdefault(action, set()).add(sha)
+    return out
+
+
+def test_publish_pins_each_shared_action_where_the_other_workflows_do():
+    """Dependabot bumps the workflows it can see together; a release workflow
+    left on an older SHA of an action the rest of the repo moved is the one
+    nobody runs until release day. For every action publish.yml shares with
+    another workflow, its pin is one the other workflows use."""
+    others: dict[str, set[str]] = {}
+    for w in WORKFLOWS:
+        if w != PUBLISH:
+            for action, shas in _pins(w).items():
+                others.setdefault(action, set()).update(shas)
+    stale = {
+        action: sorted(shas - others[action])
+        for action, shas in _pins(PUBLISH).items()
+        if action in others and shas - others[action]
+    }
+    assert stale == {}, "use the SHA (and version comment) the other workflows pin"
