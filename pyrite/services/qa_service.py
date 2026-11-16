@@ -69,13 +69,15 @@ _WORD_SPLIT = re.compile(r"[\W_]+")
 
 
 def _fold(value: str) -> str:
-    """Casefold, then drop accents: NFKD, remove every combining mark, recompose (NFC).
+    """Casefold, then drop accents: NFKD, remove the marks with a non-zero combining class, recompose (NFC).
 
     ``Élection`` and ``election`` agree. Supported: scripts whose words are runs
     of letters (Latin, Cyrillic, Greek, CJK ideographs, Hangul). Not supported:
     scripts that write vowels or voicing as combining marks (Devanagari, Thai,
-    the kana voicing marks), where the marks are removed, so two different words
-    can fold alike. A proper tokeniser for them is a follow-up.
+    the kana voicing marks). Removed: marks with a non-zero combining class
+    (accents, kana voicing: ``が`` folds to ``か``). Kept: marks of class 0
+    (Devanagari and Thai vowel signs), which then split the word at the tokeniser.
+    Either way two different words can fold alike or break apart. A proper tokeniser for them is a follow-up.
     """
     decomposed = unicodedata.normalize("NFKD", (value or "").casefold())
     kept = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
