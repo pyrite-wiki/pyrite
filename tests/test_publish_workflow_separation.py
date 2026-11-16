@@ -1,9 +1,13 @@
 """The release workflow builds without the token that publishes (#1369).
 
-A job holding `id-token: write` can mint a PyPI upload credential. Anything
-that job installs or builds runs with it, so the build happens in a job
-without it and the publish job only downloads the result and runs the pinned
-publish action.
+A job that can obtain the upload credential (`id-token: write`, or
+`permissions: write-all`, at the job or, when the job sets none, the workflow
+level) runs everything in it with that credential. So such a job may run
+nothing but the artifact download and the publish action, each pinned to a
+full SHA (`TOKEN_JOB_ACTIONS`), and may have no container, services or
+reusable-workflow call: an allowlist, not a list of things to refuse. The
+build happens in a job without the credential. `PLANTED` holds one workflow
+per shape the allowlist must refuse.
 """
 
 import re
@@ -14,32 +18,64 @@ import yaml
 
 WORKFLOWS = sorted((Path(__file__).resolve().parents[1] / ".github" / "workflows").glob("*.yml"))
 PUBLISH = WORKFLOWS[0].parent / "publish.yml"
-#: What a job that holds the publish token must not run.
-BUILD_OR_INSTALL = re.compile(
-    r"\b(pip3?|pipx|uv|poetry|npm|yarn|pnpm|make|conda)\b|\bsetup\.py\b|-m\s+build\b|\bbuild\b"
-)
-INSTALLERS = ("actions/setup-python", "actions/setup-node")
 
 
 def _load(path):
     return yaml.safe_load(path.read_text())
 
 
+#: The only actions a job that can obtain the upload credential may run,
+#: each pinned to a full commit SHA: fetch what the tokenless build made, and
+#: publish it.
+TOKEN_JOB_ACTIONS = ("actions/download-artifact", "pypa/gh-action-pypi-publish")
+#: The only keys such a job may have: no `container` or `services` (an image
+#: that runs with the token), no job-level `uses` (a reusable workflow).
+TOKEN_JOB_KEYS = {
+    "name",
+    "runs-on",
+    "needs",
+    "if",
+    "environment",
+    "permissions",
+    "steps",
+    "timeout-minutes",
+    "concurrency",
+}
+TOKEN_STEP_KEYS = {"name", "id", "if", "uses", "with"}
+PINNED_USES = re.compile(r"^(?P<action>[\w.-]+/[\w./-]+)@[0-9a-f]{40}$")
+
+
+def _effective_permissions(workflow, job):
+    """A job's own `permissions`, else the workflow's (GitHub: a job-level
+    block replaces the workflow's whole). Either may be a mapping or one of
+    the strings `read-all` / `write-all`; absent is the repository default,
+    which never includes `id-token`."""
+    return job["permissions"] if "permissions" in job else workflow.get("permissions")
+
+
 def _holds_token(workflow, job):
-    perms = job.get("permissions", workflow.get("permissions"))
+    perms = _effective_permissions(workflow, job)
+    if isinstance(perms, str):
+        return perms.strip() == "write-all"
     return isinstance(perms, dict) and perms.get("id-token") == "write"
 
 
-def _token_holders_that_build(workflow):
+def _token_job_violations(workflow):
+    """(job, what) for everything a job that can obtain the upload credential
+    does beyond downloading the artifact and running the pinned publish
+    action."""
     bad = []
-    for name, job in workflow["jobs"].items():
+    for name, job in (workflow.get("jobs") or {}).items():
         if not _holds_token(workflow, job):
             continue
-        for step in job.get("steps", []):
-            run = step.get("run", "")
-            uses = step.get("uses", "")
-            if BUILD_OR_INSTALL.search(run) or uses.startswith(INSTALLERS):
-                bad.append((name, step.get("name") or run or uses))
+        for key in sorted(set(job) - TOKEN_JOB_KEYS):
+            bad.append((name, f"job key {key!r}"))
+        for step in job.get("steps") or []:
+            for key in sorted(set(step) - TOKEN_STEP_KEYS):
+                bad.append((name, f"step key {key!r}"))
+            m = PINNED_USES.match(str(step.get("uses", "")))
+            if not m or m["action"] not in TOKEN_JOB_ACTIONS:
+                bad.append((name, f"step {step.get('uses') or step.get('run') or step!r}"))
     return bad
 
 
@@ -55,8 +91,67 @@ def _token_holders_that_build(workflow):
     ],
     ids=lambda p: p.name,
 )
-def test_no_job_with_id_token_installs_or_builds(workflow):
-    assert _token_holders_that_build(_load(workflow)) == []
+def test_a_token_job_only_downloads_and_publishes(workflow):
+    assert _token_job_violations(_load(workflow)) == []
+
+
+_SHA = "a" * 40
+_DOWNLOAD = {"uses": f"actions/download-artifact@{_SHA}", "with": {"name": "d"}}
+_PUBLISH_STEP = {"uses": f"pypa/gh-action-pypi-publish@{_SHA}"}
+_TOKEN = {"id-token": "write"}
+
+
+def _token_job(**extra):
+    job = {"runs-on": "ubuntu-latest", "environment": "pypi", "permissions": _TOKEN}
+    job["steps"] = [_DOWNLOAD, _PUBLISH_STEP]
+    job.update(extra)
+    return job
+
+
+PLANTED = {
+    "checkout-in-token-job": {
+        "jobs": {
+            "p": _token_job(steps=[{"uses": f"actions/checkout@{_SHA}"}, _DOWNLOAD, _PUBLISH_STEP])
+        }
+    },
+    "local-composite-action": {
+        "jobs": {"p": _token_job(steps=[_DOWNLOAD, {"uses": "./.github/actions/x"}, _PUBLISH_STEP])}
+    },
+    "unpinned-third-party-action": {
+        "jobs": {"p": _token_job(steps=[_DOWNLOAD, {"uses": "someone/thing@v1"}, _PUBLISH_STEP])}
+    },
+    "unpinned-publish-action": {
+        "jobs": {
+            "p": _token_job(steps=[_DOWNLOAD, {"uses": "pypa/gh-action-pypi-publish@release/v1"}])
+        }
+    },
+    "job-container": {"jobs": {"p": _token_job(container="python:3.12")}},
+    "job-services": {"jobs": {"p": _token_job(services={"db": {"image": "postgres"}})}},
+    "reusable-workflow-call": {
+        "jobs": {"p": {"permissions": _TOKEN, "uses": "./.github/workflows/other.yml"}}
+    },
+    "workflow-write-all-build-installs": {
+        "permissions": "write-all",
+        "jobs": {"build": {"runs-on": "u", "steps": [{"run": "pip install build"}]}},
+    },
+    "job-write-all-build-installs": {
+        "jobs": {
+            "build": {
+                "runs-on": "u",
+                "permissions": "write-all",
+                "steps": [{"run": "pip install x"}],
+            }
+        },
+    },
+    "run-step-in-token-job": {
+        "jobs": {"p": _token_job(steps=[_DOWNLOAD, {"run": "echo hi"}, _PUBLISH_STEP])}
+    },
+}
+
+
+@pytest.mark.parametrize("shape", PLANTED)
+def test_the_check_refuses_every_other_step_in_a_token_job(shape):
+    assert _token_job_violations(PLANTED[shape]) != [], shape
 
 
 @pytest.mark.control(reason="self-test of the checker on a planted workflow")
@@ -72,7 +167,7 @@ def test_the_check_catches_a_build_in_the_token_job():
             },
         },
     }
-    assert [name for name, _ in _token_holders_that_build(sample)] == ["one", "three"]
+    assert sorted({name for name, _ in _token_job_violations(sample)}) == ["one", "three"]
 
 
 def test_publish_workflow_has_a_tokenless_build_and_publishing_jobs():
@@ -110,30 +205,62 @@ def test_pyrite_mcp_still_waits_for_pyrite():
         assert any(n.startswith("publish-pyrite") and "mcp" not in n for n in needs), name
 
 
-def _pins(path):
-    """{action: {sha}} for every `uses: owner/action@sha` in one workflow."""
-    out: dict[str, set[str]] = {}
-    for action, sha in re.findall(r"uses:\s*([\w.-]+/[\w./-]+)@([0-9a-f]{40})", path.read_text()):
-        out.setdefault(action, set()).add(sha)
-    return out
+PIN = re.compile(r"uses:\s*([\w.-]+/[\w./-]+)@([0-9a-f]{40})[ \t]*(?:#[ \t]*(\S+))?")
 
 
-@pytest.mark.control(
-    reason="dev's publish.yml has no artifact steps; seen red against this branch's old v4 pins"
-)
-def test_publish_pins_each_shared_action_where_the_other_workflows_do():
-    """Dependabot bumps the workflows it can see together; a release workflow
-    left on an older SHA of an action the rest of the repo moved is the one
-    nobody runs until release day. For every action publish.yml shares with
-    another workflow, its pin is one the other workflows use."""
-    others: dict[str, set[str]] = {}
-    for w in WORKFLOWS:
-        if w != PUBLISH:
-            for action, shas in _pins(w).items():
-                others.setdefault(action, set()).update(shas)
-    stale = {
-        action: sorted(shas - others[action])
-        for action, shas in _pins(PUBLISH).items()
-        if action in others and shas - others[action]
-    }
-    assert stale == {}, "use the SHA (and version comment) the other workflows pin"
+def _version(comment):
+    """`v7.0.1` -> (7, 0, 1); anything else -> None."""
+    m = re.fullmatch(r"v?(\d+(?:\.\d+)*)", comment or "")
+    return tuple(int(p) for p in m[1].split(".")) if m else None
+
+
+def _newest(pins):
+    """{action: (version, sha)}: the highest version pinned for each action."""
+    best = {}
+    for action, sha, comment in pins:
+        v = _version(comment)
+        if v is not None and (action not in best or v > best[action][0]):
+            best[action] = (v, sha)
+    return best
+
+
+def behind_the_rest(publish_text, other_texts):
+    """{action: why} for each action publish.yml shares with another workflow
+    whose pin is not the newest version any other workflow pins, or whose pin
+    has no version comment to compare."""
+    newest = _newest(p for text in other_texts for p in PIN.findall(text))
+    bad = {}
+    for action, sha, comment in PIN.findall(publish_text):
+        if action not in newest:
+            continue
+        if _version(comment) is None:
+            bad[action] = f"no version comment on {sha[:8]}"
+        elif (_version(comment), sha) != newest[action]:
+            v, want = newest[action]
+            bad[action] = (
+                f"{comment} {sha[:8]}; newest elsewhere is v{'.'.join(map(str, v))} {want[:8]}"
+            )
+    return bad
+
+
+def test_publish_is_not_behind_the_rest_on_any_shared_action():
+    """Dependabot bumps the workflows it can see together; a workflow on a pull
+    request branch is invisible to a bump on dev, and a release workflow left
+    on an older pin is the one nobody runs until release day. For every action
+    publish.yml shares with another workflow, it pins the newest version any of
+    them pins, at that version's SHA (#1363 moved the artifact actions while
+    this branch's publish.yml still pinned v4)."""
+    others = [w.read_text() for w in WORKFLOWS if w != PUBLISH]
+    assert behind_the_rest(PUBLISH.read_text(), others) == {}
+
+
+def test_moving_publish_back_to_an_older_pin_still_used_elsewhere_fails():
+    new = "a" * 40
+    old = "b" * 40
+    others = [
+        f"- uses: actions/checkout@{new} # v7.0.1\n",
+        f"- uses: actions/checkout@{old} # v4\n",
+    ]
+    assert behind_the_rest(f"- uses: actions/checkout@{new} # v7.0.1\n", others) == {}
+    assert "actions/checkout" in behind_the_rest(f"- uses: actions/checkout@{old} # v4\n", others)
+    assert "actions/checkout" in behind_the_rest(f"- uses: actions/checkout@{new}\n", others)
