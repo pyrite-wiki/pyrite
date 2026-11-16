@@ -240,7 +240,9 @@ def test_a_rename_of_the_target_keeps_the_link_resolving(env):
 
 
 @pytest.mark.control(reason="a link to a file the walk skips is the only walked path, as before")
-@pytest.mark.parametrize("skipped", [".hidden/real.md", "_templates/real.md", "README.md"])
+@pytest.mark.parametrize(
+    "skipped", [".hidden/real.md", "_templates/real.md", "README.md", "notes/real.txt"]
+)
 def test_a_link_to_a_file_the_walk_skips_is_indexed_once_at_the_link(env, skipped):
     env.write(skipped, _note("h", "H"))
     env.link("alias.md", skipped, absolute=False)
@@ -343,3 +345,16 @@ def test_rest_reindex_response_carries_the_alias(env):
 
     assert response.duplicates == []
     assert response.aliases == _aliases("nested folder")
+
+
+@pytest.mark.control(
+    reason="a link to a folder named like an entry is not a regular file, as before"
+)
+def test_a_link_to_a_folder_named_like_an_entry_is_skipped_not_an_alias(env):
+    (env.root / "d.md").mkdir()
+    (env.root / "x.md").symlink_to("d.md", target_is_directory=True)
+
+    result = env.im.sync_incremental(KB)
+
+    assert result.get("aliases", []) == []
+    assert sorted(Path(s["path"]).name for s in result["skipped"]) == ["d.md", "x.md"]
