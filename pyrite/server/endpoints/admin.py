@@ -117,6 +117,7 @@ def sync_index(
             updated=result.get("updated", 0),
             removed=result.get("removed", 0),
             skipped=result.get("skipped", []),
+            unreadable_kbs=result.get("unreadable_kbs", []),
         )
 
     job_id = worker.submit_sync()

@@ -174,6 +174,11 @@ def index_build(
         git_service = GitService()
         console.print("[dim]Building index with git attribution...[/dim]")
 
+    from ..exceptions import public_text
+    from ..utils.kb_files import KBFilesUnreadableError
+
+    unreadable: list[str] = []
+    built = 0
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -194,14 +199,25 @@ def index_build(
 
                 return update_progress
 
-            if with_attribution and git_service:
-                count = index_mgr.index_with_attribution(
-                    kb.name, git_service, progress_callback=make_progress_callback(task)
+            try:
+                if with_attribution and git_service:
+                    count = index_mgr.index_with_attribution(
+                        kb.name, git_service, progress_callback=make_progress_callback(task)
+                    )
+                else:
+                    count = index_mgr.index_kb(kb.name, make_progress_callback(task))
+            except KBFilesUnreadableError as exc:
+                # Not rebuilt, its rows kept; the others go on (#1542).
+                unreadable.append(kb.name)
+                progress.update(
+                    task, description=f"[red]✗[/red] {kb.name}: {public_text(exc)}", total=1
                 )
-            else:
-                count = index_mgr.index_kb(kb.name, make_progress_callback(task))
+                continue
+            built += 1
             progress.update(task, description=f"[green]✓[/green] {kb.name}: {count} entries")
 
+    if unreadable:
+        console.print(f"\n[red]Not rebuilt (unreadable): {', '.join(unreadable)}[/red]")
     console.print("\n[green]Index build complete.[/green]")
 
     # Auto-embed after build if embeddings are available
@@ -227,6 +243,8 @@ def index_build(
                     )
         except Exception:
             logger.debug("Embedding not available, skipping")
+
+    exit_unless_whole(len(unreadable), built)
 
 
 @index_app.command("sync")
@@ -260,10 +278,19 @@ def index_sync(
 
     index_mgr = IndexManager(db, config)
 
-    if verify:
-        results = index_mgr.sync_incremental(kb_name, verify=True)
-    else:
-        results = index_mgr.sync_incremental(kb_name)
+    from ..utils.kb_files import KBFilesUnreadableError
+
+    try:
+        if verify:
+            results = index_mgr.sync_incremental(kb_name, verify=True)
+        else:
+            results = index_mgr.sync_incremental(kb_name)
+    except KBFilesUnreadableError as exc:
+        # `-k` named a KB whose files cannot be read: nothing synced, its
+        # rows kept (#1542).
+        from ..utils.errors import cli_error_from
+
+        cli_error_from(exc)
 
     console.print("[green]Sync complete:[/green]")
     console.print(f"  Added: {results['added']}")
@@ -305,6 +332,15 @@ def index_sync(
 
     _print_file_links(results)
 
+    # A KB whose files could not be read was not synced and kept its rows
+    # (#1542): named, and the exit says the sync was not whole (below).
+    unreadable_kbs = results.get("unreadable_kbs", [])
+    for item in unreadable_kbs:
+        console.print(
+            f"  [red]Not synced: {item['kb']}: {item['error']}[/red]",
+            highlight=False,
+        )
+
     # Auto-embed new/updated entries if embeddings are available.
     #
     # The queue is settled FIRST and outside the `changed > 0` gate, for two
@@ -329,6 +365,9 @@ def index_sync(
                     console.print(f"  Embedded: {stats['embedded']}")
         except Exception:
             logger.debug("Embedding not available, skipping")
+
+    synced = sum(1 for kb in config.all_kbs() if kb.path.exists()) - len(unreadable_kbs)
+    exit_unless_whole(len(unreadable_kbs), synced)
 
 
 @index_app.command("stats")
@@ -579,6 +618,7 @@ def index_health(
             "subdirectory_mismatches": subdirectory_mismatches,
             "malformed_frontmatter": malformed_frontmatter,
             "unreadable_files": unreadable_files,
+            "unreadable_kbs": health.get("unreadable_kbs", []),
             "orphaned_entries": orphaned_entries,
             "invalid_statuses": invalid_statuses,
             "off_list_values": off_list_values,
@@ -822,6 +862,11 @@ def _report_health(
         for line in _duplicate_lines(list(duplicates)):
             console.print(f"  • {line}", markup=False, highlight=False)
 
+    unreadable_kbs = health.get("unreadable_kbs", [])
+    if unreadable_kbs:
+        console.print(f"[red]Unreadable knowledge bases ({len(unreadable_kbs)}):[/red]")
+        for item in unreadable_kbs:
+            console.print(f"  {item['kb']}: {item['error']}")
     unreadable_files = health.get("unreadable_files", [])
     if unreadable_files:
         console.print(f"[red]Unreadable files ({len(unreadable_files)}):[/red]")

@@ -22,7 +22,13 @@ from typing import Any
 from sqlalchemy import exc as sa_exc
 
 from ..config import KBConfig, PyriteConfig, load_config
-from ..exceptions import EntryValueError, KBNotInConfigError, StorageError, outside_text
+from ..exceptions import (
+    EntryValueError,
+    KBNotInConfigError,
+    StorageError,
+    outside_text,
+    public_text,
+)
 from ..models import Entry
 from ..models.core_types import as_stored_text, id_text
 from ..models.protocols import (
@@ -41,7 +47,13 @@ from ..schema.field_aliases import (
     read_metadata,
     read_view,
 )
-from ..utils.kb_files import OUTSIDE_KB_REASON, KBFileOutsideRootError, KBFiles
+from ..utils.kb_files import (
+    OUTSIDE_KB_REASON,
+    KBFileOutsideRootError,
+    KBFiles,
+    KBFilesUnreadableError,
+    KBPresenceUnknownError,
+)
 from ..utils.metadata import parse_metadata
 from .database import PyriteDB
 from .errors import driver_error, storage_error_from
@@ -1205,6 +1217,10 @@ class IndexManager:
         }
         if not kb_config.path.exists():
             return results
+        # A KB whose files cannot be read is not a KB with no files: the walk
+        # below would find nothing and the removal pass would retire every
+        # row (#1542). Refused before anything is planned, so its rows stay.
+        kb_config.check_readable()
         if not isinstance(force, bool):
             force = {Path(p) for p in force}
 
@@ -1347,7 +1363,13 @@ class IndexManager:
 
                 return kb_progress
 
-            count = self.index_kb(kb.name, make_kb_progress(kb.name))
+            try:
+                count = self.index_kb(kb.name, make_kb_progress(kb.name))
+            except KBFilesUnreadableError as e:
+                # One unreadable KB does not stop the others; its rows are
+                # kept (the reconcile refused before planning) (#1542).
+                logger.warning("Skipping %s: %s", kb.name, public_text(e))
+                continue
             results[kb.name] = count
 
         return results
@@ -1625,6 +1647,10 @@ class IndexManager:
             # and its alias): the reader believes one spelling, no update
             # reaches the field until the file is fixed (Andon #994).
             "double_spellings": [],
+            # A KB whose kb.yaml could not be checked or read (a root this
+            # process cannot search, #1542): named, with a fixed reason, so
+            # it is never silently dropped from the report.
+            "unreadable_kbs": [],
         }
 
         # The file's own value of each protocol column, per (kb, id), read
@@ -1661,6 +1687,11 @@ class IndexManager:
         # fails to load is reported in `schema_errors` and its KB counts as
         # declaring no types, so health still answers for the broken KB.
         schemas = self._load_schemas(kbs)
+        for kb in kbs:
+            try:
+                kb.check_readable()  # asked now: a server's config is loaded once
+            except KBFilesUnreadableError as e:
+                health["unreadable_kbs"].append({"kb": kb.name, "error": public_text(e)})
 
         # A KB whose type belonged to an extension Pyrite has deleted (#953):
         # its types are undeclared for a reason the user should be told. The
@@ -1803,17 +1834,20 @@ class IndexManager:
                     # The KB's answer: a link out is there (and unreadable)
                     # whatever it points at, never "missing" for that.
                     present = KBFiles(kb.path).present(indexed_path)
-                except OSError as e:
-                    # A folder this process cannot search (Python 3.13 raises
-                    # PermissionError where 3.12 said "absent"): the file may
-                    # well be there. Report it; never let one row end the report.
+                except KBPresenceUnknownError as e:
+                    # ``present`` could not tell (a folder this process cannot
+                    # search, on every Python version): the file may well be
+                    # there, so it is unreadable, never missing. This local
+                    # report names the file and the OS's reason, which the
+                    # error keeps as its cause. Never let one row end the report.
+                    cause = e.__cause__ or e
                     if str(indexed_path) not in reported_unreadable:
                         reported_unreadable.add(str(indexed_path))
                         health["unreadable_files"].append(
                             {
                                 "kb": kb.name,
                                 "path": str(indexed_path),
-                                "error": f"{type(e).__name__}: {outside_text(e)}",
+                                "error": f"{type(cause).__name__}: {outside_text(cause)}",
                             }
                         )
                     continue
@@ -1872,7 +1906,9 @@ class IndexManager:
         # The schema owns the type vocabulary; an empty declaration is
         # unrestricted, including plugin types and core types.
         for kb in kbs:
-            if not kb.path.exists() or not kb.kb_yaml_present:
+            # No kb.yaml, one that failed to load, or one whose presence could
+            # not be told: ``_load_schemas`` gave no schema, so no types.
+            if not kb.path.exists():
                 continue
 
             kb_schema = schemas[kb.name][0]
@@ -1898,9 +1934,9 @@ class IndexManager:
         # compare each entry against its type's `required:` list (default
         # ["title"]) and its `subdirectory:` hint. Skip KBs with no kb.yaml.
         for kb in kbs:
-            if not kb.path.exists() or not kb.kb_yaml_present:
+            if not kb.path.exists():
                 continue
-            kb_schema = schemas[kb.name][0]
+            kb_schema = schemas[kb.name][0]  # None without a loadable kb.yaml
             if not kb_schema or not kb_schema.types:
                 continue
 
@@ -1990,7 +2026,14 @@ class IndexManager:
         """
         loaded: dict[str, tuple[Any, str | None]] = {}
         for kb in kbs:
-            if not kb.kb_yaml_present:
+            try:
+                present = kb.kb_yaml_present
+            except KBFilesUnreadableError as exc:
+                # A root this process cannot search (#1542): reported here,
+                # and in ``unreadable_kbs``; never the end of the report.
+                loaded[kb.name] = (None, public_text(exc))
+                continue
+            if not present:
                 loaded[kb.name] = (None, None)
                 continue
             try:
@@ -2258,6 +2301,10 @@ class IndexManager:
             "duplicates": [],
             "aliases": [],
             "dangling_links": [],
+            # KBs whose files could not be read (#1542): not synced, their
+            # rows kept, named here. Only a sync of every KB collects them; a
+            # sync of one named KB raises ``KBFilesUnreadableError``.
+            "unreadable_kbs": [],
         }
         kbs = [self.config.get_kb(kb_name)] if kb_name else self.config.all_kbs()
         kbs = [kb for kb in kbs if kb and kb.path.exists()]
@@ -2266,10 +2313,18 @@ class IndexManager:
             callback = None
             if progress_callback and len(kbs) == 1:
                 callback = progress_callback
-            if verify:
-                one = self.reconcile_kb(kb, progress_callback=callback, verify=True)
-            else:
-                one = self.reconcile_kb(kb, progress_callback=callback)
+            try:
+                if verify:
+                    one = self.reconcile_kb(kb, progress_callback=callback, verify=True)
+                else:
+                    one = self.reconcile_kb(kb, progress_callback=callback)
+            except KBFilesUnreadableError as e:
+                if kb_name:
+                    raise
+                reason = public_text(e)  # the error's fixed text (ADR-0052 N3)
+                logger.warning("Not syncing %s: %s", kb.name, reason)
+                results["unreadable_kbs"].append({"kb": kb.name, "error": reason})
+                continue
             for key in ("added", "updated", "removed"):
                 results[key] += one[key]
             results["malformed"].extend(one["malformed"])
@@ -2365,7 +2420,16 @@ class IndexManager:
                 if rel_path is None:  # another KB's file in the same repo
                     continue
                 full_path = kb_path / rel_path
-                if KBFiles(kb_path).present(full_path) and full_path.suffix == ".md":
+                if full_path.suffix != ".md":
+                    continue
+                try:
+                    there = KBFiles(kb_path).present(full_path)
+                except KBPresenceUnknownError:
+                    # A folder this process cannot search (#1542): not forced,
+                    # so one such file never ends the sync; the reconcile's
+                    # walk reports what it cannot reach.
+                    continue
+                if there:
                     force.add(full_path)
 
         attributed = 0

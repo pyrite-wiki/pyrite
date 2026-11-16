@@ -440,6 +440,8 @@ class SyncResponse(BaseModel):
     updated: int
     removed: int
     skipped: list[dict[str, str]] = Field(default_factory=list)
+    #: KBs whose files could not be read: not synced, rows kept (#1542).
+    unreadable_kbs: list[dict[str, str]] = Field(default_factory=list)
 
 
 class ErrorResponse(BaseModel):

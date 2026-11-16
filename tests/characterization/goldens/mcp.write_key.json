@@ -1206,6 +1206,7 @@
     "removed": "<ENUMERATION_CONTENT>",
     "skipped": [],
     "synced": "<ENUMERATION_CONTENT>",
+    "unreadable_kbs": [],
     "updated": "<ENUMERATION_CONTENT>"
   },
   "kb_index_sync | write_key | private-kb": {
@@ -1213,6 +1214,7 @@
     "removed": "<ENUMERATION_CONTENT>",
     "skipped": [],
     "synced": "<ENUMERATION_CONTENT>",
+    "unreadable_kbs": [],
     "updated": "<ENUMERATION_CONTENT>"
   },
   "kb_index_sync | write_key | readable-kb": {
@@ -1220,6 +1222,7 @@
     "removed": "<ENUMERATION_CONTENT>",
     "skipped": [],
     "synced": "<ENUMERATION_CONTENT>",
+    "unreadable_kbs": [],
     "updated": "<ENUMERATION_CONTENT>"
   },
   "kb_link | write_key | missing-kb": {

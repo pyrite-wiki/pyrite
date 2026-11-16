@@ -284,6 +284,26 @@ class TestEmbed:
 # --------------------------------------------------------------------------
 
 
+class TestUnreadableKB:
+    """A KB whose kb.yaml the process cannot read is not synced or rebuilt
+    (its rows are kept, #1542); the command names it and does not exit 0."""
+
+    def test_sync_and_build_of_an_unreadable_kb_are_refused(self, cli):
+        kb_yaml = cli.kb / "kb.yaml"
+        text = kb_yaml.read_text()
+        kb_yaml.unlink()
+        _unreadable(kb_yaml, text)
+        try:
+            sync = cli.pyrite("index", "sync", "--no-embed")
+            assert "Not synced: demo" in sync.stdout, sync.stdout + sync.stderr
+            assert sync.returncode == REFUSED, sync.stdout + sync.stderr
+            build = cli.pyrite("index", "build", "--no-embed")
+            assert "demo" in build.stdout, build.stdout + build.stderr
+            assert build.returncode == REFUSED, build.stdout + build.stderr
+        finally:
+            kb_yaml.chmod(0o644)
+
+
 class TestSchemaMigrate:
     def test_a_file_that_cannot_be_migrated_exits_partial(self, cli):
         _create(cli, "Fine")
@@ -928,8 +948,10 @@ GUARDED = {
     "pyrite export site": "TestExportSite",
     "pyrite extension install": "TestExtensionVerify",
     "pyrite import": "TestImportAndBulkLinks",
+    "pyrite index build": "TestUnreadableKB",
     "pyrite index embed": "TestEmbed",
     "pyrite index reconcile": "TestReconcile",
+    "pyrite index sync": "TestUnreadableKB",
     "pyrite init": "TestInitIndexing",
     "pyrite investigation bulk-edges": "TestJournalismAndSoftwareResults",
     "pyrite investigation evidence-chain": "TestJournalismAndSoftwareResults",
@@ -967,10 +989,7 @@ SAFE = {
     "pyrite extension uninstall": "one pip call; failure exits 1 (cli_error)",
     "pyrite ids missing": "exits 3 when files are left (ids_commands.OUTSIDE_CONTRACT)",
     "pyrite ids pin": "exits 3 when files are left (ids_commands.OUTSIDE_CONTRACT)",
-    "pyrite index build": "embedding is owed, not failed (ADR-0035); indexing errors raise",
     "pyrite index health": "exits 1 when unhealthy",
-    "pyrite index sync": "malformed files are reported, not a failed sync (groom, principle 2); "
-    "embedding is owed (ADR-0035)",
     "pyrite investigation dedup": "--link writes same_as links; no per-item failure is reported or "
     "swallowed",
     "pyrite investigation export": "one file",
@@ -1773,6 +1792,8 @@ PRINTS: dict[tuple[str, str], tuple[str, str]] = {
     ("pyrite/admin_cli.py", "kb_validate"): ("safe", "exits 1 after listing the errors"),
     ("pyrite/admin_cli.py", "repo_sync"): ("fixed", "TestAdminRepo"),
     ("pyrite/cli/__init__.py", "import_entries"): ("fixed", "TestImportAndBulkLinks"),
+    ("pyrite/cli/index_commands.py", "index_build"): ("fixed", "TestUnreadableKB"),
+    ("pyrite/cli/index_commands.py", "index_sync"): ("fixed", "TestUnreadableKB"),
     ("pyrite/cli/index_commands.py", "_report_health"): (
         "safe",
         "index health exits 1 when unhealthy, in its caller",
