@@ -25,7 +25,7 @@ import typer
 from typer.testing import CliRunner
 
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings, save_config
-from tests.outcome_walk import leaves
+from tests.outcome_walk import leaves, param_kind
 
 # (command path, parameter name) -> argv builder, given the path under test.
 # Each is an input FILE the user names: read, never written.
@@ -130,9 +130,7 @@ def _candidates():
     for prefix, root in [((), app), (("pyrite-admin",), admin_app), (("pyrite-read",), read_app)]:
         for path, command in leaves(typer.main.get_command(root)):
             for param in command.params:
-                is_path_type = any(
-                    base.__name__ in {"Path", "File"} for base in type(param.type).__mro__
-                )
+                is_path_type = param_kind(param) == "path"
                 if (_NAME.search(param.name) or is_path_type) and "output" not in param.name:
                     yield (*prefix, *path), param.name
 

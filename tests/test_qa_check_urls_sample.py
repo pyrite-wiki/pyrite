@@ -29,7 +29,9 @@ def test_negative_sample_is_a_usage_error(cli_world, sample):
     document = json.loads(next(line for line in output.splitlines() if line.startswith("{")))
     assert document["error_code"] == "USAGE_ERROR"
     assert "--sample" in document["error"]
-    assert sample in document["error"]
+    # Typer up to 0.28 echoes the value ("-1 is not in the range x>=0"); 0.29
+    # validates with Pydantic and names the bound instead (#1432).
+    assert sample in document["error"] or "greater than or equal to 0" in document["error"]
 
 
 @pytest.mark.cli

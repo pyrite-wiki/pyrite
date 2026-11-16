@@ -2603,7 +2603,7 @@ requires-dist = [
     { name = "slowapi", marker = "extra == 'server'", specifier = ">=0.1.9" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "sqlite-vec", marker = "extra == 'semantic'", specifier = ">=0.1.0" },
-    { name = "typer", extras = ["all"], marker = "extra == 'cli'", specifier = ">=0.12.3,<0.29" },
+    { name = "typer", extras = ["all"], marker = "extra == 'cli'", specifier = ">=0.12.3" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.30.1" },
     { name = "watchdog", marker = "extra == 'server'", specifier = ">=4.0.1" },
 ]
