@@ -15,9 +15,24 @@ small app built in the test.
 What counts, read from the click parameter type: INT, FLOAT, IntRange and
 FloatRange (so ``Optional[int]``, ``int | None``, ``Annotated[int, typer.Option()]``,
 ``list[int]`` and the members of a ``tuple[int, int]`` are all seen). Bounded means
-a Range with ``min`` or ``max`` set. One exclusion: a ``count=True`` option
+a Range whose type REFUSES a value just outside each declared bound (#1541: "Typer
+refuses an out-of-range value as a usage error"). One exclusion: a ``count=True`` option
 (``-v -v``). Typer gives it a plain INT type, but the user types no number: the
 value is how many times the flag was repeated and cannot be out of range.
+
+What decides whether a Range refuses (locked click 8.5.0, ``_NumberRangeBase``;
+Typer exposes only ``min``, ``max`` and ``clamp``, a hand-built click type all five):
+``min`` and ``max``: a declared bound, none declared means unbounded; ``min_open``
+and ``max_open``: the bound itself is outside, so it is the value probed; ``clamp``:
+``convert`` returns the bound instead of failing, so the type does not refuse and
+the option is NOT bounded (the FIX says to drop ``clamp=True``). Nothing else in
+click's range types affects refusal. The check is behavioural, not an attribute
+scan: for each declared bound the type's own ``convert`` is called on a value just
+outside it (int: one step; float: ``math.nextafter``) and must raise click's
+bad-parameter error. Where no value can be stepped to (an infinite bound) the
+declared attribute stands. Limit: a hand-written type that subclasses a known
+non-numeric one (a ``StringParamType`` whose ``convert`` returns an int) is classified
+by its base class and counted non-numeric.
 
 Where a parameter can be declared between a root and a leaf, and what the walk
 (``every_command``: roots, every group at every depth, every leaf, hidden ones
@@ -45,6 +60,7 @@ non-numeric ones is "unknown" and refused the same way.
 
 from __future__ import annotations
 
+import math
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -71,6 +87,7 @@ class NumericParam:
     name: str
     kind: str  # "int" or "float"
     bounded: bool
+    clamps: bool = False
 
     @property
     def row(self) -> tuple[str, str]:
@@ -114,6 +131,47 @@ def _is_unknown(member) -> bool:
     return not (names & {_INT, _FLOAT} or names & _NOT_NUMERIC)
 
 
+def _refuses(click_type, value) -> bool:
+    """Does the type's own ``convert`` refuse ``value`` with click's bad-parameter
+    error? No command runs: this is the check click makes while parsing."""
+    try:
+        click_type.convert(value, None, None)
+    except Exception as exc:
+        if "BadParameter" in _class_names(exc):
+            return True
+        raise
+    return False
+
+
+def _just_outside(member, bound, direction: int):
+    """A value just outside ``bound`` (``direction`` -1 below, +1 above), or None
+    when none can be stepped to (an infinite bound)."""
+    if getattr(member, "min_open" if direction < 0 else "max_open", False):
+        return bound  # an open bound excludes itself
+    if "IntRange" in _class_names(member):
+        return bound + direction
+    stepped = math.nextafter(bound, direction * math.inf)
+    return None if stepped == bound else stepped
+
+
+def _refuses_outside_its_bounds(member) -> bool:
+    """Bounded means refused: a declared bound whose just-outside value ``convert``
+    refuses. ``clamp=True`` converts it instead, so it is not bounded. Where no value
+    can be stepped to (an infinite bound) the declared attribute stands."""
+    declared = [
+        (b, d)
+        for b, d in ((getattr(member, "min", None), -1), (getattr(member, "max", None), 1))
+        if b is not None
+    ]
+    if not declared:
+        return False
+    for bound, direction in declared:
+        probe = _just_outside(member, bound, direction)
+        if probe is not None and not _refuses(member, probe):
+            return False
+    return True
+
+
 def numeric_params(commands: Mapping[str, object]) -> list[NumericParam]:
     """Every numeric parameter of the given click commands (path -> command)."""
     found = []
@@ -124,12 +182,10 @@ def numeric_params(commands: Mapping[str, object]) -> list[NumericParam]:
             members = _numeric_members(param.type)
             if not members:
                 continue
-            bounded = all(
-                getattr(m, "min", None) is not None or getattr(m, "max", None) is not None
-                for m in members
-            )
+            bounded = all(_refuses_outside_its_bounds(m) for m in members)
+            clamps = any(getattr(m, "clamp", False) for m in members)
             kind = "float" if _FLOAT in _class_names(members[0]) else "int"
-            found.append(NumericParam(path, param.name, kind, bounded))
+            found.append(NumericParam(path, param.name, kind, bounded, clamps))
     return found
 
 
@@ -322,7 +378,11 @@ def test_every_numeric_option_declares_a_range_or_is_listed():
         if not p.bounded and p.row not in UNBOUNDED and p.row not in NOT_YET
     ]
     assert not offenders, "\n".join(
-        f"`{p.command}` option/argument `{p.name}` ({p.kind}) declares no min or max: {FIX}"
+        f"`{p.command}` option/argument `{p.name}` ({p.kind}) has a range with clamp=True, "
+        "which changes an out-of-range value without a word instead of refusing it: "
+        "drop clamp=True, see #1541"
+        if p.clamps
+        else f"`{p.command}` option/argument `{p.name}` ({p.kind}) declares no min or max: {FIX}"
         for p in offenders
     )
 
@@ -603,3 +663,77 @@ def test_typer_gives_a_func_param_type_for_parser_and_click_type_and_plain_types
     by_name = {p.name: type(p.type).__name__ for p in cmd.params}
     assert by_name["a"] == by_name["b"] == "FuncParamType", by_name
     assert [u.name for u in unclassified_params({"app command": cmd})] == ["a", "b"]
+
+
+# --------------------------------------------------------------------------
+# Bounded means refused (fix round 2): planted on a small app
+# --------------------------------------------------------------------------
+
+
+def _one_param(**kw):
+    def command(limit: int = typer.Option(5, **kw)): ...
+
+    return command
+
+
+def _params_for(app) -> list[NumericParam]:
+    return numeric_params(commands_of(app))
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"min": 1, "clamp": True},
+        {"max": 9, "clamp": True},
+        {"min": 1, "max": 9, "clamp": True},
+    ],
+    ids=["min+clamp", "max+clamp", "min+max+clamp"],
+)
+def test_planted_clamped_int_range_is_not_bounded(kw):
+    (param,) = _params_for(_app(_one_param(**kw)))
+    assert not param.bounded and param.clamps, param
+
+
+def test_planted_clamped_float_range_is_not_bounded():
+    def command(x: float = typer.Option(0.5, min=0.0, max=1.0, clamp=True)): ...
+
+    (param,) = _params_for(_app(command))
+    assert param.kind == "float" and not param.bounded and param.clamps, param
+
+
+@pytest.mark.control(reason="a plain min= is refused at min-1 and accepted at min")
+def test_a_plain_min_is_refused_just_outside_and_accepted_at_the_bound():
+    command = _one_param(min=1)
+    (param,) = _params_for(_app(command))
+    assert param.bounded and not param.clamps
+    click_type = next(
+        p for p in commands_of(_app(command))["app command"].params if p.name == "limit"
+    ).type
+    assert click_type.convert(1, None, None) == 1
+    with pytest.raises(Exception, match="not in the range") as refused:
+        click_type.convert(0, None, None)
+    assert "BadParameter" in {k.__name__ for k in type(refused.value).__mro__}
+
+
+@pytest.mark.control(reason="a plain float range and an open bound are refused outside, so bounded")
+def test_a_float_range_and_an_open_bound_are_bounded_and_a_clamped_open_bound_is_not():
+    def tenth(x: float = typer.Option(0.5, min=0.0, max=1.0)): ...
+
+    root = typer.main.get_command(_app(tenth))
+    root.add_command(
+        click.Command(
+            "open", params=[click.Option(["--n"], type=click.IntRange(min=0, min_open=True))]
+        )
+    )
+    root.add_command(
+        click.Command(
+            "openclamp",
+            params=[click.Option(["--n"], type=click.IntRange(min=0, min_open=True, clamp=True))],
+        )
+    )
+    found = {p.row: p.bounded for p in numeric_params(every_command({"app": root}))}
+    assert found == {
+        ("app tenth", "x"): True,
+        ("app open", "n"): True,
+        ("app openclamp", "n"): False,
+    }
