@@ -624,13 +624,15 @@ every file and clears it.
 **`orient` → `notices`; `index health` → `removed_extensions`.** A KB
 registered with a `kb_type` that a deleted extension owned (`cascade-research`,
 `cascade-timeline`, `cascade-solidarity`), or holding entries of one of that
-extension's types (`actor`, `timeline_event`, ...), is still a KB: its files
+extension's types (`actor`, `timeline_event`, ...) that its `kb.yaml` does not
+declare (#1468), is still a KB: its files
 read and write as generic entries. Instead of leaving its types silently
 undeclared, `pyrite orient -k <kb>` (MCP `kb_orient`) carries one sentence
 for such a KB under `notices`, and `index health` lists it under
 `removed_extensions`: `{kb, kb_type, extension, entry_types, message}`, where
 `message` is the same sentence and `entry_types` are the removed extension's
-types the KB holds. The status is `warning`. `pyrite extension list` keeps
+types the KB holds and its `kb.yaml` does not declare (empty for a `cascade-*`
+KB that declares them all). The status is `warning`. `pyrite extension list` keeps
 naming the plugin until `pip uninstall pyrite-cascade` is run in the
 environment that had it. The removed extensions are listed in
 `pyrite/plugins/removed.py`.
