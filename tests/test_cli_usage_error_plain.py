@@ -27,6 +27,7 @@ point with stderr piped, and one pty puts a terminal on stderr.
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import re
@@ -111,6 +112,81 @@ def test_unknown_option_is_a_json_refusal_without_rich(root, path, monkeypatch):
 @pytest.mark.parametrize("root", list(ROOTS))
 def test_unknown_command_is_a_json_refusal(root):
     _assert_refusal(*_invoke(root, ["no-such-command-zz"]), names="no-such-command-zz")
+
+
+#: First-party extension commands, and the directory each installs from
+#: (README.md, "Extensions are installed separately").
+EXTENSION_COMMANDS = [
+    ("sw", "software-kb"),
+    ("zettel", "zettelkasten"),
+    ("wiki", "encyclopedia"),
+    ("social", "social"),
+    ("investigation", "journalism-investigation"),
+]
+
+
+@pytest.mark.parametrize(("command", "directory"), EXTENSION_COMMANDS)
+def test_unknown_extension_command_names_its_install_line(command, directory):
+    """#1457: typing an extension command without the extension says how to
+    install it. The refusal itself is unchanged: exit 2, USAGE_ERROR, the
+    same "No such command" error."""
+    stdout, stderr, code = _invoke("pyrite", [command, "adrs"])
+    assert code == 2, (code, stdout, stderr)
+    doc = json.loads(stdout)
+    assert doc["error"] == f"No such command '{command}'."
+    assert doc["error_code"] == "USAGE_ERROR"
+    assert doc["suggestion"] == f"Install it with 'pip install -e extensions/{directory}'."
+    assert f"Error: No such command '{command}'." in stderr
+
+
+def test_an_unknown_command_that_is_no_extension_keeps_the_help_hint():
+    stdout, _, code = _invoke("pyrite", ["no-such-command-zz"])
+    assert code == 2
+    doc = json.loads(stdout)
+    assert doc["suggestion"] == "Try 'pyrite --help' for help."
+
+
+def test_a_typo_inside_a_group_keeps_the_help_hint():
+    """The install hint is only for a top-level command: a typo inside an
+    installed group is not an extension to install."""
+    stdout, _, code = _invoke("pyrite", ["kb", "no-such-zz"])
+    assert code == 2
+    doc = json.loads(stdout)
+    assert doc["suggestion"] == "Try 'pyrite kb --help' for help."
+
+
+def test_the_extension_hint_in_rich_format():
+    """--format rich prints the new hint on the "hint:" line (#1457)."""
+    stdout, stderr, code = _invoke("pyrite", ["sw", "--format", "rich"])
+    assert code == 2, (code, stdout, stderr)
+    assert "USAGE_ERROR" in stdout
+    assert "hint:" in stdout
+    assert "pip install -e extensions/software-kb" in stdout
+
+
+def test_extension_command_table_matches_the_plugins():
+    """A renamed extension command cannot leave the table behind (#1457)."""
+    from pyrite.utils.errors import _EXTENSION_COMMAND_INSTALLS
+
+    plugins = [
+        ("pyrite_software_kb.plugin", "SoftwareKBPlugin"),
+        ("pyrite_zettelkasten.plugin", "ZettelkastenPlugin"),
+        ("pyrite_encyclopedia.plugin", "EncyclopediaPlugin"),
+        ("pyrite_social.plugin", "SocialPlugin"),
+        ("pyrite_journalism_investigation.plugin", "JournalismInvestigationPlugin"),
+    ]
+    seen: dict[str, str] = {}
+    for module_name, class_name in plugins:
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            pytest.skip(f"{module_name} is not installed in this venv")
+        directory = Path(module.__file__).resolve().parents[2].name
+        names = [name for name, _ in getattr(module, class_name)().get_cli_commands()]
+        assert names, module_name
+        for name in names:
+            seen[name] = directory
+    assert seen == _EXTENSION_COMMAND_INSTALLS
 
 
 @pytest.mark.parametrize("root", list(ROOTS))
