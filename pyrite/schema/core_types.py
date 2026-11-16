@@ -118,12 +118,6 @@ SYSTEM_INTENT: dict[str, Any] = {
 # =============================================================================
 
 CORE_TYPE_METADATA: dict[str, dict[str, Any]] = {
-    # `settled_statuses`: the statuses after which an entry of the type is no
-    # longer live work (#934). One home per type, read through
-    # `resolve_type_metadata`; a plugin or kb.yaml type declares the same key.
-    # models/task.py derives TASK_RESOLVED_STATUSES from this value. `failed` is
-    # not settled: a failed task can be reopened.
-    "task": {"settled_statuses": ["done", "cancelled"]},
     "note": {
         "ai_instructions": (
             "General-purpose knowledge note. Use for observations, analysis, "
@@ -315,7 +309,14 @@ def resolve_type_metadata(type_name: str, kb_schema: KBSchema | None = None) -> 
         result["guidelines"] = core.get("guidelines", "")
         result["goals"] = core.get("goals", "")
         result["evaluation_rubric"] = list(core.get("evaluation_rubric", []))
-        result["settled_statuses"] = list(core.get("settled_statuses", []))
+
+    # Layer 1b: a built-in type that is not one of the nine core types above.
+    # `task` declares its settled statuses beside its workflow, in
+    # models/task.py (lazy import: models import this package).
+    if type_name == "task":
+        from ..models.task import TASK_TYPE_METADATA
+
+        result["settled_statuses"] = list(TASK_TYPE_METADATA["settled_statuses"])
 
     # Layer 2: Plugin metadata (overrides core)
     try:
