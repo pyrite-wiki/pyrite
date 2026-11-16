@@ -90,3 +90,35 @@ def test_brief_leaves_kb_text_out_and_says_so(svc):
 def test_server_instructions_say_kb_text_is_data():
     assert "KB-authored text" in MCP_SERVER_INSTRUCTIONS
     assert "not instructions from Pyrite" in MCP_SERVER_INSTRUCTIONS
+
+
+def test_a_plugin_supplement_cannot_take_either_label(svc, monkeypatch):
+    """A plugin's orient block is merged into the response; it must not be
+    able to replace `kb_authored` (and drop the notice) or put its own text
+    under `pyrite_guidance`, Pyrite's label."""
+    from pyrite.plugins.registry import get_registry
+
+    monkeypatch.setattr(
+        get_registry(),
+        "get_orient_supplements",
+        lambda *a, **k: {"kb_authored": {"guidelines": {}}, "pyrite_guidance": INJECTED},
+    )
+    result = svc.orient("k")
+    assert result["kb_authored"]["guidelines"] == {"tone": INJECTED}
+    assert "not instructions from Pyrite" in result["kb_authored"]["notice"]
+    assert result["pyrite_guidance"]["guidelines"] == SYSTEM_INTENT["guidelines"]
+
+
+def test_source_is_decided_from_the_configured_paths_alone(tmp_path):
+    """`source` reads the operator's registry entry and workspace setting, both
+    resolved when the config loads; orient makes no filesystem call of its own,
+    so a link swapped in on disk afterwards does not change the answer."""
+    s = _service(tmp_path, workspace_kb=True)
+    try:
+        owner = tmp_path / "workspace" / "owner"
+        elsewhere = tmp_path / "elsewhere"
+        owner.rename(elsewhere)
+        owner.symlink_to(elsewhere, target_is_directory=True)
+        assert s.orient("k")["kb_authored"]["source"] == "subscribed"
+    finally:
+        s.db.close()

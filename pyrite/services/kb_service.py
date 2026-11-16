@@ -3624,13 +3624,16 @@ class KBService:
         A clone Pyrite made (`repo subscribe`, `repo fork`) lives under the
         workspace path; one made by `repo fork` has a repo row marked as a
         fork. Everything else is the operator's own.
+
+        Decided from the configured paths alone: `KBConfig.path` and
+        `Settings.workspace_path` are resolved when the config loads, so this
+        makes no filesystem call (ADR-0052 N1, N4: the answer does not depend
+        on what is on disk at request time).
         """
         try:
-            path = Path(kb_config.path).resolve()
-            workspace = Path(self.config.settings.workspace_path).expanduser().resolve()
-            if not path.is_relative_to(workspace):
+            if not Path(kb_config.path).is_relative_to(self.config.settings.workspace_path):
                 return "own"
-        except (OSError, ValueError, TypeError):
+        except (ValueError, TypeError):
             return "own"
         repo_name = getattr(kb_config, "repo", None)
         if repo_name:
@@ -3835,12 +3838,16 @@ class KBService:
             # The top-level `guidelines` goes with `schema.guidelines`: left
             # behind as `{}` it would read as "this KB has none".
             result.pop("guidelines", None)
-        else:
-            result["pyrite_guidance"] = self._pyrite_guidance()
-            result["kb_authored"] = self._kb_authored(kb_config)
 
         if supplements:
             result.update(supplements)
+
+        if detail != "brief":
+            # Set after the supplements, as `detail` is below: a plugin block
+            # named `kb_authored` or `pyrite_guidance` must not replace the
+            # KB's labelled text or speak under Pyrite's label (#1369).
+            result["pyrite_guidance"] = self._pyrite_guidance()
+            result["kb_authored"] = self._kb_authored(kb_config)
 
         if detail == "brief":
             # Set after the supplements so a plugin key named `detail` cannot
