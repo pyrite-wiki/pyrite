@@ -206,6 +206,7 @@ class TypeSchema:
     evaluation_rubric: list[str | dict[str, Any]] = field(
         default_factory=list
     )  # Assertions for QA validation
+    settled_statuses: list[str] = field(default_factory=list)  # statuses that end live work (#934)
     edge_type: bool = False  # Whether this type represents an edge/relationship
     endpoints: dict[str, EndpointSpec] = field(default_factory=dict)  # Edge endpoint specs
     state_machine: dict[str, Any] | None = None  # Per-type workflow override (Tier A r1175)

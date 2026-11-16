@@ -117,29 +117,13 @@ SYSTEM_INTENT: dict[str, Any] = {
 # Core Type Metadata -- AI instructions, field descriptions, display hints
 # =============================================================================
 
-#: Statuses after which an entry of a core type is no longer live work. A type
-#: declares its own the same way a plugin does: a ``settled_statuses`` list in
-#: ``get_type_metadata()``. A type that declares none has none: all of its
-#: entries are live, whatever their status says (a note has no status at all).
-CORE_SETTLED_STATUSES: dict[str, tuple[str, ...]] = {
-    "task": ("done", "cancelled", "failed"),
-}
-
-
-def settled_statuses(type_name: str) -> frozenset[str]:
-    """The type's declared terminal-but-not-live statuses, lowercase (#934)."""
-    declared = set(CORE_SETTLED_STATUSES.get(type_name, ()))
-    try:
-        from ..plugins import get_registry
-
-        plugin_meta = get_registry().get_all_type_metadata().get(type_name, {})
-        declared.update(plugin_meta.get("settled_statuses", ()))
-    except Exception:
-        logger.warning("Failed to load plugin settled statuses for %s", type_name, exc_info=True)
-    return frozenset(str(status).lower() for status in declared)
-
-
 CORE_TYPE_METADATA: dict[str, dict[str, Any]] = {
+    # `settled_statuses`: the statuses after which an entry of the type is no
+    # longer live work (#934). One home per type, read through
+    # `resolve_type_metadata`; a plugin or kb.yaml type declares the same key.
+    # models/task.py derives TASK_RESOLVED_STATUSES from this value. `failed` is
+    # not settled: a failed task can be reopened.
+    "task": {"settled_statuses": ["done", "cancelled"]},
     "note": {
         "ai_instructions": (
             "General-purpose knowledge note. Use for observations, analysis, "
@@ -318,6 +302,7 @@ def resolve_type_metadata(type_name: str, kb_schema: KBSchema | None = None) -> 
         "guidelines": "",
         "goals": "",
         "evaluation_rubric": [],
+        "settled_statuses": [],
     }
 
     # Layer 1: Core defaults (lowest priority base)
@@ -330,6 +315,7 @@ def resolve_type_metadata(type_name: str, kb_schema: KBSchema | None = None) -> 
         result["guidelines"] = core.get("guidelines", "")
         result["goals"] = core.get("goals", "")
         result["evaluation_rubric"] = list(core.get("evaluation_rubric", []))
+        result["settled_statuses"] = list(core.get("settled_statuses", []))
 
     # Layer 2: Plugin metadata (overrides core)
     try:
@@ -350,6 +336,8 @@ def resolve_type_metadata(type_name: str, kb_schema: KBSchema | None = None) -> 
                 result["goals"] = pm["goals"]
             if pm.get("evaluation_rubric"):
                 result["evaluation_rubric"] = list(pm["evaluation_rubric"])
+            if pm.get("settled_statuses"):
+                result["settled_statuses"] = list(pm["settled_statuses"])
     except Exception:
         logger.warning("Failed to load plugin type metadata for %s", type_name, exc_info=True)
 
@@ -370,5 +358,17 @@ def resolve_type_metadata(type_name: str, kb_schema: KBSchema | None = None) -> 
             result["goals"] = ts.goals
         if ts.evaluation_rubric:
             result["evaluation_rubric"] = list(ts.evaluation_rubric)
+        if ts.settled_statuses:
+            result["settled_statuses"] = list(ts.settled_statuses)
 
     return result
+
+
+def settled_statuses(type_name: str, kb_schema: KBSchema | None = None) -> frozenset[str]:
+    """The statuses the type declares settled, lowercase (#934).
+
+    Read through ``resolve_type_metadata``: kb.yaml over plugin over core. An
+    empty set means every entry of the type is live, whatever its status.
+    """
+    declared = resolve_type_metadata(type_name, kb_schema)["settled_statuses"]
+    return frozenset(str(status).strip().lower() for status in declared)

@@ -15,6 +15,8 @@ from .entry_types import (
     ADR_SETTLED_STATUSES,
     BACKLOG_KINDS,
     BACKLOG_SETTLED_STATUSES,
+    DESIGN_DOC_SETTLED_STATUSES,
+    MILESTONE_SETTLED_STATUSES,
     ADREntry,
     BacklogItemEntry,
     ComponentEntry,
@@ -747,6 +749,8 @@ class SoftwareKBPlugin:
         return {
             "backlog_item": {"settled_statuses": list(BACKLOG_SETTLED_STATUSES)},
             "adr": {"settled_statuses": list(ADR_SETTLED_STATUSES)},
+            "milestone": {"settled_statuses": list(MILESTONE_SETTLED_STATUSES)},
+            "design_doc": {"settled_statuses": list(DESIGN_DOC_SETTLED_STATUSES)},
         }
 
     def get_workflows(self) -> dict[str, dict]:
@@ -1959,6 +1963,9 @@ class SoftwareKBPlugin:
             if should_close:
                 db.close()
 
+    # Drives dependency unblocking and epic progress. Deliberately narrower than
+    # BACKLOG_SETTLED_STATUSES (which adds `superseded`, for `qa duplicates`):
+    # this set's behaviour is unchanged by #934.
     _RESOLVED_STATUSES = frozenset({"done", "retired", "wont_do"})
 
     @staticmethod

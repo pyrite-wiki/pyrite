@@ -1922,6 +1922,16 @@ decide. One failed entry does not
 stop the rest. With `--dry-run`, `fixed` lists what would be attempted and
 `failed` is empty.
 
+**Schema issues name their rule.** A `schema_violation` issue in `qa validate`
+(and in the `issues` a `qa fix` reads), an error or a warning alike, carries
+`schema_rule`: the rule the schema or a plugin validator broke (`required`,
+`enum`, `field_select`, ...), beside `field`. A caller tells a required field
+from this key, never from the message. A validator that names no rule adds no
+key. `qa fix` offers no fix for a schema issue: a required field is reported
+in `manual` with `reason: "no_safe_default"`, any other schema issue with
+`not_auto_fixable`; `--fix-rule schema_violation` still selects them and
+writes nothing.
+
 ## QA duplicate candidates
 
 `pyrite qa duplicates -t <type>` reports live entries that may describe the
@@ -1931,16 +1941,17 @@ merge: finding candidates is not a failure, so the exit code is `0` when the sca
 `--type` or empty/comma-only `--status` values are structured
 `VALIDATION_FAILED` refusals (`1`).
 
+The command is CLI-only: there is no REST or MCP surface for it.
+
 Scores are word-overlap (Jaccard) over the id slug, after removing the first
-matching `--strip-prefix`, and over the title. A pair is a candidate when either
-score is at or above `--threshold` (default `0.62`); `score` is the
+matching `--strip-prefix`, and over the title. A word is a run of Unicode word characters in any script, compared after casefolding and accent folding (NFKD, combining marks removed, NFC), so `Élection` matches `election` and a title in a script written without spaces (`选举日`) is one word per run. A title match means the two titles' word sets overlap at or above the threshold; it says nothing about the entries' bodies. A pair is a candidate when either
+score is at or above `--threshold` (default `0.62`; a number from 0 to 1, `nan` and `inf` included in what is refused, as the usage error `2` / `USAGE_ERROR`; the service function refuses it too); `score` is the
 higher one and `signal` names every signal that matched (`id`, `title`,
 or `id+title`). Within each pair, `a` sorts before `b` by `(kb_name, id)`.
 Without `--status`, an entry is live while its lifecycle is `active` and its
-status is not one the **type declares settled**: a `task`'s `done`, `cancelled`
-and `failed`; a software-kb `backlog_item`'s `done`, `retired`, `superseded` and
-`wont_do`; an `adr`'s `rejected`, `deprecated` and `superseded`. A plugin
-declares them as `settled_statuses` in `get_type_metadata()`. A type that
+status is not one the **type declares settled**: a `task`'s `done` and `cancelled`; a software-kb `backlog_item`'s `done`, `retired`, `superseded` and
+`wont_do`; an `adr`'s `rejected`, `deprecated` and `superseded`; a `milestone`'s `closed`; a `design_doc`'s `obsolete` and `implemented`. `deferred` backlog items stay live. A type whose status lives in a field other than `status` (`review_status`, `research_status`, `case_status`, `claim_status`) has no status the scan reads. A plugin
+declares them as `settled_statuses` in `get_type_metadata()`; a type declared only in `kb.yaml` declares them with the same key (`types.<name>.settled_statuses`), read per KB, and `kb.yaml` overrides a plugin, which overrides core. Core `task` is `done` and `cancelled`: a `failed` task can be reopened, so it stays in the scan. A type that
 declares none, or has no status field at all (a `note`), has every entry live
 and is scanned. Task status is effective: a task completed by its children
 counts as `done` even while its file still says `open`. This applies both to
@@ -1972,13 +1983,3 @@ To bound common-word expansion, tokens occurring in more than
 coverage is incomplete. Identical nonempty id or title token sets are still
 paired, even in large clusters. Producing all pairs in a large identical cluster
 necessarily takes time proportional to that output.
-
-**Schema issues name their rule.** A `schema_violation` issue in `qa validate`
-(and in the `issues` a `qa fix` reads), an error or a warning alike, carries
-`schema_rule`: the rule the schema or a plugin validator broke (`required`,
-`enum`, `field_select`, ...), beside `field`. A caller tells a required field
-from this key, never from the message. A validator that names no rule adds no
-key. `qa fix` offers no fix for a schema issue: a required field is reported
-in `manual` with `reason: "no_safe_default"`, any other schema issue with
-`not_auto_fixable`; `--fix-rule schema_violation` still selects them and
-writes nothing.

@@ -242,7 +242,18 @@ def _write(folder, entry_id: str, entry_type: str, title: str, status: str | Non
     )
 
 
-@pytest.mark.parametrize("settled", ["done", "retired", "superseded", "wont_do"])
+@pytest.mark.parametrize(
+    "settled",
+    [
+        pytest.param(
+            "done",
+            marks=pytest.mark.control(reason="done was already settled in the old scan"),
+        ),
+        "retired",
+        "superseded",
+        "wont_do",
+    ],
+)
 def test_a_settled_backlog_item_is_never_in_the_default_scan(dup_setup, tmp_path, settled):
     """#934 groom: the default scan lists live items only. `settled` comes from
     the backlog_item type's declared statuses, not a list in the scan."""
@@ -308,3 +319,153 @@ def test_cli_scans_a_statusless_type(cli_world):
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["count"] == 1
+
+
+# --- fix round 1 (#934): every documented rule has a test red without it -----
+
+
+def _titles(setup, tmp_path, entry_type, pairs, status=None):
+    for entry_id, title in pairs:
+        _write(tmp_path / "kb", entry_id, entry_type, title, status)
+    setup["index"].index_all()
+    return setup["qa"].find_duplicates(entry_type, readable_kbs=UNSCOPED)
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("选举日", "选举日"),
+        ("День выборов", "день ВЫБОРОВ"),
+        ("Élection présidentielle", "Election presidentielle"),
+    ],
+    ids=["cjk", "cyrillic", "accented-vs-plain"],
+)
+def test_titles_in_any_script_are_compared(dup_setup, tmp_path, left, right):
+    result = _titles(dup_setup, tmp_path, "note", [("entry-one", left), ("entry-two", right)])
+
+    assert result["count"] == 1, result
+    assert result["pairs"][0]["signal"] == "title"
+    assert result["pairs"][0]["score"] == 1.0
+
+
+def test_distinct_non_ascii_titles_are_not_paired(dup_setup, tmp_path):
+    result = _titles(
+        dup_setup, tmp_path, "note", [("entry-one", "选举日"), ("entry-two", "День выборов")]
+    )
+    assert result["count"] == 0
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_cli_refuses_a_non_finite_threshold_as_a_usage_error(cli_world, value):
+    world = cli_world()
+
+    result = world.cli("qa", "duplicates", "-t", "task", "--threshold", value)
+
+    assert result.exit_code == 2, result.output
+    assert "NaN" not in result.stdout
+    assert "NO_OUTCOME" not in result.stdout + result.output
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -0.1, 1.1])
+def test_service_refuses_a_threshold_outside_zero_to_one(dup_setup, value):
+    from pyrite.exceptions import ValidationError
+
+    with pytest.raises(ValidationError):
+        dup_setup["qa"].find_duplicates("task", readable_kbs=UNSCOPED, threshold=value)
+
+
+def test_an_archived_entry_is_excluded_by_default(dup_setup, tmp_path):
+    folder = tmp_path / "kb"
+    for entry_id in ("keep-a", "keep-b"):
+        _write(folder, entry_id, "note", "Same Title", None)
+    (folder / "gone.md").write_text(
+        "---\nid: gone\ntype: note\ntitle: Same Title\nlifecycle: archived\n---\nBody.\n",
+        encoding="utf-8",
+    )
+    dup_setup["index"].index_all()
+
+    result = dup_setup["qa"].find_duplicates("note", readable_kbs=UNSCOPED)
+
+    assert {s["id"] for p in result["pairs"] for s in (p["a"], p["b"])} == {"keep-a", "keep-b"}
+
+
+@pytest.mark.parametrize("settled", ["rejected", "deprecated", "superseded"])
+def test_a_settled_adr_is_excluded_and_a_live_adr_is_not(dup_setup, tmp_path, settled):
+    folder = tmp_path / "kb"
+    _write(folder, "adr-a", "adr", "Use SQLite", settled)
+    _write(folder, "adr-b", "adr", "Use SQLite", "accepted")
+    _write(folder, "adr-c", "adr", "Use SQLite", "proposed")
+    dup_setup["index"].index_all()
+
+    result = dup_setup["qa"].find_duplicates("adr", readable_kbs=UNSCOPED)
+
+    assert {s["id"] for p in result["pairs"] for s in (p["a"], p["b"])} == {"adr-b", "adr-c"}
+
+
+@pytest.mark.parametrize("live", ["deferred", "proposed", "accepted"])
+def test_a_deferred_backlog_item_stays_live(dup_setup, tmp_path, live):
+    folder = tmp_path / "kb"
+    _write(folder, "weekly-a", "backlog_item", "Weekly Report", live)
+    _write(folder, "weekly-b", "backlog_item", "Weekly Report", "proposed")
+    dup_setup["index"].index_all()
+
+    assert dup_setup["qa"].find_duplicates("backlog_item", readable_kbs=UNSCOPED)["count"] == 1
+
+
+def test_a_failed_task_beside_its_open_retry_is_a_candidate(dup_setup, tmp_path):
+    """A failed task can be reopened (models/task.py), so it is not settled."""
+    folder = tmp_path / "kb"
+    _write(folder, "deploy-a", "task", "Deploy The Thing", "failed")
+    _write(folder, "deploy-b", "task", "Deploy The Thing", "open")
+    dup_setup["index"].index_all()
+
+    assert dup_setup["qa"].find_duplicates("task", readable_kbs=UNSCOPED)["count"] == 1
+
+
+@pytest.mark.parametrize("settled", ["done", "cancelled"])
+def test_a_resolved_task_is_excluded(dup_setup, tmp_path, settled):
+    folder = tmp_path / "kb"
+    _write(folder, "ship-a", "task", "Ship The Thing", settled)
+    _write(folder, "ship-b", "task", "Ship The Thing", "open")
+    dup_setup["index"].index_all()
+
+    assert dup_setup["qa"].find_duplicates("task", readable_kbs=UNSCOPED)["count"] == 0
+
+
+@pytest.mark.parametrize(
+    ("entry_type", "settled"),
+    [("milestone", "closed"), ("design_doc", "obsolete"), ("design_doc", "implemented")],
+)
+def test_other_software_kb_types_declare_what_ends_their_live_work(
+    dup_setup, tmp_path, entry_type, settled
+):
+    live = {"milestone": "open", "design_doc": "draft"}[entry_type]
+    folder = tmp_path / "kb"
+    _write(folder, "one-a", entry_type, "Same Name", settled)
+    _write(folder, "one-b", entry_type, "Same Name", settled)
+    _write(folder, "one-c", entry_type, "Same Name", live)
+    _write(folder, "one-d", entry_type, "Same Name", live)
+    dup_setup["index"].index_all()
+
+    result = dup_setup["qa"].find_duplicates(entry_type, readable_kbs=UNSCOPED)
+
+    assert {s["id"] for p in result["pairs"] for s in (p["a"], p["b"])} == {"one-c", "one-d"}
+
+
+def test_a_type_declared_only_in_kb_yaml_declares_settled_statuses(dup_setup, tmp_path):
+    from pyrite.schema.core_types import resolve_type_metadata
+
+    (tmp_path / "kb" / "kb.yaml").write_text(
+        "name: dups\ntypes:\n  ticket:\n    settled_statuses: [shipped]\n", encoding="utf-8"
+    )
+    schema = dup_setup["config"].get_kb("dups").kb_schema
+    assert resolve_type_metadata("ticket", schema)["settled_statuses"] == ["shipped"]
+
+    folder = tmp_path / "kb"
+    for entry_id, status in (("t-a", "shipped"), ("t-b", "open"), ("t-c", "open")):
+        _write(folder, entry_id, "ticket", "Same Ticket", status)
+    dup_setup["index"].index_all()
+
+    result = dup_setup["qa"].find_duplicates("ticket", readable_kbs=UNSCOPED)
+
+    assert {s["id"] for p in result["pairs"] for s in (p["a"], p["b"])} == {"t-b", "t-c"}

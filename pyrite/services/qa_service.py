@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import time
+import unicodedata
 from collections.abc import Callable
 from datetime import UTC, datetime
 from itertools import combinations
@@ -27,6 +28,7 @@ from ..exceptions import (
     InvalidQATierError,
     KBUnreadableError,
     PyriteError,
+    ValidationError,
     os_reason,
     public_attribute,
     public_text,
@@ -64,16 +66,29 @@ def require_qa_tier(tier: int, *, llm_available: Callable[[], bool]) -> None:
         )
 
 
-_WORD_SPLIT = re.compile(r"[^a-z0-9]+")
+_WORD_SPLIT = re.compile(r"[\W_]+")
+
+
+def _fold(value: str) -> str:
+    """Casefold, then drop accents: NFKD, remove combining marks, recompose (NFC).
+
+    ``Élection`` and ``election`` agree; scripts without case or accents (CJK,
+    Hangul) pass through unchanged.
+    """
+    decomposed = unicodedata.normalize("NFKD", (value or "").casefold())
+    kept = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return unicodedata.normalize("NFC", kept)
 
 
 def _duplicate_tokens(value: str, prefixes: tuple[str, ...] = ()) -> set[str]:
-    """Lowercase word tokens, with at most one matching id prefix removed."""
-    text = (value or "").lower()
+    """Word tokens in any script, folded by ``_fold``, with at most one matching
+    id prefix removed. A word is a run of Unicode word characters; text in a
+    script written without spaces is one token per run."""
+    text = _fold(value)
     for prefix in prefixes:
-        lowered = prefix.lower()
-        if lowered and text.startswith(lowered):
-            text = text[len(lowered) :]
+        folded = _fold(prefix)
+        if folded and text.startswith(folded):
+            text = text[len(folded) :]
             break
     return {token for token in _WORD_SPLIT.split(text) if token}
 
@@ -298,9 +313,8 @@ class QAService:
 
         With ``statuses`` the scan keeps only those statuses. Without it, an
         entry is live while its lifecycle is ``active`` and its effective status is not
-        one the type declares settled (``core_types.settled_statuses``: a task's
-        ``done``/``cancelled``/``failed``, a backlog item's ``retired``,
-        ``superseded``, ``wont_do``, ...). A type that declares none, or has no
+        one the type declares settled (``core_types.settled_statuses``: the
+        type's ``settled_statuses`` metadata, kb.yaml over plugin over core). A type that declares none, or has no
         status at all, has every entry live.
         Tasks completed by their children use the shared derived-status rule;
         reading duplicate candidates never rewrites their files.
@@ -313,6 +327,8 @@ class QAService:
         quadratic output; a common word alone does not expand every pair.
         Returned pairs are sorted by score and identity, so two runs agree.
         """
+        if not (0.0 <= threshold <= 1.0):  # also false for NaN
+            raise ValidationError(f"threshold must be a number from 0 to 1, got {threshold!r}")
         params: dict[str, Any] = {"entry_type": entry_type}
         scope = kb_names_clause("kb_name", readable_kbs, params)
         keys = (
@@ -328,7 +344,11 @@ class QAService:
         if scope:
             sql += f" AND {scope}"
         rows = self.db.execute_sql(sql, params)
-        settled = settled_statuses(entry_type)
+        # A KB's kb.yaml may declare the type's settled statuses, so the set is
+        # read per KB. If the registry cannot be read the resolver logs it and
+        # the set is empty: a report that lists more candidates, never fewer
+        # pairs than exist, and it writes nothing.
+        settled_by_kb: dict[str, frozenset[str]] = {}
 
         entries: list[dict[str, Any]] = []
         for row in rows:
@@ -337,8 +357,14 @@ class QAService:
             if statuses is not None:
                 if status not in statuses:
                     continue
-            elif lifecycle != "active" or status in settled:
-                continue
+            else:
+                if row["kb_name"] not in settled_by_kb:
+                    kb_config = self.config.get_kb(row["kb_name"])
+                    settled_by_kb[row["kb_name"]] = settled_statuses(
+                        entry_type, kb_config.kb_schema if kb_config else None
+                    )
+                if lifecycle != "active" or status in settled_by_kb[row["kb_name"]]:
+                    continue
             entries.append(
                 {
                     "id": row["id"],

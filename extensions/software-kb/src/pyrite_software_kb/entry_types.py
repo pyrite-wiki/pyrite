@@ -54,8 +54,15 @@ BACKLOG_STATUSES = (
 )
 # Statuses after which a backlog item is no longer live work. `deferred` is not
 # one: it is reactivated (workflows.py).
+# The scan's set is wider than plugin._RESOLVED_STATUSES (done, retired,
+# wont_do), which drives dependency unblocking and epic progress: a superseded
+# item is no longer live work, so two of them are not a duplicate candidate, but
+# it has never unblocked a dependent, and that behaviour is not changed here.
 BACKLOG_SETTLED_STATUSES = ("done", "retired", "superseded", "wont_do")
 ADR_SETTLED_STATUSES = ("rejected", "deprecated", "superseded")
+MILESTONE_SETTLED_STATUSES = ("closed",)
+# `implemented`: the design has been built; its work is over like `obsolete`.
+DESIGN_DOC_SETTLED_STATUSES = ("obsolete", "implemented")
 BACKLOG_PRIORITIES = ("critical", "high", "medium", "low")
 BACKLOG_EFFORTS = ("XS", "S", "M", "L", "XL")
 RUNBOOK_KINDS = ("howto", "troubleshooting", "setup", "operations", "onboarding")

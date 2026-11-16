@@ -4,6 +4,7 @@ QA validation and assessment commands for pyrite CLI.
 Commands: validate, duplicates, status, assess
 """
 
+import click
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -13,6 +14,27 @@ from ..services.access_policy import UNSCOPED, named_kb
 from .context import cli_context, require_entry_kb
 from .outcome import Outcome
 from .output import OUTPUT_FORMAT, cli_console, output_format_choice, validate_output_format
+
+
+class _UnitInterval(click.ParamType):
+    """A number from 0 to 1, NaN refused. ``min=0, max=1`` lets NaN through (it
+    compares false with both bounds), so the range is checked here, at parse
+    time, where a refusal is the usage error (exit 2) a bad range already is. A
+    parameter *callback* is forbidden on the Outcome contract; a type is not.
+    The error is ``typer.BadParameter``: Typer 0.27 vendors click, and only its
+    own class is answered as ``USAGE_ERROR`` (exit 2)."""
+
+    name = "float in [0, 1]"
+
+    def convert(self, value, param, ctx):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise typer.BadParameter(f"{value!r} is not a valid number", ctx=ctx, param=param)
+        if not 0.0 <= number <= 1.0:
+            raise typer.BadParameter(f"{value!r} is not in the range 0 to 1", ctx=ctx, param=param)
+        return number
+
 
 qa_app = typer.Typer(help="Quality assurance validation and assessment")
 console = cli_console()
@@ -136,8 +158,7 @@ def qa_duplicates(
     threshold: float = typer.Option(
         0.62,
         "--threshold",
-        min=0,
-        max=1,
+        click_type=_UnitInterval(),
         help="Minimum score; a pair at or above it is a candidate",
     ),
     strip_prefix: list[str] | None = typer.Option(

@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
+from ..schema.core_types import CORE_TYPE_METADATA
 from .core_types import NoteEntry
 from .protocols import Assignable, Parentable, Prioritizable, Statusable, Temporal
 
@@ -142,7 +143,8 @@ def task_priority_problem(value: Any) -> str | None:
 # parent rollup and dependency unblocking. `failed` is intentionally excluded:
 # a failed task is not resolved (it can be reopened), so it should not roll up a
 # parent or unblock dependents.
-TASK_RESOLVED_STATUSES = ("done", "cancelled")
+# The value is declared once, as core `task` type metadata (`settled_statuses`).
+TASK_RESOLVED_STATUSES = tuple(CORE_TYPE_METADATA["task"]["settled_statuses"])
 
 # =========================================================================
 # Workflow
