@@ -488,7 +488,11 @@ def _print_rubric_line(text: str, kind: str, item: str | dict) -> None:
 def qa_gaps(
     kb_name: str = typer.Option(..., "--kb", "-k", help="KB to analyze"),
     threshold: int = typer.Option(
-        3, "--threshold", "-t", help="Minimum entries per type to not flag as sparse"
+        3,
+        "--threshold",
+        "-t",
+        min=0,
+        help="Minimum entries per type to not flag as sparse",
     ),
     output_format: str = typer.Option(
         "rich",
