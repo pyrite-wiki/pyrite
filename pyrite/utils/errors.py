@@ -403,6 +403,21 @@ def _print_click_error(error: Any, fmt: str) -> None:
     message = error.format_message()
     ctx = getattr(error, "ctx", None)
     suggestion = f"Try '{ctx.command_path} --help' for help." if ctx is not None else None
+    # Typer 0.29 flattens click's NoSuchCommand into a plain UsageError, so
+    # recognise it by its message rather than by the exception class.
+    if is_usage and ctx is not None and message.startswith("No such command "):
+        # A missing subcommand on a group: name the commands that do exist, so
+        # the refusal points at something runnable instead of only --help.
+        names = [
+            name
+            for name in ctx.command.list_commands(ctx)
+            if not getattr(ctx.command.get_command(ctx, name), "hidden", False)
+        ]
+        if names:
+            suggestion = (
+                f"{ctx.command_path} has: {', '.join(names)}. "
+                f"Try '{ctx.command_path} --help' for help."
+            )
     payload = {
         "outcome": REFUSED,
         **build_error(message, "USAGE_ERROR" if is_usage else "ERROR", suggestion=suggestion),
