@@ -12,6 +12,8 @@ import pytest
 from click import unstyle
 from typer.testing import CliRunner
 
+from tests.cli_help import plain
+
 from pyrite.cli import app
 from pyrite.cli import context as cli_context_module
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
@@ -218,17 +220,43 @@ def test_qa_status_json(cli_env):
 
 @pytest.mark.cli
 @pytest.mark.parametrize(
-    ("command", "count_key"),
-    [("stale", "stale_count"), ("compact", "candidate_count")],
+    ("command", "count_key", "extra_args"),
+    [
+        ("stale", "stale_count", ["--max-age", "0"]),
+        ("compact", "candidate_count", []),
+    ],
 )
-def test_qa_reports_use_real_context(cli_env, monkeypatch, command, count_key):
+def test_qa_reports_use_real_context(cli_env, monkeypatch, command, count_key, extra_args):
     """Sibling QA reports use the same context-manager contract."""
     monkeypatch.setattr(cli_context_module, "load_config", lambda: cli_env["config"])
 
-    result = runner.invoke(app, ["qa", command, "test-events", "--format", "json"])
+    result = runner.invoke(app, ["qa", command, "test-events", "--format", "json", *extra_args])
 
     assert result.exit_code == 0, result.output
     assert isinstance(json.loads(result.output)[count_key], int)
+
+
+@pytest.mark.cli
+@pytest.mark.parametrize("age_option", ["--max-age", "-a"])
+@pytest.mark.parametrize("output_format", ["rich", "json", "markdown", "csv", "yaml"])
+def test_qa_stale_rejects_negative_max_age_before_output(age_option, output_format):
+    """Negative stale thresholds are usage errors for every output format."""
+    result = runner.invoke(
+        app,
+        [
+            "qa",
+            "stale",
+            "test-events",
+            age_option,
+            "-1",
+            "--format",
+            output_format,
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "stale_count" not in result.output
+    assert "--max-age" in plain(result.output)
 
 
 @pytest.mark.cli

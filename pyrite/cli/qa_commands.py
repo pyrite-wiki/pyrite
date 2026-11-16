@@ -724,7 +724,7 @@ def qa_fix(
 def qa_stale(
     kb_name: str = typer.Argument(..., help="KB to check for stale entries"),
     max_age: int = typer.Option(
-        90, "--max-age", "-a", help="Days since last update to consider stale"
+        90, "--max-age", "-a", min=0, help="Days since last update to consider stale"
     ),
     output_format: str = typer.Option(
         "rich",
