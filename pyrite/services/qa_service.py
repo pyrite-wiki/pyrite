@@ -29,7 +29,6 @@ from ..exceptions import (
     KBUnreadableError,
     PyriteError,
     ValidationError,
-    os_reason,
     public_attribute,
     public_text,
 )
@@ -40,7 +39,7 @@ from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata, settled_st
 from ..storage import effective_status
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
-from ..utils.kb_files import KBFileOutsideRootError, KBFiles
+from ..utils.kb_files import KBFileOutsideRootError, KBFiles, KBFilesUnreadableError
 from ..utils.metadata import parse_metadata
 
 logger = logging.getLogger(__name__)
@@ -554,30 +553,24 @@ class QAService:
 
         Names no path: the message can reach an MCP or REST caller.
         """
-        import os
 
         kb_config = self.config.get_kb(kb_name)
         if kb_config is None:
             return None
         path = Path(kb_config.path)
+        if not path.exists():
+            return "its folder is missing"
+        if not path.is_dir():
+            return "its path is not a folder"
+        # The KB's one readability check (``KBConfig.check_readable``): its
+        # folder listed, its kb.yaml probed and read inside the KB (a link
+        # out is not opened here; ``kb_schema`` refuses it, OUTSIDE_KB_ROOT).
+        # One fixed reason whatever the OS refused, since this text can reach
+        # an MCP or REST caller (#1542).
         try:
-            if not path.exists():
-                return "its folder is missing"
-            if not path.is_dir():
-                return "its path is not a folder"
-            with os.scandir(path) as listing:
-                next(listing, None)
-            # Read as the KB reads it: a kb.yaml that is a link out of the KB
-            # is not opened here (``kb_schema`` refuses it, OUTSIDE_KB_ROOT),
-            # so no error text from a file outside the KB reaches the caller.
-            kb_yaml = path / "kb.yaml"
-            if KBFiles(path).present(kb_yaml):
-                try:
-                    KBFiles(path).read_bytes(kb_yaml)
-                except KBFileOutsideRootError:
-                    pass
-        except OSError as exc:
-            return f"its folder cannot be read ({os_reason(exc)})"
+            kb_config.check_readable()
+        except KBFilesUnreadableError:
+            return "its files cannot be read (the operating system refused)"
         return None
 
     def validate_all(
@@ -1744,7 +1737,6 @@ class QAService:
         """
         from ..storage.repository import _is_regular_file, _text_of
         from ..utils.frontmatter import Frontmatter, split_frontmatter
-        from ..utils.kb_files import KBFileOutsideRootError
         from ..utils.yaml import load_yaml
 
         for file_path in repo.list_files():

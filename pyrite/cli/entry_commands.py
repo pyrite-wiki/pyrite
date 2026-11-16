@@ -31,6 +31,7 @@ from ..exceptions import (
     EntryLoadError,
     EntryNotFoundError,
     KBNotFoundError,
+    KBUnreadableError,
     PyriteError,
     UndeclaredTypeError,
     ValidationError,
@@ -257,7 +258,8 @@ def register_entry_commands(app: typer.Typer) -> None:
         with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
             try:
                 result = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
-            except (AmbiguousEntryError, ValidationError) as exc:
+            except (AmbiguousEntryError, ValidationError, KBUnreadableError) as exc:
+                # KBUnreadableError: KB_UNREADABLE, as on every surface (#1542).
                 cli_error_from(exc, output_format)
 
             if not result:
@@ -753,6 +755,8 @@ def register_entry_commands(app: typer.Typer) -> None:
                 # Nothing deleted: a file its type cannot load is written not
                 # at all (ADR-0042 8a).
                 cli_error(str(e), output_format, error_code=e.error_code)
+            except KBUnreadableError as e:
+                cli_error_from(e, output_format)  # KB_UNREADABLE: nothing deleted (#1542)
             except (PyriteError, ValueError) as e:
                 cli_error(str(e), output_format, error_code="ERROR")
 

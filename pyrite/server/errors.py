@@ -108,6 +108,9 @@ _STATUS_BY_CODE: dict[str, int] = {
     # A page past the clipper's byte cap: the page is the problem, not the server.
     "CLIP_TOO_LARGE": 413,
     "INTERNAL_ERROR": 500,
+    # A KB whose files the server cannot read (#1542): the server's state,
+    # not the request's. Listed so the status is chosen, not fallen into.
+    "KB_UNREADABLE": 500,
     # AccessDenied family (ADR-0037 §3). Not raised by any surface yet
     # (theme 1/3b's job) -- listed so the mapping is ready when they are.
     "UNAUTHENTICATED": 401,
