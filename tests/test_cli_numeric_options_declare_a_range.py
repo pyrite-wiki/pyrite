@@ -18,6 +18,29 @@ FloatRange (so ``Optional[int]``, ``int | None``, ``Annotated[int, typer.Option(
 a Range with ``min`` or ``max`` set. One exclusion: a ``count=True`` option
 (``-v -v``). Typer gives it a plain INT type, but the user types no number: the
 value is how many times the flag was repeated and cannot be out of range.
+
+Where a parameter can be declared between a root and a leaf, and what the walk
+(``every_command``: roots, every group at every depth, every leaf, hidden ones
+included) does with each; "planted" means a test below goes red without it:
+
+- a root's own options (``--verbose``): seen, planted (``..._on_the_root_group``);
+- a group's callback, three ways (``@sub.callback()``, ``add_typer(callback=)``,
+  two groups deep): seen, planted;
+- a leaf, hidden or not, with a hidden or envvar-fed option: seen, planted (an
+  envvar-only option cannot occur: click and Typer always give an option a flag);
+- a ``click.Command``/``click.Group`` grafted on without Typer: seen, planted;
+- ``typer.Context`` and ``--help`` are not parameters of a user's value.
+
+Ways Typer hands click a number: ``int``/``float``, ``Optional``, ``| None``,
+``Annotated``, ``list[...]`` (``multiple``), ``tuple[...]`` (a mixed tuple is
+numeric, and bounded only if every numeric member is): seen, planted. ``min=``
+and ``max=``: a Range. ``count=True``: excluded, see above. ``parser=`` and
+``click_type=``: click gets a ``FuncParamType`` (locked Typer 0.27.3), so neither
+the number nor a range given that way is visible: a stated limit, refused by
+``test_every_parameter_type_is_classified_or_listed`` (``UNCLASSIFIED``, empty),
+pinned by a control. An ``Enum`` (an int-valued one too) is a ``Choice`` of text:
+a closed set, not a range. Any click type outside the known numeric and
+non-numeric ones is "unknown" and refused the same way.
 """
 
 from __future__ import annotations
@@ -31,7 +54,7 @@ from typing import Annotated, Optional
 import pytest
 import typer
 
-from tests.outcome_walk import leaves, root_app
+from tests.outcome_walk import root_app
 
 sys.path.insert(0, str(Path(__file__).parent))
 from test_requested_effect_exit_code import _commands  # noqa: E402
@@ -58,12 +81,37 @@ def _class_names(obj) -> set[str]:
     return {k.__name__ for k in type(obj).__mro__}
 
 
-def _numeric_members(click_type) -> list:
-    """The INT/FLOAT types inside a parameter type (a tuple type has several)."""
+#: Click types whose values are not numbers, so no range applies. Anything not here
+#: and not INT/FLOAT is "unknown" (see ``unclassified_params``). ``TyperPath`` is Typer's own
+#: path type; an int-valued ``Enum`` reaches click as a ``Choice`` of text.
+_NOT_NUMERIC = {
+    "StringParamType",
+    "BoolParamType",
+    "Choice",
+    "Path",
+    "TyperPath",
+    "File",
+    "DateTime",
+    "UUIDParamType",
+    "UnprocessedParamType",
+}
+
+
+def _members(click_type) -> list:
+    """The leaf types inside a parameter type (a tuple type has several)."""
     members = getattr(click_type, "types", None)
     if members is not None:
-        return [m for t in members for m in _numeric_members(t)]
-    return [click_type] if _class_names(click_type) & {_INT, _FLOAT} else []
+        return [m for t in members for m in _members(t)]
+    return [click_type]
+
+
+def _numeric_members(click_type) -> list:
+    return [m for m in _members(click_type) if _class_names(m) & {_INT, _FLOAT}]
+
+
+def _is_unknown(member) -> bool:
+    names = _class_names(member)
+    return not (names & {_INT, _FLOAT} or names & _NOT_NUMERIC)
 
 
 def numeric_params(commands: Mapping[str, object]) -> list[NumericParam]:
@@ -85,21 +133,58 @@ def numeric_params(commands: Mapping[str, object]) -> list[NumericParam]:
     return found
 
 
-def commands_of(app: typer.Typer, prog: str = "app") -> dict[str, object]:
-    """The mapping ``registry()`` gives for the real roots, for a small app: the
-    root group (its own options) and every leaf under it, nested groups included."""
-    root = typer.main.get_command(app)
-    found = {prog: root}
-    found.update({" ".join((prog, *path)): cmd for path, cmd in leaves(root)})
+@dataclass(frozen=True)
+class Unclassified:
+    command: str
+    name: str
+    type_name: str
+
+    @property
+    def row(self) -> tuple[str, str]:
+        return (self.command, self.name)
+
+
+def unclassified_params(commands: Mapping[str, object]) -> list[Unclassified]:
+    """Parameters whose click type is neither numeric nor a known non-numeric one,
+    so the checker cannot say whether a number is typed there. Typer hands click a
+    ``FuncParamType`` for ``parser=`` and ``click_type=`` (locked Typer 0.27.3), and
+    a hand-written ``click.ParamType`` is the same: not guessed from the name."""
+    found = []
+    for path, cmd in commands.items():
+        for param in getattr(cmd, "params", ()):
+            if getattr(param, "count", False):
+                continue
+            if any(_is_unknown(m) for m in _members(param.type)):
+                found.append(Unclassified(path, param.name, type(param.type).__name__))
     return found
+
+
+def every_command(roots: Mapping[str, object]) -> dict[str, object]:
+    """Every node of the click trees under ``roots`` (name -> click command): the
+    roots, every group at every depth, and every leaf. ``outcome_walk.leaves`` yields
+    leaves only, which is why a group's own callback options were invisible."""
+    found: dict[str, object] = {}
+
+    def walk(cmd, path: tuple[str, ...]) -> None:
+        found[" ".join(path)] = cmd
+        if hasattr(cmd, "list_commands"):  # Typer vendors click: no isinstance
+            ctx = cmd.make_context(path[-1], [], resilient_parsing=True)
+            for name in cmd.list_commands(ctx):
+                walk(cmd.get_command(ctx, name), (*path, name))
+
+    for prog, root in roots.items():
+        walk(root, (prog,))
+    return found
+
+
+def commands_of(app: typer.Typer, prog: str = "app") -> dict[str, object]:
+    """The mapping ``registry()`` gives for the real roots, for a small app."""
+    return every_command({prog: typer.main.get_command(app)})
 
 
 def registry() -> dict[str, object]:
-    """Every leaf of the three roots, and the roots' own options (``--verbose``)."""
-    found = dict(_commands())
-    for prog in ROOTS:
-        found[prog] = typer.main.get_command(root_app(prog))
-    return found
+    """Every command of the three roots, groups and leaves, with their options."""
+    return every_command({prog: typer.main.get_command(root_app(prog)) for prog in ROOTS})
 
 
 # --------------------------------------------------------------------------
@@ -109,6 +194,10 @@ def registry() -> dict[str, object]:
 #: (command path, parameter name) -> why no range makes sense. A row is added
 #: only with a true reason, never to make the test pass. Empty today.
 UNBOUNDED: dict[tuple[str, str], str] = {}
+
+#: (command path, parameter name) -> why the checker cannot classify the type (a
+#: ``parser=`` or ``click_type=`` option) and why that is safe. Empty today.
+UNCLASSIFIED: dict[tuple[str, str], str] = {}
 
 #: #1541: unbounded on ``dev`` today, grouped by the module that declares them.
 #: Each module is a good first issue: add the range where the option is
@@ -206,6 +295,26 @@ def test_the_walk_reaches_the_core_and_every_extension():
     assert any(p.bounded for p in params) and any(not p.bounded for p in params)
 
 
+def test_the_walk_sees_the_same_leaves_as_the_other_cli_structure_tests():
+    """``registry()`` also holds the groups; its leaves must be exactly the
+    commands ``_commands()`` (the walk the other tests share) finds."""
+    leaves_here = {name for name, cmd in registry().items() if not hasattr(cmd, "list_commands")}
+    assert leaves_here == set(_commands())
+
+
+def test_every_parameter_type_is_classified_or_listed():
+    """A parameter the checker cannot classify (``parser=``, ``click_type=``, a
+    custom ``click.ParamType``) may hide a number or a range from it: refused unless
+    on UNCLASSIFIED with a reason. Declare the option with a plain Python type
+    (``int``, ``float``, ``min=``, ``max=``) instead, see #1541."""
+    offenders = [u for u in unclassified_params(registry()) if u.row not in UNCLASSIFIED]
+    assert not offenders, "\n".join(
+        f"`{u.command}` option/argument `{u.name}` has click type {u.type_name}, which the "
+        f"range check cannot classify: use a plain int/float with min= or max=, see #1541"
+        for u in offenders
+    )
+
+
 def test_every_numeric_option_declares_a_range_or_is_listed():
     offenders = [
         p
@@ -235,6 +344,12 @@ def test_listed_rows_are_not_stale():
                     f"{label} row `{command}` `{name}` is bounded now; delete the row "
                     "(and lower NOT_YET_PINNED_SIZE)"
                 )
+    unclassified = {u.row for u in unclassified_params(registry())}
+    for command, name in sorted(UNCLASSIFIED):
+        if (command, name) not in unclassified:
+            problems.append(
+                f"UNCLASSIFIED row `{command}` `{name}` is not an unclassifiable option; delete the row"
+            )
     assert not problems, "\n".join(problems)
 
 
@@ -256,9 +371,9 @@ def test_the_pin_is_not_slack():
 def test_the_lists_do_not_overlap_and_every_reason_is_a_sentence():
     both = sorted(NOT_YET & set(UNBOUNDED))
     assert not both, f"on both NOT_YET and UNBOUNDED, pick one: {both}"
-    for row, reason in UNBOUNDED.items():
+    for row, reason in {**UNBOUNDED, **UNCLASSIFIED}.items():
         assert isinstance(reason, str) and len(reason.split()) >= 3, (
-            f"UNBOUNDED row {row} needs a reason that says why no range makes sense, got {reason!r}"
+            f"UNBOUNDED/UNCLASSIFIED row {row} needs a reason that says why no range makes sense, got {reason!r}"
         )
 
 
@@ -360,3 +475,131 @@ def test_a_count_option_is_a_plain_int_to_click_and_is_excluded_by_the_checker()
     param = next(p for p in cmd.params if p.name == "v")
     assert param.count and getattr(param.type, "min", None) is None  # Typer: not an IntRange
     assert numeric_params({"app verbose": cmd}) == []
+
+
+# --------------------------------------------------------------------------
+# Places a parameter can be declared, and ways Typer hands click a number
+# (fix round 1). Planted on a small app; each runs with the one command
+#   pytest tests/test_cli_numeric_options_declare_a_range.py -k <name>
+# --------------------------------------------------------------------------
+
+import click  # noqa: E402
+
+
+def _depth_one_callback(depth: int = 1): ...
+
+
+def test_planted_int_on_a_nested_groups_own_callback_is_reported():
+    app = _app()
+    sub = typer.Typer()
+    sub.callback()(_depth_one_callback)
+    sub.command("leaf")(lambda: None)
+    sub.command("leaf2")(lambda: None)
+    app.add_typer(sub, name="grp")
+    assert _report(app) == {("app grp", "depth"): False}
+
+
+def test_planted_int_on_add_typer_callback_is_reported():
+    app = _app()
+    sub = typer.Typer()
+    sub.command("leaf")(lambda: None)
+    sub.command("leaf2")(lambda: None)
+    app.add_typer(sub, name="grp", callback=_depth_one_callback)
+    assert _report(app) == {("app grp", "depth"): False}
+
+
+def test_planted_int_two_groups_deep_is_reported():
+    app, mid, inner = _app(), typer.Typer(), typer.Typer()
+    inner.callback()(_depth_one_callback)
+    inner.command("leaf")(lambda: None)
+    inner.command("leaf2")(lambda: None)
+    mid.add_typer(inner, name="inner")
+    mid.command("leaf")(lambda: None)
+    app.add_typer(mid, name="mid")
+    assert _report(app) == {("app mid inner", "depth"): False}
+
+
+def test_planted_hidden_command_with_hidden_envvar_option_is_reported():
+    """Hidden and envvar-fed options are still typed by a user, and hidden commands
+    are still listed by click: both are seen."""
+    app = _app()
+
+    @app.command(hidden=True)
+    def secret(n: int = typer.Option(1, envvar="SOME_NUMBER", hidden=True)): ...
+
+    assert _report(app) == {("app secret", "n"): False}
+
+
+def test_planted_click_command_added_without_typer_is_reported():
+    """A click.Command (and a click.Group holding one) grafted onto the tree, the way
+    a plugin could, is walked: the walk reads the click tree, not Typer's registry."""
+
+    def noop(): ...
+
+    root = typer.main.get_command(_app(noop))  # two commands: a group, not a collapsed command
+    grafted = click.Group(
+        "grafted", commands={"c": click.Command("c", params=[click.Option(["--n"], type=int)])}
+    )
+    root.add_command(grafted)
+    root.add_command(
+        click.Command("bare", params=[click.Option(["--m"], type=click.IntRange(min=0))])
+    )
+    found = {p.row: p.bounded for p in numeric_params(every_command({"app": root}))}
+    assert found == {("app grafted c", "n"): False, ("app bare", "m"): True}
+
+
+def test_planted_mixed_tuple_is_numeric_and_unbounded_but_a_text_tuple_is_not():
+    def mixed(t: tuple[int, str] = (1, "x")): ...
+    def text(t: tuple[str, str] = ("a", "b")): ...
+
+    assert _report(_app(mixed, text)) == {("app mixed", "t"): False}
+
+
+def test_planted_custom_click_type_cannot_be_classified():
+    class Odd(click.ParamType):
+        name = "odd"
+
+        def convert(self, value, param, ctx):
+            return int(value)
+
+    cmd = click.Command("c", params=[click.Option(["--n"], type=Odd())])
+    assert [(u.command, u.name) for u in unclassified_params({"app c": cmd})] == [("app c", "n")]
+
+
+@pytest.mark.parametrize(
+    "how", ["parser=int", "click_type=INT", "click_type=IntRange()", "click_type=IntRange(min=0)"]
+)
+def test_planted_typer_parser_or_click_type_cannot_be_classified(how):
+    """With the locked Typer (0.27.3), ``parser=`` and ``click_type=`` both hand click
+    a FuncParamType: neither the number nor a range given that way is visible, so
+    the shape is refused unless a reviewed row says why (UNCLASSIFIED, empty)."""
+    option = {
+        "parser=int": typer.Option(1, parser=int),
+        "click_type=INT": typer.Option(1, click_type=click.INT),
+        "click_type=IntRange()": typer.Option(1, click_type=click.IntRange()),
+        "click_type=IntRange(min=0)": typer.Option(1, click_type=click.IntRange(min=0)),
+    }[how]
+
+    def command(n: int = option): ...
+
+    commands = commands_of(_app(command))
+    assert [(u.command, u.name) for u in unclassified_params(commands)] == [("app command", "n")]
+
+
+@pytest.mark.control(
+    reason="pins what the locked Typer gives for parser=/click_type=, and that a classified type is not flagged"
+)
+def test_typer_gives_a_func_param_type_for_parser_and_click_type_and_plain_types_are_classified():
+    def command(
+        a: int = typer.Option(1, parser=int),
+        b: int = typer.Option(1, click_type=click.IntRange(min=0)),
+        c: int = 1,
+        d: str = "x",
+        e: bool = False,
+        f: float = typer.Option(0.5, min=0.0),
+    ): ...
+
+    cmd = commands_of(_app(command))["app command"]
+    by_name = {p.name: type(p.type).__name__ for p in cmd.params}
+    assert by_name["a"] == by_name["b"] == "FuncParamType", by_name
+    assert [u.name for u in unclassified_params({"app command": cmd})] == ["a", "b"]
