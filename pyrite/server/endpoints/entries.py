@@ -15,6 +15,7 @@ from ...exceptions import (
     EntryLoadError,
     EntryNotFoundError,
     KBReadOnlyError,
+    KBUnreadableError,
     PyriteError,
     StorageError,
     ValidationError,
@@ -900,8 +901,10 @@ def create_entry(
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
     except ValidationError as e:
         raise refusal_http(e)
-    except AccessDenied:
-        raise  # the central handler's 403 FORBIDDEN
+    except (AccessDenied, KBUnreadableError):
+        # FORBIDDEN 403, and KB_UNREADABLE (#1542): the central handler's
+        # answer, the same on every verb, not this handler's catch-all.
+        raise
     except (PyriteError, ValueError) as e:
         raise HTTPException(
             status_code=400, detail={"code": "CREATE_FAILED", "message": public_text(e, log=logger)}
@@ -1093,6 +1096,8 @@ def delete_entry(
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
     except EntryLoadError as e:
         raise refusal_http(e)  # ENTRY_UNREADABLE 422: nothing deleted (ADR-0042 8a)
+    except KBUnreadableError:
+        raise  # KB_UNREADABLE from the central handler, as on every verb (#1542)
     except (ValidationError, PyriteError, ValueError) as e:
         raise HTTPException(
             status_code=400, detail={"code": "DELETE_FAILED", "message": public_text(e)}

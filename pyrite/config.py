@@ -104,6 +104,10 @@ class KBConfig:
 
     # Internal cache — not serialized
     _schema_cache: Any = field(default=None, init=False, repr=False)
+    #: Set by ``load_kb_yaml`` when this KB's kb.yaml could not be checked or
+    #: read: the fixed text to show for it (``pyrite kb list``, index health).
+    #: Not serialized. One unreadable KB must not stop the others (#1542).
+    unreadable: str | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
         self.path = Path(self.path).expanduser().resolve()
@@ -176,6 +180,38 @@ class KBConfig:
         pyrite_dir.mkdir(exist_ok=True)
         return pyrite_dir / "index.db"
 
+    def check_readable(self) -> None:
+        """Raise ``KBFilesUnreadableError`` (``KB_UNREADABLE``) when this KB's
+        files cannot be read: its folder cannot be listed, whether it has a
+        kb.yaml cannot be told, or its kb.yaml is there and cannot be read.
+        A missing folder (or a path that is not one) is not this answer; its
+        callers already handle that. A kb.yaml that leads outside the KB is
+        not either: the read that needs it refuses it (OUTSIDE_KB_ROOT).
+
+        The gate in front of anything that would read the KB's absence of
+        files as a fact: the reconcile asks it before it may remove a row
+        (#1542), so a KB the process cannot read keeps its index rows.
+        """
+        import os
+
+        from .utils.kb_files import KBFileOutsideRootError, KBFiles, KBFilesUnreadableError
+
+        try:
+            with os.scandir(self.path) as listing:
+                next(listing, None)
+        except (FileNotFoundError, NotADirectoryError):
+            return
+        except OSError as e:
+            raise KBFilesUnreadableError() from e
+        if not self.kb_yaml_present:  # KBPresenceUnknownError when it cannot tell
+            return
+        try:
+            KBFiles(self.path).read_bytes(self.kb_yaml_path)
+        except KBFileOutsideRootError:
+            return
+        except OSError as e:
+            raise KBFilesUnreadableError() from e
+
     def load_kb_yaml(self) -> bool:
         """Load kb.yaml if it exists. Returns True if loaded.
 
@@ -183,24 +219,40 @@ class KBConfig:
         that is a link out of the KB, or has more than one hard link, is not
         the KB's, and is left unloaded with a warning here, where every
         registered KB is loaded at once. ``kb_schema`` refuses it
-        (``OUTSIDE_KB_ROOT``) for the operations that need it."""
-        if self.kb_yaml_present:
-            from .utils.kb_files import KBFileOutsideRootError
+        (``OUTSIDE_KB_ROOT``) for the operations that need it.
 
-            try:
-                data = load_yaml_file(self.kb_yaml_path, kb_root=self.path)
-            except KBFileOutsideRootError:
-                logger.warning(
-                    "KB %s: kb.yaml may lead outside the KB's folder (a symbolic link out "
-                    "of it, or a file with more than one hard link); not read",
-                    self.name,
-                )
+        Every registered KB is loaded here at once, so a KB whose files this
+        process cannot read (``check_readable``: a folder it may not list or
+        search, a kb.yaml it may not open) is marked ``unreadable`` and
+        logged by name; it never stops the load, or one such KB would stop
+        every command on every other KB (#1542). Every operation on this KB
+        that needs its files then stops with ``KBFilesUnreadableError``,
+        whose fixed message ``unreadable`` holds."""
+        from .utils.kb_files import KBFileOutsideRootError, KBFilesUnreadableError
+
+        self.unreadable = None
+        try:
+            self.check_readable()
+            if not self.kb_yaml_present:
                 return False
-            self.schema = data.get("schema")
-            self.types = data.get("types")
-            self.policies = data.get("policies")
-            return True
-        return False
+            data = load_yaml_file(self.kb_yaml_path, kb_root=self.path)
+        except KBFileOutsideRootError:
+            logger.warning(
+                "KB %s: kb.yaml may lead outside the KB's folder (a symbolic link out "
+                "of it, or a file with more than one hard link); not read",
+                self.name,
+            )
+            return False
+        except KBFilesUnreadableError as e:
+            from .exceptions import public_text
+
+            self.unreadable = public_text(e)  # its fixed text (ADR-0052 N3)
+            logger.warning("KB %s is unreadable: %s", self.name, self.unreadable)
+            return False
+        self.schema = data.get("schema")
+        self.types = data.get("types")
+        self.policies = data.get("policies")
+        return True
 
     def validate(self) -> list[str]:
         """Validate KB configuration. Returns list of errors."""

@@ -438,7 +438,8 @@ def load_yaml_file(path: str | Path, *, kb_root: str | Path | None = None) -> di
     only inside that root (``KBFiles.read_bytes``): a link out of it, or a
     file with more than one hard link, raises ``KBFileReadOutsideRootError``
     (``OUTSIDE_KB_ROOT``) and nothing is read. ``FileNotFoundError`` when it
-    is absent. Every reader of a KB's own YAML whose values reach a caller
+    is absent; ``KBFilesUnreadableError`` (``KB_UNREADABLE``) when it is there
+    and the OS refuses the read. Every reader of a KB's own YAML whose values reach a caller
     passes it.
     """
     p = Path(path)
@@ -446,7 +447,14 @@ def load_yaml_file(path: str | Path, *, kb_root: str | Path | None = None) -> di
     if kb_root is not None:
         from .kb_files import KBFiles
 
-        raw = KBFiles(kb_root).read_bytes(p)
+        try:
+            raw = KBFiles(kb_root).read_bytes(p)
+        except OSError as e:
+            # The file is there and the OS will not let it be read (#1542):
+            # the KB's one typed answer, never a raw OSError naming the path.
+            from .kb_files import KBFilesUnreadableError
+
+            raise KBFilesUnreadableError() from e
         if raw is None:
             raise FileNotFoundError(str(p))
         text = raw.decode("utf-8")

@@ -98,6 +98,10 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         {"KBConfig.kb_yaml_present": 1},
         "kb_yaml_present, then KBSchema.from_yaml (KBFiles)",
     ),
+    ("pyrite/config.py", "KBConfig.check_readable"): (
+        {"KBConfig.kb_yaml_present": 1, "KBFiles.read_bytes": 1, "os.scandir": 1},
+        "the KB's folder listed (operator config); kb.yaml by kb_yaml_present and KBFiles.read_bytes (#1542)",
+    ),
     ("pyrite/config.py", "KBConfig.kb_yaml_present"): (
         {"KBFiles.present": 1},
         "KBFiles.present for kb.yaml",
@@ -167,14 +171,8 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         "kb_yaml_present",
     ),
     ("pyrite/services/qa_service.py", "QAService._kb_folder_problem"): (
-        {
-            "KBFiles.present": 1,
-            "KBFiles.read_bytes": 1,
-            "os.scandir": 1,
-            "path.exists": 1,
-            "path.is_dir": 1,
-        },
-        "the KB's folder itself: the operator's registry entry, not a file in it (exists, is_dir, scandir); kb.yaml by KBFiles.present and read_bytes",
+        {"path.exists": 1, "path.is_dir": 1},
+        "the KB's folder itself: the operator's registry entry, not a file in it (exists, is_dir); the rest by KBConfig.check_readable (#1542)",
     ),
     ("pyrite/services/review_service.py", "_read_entry_file"): (
         {"KBFiles.read_bytes": 1},
@@ -201,8 +199,8 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         "kb_yaml_present",
     ),
     ("pyrite/storage/index.py", "IndexManager.check_health"): (
-        {"KBConfig.kb_yaml_present": 2, "KBFiles.present": 1, "path.exists": 4},
-        "KBFiles.present of an indexed path; kb_yaml_present; the KB's folder (operator config)",
+        {"KBFiles.present": 1, "path.exists": 4},
+        "KBFiles.present of an indexed path; the KB's folder (operator config); kb.yaml only through _load_schemas (#1542)",
     ),
     ("pyrite/storage/index.py", "IndexManager.index_with_attribution"): (
         {"KBFiles.present": 1},
@@ -713,7 +711,7 @@ LOCAL_ONLY: dict[Site, Entry] = {
 }
 
 SIZES = {
-    "DECIDED_INSIDE": 53,
+    "DECIDED_INSIDE": 54,
     "SAME_ANSWER": 19,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,
@@ -1203,9 +1201,9 @@ MUTATIONS = [
         "folder.mkdir(parents=True, exist_ok=True)",
     ),
     (
-        "pyrite/services/qa_service.py",
-        "KBFiles(path).present(kb_yaml)",
-        "kb_yaml.exists()",
+        "pyrite/config.py",
+        "KBFiles(self.path).read_bytes(self.kb_yaml_path)",
+        "self.kb_yaml_path.read_bytes()",
     ),
 ]
 
