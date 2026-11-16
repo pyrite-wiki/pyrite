@@ -118,6 +118,9 @@ def _pins(path):
     return out
 
 
+@pytest.mark.control(
+    reason="dev's publish.yml has no artifact steps; seen red against this branch's old v4 pins"
+)
 def test_publish_pins_each_shared_action_where_the_other_workflows_do():
     """Dependabot bumps the workflows it can see together; a release workflow
     left on an older SHA of an action the rest of the repo moved is the one
