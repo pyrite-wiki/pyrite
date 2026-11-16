@@ -1018,6 +1018,7 @@ WRITE_TOOLS = {
                             },
                         },
                         "required": ["target"],
+                        "additionalProperties": False,
                     },
                     "description": "Links to other entries. Each link is {target, relation?}. Added after the task is created; a link whose target does not exist fails individually without rejecting the task.",
                 },

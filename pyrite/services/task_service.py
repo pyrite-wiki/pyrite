@@ -90,15 +90,11 @@ class TaskService:
 
         if fields:
             fields = dict(fields)
-            if not due_date and "due_date" in fields:
-                due_date = fields.pop("due_date")
-            if links is None and "links" in fields:
-                links = fields.pop("links")
 
-        if due_date:
+        if due_date is not None and due_date != "":
             from ..schema.validators import validate_date
 
-            if not validate_date(due_date):
+            if not isinstance(due_date, str) or not validate_date(due_date):
                 message = f"Invalid due_date '{due_date}': must be YYYY-MM-DD"
                 raise ValidationError(
                     message,
@@ -113,45 +109,38 @@ class TaskService:
                 )
 
         parsed_links = []
-        if links:
+        if links is not None:
+            if not isinstance(links, list):
+                raise ValidationError(
+                    "links must be a list of {target, relation} objects",
+                    errors=[{"field": "links", "rule": "type", "expected": "list"}],
+                )
             from .kb_service import check_link_spec
 
-            for link_item in links:
-                if isinstance(link_item, dict):
-                    t = link_item.get("target")
-                    rel = link_item.get("relation")
-                    nt = link_item.get("note")
-                    tkb = link_item.get("target_kb")
-                    target, relation, note = check_link_spec(t, rel, note=nt, target_kb=tkb)
-                    parsed_links.append(
-                        {"target": target, "relation": relation, "note": note, "target_kb": tkb}
+            allowed_keys = {"target", "relation"}
+            for idx, link_item in enumerate(links):
+                if not isinstance(link_item, dict):
+                    raise ValidationError(
+                        f"links[{idx}] must be a dictionary, got {type(link_item).__name__}",
+                        errors=[{"field": f"links[{idx}]", "rule": "type", "expected": "dict"}],
                     )
-                elif isinstance(link_item, str):
-                    parts = link_item.split(":")
-                    if len(parts) > 2:
-                        message = f"--link takes target or target:relation; got '{link_item}', which has {len(parts)} parts."
-                        raise ValidationError(
-                            message,
-                            errors=[{"field": "links", "rule": "format", "message": message}],
-                        )
-                    t = parts[0].strip()
-                    rel = parts[1].strip() if len(parts) == 2 else None
-                    target, relation, note = check_link_spec(t, rel)
-                    parsed_links.append(
-                        {"target": target, "relation": relation, "note": note, "target_kb": None}
+                extra = set(link_item.keys()) - allowed_keys
+                if extra:
+                    invalid_key = sorted(extra)[0]
+                    raise ValidationError(
+                        f"links[{idx}] has undeclared key '{invalid_key}': only 'target' and 'relation' are accepted",
+                        errors=[
+                            {
+                                "field": invalid_key,
+                                "rule": "undeclared",
+                                "message": f"undeclared key '{invalid_key}'",
+                            }
+                        ],
                     )
-                elif isinstance(link_item, (tuple, list)):
-                    t = link_item[0]
-                    rel = link_item[1] if len(link_item) > 1 else None
-                    target, relation, note = check_link_spec(t, rel)
-                    parsed_links.append(
-                        {"target": target, "relation": relation, "note": note, "target_kb": None}
-                    )
-                else:
-                    target, relation, note = check_link_spec(link_item)
-                    parsed_links.append(
-                        {"target": target, "relation": relation, "note": note, "target_kb": None}
-                    )
+                t = link_item.get("target")
+                rel = link_item.get("relation")
+                target, relation, _ = check_link_spec(t, rel)
+                parsed_links.append({"target": target, "relation": relation})
 
         entry_id = generate_entry_id(title)
         kwargs: dict[str, Any] = {"status": "open", "priority": priority}
@@ -182,24 +171,22 @@ class TaskService:
         for l in parsed_links:
             target = l["target"]
             relation = l["relation"]
-            note = l.get("note") or ""
-            target_kb = l.get("target_kb")
             try:
                 self.kb_svc.add_link(
                     entry.id,
                     kb_name,
                     target,
                     relation=relation,
-                    target_kb=target_kb,
-                    note=note,
                 )
                 linked.append({"target": target, "relation": relation})
             except (PyriteError, ValueError) as e:
+                from ..utils.errors import public_text
+
                 failed_links.append(
                     {
                         "target": target,
                         "relation": relation,
-                        "error": str(e),
+                        "error": public_text(e),
                     }
                 )
 
@@ -214,10 +201,8 @@ class TaskService:
             "due_date": getattr(entry, "due_date", ""),
             "kb_name": kb_name,
         }
-        if linked:
-            result["links"] = linked
+        if links is not None:
             result["linked"] = linked
-        if failed_links:
             result["failed_links"] = failed_links
         if written.warnings:
             result["warnings"] = written.warnings

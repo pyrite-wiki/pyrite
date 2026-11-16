@@ -122,7 +122,8 @@ class TestCreateTask:
         overdue = svc.find_overdue(as_of="2026-11-25", kb_name="test-tasks")
         assert any(t["id"] == result["entry_id"] for t in overdue)
 
-    def test_create_task_invalid_due_date_raises_validation_error(self, task_env):
+    @pytest.mark.parametrize("bad_due", ["2026-02-30", "not-a-date", False, 0])
+    def test_create_task_invalid_due_date_raises_validation_error(self, task_env, bad_due):
         from pyrite.exceptions import ValidationError
 
         svc = task_env["svc"]
@@ -130,7 +131,7 @@ class TestCreateTask:
             svc.create_task(
                 kb_name="test-tasks",
                 title="Bad date task",
-                due_date="2026-02-30",
+                due_date=bad_due,
             )
         assert exc_info.value.error_code == "VALIDATION_FAILED"
         assert "due_date" in str(exc_info.value).lower()
@@ -146,33 +147,65 @@ class TestCreateTask:
             links=[{"target": target_id, "relation": "blocks"}],
         )
         assert result["created"] is True
-        assert result["links"] == [{"target": target_id, "relation": "blocks"}]
+        assert result["linked"] == [{"target": target_id, "relation": "blocks"}]
+        assert result["failed_links"] == []
+        assert "links" not in result
 
         # Verify kb_get returns links
         entry = svc.kb_svc.get_entry(result["entry_id"], "test-tasks", readable_kbs=None)
         assert entry is not None
-        assert any(
-            l.get("target_id") == target_id or l.get("target") == target_id
-            for l in entry.get("links", [])
-        )
+        assert any(l["target_id"] == target_id for l in entry.get("links", []))
 
         # Verify target entry shows the task in backlinks
         backlinks = svc.db.get_backlinks(target_id, "test-tasks", readable_kbs=None)
         assert any(b["id"] == result["entry_id"] for b in backlinks)
 
-    def test_create_task_invalid_link_spec_raises_validation_error(self, task_env):
+    @pytest.mark.parametrize(
+        ("bad_links", "expected_err"),
+        [
+            ([{"target": ""}], "target"),
+            ([{"target": "t", "note": "extra"}], "note"),
+            ([{"target": "t", "target_kb": "extra"}], "target_kb"),
+            (["target:blocks"], "dictionary"),
+        ],
+    )
+    def test_create_task_invalid_link_spec_raises_validation_error(
+        self, task_env, bad_links, expected_err
+    ):
         from pyrite.exceptions import ValidationError
 
         svc = task_env["svc"]
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError) as exc_info:
             svc.create_task(
                 kb_name="test-tasks",
                 title="Bad link task",
-                links=[{"target": ""}],
+                links=bad_links,
             )
+        assert exc_info.value.error_code == "VALIDATION_FAILED"
+        assert expected_err in str(exc_info.value).lower()
         # Entry should not have been created
         tasks = svc.list_tasks(kb_name="test-tasks")
         assert not any(t["title"] == "Bad link task" for t in tasks)
+
+    def test_create_task_dangling_link_populates_failed_links_and_keeps_task(self, task_env):
+        svc = task_env["svc"]
+        result = svc.create_task(
+            kb_name="test-tasks",
+            title="Dangling link task",
+            links=[{"target": "missing-target", "relation": "blocks"}],
+        )
+        assert result["created"] is True
+        assert result["linked"] == []
+        assert len(result["failed_links"]) == 1
+        failed = result["failed_links"][0]
+        assert failed["target"] == "missing-target"
+        assert failed["relation"] == "blocks"
+        assert "Entry not found" in failed["error"]
+        assert "links" not in result
+
+        # Task was created and exists
+        task = svc.get_task(result["entry_id"], "test-tasks", readable_kbs=None)
+        assert task is not None
 
 
 class TestUpdateTask:
