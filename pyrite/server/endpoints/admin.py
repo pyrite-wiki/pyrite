@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import ValidationError as PydanticValidationError
 
+from ...config import validate_kb_default_role
 from ...exceptions import (
     ConfigError,
     KBNotFoundError,
@@ -472,8 +473,12 @@ def update_kb_default_role(
 ):
     """Update a KB's default access role. Requires admin."""
     _resolve_named_kb(request, policy, name)
-    if role is not None and role not in ("none", "read", "write"):
-        raise HTTPException(status_code=400, detail="role must be 'none', 'read', 'write', or null")
+    try:
+        validate_kb_default_role(role, f"KB '{name}'")
+    except ConfigError:
+        raise HTTPException(
+            status_code=400, detail="role must be 'none', 'read', 'write', or null"
+        ) from None
     try:
         registry.update_kb(name, default_role=role)
     except KBNotFoundError as e:

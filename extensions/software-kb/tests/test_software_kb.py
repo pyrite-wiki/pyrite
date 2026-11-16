@@ -812,11 +812,17 @@ class TestValidators:
         warnings = [e for e in errors if e.get("rule") == "path_not_found"]
         assert warnings == []
 
+    @pytest.mark.control(
+        reason="the local operator's path check is unchanged; the test now binds the local process"
+    )
     def test_component_path_not_found_warning(self, tmp_path):
+        from pyrite.services.acting import local_process
+
         context = {"kb_path": str(tmp_path)}
-        errors = validate_software_kb(
-            "component", {"kind": "module", "path": "nonexistent/module/"}, context
-        )
+        with local_process():  # the check is the local operator's (ADR-0052 N4)
+            errors = validate_software_kb(
+                "component", {"kind": "module", "path": "nonexistent/module/"}, context
+            )
         warnings = [e for e in errors if e.get("rule") == "path_not_found"]
         assert len(warnings) == 1
         assert warnings[0]["severity"] == "warning"

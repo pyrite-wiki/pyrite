@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from pyrite.config import KBConfig, PyriteConfig, Settings
+from pyrite.services.acting import local_process
 from pyrite.exceptions import ValidationError
 from pyrite.server.mcp_server import PyriteMCPServer
 from pyrite.services.kb_service import KBService
@@ -61,11 +62,13 @@ def test_bulk_create_refuses_a_type_that_is_not_a_plain_name(env, entry_type):
     assert _files(config) == []
 
 
+@pytest.mark.control(reason="unchanged for the local process, which the test now binds")
 def test_a_file_import_refuses_a_type_that_is_not_a_plain_name(env, tmp_path):
     config, svc = env
     source = tmp_path / "upload.md"
     source.write_text("---\ntitle: Imported\ntype: two words\n---\nbody\n")
-    with pytest.raises(ValidationError, match="type"):
+    # add_entry_from_file is the CLI's (the local process) only.
+    with local_process(), pytest.raises(ValidationError, match="type"):
         svc.add_entry_from_file("kb", source)
     assert _files(config) == []
 

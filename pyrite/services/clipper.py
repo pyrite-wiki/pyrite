@@ -112,6 +112,10 @@ class ClipperService:
                 # Only codings `_read_capped` decodes within the cap.
                 headers={"User-Agent": "Pyrite-Clipper/1.0", "Accept-Encoding": "gzip, deflate"},
                 event_hooks={"request": [_reject_blocked_request]},
+                # The URL is the caller's: nothing of the server account's
+                # environment applies to it (no proxy variable, which can
+                # carry a proxy credential; no netrc). ADR-0052 N2.
+                trust_env=False,
             ) as client:
                 async with client.stream("GET", url) as response:
                     response.raise_for_status()

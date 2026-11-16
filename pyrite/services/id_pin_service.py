@@ -34,7 +34,7 @@ from typing import Any
 
 from .. import config as pyrite_config
 from ..config import KBConfig, PyriteConfig
-from ..exceptions import PyriteError, ValidationError, outside_text
+from ..exceptions import PyriteError, ValidationError, os_reason, outside_text
 from ..models.core_types import explicit_entry_id, id_text, read_entry_id
 from ..storage.repository import KBRepository
 from ..utils.atomic_write import FileChanged, HardLinked
@@ -179,7 +179,7 @@ def write_refusal(root: Path, path: Path) -> str | None:
                 where = current.relative_to(root).as_posix()
                 return f"inside a symlinked directory ({where}); pin does not write through links"
     except OSError as e:
-        return f"cannot be inspected: {e.strerror or type(e).__name__}"
+        return f"cannot be inspected: {os_reason(e)}"
     if st is None or not stat.S_ISREG(st.st_mode):
         return "not a regular file"
     if st.st_nlink > 1:
@@ -224,9 +224,7 @@ def _write_pin(root: Path, path: Path, planned_original: bytes, new_text: str) -
     try:
         checked = os.lstat(path.parent)
     except OSError as e:
-        raise PinRefusedError(
-            f"its folder cannot be inspected: {e.strerror or type(e).__name__}"
-        ) from e
+        raise PinRefusedError(f"its folder cannot be inspected: {os_reason(e)}") from e
     refusal = write_refusal(root, path)
     if refusal:
         raise PinRefusedError(refusal)
@@ -261,7 +259,7 @@ def _write_pin(root: Path, path: Path, planned_original: bytes, new_text: str) -
     except LockDirError:
         raise
     except OSError as e:
-        raise PinRefusedError(f"could not be written: {e.strerror or type(e).__name__}") from e
+        raise PinRefusedError(f"could not be written: {os_reason(e)}") from e
 
 
 def _write_pin_locked(root: Path, path: Path, planned_original: bytes, new_text: str) -> None:
@@ -345,7 +343,7 @@ def scan(kb_config: KBConfig) -> IdScan:
         holders[current].append({"path": rel, "explicit": explicit})
 
     # __collection.yaml files hold ids too (``collection-<folder>``)
-    for path in sorted(repo.path.rglob("__collection.yaml")):
+    for path in sorted(repo._named("__collection.yaml")):
         current = repo.id_of_file(path)
         if current and not any(part.startswith(".") for part in path.parts):
             holders[current].append({"path": _rel(root, path), "explicit": True})

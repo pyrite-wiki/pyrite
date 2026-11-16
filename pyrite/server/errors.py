@@ -41,6 +41,7 @@ from ..exceptions import (
     PyriteError,
     StorageError,
     ValidationError,
+    public_attribute,
     public_text,
     refusal_fields,
 )
@@ -182,7 +183,7 @@ def error_response(exc: PyriteError) -> tuple[int, dict]:
     # refusal, where nothing else logs it (#848).
     message = public_text(exc, already_logged=status_code >= 500, log=logger)
     detail: dict = {"code": code, "message": message, "retryable": _retryable(exc)}
-    suggestion = getattr(exc, "suggestion", None)
+    suggestion = public_attribute(exc, "suggestion")
     if suggestion:
         detail["hint"] = suggestion
     # A refusal's public extras (AMBIGUOUS's candidate_kbs, #528), mapped

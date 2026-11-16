@@ -37,6 +37,7 @@ from ..exceptions import (
     QueryTooLongError,
     StorageError,
     ValidationError,
+    public_attribute,
     public_text,
     refusal_fields,
 )
@@ -50,7 +51,14 @@ from ..plugins.identity import (
 )
 from ..schema import filter_updated_since, parse_since
 from ..services.access_policy import ROLES, Principal, named_kb
-from ..services.acting import OPERATOR, acting, acting_as, acting_for, local_process
+from ..services.acting import (
+    OPERATOR,
+    acting,
+    acting_as,
+    acting_for,
+    local_process,
+    read_grant,
+)
 from ..services.body_bounds import (
     MARKER_KEYS,
     BodyBounds,
@@ -303,14 +311,14 @@ def _refusal(exc: PyriteError, *, already_logged: bool = False) -> dict:
     err = _error(
         code,
         message,
-        suggestion=getattr(exc, "suggestion", None),
+        suggestion=public_attribute(exc, "suggestion"),
         retryable=retryable,
         legacy_error_code=legacy_code,
     )
     # A refusal's public extras (AMBIGUOUS's candidate_kbs, #528), mapped
     # once for every class from REFUSAL_FIELDS in pyrite.exceptions.
     err.update(refusal_fields(exc))
-    declared = getattr(exc, "declared_types", None)
+    declared = public_attribute(exc, "declared_types")
     if declared is not None:
         err["declared_types"] = declared
         err.setdefault(
@@ -880,6 +888,7 @@ class PyriteMCPServer:
             # but `results` goes into the payload as it is.
             response = self.search_svc.search_response(
                 query=query,
+                caller_wrote_query=True,  # the caller's own words, as written
                 kb_name=args.get("kb_name"),
                 kb_names=None if args.get("kb_name") else readable_kbs,
                 entry_type=args.get("entry_type"),
@@ -2230,8 +2239,16 @@ class PyriteMCPServer:
 
         if action == "discover":
             from ..config import auto_discover_kbs
+            from ..services.acting import is_local_process
 
-            discovered = auto_discover_kbs()
+            # The local operator searches the working directory; a network
+            # caller searches only the configured kb_roots (where it may
+            # register a KB), never the server's own folders (ADR-0052 N1).
+            if is_local_process():
+                discovered = auto_discover_kbs()
+            else:
+                roots = list(self.config.settings.kb_roots)
+                discovered = auto_discover_kbs(roots) if roots else []
             return {
                 "discovered": len(discovered),
                 "kbs": [{"name": kb.name, "path": str(kb.path)} for kb in discovered],
@@ -3337,8 +3354,20 @@ class PyriteMCPServer:
             if principal is not None
             else contextlib.nullcontext()
         )
+        # The KBs the caller reads, for text that quotes a KB's bytes (D4,
+        # `acting.read_grant`); with no principal the caller's own binding
+        # stands (nothing, so KB text is withheld, for an embedded caller).
+        # An anonymous principal reads no text quoted from a KB file, whatever
+        # its readable set (maintainer decision on D4, 2026-11-16).
+        grant_ctx = (
+            read_grant(None)
+            if principal is not None and principal.kind == "anonymous"
+            else read_grant(lambda kb: readable_kbs is None or kb in readable_kbs)
+            if principal is not None
+            else contextlib.nullcontext()
+        )
         # The call's own session is already open (``_dispatch_tool``).
-        with binding(target), acting_ctx, local_ctx:
+        with binding(target), acting_ctx, local_ctx, grant_ctx:
             if spec and kb_name_named:
                 # Verifies each id in the `kb_name` the caller named (the
                 # checks above ran on it); raises the refusal.

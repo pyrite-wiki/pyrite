@@ -139,7 +139,12 @@ class URLChecker:
         import urllib.request
 
         _check_url_safe(req.full_url)
-        opener = urllib.request.build_opener(_PublicDestinationRedirects)
+        # The URL is a caller's: an empty ProxyHandler replaces the default
+        # one that reads the server account's proxy variables (which can
+        # carry a proxy credential). ADR-0052 N2.
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), _PublicDestinationRedirects
+        )
         return opener.open(req, timeout=self.timeout)
 
     def check_url(self, url: str) -> URLCheckResult:

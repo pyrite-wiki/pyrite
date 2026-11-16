@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -50,6 +51,29 @@ class KBType(StrEnum):
 # set, reaching the canonical files only by review. Set by the operator in the
 # config file only (ADR-0039 decision 1) -- never in kb.yaml, never by a surface.
 LANDINGS = ("canonical", "review")
+
+#: The values a KB's ``default_role`` may hold. None (absent) is the instance
+#: default; "none" closes the KB to every caller without a grant.
+KB_DEFAULT_ROLES = ("none", "read", "write")
+
+
+def validate_kb_default_role(value: Any, where: str) -> str | None:
+    """The one check of a KB's ``default_role``, for every source.
+
+    The config file, the file the environment names, ``KBConfig`` built in
+    code, the index's registry row, the registry service and the REST admin
+    endpoint all ask here. Returns the value (None for absent) or raises
+    ``ConfigError`` naming `where`. Exact spellings only: the role check
+    hands a KB's default_role to every user with global access as their
+    role (``access_policy.kb_role`` step 3), so a value outside these is
+    never carried through, and no case or blank is guessed at.
+    """
+    if value is None or (isinstance(value, str) and value in KB_DEFAULT_ROLES):
+        return value
+    raise ConfigError(
+        f"{where}: default_role must be 'none', 'read' or 'write' (or absent for the "
+        f"instance default), not {value!r}"
+    )
 
 
 @dataclass
@@ -87,6 +111,7 @@ class KBConfig:
         if hasattr(self.kb_type, "value"):
             self.kb_type = self.kb_type.value
         self._schema_cache = None
+        self.default_role = validate_kb_default_role(self.default_role, f"KB '{self.name}'")
         # A misspelt landing must not quietly mean canonical: it fails at load.
         if self.landing not in LANDINGS:
             raise ConfigError(
@@ -119,14 +144,23 @@ class KBConfig:
         return self.path / "kb.yaml"
 
     @property
+    def kb_yaml_present(self) -> bool:
+        """Whether this KB has a kb.yaml, as the KB answers it
+        (``KBFiles.present``): a kb.yaml that is a link out of the KB is there
+        whatever it points at, and the read refuses it (``OUTSIDE_KB_ROOT``),
+        so no answer depends on whether a file outside the KB exists."""
+        from .utils.kb_files import KBFiles
+
+        return KBFiles(self.path).present(self.kb_yaml_path)
+
+    @property
     def kb_schema(self) -> "Any":
         """Lazily load and cache the KBSchema object for this KB."""
         if self._schema_cache is None:
             from .schema import KBSchema
 
-            schema_path = self.path / "kb.yaml"
-            if schema_path.exists():
-                self._schema_cache = KBSchema.from_yaml(schema_path)
+            if self.kb_yaml_present:
+                self._schema_cache = KBSchema.from_yaml(self.kb_yaml_path)
             else:
                 self._schema_cache = KBSchema()
         return self._schema_cache
@@ -150,7 +184,7 @@ class KBConfig:
         the KB's, and is left unloaded with a warning here, where every
         registered KB is loaded at once. ``kb_schema`` refuses it
         (``OUTSIDE_KB_ROOT``) for the operations that need it."""
-        if self.kb_yaml_path.exists():
+        if self.kb_yaml_present:
             from .utils.kb_files import KBFileOutsideRootError
 
             try:
@@ -501,6 +535,268 @@ def normalize_git_allowed_hosts(
     return hosts
 
 
+@dataclass(frozen=True)
+class GitCredential:
+    """One credential the operator grants network git (``git_credentials``).
+
+    It is offered to a network caller's git command only (the local CLI uses
+    the operator's own git setup and never reads these), for a remote on
+    `host` (``host`` or ``host:port``, as in ``git_allowed_hosts``) over the
+    entry's own transport (https for a token, ssh for a key), and, when `kb`
+    is set, only for that KB.
+
+    Scope (D-U1): an entry serves remotes already configured in a registered
+    KB's repository (the push of a KB, the sync of a subscribed clone). A URL
+    a caller names (subscribe, fork, export to a URL) gets the entry only
+    when one of `url_prefixes` covers it.
+
+    Exactly one source: `token_env` (the name of an environment variable
+    holding a token), `token_file` (a file holding one), or `ssh_key` (a
+    private key file, with `known_hosts` naming the host keys to trust; the
+    key must have no passphrase). A credential never allows a host: the host
+    must also be in ``git_allowed_hosts``.
+    """
+
+    host: str
+    kb: str | None = None
+    token_env: str | None = None
+    token_file: Path | None = None
+    ssh_key: Path | None = None
+    known_hosts: Path | None = None
+    username: str = "oauth2"
+    #: Repository URLs a caller may name that this entry still serves: each a
+    #: URL on `host` over the entry's transport, matched by whole path
+    #: segments (``https://host/team/`` covers ``https://host/team/r.git``,
+    #: never ``https://host/team-x/r`` or ``https://host/team``).
+    url_prefixes: tuple[str, ...] = ()
+
+    @property
+    def transport(self) -> str:
+        """``ssh`` for a key, ``https`` for a token."""
+        return "ssh" if self.ssh_key is not None else "https"
+
+    def token(self) -> str | None:
+        """The token, read when used (never kept), or None for an ssh key or a
+        source that holds nothing."""
+        if self.token_env:
+            value = os.environ.get(self.token_env, "").strip()
+            return value or None
+        if self.token_file:
+            try:
+                value = Path(self.token_file).read_text(encoding="utf-8").strip()
+            except OSError:
+                logger.warning("git_credentials: cannot read the token_file for %s", self.host)
+                return None
+            return value or None
+        return None
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"host": self.host}
+        if self.kb:
+            out["kb"] = self.kb
+        for name in ("token_env", "token_file", "ssh_key", "known_hosts"):
+            value = getattr(self, name)
+            if value:
+                out[name] = str(value)
+        if self.username != "oauth2":
+            out["username"] = self.username
+        if self.url_prefixes:
+            out["url_prefixes"] = list(self.url_prefixes)
+        return out
+
+
+_GIT_USERNAME_RE = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def _credential_path(item: dict, key: str, where: str) -> Path | None:
+    raw = item.get(key)
+    if raw is None:
+        return None
+    resolved = Path(str(raw)).expanduser()
+    if not resolved.is_absolute():
+        raise ValueError(f"{where}.{key} must be an absolute path")
+    return resolved
+
+
+_ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _url_prefix_host(prefix: str, transport: str) -> str | None:
+    """The ``host``/``host:port`` a `git_credentials` URL prefix names over
+    `transport`, or None when it is not a plain URL of that transport."""
+    if any(c.isspace() or ord(c) < 32 or c in "\\?#" for c in prefix):
+        return None
+    if transport == "https" or prefix.startswith("ssh://"):
+        try:
+            parts = urlsplit(prefix)
+            port = parts.port
+        except ValueError:
+            return None
+        if parts.scheme != transport or not parts.hostname or parts.password is not None:
+            return None
+        if transport == "https" and parts.username is not None:
+            return None
+        if port in (None, 22) and transport == "ssh":
+            port = None
+        host = parts.hostname.lower()
+        return host if port is None else f"{host}:{port}"
+    login, sep, _path = prefix.partition(":")
+    if not sep or "/" in login or "[" in login:
+        return None
+    host = login.rpartition("@")[2].lower()
+    return host or None
+
+
+def _url_prefixes(item: dict, host: str, transport: str, where: str) -> tuple[str, ...]:
+    raw = item.get("url_prefixes")
+    if raw is None:
+        return ()
+    if not isinstance(raw, (list, tuple)) or not all(isinstance(p, str) for p in raw):
+        raise ValueError(f"{where}.url_prefixes must be a list of repository URLs")
+    for prefix in raw:
+        if _url_prefix_host(prefix, transport) != host:
+            raise ValueError(
+                f"{where}.url_prefixes: {prefix!r} is not an {transport} URL on {host} "
+                "(an entry's prefixes name its own host and transport)"
+            )
+        path = urlsplit(prefix).path if "://" in prefix else prefix.partition(":")[2]
+        if "%" in path:
+            raise ValueError(
+                f"{where}.url_prefixes: {prefix!r} has a percent-encoded character ('%') "
+                "in its path; write the path plainly (a server may decode it into "
+                "another path)"
+            )
+        segments = [s for s in path.split("/") if s]
+        if any(s in (".", "..") for s in segments):
+            raise ValueError(f"{where}.url_prefixes: {prefix!r} has a '.' or '..' dot segment")
+        if not segments:
+            raise ValueError(
+                f"{where}.url_prefixes: {prefix!r} names no repository path, so it would "
+                "cover nothing. Name a path (for example https://host/team/), or omit "
+                "url_prefixes so the entry serves only remotes configured in a KB's repository"
+            )
+    return tuple(raw)
+
+
+def normalize_git_credentials(
+    value: Any, source: str = "settings.git_credentials"
+) -> list[GitCredential]:
+    """The validated ``git_credentials``: a list of mappings (config.yaml) or
+    `GitCredential` objects. A mistake is one error at load naming the entry,
+    never a credential that silently matches nothing."""
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"{source} must be a list of entries, got {_kind_of(value)}")
+    out: list[GitCredential] = []
+    for i, item in enumerate(value):
+        where = f"{source}[{i}]"
+        if isinstance(item, GitCredential):
+            item = item.to_dict()
+        if not isinstance(item, dict):
+            raise ValueError(f"{where} must be a mapping, got {_kind_of(item)}")
+        unknown = set(item) - {
+            "host",
+            "kb",
+            "token_env",
+            "token_file",
+            "ssh_key",
+            "known_hosts",
+            "username",
+            "url_prefixes",
+        }
+        if unknown:
+            raise ValueError(f"{where} has unknown keys: {', '.join(sorted(unknown))}")
+        [host] = normalize_git_allowed_hosts([item.get("host")], f"{where}.host") or [None]
+        sources = [k for k in ("token_env", "token_file", "ssh_key") if item.get(k)]
+        if len(sources) != 1:
+            raise ValueError(f"{where} needs exactly one of token_env, token_file, ssh_key")
+        kb = item.get("kb")
+        if kb is not None and (not isinstance(kb, str) or not kb.strip()):
+            raise ValueError(f"{where}.kb must be a KB name")
+        token_env = item.get("token_env")
+        if token_env is not None and not (
+            isinstance(token_env, str) and _ENV_NAME_RE.fullmatch(token_env)
+        ):
+            raise ValueError(f"{where}.token_env must be an environment variable name")
+        username = item.get("username", "oauth2")
+        if not isinstance(username, str) or not _GIT_USERNAME_RE.fullmatch(username):
+            raise ValueError(f"{where}.username must be a plain user name")
+
+        ssh_key, known_hosts = (
+            _credential_path(item, "ssh_key", where),
+            _credential_path(item, "known_hosts", where),
+        )
+        if ssh_key is not None and known_hosts is None:
+            raise ValueError(
+                f"{where}: an ssh_key needs known_hosts, the file of host keys to trust"
+            )
+        if ssh_key is None and known_hosts is not None:
+            raise ValueError(f"{where}: known_hosts is only for an ssh_key")
+        out.append(
+            GitCredential(
+                host=host,
+                kb=kb.strip() if kb else None,
+                token_env=token_env,
+                token_file=_credential_path(item, "token_file", where),
+                ssh_key=ssh_key,
+                known_hosts=known_hosts,
+                username=username,
+                url_prefixes=_url_prefixes(
+                    item, host, "ssh" if ssh_key is not None else "https", where
+                ),
+            )
+        )
+    return out
+
+
+def normalize_git_proxy(value: Any, source: str = "settings.git_proxy") -> str | None:
+    """``git_proxy``: an ``http://`` or ``https://`` proxy URL (a grant: it
+    may carry the proxy's own credential), or None for no proxy."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{source} must be a proxy URL, got {_kind_of(value)}")
+    text = value.strip()
+    try:
+        parts = urlsplit(text)
+        parts.port  # noqa: B018 (a bad port raises here)
+    except ValueError:
+        parts = None
+    if (
+        parts is None
+        or parts.scheme not in ("http", "https")
+        or not parts.hostname
+        or parts.path not in ("", "/")
+        or parts.query
+        or parts.fragment
+        or any(c.isspace() for c in text)
+    ):
+        raise ValueError(f"{source} must be an http:// or https:// proxy URL (host[:port])")
+    return text
+
+
+@dataclass(frozen=True)
+class GitIdentity:
+    """``git_identity``: the name and email Pyrite's commits for a network
+    caller are made as (worktree commits, exports, merges)."""
+
+    name: str
+    email: str
+
+
+def normalize_git_identity(value: Any, source: str = "settings.git_identity") -> GitIdentity | None:
+    if value is None or isinstance(value, GitIdentity):
+        return value
+    if not isinstance(value, dict) or set(value) != {"name", "email"}:
+        raise ValueError(f"{source} must be a mapping with name and email")
+    name, email = value["name"], value["email"]
+    for key, text in (("name", name), ("email", email)):
+        if not isinstance(text, str) or not text.strip() or any(ord(c) < 32 for c in text):
+            raise ValueError(f"{source}.{key} must be one line of text")
+    return GitIdentity(name=name.strip(), email=email.strip())
+
+
 @dataclass
 class Settings:
     """Global application settings."""
@@ -537,6 +833,19 @@ class Settings:
     # only; an entry is a hostname, or host:port for a non-default port.
     # Env: PYRITE_GIT_ALLOWED_HOSTS (comma-separated).
     git_allowed_hosts: list[str] = field(default_factory=lambda: list(DEFAULT_GIT_ALLOWED_HOSTS))
+    # Credentials the operator grants network git, by host (and optionally
+    # KB): the only credential a git command run for a network caller gets
+    # besides that caller's own GitHub token. Never read from the account's
+    # helpers, agent, netrc or global config (ADR-0052 N2). See GitCredential.
+    git_credentials: list[GitCredential] = field(default_factory=list)
+    # The identity commits made for a network caller carry. Unset: the
+    # account's global user.name/user.email, until 0.27.0 removes that
+    # fallback.
+    git_identity: GitIdentity | None = None
+    # The proxy network git and the GitHub API calls made for a network caller
+    # go through (an operator grant). Unset: no proxy; the account's proxy
+    # variables never apply to a network caller. Env: PYRITE_GIT_PROXY.
+    git_proxy: str | None = None
     api_key: str = ""  # Empty = auth disabled (backwards-compatible)
     api_keys: list[dict[str, str]] = field(default_factory=list)  # [{key_hash, role, label}]
     auth: AuthConfig = field(default_factory=AuthConfig)
@@ -589,6 +898,9 @@ class Settings:
         self.workspace_path = Path(self.workspace_path).expanduser().resolve()
         self.kb_roots = normalize_kb_roots(self.kb_roots)
         self.git_allowed_hosts = normalize_git_allowed_hosts(self.git_allowed_hosts)
+        self.git_credentials = normalize_git_credentials(self.git_credentials)
+        self.git_identity = normalize_git_identity(self.git_identity)
+        self.git_proxy = normalize_git_proxy(self.git_proxy)
         self.cors_origins = cors_origin_list(self.cors_origins)
         if self.branding_dir is not None:
             self.branding_dir = Path(self.branding_dir).expanduser().resolve()
@@ -774,6 +1086,12 @@ class PyriteConfig:
                 description=kb_data.get("description") or "",
                 default_role=default_role,
             )
+        except ConfigError:
+            # A row holding a value the validator refuses (an older version,
+            # another tool) is never a role: the KB is left out, and the
+            # access policy answers "none" for a KB the load left out.
+            logger.warning("Registry KB %r has an invalid default_role; not loading it", name)
+            return None
         except (OSError, RuntimeError, ValueError):
             # A registry path that cannot be resolved (an unknown ~user, a
             # symlink loop) must not stop the load -- this runs while every
@@ -1040,6 +1358,22 @@ class PyriteConfig:
                 else {}
             ),
             **(
+                {"git_credentials": [c.to_dict() for c in self.settings.git_credentials]}
+                if self.settings.git_credentials
+                else {}
+            ),
+            **(
+                {
+                    "git_identity": {
+                        "name": self.settings.git_identity.name,
+                        "email": self.settings.git_identity.email,
+                    }
+                }
+                if self.settings.git_identity
+                else {}
+            ),
+            **({"git_proxy": self.settings.git_proxy} if self.settings.git_proxy else {}),
+            **(
                 {"kb_roots": [str(p) for p in self.settings.kb_roots]}
                 if self.settings.kb_roots
                 else {}
@@ -1213,6 +1547,9 @@ class PyriteConfig:
             git_allowed_hosts=settings_data.get(
                 "git_allowed_hosts", list(DEFAULT_GIT_ALLOWED_HOSTS)
             ),
+            git_credentials=settings_data.get("git_credentials") or [],
+            git_identity=settings_data.get("git_identity"),
+            git_proxy=settings_data.get("git_proxy"),
             kb_roots=settings_data.get("kb_roots") or [],
             api_key=settings_data.get("api_key", ""),
             api_keys=settings_data.get("api_keys", []),
@@ -1417,6 +1754,8 @@ def _apply_env_overrides(config: PyriteConfig) -> None:
         config.settings.git_allowed_hosts = normalize_git_allowed_hosts(
             val, source="PYRITE_GIT_ALLOWED_HOSTS"
         )
+    if val := env("PYRITE_GIT_PROXY"):
+        config.settings.git_proxy = normalize_git_proxy(val, source="PYRITE_GIT_PROXY")
     if val := env("PYRITE_API_KEY"):
         config.settings.api_key = val
     if val := env("PYRITE_AI_PROVIDER"):
@@ -1968,8 +2307,16 @@ def auto_discover_kbs(search_paths: list[Path] | None = None) -> list[KBConfig]:
         if not search_path.exists():
             continue
 
-        # Look for kb.yaml files
-        for kb_yaml in search_path.rglob("kb.yaml"):
+        # Look for kb.yaml files by name (``os.walk``): a kb.yaml that is a
+        # link is listed whether or not its target exists, on every Python
+        # (3.11's ``rglob`` with a literal name checked the target), and a
+        # folder that is a link out is not walked into.
+        found = (
+            Path(dirpath) / "kb.yaml"
+            for dirpath, dirnames, filenames in os.walk(search_path)
+            if "kb.yaml" in filenames or "kb.yaml" in dirnames
+        )
+        for kb_yaml in found:
             try:
                 # Read inside the folder it names as a KB: a kb.yaml that is
                 # a link out of it, or a hard link, is not that KB's (a

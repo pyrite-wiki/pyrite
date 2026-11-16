@@ -14,7 +14,7 @@ from functools import cache
 from pathlib import Path
 from typing import Any, ClassVar
 
-from ..exceptions import EntryTypeError
+from ..exceptions import EntryTypeError, json_safe_value
 from ..schema import Link, Provenance, Source
 from ..utils.frontmatter import require_frontmatter
 from ..utils.yaml import load_yaml
@@ -30,6 +30,21 @@ def _utcnow() -> datetime:
 # The value `importance` takes when frontmatter does not set it. Kept as a name
 # so the write path can tell "unset" from "deliberately 5".
 DEFAULT_IMPORTANCE = 5
+
+
+def lifecycle_validation_error(value: Any) -> dict[str, Any] | None:
+    """The same lifecycle rule for writes and QA's file-value checks."""
+    if value in ("active", "archived"):
+        return None
+    return {
+        "field": "lifecycle",
+        "rule": "enum",
+        # Write validation compares messages to recognize a violation kept
+        # from disk. Different invalid values must remain different errors.
+        "message": f"Invalid lifecycle: {value!r} (expected active or archived)",
+        "expected": ["active", "archived"],
+        "got": json_safe_value(value),
+    }
 
 
 # Base keys every class handles through _base_kwargs / _base_frontmatter even
@@ -698,14 +713,6 @@ class Entry(ABC):
             capture_extra_frontmatter(entry, meta)
         return entry
 
-    @classmethod
-    def load(cls, path: Path) -> "Entry":
-        """Load entry from file."""
-        text = path.read_text(encoding="utf-8")
-        entry = cls.from_markdown(text)
-        entry.file_path = path
-        return entry
-
     def add_link(self, target: str, relation: str, note: str = "", kb: str = "") -> None:
         """Add a link to another entry."""
         self.links.append(Link(target=target, relation=relation, note=note, kb=kb))
@@ -751,6 +758,8 @@ class Entry(ABC):
                     "expected": "a string",
                 }
             )
+        if problem := lifecycle_validation_error(self.lifecycle):
+            errors.append(problem)
         return errors
 
     def validate(self) -> list[str]:

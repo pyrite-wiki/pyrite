@@ -39,7 +39,9 @@ from ..exceptions import (
     StorageError,
     UndeclaredTypeError,
     ValidationError,
+    kb_origin,
     outside_text,
+    public_attribute,
     public_text,
     refusal_fields,
 )
@@ -1595,8 +1597,17 @@ class KBService:
         # the same way the real filesystem does for a non-dry-run one.
         repo = KBRepository(kb_config)
         resolved_path = repo._resolve_file_path(entry, repo._infer_subdir(entry))
-        if resolved_path.exists() or resolved_path in (pending_paths or ()):
-            holder = repo.holder_of_path(resolved_path) if resolved_path.exists() else None
+        # A path that leads out of the KB gets the write's own refusal here,
+        # so a dry run and a real create answer alike (OUTSIDE_KB_ROOT), and
+        # neither depends on what lies outside.
+        if not KBFiles(kb_config.path).contains(resolved_path):
+            logger.warning("Refusing %s: it resolves outside the KB root", resolved_path)
+            raise KBFileOutsideRootError()
+        # ``repo.present``, not ``Path.exists``: never "absent" because a
+        # file outside is missing.
+        taken = repo.present(resolved_path)
+        if taken or resolved_path in (pending_paths or ()):
+            holder = repo.holder_of_path(resolved_path) if taken else None
             held = f", which holds '{holder}'" if holder and holder != entry.id else ""
             raise EntryExistsError(
                 f"Entry with ID '{entry.id}' would resolve to a file that already "
@@ -1907,16 +1918,29 @@ class KBService:
         Returns:
             Tuple of (Entry, validation_result dict with errors/warnings)
 
+        Local only (ADR-0052 N1): ``source_path`` is any path the caller
+        names, outside every KB, so this is the CLI's ``pyrite add`` and
+        nothing else. The server holds this service; a call that is not the
+        local process (``is_local_process``) is refused before anything is
+        read.
+
         Raises:
             KBNotFoundError: If KB not found
             KBReadOnlyError: If KB is read-only
             ValidationError: If frontmatter is missing required fields or the
                 pipeline refuses the entry
+            Forbidden: If the call is not the local process
         """
         from ..models.core_types import entry_from_frontmatter
         from ..schema import generate_entry_id
         from ..utils.yaml import load_yaml
+        from .acting import is_local_process
 
+        if not is_local_process():
+            raise Forbidden(
+                "Adding an entry from a file path is for the local process only "
+                "(`pyrite add`); over the network, send the entry's content instead."
+            )
         kb_config = self.require_kb(kb_name)
         if not validate_only:
             kb_config.refuse_writes()
@@ -2260,7 +2284,8 @@ class KBService:
                 all_ops.append(resolved)
             self._refuse_conflicting_spellings(entry, updates)
             try:
-                new_text, _report = apply(text, all_ops, span)
+                # The file is this KB's: its parser's words go to a reader of it.
+                new_text, _report = apply(text, all_ops, span, origin=kb_origin(kb_config.name))
                 changed = new_text != text
                 if changed and "updated_at" in file_values and "updated_at" not in updates:
                     stamp = _updated_at_stamp(
@@ -2268,7 +2293,10 @@ class KBService:
                     )
                     if stamp is not None:
                         new_text, _report = apply(
-                            new_text, [Set("updated_at", stamp)], _frontmatter_span(new_text)
+                            new_text,
+                            [Set("updated_at", stamp)],
+                            _frontmatter_span(new_text),
+                            origin=kb_origin(kb_config.name),
                         )
             except OperationRefusedError as e:
                 raise ValidationError(f"Cannot update '{entry_id}': {e.reason}") from e
@@ -2443,7 +2471,7 @@ class KBService:
                     raise ValidationError(
                         message,
                         errors=[{"field": key, "rule": "unknown_field", "message": message}],
-                        suggestion=getattr(e, "suggestion", None),
+                        suggestion=public_attribute(e, "suggestion"),
                     ) from None
                 continue  # a custom top-level key: written as sent
             if field in managed:
@@ -2768,7 +2796,7 @@ class KBService:
             return path, f"the file keeps its place: it has {e.links} hard links"
         except ValidationError as e:
             return path, f"the file keeps its place: {e}"
-        target.parent.mkdir(parents=True, exist_ok=True)
+        # The create makes target's folders beneath the root (KBFiles).
         try:
             create_entry_text(target, text, root=kb_config.path)
         except FileExistsError:
@@ -3725,7 +3753,8 @@ class KBService:
         # but `index health`; the rule is `plugins/removed.py`'s.
         from ..plugins.removed import removed_extension_notice
 
-        notice = removed_extension_notice(kb_name, kb_config.kb_type, distinct_types)
+        declared = kb_config.kb_schema.declared_types()
+        notice = removed_extension_notice(kb_name, kb_config.kb_type, distinct_types, declared)
         if notice:
             result["notices"] = [notice]
 
@@ -4177,7 +4206,7 @@ class KBService:
             except Exception as exc:
                 # A bad template (such as a directory symlink outside the KB)
                 # should be reported without preventing other entries from running.
-                result.errors.append((entry.id, str(exc)))
+                result.errors.append((entry.id, public_text(exc)))
 
         result.moves = [
             (entry.id, current_path, target_path) for entry, current_path, target_path in planned
@@ -4210,7 +4239,7 @@ class KBService:
                     raise
                 result.moved += 1
             except Exception as exc:
-                result.errors.append((entry.id, str(exc)))
+                result.errors.append((entry.id, public_text(exc)))
 
         return result
 
@@ -4284,20 +4313,23 @@ class KBService:
         changes = []
         counts = {"created": 0, "modified": 0, "deleted": 0}
 
-        # Combine all changed files
+        # Combine all changed files. Whether a file is there is the KB's
+        # answer (``KBFiles.present``): a link out is there whatever it points
+        # at, so "deleted" never says that a file outside is missing.
+        present = KBFiles(kb_path).present
         all_files: dict[str, str] = {}  # filename -> change_type
         for f in status.get("untracked", []):
             if f.endswith(".md"):
                 all_files[f] = "created"
         for f in status.get("unstaged", []):
             if f.endswith(".md"):
-                if not (kb_path / f).exists():
+                if not present(kb_path / f):
                     all_files[f] = "deleted"
                 elif f not in all_files:
                     all_files[f] = "modified"
         for f in status.get("staged", []):
             if f.endswith(".md") and f not in all_files:
-                if not (kb_path / f).exists():
+                if not present(kb_path / f):
                     all_files[f] = "deleted"
                 else:
                     all_files[f] = "modified"
@@ -4326,7 +4358,7 @@ class KBService:
 
         # Get current content (for created/modified)
         full_path = kb_path / file_path
-        if full_path.exists():
+        if KBFiles(kb_path).present(full_path):
             # Only inside the KB, one name (``KBFiles.read_bytes``): this text
             # is handed to the caller. A link out or a hard link is listed as
             # changed and not read.
@@ -4834,7 +4866,10 @@ def files_the_index_may_miss(db: Any, repo: KBRepository) -> set[Path]:
         if row.get("file_path")
     }
     behind: list[tuple[int, Path]] = []
+    inside = KBFiles(repo.path)
     for path in repo.list_files():
+        if not inside.contains(path):
+            continue  # a link out: never read, and its stat orders nothing
         row = known.get(str(path))
         try:
             stat = path.stat()

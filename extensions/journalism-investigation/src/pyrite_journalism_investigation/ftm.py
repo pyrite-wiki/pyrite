@@ -8,8 +8,7 @@ import json
 import logging
 from typing import Any
 
-from pyrite.exceptions import PyriteError
-from pyrite.utils.errors import public_text
+from pyrite.exceptions import PyriteError, public_text
 
 from .utils import parse_meta, persist_entry, require_writable_kb
 

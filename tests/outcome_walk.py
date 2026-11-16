@@ -24,12 +24,16 @@ closed)::
 
 from __future__ import annotations
 
+import enum
 import functools
 import importlib
 import json
 import os
+import pathlib
 import subprocess
 import sys
+import types
+import typing
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -139,6 +143,63 @@ def planted(app: typer.Typer, path: tuple[str, ...], body: Callable[[], object])
         info.callback = original
 
 
+_KINDS = ((bool, "boolean"), (int, "integer"), (float, "float"), (pathlib.PurePath, "path"))
+
+
+def _annotation(param) -> object:
+    """The value type a Typer 0.29+ parameter declares, without ``Optional``
+    or a ``list``/``tuple`` around it."""
+    annotation = param.type_descriptor.annotation
+    while True:
+        args = [a for a in typing.get_args(annotation) if a is not type(None)]
+        origin = typing.get_origin(annotation)
+        if origin in (typing.Union, types.UnionType) and len(args) == 1:
+            annotation = args[0]
+        elif origin in (list, tuple, set, frozenset) and args:
+            annotation = args[0]
+        elif origin is typing.Annotated:
+            annotation = args[0]
+        else:
+            return annotation
+
+
+def param_kind(param) -> str:
+    """What a parameter takes, in click's type names: ``integer``, ``float``,
+    ``boolean``, ``choice``, ``path``, or ``""`` for anything else.
+
+    Typer up to 0.28 puts a click type on ``param.type``. Typer 0.29 validates
+    with Pydantic and has no ``.type`` (#1432); the declared annotation is on
+    ``param.type_descriptor`` instead."""
+    if hasattr(param, "type"):
+        if getattr(param.type, "choices", None):
+            return "choice"
+        if any(base.__name__ in {"Path", "File"} for base in type(param.type).__mro__):
+            return "path"
+        return getattr(param.type, "name", "")
+    annotation = _annotation(param)
+    if param_choices(param):
+        return "choice"
+    if param.type_descriptor.file_annotation is not None:
+        return "path"
+    if isinstance(annotation, type):
+        for base, name in _KINDS:
+            if issubclass(annotation, base):
+                return name
+    return ""
+
+
+def param_choices(param) -> list[str]:
+    """The values a choice parameter accepts, as typed on the command line, or ``[]``."""
+    if hasattr(param, "type"):
+        return [str(c) for c in getattr(param.type, "choices", None) or ()]
+    annotation = _annotation(param)
+    if isinstance(annotation, type) and issubclass(annotation, enum.Enum):
+        return [str(member.value) for member in annotation]
+    if typing.get_origin(annotation) is typing.Literal:
+        return [str(value) for value in typing.get_args(annotation)]
+    return []
+
+
 def args_for(command) -> list[str]:
     """Arguments that get past click's parsing for any command: a value for
     each required parameter, by its type. The body is planted, so no value is
@@ -147,11 +208,11 @@ def args_for(command) -> list[str]:
     for param in command.params:
         if not param.required:
             continue
-        kind = getattr(param.type, "name", "")
+        kind = param_kind(param)
         if kind in ("integer", "float"):
             value = "1"
-        elif getattr(param.type, "choices", None):
-            value = str(list(param.type.choices)[0])
+        elif kind == "choice":
+            value = param_choices(param)[0]
         else:
             value = "x"
         args += [value] if param.param_type_name == "argument" else [param.opts[0], value]

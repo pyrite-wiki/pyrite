@@ -552,7 +552,7 @@ class TestEntryRoundtrip:
             original.add_source(title="Source", url="https://example.com")
 
             create_entry_text(path, new_entry_text(original), root=(path).parent)
-            loaded = EventEntry.load(path)
+            loaded = EventEntry.from_markdown(path.read_text(encoding="utf-8"))
 
             assert loaded.id == original.id
             assert loaded.date == original.date
@@ -573,7 +573,7 @@ class TestEntryRoundtrip:
             original.research_status = ResearchStatus.DRAFT
 
             create_entry_text(path, new_entry_text(original), root=(path).parent)
-            loaded = PersonEntry.load(path)
+            loaded = PersonEntry.from_markdown(path.read_text(encoding="utf-8"))
 
             assert loaded.id == original.id
             assert loaded.role == "operative"
@@ -607,7 +607,7 @@ class TestLoadExistingKBs:
             pytest.skip("No event files found")
 
         event_file = event_files[0]
-        event = EventEntry.load(event_file)
+        event = EventEntry.from_markdown(event_file.read_text(encoding="utf-8"))
 
         assert event.id is not None
         assert event.title is not None
@@ -625,7 +625,7 @@ class TestLoadExistingKBs:
             pytest.skip("No actor files found")
 
         actor_file = actor_files[0]
-        actor = PersonEntry.load(actor_file)
+        actor = PersonEntry.from_markdown(actor_file.read_text(encoding="utf-8"))
 
         assert actor.id is not None
         assert actor.title is not None

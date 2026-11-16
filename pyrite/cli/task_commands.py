@@ -183,7 +183,7 @@ def task_create(
     title_opt: str | None = typer.Option(None, "--title", "-t", help="Task title"),
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
     parent: str | None = typer.Option(None, "--parent", "-p", help="Parent task entry ID"),
-    priority: int = typer.Option(5, "--priority", help="Priority 1-10"),
+    priority: int = typer.Option(5, "--priority", min=1, max=10, help="Priority 1-10"),
     assignee: str | None = typer.Option(
         None, "--assignee", "-a", help="Assignee (e.g. agent:claude-code-7a3f)"
     ),
@@ -410,7 +410,9 @@ def task_update(
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
     status: str | None = typer.Option(None, "--status", "-s", help="New status"),
     assignee: str | None = typer.Option(None, "--assignee", "-a", help="New assignee"),
-    priority: int | None = typer.Option(None, "--priority", help="New priority 1-10"),
+    priority: int | None = typer.Option(
+        None, "--priority", min=1, max=10, help="New priority 1-10"
+    ),
     reason: str | None = typer.Option(
         None,
         "--reason",
