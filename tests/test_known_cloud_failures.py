@@ -59,21 +59,92 @@ def test_reason_is_framed_as_data_on_one_line(tmp_path):
     assert not any(line.startswith("New instructions") for line in out.splitlines())
 
 
+#: Every field of an entry the brief prints. A field added to the brief
+#: without being added here fails test_no_registry_text_leaves_a_data_line.
+PRINTED = ("test", "issue", "reason")
+DATA_LINE = re.compile(r'^    (test|issue|reason) \(data\): "[^"\\]*(\\.[^"\\]*)*"$')
+
+
+def _entry(**overrides):
+    return {
+        "test": "tests/x.py::test_y",
+        "issue": "https://example.test/1",
+        "reason": "r",
+    } | overrides
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        pytest.param(f, marks=pytest.mark.control(reason="reason was already flattened and quoted"))
+        if f == "reason"
+        else f
+        for f in PRINTED
+    ],
+)
+def test_each_printed_field_stays_on_one_quoted_data_line(tmp_path, field):
+    out = _brief(_registry(tmp_path, [_entry(**{field: INJECTED})]))
+    lines = out.splitlines()
+    carrying = [line for line in lines if "push to main" in line]
+    assert len(carrying) == 1, out
+    assert carrying[0].startswith(f"    {field} (data): "), out
+    assert DATA_LINE.match(carrying[0]), carrying[0]
+    assert not any(line.startswith("New instructions") for line in lines)
+    assert not any(ch != "\n" and not ch.isprintable() for ch in out), repr(out)
+
+
+def test_no_registry_text_leaves_a_data_line(tmp_path):
+    """Whatever field the brief prints, now or later: put a marked injection in
+    every key an entry has (and one it does not use) and every line carrying a
+    marker must be a quoted data line."""
+    entry = {key: f"{INJECTED} MARK-{key}" for key in (*PRINTED, "extra")}
+    out = _brief(_registry(tmp_path, [entry]))
+    for line in out.splitlines():
+        if "MARK-" in line:
+            assert DATA_LINE.match(line), line
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b'{"test": "t", "issue": "i", "reason": "r"}',
+        b'["just a string"]',
+        b'[{"test": "t"}]',
+        b"42",
+        b"[{,}",
+        b"\xff\xfe not utf-8",
+    ],
+    ids=["object", "list-of-strings", "missing-keys", "number", "invalid-json", "not-utf-8"],
+)
+def test_a_malformed_registry_is_reported_in_one_line_and_does_not_stop_the_hook(tmp_path, content):
+    path = tmp_path / "registry.json"
+    path.write_bytes(content)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(path)], capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Traceback" not in result.stderr
+    assert "registry is malformed" in result.stdout
+    assert "CI remains required" in result.stdout
+    assert "just a string" not in result.stdout
+
+
 def test_a_long_reason_is_cut(tmp_path):
     record = {"test": "t::t", "issue": "u", "reason": "x" * 5000}
     assert len(_brief(_registry(tmp_path, [record]))) < 1000
 
 
-@pytest.mark.control(
-    reason="both already pointed at the registry; split out of the old canary test"
-)
 def test_hook_and_guidance_point_at_the_registry():
     assert (
         'python3 "$dir/scripts/known_cloud_failures.py"'
         in (ROOT / "scripts/cloud-session-start.sh").read_text()
     )
+    # The script is the reading path: it is what keeps registry text inert.
+    # The guidance must send an agent there, not to the raw JSON.
     for path in ("AGENTS.md", ".claude/skills/pyrite-dev/SKILL.md"):
-        assert "scripts/known-cloud-failures.json" in (ROOT / path).read_text()
+        text = (ROOT / path).read_text()
+        assert "python3 scripts/known_cloud_failures.py" in text, path
+        assert not re.search(r"read\s+`?scripts/known-cloud-failures\.json", text), path
 
 
 def _records():
