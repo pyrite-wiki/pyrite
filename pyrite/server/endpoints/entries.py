@@ -779,17 +779,12 @@ def get_entry(
             },
         )
 
-    # A column the file's type refused (ADR-0042 8a: a `load_problems` entry
-    # names it) is left out of the reply, never a default and never null: the
-    # model's `[]` or `{}` would read as the file's value, and a client that
-    # indexes `.length` on a list must not meet null. Every other column keeps
-    # the value the read gave it, or the model's default (round 4, B2).
-    refused = {
-        p["field"] for p in result.get("load_problems") or () if p["field"] in _DEFAULTED_COLUMNS
-    }
-    for key in ("sources", "tags"):
-        if key not in refused:
-            result.setdefault(key, [])
+    # A column the file's type refused (ADR-0042 8a) is left out of the reply,
+    # never a default and never null: the model's `[]` or `{}` would read as
+    # the file's value, and a client that indexes `.length` on a list must
+    # not meet null. Every other column keeps the value the read gave it, or
+    # the model's default (round 4, B2).
+    refused = apply_refused_columns(result)
 
     # Apply field projection. One rule for every read surface (#193): the
     # identity pair always survives, and keys the entry does not have are not
@@ -805,16 +800,46 @@ def get_entry(
     neg = negotiate_response(request, result, single_entry=True)
     if neg is not None:
         return neg
-    if refused:
-        body = EntryResponse(**result).model_dump(mode="json")
-        return JSONResponse(content={k: v for k, v in body.items() if k not in refused})
-    return EntryResponse(**result)
+    return entry_response(result, refused)
 
 
 _CREATE_DEFAULTED = frozenset({"participants", "tags", "metadata"})
 
 #: The EntryResponse columns that default to a placeholder (``[]``, ``{}``).
 _DEFAULTED_COLUMNS = ("tags", "participants", "sources", "metadata")
+
+
+def apply_refused_columns(result: dict) -> set[str]:
+    """Apply the refused-column rule to a single-entry read dict.
+
+    A ``load_problems`` entry names a column the file's type refused
+    (ADR-0042 8a); when it is one of the columns ``EntryResponse`` defaults
+    (``_DEFAULTED_COLUMNS``), the reply leaves it out, never a default and
+    never null. Skips the empty-list default for a refused ``sources`` or
+    ``tags`` and returns the refused set, so the caller can drop those keys
+    from the dumped response body. ``metadata`` and ``participants`` take no
+    default here; the dump step drops them when refused.
+    """
+    refused = {
+        p["field"] for p in result.get("load_problems") or () if p["field"] in _DEFAULTED_COLUMNS
+    }
+    for key in ("sources", "tags"):
+        if key not in refused:
+            result.setdefault(key, [])
+    return refused
+
+
+def entry_response(result: dict, refused: set[str]) -> EntryResponse | JSONResponse:
+    """Render a single-entry read, leaving refused columns out.
+
+    The dumped ``EntryResponse`` fills every defaulted column, so a refused
+    one is dropped from the dumped body: ``[]`` or ``{}`` would read as the
+    file's value.
+    """
+    if refused:
+        body = EntryResponse(**result).model_dump(mode="json")
+        return JSONResponse(content={k: v for k, v in body.items() if k not in refused})
+    return EntryResponse(**result)
 
 
 @router.post(
