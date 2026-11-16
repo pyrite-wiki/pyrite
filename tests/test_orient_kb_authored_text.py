@@ -72,12 +72,32 @@ def test_the_old_keys_still_answer_for_one_release(svc):
     assert result["schema"]["types"]["note"]["ai_instructions"] == INJECTED
 
 
-def test_the_notice_says_the_old_keys_carry_the_same_text(svc):
-    """The deprecated keys must stay for a release (additions only), and they
-    mix this KB's text with Pyrite's defaults. The label on the KB's text says
-    where else it appears, so it is not read there as Pyrite's guidance."""
+def test_the_notice_says_where_else_the_text_appears_key_by_key(svc):
+    """The deprecated orient keys stay for a release (additions only). The
+    notice names each one that carries this KB's text and says how; it does
+    not name the top-level `guidelines`, which never carries it."""
     notice = svc.orient("k")["kb_authored"]["notice"]
-    assert "schema" in notice and "guidelines" in notice and "deprecated" in notice
+    assert "schema.goals as written" in notice
+    assert "schema.guidelines and schema.evaluation_rubric merged with Pyrite's defaults" in notice
+    assert "schema.types" in notice and "in place of" in notice
+    assert "top-level" not in notice
+
+
+@pytest.mark.control(
+    reason="pins what the deprecated keys already returned; the notice is held to it"
+)
+def test_what_the_deprecated_keys_return_key_by_key(svc):
+    """The facts the notice, docs/json-contracts.md and the fragment state."""
+    result = svc.orient("k")
+    schema = result["schema"]
+    assert result["guidelines"] == {}  # KBConfig has no guidelines: never KB text
+    assert schema["guidelines"] == {**SYSTEM_INTENT["guidelines"], "tone": INJECTED}
+    assert schema["goals"] == {"main": "be thorough"}  # as written, no defaults
+    assert schema["evaluation_rubric"] == [
+        *SYSTEM_INTENT["evaluation_rubric"],
+        "Entry mentions the moon",
+    ]
+    assert schema["types"]["note"]["ai_instructions"] == INJECTED  # replaces the default
 
 
 def test_a_kb_under_the_workspace_is_a_subscription(tmp_path):

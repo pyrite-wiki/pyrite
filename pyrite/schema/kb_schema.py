@@ -1,6 +1,8 @@
 """KBSchema - per-KB schema loaded from kb.yaml."""
 
+import datetime
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -213,26 +215,41 @@ class KBSchema:
         `evaluation_rubric`, and per type `ai_instructions`, `guidelines`,
         `goals`, `evaluation_rubric`. Pyrite's defaults (`SYSTEM_INTENT`, core
         and plugin type metadata) are not in it; `to_agent_schema` merges both
-        and cannot tell them apart (#1369). Empty values are omitted.
+        and cannot tell them apart (#1369).
+
+        Each value comes back as written, in whatever shape the author gave
+        it (a mapping, string, list, number, bool), as plain JSON values. It
+        is never coerced to the shape Pyrite documents for the key: a string
+        `guidelines` stays a string. A value JSON cannot carry as written (a
+        date or timestamp, a mapping with a non-string key, NaN or infinity)
+        is left out and named under `malformed` instead, so no transport
+        reshapes it. Null and empty values are omitted.
         """
         out: dict[str, Any] = {}
-        if self.guidelines:
-            out["guidelines"] = dict(self.guidelines)
-        if self.goals:
-            out["goals"] = self.goals
-        if self.evaluation_rubric:
-            out["evaluation_rubric"] = list(self.evaluation_rubric)
+        malformed: list[dict[str, str]] = []
+
+        def put(target: dict[str, Any], key: str, path: str, value: Any) -> None:
+            if value is None or value == "" or value == {} or value == []:
+                return
+            plain, problem = _plain_json(value)
+            if problem is None:
+                target[key] = plain
+            else:
+                malformed.append({"key": path, "reason": _NOT_PLAIN_JSON[problem]})
+
+        for key in ("guidelines", "goals", "evaluation_rubric"):
+            put(out, key, key, getattr(self, key))
         types: dict[str, Any] = {}
         for name, ts in self.types.items():
-            block = {
-                key: getattr(ts, key)
-                for key in ("ai_instructions", "guidelines", "goals", "evaluation_rubric")
-                if getattr(ts, key)
-            }
+            block: dict[str, Any] = {}
+            for key in ("ai_instructions", "guidelines", "goals", "evaluation_rubric"):
+                put(block, key, f"types.{name}.{key}", getattr(ts, key))
             if block:
                 types[name] = block
         if types:
             out["types"] = types
+        if malformed:
+            out["malformed"] = malformed
         return out
 
     def to_agent_schema(self, *, kb_type: str) -> dict[str, Any]:
@@ -532,3 +549,49 @@ class KBSchema:
             logger.warning("Schema validation failed for %s", entry_type, exc_info=True)
 
         return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
+
+
+#: Why a kb.yaml value is not returned in `kb_authored`: Pyrite's own text.
+_NOT_PLAIN_JSON = {
+    "nan": "a NaN or infinite number, which JSON cannot carry",
+    "key": "a mapping with a key that is not a string",
+    "date": "a YAML date or timestamp, which JSON cannot carry as written",
+    "other": "a YAML value of a kind JSON cannot carry as written",
+}
+
+
+def _plain_json(value: Any) -> tuple[Any, str | None]:
+    """`(value as plain JSON types, None)`: str, int, float, bool, list, dict,
+    the same shape and contents; or `(None, problem)`, a key of
+    `_NOT_PLAIN_JSON`. The YAML loader's round-trip subclasses (a commented
+    mapping, a scalar string) become their plain base types; nothing else is
+    converted."""
+    if isinstance(value, bool) or type(value).__name__ == "ScalarBoolean":
+        return bool(value), None
+    if isinstance(value, str):
+        return str(value), None
+    if isinstance(value, int):
+        return int(value), None
+    if isinstance(value, float):
+        return (float(value), None) if math.isfinite(value) else (None, "nan")
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            if not isinstance(k, str):
+                return None, "key"
+            plain, problem = _plain_json(v)
+            if problem is not None:
+                return None, problem
+            out[str(k)] = plain
+        return out, None
+    if isinstance(value, list | tuple):
+        items = []
+        for v in value:
+            plain, problem = _plain_json(v)
+            if problem is not None:
+                return None, problem
+            items.append(plain)
+        return items, None
+    if isinstance(value, datetime.date):
+        return None, "date"
+    return None, "other"
