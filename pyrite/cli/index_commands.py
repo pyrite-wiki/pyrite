@@ -275,6 +275,19 @@ def index_sync(
         for line in _duplicate_lines(duplicates):
             console.print(f"    • {line}", markup=False, highlight=False)
 
+    # In-KB links to an entry file: indexed once, at the target (#1262).
+    aliases = results.get("aliases", [])
+    if aliases:
+        console.print(f"  Aliases: {len(aliases)} (links indexed once, at their target)")
+        for alias in aliases[:5]:
+            console.print(
+                f"    • {alias['kb']}: {alias['path']} -> {alias['target']}",
+                markup=False,
+                highlight=False,
+            )
+        if len(aliases) > 5:
+            console.print(f"    [dim]… and {len(aliases) - 5} more[/dim]")
+
     # Auto-embed new/updated entries if embeddings are available.
     #
     # The queue is settled FIRST and outside the `changed > 0` gate, for two
@@ -553,6 +566,7 @@ def index_health(
             "invalid_statuses": invalid_statuses,
             "off_list_values": off_list_values,
             "duplicates": duplicates,
+            "aliases": health.get("aliases", []),
             "removed_extensions": removed_extensions,
             "type_name_drift": health.get("type_name_drift", []),
             "type_name_drift_total": health.get("type_name_drift_total", 0),
@@ -612,6 +626,11 @@ def _report_health(
         return
 
     console.print("\n[bold]Index Health Check[/bold]\n")
+
+    # Information, not a finding: in-KB links indexed once, at their target (#1262).
+    aliases = health.get("aliases", [])
+    if aliases:
+        console.print(f"{len(aliases)} alias(es): links indexed once, at their target")
 
     if not is_unhealthy and not has_warning:
         console.print("[green]✓ Index is healthy[/green]")

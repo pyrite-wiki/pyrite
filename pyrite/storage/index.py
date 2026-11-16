@@ -6,6 +6,7 @@ Supports incremental updates based on file modification times.
 """
 
 import hashlib
+import itertools
 import json
 import logging
 import os
@@ -408,6 +409,10 @@ class ReconcilePlan:
     duplicates: list[dict[str, Any]] = field(default_factory=list)
     malformed: list[dict[str, str]] = field(default_factory=list)
     skipped: list[dict[str, str]] = field(default_factory=list)
+    # In-KB links to a walked entry file (``KBRepository.alias_target``):
+    # ``{"kb", "path", "target"}``, KB-relative, sorted by path. Not read and
+    # not a claim: the entry is its target's (#1262).
+    aliases: list[dict[str, str]] = field(default_factory=list)
     holders: dict[str, list[_Claim]] = field(default_factory=dict)
     # path -> "ExcType: detail" for the ``malformed`` files whose bytes could not
     # be read or decoded (OSError, UnicodeError), whatever the file's kind:
@@ -1036,13 +1041,21 @@ class IndexManager:
         plan = ReconcilePlan(kb_name=kb_config.name)
 
         files = []
-        for file_path in repo.list_all_files():
+        walk = itertools.chain(repo.walk_files(), ((y, None) for y in repo.list_collection_files()))
+        for file_path, alias_of in walk:
             try:
                 rel = file_path.relative_to(kb_config.path).as_posix()
             except ValueError:
                 continue
+            if alias_of is not None:
+                # Another name for a walked file (#1262): the entry is indexed
+                # once, at its real file, and this path is reported, never read.
+                target = alias_of.relative_to(kb_config.path).as_posix()
+                plan.aliases.append({"kb": kb_config.name, "path": rel, "target": target})
+                continue
             files.append((rel, file_path))
         files.sort()
+        plan.aliases.sort(key=lambda a: a["path"])
 
         # The index holds only bytes read inside the KB's root: most exports
         # write from it (REST export to a repo, GET /api/entries/export).
@@ -1157,7 +1170,9 @@ class IndexManager:
         Returns ``added``, ``updated``, ``removed`` (row counts), ``malformed``
         (``{"path", "error"}``), ``skipped`` (non-regular paths and reasons),
         ``duplicates`` (``{"kb", "id", "winner", "paths"}``, KB-relative
-        paths, the winner first) and ``written`` (rows written, counted or not).
+        paths, the winner first), ``aliases`` (``{"kb", "path", "target"}``,
+        in-KB links to an entry file, indexed once at the target: #1262) and
+        ``written`` (rows written, counted or not).
         """
         results: dict[str, Any] = {
             "added": 0,
@@ -1166,6 +1181,7 @@ class IndexManager:
             "malformed": [],
             "skipped": [],
             "duplicates": [],
+            "aliases": [],
             "written": 0,
         }
         if not kb_config.path.exists():
@@ -1189,6 +1205,7 @@ class IndexManager:
         results["malformed"] = plan.malformed
         results["skipped"] = plan.skipped
         results["duplicates"] = plan.duplicates
+        results["aliases"] = plan.aliases
 
         total = len(plan.winners)
         unwritable: set[str] = set()
@@ -1546,6 +1563,9 @@ class IndexManager:
           holds (the lexicographically first KB-relative path). Only the
           winner is checked for staleness; a losing copy is not the indexed
           file, so it is neither stale nor changed.
+        - aliases: in-KB links to a walked entry file, ``{"kb", "path",
+          "target"}`` as ``index sync`` reports them; information, neither a
+          warning nor unhealthy (#1262).
         """
         health: dict[str, Any] = {
             "missing_files": [],
@@ -1563,6 +1583,7 @@ class IndexManager:
             "invalid_statuses": [],
             "off_list_values": [],
             "duplicates": [],
+            "aliases": [],
             "removed_extensions": [],
             # Files whose frontmatter Pyrite cannot model (#760 (b)): a
             # tagged, complex or duplicate key. No write reaches them, so
@@ -1647,6 +1668,8 @@ class IndexManager:
             # rule as `pyrite index sync` (ADR-0038 step 2).
             plan = self.plan_reconcile(kb, force=True, indexed=indexed)
             health["duplicates"].extend(plan.duplicates)
+            # Reported, not a problem: a hand-made shape the index models (#1262).
+            health["aliases"].extend(plan.aliases)
             # A path sync lists and skips because it is not a regular file
             # (a directory named `x.md`, a FIFO) used to vanish from health
             # while sync reported it in `skipped` (#1119).
@@ -2196,7 +2219,8 @@ class IndexManager:
         those whose content hash differs.
 
         Returns ``added``, ``updated``, ``removed``, ``malformed``,
-        ``skipped`` non-regular files and ``duplicates`` summed over the KBs.
+        ``skipped`` non-regular files, ``duplicates`` and ``aliases`` summed
+        over the KBs.
         The CLI prints malformed, skipped and duplicate files as a summary
         rather than per-file tracebacks (Tier A 1080).
         """
@@ -2207,6 +2231,7 @@ class IndexManager:
             "malformed": [],
             "skipped": [],
             "duplicates": [],
+            "aliases": [],
         }
         kbs = [self.config.get_kb(kb_name)] if kb_name else self.config.all_kbs()
         kbs = [kb for kb in kbs if kb and kb.path.exists()]
@@ -2224,6 +2249,7 @@ class IndexManager:
             results["malformed"].extend(one["malformed"])
             results["skipped"].extend(one["skipped"])
             results["duplicates"].extend(one["duplicates"])
+            results["aliases"].extend(one["aliases"])
             if progress_callback and len(kbs) > 1:
                 progress_callback(n, len(kbs))
         return results

@@ -5,6 +5,7 @@ Handles reading and writing entries to/from markdown files.
 Each KB is a directory of markdown files with YAML frontmatter.
 """
 
+import fnmatch
 import glob
 import io
 import logging
@@ -1493,14 +1494,68 @@ class KBRepository:
         )
 
     def list_files(self) -> Iterator[Path]:
-        """Iterate over all markdown files in the KB."""
-        for md_file in self.path.rglob("*.md"):
-            if self._listed(md_file):
+        """Iterate over all markdown entry files in the KB: not an alias
+        (``alias_target``), so each real file is listed once."""
+        for md_file, target in self.walk_files():
+            if target is None:
                 yield md_file
+
+    def walk_files(self) -> Iterator[tuple[Path, Path | None]]:
+        """Every markdown path the walk's lexical rules keep, with the walked
+        file it is an alias of (``alias_target``), or None for an entry file.
+        ``list_files`` keeps the Nones; the reconcile's plan reports the rest
+        as aliases from the same pass, so there is one walk and one rule."""
+        for md_file in self.path.rglob("*.md"):
+            if self._lexically_listed(md_file):
+                yield md_file, self.alias_target(md_file)
+
+    def alias_target(self, md_file: Path) -> Path | None:
+        """The walked entry file ``md_file`` is another name for, or None.
+
+        An alias (#1262) is a path that is itself a symbolic link whose fully
+        resolved target is a regular ``*.md`` file inside the KB's real root
+        that the walk keeps by its own rules: one entry per real file, so the
+        target is the entry and this path is not. The target is returned as a
+        path under ``self.path`` (the spelling the walk lists it by). A chain
+        of links ends at its last target.
+
+        Not an alias, and walked as before: a path that is not a link; a link
+        that leaves the KB (the reader refuses it); a dangling or looping link
+        (malformed); a link to a file the walk skips (a hidden folder,
+        ``_templates``, a README), which is then the only walked name. A hard
+        link is not a symbolic link: no name is the real one, and the
+        reconcile skips both (nlink > 1).
+
+        One ``lstat`` per walked file (``islink``); only a link is resolved.
+        Nothing is written: the link is the user's file.
+        """
+        if not os.path.islink(md_file):
+            return None
+        try:
+            real = os.path.realpath(md_file, strict=True)
+            real_root = os.path.realpath(self.path, strict=True)
+        except (OSError, ValueError, RuntimeError):
+            return None  # dangling or a loop: the reconcile reports it malformed
+        if os.path.commonpath([real_root, real]) != real_root or real == real_root:
+            return None  # leaves the KB
+        target = self.path / os.path.relpath(real, real_root)
+        if (
+            not fnmatch.fnmatch(target.name, "*.md")
+            or not self._lexically_listed(target)
+            or not _is_regular_file(target)
+        ):
+            return None
+        return target
 
     def _listed(self, md_file: Path) -> bool:
         """Whether ``list_files`` walks ``md_file``; ``find_file`` uses the
-        same rule, so what sync indexes is what lookup finds."""
+        same rule, so what sync indexes is what lookup finds. An alias of
+        another walked file is not listed (``alias_target``)."""
+        return self._lexically_listed(md_file) and self.alias_target(md_file) is None
+
+    def _lexically_listed(self, md_file: Path) -> bool:
+        """The walk's skip rules on the path's spelling alone: hidden parts,
+        ``_templates``, a README. No I/O."""
         # The parts below the KB root. A string prefix first: ``relative_to``
         # walks the path's parents, and on a lookup's walk of a 2,000-file KB
         # that was a third of the cost (#135). Both are lexical; a path the
@@ -1528,6 +1583,10 @@ class KBRepository:
     def list_all_files(self) -> Iterator[Path]:
         """Iterate over all entry file paths (md + collection yaml) without parsing."""
         yield from self.list_files()
+        yield from self.list_collection_files()
+
+    def list_collection_files(self) -> Iterator[Path]:
+        """Every ``__collection.yaml`` the walk keeps (not under a hidden part)."""
         for yaml_file in self.path.rglob("__collection.yaml"):
             if any(part.startswith(".") for part in yaml_file.parts):
                 continue

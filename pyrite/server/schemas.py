@@ -84,6 +84,9 @@ class KBReindexResponse(BaseModel):
     # Ids held by more than one file: {"kb", "id", "winner", "paths"}, the
     # winner (the lexicographically first KB-relative path) indexed (ADR-0038).
     duplicates: list[dict[str, Any]] = Field(default_factory=list)
+    # In-KB links to another entry file, indexed once at the target (#1262):
+    # {"kb", "path", "target"}, KB-relative.
+    aliases: list[dict[str, str]] = Field(default_factory=list)
 
 
 # =============================================================================
