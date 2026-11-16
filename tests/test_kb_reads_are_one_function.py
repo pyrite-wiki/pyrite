@@ -276,9 +276,13 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         {"repo.present": 1},
         "present, then read_id",
     ),
-    ("pyrite/storage/repository.py", "KBRepository.list_all_files"): (
+    ("pyrite/storage/repository.py", "KBRepository.alias_target"): (
+        {"KBFiles.resolved": 1, "_is_regular_file": 1, "os.path.islink": 1},
+        "is a walked name an in-KB link to another walked file (#1262): islink is the lstat of the name itself, never followed; where it leads, and whether that is out of the KB, is KBFiles.resolved (the rule behind contains); the regular-file stat is only of a target KBFiles placed inside. Nothing is read: the entry is read at the target through KBFiles",
+    ),
+    ("pyrite/storage/repository.py", "KBRepository.list_collection_files"): (
         {"repo._named": 1},
-        "_named (fixed here: as count)",
+        "_named (fixed here: as count; moved out of list_all_files by #1262)",
     ),
     ("pyrite/storage/repository.py", "KBRepository.present"): (
         {"KBFiles.present": 1},
@@ -366,9 +370,9 @@ SAME_ANSWER: dict[Site, Entry] = {
         {"_is_regular_file": 1, "repo._named": 1},
         "_named for collections; _is_regular_file skips a non-file, and a link out that is a file is refused by the load and skipped: the same answer",
     ),
-    ("pyrite/storage/repository.py", "KBRepository.list_files"): (
+    ("pyrite/storage/repository.py", "KBRepository.walk_files"): (
         {"path.rglob": 1},
-        "rglob('*.md'): a wildcard lists a link by its name on every Python and walks into no folder link; each file is then read through KBFiles",
+        "rglob('*.md'): a wildcard lists a link by its name on every Python and walks into no folder link; each file is then read through KBFiles (list_files filters this walk, #1262)",
     ),
     ("pyrite/storage/repository.py", "KBRepository.read_for_write"): (
         {"path.stat": 1, "repo._read_inside": 1},
@@ -713,7 +717,7 @@ LOCAL_ONLY: dict[Site, Entry] = {
 }
 
 SIZES = {
-    "DECIDED_INSIDE": 53,
+    "DECIDED_INSIDE": 54,
     "SAME_ANSWER": 19,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,
@@ -779,7 +783,7 @@ _OS = {"open", "stat", "lstat", "access", "scandir", "listdir", "walk", "mkdir",
 _OS_PATH = {"exists", "isfile", "isdir", "islink", "lexists", "getsize", "getmtime", "samefile"}
 _IO = {"open", "FileIO"}
 _GLOB = {"glob", "iglob"}
-_KBFILES = {"read_bytes", "present", "contains", "make_dirs", "check", "require"}
+_KBFILES = {"read_bytes", "present", "contains", "resolved", "make_dirs", "check", "require"}
 _KBFILES_NAMES = {"inside", "kbf", "files"}
 _REPO = {"_read_inside", "_inside_bytes", "_inside_text", "present", "_named"}
 _HELPERS = {"_is_regular_file", "_hard_link_fault", "FileIO", "open"}
