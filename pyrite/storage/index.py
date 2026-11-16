@@ -40,7 +40,12 @@ from ..schema.field_aliases import (
     read_metadata,
     read_view,
 )
-from ..utils.kb_files import OUTSIDE_KB_REASON, KBFileOutsideRootError, KBFiles
+from ..utils.kb_files import (
+    OUTSIDE_KB_REASON,
+    KBFileOutsideRootError,
+    KBFiles,
+    KBPresenceUnknownError,
+)
 from ..utils.metadata import parse_metadata
 from .database import PyriteDB
 from .errors import driver_error, storage_error_from
@@ -1579,6 +1584,10 @@ class IndexManager:
             # and its alias): the reader believes one spelling, no update
             # reaches the field until the file is fixed (Andon #994).
             "double_spellings": [],
+            # A KB whose kb.yaml could not be checked or read (a root this
+            # process cannot search, #1542): named, with a fixed reason, so
+            # it is never silently dropped from the report.
+            "unreadable_kbs": [],
         }
 
         # The file's own value of each protocol column, per (kb, id), read
@@ -1615,6 +1624,12 @@ class IndexManager:
         # fails to load is reported in `schema_errors` and its KB counts as
         # declaring no types, so health still answers for the broken KB.
         schemas = self._load_schemas(kbs)
+        for kb in kbs:
+            reason = kb.unreadable  # set when the config was loaded
+            if reason is None and schemas[kb.name][1] == KBPresenceUnknownError.MESSAGE:
+                reason = KBPresenceUnknownError.MESSAGE  # a KB the config load did not see
+            if reason is not None:
+                health["unreadable_kbs"].append({"kb": kb.name, "error": reason})
 
         # A KB whose type belonged to an extension Pyrite has deleted (#953):
         # its types are undeclared for a reason the user should be told. The
@@ -1753,17 +1768,20 @@ class IndexManager:
                     # The KB's answer: a link out is there (and unreadable)
                     # whatever it points at, never "missing" for that.
                     present = KBFiles(kb.path).present(indexed_path)
-                except OSError as e:
-                    # A folder this process cannot search (Python 3.13 raises
-                    # PermissionError where 3.12 said "absent"): the file may
-                    # well be there. Report it; never let one row end the report.
+                except KBPresenceUnknownError as e:
+                    # ``present`` could not tell (a folder this process cannot
+                    # search, on every Python version): the file may well be
+                    # there, so it is unreadable, never missing. This local
+                    # report names the file and the OS's reason, which the
+                    # error keeps as its cause. Never let one row end the report.
+                    cause = e.__cause__ or e
                     if str(indexed_path) not in reported_unreadable:
                         reported_unreadable.add(str(indexed_path))
                         health["unreadable_files"].append(
                             {
                                 "kb": kb.name,
                                 "path": str(indexed_path),
-                                "error": f"{type(e).__name__}: {outside_text(e)}",
+                                "error": f"{type(cause).__name__}: {outside_text(cause)}",
                             }
                         )
                     continue
@@ -1822,7 +1840,9 @@ class IndexManager:
         # The schema owns the type vocabulary; an empty declaration is
         # unrestricted, including plugin types and core types.
         for kb in kbs:
-            if not kb.path.exists() or not kb.kb_yaml_present:
+            # No kb.yaml, one that failed to load, or one whose presence could
+            # not be told: ``_load_schemas`` gave no schema, so no types.
+            if not kb.path.exists():
                 continue
 
             kb_schema = schemas[kb.name][0]
@@ -1848,9 +1868,9 @@ class IndexManager:
         # compare each entry against its type's `required:` list (default
         # ["title"]) and its `subdirectory:` hint. Skip KBs with no kb.yaml.
         for kb in kbs:
-            if not kb.path.exists() or not kb.kb_yaml_present:
+            if not kb.path.exists():
                 continue
-            kb_schema = schemas[kb.name][0]
+            kb_schema = schemas[kb.name][0]  # None without a loadable kb.yaml
             if not kb_schema or not kb_schema.types:
                 continue
 
@@ -1940,7 +1960,14 @@ class IndexManager:
         """
         loaded: dict[str, tuple[Any, str | None]] = {}
         for kb in kbs:
-            if not kb.kb_yaml_present:
+            try:
+                present = kb.kb_yaml_present
+            except KBPresenceUnknownError as exc:
+                # A root this process cannot search (#1542): reported here,
+                # and in ``unreadable_kbs``; never the end of the report.
+                loaded[kb.name] = (None, exc.MESSAGE)
+                continue
+            if not present:
                 loaded[kb.name] = (None, None)
                 continue
             try:

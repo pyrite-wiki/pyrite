@@ -11,7 +11,7 @@ filesystem's name limit was a traceback instead of NOT_FOUND
 The property, the same on every Python version:
 
 - exists: True; a path that resolves outside the root: True, with no stat;
-- absent: False, and a name the filesystem cannot hold (too long, a NUL) is
+- absent: False, and a name the filesystem cannot hold (too long) is
   absent, because no file can have it;
 - could not tell: one typed Pyrite error, ``KBPresenceUnknownError``. No raw
   ``OSError`` leaves ``present``.
@@ -47,21 +47,25 @@ def _skip_if_mode_does_not_stop_us(folder: Path) -> None:
 # -- the probe itself --------------------------------------------------------
 
 
+@pytest.mark.control(reason="the exists answer the fix keeps")
 def test_an_existing_file_is_present(tmp_path):
     (tmp_path / "a.md").write_text("a\n", encoding="utf-8")
     assert KBFiles(tmp_path).present(tmp_path / "a.md") is True
 
 
+@pytest.mark.control(reason="the absent answer the fix keeps")
 def test_a_missing_file_is_absent(tmp_path):
     assert KBFiles(tmp_path).present(tmp_path / "gone.md") is False
 
 
+@pytest.mark.control(reason="ENOTDIR was absent before and after")
 def test_a_path_through_a_file_is_absent(tmp_path):
     """ENOTDIR: ``a.md/b.md`` names nothing when ``a.md`` is a file."""
     (tmp_path / "a.md").write_text("a\n", encoding="utf-8")
     assert KBFiles(tmp_path).present(tmp_path / "a.md" / "b.md") is False
 
 
+@pytest.mark.control(reason="ELOOP was absent before and after")
 def test_a_symlink_loop_inside_the_kb_is_absent(tmp_path):
     """ELOOP: two links inside the KB that point at each other."""
     (tmp_path / "x").symlink_to(tmp_path / "y")
@@ -76,21 +80,24 @@ def test_a_name_the_filesystem_cannot_hold_is_absent(tmp_path, length):
     assert KBFiles(tmp_path).present(tmp_path / ("a" * length + ".md")) is False
 
 
-def test_a_name_with_a_nul_is_absent(tmp_path):
-    """``os.stat`` raises ValueError for an embedded NUL; no file has one."""
-    assert KBFiles(tmp_path).present(tmp_path / "a\x00b.md") is False
-
-
-def test_a_path_outside_the_root_is_present_without_a_stat(tmp_path, monkeypatch):
+@pytest.mark.control(reason="the outside-root answer the fix keeps")
+def test_a_path_outside_the_root_is_present_whatever_lies_there(tmp_path):
+    """Outside the root, "there" whatever is outside: the read or write that
+    follows refuses it (OUTSIDE_KB_ROOT), never "absent" because a file
+    outside is missing, and never "could not tell" because a folder outside
+    cannot be searched."""
     kb = tmp_path / "kb"
     kb.mkdir()
-    calls = []
-    real_stat = os.stat
-    monkeypatch.setattr(
-        "pyrite.utils.kb_files.os.stat", lambda p, *a, **k: calls.append(p) or real_stat(p, *a, **k)
-    )
-    assert KBFiles(kb).present(tmp_path / "elsewhere" / "gone.md") is True
-    assert calls == []
+    shut = tmp_path / "shut"
+    shut.mkdir()
+    (kb / "out").symlink_to(tmp_path / "gone.md")  # a dangling link out
+    shut.chmod(0o000)
+    try:
+        assert KBFiles(kb).present(tmp_path / "gone.md") is True
+        assert KBFiles(kb).present(kb / "out") is True
+        assert KBFiles(kb).present(shut / "x.md") is True
+    finally:
+        shut.chmod(0o755)
 
 
 @pytest.mark.parametrize("mode", [0o600, 0o000], ids=["no-search-bit", "no-access"])

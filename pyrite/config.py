@@ -76,6 +76,12 @@ def validate_kb_default_role(value: Any, where: str) -> str | None:
     )
 
 
+#: What ``pyrite kb list`` and index health say for a KB whose kb.yaml is
+#: there and could not be read (``KBConfig.unreadable``). Fixed: it names no
+#: path and no OS text.
+KB_YAML_UNREADABLE = "Pyrite could not read this knowledge base's kb.yaml."
+
+
 @dataclass
 class KBConfig:
     """Configuration for a single knowledge base."""
@@ -104,6 +110,10 @@ class KBConfig:
 
     # Internal cache — not serialized
     _schema_cache: Any = field(default=None, init=False, repr=False)
+    #: Set by ``load_kb_yaml`` when this KB's kb.yaml could not be checked or
+    #: read: the fixed text to show for it (``pyrite kb list``, index health).
+    #: Not serialized. One unreadable KB must not stop the others (#1542).
+    unreadable: str | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
         self.path = Path(self.path).expanduser().resolve()
@@ -183,24 +193,39 @@ class KBConfig:
         that is a link out of the KB, or has more than one hard link, is not
         the KB's, and is left unloaded with a warning here, where every
         registered KB is loaded at once. ``kb_schema`` refuses it
-        (``OUTSIDE_KB_ROOT``) for the operations that need it."""
-        if self.kb_yaml_present:
-            from .utils.kb_files import KBFileOutsideRootError
+        (``OUTSIDE_KB_ROOT``) for the operations that need it.
 
-            try:
-                data = load_yaml_file(self.kb_yaml_path, kb_root=self.path)
-            except KBFileOutsideRootError:
-                logger.warning(
-                    "KB %s: kb.yaml may lead outside the KB's folder (a symbolic link out "
-                    "of it, or a file with more than one hard link); not read",
-                    self.name,
-                )
+        Every registered KB is loaded here at once, so a kb.yaml this process
+        cannot check or read (a root it may not search, a file it may not
+        open) marks this KB ``unreadable`` and is logged by name; it never
+        stops the load, or one such KB would stop every command on every
+        other KB (#1542). The operations on this KB that need its kb.yaml
+        stop with that same answer when they ask for it."""
+        from .utils.kb_files import KBFileOutsideRootError, KBPresenceUnknownError
+
+        self.unreadable = None
+        try:
+            if not self.kb_yaml_present:
                 return False
-            self.schema = data.get("schema")
-            self.types = data.get("types")
-            self.policies = data.get("policies")
-            return True
-        return False
+            data = load_yaml_file(self.kb_yaml_path, kb_root=self.path)
+        except KBFileOutsideRootError:
+            logger.warning(
+                "KB %s: kb.yaml may lead outside the KB's folder (a symbolic link out "
+                "of it, or a file with more than one hard link); not read",
+                self.name,
+            )
+            return False
+        except KBPresenceUnknownError as e:
+            self.unreadable = e.MESSAGE
+        except OSError:
+            self.unreadable = KB_YAML_UNREADABLE
+        if self.unreadable is not None:
+            logger.warning("KB %s is unreadable: %s", self.name, self.unreadable)
+            return False
+        self.schema = data.get("schema")
+        self.types = data.get("types")
+        self.policies = data.get("policies")
+        return True
 
     def validate(self) -> list[str]:
         """Validate KB configuration. Returns list of errors."""

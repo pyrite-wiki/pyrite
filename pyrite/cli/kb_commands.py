@@ -76,6 +76,13 @@ def kb_list(
     """List all configured knowledge bases."""
     with cli_registry_context() as (config, db, svc, registry):
         kbs = registry.list_kbs(type_filter=kb_type)
+        # A KB whose kb.yaml could not be checked or read is listed, by name,
+        # with why (``KBConfig.unreadable``, set at config load): never
+        # dropped, and never the reason the list fails (#1542).
+        for kb in kbs:
+            cfg = config.get_kb(kb["name"])
+            if cfg is not None and cfg.unreadable:
+                kb["unreadable"] = cfg.unreadable
 
         if not kbs:
             console.print("[yellow]No knowledge bases configured.[/yellow]")
@@ -97,7 +104,7 @@ def kb_list(
 
         for kb in kbs:
             table.add_row(
-                kb["name"],
+                kb["name"] + (" [red](unreadable)[/red]" if kb.get("unreadable") else ""),
                 kb["type"],
                 kb.get("source", "user"),
                 str(kb.get("entries", 0)),

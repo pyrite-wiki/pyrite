@@ -201,8 +201,8 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         "kb_yaml_present",
     ),
     ("pyrite/storage/index.py", "IndexManager.check_health"): (
-        {"KBConfig.kb_yaml_present": 2, "KBFiles.present": 1, "path.exists": 4},
-        "KBFiles.present of an indexed path; kb_yaml_present; the KB's folder (operator config)",
+        {"KBFiles.present": 1, "path.exists": 4},
+        "KBFiles.present of an indexed path; the KB's folder (operator config); kb.yaml only through _load_schemas (#1542)",
     ),
     ("pyrite/storage/index.py", "IndexManager.index_with_attribution"): (
         {"KBFiles.present": 1},

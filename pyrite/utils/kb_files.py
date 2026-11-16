@@ -80,7 +80,7 @@ import stat
 from collections.abc import Iterator
 from pathlib import Path
 
-from ..exceptions import ValidationError
+from ..exceptions import StorageError, ValidationError
 from .atomic_write import ABSENT, FileChanged, HardLinked
 from .containment import inside_or_warn
 from .file_lock import LOCK_TIMEOUT, NotInGitRepository, check_timeout, file_lock
@@ -92,6 +92,7 @@ __all__ = [
     "KBFileOutsideRootError",
     "KBFiles",
     "KBFolderChanged",
+    "KBPresenceUnknownError",
     "OwnerNotKeptError",
 ]
 
@@ -106,8 +107,13 @@ _HAS_DIR_FD = (
 )
 _DIR_FLAGS = getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
-# The errors ``pathlib.Path.exists`` answers False for; any other raises.
-_ABSENT_ERRNOS = {errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP}
+# The ``os.stat`` errors ``KBFiles.present`` answers "absent" for: nothing is
+# there (ENOENT), a file stands where a folder would (ENOTDIR), the name
+# cannot be looked up (EBADF), a link loop (ELOOP), and a name no file can
+# have (ENAMETOOLONG). Any other errno is "could not tell"
+# (``KBPresenceUnknownError``): a folder the process cannot search, an I/O
+# error, a stale mount.
+_ABSENT_ERRNOS = {errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP, errno.ENAMETOOLONG}
 _UNSUPPORTED = {errno.ENOTSUP, errno.ENOSYS, getattr(errno, "EOPNOTSUPP", errno.ENOTSUP)}
 
 
@@ -167,6 +173,29 @@ class OwnerNotKeptError(Exception):
         super().__init__(f"cannot preserve owner {uid} and group {gid}")
         self.uid = uid
         self.gid = gid
+
+
+class KBPresenceUnknownError(StorageError):
+    """``KBFiles.present`` could not tell whether a path is there: the OS
+    refused to say (a folder the process cannot search, an I/O error, a stale
+    mount), so neither "there" nor "absent" would be true (#1542).
+
+    One answer whatever the cause: the message names no path, no errno and
+    no OS text, so a network caller learns nothing about the server's
+    filesystem from it. The ``OSError`` is kept as ``__cause__`` for a local
+    report that names the file (index health's ``unreadable_files``).
+    """
+
+    MESSAGE = (
+        "Pyrite could not tell whether a file is in the knowledge base: the "
+        "operating system refused to say (for example, a folder Pyrite may not "
+        "search)."
+    )
+    #: The message is fixed and safe, so every transport shows it as is.
+    public_message = MESSAGE
+
+    def __init__(self) -> None:
+        super().__init__(self.MESSAGE)
 
 
 class KBFileIsLinkError(ValidationError):
@@ -678,6 +707,12 @@ class KBFiles:
         files decide. ``Path.exists`` follows a link out, and so answers what
         lies outside.
 
+        A name no file can have (longer than the filesystem allows) is
+        absent. Where the OS will not say (a folder this process
+        cannot search, an I/O error) the answer is
+        ``KBPresenceUnknownError``, one typed error with a fixed message:
+        each caller handles it or lets it stop the operation (#1542).
+
         Limit: where a path resolves is decided by ``os.path.realpath``,
         which follows every link on the way. A link out of the KB whose
         target outside is itself a link back into the KB resolves inside, so
@@ -686,15 +721,18 @@ class KBFiles:
         """
         if not self.contains(path):
             return True
-        # ``Path.exists``'s answer, not ``os.path.exists``'s: a folder this
-        # process cannot search raises, never "absent" (index health then
-        # reports the file unreadable, not missing).
+        # ``os.stat`` itself, not ``os.path.exists`` (which answers False for
+        # every error, so a folder this process cannot search would read as
+        # "absent" and index health would call the file missing) and not
+        # ``Path.exists`` (whose set of absent errnos changes between Python
+        # versions). The answer is three-way: True, False, or
+        # ``KBPresenceUnknownError``; no raw ``OSError`` leaves here.
         try:
             os.stat(self._absolute(path))
         except OSError as e:
             if e.errno in _ABSENT_ERRNOS:
                 return False
-            raise
+            raise KBPresenceUnknownError() from e
         return True
 
     def make_dirs(self, path: str | os.PathLike[str]) -> None:

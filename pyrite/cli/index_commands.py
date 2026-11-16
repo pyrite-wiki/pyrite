@@ -549,6 +549,7 @@ def index_health(
             "subdirectory_mismatches": subdirectory_mismatches,
             "malformed_frontmatter": malformed_frontmatter,
             "unreadable_files": unreadable_files,
+            "unreadable_kbs": health.get("unreadable_kbs", []),
             "orphaned_entries": orphaned_entries,
             "invalid_statuses": invalid_statuses,
             "off_list_values": off_list_values,
@@ -774,6 +775,11 @@ def _report_health(
         for line in _duplicate_lines(list(duplicates)):
             console.print(f"  • {line}", markup=False, highlight=False)
 
+    unreadable_kbs = health.get("unreadable_kbs", [])
+    if unreadable_kbs:
+        console.print(f"[red]Unreadable knowledge bases ({len(unreadable_kbs)}):[/red]")
+        for item in unreadable_kbs:
+            console.print(f"  {item['kb']}: {item['error']}")
     unreadable_files = health.get("unreadable_files", [])
     if unreadable_files:
         console.print(f"[red]Unreadable files ({len(unreadable_files)}):[/red]")
