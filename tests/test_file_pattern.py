@@ -47,13 +47,33 @@ class TestTypeSchemaFilePattern:
         result = schema.resolve_filename(entry)
         assert result == "event--2026-03-30--test.md"
 
-    def test_missing_date_uses_empty_string(self):
+    def test_missing_date_falls_back_to_the_default_filename(self):
         schema = TypeSchema(name="note", file_pattern="{date}--{slug}.md")
         from pyrite.models.factory import build_entry
 
         entry = build_entry("note", title="No Date Note", body="")
+        assert schema.resolve_filename(entry) is None
+
+    def test_date_placeholder_reads_metadata_for_generic_types(self):
+        # A kb.yaml-declared type (GenericEntry) keeps `date` in metadata,
+        # not on the entry; `{date}` must resolve from there instead of
+        # formatting an empty string into the name (#1467).
+        schema = TypeSchema(name="timeline_event", file_pattern="{date}--{slug}.md")
+        from pyrite.models.factory import build_entry
+
+        entry = build_entry("timeline_event", title="Upgrade Notes", body="", date="2026-11-12")
         result = schema.resolve_filename(entry)
-        assert result == "--no-date-note.md"
+        assert result == "2026-11-12--upgrade-notes.md"
+
+    def test_generic_entry_without_any_date_falls_back_to_the_id_name(self):
+        # The other half of #1467: a kb.yaml-only type whose metadata has no
+        # `date` either must fall back to the plain `<id>.md` name (the None
+        # return), not format an empty `{date}` into `--<slug>.md`.
+        schema = TypeSchema(name="timeline_event", file_pattern="{date}--{slug}.md")
+        from pyrite.models.factory import build_entry
+
+        entry = build_entry("timeline_event", title="Undated", body="")
+        assert schema.resolve_filename(entry) is None
 
     def test_to_dict_includes_file_pattern(self):
         schema = TypeSchema(name="event", file_pattern="{date}--{slug}.md")
@@ -269,3 +289,53 @@ class TestResolveFilenameEntryFieldPlaceholders:
         schema = TypeSchema(name="event", file_pattern="{date}--{slug}.md")
         entry = build_entry("event", title="ICE Raid Downtown", body="", date="2026-03-30")
         assert schema.resolve_filename(entry) == "2026-03-30--ice-raid-downtown.md"
+
+
+class TestCreateEntryMedium:
+    """The #1467 repro end to end through `KBService.create_entry`, the
+    pipeline `pyrite create -f` and MCP `kb_create` share: a kb.yaml-declared
+    `timeline_event` with `file_pattern: "{date}--{slug}.md"` must land as
+    `2026-11-12--test-d.md`, not `--test-d.md`."""
+
+    KB_YAML = """\
+name: tl
+types:
+  timeline_event:
+    subdirectory: ""
+    file_pattern: "{date}--{slug}.md"
+    required: [title, date]
+    fields:
+      date: {type: date}
+"""
+
+    def _make_kb(self, tmp_path):
+        from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
+        from pyrite.storage.database import PyriteDB
+
+        kb_path = tmp_path / "tl"
+        kb_path.mkdir()
+        (kb_path / "kb.yaml").write_text(self.KB_YAML, encoding="utf-8")
+        db_path = tmp_path / "index.db"
+        PyriteDB(db_path).close()
+        kb_config = KBConfig(name="tl", path=kb_path, kb_type=KBType.GENERIC)
+        config = PyriteConfig(
+            knowledge_bases=[kb_config],
+            settings=Settings(index_path=db_path, auto_embed=False),
+        )
+        return config, kb_path
+
+    def test_create_writes_the_dated_name(self, tmp_path):
+        from pyrite.services.kb_service import KBService
+        from pyrite.storage.database import PyriteDB
+
+        config, kb_path = self._make_kb(tmp_path)
+        db = PyriteDB(config.settings.index_path)
+        svc = KBService(config, db)
+        try:
+            svc.create_entry("tl", "test-d", "Test D", "timeline_event", "", date="2026-11-12")
+        finally:
+            db.close()
+        assert (kb_path / "2026-11-12--test-d.md").exists(), sorted(
+            p.name for p in kb_path.iterdir()
+        )
+        assert not (kb_path / "--test-d.md").exists(), "the empty-date name must not exist"
