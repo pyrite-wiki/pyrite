@@ -276,10 +276,6 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         {"repo.present": 1},
         "present, then read_id",
     ),
-    ("pyrite/storage/document_manager.py", "DocumentManager.delete_entry_leaving"): (
-        {"KBFiles.present": 1},
-        "KBFiles.present of each alias's target once the delete is done: which in-KB links it left pointing at nothing (#1262)",
-    ),
     ("pyrite/storage/repository.py", "KBRepository._in_kb_link"): (
         {"KBFiles.resolved": 1, "os.path.islink": 1},
         "where an in-KB link leads (#1262): the name is decided under the root lexically first; islink is the lstat of that name itself, never followed; where it leads, and whether that is out of the KB, is KBFiles.resolved (the rule behind contains). Nothing is read",
@@ -729,7 +725,7 @@ LOCAL_ONLY: dict[Site, Entry] = {
 }
 
 SIZES = {
-    "DECIDED_INSIDE": 57,
+    "DECIDED_INSIDE": 56,
     "SAME_ANSWER": 19,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,

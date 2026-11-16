@@ -565,9 +565,9 @@ def test_the_templated_reconcile_does_not_move_a_file_an_in_kb_link_names(tmp_pa
     e = _templated(tmp_path, "done", "open")  # misplaced: done, under open/
     try:
         result = KBService(e.config, e.db).reconcile_templated_subdirectories(KB, apply=True)
-        assert result.moved == 0
-        assert [eid for eid, _ in result.errors] == ["t"]
-        assert "sub/alias.md" in result.errors[0][1]
+        assert result.moved == 0 and result.errors == []
+        assert [eid for eid, _ in result.kept] == ["t"]
+        assert "sub/alias.md" in result.kept[0][1]
         assert (e.root / "things/open/t.md").is_file()
         assert (e.root / "sub/alias.md").resolve() == (e.root / "things/open/t.md").resolve()
     finally:
@@ -589,3 +589,102 @@ def test_the_cli_prints_aliases_and_dangling_links_in_sync_and_kb_reindex(env, c
         assert "Dangling links: 1" in result.output
         assert "o/gone.md -> t/nowhere.md" in result.output
         assert "Malformed" not in result.output
+
+
+def _point_the_row_at(env: Env, entry_id: str, rel: str) -> None:
+    """Set the index row's file to ``rel``: the row a dev-built index holds
+    for a KB whose link sorts before its real file ("the first path by name
+    could be indexed in place of the real file"), or any stale row."""
+    conn = env.db._raw_conn
+    conn.execute(
+        "UPDATE entry SET file_path = ? WHERE id = ? AND kb_name = ?",
+        (str(env.root / rel), entry_id, KB),
+    )
+    conn.commit()
+    assert env.rows()[entry_id] == rel
+
+
+@pytest.mark.parametrize(
+    ("real", "link", "to"),
+    [
+        ("notes/zz.md", "a.md", "notes/zz.md"),  # the link is named like the id
+        ("a.md", "sub/al.md", "a.md"),  # the real file is
+    ],
+    ids=["link named like the id", "real file named like the id"],
+)
+def test_a_delete_never_removes_a_link_the_index_row_names(env, real, link, to):
+    """An index is a cache: a row naming the link (dev's sync wrote one for a
+    link-first KB) must never make the link the entry. The delete removes the
+    real file, keeps the link, and ``links_left`` names exactly the link that
+    is still there and points at nothing."""
+    from pyrite.services.kb_service import KBService
+
+    env.write(real, _note("a", "A"))
+    env.link(link, to, absolute=False)
+    env.im.sync_incremental(KB)
+    _point_the_row_at(env, "a", link)
+    said = os.readlink(env.root / link)
+
+    deleted = KBService(env.config, env.db).delete_entry("a", KB, readable_kbs={KB})
+
+    assert deleted.deleted is True
+    assert not (env.root / real).exists(), "the entry's real file is still there"
+    assert (env.root / link).is_symlink(), "the delete removed the user's link"
+    assert os.readlink(env.root / link) == said
+    assert deleted.links_left == [{"path": link, "target": real}]
+
+
+def test_links_left_names_only_links_still_on_disk(env, monkeypatch):
+    """``links_left`` is what is on disk after the delete, not the plan: a
+    link that is gone by then (here, removed by whoever else, between the
+    plan and the check) is not listed."""
+    from pyrite.services.kb_service import KBService
+    from pyrite.storage.repository import KBRepository
+
+    env.write(TARGET, _note("x", "X"))
+    env.link("o/one.md", TARGET, absolute=False)
+    env.link("o/two.md", TARGET, absolute=False)
+    env.im.sync_incremental(KB)
+    real_delete = KBRepository.delete
+
+    def delete_and_lose_a_link(self, *args, **kwargs):
+        done = real_delete(self, *args, **kwargs)
+        (env.root / "o" / "two.md").unlink()
+        return done
+
+    monkeypatch.setattr(KBRepository, "delete", delete_and_lose_a_link)
+    deleted = KBService(env.config, env.db).delete_entry("x", KB, readable_kbs={KB})
+
+    assert deleted.links_left == [{"path": "o/one.md", "target": TARGET}]
+
+
+def test_the_cli_reconcile_says_a_link_keeps_the_file_and_exits_partial(tmp_path, cli_world):
+    """The path was checked: a link holds it. `index reconcile` says that
+    (never "could not be checked") and exits partial (3), dry-run as apply."""
+    e = _templated(tmp_path, "done", "open")
+    try:
+        world = cli_world(kbs=[KBConfig(name=KB, path=e.root, kb_type="generic")])
+        for args in (("index", "reconcile", KB), ("index", "reconcile", KB, "--apply")):
+            result = world.cli(*args)
+            assert result.exit_code == 3, result.output
+            assert "could not be checked" not in result.output
+            assert "Kept in place t" in result.output and "sub/alias.md" in result.output
+            assert "stay where they are because an in-KB link names each" in result.output
+        assert (e.root / "things/open/t.md").is_file()
+    finally:
+        e.db.close()
+
+
+def test_a_dangling_collection_link_is_reported_as_dangling(env):
+    """`__collection.yaml` files are walked by name (``_named``), a link
+    included: one that points at nothing inside the KB is a dangling link
+    like a markdown one, not an unreadable file."""
+    (env.root / "c").mkdir()
+    (env.root / "c" / "__collection.yaml").symlink_to("gone.yaml")
+
+    result = env.im.sync_incremental(KB)
+
+    assert result["dangling_links"] == [
+        {"kb": KB, "path": "c/__collection.yaml", "target": "c/gone.yaml"}
+    ]
+    assert result["malformed"] == []

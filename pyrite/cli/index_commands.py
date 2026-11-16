@@ -897,15 +897,28 @@ def index_reconcile(
     result = KBService(config, db).reconcile_templated_subdirectories(kb_name, apply=apply)
     for entry_id, error in result.errors:
         console.print(f"[yellow]Could not reconcile {entry_id}:[/yellow] {error}")
+    # Checked, and left in place: the user's link would point at nothing (#1262).
+    for entry_id, why in result.kept:
+        console.print(
+            f"[yellow]Kept in place {entry_id}:[/yellow] {why}", markup=True, highlight=False
+        )
 
     if not result.moves:
-        if not result.errors:
+        if not result.errors and not result.kept:
             console.print("[green]All templated subdirectories match.[/green]")
         else:
-            console.print(
-                f"[yellow]No moves planned; {len(result.errors)} entry path(s) could not be checked.[/yellow]"
-            )
-        if result.errors:
+            parts = []
+            if result.kept:
+                parts.append(
+                    f"{len(result.kept)} misplaced file(s) stay where they are because an "
+                    "in-KB link names each"
+                )
+            if result.errors:
+                parts.append(f"{len(result.errors)} entry path(s) could not be checked")
+            console.print(f"[yellow]No moves planned; {'; '.join(parts)}.[/yellow]")
+        if result.errors or result.kept:
+            # Not everything asked for was done: a file stays misplaced
+            # (#1262), or a path could not be checked.
             raise typer.Exit(PARTIAL_EXIT)
         return
 
@@ -928,7 +941,7 @@ def index_reconcile(
 
     if not apply:
         console.print("\n[yellow]Dry run. Use --apply to execute moves.[/yellow]")
-        if result.errors:
+        if result.errors or result.kept:
             raise typer.Exit(PARTIAL_EXIT)
         return
 
@@ -938,8 +951,9 @@ def index_reconcile(
 
     console.print(f"\n[green]Moved {result.moved} file(s).[/green]")
     console.print("The index was updated for successfully moved files.")
-    # Moves that failed were reported above; some moved, some did not.
-    exit_unless_whole(len(result.errors), result.moved)
+    # Moves that failed, and files kept in place for a link, were reported
+    # above; some moved, some did not.
+    exit_unless_whole(len(result.errors) + len(result.kept), result.moved)
 
 
 @index_app.command("jobs")

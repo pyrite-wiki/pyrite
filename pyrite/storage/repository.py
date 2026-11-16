@@ -997,7 +997,18 @@ class KBRepository:
                 self._refuse_if_derived(entry_id, held)
                 return list(held)
         candidates: list[Path] = []
-        if indexed_path is not None and self._lexically_inside(indexed_path):
+        # The index row is a cache, never evidence of which file is the
+        # entry: its path is a candidate only where the walk would list it
+        # (``_listed``, the rule ``_filename_candidates`` applies). A row
+        # naming an in-KB link to the real file -- dev's sync wrote one when
+        # the link sorted first, and any row can be stale -- would otherwise
+        # read through the link as an explicit holder, and the delete would
+        # remove the user's link and keep the entry (#1262).
+        if (
+            indexed_path is not None
+            and self._lexically_inside(indexed_path)
+            and self._listed(indexed_path)
+        ):
             candidates.append(indexed_path)
         try:
             self._validate_entry_id(entry_id)

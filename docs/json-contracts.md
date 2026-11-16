@@ -279,9 +279,17 @@ that pointed at the removed file, `[{path, target}]`, KB-relative (`[]` when
 there are none). A delete removes the entry's real file only and keeps each
 such link, which is the user's file; `warnings` names them, and the next
 `index sync` / `index health` lists them under `dangling_links` (#1262).
+The delete's candidates come from the files, never from the index row
+alone: a row naming an in-KB link (dev's sync wrote one when the link sorted
+before its real file; any row can be stale) does not make the link the entry,
+and `links_left` lists only links still on disk that point at nothing.
+
 A write that would move a file such a link names (a templated-subdirectory
-move on update, `pyrite index reconcile --apply`) leaves the file in place and
-says why, naming the link (`not_moved` on update, an error row on reconcile).
+move on update, `pyrite index reconcile`) leaves the file in place and says
+why, naming the link: `not_moved` on update; on reconcile, a "Kept in place"
+line per file and "N misplaced file(s) stay where they are because an in-KB
+link names each" (never "could not be checked"). A reconcile of a KB with such
+a file exits partial (3), dry-run and `--apply` alike.
 
 CLI deletion keeps its default rich output and supports `--format json`.
 Without a terminal it refuses an unconfirmed deletion with `USAGE_ERROR`
@@ -497,8 +505,8 @@ a row here (a test compares this table with the command's output).
 | `invalid_statuses` | Entries whose `status` a plugin validator's enum rejects. | Warning | `pyrite update <id> -f status=<allowed>`. |
 | `off_list_values` | Off-list values of declared enums, with their `origin` and `severity`. | Failure for `severity: error`; warning for `warning`; `info` changes nothing | `pyrite update <id> -f <field>=<allowed>`. |
 | `duplicates` | IDs held by more than one file; `winner` names the indexed copy. | Failure | Keep one file, then `pyrite index sync`. |
-| `aliases` | In-KB symbolic links to another walked entry file, `{kb, path, target}`. The link is never indexed or read itself, and is left as it is; `target` is read by the walk's own rules (indexed once, unless it is skipped, as a file with a second hard link is). The same list is returned by `IndexManager.sync_incremental`/`reconcile_kb`, CLI `index sync` (text) and `kb reindex` (JSON and text), and REST `POST /api/kbs/{name}/reindex`; MCP `kb_index_sync` and REST `POST /api/index/sync` return neither key. | Information, not a finding | Nothing to do; remove the link only if it is not wanted. |
-| `dangling_links` | In-KB symbolic links with nothing at the path they name, `{kb, path, target}` (`target` KB-relative): hand-made, or left by a delete, which keeps the user's link. They hold no entry, so they are not `unreadable_files` and not `malformed`. The same surfaces as `aliases` return it. A link that leads out of the KB, or a link loop, is reported as before. | Warning | Restore the file the link names, or remove the link. |
+| `aliases` | In-KB symbolic links to another walked entry file, `{kb, path, target}`. The link is never indexed or read itself, and is left as it is; `target` is read by the walk's own rules (indexed once, unless it is skipped, as a file with a second hard link is). The same list is returned by `IndexManager.sync_incremental`/`reconcile_kb`, CLI `index sync` (text) and `kb reindex` (JSON and text), REST `POST /api/kbs/{name}/reindex` and MCP `kb_registry_reindex`; MCP `kb_index_sync` and REST `POST /api/index/sync` return neither key. | Information, not a finding | Nothing to do; remove the link only if it is not wanted. |
+| `dangling_links` | In-KB symbolic links with nothing at the path they name, `{kb, path, target}` (`target` KB-relative): hand-made, or left by a delete, which keeps the user's link. They hold no entry, so they are not `unreadable_files` and not `malformed`. A `__collection.yaml` that is such a link is reported here too. The same surfaces as `aliases` return it. A link that leads out of the KB, or a link loop, is reported as before. | Warning | Restore the file the link names, or remove the link. |
 | `removed_extensions` | KBs whose type belonged to an extension that is no longer installed. | Warning | Reinstall the extension, or change `kb_type` in `kb.yaml`. |
 | `type_name_drift` | Groups of one type spelled more than one way after case, `_` and spaces are folded to `-`. | Warning | Hand edit the `type:` spellings, then `pyrite index sync`. |
 | `type_name_drift_total` | Number of drift groups before the report's cap. | Metadata, not a finding | Fix the groups listed there. |

@@ -480,6 +480,9 @@ class ReconcileResult:
 
     moves: list[tuple[str, Path, Path]] = field(default_factory=list)
     errors: list[tuple[str, str]] = field(default_factory=list)
+    #: ``(entry_id, why)`` for a misplaced file left where it is because an
+    #: in-KB symbolic link names it: checked, not failed (#1262).
+    kept: list[tuple[str, str]] = field(default_factory=list)
     moved: int = 0
     read_only: bool = False
 
@@ -4256,7 +4259,7 @@ class KBService:
                         aliases = repo.aliases_by_target()
                     held = _links_naming(repo, current_path, aliases)
                     if held:
-                        result.errors.append((entry.id, f"not moved: {held}"))
+                        result.kept.append((entry.id, held))
                         continue
                     planned.append((entry, current_path, target_path))
             except Exception as exc:

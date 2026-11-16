@@ -10,7 +10,6 @@ from pathlib import Path
 
 from ..config import KBConfig
 from ..models import Entry
-from ..utils.kb_files import KBFiles
 from .database import PyriteDB
 from .index import IndexManager
 from .repository import KBRepository
@@ -225,13 +224,16 @@ class DocumentManager:
         holders = [claim.path for claim in plan.holders.get(entry_id, [])]
         file_deleted = repo.delete(entry_id, indexed_path=indexed, holders=holders)
         self._db.delete_entry(entry_id, kb_name)
+        # What is on disk once the delete is done, never the plan alone: each
+        # alias the plan saw that is still a link inside the KB and now
+        # points at nothing (``dangling_target``). A link gone by now, or
+        # whose target is still there, is not listed.
         left: list[dict[str, str]] = []
         if file_deleted:
-            files = KBFiles(kb_config.path)
             left = [
                 {"path": alias["path"], "target": alias["target"]}
                 for alias in plan.aliases
-                if not files.present(kb_config.path / alias["target"])
+                if repo.dangling_target(kb_config.path / alias["path"]) is not None
             ]
         return file_deleted, left
 
