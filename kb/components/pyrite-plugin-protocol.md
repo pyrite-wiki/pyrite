@@ -20,6 +20,7 @@ The single extension point for all domain-specific capabilities. A `@runtime_che
 **Registration**
 
 - `get_entry_types()` — register custom entry type classes with the schema layer
+- `get_type_mappings()` — declare which core types a create stores as one of the plugin's own (`{"event": "investigation_event"}`; #468). The only way a named type is stored as another: subclassing a core class maps nothing. Checked at load (core key, own target, no two plugins mapping one core type for an overlapping KB type, else `PluginError` naming both); read through the one resolver `pyrite.schema.type_mapping.resolve_type_mappings`, which the write path and `orient`/`kb_schema` (`type_mappings`) share. ADR-0040's proposed amendment of 2026-11-16.
 - `get_cli_commands()` — contribute typer sub-apps to the `pyrite` CLI
 - `get_mcp_tools(tier)` — contribute MCP tools at read/write/admin tiers
 - `get_relationship_types()` — named link types with inverses (e.g. `cites` ↔ `cited-by`)
