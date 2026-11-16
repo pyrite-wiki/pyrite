@@ -52,6 +52,10 @@ BACKLOG_STATUSES = (
     "superseded",
     "wont_do",
 )
+# Statuses after which a backlog item is no longer live work. `deferred` is not
+# one: it is reactivated (workflows.py).
+BACKLOG_SETTLED_STATUSES = ("done", "retired", "superseded", "wont_do")
+ADR_SETTLED_STATUSES = ("rejected", "deprecated", "superseded")
 BACKLOG_PRIORITIES = ("critical", "high", "medium", "low")
 BACKLOG_EFFORTS = ("XS", "S", "M", "L", "XL")
 RUNBOOK_KINDS = ("howto", "troubleshooting", "setup", "operations", "onboarding")

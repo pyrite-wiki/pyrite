@@ -12,7 +12,9 @@ from pyrite.plugins.scoping import kb_scope_clause
 
 from .adr_listing import adr_relations, adr_sort_key
 from .entry_types import (
+    ADR_SETTLED_STATUSES,
     BACKLOG_KINDS,
+    BACKLOG_SETTLED_STATUSES,
     ADREntry,
     BacklogItemEntry,
     ComponentEntry,
@@ -739,6 +741,13 @@ class SoftwareKBPlugin:
 
     def get_db_tables(self) -> list[dict]:
         return []
+
+    def get_type_metadata(self) -> dict[str, dict]:
+        """Which statuses end a type's live work (read by `qa duplicates`, #934)."""
+        return {
+            "backlog_item": {"settled_statuses": list(BACKLOG_SETTLED_STATUSES)},
+            "adr": {"settled_statuses": list(ADR_SETTLED_STATUSES)},
+        }
 
     def get_workflows(self) -> dict[str, dict]:
         return {

@@ -232,3 +232,79 @@ def test_rich_output_discloses_the_common_token_cutoff(cli_world):
     assert result.exit_code == 0, result.output
     assert "Common-token expansion skipped for 2 tokens" in result.stdout
     assert "near-match coverage is incomplete" in result.stdout
+
+
+def _write(folder, entry_id: str, entry_type: str, title: str, status: str | None) -> None:
+    status_line = f"status: {status}\n" if status is not None else ""
+    (folder / f"{entry_id}.md").write_text(
+        f"---\nid: {entry_id}\ntype: {entry_type}\ntitle: {title}\n{status_line}---\nBody.\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("settled", ["done", "retired", "superseded", "wont_do"])
+def test_a_settled_backlog_item_is_never_in_the_default_scan(dup_setup, tmp_path, settled):
+    """#934 groom: the default scan lists live items only. `settled` comes from
+    the backlog_item type's declared statuses, not a list in the scan."""
+    folder = tmp_path / "kb"
+    _write(folder, "weekly-report-a", "backlog_item", "Weekly Report Sync", settled)
+    _write(folder, "weekly-report-b", "backlog_item", "Weekly Report Sync", "proposed")
+    _write(folder, "weekly-report-c", "backlog_item", "Weekly Report Sync", "in_progress")
+    dup_setup["index"].index_all()
+
+    result = dup_setup["qa"].find_duplicates("backlog_item", readable_kbs=UNSCOPED)
+
+    ids = {side["id"] for pair in result["pairs"] for side in (pair["a"], pair["b"])}
+    assert ids == {"weekly-report-b", "weekly-report-c"}
+    assert result["count"] == 1
+
+
+@pytest.mark.control(
+    reason="passes on the old scan too: an explicit --status is not narrowed by the settled set"
+)
+def test_an_explicit_status_still_reaches_a_settled_backlog_item(dup_setup, tmp_path):
+    folder = tmp_path / "kb"
+    _write(folder, "old-a", "backlog_item", "Retired Thing", "retired")
+    _write(folder, "old-b", "backlog_item", "Retired Thing", "retired")
+    dup_setup["index"].index_all()
+
+    result = dup_setup["qa"].find_duplicates(
+        "backlog_item", readable_kbs=UNSCOPED, statuses={"retired"}
+    )
+
+    assert result["count"] == 1
+
+
+@pytest.mark.control(
+    reason="passes on the old scan too: guards that the declared-status rule drops nothing from a type with no status"
+)
+def test_a_type_with_no_status_field_is_scanned_and_every_entry_is_live(dup_setup, tmp_path):
+    """A note has no status: nothing is dropped and nothing raises."""
+    folder = tmp_path / "kb"
+    for entry_id in ("election-day", "2026-11-03"):
+        _write(folder, entry_id, "note", "Election Day", None)
+    dup_setup["index"].index_all()
+
+    result = dup_setup["qa"].find_duplicates("note", readable_kbs=UNSCOPED)
+
+    assert result["count"] == 1
+    assert {result["pairs"][0]["a"]["id"], result["pairs"][0]["b"]["id"]} == {
+        "election-day",
+        "2026-11-03",
+    }
+
+
+@pytest.mark.control(
+    reason="passes on the old scan too: guards that the declared-status rule drops nothing from a type with no status"
+)
+def test_cli_scans_a_statusless_type(cli_world):
+    world = cli_world()
+    folder = world.kb_path("test-kb")
+    for entry_id in ("election-day", "2026-11-03"):
+        _write(folder, entry_id, "note", "Election Day", None)
+    world.index()
+
+    result = world.cli("qa", "duplicates", "-t", "note", "--format", "json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["count"] == 1

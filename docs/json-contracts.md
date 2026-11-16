@@ -1936,8 +1936,13 @@ matching `--strip-prefix`, and over the title. A pair is a candidate when either
 score is at or above `--threshold` (default `0.62`); `score` is the
 higher one and `signal` names every signal that matched (`id`, `title`,
 or `id+title`). Within each pair, `a` sorts before `b` by `(kb_name, id)`.
-Without `--status`, an entry is live while its lifecycle is `active` and its status is not `done`, `cancelled`, `failed`,
-`archived` or `closed`. Task status is effective: a task completed by its children
+Without `--status`, an entry is live while its lifecycle is `active` and its
+status is not one the **type declares settled**: a `task`'s `done`, `cancelled`
+and `failed`; a software-kb `backlog_item`'s `done`, `retired`, `superseded` and
+`wont_do`; an `adr`'s `rejected`, `deprecated` and `superseded`. A plugin
+declares them as `settled_statuses` in `get_type_metadata()`. A type that
+declares none, or has no status field at all (a `note`), has every entry live
+and is scanned. Task status is effective: a task completed by its children
 counts as `done` even while its file still says `open`. This applies both to
 `--status` and the default live-entry scan; the scan does not rewrite files.
 

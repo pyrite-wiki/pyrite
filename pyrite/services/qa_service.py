@@ -34,7 +34,7 @@ from ..exceptions import (
 from ..models.base import lifecycle_validation_error
 from ..plugins.registry import get_registry
 from ..schema import validate_date, validate_importance
-from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata
+from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata, settled_statuses
 from ..storage import effective_status
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
@@ -64,10 +64,6 @@ def require_qa_tier(tier: int, *, llm_available: Callable[[], bool]) -> None:
         )
 
 
-#: Statuses a duplicate scan treats as settled when the caller names no
-#: ``--status`` filter. A note (no status) is live while its lifecycle is
-#: ``active``; a task is live until one of these (#934).
-_DUPLICATE_RESOLVED = frozenset({"done", "cancelled", "canceled", "failed", "archived", "closed"})
 _WORD_SPLIT = re.compile(r"[^a-z0-9]+")
 
 
@@ -302,7 +298,10 @@ class QAService:
 
         With ``statuses`` the scan keeps only those statuses. Without it, an
         entry is live while its lifecycle is ``active`` and its effective status is not
-        one of ``done``/``cancelled``/``failed``/``archived``/``closed``.
+        one the type declares settled (``core_types.settled_statuses``: a task's
+        ``done``/``cancelled``/``failed``, a backlog item's ``retired``,
+        ``superseded``, ``wont_do``, ...). A type that declares none, or has no
+        status at all, has every entry live.
         Tasks completed by their children use the shared derived-status rule;
         reading duplicate candidates never rewrites their files.
 
@@ -329,6 +328,7 @@ class QAService:
         if scope:
             sql += f" AND {scope}"
         rows = self.db.execute_sql(sql, params)
+        settled = settled_statuses(entry_type)
 
         entries: list[dict[str, Any]] = []
         for row in rows:
@@ -337,7 +337,7 @@ class QAService:
             if statuses is not None:
                 if status not in statuses:
                     continue
-            elif lifecycle != "active" or status in _DUPLICATE_RESOLVED:
+            elif lifecycle != "active" or status in settled:
                 continue
             entries.append(
                 {

@@ -117,6 +117,28 @@ SYSTEM_INTENT: dict[str, Any] = {
 # Core Type Metadata -- AI instructions, field descriptions, display hints
 # =============================================================================
 
+#: Statuses after which an entry of a core type is no longer live work. A type
+#: declares its own the same way a plugin does: a ``settled_statuses`` list in
+#: ``get_type_metadata()``. A type that declares none has none: all of its
+#: entries are live, whatever their status says (a note has no status at all).
+CORE_SETTLED_STATUSES: dict[str, tuple[str, ...]] = {
+    "task": ("done", "cancelled", "failed"),
+}
+
+
+def settled_statuses(type_name: str) -> frozenset[str]:
+    """The type's declared terminal-but-not-live statuses, lowercase (#934)."""
+    declared = set(CORE_SETTLED_STATUSES.get(type_name, ()))
+    try:
+        from ..plugins import get_registry
+
+        plugin_meta = get_registry().get_all_type_metadata().get(type_name, {})
+        declared.update(plugin_meta.get("settled_statuses", ()))
+    except Exception:
+        logger.warning("Failed to load plugin settled statuses for %s", type_name, exc_info=True)
+    return frozenset(str(status).lower() for status in declared)
+
+
 CORE_TYPE_METADATA: dict[str, dict[str, Any]] = {
     "note": {
         "ai_instructions": (
