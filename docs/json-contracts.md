@@ -1783,11 +1783,13 @@ named rather than dropped:
   status is `unhealthy`.
 - `pyrite index sync` (every KB) does not sync it and keeps its index rows;
   it prints `Not synced: <kb>: <message>` and exits 3 when other KBs synced
-  (1 when none did). The sync result's `unreadable_kbs` list (REST
-  `POST /api/index/sync`, MCP `kb_index_sync`) names it the same way. A sync,
-  rebuild or reindex of that one KB answers `KB_UNREADABLE` and changes
-  nothing. `pyrite index build` skips it, names it, and exits 3 or 1 the same
-  way.
+  (1 when none did). A sync that runs in the foreground (REST
+  `POST /api/index/sync` with `wait=true`, MCP `kb_index_sync` without
+  `background`) names it the same way, in the result's `unreadable_kbs` list.
+  A background sync job keeps the rows too, and its job result does not yet
+  name the KB; `pyrite index health` does. A sync, rebuild or reindex of that
+  one KB answers `KB_UNREADABLE` and changes nothing. `pyrite index build`
+  skips it, names it, and exits 3 or 1 the same way.
 - Every operation that needs its files answers `KB_UNREADABLE`.
 
 ## Operational contracts
