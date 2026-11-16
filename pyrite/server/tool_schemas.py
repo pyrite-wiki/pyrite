@@ -16,6 +16,7 @@ deployment whose ceiling is 20,000 has been misled by its own tool schema.
 import copy
 from typing import Any
 
+from ..models.task import TASK_STATUSES
 from ..services.search_service import HOW_TO_READ_MATCH
 
 
@@ -616,15 +617,7 @@ READ_TOOLS = {
                 "kb_name": {"type": "string", "description": "KB name (optional)"},
                 "status": {
                     "type": "string",
-                    "enum": [
-                        "open",
-                        "claimed",
-                        "in_progress",
-                        "blocked",
-                        "review",
-                        "done",
-                        "failed",
-                    ],
+                    "enum": list(TASK_STATUSES),
                     "description": "Filter by task status",
                 },
                 "assignee": {
@@ -1004,7 +997,13 @@ WRITE_TOOLS = {
         },
     },
     "task_update": {
-        "description": "Update task fields (status, assignee, priority).",
+        "description": (
+            "Update task fields (status, assignee, priority). Allowed status transitions: "
+            "open -> claimed (use task_claim) -> in_progress -> done / failed / blocked / review; "
+            "blocked and review back to in_progress; "
+            "cancelled from any unfinished state (open, claimed, in_progress, blocked, review); "
+            "failed -> open needs a reason."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1012,15 +1011,7 @@ WRITE_TOOLS = {
                 "kb_name": {"type": "string", "description": "KB name"},
                 "status": {
                     "type": "string",
-                    "enum": [
-                        "open",
-                        "claimed",
-                        "in_progress",
-                        "blocked",
-                        "review",
-                        "done",
-                        "failed",
-                    ],
+                    "enum": list(TASK_STATUSES),
                     "description": "New status",
                 },
                 "assignee": {

@@ -669,7 +669,49 @@ class TestHooks:
         # open → done is not a valid transition — raises a typed, helpful error
         from pyrite.exceptions import ValidationError
 
-        with pytest.raises(ValidationError, match="Cannot move task from 'open' to 'done'"):
+        with pytest.raises(
+            ValidationError, match="Cannot move task from 'open' to 'done'"
+        ) as exc_info:
+            _task_validate_transition(entry, ctx)
+        assert "from any unfinished state" in str(exc_info.value)
+
+    @pytest.mark.parametrize("old_status", ["open", "claimed", "in_progress", "blocked", "review"])
+    def test_before_save_allows_cancelling_from_unfinished_states(self, old_status):
+        from unittest.mock import MagicMock
+        from pyrite.plugins.context import PluginContext
+        from pyrite.services.task_service import _task_validate_transition
+
+        entry = TaskEntry(id="t1", title="Test", status="cancelled")
+        ctx = PluginContext(
+            config=MagicMock(),
+            db=MagicMock(),
+            kb_name="test",
+            operation="update",
+            kb_type="task",
+            extra={"old_status": old_status},
+        )
+        result = _task_validate_transition(entry, ctx)
+        assert result.status == "cancelled"
+
+    @pytest.mark.parametrize("old_status", ["done", "failed"])
+    def test_before_save_rejects_cancelling_from_terminal_states(self, old_status):
+        from unittest.mock import MagicMock
+        from pyrite.exceptions import ValidationError
+        from pyrite.plugins.context import PluginContext
+        from pyrite.services.task_service import _task_validate_transition
+
+        entry = TaskEntry(id="t1", title="Test", status="cancelled")
+        ctx = PluginContext(
+            config=MagicMock(),
+            db=MagicMock(),
+            kb_name="test",
+            operation="update",
+            kb_type="task",
+            extra={"old_status": old_status},
+        )
+        with pytest.raises(
+            ValidationError, match=f"Cannot move task from '{old_status}' to 'cancelled'"
+        ):
             _task_validate_transition(entry, ctx)
 
     def test_before_save_allows_valid_transition(self):
@@ -749,6 +791,39 @@ class TestMCPToolSchemas:
         schema = WRITE_TOOLS["task_decompose"]["inputSchema"]
         assert "parent_id" in schema["required"]
         assert "children" in schema["required"]
+
+    def test_task_status_enums_equal_task_statuses(self):
+        """Principle 8: task status enums in MCP tools are built from TASK_STATUSES (#1504)."""
+        assert WRITE_TOOLS["task_update"]["inputSchema"]["properties"]["status"]["enum"] == list(
+            TASK_STATUSES
+        )
+        assert READ_TOOLS["task_list"]["inputSchema"]["properties"]["status"]["enum"] == list(
+            TASK_STATUSES
+        )
+        assert (
+            "cancelled" in WRITE_TOOLS["task_update"]["inputSchema"]["properties"]["status"]["enum"]
+        )
+        assert "cancelled" in READ_TOOLS["task_list"]["inputSchema"]["properties"]["status"]["enum"]
+
+    def test_task_update_and_list_validate_cancelled_status(self):
+        """MCP schemas accept 'cancelled' under jsonschema validation (#1504)."""
+        from jsonschema import validate
+
+        update_args = {"task_id": "test-task", "kb_name": "test-kb", "status": "cancelled"}
+        validate(update_args, WRITE_TOOLS["task_update"]["inputSchema"])
+
+        list_args = {"status": "cancelled"}
+        validate(list_args, READ_TOOLS["task_list"]["inputSchema"])
+
+    def test_task_update_description_mentions_transitions_and_task_claim(self):
+        """The task_update description explains transitions, task_claim, and cancellation (#1504)."""
+        desc = WRITE_TOOLS["task_update"]["description"]
+        assert "task_claim" in desc
+        assert "open" in desc
+        assert "claimed" in desc
+        assert "in_progress" in desc
+        assert "cancelled" in desc
+        assert "unfinished state" in desc
 
 
 # =========================================================================
