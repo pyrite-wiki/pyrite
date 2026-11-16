@@ -157,3 +157,28 @@ def test_rich_is_still_a_person_s_view(task_cli_env):  # noqa: F811
     )
     assert out.exit_code == 0, out.output
     assert "CLI lookup task" in out.stdout and "Completion (derived)" in out.stdout
+
+
+@pytest.mark.cli
+def test_claim_of_a_task_the_file_says_is_held_is_refused_whatever_the_index_says(
+    task_cli_env,  # noqa: F811
+):
+    """`pyrite task claim` decides on the file. The file here was claimed
+    without the index hearing of it (a `git pull`), so the row still says
+    open: the claim exits as a lost claim does, names the file's status and
+    leaves the file as it was."""
+    task_id = task_cli_env["task_id"]
+    path = task_cli_env["config"].knowledge_bases[0].path / "tasks" / f"{task_id}.md"
+    text = path.read_text()
+    assert "status: open\n" in text
+    path.write_text(text.replace("status: open\n", "status: claimed\nassignee: agent-A\n"))
+    held = path.read_bytes()
+
+    out = runner.invoke(app, ["task", "claim", task_id, "-k", "test-tasks", "-a", "agent-B"])
+
+    assert out.exit_code == 1, out.output
+    data = json.loads(out.stdout)
+    assert data["claimed"] is False
+    assert data["current_status"] == "claimed"
+    assert data["error"] == f"Entry '{task_id}' is 'claimed', not 'open'"
+    assert path.read_bytes() == held

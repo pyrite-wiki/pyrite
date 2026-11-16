@@ -649,9 +649,14 @@ CALL_SITES: dict[str, tuple[str, object]] = {
         WRITER,
         ["cli_link", "mcp_link", "bulk_link"],
     ),
-    "pyrite/services/kb_service.py::KBService.claim_entry": (
+    # claim_entry's strict load, ahead of the index row's compare-and-swap
+    "pyrite/services/kb_service.py::KBService._claimable_file_row": (
         WRITER,
         ["cli_task_claim", "mcp_task_claim"],
+    ),
+    "pyrite/services/kb_service.py::KBService._undo_claim_swap": (
+        READER,
+        "after a claim's file write failed: rebuilds the index row, writes no file",
     ),
     "pyrite/services/task_service.py::TaskService.update_task": (
         WRITER,

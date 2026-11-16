@@ -2223,9 +2223,16 @@ class KBService:
         restrict: bool,
         ops: list[Any] | None = None,
         merge_spellings: bool = False,
+        precondition: Callable[[Entry, Path, bytes], Any] | None = None,
     ) -> WriteResult:
         """The one update: the request as operations applied to the file's own
         bytes (ADR-0042; #955, B6 P3a).
+
+        ``precondition`` makes the write conditional on what the file holds: it
+        is called with the entry, path and bytes of every read (the first and
+        each re-read after ``FileChanged``) and refuses by raising. The bytes
+        it accepted are the bytes the publish compares the file with, so the
+        condition holds at the instant of the replace (a claim: ``claim_entry``).
 
         Read the file once (``read_for_write``: the bytes are the base, the
         model is parsed from the same bytes); map the request and the item
@@ -2280,6 +2287,8 @@ class KBService:
                 raise EntryNotFoundError(
                     f"Entry not found: {entry_id}{repo.not_found_hint(entry_id)}"
                 ) from None
+            if precondition is not None:
+                precondition(entry, path, raw)
             text = raw.decode("utf-8")
             split = split_frontmatter(text)
             if not isinstance(split, Frontmatter):
@@ -4050,45 +4059,173 @@ class KBService:
         from_status: str = "open",
         to_status: str = "claimed",
     ) -> dict[str, Any]:
-        """Atomically claim an Assignable + Statusable entry via CAS.
+        """Claim an Assignable + Statusable entry: move it from ``from_status``
+        to ``to_status`` under ``assignee``, for one caller at most.
 
-        Uses compare-and-swap on the index to ensure only one agent can claim.
-        On success, updates the markdown file to match.
+        **The file decides.** The status and the assignee a claim is judged on
+        are the file's, read here and read again inside the write
+        (``_update(precondition=...)``), whose publish compares the file with
+        the bytes that were judged: the file never goes from a status other
+        than ``from_status`` to ``to_status`` through this call, whatever the
+        index row says. A row that has fallen behind the file (a ``git pull``,
+        a hand edit, an ``index sync`` whose plan predates a write) used to
+        win the compare-and-swap below and hand a held task to a second
+        claimer.
+
+        **The index row is the mutex, not the record.** The compare-and-swap
+        on the row is kept because it is the one step that is atomic for every
+        process sharing the index in every KB kind: outside a git work tree
+        ``publish_entry_text`` compares and replaces without a lock (D1 (b)),
+        so two claimers there could both pass the file compare. A row the swap
+        loses to is believed only when it was built from the bytes the file
+        holds now (its ``content_hash``): then it marks a claim in flight or
+        done. Otherwise it is stale, is rebuilt from the file, and the swap
+        runs once more.
+
+        A refusal on the file's word leaves the row saying what the file
+        says, and so does a file write that fails after the swap.
 
         Returns:
             Dict with claimed=True on success, or error details.
         """
-        from sqlalchemy import text
-
         refusal = self._refuse_claim_of_complete_task(entry_id, kb_name)
         if refusal:
             return refusal
-        kb_config = self.get_kb(kb_name)
-        if kb_config is not None:
+        check = self._claim_precondition(entry_id, kb_name, assignee, from_status)
+        change_set = getattr(self.db, "is_change_set", False)
+        try:
             # A claim is a write: a file its declared type cannot load is
-            # refused (EntryLoadError) before the index's compare-and-swap,
-            # which a stale row would otherwise win (ADR-0042 8a).
-            KBRepository(kb_config).load(entry_id)
+            # refused (EntryLoadError) before anything else (ADR-0042 8a).
+            file_row, path = self._claimable_file_row(entry_id, kb_name, check)
+        except _ClaimRefusedError:
+            return self._claim_refused(entry_id, kb_name, from_status, check, change_set)
+        if file_row is None:
+            # No file this claim can judge (none, or one the write below
+            # refuses): the holder rule on the row, as before, so a refused
+            # claim never touches it. The write still checks the file.
+            held = self.db.execute_sql(
+                "SELECT assignee FROM entry WHERE id = :entry_id AND kb_name = :kb_name",
+                {"entry_id": entry_id, "kb_name": kb_name},
+            )
+            if held:
+                _refuse_assignee_values(entry_id, held[0].get("assignee") or "", assignee or "")
 
-        # The holder rule before the compare-and-swap, so a refused claim
-        # never touches the index row (the file write below checks again).
-        held = self.db.execute_sql(
-            "SELECT assignee FROM entry WHERE id = :entry_id AND kb_name = :kb_name",
-            {"entry_id": entry_id, "kb_name": kb_name},
-        )
-        if held:
-            _refuse_assignee_values(entry_id, held[0].get("assignee") or "", assignee or "")
+        if change_set:
+            return self._claim_in_change_set(
+                entry_id, kb_name, assignee, from_status, to_status, check
+            )
 
-        if getattr(self.db, "is_change_set", False):
-            return self._claim_in_change_set(entry_id, kb_name, assignee, from_status, to_status)
+        for attempt in range(_CLAIM_SWAP_ATTEMPTS):
+            if self._swap_claim_row(entry_id, kb_name, assignee, from_status, to_status):
+                break
+            # The row is not `from_status`. Read it, then the file again: the
+            # claimer this one lost to has usually published by now. In that
+            # order, a row that claimer has finished writing is never compared
+            # with a file read before it published, and taken for stale.
+            rows = self.db.execute_sql(
+                "SELECT status, content_hash FROM entry "
+                "WHERE id = :entry_id AND kb_name = :kb_name",
+                {"entry_id": entry_id, "kb_name": kb_name},
+            )
+            try:
+                file_row, path = self._claimable_file_row(entry_id, kb_name, check)
+            except _ClaimRefusedError:
+                return self._claim_refused(entry_id, kb_name, from_status, check, change_set)
+            if file_row is None and not rows:
+                return {
+                    "claimed": False,
+                    "error": f"Entry '{entry_id}' not found in KB '{kb_name}'",
+                }
+            stale = not rows or rows[0].get("content_hash") != (file_row or {}).get("content_hash")
+            if file_row is not None and path is not None and stale:
+                if attempt + 1 < _CLAIM_SWAP_ATTEMPTS:
+                    # The file is claimable and the row was not built from
+                    # it: the row is behind, not a claim in flight.
+                    self._index_row_from_file(kb_name, file_row, path)
+                    continue
+            # The row was built from these bytes and says otherwise: another
+            # claimer holds the swap and has yet to publish.
+            current = rows[0].get("status", from_status) if rows else from_status
+            return {
+                "claimed": False,
+                "error": f"Entry '{entry_id}' is '{current}', not '{from_status}'",
+                "current_status": current,
+            }
 
-        session = self.db.session
+        # The file, on the condition that it still says what was judged.
+        try:
+            self._update(
+                entry_id,
+                kb_name,
+                {"status": to_status, "assignee": assignee},
+                restrict=False,
+                precondition=check,
+            )
+        except _ClaimRefusedError:
+            # The file changed between the swap and the write: it wins.
+            return self._claim_refused(entry_id, kb_name, from_status, check, change_set)
+        except Exception as e:
+            logger.warning("File update failed for claim on %s, rolling back: %s", entry_id, e)
+            self._undo_claim_swap(entry_id, kb_name, from_status)
+            return {"claimed": False, "error": f"File update failed: {outside_text(e)}"}
 
-        # CAS: only update if status matches from_status
+        return {
+            "claimed": True,
+            "task_id": entry_id,
+            "assignee": assignee,
+            "status": to_status,
+        }
+
+    def _claim_precondition(
+        self, entry_id: str, kb_name: str, assignee: str, from_status: str
+    ) -> _ClaimCheck:
+        """What a claim requires of the file, as ``_update``'s precondition
+        (``_ClaimCheck``)."""
+        return _ClaimCheck(self._index_mgr, entry_id, kb_name, assignee, from_status)
+
+    def _claimable_file_row(
+        self, entry_id: str, kb_name: str, check: _ClaimCheck
+    ) -> tuple[dict[str, Any] | None, Path | None]:
+        """The index row of the entry's file as it is now, and its path, when
+        the file passes ``check``; ``(None, None)`` when there is no file to
+        judge (no KB, no file, or one whose fault the write reports:
+        hard-linked, unparseable, unindexable). Raises what ``check`` raises,
+        and ``EntryLoadError`` for a file its declared type cannot load."""
+        kb_config = self.get_kb(kb_name)
+        if kb_config is None:
+            return None, None
+        repo = KBRepository(kb_config)
+        try:
+            found = repo.read_for_write(entry_id)
+        except OSError:
+            return None, None
+        if found is None:
+            return None, None
+        path, raw = found
+        try:
+            entry = repo.load_entry_from_bytes(path, raw)
+        except EntryLoadError:
+            raise
+        except Exception:
+            return None, None
+        try:
+            return check(entry, path, raw), path
+        except ValueError:  # `row_for`: a file the index cannot store
+            return None, None
+
+    def _swap_claim_row(
+        self, entry_id: str, kb_name: str, assignee: str, from_status: str, to_status: str
+    ) -> bool:
+        """The compare-and-swap on the index row: True when this caller moved
+        it from ``from_status``. One statement, so one winner among the
+        processes that share the index."""
+        from sqlalchemy import text
+
         if from_status == "open":
             status_clause = "(status = :from_status OR status IS NULL)"
         else:
             status_clause = "status = :from_status"
+        session = self.db.session
         result = session.execute(
             text(f"""UPDATE entry
                SET status = :to_status,
@@ -4104,46 +4241,77 @@ class KBService:
             },
         )
         session.commit()
+        return result.rowcount > 0
 
-        if result.rowcount == 0:
+    def _index_row_from_file(self, kb_name: str, row: dict[str, Any], path: Path) -> None:
+        """Store ``row``, built by ``row_for`` from the file at ``path``."""
+        kb_config = self.require_kb(kb_name)
+        self.db.ensure_kb(
+            name=kb_name,
+            kb_type=kb_config.kb_type,
+            path=str(kb_config.path),
+            description=kb_config.description,
+        )
+        self._index_mgr.index_row(dict(row), path)
+
+    def _claim_refused(
+        self,
+        entry_id: str,
+        kb_name: str,
+        from_status: str,
+        check: _ClaimCheck,
+        change_set: bool,
+    ) -> dict[str, Any]:
+        """The refusal of a claim the file does not allow (``check`` has just
+        raised ``_ClaimRefusedError``), with the file's status; the index row
+        is rebuilt from the file when it says anything else (not in a change
+        set, whose index is the overlay's)."""
+        row, path, current = check.row, check.path, check.current
+        if not change_set and row is not None and path is not None:
             rows = self.db.execute_sql(
-                "SELECT status FROM entry WHERE id = :entry_id AND kb_name = :kb_name",
+                "SELECT status, assignee, content_hash FROM entry "
+                "WHERE id = :entry_id AND kb_name = :kb_name",
                 {"entry_id": entry_id, "kb_name": kb_name},
             )
-            if not rows:
-                return {
-                    "claimed": False,
-                    "error": f"Entry '{entry_id}' not found in KB '{kb_name}'",
-                }
-            current = rows[0].get("status", from_status)
-            return {
-                "claimed": False,
-                "error": f"Entry '{entry_id}' is '{current}', not '{from_status}'",
-                "current_status": current,
-            }
-
-        # Update the markdown file to match
-        try:
-            self.update_entry(entry_id, kb_name, status=to_status, assignee=assignee)
-        except Exception as e:
-            # Rollback index CAS on file error
-            logger.warning("File update failed for claim on %s, rolling back: %s", entry_id, e)
-            session.execute(
-                text("""UPDATE entry
-                   SET status = :from_status,
-                       assignee = NULL
-                   WHERE id = :entry_id AND kb_name = :kb_name"""),
-                {"entry_id": entry_id, "kb_name": kb_name, "from_status": from_status},
-            )
-            session.commit()
-            return {"claimed": False, "error": f"File update failed: {outside_text(e)}"}
-
+            keys = ("status", "assignee", "content_hash")
+            if not rows or any((rows[0].get(k) or "") != (row.get(k) or "") for k in keys):
+                self._index_row_from_file(kb_name, row, path)
         return {
-            "claimed": True,
-            "task_id": entry_id,
-            "assignee": assignee,
-            "status": to_status,
+            "claimed": False,
+            "error": f"Entry '{entry_id}' is '{current}', not '{from_status}'",
+            "current_status": current,
         }
+
+    def _undo_claim_swap(self, entry_id: str, kb_name: str, from_status: str) -> None:
+        """After a claim's file write failed: make the row say what the file
+        says. Rebuilt from the file when it can be read as an entry; else the
+        swap alone is reversed, as it always was."""
+        from sqlalchemy import text
+
+        kb_config = self.get_kb(kb_name)
+        try:
+            if kb_config is not None:
+                repo = KBRepository(kb_config)
+                found = repo.read_for_write(entry_id)
+                if found is not None:
+                    path, raw = found
+                    entry = repo.load_entry_from_bytes(path, raw)
+                    row = self._index_mgr.row_for(
+                        entry, kb_name, path, content_hash=content_hash(raw)
+                    )
+                    self._index_row_from_file(kb_name, row, path)
+                    return
+        except Exception as e:
+            logger.warning("Could not re-index %s after a failed claim: %s", entry_id, e)
+        session = self.db.session
+        session.execute(
+            text("""UPDATE entry
+               SET status = :from_status,
+                   assignee = NULL
+               WHERE id = :entry_id AND kb_name = :kb_name"""),
+            {"entry_id": entry_id, "kb_name": kb_name, "from_status": from_status},
+        )
+        session.commit()
 
     def lands_in(self, principal, kb_name: str):
         """Where `principal`'s write to `kb_name` lands: the landing rule,
@@ -4154,14 +4322,22 @@ class KBService:
         return AccessPolicy(self.config, self.db).lands_in(principal, kb_name)
 
     def _claim_in_change_set(
-        self, entry_id: str, kb_name: str, assignee: str, from_status: str, to_status: str
+        self,
+        entry_id: str,
+        kb_name: str,
+        assignee: str,
+        from_status: str,
+        to_status: str,
+        check: _ClaimCheck,
     ) -> dict[str, Any]:
         """A claim whose write lands in the claimer's change set (a KB with
         `landing: review`; ADR-0044 §1, decided 2026-10-20: claims follow the
-        rule). The compare-and-swap above runs on the shared index, which is
-        main: here the claim is the claimer's own, so the status is read
-        through the overlay and the change is the file write alone. Other
-        users do not see it until the change set merges."""
+        rule). The compare-and-swap runs on the shared index, which is main:
+        here the claim is the claimer's own, so the status is read through
+        the overlay and the change is the file write alone. Other users do
+        not see it until the change set merges. The write carries the same
+        condition on the working copy's file as a claim on main (``check``):
+        both the overlay and the file must say ``from_status``."""
         entry = self.db.get_entry(entry_id, kb_name)
         if not entry:
             return {"claimed": False, "error": f"Entry '{entry_id}' not found in KB '{kb_name}'"}
@@ -4172,7 +4348,16 @@ class KBService:
                 "error": f"Entry '{entry_id}' is '{current}', not '{from_status}'",
                 "current_status": current,
             }
-        self.update_entry(entry_id, kb_name, status=to_status, assignee=assignee)
+        try:
+            self._update(
+                entry_id,
+                kb_name,
+                {"status": to_status, "assignee": assignee},
+                restrict=False,
+                precondition=check,
+            )
+        except _ClaimRefusedError:
+            return self._claim_refused(entry_id, kb_name, from_status, check, True)
         return {"claimed": True, "task_id": entry_id, "assignee": assignee, "status": to_status}
 
     # =========================================================================
@@ -4516,6 +4701,50 @@ class KBService:
 
 #: One read-and-apply, then five more from a fresh read (ADR-0042 decision 10).
 _UPDATE_ATTEMPTS = 6
+
+#: How many times a claim tries the index row's compare-and-swap: once, and
+#: once more after rebuilding a row found to be behind its file.
+_CLAIM_SWAP_ATTEMPTS = 2
+
+
+class _ClaimRefusedError(Exception):
+    """The file does not hold the status a claim needs. Carries nothing: what
+    the file holds is on the ``_ClaimCheck`` that raised it."""
+
+
+class _ClaimCheck:
+    """What a claim requires of the file, as ``_update``'s precondition: the
+    holder rule, then ``status == from_status`` (no status is open), both on
+    the values an index row built from these bytes would hold -- ``row_for``,
+    so the status of every type is read the one way, and the rule is the one
+    the swap's SQL applies to a row that is current.
+
+    Called with an entry, its path and its bytes, it returns that row, or
+    raises ``Forbidden`` (the holder rule) or ``_ClaimRefusedError``.
+    ``row``, ``path`` and ``current`` (the file's status) are those of the
+    last file it judged: what a refusal reports and the index is rebuilt
+    from."""
+
+    def __init__(
+        self, index_mgr: IndexManager, entry_id: str, kb_name: str, assignee: str, from_status: str
+    ):
+        self._index_mgr = index_mgr
+        self._entry_id = entry_id
+        self._kb_name = kb_name
+        self._assignee = assignee
+        self._from_status = from_status
+        self.row: dict[str, Any] | None = None
+        self.path: Path | None = None
+        self.current: Any = None
+
+    def __call__(self, entry: Entry, path: Path, raw: bytes) -> dict[str, Any]:
+        row = self._index_mgr.row_for(entry, self._kb_name, path, content_hash=content_hash(raw))
+        _refuse_assignee_values(self._entry_id, row.get("assignee") or "", self._assignee or "")
+        current = row.get("status")
+        self.row, self.path, self.current = row, path, current
+        if not (current == self._from_status or (self._from_status == "open" and current is None)):
+            raise _ClaimRefusedError
+        return row
 
 
 #: The managed lists a surface may append an item to or remove one from, as

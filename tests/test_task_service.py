@@ -351,21 +351,24 @@ class TestClaimTask:
         created = svc.create_task(kb_name="test-tasks", title="Rollback test")
         entry_id = created["entry_id"]
 
-        with patch.object(svc.kb_svc, "update_entry", side_effect=OSError("disk full")):
+        # The claim's file write is `_update` (with the claim's precondition).
+        with patch.object(svc.kb_svc, "_update", side_effect=OSError("disk full")):
             result = svc.claim_task(entry_id, "test-tasks", "agent:fail")
 
         assert result["claimed"] is False
         assert "File update failed" in result["error"]
 
+        # The row says what the file says: open, held by nobody.
         row = (
             task_env["db"]
             ._raw_conn.execute(
-                "SELECT status FROM entry WHERE id = ?",
+                "SELECT status, assignee FROM entry WHERE id = ?",
                 (entry_id,),
             )
             .fetchone()
         )
         assert row["status"] == "open"
+        assert not row["assignee"]
 
 
 class TestClaimEntry:

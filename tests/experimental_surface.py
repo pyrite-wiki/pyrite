@@ -267,6 +267,7 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     "tests/test_role_ladder_has_one_home.py": AUTHZ,
     "tests/test_settings_secret_authz.py": AUTHZ,
     "tests/test_untrusted_local_config.py": AUTHZ,
+    "tests/test_task_claim_concurrency.py::*test_the_holder_rule_reads_the_file*": AUTHZ,
     "tests/test_repo_endpoints.py::*requires_github_token*": AUTHZ,
     "tests/test_repo_endpoints.py::*requires_token*": AUTHZ,
     "extensions/journalism-investigation/tests/test_mcp_tools.py::*no_tools_for_invalid_tier*": AUTHZ,
