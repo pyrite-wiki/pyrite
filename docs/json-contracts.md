@@ -323,7 +323,7 @@ is reproduced by a command in "Reproduce the codes" below, which CI runs.
 | `KB_NOT_FOUND` | the KB name is not registered, or, for a scoped caller, not readable (the same answer, byte for byte), or it is a KB's **shortname**: a shortname is link syntax only (`[[short:id]]`), and `-k`, REST `kb` and MCP `kb_name` take the full name (#952). One resolver answers every surface; the refusal carries `did_you_mean` (near matches drawn only from the KBs you can read; for a readable KB's shortname, its full name) and a `suggestion`/`hint`. A blank name names no KB and is never this code: a command that needs one answers `VALIDATION_FAILED`. The one exception is a blank REST path segment (`/api/kbs/%20/permissions`): a path that must name a KB and names none is `KB_NOT_FOUND`. Every CLI write command (`create`, `update`, `delete`, `link`) reports it. | Use a name from `did_you_mean`, or `pyrite orient` (`kb_orient`) with no KB to list the KBs you can read. |
 | `NOT_FOUND` | the entry id does not exist: CLI `get`, `update`, `delete`, `link`. Also a path you named as input (`--body-file`, `--schema-file`, `--alias-file`, `--file`, `import`'s and `add`'s file) that does not exist; an empty path or a non-regular file (directory, FIFO or device) is `VALIDATION_FAILED` before command work (#923, #1165). `pyrite backlinks` and `pyrite-read backlinks` on an id that no entry has and nothing links to answer `ENTRY_NOT_FOUND` (the class's code, today; #610 settles the spelling). An id that is only linked to (`[[ghost-page]]`) is answered with its linking entries. For MCP spellings and legacy codes, see [MCP code transitions](#mcp-code-transitions); `ENTRY_NOT_FOUND` is also the REST class code. | `pyrite search <term> -k <kb>` to find the id. |
 | `AMBIGUOUS` | the id was given without a KB (or with a blank `-k`) and more than one KB you can read holds it (see "`AMBIGUOUS`" above). The error lists them in `candidate_kbs`; REST answers `409`. | Repeat the command with `-k <kb>` (`kb` on REST, `kb_name` on MCP), one of `candidate_kbs`. |
-| `UNDECLARED_TYPE` | the KB's `kb.yaml` declares types and this is not one of them. Core types (`note`, `person`, …) are **not** exempt. Override with `allow_undeclared` (MCP, REST body or import query) / `--allow-undeclared` (CLI). The error carries `declared_types` on MCP and REST. | Use a declared type (`pyrite kb schema show <kb>`), or pass the override. |
+| `UNDECLARED_TYPE` | the KB's `kb.yaml` declares types and this is not one of them. Core types (`note`, `person`, …) are **not** exempt. A declared mapping (`type_mappings` in `kb_schema`/`orient`, e.g. `event` → `investigation_event`) is applied only when the KB declares both of its types, so without the override the type a create stores is one the KB declares; with `allow_undeclared` an undeclared named type is stored as named, unmapped. The write path also has a check that refuses, naming it, a mapped type the KB does not declare; no caller reaches it today (the resolver never offers such a pair), and it guards a later `kb.yaml` `type_map:` override (#468). Override with `allow_undeclared` (MCP, REST body or import query) / `--allow-undeclared` (CLI). The error carries `declared_types` on MCP and REST. | Use a declared type (`pyrite kb schema show <kb>` prints the KB's `kb.yaml`; the types and the `type_mappings` a create applies are in `pyrite orient -k <kb> --format json` under `schema`), or pass the override. |
 | `ENTRY_EXISTS` | the id (given, or derived from the title) already exists. Create never replaces; use update. REST answers `409`. | `update` it, or choose another title or id. |
 | `SCHEMA_VIOLATION` | the KB schema or a plugin validator rejected a field: enum, required, range, format. A kb.yaml enum (`options:`/`values:`, list `items:`, rule `enum:`) is refused when `validation.enforce_enums` is on (the default); every other kb.yaml finding when `validation.enforce` is on. The message names the field, the value and the allowed list (`kind: 'chore' is not one of [...]`). An update that leaves an off-list value as it was is not refused (see **Warnings**). | Re-read the message: it names the field and the allowed values. |
 | `VALIDATION_FAILED` | anything else the entry model refuses (an event without a date, a missing title), a `managed_fields` key in an update, a field Pyrite or the type manages on a create at any spelling (`status_change_log`, `adr_number`, `file_path`, ...: top level, dotted `metadata.k`, under `metadata`, or an alias of the field; REST `POST` refuses only the `metadata` spelling, see above; #1010), an `entry` key holding a whole `kb_get` envelope sent to `kb_update` or REST `PUT` (send `result["entry"]`'s fields at the top level; the file is left untouched; #1024), and the ADR-0034 truncated-body refusal below. Unchanged by ADR-0037 theme 2 (2026-09-25): REST, MCP and the CLI already agreed on this code, so no `legacy_error_code`. | Fix the named field. For a truncated body, reassemble it with `kb_read_body` and retry without the marker. |
@@ -672,6 +672,25 @@ KB that declares them all). The status is `warning`. `pyrite extension list` kee
 naming the plugin until `pip uninstall pyrite-cascade` is run in the
 environment that had it. The removed extensions are listed in
 `pyrite/plugins/removed.py`.
+
+**`kb_schema` / `orient` → `type_mappings`.** These six surfaces carry
+`type_mappings`, an object `{core type: stored type}`, always present and
+`{}` when nothing maps (#468): MCP `kb_schema`, MCP `kb_orient` (under
+`schema`), `GET /api/kbs/{kb}/schema`, `GET /api/kbs/{kb}/orient` (under
+`schema`), `pyrite orient --format json` (under `schema`) and
+`pyrite-admin schema`. `pyrite kb schema show` does not: it prints the KB's
+`kb.yaml` as written. It is exactly what a create in
+that KB applies: a create that names a key, and that the KB accepts, stores
+its value; any other accepted name is stored as named (with `allow_undeclared`,
+an undeclared name is stored as named and never mapped). The pairs are the
+plugins' declared mappings for the KB's registered `kb_type`
+(journalism-investigation: `{"event": "investigation_event", "document":
+"document_source"}`), less any pair whose key or value the KB's `kb.yaml`
+leaves out when it declares types, through the one resolver the write path
+reads. So a KB made from the journalism preset, which declares
+`investigation_event` but not `event`, shows no `event` pair, and
+`create -t event` there is refused `UNDECLARED_TYPE`. Subclassing a core
+class maps nothing.
 
 **Update fields.** An update applies the fields it names: the entry type's
 own fields (its model's fields and every field its `kb.yaml` names for the

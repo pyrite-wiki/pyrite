@@ -223,11 +223,16 @@ KNOWN_ENTITIES_PRESET = {
             "subdirectory": "organizations/",
         },
     },
-    "guidelines": (
-        "Maintain canonical entity records with stable IDs. "
-        "Use aliases for alternate names, abbreviations, and transliterations. "
-        "Keep entries neutral and factual — link to investigation KBs for editorial context. "
-        "Update existing records rather than creating duplicates."
-    ),
+    # A mapping of name -> text, as KBSchema.guidelines reads it: a bare
+    # string made every schema export of a KB made from this preset raise
+    # (MCP kb_schema INTERNAL; orient showed an empty schema).
+    "guidelines": {
+        "canonical_records": (
+            "Maintain canonical entity records with stable IDs. "
+            "Use aliases for alternate names, abbreviations, and transliterations. "
+            "Keep entries neutral and factual — link to investigation KBs for editorial "
+            "context. Update existing records rather than creating duplicates."
+        ),
+    },
     "directories": ["people", "organizations"],
 }

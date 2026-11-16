@@ -3849,6 +3849,7 @@
           "wikilink": "Inline wikilink reference",
           "wikilinked_by": "Referenced by inline wikilink"
         },
+        "type_mappings": {},
         "types": {
           "collection": {
             "ai_instructions": "A folder-backed collection that groups related entries. Created automatically from __collection.yaml files in KB folders. Use to organize entries into browsable groups with list or table views.",
@@ -4186,6 +4187,7 @@
           "wikilink": "Inline wikilink reference",
           "wikilinked_by": "Referenced by inline wikilink"
         },
+        "type_mappings": {},
         "types": {
           "collection": {
             "ai_instructions": "A folder-backed collection that groups related entries. Created automatically from __collection.yaml files in KB folders. Use to organize entries into browsable groups with list or table views.",
@@ -4523,6 +4525,7 @@
           "wikilink": "Inline wikilink reference",
           "wikilinked_by": "Referenced by inline wikilink"
         },
+        "type_mappings": {},
         "types": {
           "collection": {
             "ai_instructions": "A folder-backed collection that groups related entries. Created automatically from __collection.yaml files in KB folders. Use to organize entries into browsable groups with list or table views.",
@@ -4852,6 +4855,7 @@
         "wikilink": "Inline wikilink reference",
         "wikilinked_by": "Referenced by inline wikilink"
       },
+      "type_mappings": {},
       "types": {
         "collection": {
           "ai_instructions": "A folder-backed collection that groups related entries. Created automatically from __collection.yaml files in KB folders. Use to organize entries into browsable groups with list or table views.",
@@ -5165,6 +5169,7 @@
         "wikilink": "Inline wikilink reference",
         "wikilinked_by": "Referenced by inline wikilink"
       },
+      "type_mappings": {},
       "types": {
         "collection": {
           "ai_instructions": "A folder-backed collection that groups related entries. Created automatically from __collection.yaml files in KB folders. Use to organize entries into browsable groups with list or table views.",
@@ -5478,6 +5483,7 @@
         "wikilink": "Inline wikilink reference",
         "wikilinked_by": "Referenced by inline wikilink"
       },
+      "type_mappings": {},
       "types": {
         "collection": {
           "ai_instructions": "A folder-backed collection that groups related entries. Created automatically from __collection.yaml files in KB folders. Use to organize entries into browsable groups with list or table views.",

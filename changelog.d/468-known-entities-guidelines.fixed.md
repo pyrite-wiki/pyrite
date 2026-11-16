@@ -1,0 +1,1 @@
+- **A KB made from the `known-entities` preset has a working schema export.** The preset wrote its `guidelines` as a bare string, so `kb_schema` failed with `INTERNAL` and `orient` showed an empty schema for every such KB. New KBs get a `guidelines` mapping; an existing one can replace `guidelines: <text>` in its `kb.yaml` with `guidelines: {canonical_records: <text>}`.
