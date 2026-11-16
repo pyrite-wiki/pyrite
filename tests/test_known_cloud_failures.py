@@ -30,10 +30,14 @@ def _registry(tmp_path, records):
     return path
 
 
+@pytest.mark.control(reason="the script already printed nothing for an empty registry")
 def test_empty_registry_is_silent(tmp_path):
     assert _brief(_registry(tmp_path, [])) == ""
 
 
+@pytest.mark.control(
+    reason="rewritten from the old default-brief test; the brief already named test and issue"
+)
 def test_brief_names_each_test_and_issue_and_does_not_waive_ci(tmp_path):
     record = {"test": "tests/x.py::test_y", "issue": "https://example.test/1", "reason": "flaky"}
     out = _brief(_registry(tmp_path, [record]))
@@ -60,6 +64,9 @@ def test_a_long_reason_is_cut(tmp_path):
     assert len(_brief(_registry(tmp_path, [record]))) < 1000
 
 
+@pytest.mark.control(
+    reason="both already pointed at the registry; split out of the old canary test"
+)
 def test_hook_and_guidance_point_at_the_registry():
     assert (
         'python3 "$dir/scripts/known_cloud_failures.py"'
@@ -73,6 +80,7 @@ def _records():
     return json.loads(REGISTRY.read_text())
 
 
+@pytest.mark.control(reason="holds for any registry, empty or not")
 def test_every_registered_test_exists():
     for record in _records():
         file, function = record["test"].split("::")
@@ -114,6 +122,7 @@ def test_each_tracking_issue_is_still_open():
     assert closed_entries(_records()) == [], "remove these from scripts/known-cloud-failures.json"
 
 
+@pytest.mark.control(reason="self-test of the closed_entries helper, which lives in this file")
 def test_a_closed_issue_is_caught(tmp_path, monkeypatch):
     gh = tmp_path / "gh"
     gh.write_text("#!/bin/sh\necho CLOSED\n")
@@ -123,12 +132,16 @@ def test_a_closed_issue_is_caught(tmp_path, monkeypatch):
     assert closed_entries([{"issue": url}]) == [url]
 
 
+@pytest.mark.control(reason="self-test of the _issue_state helper, which lives in this file")
 def test_without_gh_the_check_skips_with_a_reason(monkeypatch):
     monkeypatch.setenv("PATH", "/nonexistent")
     with pytest.raises(pytest.skip.Exception, match="gh is not installed"):
         _issue_state("https://example.test/1")
 
 
+@pytest.mark.control(
+    reason="self-test of the _issue_state helper in this file; seen red against its gh issue view version"
+)
 def test_the_check_works_where_graphql_is_refused(tmp_path, monkeypatch):
     """Cloud sessions, the place this registry is read, refuse GitHub GraphQL
     (`gh issue view`) and allow REST (`gh api`). A check that asks over

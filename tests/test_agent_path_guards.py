@@ -108,6 +108,7 @@ def test_scripts_the_cloud_hook_runs_are_owned():
     assert unowned == [], "add these to .github/CODEOWNERS"
 
 
+@pytest.mark.control(reason="self-test of the scripts_run_from helper, which lives in this file")
 def test_the_chain_is_followed_past_the_first_script(tmp_path):
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "a.sh").write_text("# scripts/ignored.sh\nscripts/b.sh\n")
@@ -140,10 +141,14 @@ def editor_autoload_files(paths: list[str]) -> list[str]:
     return found
 
 
+@pytest.mark.control(reason="guard for the future: dev tracks no editor autoload file today")
 def test_the_tree_tracks_no_editor_autoload_file():
     assert editor_autoload_files(_tracked()) == []
 
 
+@pytest.mark.control(
+    reason="self-test of the editor_autoload_files helper, which lives in this file"
+)
 def test_the_check_names_each_kind_of_autoload_file(tmp_path, monkeypatch):
     import tests.test_agent_path_guards as me
 

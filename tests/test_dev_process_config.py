@@ -1017,6 +1017,9 @@ class TestCloudEnvironment:
         assert uv_log.exists(), "setup-checkout must still run"
         assert (repo / ".venv" / ".pyrite-install-stamp").exists()
 
+    @pytest.mark.control(
+        reason="edited to hold for an empty registry; the hook itself did not change"
+    )
     def test_session_hook_exports_the_url_through_the_env_file(
         self, scratch_checkout, fake_docker, listener, tmp_path
     ):

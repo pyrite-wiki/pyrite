@@ -65,6 +65,7 @@ def test_pyrite_guidance_holds_only_pyrites_own_text(svc):
     assert "tone" not in guidance["guidelines"]
 
 
+@pytest.mark.control(reason="compatibility: the deprecated keys must keep answering as before")
 def test_the_old_keys_still_answer_for_one_release(svc):
     result = svc.orient("k")
     assert result["schema"]["guidelines"]["tone"] == INJECTED
@@ -89,6 +90,7 @@ def test_a_kb_under_the_workspace_is_a_subscription(tmp_path):
     assert authored["read_only"] is True
 
 
+@pytest.mark.control(reason="negative: brief carried no KB text before kb_authored existed")
 def test_brief_leaves_kb_text_out_and_says_so(svc):
     result = svc.orient("k", detail="brief")
     assert "kb_authored" not in result

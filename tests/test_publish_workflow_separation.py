@@ -43,11 +43,23 @@ def _token_holders_that_build(workflow):
     return bad
 
 
-@pytest.mark.parametrize("workflow", WORKFLOWS, ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        w
+        if w == PUBLISH
+        else pytest.param(
+            w, marks=pytest.mark.control(reason="no id-token job in this workflow before or after")
+        )
+        for w in WORKFLOWS
+    ],
+    ids=lambda p: p.name,
+)
 def test_no_job_with_id_token_installs_or_builds(workflow):
     assert _token_holders_that_build(_load(workflow)) == []
 
 
+@pytest.mark.control(reason="self-test of the checker on a planted workflow")
 def test_the_check_catches_a_build_in_the_token_job():
     sample = {
         "permissions": {"id-token": "write"},
@@ -87,6 +99,7 @@ def test_build_is_pinned_to_an_exact_version_and_dist_is_uploaded():
     assert "actions/upload-artifact@" in text
 
 
+@pytest.mark.control(reason="the mcp job already needed the pyrite job; kept true across the split")
 def test_pyrite_mcp_still_waits_for_pyrite():
     jobs = _load(PUBLISH)["jobs"]
     mcp = [n for n, j in jobs.items() if "mcp" in n and j.get("environment") == "pypi"]
