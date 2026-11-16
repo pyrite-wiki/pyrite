@@ -21,7 +21,13 @@ from typing import Any
 from sqlalchemy import exc as sa_exc
 
 from ..config import KBConfig, PyriteConfig, load_config
-from ..exceptions import EntryValueError, KBNotInConfigError, StorageError, outside_text
+from ..exceptions import (
+    EntryValueError,
+    KBNotInConfigError,
+    StorageError,
+    outside_text,
+    public_text,
+)
 from ..models import Entry
 from ..models.core_types import as_stored_text, id_text
 from ..models.protocols import (
@@ -1325,7 +1331,7 @@ class IndexManager:
             except KBFilesUnreadableError as e:
                 # One unreadable KB does not stop the others; its rows are
                 # kept (the reconcile refused before planning) (#1542).
-                logger.warning("Skipping %s: %s", kb.name, e.MESSAGE)
+                logger.warning("Skipping %s: %s", kb.name, public_text(e))
                 continue
             results[kb.name] = count
 
@@ -1639,7 +1645,7 @@ class IndexManager:
             try:
                 kb.check_readable()  # asked now: a server's config is loaded once
             except KBFilesUnreadableError as e:
-                health["unreadable_kbs"].append({"kb": kb.name, "error": e.MESSAGE})
+                health["unreadable_kbs"].append({"kb": kb.name, "error": public_text(e)})
 
         # A KB whose type belonged to an extension Pyrite has deleted (#953):
         # its types are undeclared for a reason the user should be told. The
@@ -1975,7 +1981,7 @@ class IndexManager:
             except KBFilesUnreadableError as exc:
                 # A root this process cannot search (#1542): reported here,
                 # and in ``unreadable_kbs``; never the end of the report.
-                loaded[kb.name] = (None, exc.MESSAGE)
+                loaded[kb.name] = (None, public_text(exc))
                 continue
             if not present:
                 loaded[kb.name] = (None, None)
@@ -2262,8 +2268,9 @@ class IndexManager:
             except KBFilesUnreadableError as e:
                 if kb_name:
                     raise
-                logger.warning("Not syncing %s: %s", kb.name, e.MESSAGE)
-                results["unreadable_kbs"].append({"kb": kb.name, "error": e.MESSAGE})
+                reason = public_text(e)  # the error's fixed text (ADR-0052 N3)
+                logger.warning("Not syncing %s: %s", kb.name, reason)
+                results["unreadable_kbs"].append({"kb": kb.name, "error": reason})
                 continue
             for key in ("added", "updated", "removed"):
                 results[key] += one[key]

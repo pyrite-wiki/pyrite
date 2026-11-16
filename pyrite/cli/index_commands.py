@@ -146,6 +146,7 @@ def index_build(
         git_service = GitService()
         console.print("[dim]Building index with git attribution...[/dim]")
 
+    from ..exceptions import public_text
     from ..utils.kb_files import KBFilesUnreadableError
 
     unreadable: list[str] = []
@@ -180,7 +181,9 @@ def index_build(
             except KBFilesUnreadableError as exc:
                 # Not rebuilt, its rows kept; the others go on (#1542).
                 unreadable.append(kb.name)
-                progress.update(task, description=f"[red]✗[/red] {kb.name}: {exc.MESSAGE}", total=1)
+                progress.update(
+                    task, description=f"[red]✗[/red] {kb.name}: {public_text(exc)}", total=1
+                )
                 continue
             built += 1
             progress.update(task, description=f"[green]✓[/green] {kb.name}: {count} entries")

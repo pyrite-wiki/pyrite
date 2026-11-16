@@ -244,7 +244,9 @@ class KBConfig:
             )
             return False
         except KBFilesUnreadableError as e:
-            self.unreadable = e.MESSAGE
+            from .exceptions import public_text
+
+            self.unreadable = public_text(e)  # its fixed text (ADR-0052 N3)
             logger.warning("KB %s is unreadable: %s", self.name, self.unreadable)
             return False
         self.schema = data.get("schema")

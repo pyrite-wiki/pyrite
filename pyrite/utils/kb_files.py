@@ -195,8 +195,10 @@ class KBFilesUnreadableError(KBUnreadableError):
         "Pyrite could not read this knowledge base's files: the operating "
         "system refused (for example, a folder or file Pyrite may not open)."
     )
-    #: The message is fixed and safe, so every transport shows it as is.
-    public_message = MESSAGE
+    # No ``public_message``: ``str(exc)`` is always ``MESSAGE`` (the
+    # constructor takes no text), so it masks nothing and every transport
+    # shows it through ``public_text`` as it is. A class that sets one must
+    # be on tests/test_public_message_logged_once.py's reviewed list.
     retryable = False
 
     def __init__(self) -> None:
