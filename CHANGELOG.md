@@ -13,6 +13,23 @@ asserts that `[Unreleased]` stays empty.
 
 ## [Unreleased]
 
+## [0.26.3] - 2026-11-16
+
+Security fixes, continuing 0.26.2. A network call (REST, MCP over HTTP) reaches the entries it holds a grant on and nothing else the server account holds (ADR-0052, proposed):
+- A git command run for it gets its environment from an allow-list and Pyrite's own config. The only credential it gets is the caller's own token or an operator `git_credentials` entry for that host, KB and transport.
+- It learns nothing from a file outside a KB: bytes, and facts derived from them, come only from files read inside the KB's folder.
+- Its responses carry only text Pyrite wrote for it, or text that is its own. Parser text quoting a KB file is shown to a signed-in caller who can read that KB, and never to an anonymous caller.
+- A KB's `default_role` in `config.yaml` is exactly what the file says, validated once at every source. On upgrade, a KB that was closed stays closed.
+
+The local CLI and stdio MCP keep the operator's full reach and detail.
+
+**Upgrade notes.**
+- A private repository reached over REST or MCP needs a `git_credentials` entry: the server account's ssh agent, keys, credential helpers and netrc no longer apply to network callers. A network push to a host off `git_allowed_hosts` is refused. See "Upgrading to 0.26.3: network git" in `docs/configuration.md`.
+- Behind a proxy, set `git_proxy`: network git and the GitHub API calls made for network callers no longer use the account's proxy variables.
+- Set `git_identity` for commits made for network callers; the fallback to the account's global identity is removed in 0.27.0.
+- An invalid `default_role` in `config.yaml` (`admin`, a wrong case, an empty string, a YAML boolean) now stops the config load with an error naming the KB. Removing a `default_role: read` or `write` line now gives the instance default.
+- `Entry.load(path)` is removed. A plugin should load an entry file through `KBRepository`.
+
 ## [0.26.2] - 2026-11-11
 
 Security fixes, landing now. A network call (REST, MCP over HTTP) reaches the entries it holds a grant on and nothing else the server account holds (ADR-0052, proposed):

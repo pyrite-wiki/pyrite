@@ -248,8 +248,11 @@ kinds of outside text are the caller's, each marked where the text is made
   and of the file an update edits (`Cannot update ...: the frontmatter does
   not parse: ...`), before or after the caller's edit is applied. For a
   signed-in caller the grant is the routes' own rule, access through a KB's
-  `default_role` included; an anonymous caller (REST or MCP over HTTP) is
-  never shown text quoted from a KB file, whatever its `default_role` allows.
+  `default_role` included; an anonymous REST caller is never shown text
+  quoted from a KB file, whatever its `default_role` allows (MCP over HTTP
+  refuses an anonymous caller before any tool runs). With authentication
+  disabled, every network caller is the operator, and this rule does not
+  narrow what it is shown.
   A call with no grant bound (a job, an embedded MCP caller with no
   principal) is not shown it either.
 

@@ -121,7 +121,8 @@ the property one layer further out than the last.
   to the caller's KBs. A signed-in caller's grant includes access through a
   KB's `default_role`; an anonymous caller is granted no KB, so it never sees
   text quoted from a KB file (maintainer decision on D4, 2026-11-16; revisit
-  with the 0.27 authorization model). Every mark is listed in the N3 ratchet
+  with the 0.27 authorization model). With authentication disabled every
+  network caller is the operator, so this narrowing does not apply there. Every mark is listed in the N3 ratchet
   (`MARKS`) with its class and the test that fails without it; a held
   exception (`HeldFault`) honours no caller-request mark. D4 holds because N1
   reads KB bytes only through `KBFiles`.
