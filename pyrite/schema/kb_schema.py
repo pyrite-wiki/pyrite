@@ -194,9 +194,13 @@ class KBSchema:
         no vocabulary of its own, and every type is allowed -- so an empty
         answer means "not restricted", never "nothing allowed".
 
-        Read by the write path's refusal (`KBService._refuse_undeclared_type`),
-        by `to_agent_schema` (orient, `kb_schema`, `GET /kbs/{kb}/schema`,
-        `pyrite-admin schema`) and by the web type picker's route. They used
+        Read by the write path's refusals (`KBService._refuse_undeclared_type`
+        and `_refuse_undeclared_mapping_target`), by the type-mapping resolver
+        (`schema.type_mapping.resolve_type_mappings`, which offers a pair only
+        when both its types are declared here), by `to_agent_schema` -- whose
+        output is MCP `kb_schema` and `kb_orient`, REST `GET /kbs/{kb}/schema`
+        and `GET /kbs/{kb}/orient`, CLI `pyrite orient --format json`, and
+        `pyrite-admin schema` -- and by the web type picker's route. They used
         to hold a copy each, and orient's copy listed all core types for a KB
         whose `create` refused them.
         """

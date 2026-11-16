@@ -1370,7 +1370,10 @@ class KBService:
 
         The type the caller named, unless a plugin active for the KB's
         ``kb_type`` declares that core type maps to one of its own -- e.g.
-        journalism-investigation's ``event -> investigation_event``. Nothing
+        journalism-investigation's ``event -> investigation_event`` -- and the
+        KB's kb.yaml declares both the core type and the target, or declares no
+        types at all (a pair either end of which the vocabulary leaves out is
+        not applied, even under ``allow_undeclared``). Nothing
         is inferred from subclassing: that rule (the most-derived subclass,
         tie-broken by name) wrote every ``note`` in a software KB as an ADR.
         The one resolver is ``pyrite.schema.type_mapping``, which orient and
@@ -1457,7 +1460,12 @@ class KBService:
         """Refuse a declared mapping whose target the KB's kb.yaml does not
         declare, when it declares any (#468). The named type passed
         :meth:`_refuse_undeclared_type` already; the type that would be
-        stored must be in the vocabulary too."""
+        stored must be in the vocabulary too.
+
+        No caller reaches this today: the resolver never offers a pair whose
+        target the vocabulary leaves out. It is a guard for a later source of
+        mappings (a kb.yaml ``type_map:`` override) that might, and is tested
+        by patching the resolver."""
         schema = kb_config.kb_schema
         declared = schema.declared_types() if schema else []
         if declared and target not in declared:
@@ -1496,8 +1504,9 @@ class KBService:
         own so a file's frontmatter round-trips exactly as the loader reads it.
 
         The stored type is the named one unless a plugin declares the core
-        type maps to its own (:meth:`_resolve_entry_type`, #468) -- the same
-        on every surface, a file given to ``add`` included. ``pending_ids``
+        type maps to its own and the KB's vocabulary admits both types (or the
+        KB declares none) (:meth:`_resolve_entry_type`, #468) -- the same on
+        every surface, a file given to ``add`` included. ``pending_ids``
         are ids an earlier item of the same dry run would have created;
         ``pending_paths`` are resolved file paths an earlier item of the same
         dry run would have created -- needed because a `file_pattern` type's

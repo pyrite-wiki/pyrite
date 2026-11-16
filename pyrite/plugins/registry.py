@@ -1097,13 +1097,27 @@ class PluginRegistry:
         """
         from ..models.core_types import ENTRY_TYPE_REGISTRY
 
-        #: (plugins involved, message, the fault the CLI shows)
-        refusals: list[tuple[tuple[str, ...], str, HeldFault]] = []
+        #: (plugins involved, what was refused, what that means when loading
+        #: carries on, the fault the CLI shows)
+        refusals: list[tuple[tuple[str, ...], str, str, HeldFault]] = []
+
+        def strict_outcome() -> str:
+            # Strict loading refuses the whole plugin (register) or stops
+            # discovery: the message says that, not "the mapping does not apply".
+            if involving is not None:
+                return f"Plugin '{involving}' is not registered."
+            return "Plugin discovery stops (strict)."
 
         def refuse(
-            names: tuple[str, ...], message: str, fault: BaseException | None = None
+            names: tuple[str, ...],
+            message: str,
+            consequence: str,
+            fault: BaseException | None = None,
         ) -> None:
-            refusals.append((names, message, held_fault(fault or TypeMappingRefusedError(message))))
+            recorded = f"{message} {consequence}"
+            refusals.append(
+                (names, message, recorded, held_fault(fault or TypeMappingRefusedError(recorded)))
+            )
 
         checked: dict[str, dict[str, str]] = {}
         for plugin in self._plugins.values():
@@ -1117,12 +1131,16 @@ class PluginRegistry:
                     (plugin.get_entry_types() or {}) if hasattr(plugin, "get_entry_types") else ()
                 )
             except Exception as e:
+                failed = f"Plugin '{plugin.name}' get_type_mappings failed ({type(e).__name__})."
+                if strict and involving in (None, plugin.name):
+                    # Chained, never embedded: the cause keeps the plugin's text.
+                    raise PluginError(f"{failed} {strict_outcome()}") from e
                 # The plugin's own exception text is held, not embedded: the
                 # HeldFault decides at display who may see it.
                 refuse(
                     (plugin.name,),
-                    f"Plugin '{plugin.name}' get_type_mappings failed ({type(e).__name__}); "
-                    "its mappings do not apply.",
+                    failed,
+                    "Its mappings do not apply.",
                     e,
                 )
                 continue
@@ -1131,6 +1149,7 @@ class PluginRegistry:
                     (plugin.name,),
                     f"Plugin '{plugin.name}' declares type mappings but no KB types "
                     "(get_kb_types); a mapping applies only to the KB types a plugin names.",
+                    "Its mappings do not apply.",
                 )
                 continue
             kept: dict[str, str] = {}
@@ -1140,12 +1159,14 @@ class PluginRegistry:
                         (plugin.name,),
                         f"Plugin '{plugin.name}' maps '{core}', which is not a core type; "
                         f"get_type_mappings maps a core type to one of the plugin's own.",
+                        "That mapping does not apply.",
                     )
                 elif target not in own:
                     refuse(
                         (plugin.name,),
                         f"Plugin '{plugin.name}' maps core type '{core}' to '{target}', "
                         f"which is not one of its own entry types.",
+                        "That mapping does not apply.",
                     )
                 else:
                     kept[core] = target
@@ -1169,14 +1190,15 @@ class PluginRegistry:
                         (first, second),
                         f"Plugins '{first}' and '{second}' both map core type '{core}' "
                         f"(to '{checked[first][core]}' and '{checked[second][core]}') for "
-                        f"an overlapping KB type; neither mapping applies.",
+                        f"an overlapping KB type.",
+                        "Neither mapping applies.",
                     )
                     conflicted |= {(first, core), (second, core)}
 
         if strict:
-            for refused_names, message, _fault in refusals:
+            for refused_names, message, _recorded, _fault in refusals:
                 if involving is None or involving in refused_names:
-                    raise PluginError(message)
+                    raise PluginError(f"{message} {strict_outcome()}")
 
         for name, core in conflicted:
             checked[name].pop(core, None)
@@ -1189,10 +1211,10 @@ class PluginRegistry:
         self.aggregate_failures = [
             row for row in self.aggregate_failures if row[1] != "get_type_mappings"
         ]
-        for refused_names, message, fault in refusals:
+        for refused_names, _message, recorded, fault in refusals:
             for name in refused_names:
                 if (name, fault.type_name, fault.text(local=True)) not in previous:
-                    logger.error("%s", message)
+                    logger.error("%s", recorded)
                 self.aggregate_failures.append((name, "get_type_mappings", fault))
 
     def type_mappings_for_kb(self, kb_type: str = "") -> dict[str, str]:
