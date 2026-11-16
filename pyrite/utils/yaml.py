@@ -16,7 +16,7 @@ from ruamel.yaml.error import YAMLError
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString
 from yaml.resolver import Resolver as _PyYAMLResolver
 
-from ..exceptions import FrontmatterError, YamlLimitError, outside_text
+from ..exceptions import FrontmatterError, TextOrigin, YamlLimitError, outside_text, with_origin
 
 #: Fixed bounds on a YAML document, checked before anything is built:
 #:
@@ -370,22 +370,28 @@ def safe_load_bounded(text: str) -> Any:
     return yaml.safe_load(text)
 
 
-def load_yaml_document(text: str) -> Any:
+def load_yaml_document(text: str, *, origin: TextOrigin = None) -> Any:
     """Parse a YAML document, including bulk-import sequences and empty input.
 
     Entry frontmatter callers must use ``load_yaml`` for its mapping contract.
     Both paths use the same parser, scalar rules and public parse error.
+
+    ``origin``: whose bytes ``text`` is. The parser is given only the text,
+    never a filename, so its message quotes only these bytes. A caller's own
+    request (``CALLER_REQUEST``) or a KB the acting caller reads
+    (``kb_origin(name)``) is shown the quote; by default (None) it is the
+    operator's, shown to the local process only (ADR-0052 N3).
     """
     check_yaml_limits(text)
     try:
         return _get_yaml().load(text)
     except YAMLError as e:
-        # The parser's text quotes the file's own lines: the operator's, not
-        # a network caller's (ADR-0052 N3); the CLI still shows it.
-        raise FrontmatterError(f"Invalid YAML frontmatter: {outside_text(e)}") from e
+        raise FrontmatterError(
+            f"Invalid YAML frontmatter: {outside_text(with_origin(e, origin))}"
+        ) from e
 
 
-def load_yaml(text: str) -> dict[str, Any]:
+def load_yaml(text: str, *, origin: TextOrigin = None) -> dict[str, Any]:
     """Load YAML from a string.
 
     Returns a CommentedMap (dict-compatible MutableMapping) that preserves
@@ -394,9 +400,10 @@ def load_yaml(text: str) -> dict[str, Any]:
 
     Raises ``FrontmatterError`` if the text is not valid YAML or does not
     parse to a mapping, so a single malformed entry surfaces a clear error
-    instead of leaking a raw ruamel traceback to callers.
+    instead of leaking a raw ruamel traceback to callers. ``origin``: as
+    ``load_yaml_document``.
     """
-    result = load_yaml_document(text)
+    result = load_yaml_document(text, origin=origin)
     if result is None:
         return {}
     if not isinstance(result, Mapping):

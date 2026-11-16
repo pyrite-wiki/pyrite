@@ -181,7 +181,6 @@ def test_find_file_never_picks_the_alias_over_the_target(env, absolute):
     env.link("x.md", TARGET, absolute=absolute)
 
     assert env.repo.find_file("x") == env.root / TARGET
-    assert env.repo.find_file("x", inside=False) == env.root / TARGET
     assert env.repo.exists("x")
 
 
@@ -356,3 +355,55 @@ def test_a_link_to_a_folder_named_like_an_entry_is_skipped_not_an_alias(env):
 
     assert result.get("aliases", []) == []
     assert sorted(Path(s["path"]).name for s in result["skipped"]) == ["d.md", "x.md"]
+
+
+def test_alias_target_agrees_with_kbfiles_on_every_link(env):
+    """ADR-0052 N1: "does this name lead out of the KB" has one answer,
+    ``KBFiles``'s. Every link kind in one KB, the expected target written by
+    hand; then each answer is checked against ``KBFiles`` itself: an alias
+    names exactly the bytes ``KBFiles.read_bytes`` reads for its target, and
+    a link ``KBFiles`` refuses to read is never an alias."""
+    from pyrite.utils.kb_files import KBFileReadOutsideRootError, KBFiles
+
+    env.write(TARGET, _note("x", "X"))
+    env.write(".hidden/h.md", _note("h", "H"))
+    (env.outside / "o.md").write_text(_note("o", "O"))
+    env.link("rel.md", TARGET, absolute=False)
+    env.link("abs.md", TARGET, absolute=True)
+    env.link("chain.md", "rel.md", absolute=False)
+    env.link("to-hidden.md", ".hidden/h.md", absolute=False)
+    (env.root / "out.md").symlink_to(env.outside / "o.md")
+    (env.root / "dangling.md").symlink_to("nowhere.md")
+    (env.root / "dangling-out.md").symlink_to(env.outside / "nowhere.md")
+    (env.root / "loop1.md").symlink_to("loop2.md")
+    (env.root / "loop2.md").symlink_to("loop1.md")
+    # KBFiles's stated limit: a link out whose outside target links back in
+    # resolves inside, so KBFiles reads it, and it is an alias of that file.
+    (env.outside / "back.md").symlink_to(env.root / TARGET)
+    (env.root / "out-and-back.md").symlink_to(env.outside / "back.md")
+
+    expected = {
+        "rel.md": TARGET,
+        "abs.md": TARGET,
+        "chain.md": TARGET,
+        "out-and-back.md": TARGET,
+        "to-hidden.md": None,  # the target is not walked: the link is the entry
+        "out.md": None,
+        "dangling.md": None,
+        "dangling-out.md": None,
+        "loop1.md": None,
+        "loop2.md": None,
+    }
+    files = KBFiles(env.root)
+    for name, want in expected.items():
+        link = env.root / name
+        got = env.repo.alias_target(link)
+        assert got == (None if want is None else env.root / want), name
+        if got is not None:
+            assert files.contains(link) and files.present(got), name
+            assert files.read_bytes(link) == files.read_bytes(got), name
+        elif not files.contains(link):
+            with pytest.raises(KBFileReadOutsideRootError):
+                files.read_bytes(link)
+    # The real file and a non-link are never aliases.
+    assert env.repo.alias_target(env.root / TARGET) is None

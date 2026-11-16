@@ -96,9 +96,11 @@ With auth on, a signed-in user who is not an admin never writes to the main KB.
 Each write (create, update, delete) goes to that user's own copy of the KB, a
 git worktree on the branch `user/<username>`. The main KB changes only when an
 admin merges. The KB must be a git repository whose main branch is `main`, and
-the server's git needs an identity (`git config --global user.name` and
-`user.email` for the account that runs `pyrite serve`): submitting commits in the
-worktree, and without an identity that commit fails. For a KB that is not in git, see
+the server needs a commit identity: set `git_identity` (name and email) in
+`config.yaml` ([configuration](configuration.md#the-identity-of-commits-made-for-network-callers)).
+Submitting commits in the worktree, and without an identity that commit fails.
+Until 0.27.0, an unset `git_identity` falls back to `git config --global
+user.name` and `user.email` of the account that runs `pyrite serve`. For a KB that is not in git, see
 [the update contract](json-contracts.md#write-refusals-create-import-update).
 
 1. **The user edits.** Their change lands in their worktree. The main KB is

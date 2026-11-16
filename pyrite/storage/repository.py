@@ -6,7 +6,6 @@ Each KB is a directory of markdown files with YAML frontmatter.
 """
 
 import fnmatch
-import glob
 import io
 import logging
 import os
@@ -23,6 +22,7 @@ from ..exceptions import (
     EntryNotFoundError,
     FrontmatterError,
     ValidationError,
+    kb_origin,
     outside_text,
 )
 from ..migrations import get_migration_registry, load_plugin_migrations
@@ -133,7 +133,10 @@ def _hard_link_fault(path: Path) -> str | None:
     be outside the KB, and under git would take another lock). None
     when the file can be published."""
     try:
-        links = path.stat().st_nlink
+        # lstat: the name's own link count. Called after KBFiles read the
+        # file, but a stat that followed a link out would report the outside
+        # inode's count.
+        links = path.lstat().st_nlink
     except OSError:
         return None
     if links <= 1:
@@ -156,7 +159,7 @@ def _fault_reason(e: BaseException) -> str:
         return _hard_linked(e.links)
     if isinstance(e, KBFileOutsideRootError):
         return "it resolves outside the KB root, through a symbolic link"
-    return f"{type(e).__name__}: {e}"
+    return f"{type(e).__name__}: {outside_text(e)}"
 
 
 def _read_fault_reason(path: Path, e: BaseException) -> str:
@@ -218,36 +221,10 @@ def _is_regular_file(path: Path) -> bool:
         return False
 
 
-def _regular_file_text(path: Path) -> str | None:
-    """``path.read_text(encoding="utf-8")`` -- UTF-8, universal newlines -- if
-    ``path`` is a regular file (symlinks followed), else None; None too when
-    it cannot be read or decoded. One ``open`` and ``fstat`` where
-    ``_is_regular_file`` and ``read_text`` stat and open: a lookup's scan
-    pays it once per file in the KB (#135). ``O_NONBLOCK``: a FIFO opens
-    without blocking and is refused by the ``fstat``."""
-    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
-    try:
-        fd = os.open(path, flags)
-    except OSError:
-        return None
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            return None
-        raw = io.FileIO(fd, closefd=False).readall()
-    except OSError:
-        return None
-    finally:
-        os.close(fd)
-    try:
-        return _text_of(raw)
-    except UnicodeDecodeError:
-        return None
-
-
 def _text_of(raw: bytes) -> str:
     """``raw`` decoded as ``Path.read_text(encoding="utf-8")`` decodes a file:
     strict UTF-8, universal newlines. The one decoding for a reader that has
-    the bytes (``_regular_file_text``, ``load_entry_from_bytes``), so what it
+    the bytes (``_inside_text``, ``load_entry_from_bytes``), so what it
     parses is what a read of the file would give."""
     return io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8").read()
 
@@ -454,10 +431,18 @@ class KBRepository:
         bytes from outside the KB: a link out of it, or a hard link, raises
         ``KBFileReadOutsideRootError`` (``OUTSIDE_KB_ROOT``) and nothing is
         read. ``FileNotFoundError`` when the file is gone."""
-        raw = KBFiles(self.path).read_bytes(file_path)
+        raw = self._inside_bytes(file_path)
         if raw is None:
             raise FileNotFoundError(str(file_path))
         return raw
+
+    def _inside_bytes(self, file_path: Path) -> bytes | None:
+        """``KBFiles.read_bytes`` for this KB: the bytes, or None when nothing
+        is there to read (absent, or not a regular file: a FIFO or a device,
+        opened without blocking and never read). A link out of the KB, or a
+        hard link, raises ``KBFileReadOutsideRootError`` whatever it points
+        at, so no answer built on this depends on what lies outside."""
+        return KBFiles(self.path).read_bytes(file_path)
 
     def _load_entry(self, file_path: Path, text: str | None = None) -> Entry:
         """Load an entry from a file as the type its frontmatter declares: THE
@@ -507,7 +492,9 @@ class KBRepository:
         split = split_frontmatter(text)
         if not isinstance(split, Frontmatter):
             raise FrontmatterError(f"Invalid entry format: {describe(split)}")
-        fm = load_yaml(split.text)
+        # This KB's bytes: a caller holding a read grant on it is shown the
+        # parser's quote of them (D4); anyone else, the operator's message.
+        fm = load_yaml(split.text, origin=kb_origin(self.name))
         if fm is None:
             fm = {}  # `---\n---` and `null`: an empty mapping, as `read_entry_id` reads it
         if not isinstance(fm, dict):
@@ -591,7 +578,7 @@ class KBRepository:
 
     def _maybe_migrate(self, fm: dict) -> dict:
         """Apply pending schema migrations to frontmatter if needed."""
-        if not hasattr(self.config, "kb_yaml_path") or not self.config.kb_yaml_path.exists():
+        if not getattr(self.config, "kb_yaml_present", False):
             return fm
 
         entry_type = fm.get("type", "")
@@ -686,19 +673,25 @@ class KBRepository:
         so does one the KB would not read (a link out, a hard link): what such
         a file holds decides nothing."""
         path = self._get_file_path(entry_id, subdir)
-        holder = self.read_id(path, inside=True)[0] if path.exists() else None
+        holder = self.read_id(path)[0] if self.present(path) else None
         if holder is None or holder == entry_id:
             return path
         for n in range(2, 1000):
             candidate = path.with_name(f"{entry_id}-{n}.md")
-            if not candidate.exists() and not candidate.is_symlink():
+            if not self.present(candidate):
                 return candidate
         return path
 
     def holder_of_path(self, path: Path) -> str | None:
         """The id the file at ``path`` holds, for a message; None if unreadable
         or not the KB's to read (a link out, a hard link)."""
-        return self.read_id(path, inside=True)[0] if path.exists() else None
+        return self.read_id(path)[0] if self.present(path) else None
+
+    def present(self, path: Path) -> bool:
+        """Whether ``path`` is taken in this KB, as ``KBFiles`` answers it
+        (``KBFiles.present``): a name that leads out of the KB is taken
+        whatever it points at, or whether its target exists."""
+        return KBFiles(self.path).present(path)
 
     def _infer_subdir(self, entry: Entry) -> str | None:
         """Infer subdirectory for entries based on type.
@@ -750,9 +743,8 @@ class KBRepository:
         An existence answer (create's "already exists") counts only files
         ``KBFiles`` would read: inside the root, with one name. A file that is
         a link out of the KB, or has a second hard link, is not the KB's, so
-        whether it holds the id is not the KB's to say (``find_file(...,
-        inside=True)``)."""
-        return self.find_file(entry_id, inside=True) is not None
+        whether it holds the id is not the KB's to say (``find_file``)."""
+        return self.find_file(entry_id) is not None
 
     def _lexically_inside(self, path: Path) -> bool:
         """``path`` stays under the KB root once ``..`` is collapsed.
@@ -776,13 +768,13 @@ class KBRepository:
         a plain stem. A name is a hint for a fast lookup, never evidence of
         the id the file holds: ``find_file`` verifies each one."""
         root_path = self.path / f"{entry_id}.md"
-        if root_path.is_file() and self._listed(root_path):
+        if self.present(root_path) and self._listed(root_path):
             yield root_path
 
-        # glob.escape: an id is a name, not a pattern -- `*` must not match
-        # (and so let `kb_delete` remove) whichever entry globs first.
-        filename = glob.escape(f"{entry_id}.md")
-        for match in self.path.rglob(filename):
+        # By name, never as a pattern (`*` must not match, and so let
+        # `kb_delete` remove, whichever entry globs first), and never by
+        # whether a link's target exists (``_named``).
+        for match in self._named(f"{entry_id}.md"):
             if match != root_path and self._listed(match):
                 yield match
 
@@ -791,11 +783,22 @@ class KBRepository:
             folder_name = entry_id[len("collection-") :]
             if folder_name in ("", ".", ".."):
                 return
-            for subdir in self.path.rglob(glob.escape(folder_name)):
-                if subdir.is_dir():
-                    yaml_path = subdir / "__collection.yaml"
-                    if yaml_path.exists():
-                        yield yaml_path
+            for subdir in self._named(folder_name):
+                yaml_path = subdir / "__collection.yaml"
+                if self.present(yaml_path):
+                    yield yaml_path
+
+    def _named(self, name: str) -> Iterator[Path]:
+        """Every path under the KB whose last component is ``name``, found
+        by the name alone: a link (to a file, to a folder, or dangling) is
+        listed as the name it is, never followed or checked, and a folder
+        that is a link is not walked into (``os.walk``). On Python 3.11
+        ``Path.rglob`` with a literal name lists a link only when its target
+        exists, so a listing would differ by what lies outside the KB; 3.12
+        and later list it either way. One rule on every Python."""
+        for dirpath, dirnames, filenames in os.walk(self.path):
+            if name in filenames or name in dirnames:
+                yield Path(dirpath) / name
 
     def id_of_file(self, file_path: Path) -> str | None:
         """The id ``file_path`` holds, by the loader's rule; None when it is
@@ -807,31 +810,28 @@ class KBRepository:
         """
         return self.read_id(file_path)[0]
 
-    def read_id(
-        self, file_path: Path, text: str | None = None, *, inside: bool = False
-    ) -> tuple[str | None, str | None]:
+    def read_id(self, file_path: Path, text: str | None = None) -> tuple[str | None, str | None]:
         """``id_of_file`` with the reason: ``(id, None)``, or ``(None, why)``
         where ``why`` is the loader's own message (``title must be a string,
-        got a list``), or None when the file simply holds no entry. A path
-        that is not a regular file is not read (a FIFO would block).
-        ``text``: the markdown file's text, when the caller has read it.
-        ``inside``: read only as ``KBFiles`` reads (``_read_inside``); a file
-        it refuses holds no id here. For a caller whose answer says whether
-        an id exists, and so must say nothing about a file outside the KB."""
-        if not _is_regular_file(file_path):
-            return None, "not a regular file"
+        got a list``), or None when the file simply holds no entry.
+        ``text``: the markdown file's text, when the caller has read it
+        inside the KB.
+
+        One read path (ADR-0052 N1): the file is read only as ``KBFiles``
+        reads it (``_inside_bytes``). A file it refuses -- a link out of the
+        KB, a file with a second hard link -- holds no id here, and the reason
+        is the refusal whatever the link points at; a path with nothing to
+        read (absent, a FIFO, a device) is "not a regular file", and is never
+        opened in a way that blocks. So no id, existence or hint depends on a
+        file outside the KB."""
         try:
-            if file_path.name == "__collection.yaml":
-                return self._load_collection(file_path).id or None, None
-            if text is None and inside:
-                text = _text_of(self._read_inside(file_path))
             if text is None:
-                # Not ``_read_inside``: this locates a file by the id it holds,
-                # and what is found is then read inside the KB by its reader,
-                # which refuses a link out (``OUTSIDE_KB_ROOT``) or a hard link
-                # (``STORAGE_ERROR`` on a write) -- the answer a caller gets,
-                # rather than a miss.
-                text = file_path.read_text(encoding="utf-8")
+                raw = self._inside_bytes(file_path)
+                if raw is None:
+                    return None, "not a regular file"
+                text = _text_of(raw)
+            if file_path.name == "__collection.yaml":
+                return self._collection_of(file_path, text).id or None, None
             return read_entry_id(text, migrate=self._maybe_migrate), None
         except Exception as e:
             logger.warning("Skipping unreadable file during id lookup: %s (%s)", file_path, e)
@@ -842,7 +842,7 @@ class KBRepository:
             )
             return None, why or type(e).__name__
 
-    def find_file(self, entry_id: str, *, inside: bool = True) -> Path | None:
+    def find_file(self, entry_id: str) -> Path | None:
         """The file that holds ``entry_id``, or None (ADR-0038 I8).
 
         A file named like the id is tried first and returned only if it holds
@@ -860,13 +860,11 @@ class KBRepository:
         still match a file's *frontmatter* id below -- that scan only returns
         files it found inside the KB.
 
-        ``inside`` (the default, and what every by-id caller uses): only files
-        ``KBFiles`` would read count (``read_id``'s ``inside``). A file that is
+        Only files ``KBFiles`` would read count (``read_id``). A file that is
         a link out of the KB, or has a second hard link, never matches an id,
         so a get, update, delete or rename by id answers not-found whatever
         such a file holds (maintainer decision 2026-11-10): no answer differs
-        by what a file outside the KB holds. ``inside=False`` reads such
-        files raw; nothing that answers a caller may use it.
+        by what a file outside the KB holds. There is no raw mode.
         """
         if not isinstance(entry_id, str) or not entry_id:
             return None
@@ -880,21 +878,16 @@ class KBRepository:
         if plain:
             for candidate in self._filename_candidates(entry_id):
                 tried.add(candidate)
-                if (
-                    self._lexically_inside(candidate)
-                    and self.read_id(candidate, inside=inside)[0] == entry_id
-                ):
+                if self._lexically_inside(candidate) and self.read_id(candidate)[0] == entry_id:
                     return candidate
 
-        return next(self._files_holding(entry_id, skip=tried, inside=inside), None)
+        return next(self._files_holding(entry_id, skip=tried), None)
 
     def _files_holding(
         self,
         entry_id: str,
         skip: Set[Path] = frozenset(),
         only: Set[Path] | None = None,
-        *,
-        inside: bool = True,
     ) -> Iterator[Path]:
         """Every file ``list_files`` walks that holds ``entry_id``, in walk
         order: the whole-KB scan behind ``find_file``, ``files_to_delete`` and
@@ -910,42 +903,37 @@ class KBRepository:
         files the index could be wrong about (``KBService`` on a miss) passes
         them, and no other file is opened.
 
-        ``inside``: each file is read as ``KBFiles`` reads it, and one it
-        refuses is skipped (``find_file``).
+        Each file is read as ``KBFiles`` reads it, and one it refuses is
+        skipped (``find_file``).
         """
         prefilter = not self._migrations_apply()
         for md_file in self.list_files():
             if md_file in skip or (only is not None and md_file not in only):
                 continue
-            if inside:
-                text = self._inside_text(md_file)
-                if text is None:
-                    continue
-            else:
-                # None: not read here; read_id reads it, or says why it cannot.
-                text = _regular_file_text(md_file) if prefilter else None
+            text = self._inside_text(md_file)
+            if text is None:
+                continue
             # The prefilter only where no migration can set the id the raw
             # text does not show.
-            if prefilter and text is not None and not could_hold_id(text, entry_id):
+            if prefilter and not could_hold_id(text, entry_id):
                 continue
-            if self.read_id(md_file, text, inside=inside)[0] == entry_id:
+            if self.read_id(md_file, text)[0] == entry_id:
                 yield md_file
 
     def _inside_text(self, file_path: Path) -> str | None:
         """``file_path``'s text read as ``KBFiles`` reads it, or None when it
         refuses the file (a link out, a hard link), it is not a regular file,
         it is gone, or it is not UTF-8."""
-        if not _is_regular_file(file_path):
-            return None
         try:
-            return _text_of(self._read_inside(file_path))
+            raw = self._inside_bytes(file_path)
+            return None if raw is None else _text_of(raw)
         except (OSError, UnicodeDecodeError, KBFileReadOutsideRootError):
             return None
 
     def _migrations_apply(self) -> bool:
         """Whether ``_maybe_migrate`` can change any file's frontmatter here:
         a type ``kb.yaml`` gives a version, with migrations registered."""
-        if not hasattr(self.config, "kb_yaml_path") or not self.config.kb_yaml_path.exists():
+        if not getattr(self.config, "kb_yaml_present", False):
             return False
         versioned = [name for name, t in self.config.kb_schema.types.items() if t.version]
         if not versioned:
@@ -961,11 +949,9 @@ class KBRepository:
         Read only as ``KBFiles`` reads: a file it refuses (a link out, a hard
         link) holds nothing, and nothing in it is read, so a delete by id never
         removes or refuses it for what it holds."""
-        if not file_path.is_file():
-            return None
         if file_path.name == "__collection.yaml":
             # named by its folder, or its own ``id:``; read inside the KB
-            held = self.read_id(file_path, inside=True)[0]
+            held = self.read_id(file_path)[0]
             return "explicit" if held == entry_id else None
         text = self._inside_text(file_path)
         if text is None or self.read_id(file_path, text)[0] != entry_id:
@@ -1049,7 +1035,7 @@ class KBRepository:
             return ""
         for candidate in self._filename_candidates(entry_id):
             # Only a file the KB would read: the hint quotes the id it holds.
-            held = self.read_id(candidate, inside=True)[0]
+            held = self.read_id(candidate)[0]
             if held and held != entry_id:
                 rel = candidate.relative_to(self.path)
                 return (
@@ -1148,11 +1134,13 @@ class KBRepository:
         """
         self.config.refuse_writes()
 
+        # No mkdir here: the create below makes the file's folders beneath
+        # the root (KBFiles), so a folder that is a link out is the write's
+        # refusal, never an OSError that depends on what lies outside.
         file_path = self._target_path(entry, subdir, keep_filename)
-        file_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Stamp current schema version on save
-        if hasattr(self.config, "kb_yaml_path") and self.config.kb_yaml_path.exists():
+        if getattr(self.config, "kb_yaml_present", False):
             type_schema = self.config.kb_schema.get_type_schema(entry.entry_type)
             if type_schema and type_schema.version > 0:
                 entry._schema_version = type_schema.version
@@ -1298,7 +1286,7 @@ class KBRepository:
             )
 
         # An existence answer: only a file the KB would read takes the id.
-        if self.find_file(new_id, inside=True):
+        if self.find_file(new_id):
             raise ValidationError(
                 f"Cannot rename '{old_id}' to '{new_id}': target already exists in KB '{self.name}'"
             )
@@ -1307,8 +1295,12 @@ class KBRepository:
         # (ADR-0042 decision 8a). The rename no longer loads the model (it
         # rewrites the id in place, ADR-0038 I6), so the strict load is made
         # here, before the dry-run return too: a request that would change
-        # nothing is refused the same way.
-        self._load_entry(src, src.read_text(encoding="utf-8"))
+        # nothing is refused the same way. The source is read once, inside
+        # the KB (a link out of it, or a hard link, is refused here,
+        # OUTSIDE_KB_ROOT, before anything is parsed), and these bytes are
+        # what is loaded, rewritten and compared at the publish.
+        raw = self._read_inside(src)
+        self._load_entry(src, _text_of(raw))
 
         # Plan the link rewrite. We scan every body once and substitute
         # `[[<old_id>]]` and `[[<old_id>|...]]`. Substring matches at
@@ -1328,25 +1320,27 @@ class KBRepository:
                 # pre-count its body or double-write.
                 if md_file.resolve() == src.resolve():
                     continue
-                if not _is_regular_file(md_file):
-                    continue  # a FIFO would block the read (#990)
                 rel = self._rel(md_file)
                 try:
-                    raw = self._read_inside(md_file)  # a dry run's counts too
-                    rewrite = _rewrite_wikilinks(raw.decode("utf-8"), old_id, new_id)
+                    # A dry run's counts too. Nothing to read (gone, a FIFO,
+                    # which is never opened to block, #990) is passed over.
+                    linker = self._inside_bytes(md_file)
+                    if linker is None:
+                        continue
+                    rewrite = _rewrite_wikilinks(linker.decode("utf-8"), old_id, new_id)
                 except Exception as e:  # noqa: BLE001 - listed, not fatal
                     skipped[rel] = _read_fault_reason(md_file, e)
                     continue
                 if rewrite.count == 0 and rewrite.partial is None:
                     continue
-                fault = _hard_link_fault(md_file) or self._write_refusal(md_file, raw)
+                fault = _hard_link_fault(md_file) or self._write_refusal(md_file, linker)
                 if fault is not None:
                     skipped[rel] = fault
                     continue
                 if rewrite.partial is not None:
                     partial[rel] = rewrite.partial
                 if rewrite.count:
-                    rewrites.append((md_file, raw, rewrite))
+                    rewrites.append((md_file, linker, rewrite))
 
         if dry_run:
             return self._rename_result(
@@ -1365,10 +1359,8 @@ class KBRepository:
         # did not exist). The source: one `Set("id", new_id)` on its own
         # bytes (and the `updated_at` bookkeeping where the file carries it),
         # published in place against the bytes read.
-        # Read inside the KB: a link out of it, or a hard link, is refused
-        # here (OUTSIDE_KB_ROOT), before anything is parsed or written, so no
-        # answer (not even "no frontmatter") depends on such a file's bytes.
-        raw = self._read_inside(src)
+        # The bytes read inside the KB above: no answer (not even "no
+        # frontmatter") depends on a file outside it.
         text = raw.decode("utf-8")
         split = split_frontmatter(text)
         if not isinstance(split, Frontmatter):
@@ -1526,22 +1518,22 @@ class KBRepository:
         link is not a symbolic link: no name is the real one, and the
         reconcile skips both (nlink > 1).
 
-        One ``lstat`` per walked file (``islink``); only a link is resolved.
+        Where the link leads, and whether that is out of the KB, is
+        ``KBFiles``'s answer (``KBFiles.resolved``, the rule behind
+        ``contains`` and every read and write), never a second rule here.
+        Nothing is read: ``islink`` is one ``lstat`` per walked file, only a
+        link is resolved, and the target's kind is a ``stat``. The entry's
+        bytes are read later, at the target, through ``KBFiles.read_bytes``.
         Nothing is written: the link is the user's file.
         """
         if not os.path.islink(md_file):
             return None
-        try:
-            real = os.path.realpath(md_file, strict=True)
-            real_root = os.path.realpath(self.path, strict=True)
-        except (OSError, ValueError, RuntimeError):
-            return None  # dangling or a loop: the reconcile reports it malformed
-        # Leaves the KB. Stated, not left to the lexical rule below (a `..`
-        # part reads as hidden): ``relpath`` raises across Windows drives.
-        if os.path.commonpath([real_root, real]) != real_root or real == real_root:
-            return None
-        target = self.path / os.path.relpath(real, real_root)
-        if (
+        # None: leads out of the KB (the reader refuses it, as before).
+        target = KBFiles(self.path).resolved(md_file)
+        # A dangling or looping link resolves to a name that is no regular
+        # file, so the last test below turns it away: the reconcile reports
+        # it malformed, as before.
+        if target is None or (
             not fnmatch.fnmatch(target.name, "*.md")
             or not self._lexically_listed(target)
             or not _is_regular_file(target)
@@ -1589,7 +1581,7 @@ class KBRepository:
 
     def list_collection_files(self) -> Iterator[Path]:
         """Every ``__collection.yaml`` the walk keeps (not under a hidden part)."""
-        for yaml_file in self.path.rglob("__collection.yaml"):
+        for yaml_file in self._named("__collection.yaml"):
             if any(part.startswith(".") for part in yaml_file.parts):
                 continue
             yield yaml_file
@@ -1645,7 +1637,7 @@ class KBRepository:
                 continue
 
         # Discover __collection.yaml files
-        for yaml_file in self.path.rglob("__collection.yaml"):
+        for yaml_file in self._named("__collection.yaml"):
             if any(part.startswith(".") for part in yaml_file.parts):
                 continue
             try:
@@ -1658,8 +1650,13 @@ class KBRepository:
                 continue
 
     def _load_collection(self, yaml_file: Path) -> CollectionEntry:
-        """Load a CollectionEntry from a __collection.yaml file."""
-        data = load_yaml(_text_of(self._read_inside(yaml_file))) or {}
+        """Load a CollectionEntry from a __collection.yaml file, read inside
+        the KB."""
+        return self._collection_of(yaml_file, _text_of(self._read_inside(yaml_file)))
+
+    def _collection_of(self, yaml_file: Path, text: str) -> CollectionEntry:
+        """The CollectionEntry ``text`` (``yaml_file``'s, read inside) holds."""
+        data = load_yaml(text) or {}
         folder_path = str(yaml_file.parent.relative_to(self.path))
         return CollectionEntry.from_collection_yaml(data, folder_path)
 
@@ -1668,7 +1665,7 @@ class KBRepository:
         md_count = sum(1 for _ in self.list_files())
         yaml_count = sum(
             1
-            for f in self.path.rglob("__collection.yaml")
+            for f in self._named("__collection.yaml")
             if not any(part.startswith(".") for part in f.parts)
         )
         return md_count + yaml_count

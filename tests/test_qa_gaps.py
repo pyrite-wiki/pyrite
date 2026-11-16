@@ -7,7 +7,9 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+from pyrite.cli import qa_commands
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models import EventEntry, NoteEntry
 from pyrite.schema.core_types import CORE_TYPES
@@ -260,3 +262,29 @@ def test_untyped_qa_gap_analysis_falls_back_to_all_core_types(tmp_path):
         assert set(result["empty_types"]) == set(CORE_TYPES)
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("threshold", [-5, -1])
+def test_qa_gaps_rejects_negative_threshold(threshold):
+    result = CliRunner().invoke(
+        qa_commands.qa_app,
+        ["gaps", "--kb", "test-kb", "--threshold", str(threshold)],
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "Invalid value for '--threshold'" in result.output
+
+
+def test_qa_gaps_accepts_zero_threshold(cli_world):
+    cli_world()
+    result = CliRunner().invoke(
+        qa_commands.qa_app,
+        ["gaps", "--kb", "test-kb", "--threshold", "0", "--format", "json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.stdout)
+    assert report["kb_name"] == "test-kb"
+    assert report["threshold"] == 0
+    assert report["sparse_types"] == []

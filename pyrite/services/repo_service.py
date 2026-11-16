@@ -52,10 +52,25 @@ class RepoService:
         self._github_token = github_token
 
     def _get_token(self) -> str | None:
-        """Get GitHub token: injected token first, then CLI fallback."""
+        """The caller's GitHub token: the one injected for this caller, else,
+        for the operator's own local process only, the token ``pyrite auth
+        github-login`` stored for the CLI. A network caller with no token of
+        its own gets none: the stored token is the operator's (ADR-0052 N2,
+        D3), and an operator grant for network git is ``git_credentials``."""
         if self._github_token:
             return self._github_token
-        return get_github_token()
+        from .acting import is_local_process
+
+        return get_github_token() if is_local_process() else None
+
+    def _current_user(self) -> dict:
+        """Who the workspace rows are recorded for: the caller's own GitHub
+        identity (by its own token), else, for the local process only, the
+        operator's stored CLI token's; else the local sentinel. Never the
+        operator's stored token for a network caller."""
+        return self.user_service.get_current_user(
+            token=self._github_token, proxy=self.config.settings.git_proxy
+        )
 
     def subscribe(
         self,
@@ -108,6 +123,8 @@ class RepoService:
             depth=1,
             token=token,
             allowed_hosts=self.config.settings.git_allowed_hosts,
+            credentials=self.config.settings.git_credentials,
+            proxy=self.config.settings.git_proxy,
         )
         if not success:
             return {"success": False, "error_code": code, "error": msg}
@@ -155,7 +172,9 @@ class RepoService:
         check_config_save(self.config)
 
         # Fork on GitHub
-        success, fork_data = GitService.fork_repo(owner, repo_name, token)
+        success, fork_data = GitService.fork_repo(
+            owner, repo_name, token, proxy=self.config.settings.git_proxy
+        )
         if not success:
             return {"success": False, "error": fork_data.get("error", "Fork failed")}
 
@@ -186,7 +205,7 @@ class RepoService:
         )
 
         # Update workspace role
-        user = self.user_service.get_current_user()
+        user = self._current_user()
         if fork_repo:
             self.db.update_workspace_role(user["id"], fork_repo["id"], "contributor")
 
@@ -242,7 +261,14 @@ class RepoService:
 
             # Pull
             success, msg = GitService.pull(
-                local_path, token=token, allowed_hosts=self.config.settings.git_allowed_hosts
+                local_path,
+                token=token,
+                allowed_hosts=self.config.settings.git_allowed_hosts,
+                credentials=self.config.settings.git_credentials,
+                # The subscribed clone's own remote, configured when it was
+                # registered: an unscoped git_credentials entry may serve it.
+                registered_remote=True,
+                proxy=self.config.settings.git_proxy,
             )
             if not success:
                 results[name] = {"success": False, "error": msg}
@@ -311,7 +337,7 @@ class RepoService:
             announce_kb_policy_change(kb_row["name"])
 
         # Remove workspace membership
-        user = self.user_service.get_current_user()
+        user = self._current_user()
         self.db.remove_workspace_repo(user["id"], repo["id"])
 
         # Remove repo from DB
@@ -378,7 +404,14 @@ class RepoService:
             return {"success": False, "error": "GitHub authentication required for PR creation"}
 
         success, result = GitService.create_pull_request(
-            upstream_owner, upstream_repo, title, body, head, base, token
+            upstream_owner,
+            upstream_repo,
+            title,
+            body,
+            head,
+            base,
+            token,
+            proxy=self.config.settings.git_proxy,
         )
         if success:
             return {"success": True, **result}
@@ -496,6 +529,8 @@ class RepoService:
             depth=depth,
             token=token,
             allowed_hosts=self.config.settings.git_allowed_hosts,
+            credentials=self.config.settings.git_credentials,
+            proxy=self.config.settings.git_proxy,
         )
         if not success:
             return {"success": False, "error_code": code, "error": msg}
@@ -656,7 +691,7 @@ class RepoService:
                 self.db.link_kb_to_repo(kb_config.name, repo_row["id"], kb_config.repo_subpath)
             index_mgr.index_with_attribution(kb_config.name, self.git)
 
-        user = self.user_service.get_current_user()
+        user = self._current_user()
         if repo_row.get("id"):
             self.db.add_workspace_repo(user["id"], repo_row["id"], workspace_role)
 

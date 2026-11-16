@@ -112,7 +112,7 @@ def public_text(
             from .services.acting import is_local_process
 
             local = is_local_process()
-        if local:
+        if local or _the_callers(exc):
             return str(exc)
         if not already_logged:
             (log or logger).warning("%s: %s", type(exc).__name__, exc)
@@ -136,6 +136,7 @@ def outside_text(
     *,
     already_logged: bool = False,
     local: bool | None = None,
+    caller_marks: bool = True,
 ) -> str:
     """The text of ``exc`` for placing *inside* a Pyrite message (ADR-0052 N3).
 
@@ -156,11 +157,154 @@ def outside_text(
         from .services.acting import is_local_process
 
         local = is_local_process()
-    if local:
+    if local or _the_callers(exc, caller_marks=caller_marks):
         return str(exc)
     if not already_logged:
         logger.warning("%s: %s", type(exc).__name__, exc)
     return OUTSIDE_TEXT_WITHHELD
+
+
+# -- provenance: where text that is not Pyrite's came from (ADR-0052 N3) ------
+#
+# Text from outside Pyrite is the operator's by default. Two origins are the
+# caller's to see, and each is marked where the text is made -- at the parser
+# call, never at a distant catch:
+#
+# - caller-request (``caller_owned``): detail about the caller's own request,
+#   a parse error quoting their YAML, JSON or query. The parser is
+#   given only bytes, never a filename, so its text can quote only bytes.
+# - KB(name) (``kb_owned``): bytes of a KB, shown to a caller who holds a read
+#   grant on that KB (maintainer decision D4). Holds because N1 reads KB bytes
+#   only through ``KBFiles``, inside the KB root.
+#
+# ``outside_text`` and ``public_text`` show a marked exception's text to the
+# caller it belongs to and nothing else. Marking never unmasks a PyriteError
+# class that fixes its ``public_message``. Every mark outside this module is
+# listed, with its reason, in ``tests/test_response_text_is_pyrites.py``.
+
+#: The origin of text that is detail about the caller's own request.
+CALLER_REQUEST = "caller-request"
+_ORIGIN = "_pyrite_text_origin"
+
+
+def caller_owned(exc: BaseException) -> BaseException:
+    """Mark ``exc``'s text as detail about the caller's own request; return it."""
+    try:
+        setattr(exc, _ORIGIN, CALLER_REQUEST)
+    except AttributeError:  # an exception type that takes no attributes stays the operator's
+        pass
+    return exc
+
+
+def kb_owned(exc: BaseException, kb_name: str) -> BaseException:
+    """Mark ``exc``'s text as quoting bytes of KB ``kb_name``; return it."""
+    try:
+        setattr(exc, _ORIGIN, ("kb", kb_name))
+    except AttributeError:
+        pass
+    return exc
+
+
+#: An origin a parser is told: None (the operator's, the default),
+#: ``CALLER_REQUEST``, or ``kb_origin(name)``.
+TextOrigin = str | tuple[str, str] | None
+
+
+def kb_origin(kb_name: str) -> tuple[str, str]:
+    """The origin of bytes read from KB ``kb_name`` (see ``kb_owned``)."""
+    return ("kb", kb_name)
+
+
+def with_origin(exc: BaseException, origin: TextOrigin) -> BaseException:
+    """Mark ``exc`` with ``origin`` (a parser's ``origin=`` argument); return it.
+    None leaves it the operator's."""
+    if origin == CALLER_REQUEST:
+        return caller_owned(exc)
+    if isinstance(origin, tuple) and len(origin) == 2 and origin[0] == "kb":
+        return kb_owned(exc, origin[1])
+    return exc
+
+
+def _the_callers(exc: BaseException, *, caller_marks: bool = True) -> bool:
+    """Whether ``exc``'s text belongs to the acting caller (see above).
+
+    ``caller_marks=False`` ignores a caller-request mark: it names the caller
+    of the request the text was made in, which a text shown later (a
+    ``HeldFault``) may not be. A KB mark is asked of the grant bound now, so it
+    holds whenever it is shown."""
+    origin = getattr(exc, _ORIGIN, None)
+    if origin == CALLER_REQUEST:
+        return caller_marks
+    if isinstance(origin, tuple) and len(origin) == 2 and origin[0] == "kb":
+        from .services.acting import may_read_kb
+
+        return may_read_kb(origin[1])
+    return False
+
+
+class HeldFault:
+    """An exception kept for a message built later (an attribute a warning
+    reads on every search). Its text is decided each time it is shown, by
+    ``outside_text`` for whoever is acting then; only its class name is fixed.
+    The exception itself is not handed out."""
+
+    __slots__ = ("_exc", "type_name")
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+        self.type_name = type(exc).__name__
+
+    def matches(self, predicate) -> bool:
+        """``predicate(exc)``, for a decision Pyrite makes from the exception
+        (a class, a code), never for its text."""
+        return bool(predicate(self._exc))
+
+    def text(self, *, local: bool | None = None) -> str:
+        """The text for whoever is acting (``local``: as ``outside_text``).
+
+        A caller-request mark is not honoured: it named the caller of the
+        request the exception was made in, and this text is shown later,
+        perhaps to another. A KB mark is asked of the grant bound now."""
+        return outside_text(self._exc, already_logged=True, local=local, caller_marks=False)
+
+    def __str__(self) -> str:
+        return self.text()
+
+    def __repr__(self) -> str:
+        return f"HeldFault({self.type_name})"
+
+
+def held_fault(exc: BaseException) -> HeldFault:
+    """Keep ``exc`` for a later message (see ``HeldFault``)."""
+    return HeldFault(exc)
+
+
+#: Attributes a ``PyriteError`` carries for a caller, public by construction.
+#: The same name on any other exception is not Pyrite's (``UnicodeDecodeError.reason``,
+#: an HTTP library's ``reason``), so it is not read.
+PUBLIC_ATTRIBUTES: tuple[str, ...] = ("suggestion", "declared_types", "reason")
+
+
+def public_attribute(exc: BaseException, name: str):
+    """``exc.<name>`` when ``exc`` is a ``PyriteError`` and the attribute is public, else None."""
+    if name not in PUBLIC_ATTRIBUTES and name not in REFUSAL_FIELDS:
+        raise ValueError(f"{name!r} is not a public attribute")
+    if not isinstance(exc, PyriteError):
+        return None
+    return getattr(exc, name, None)
+
+
+def os_reason(exc: BaseException) -> str:
+    """The C library's text for ``exc``'s errno ("Permission denied"), else its
+    class name. Never the exception's own ``strerror``, which an ``OSError``
+    can be built with any text in (D5); the text for a code is the same for
+    every file and names none."""
+    import os
+
+    code = getattr(exc, "errno", None)
+    if isinstance(code, int):
+        return os.strerror(code)
+    return type(exc).__name__
 
 
 class PyriteError(Exception):
@@ -223,8 +367,12 @@ REFUSAL_FIELDS: tuple[str, ...] = ("candidate_kbs", "did_you_mean", "errors")
 
 
 def refusal_fields(exc: BaseException) -> dict:
-    """The ``REFUSAL_FIELDS`` ``exc`` carries, keyed by name (absent ones left out)."""
-    out = {}
+    """The ``REFUSAL_FIELDS`` ``exc`` carries, keyed by name (absent ones left out).
+
+    Only a ``PyriteError``'s: the same name on another exception is not Pyrite's."""
+    out: dict = {}
+    if not isinstance(exc, PyriteError):
+        return out
     for name in REFUSAL_FIELDS:
         value = getattr(exc, name, None)
         if value is not None:

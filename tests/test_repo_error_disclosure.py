@@ -24,6 +24,7 @@ import pytest
 
 from pyrite.config import AuthConfig, PyriteConfig, Settings
 from pyrite.services.git_service import GitService
+from tests._git_plans import allowed_remote_plan
 from pyrite.services.repo_service import RepoService
 from pyrite.storage.database import PyriteDB
 
@@ -131,7 +132,7 @@ def git_url_lookups_answered_directly(monkeypatch):
     is the clone/pull/push's. The rule still checks every URL string; its
     lookups are tested in tests/test_git_destinations_are_allowed.py."""
     monkeypatch.setattr(GitService, "_effective_url", staticmethod(lambda url, cwd=None: url))
-    monkeypatch.setattr(GitService, "_check_remote_urls", staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(GitService, "_remote_plan", staticmethod(allowed_remote_plan))
     monkeypatch.setattr(GitService, "_pull_remote", staticmethod(lambda path: "origin"))
 
 

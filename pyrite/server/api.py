@@ -180,23 +180,50 @@ class NobodyActingMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        from ..services.acting import acting_as, local_process
+        from ..services.acting import acting_as, local_process, read_grant
 
-        with acting_as(None), local_process(False):
+        with acting_as(None), local_process(False), read_grant(None):
             await self.app(scope, receive, send)
 
 
-async def bind_acting_account(request: Request) -> None:
+async def bind_acting_account(
+    request: Request,
+    config: PyriteConfig = Depends(get_config),
+    db: PyriteDB = Depends(get_db),
+) -> None:
     """Bind who this request acts for (`services.acting.acting_for`: the
     account, the operator, or nobody), for the write pipeline's rules that
     depend on the caller. On every `/api` route, after `verify_api_key`.
     Async on purpose: it runs in the request's own task, so the binding
     reaches the worker thread a sync endpoint runs in; a sync dependency's
-    would not."""
-    from ..services.acting import acting_for
+    would not.
+
+    Also binds the caller's read grants (`acting.read_grant`), asked only
+    when text quoting a KB's bytes is about to be shown (D4), and then
+    through `readable_kbs_for_user`, the one rule the routes apply."""
+    from ..services.acting import acting_for, bind_read_grant
     from ..services.acting import bind_acting_account as bind
 
-    bind(acting_for(get_principal(request)))
+    principal = get_principal(request)
+    bind(acting_for(principal))
+    if principal is None or principal.kind == "anonymous":
+        # An anonymous visitor reads no text quoted from a KB file, whatever
+        # the KB's default_role allows (maintainer decision on D4,
+        # 2026-11-16): the grant stays unbound, so it covers no KB.
+        return
+    readable: list[set[str] | None] = []
+
+    def may_read(kb_name: str) -> bool:
+        if not readable:
+            readable.append(
+                readable_kbs_for_user(
+                    config, db, principal.user_id, principal.role, scoped=principal.scoped
+                )
+            )
+        scope = readable[0]
+        return scope is None or kb_name in scope
+
+    bind_read_grant(may_read)
 
 
 def get_read_kb_service(

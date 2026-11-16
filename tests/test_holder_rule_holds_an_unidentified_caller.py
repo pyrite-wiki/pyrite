@@ -100,8 +100,16 @@ WRITERS = {
         KB, "pinned", "Pinned", "task", "body", assignee=OTHER
     ),
     "bulk_create_entries": lambda svc, _p: _bulk(svc),
-    "add_entry_from_file": lambda svc, p: svc.add_entry_from_file(KB, p),
+    # The CLI's `pyrite add` (the local process only), with nobody bound.
+    "add_entry_from_file": lambda svc, p: _local_add(svc, p),
 }
+
+
+def _local_add(svc, path):
+    from pyrite.services.acting import local_process
+
+    with local_process():
+        return svc.add_entry_from_file(KB, path)
 
 
 def _apply_set(svc):

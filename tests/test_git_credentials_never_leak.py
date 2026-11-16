@@ -24,6 +24,7 @@ import pytest
 
 from pyrite.services import git_service
 from pyrite.services.git_service import GitService
+from tests._git_plans import plan_for
 
 TOKEN = "ghp_SECRETTOKENVALUE0123456789"
 
@@ -65,7 +66,8 @@ def github_like(tmp_path, monkeypatch):
     cert, key = tmp_path / "c.pem", tmp_path / "k.pem"
     subprocess.run(
         ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key)]
-        + ["-out", str(cert), "-days", "2", "-subj", "/CN=127.0.0.1"],
+        + ["-out", str(cert), "-days", "2", "-subj", "/CN=127.0.0.1"]
+        + ["-addext", "subjectAltName=IP:127.0.0.1"],
         check=True,
         capture_output=True,
         timeout=60,
@@ -74,7 +76,10 @@ def github_like(tmp_path, monkeypatch):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     host = f"127.0.0.1:{server.server_address[1]}"
     monkeypatch.setattr(git_service, "_GITHUB_HOSTS", frozenset({"127.0.0.1"}))
-    monkeypatch.setenv("GIT_SSL_NO_VERIFY", "1")
+    # The test server's certificate is trusted as an operator's private CA
+    # is: by name, through a variable a network caller's git still gets
+    # (git_hardening.NETWORK_ENV_ALLOWLIST). GIT_SSL_NO_VERIFY is not carried.
+    monkeypatch.setenv("GIT_SSL_CAINFO", str(cert))
     # A user/system-style git config that names a credential helper, as a
     # macOS system config names osxkeychain. It answers `get` with a stale
     # credential and records every call, `store` included.
@@ -370,8 +375,7 @@ def _bind(local: bool):
 def test_credential_fill_for_a_network_caller_reads_no_account_source(account_sources, token):
     url = "https://127.0.0.1:9/o/r.git"
     with _bind(False):
-        creds = GitService._credentials(token, [url])
-    env = git_service._git_env({**git_service._NETWORK_GUARD_ENV, **creds.env}, config=creds.config)
+        env = git_service._network_git_env(plan_for(token, [url]))
     r = subprocess.run(
         ["git", "credential", "fill"],
         input="protocol=https\nhost=127.0.0.1:9\npath=o/r.git\n\n",

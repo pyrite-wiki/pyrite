@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 
 from pyrite.config import KBConfig, KBType
+from pyrite.services.acting import local_process
 from pyrite.exceptions import SchemaViolationError, ValidationError, refusal_fields
 from pyrite.services.kb_service import KBService, check_link_spec
 from tests._world import build_world
@@ -106,6 +107,7 @@ class TestPipelineRefusalsCarryRows:
     @pytest.mark.parametrize(
         ("frontmatter", "field"), [("title: Has no type\n", "type"), ("type: note\n", "title")]
     )
+    @pytest.mark.control(reason="unchanged for the local process, which the test now binds")
     def test_an_imported_file_names_the_frontmatter_key_it_lacks(
         self, event_kb, tmp_path, frontmatter, field
     ):
@@ -113,7 +115,7 @@ class TestPipelineRefusalsCarryRows:
         source = tmp_path / f"{field}.md"
         source.write_text(f"---\n{frontmatter}---\n\nBody\n", encoding="utf-8")
 
-        with pytest.raises(ValidationError) as caught:
+        with local_process(), pytest.raises(ValidationError) as caught:
             service.add_entry_from_file("ev", source)
 
         row = caught.value.errors[0]

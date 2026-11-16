@@ -205,6 +205,10 @@ class ExportService:
                 depth=None,
                 token=github_token,
                 allowed_hosts=allowed_hosts,
+                credentials=self.config.settings.git_credentials,
+                # The URL is the caller's: an operator entry serves it only
+                # through its url_prefixes (registered_remote is False).
+                proxy=self.config.settings.git_proxy,
             )
             if not success:
                 return {"success": False, "error": f"Clone failed: {msg}"}
@@ -224,7 +228,9 @@ class ExportService:
             if not commit_message:
                 commit_message = f"Export KB '{kb_name}': {result['entries_exported']} entries"
 
-            commit_ok, commit_result = GitService.commit(clone_path, commit_message)
+            commit_ok, commit_result = GitService.commit(
+                clone_path, commit_message, identity=self.config.settings.git_identity
+            )
             if not commit_ok:
                 return {
                     "success": False,
@@ -238,6 +244,10 @@ class ExportService:
                 branch=branch,
                 token=github_token,
                 allowed_hosts=allowed_hosts,
+                credentials=self.config.settings.git_credentials,
+                # The URL is the caller's: an operator entry serves it only
+                # through its url_prefixes (registered_remote is False).
+                proxy=self.config.settings.git_proxy,
             )
             if not push_ok:
                 return {"success": False, "error": push_msg}
@@ -291,7 +301,12 @@ class ExportService:
             raise PyriteError(f"KB '{kb_name}' is not in a git repository")
 
         success, result = GitService.commit(
-            kb.path, message, paths=paths, sign_off=sign_off, run_hooks=run_hooks
+            kb.path,
+            message,
+            paths=paths,
+            sign_off=sign_off,
+            run_hooks=run_hooks,
+            identity=self.config.settings.git_identity,
         )
 
         if success:
@@ -412,5 +427,19 @@ class ExportService:
         if not GitService.is_git_repo(kb.path):
             raise PyriteError(f"KB '{kb_name}' is not in a git repository")
 
-        success, msg = GitService.push(kb.path, remote=remote, branch=branch)
+        # Held to git_allowed_hosts and the transport rule for every caller;
+        # only the operator's own local process keeps an unrestricted push to
+        # the remote they configured (operator_push; ADR-0052 N2, D2).
+        success, msg = GitService.push(
+            kb.path,
+            remote=remote,
+            branch=branch,
+            allowed_hosts=self.config.settings.git_allowed_hosts,
+            credentials=self.config.settings.git_credentials,
+            kb_name=kb_name,
+            operator_push=True,
+            # A remote already configured in this registered KB's repository.
+            registered_remote=True,
+            proxy=self.config.settings.git_proxy,
+        )
         return {"success": success, "message": msg}

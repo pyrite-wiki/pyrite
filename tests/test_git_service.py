@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrite.services.git_service import GitService
+from tests._git_plans import allowed_remote_plan, plan_for
 
 
 class TestParseGithubUrl:
@@ -38,41 +39,37 @@ class TestParseGithubUrl:
 
 
 class TestCredentialsAreOfferedOnlyToGitHub:
-    """`_credentials` hands git a token only for https GitHub URLs."""
+    """`_network_plan` hands git a caller's token only for https GitHub URLs."""
 
     def test_https_github_gets_a_scoped_helper(self):
-        creds = GitService._credentials("mytoken", ["https://github.com/org/repo.git"])
-        assert creds.env["PYRITE_GIT_TOKEN"] == "mytoken"
-        config = dict(creds.config)
+        plan = plan_for("mytoken", ["https://github.com/org/repo.git"])
+        assert plan.env["PYRITE_GIT_TOKEN"] == "mytoken"
+        config = dict(plan.config)
         assert config["credential.helper"] == ""  # configured helpers reset
         assert "credential.https://github.com.helper" in config
-        assert "mytoken" not in str(creds.config)
-
-    # No token offered: for a network caller (the default, nothing bound) the
-    # server account's helpers are still reset; the local operator keeps them.
-    # (and the account's other sources are closed: see
-    # tests/test_git_credentials_never_leak.py, "every credential source").
-    _RESET = (("credential.helper", ""), ("core.askPass", ""))
+        assert "mytoken" not in str(plan.config)
 
     def test_a_non_https_url_gets_nothing(self):
-        creds = GitService._credentials("mytoken", ["git@github.com:org/repo.git"])
-        assert "PYRITE_GIT_TOKEN" not in creds.env and creds.config == self._RESET
+        """An ssh remote with no operator ssh key is refused outright."""
+        assert plan_for("mytoken", ["git@github.com:org/repo.git"]) is None
 
+    @pytest.mark.control(
+        reason="already held; round 2 pins the network plan's exact config instead of a looser check"
+    )
     def test_no_token_gets_nothing(self):
-        creds = GitService._credentials(None, ["https://github.com/org/repo.git"])
-        assert "PYRITE_GIT_TOKEN" not in creds.env and creds.config == self._RESET
-
-    @pytest.mark.control(reason="the operator keeps their helpers, as before")
-    def test_no_token_for_the_local_operator_leaves_their_helpers(self):
         from pyrite.services.acting import local_process
 
-        with local_process(True):
-            creds = GitService._credentials(None, ["https://github.com/org/repo.git"])
-        assert creds.env == {} and creds.config == ()
+        with local_process(False):
+            plan = plan_for(None, ["https://github.com/org/repo.git"])
+        assert "PYRITE_GIT_TOKEN" not in plan.env
+        # A network caller's plan with no credential holds exactly one setting:
+        # http.proxy reset to none (no git_proxy).
+        assert plan.config == (("http.proxy", ""),)
+        assert plan.credential == "none"
 
     def test_one_foreign_url_among_several_withholds_it(self):
         urls = ["https://github.com/o/r", "https://evil.example/o/r"]
-        assert "PYRITE_GIT_TOKEN" not in GitService._credentials("mytoken", urls).env
+        assert "PYRITE_GIT_TOKEN" not in plan_for("mytoken", urls).env
 
 
 class TestSanitizeOutput:
@@ -96,7 +93,7 @@ class TestClone:
         """These tests are about the git command; the host rule's own calls to
         git are tested in tests/test_git_destinations_are_allowed.py."""
         monkeypatch.setattr(GitService, "_effective_url", staticmethod(lambda url, cwd=None: url))
-        monkeypatch.setattr(GitService, "_check_remote_urls", staticmethod(lambda *a, **k: None))
+        monkeypatch.setattr(GitService, "_remote_plan", staticmethod(allowed_remote_plan))
         monkeypatch.setattr(GitService, "_pull_remote", staticmethod(lambda path: "origin"))
 
     @patch("pyrite.services.git_service.subprocess.run")
@@ -145,7 +142,7 @@ class TestPull:
         """These tests are about the git command; the host rule's own calls to
         git are tested in tests/test_git_destinations_are_allowed.py."""
         monkeypatch.setattr(GitService, "_effective_url", staticmethod(lambda url, cwd=None: url))
-        monkeypatch.setattr(GitService, "_check_remote_urls", staticmethod(lambda *a, **k: None))
+        monkeypatch.setattr(GitService, "_remote_plan", staticmethod(allowed_remote_plan))
         monkeypatch.setattr(GitService, "_pull_remote", staticmethod(lambda path: "origin"))
 
     @patch("pyrite.services.git_service.subprocess.run")
@@ -454,17 +451,15 @@ class TestGitHubHostMatching:
 
     @pytest.mark.parametrize("url", HOSTILE)
     def test_token_never_offered_for_non_github_host(self, url):
-        assert "PYRITE_GIT_TOKEN" not in GitService._credentials("SECRET", [url]).env
+        plan = plan_for("SECRET", [url])
+        assert plan is None or "PYRITE_GIT_TOKEN" not in plan.env
 
     @pytest.mark.parametrize("url", HOSTILE)
     def test_non_github_host_does_not_parse(self, url):
         assert GitService.parse_github_url(url) is None
 
     def test_http_scheme_never_gets_token(self):
-        assert (
-            "PYRITE_GIT_TOKEN"
-            not in GitService._credentials("SECRET", ["http://github.com/org/repo"]).env
-        )
+        assert plan_for("SECRET", ["http://github.com/org/repo"]) is None
 
     def test_www_and_case_variants_still_work(self):
         assert GitService.parse_github_url("https://GitHub.com/org/repo") == ("org", "repo")
