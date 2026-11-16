@@ -276,6 +276,20 @@ CORE_TYPE_METADATA: dict[str, dict[str, Any]] = {
 }
 
 
+def valid_status_list(raw: Any) -> list[str] | None:
+    """``raw`` as a list of status names, or ``None`` if it is not one.
+
+    A list (or tuple) whose every item is a non-blank string. A bare string is
+    a wrong shape, not one status: it is never read as letters. ``[]`` is valid
+    (a declaration that nothing is settled).
+    """
+    if not isinstance(raw, list | tuple):
+        return None
+    if not all(isinstance(item, str) and item.strip() for item in raw):
+        return None
+    return list(raw)
+
+
 def resolve_type_metadata(type_name: str, kb_schema: KBSchema | None = None) -> dict[str, Any]:
     """Resolve type metadata using 4-layer precedence.
 
@@ -316,7 +330,7 @@ def resolve_type_metadata(type_name: str, kb_schema: KBSchema | None = None) -> 
     if type_name == "task":
         from ..models.task import TASK_TYPE_METADATA
 
-        result["settled_statuses"] = list(TASK_TYPE_METADATA["settled_statuses"])
+        result["settled_statuses"] = valid_status_list(TASK_TYPE_METADATA["settled_statuses"]) or []
 
     # Layer 2: Plugin metadata (overrides core)
     try:
@@ -337,8 +351,17 @@ def resolve_type_metadata(type_name: str, kb_schema: KBSchema | None = None) -> 
                 result["goals"] = pm["goals"]
             if pm.get("evaluation_rubric"):
                 result["evaluation_rubric"] = list(pm["evaluation_rubric"])
-            if pm.get("settled_statuses"):
-                result["settled_statuses"] = list(pm["settled_statuses"])
+            if pm.get("settled_statuses") is not None:
+                declared = valid_status_list(pm["settled_statuses"])
+                if declared is None:
+                    logger.warning(
+                        "Plugin type metadata '%s.settled_statuses' must be a list of status "
+                        "names; got %r. Ignored.",
+                        type_name,
+                        pm["settled_statuses"],
+                    )
+                else:
+                    result["settled_statuses"] = declared
     except Exception:
         logger.warning("Failed to load plugin type metadata for %s", type_name, exc_info=True)
 
@@ -359,8 +382,11 @@ def resolve_type_metadata(type_name: str, kb_schema: KBSchema | None = None) -> 
             result["goals"] = ts.goals
         if ts.evaluation_rubric:
             result["evaluation_rubric"] = list(ts.evaluation_rubric)
-        if ts.settled_statuses:
-            result["settled_statuses"] = list(ts.settled_statuses)
+        # [] is a declaration (this KB's type has no settled statuses); None is
+        # not declared; a wrong shape is ignored here and reported by qa validate.
+        declared = valid_status_list(ts.settled_statuses)
+        if declared is not None:
+            result["settled_statuses"] = declared
 
     return result
 

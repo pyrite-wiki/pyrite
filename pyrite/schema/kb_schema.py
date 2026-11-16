@@ -111,7 +111,7 @@ class KBSchema:
                     guidelines=type_data.get("guidelines", ""),
                     goals=type_data.get("goals", ""),
                     evaluation_rubric=type_data.get("evaluation_rubric", []),
-                    settled_statuses=list(type_data.get("settled_statuses") or []),
+                    settled_statuses=type_data.get("settled_statuses"),
                     edge_type=type_data.get("edge_type", False),
                     endpoints=endpoints,
                     state_machine=type_data.get("state_machine"),

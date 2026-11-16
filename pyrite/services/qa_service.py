@@ -69,10 +69,13 @@ _WORD_SPLIT = re.compile(r"[\W_]+")
 
 
 def _fold(value: str) -> str:
-    """Casefold, then drop accents: NFKD, remove combining marks, recompose (NFC).
+    """Casefold, then drop accents: NFKD, remove every combining mark, recompose (NFC).
 
-    ``Élection`` and ``election`` agree; scripts without case or accents (CJK,
-    Hangul) pass through unchanged.
+    ``Élection`` and ``election`` agree. Supported: scripts whose words are runs
+    of letters (Latin, Cyrillic, Greek, CJK ideographs, Hangul). Not supported:
+    scripts that write vowels or voicing as combining marks (Devanagari, Thai,
+    the kana voicing marks), where the marks are removed, so two different words
+    can fold alike. A proper tokeniser for them is a follow-up.
     """
     decomposed = unicodedata.normalize("NFKD", (value or "").casefold())
     kept = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
@@ -80,7 +83,7 @@ def _fold(value: str) -> str:
 
 
 def _duplicate_tokens(value: str, prefixes: tuple[str, ...] = ()) -> set[str]:
-    """Word tokens in any script, folded by ``_fold``, with at most one matching
+    """Word tokens (see ``_fold`` for the scripts supported), with at most one matching
     id prefix removed. A word is a run of Unicode word characters; text in a
     script written without spaces is one token per run."""
     text = _fold(value)
@@ -274,6 +277,7 @@ class QAService:
             # Per-entry schema pass (only if kb.yaml exists): the kb.yaml itself,
             # then each entry, its typed attributes read from its file
             self._check_rubric_action_config(issues, kb_name)
+            self._check_settled_statuses_config(issues, kb_name)
             self._check_schema_retypes_core_fields(issues, kb_name)
             self._check_schema_all(issues, kb_name, sources)
 
@@ -326,7 +330,11 @@ class QAService:
         quadratic output; a common word alone does not expand every pair.
         Returned pairs are sorted by score and identity, so two runs agree.
         """
-        if not (0.0 <= threshold <= 1.0):  # also false for NaN
+        if (
+            isinstance(threshold, bool)
+            or not isinstance(threshold, int | float)
+            or not (0.0 <= threshold <= 1.0)  # also false for NaN
+        ):
             raise ValidationError(f"threshold must be a number from 0 to 1, got {threshold!r}")
         params: dict[str, Any] = {"entry_type": entry_type}
         scope = kb_names_clause("kb_name", readable_kbs, params)
@@ -2019,6 +2027,54 @@ class QAService:
                         "message": f"kb.yaml {key} must be warn or fail; got {value!r}",
                     }
                 )
+
+    def _check_settled_statuses_config(self, issues: list[dict[str, Any]], kb_name: str) -> None:
+        """kb.yaml ``types.<name>.settled_statuses``: a list of status names, each
+        in the type's own ``status`` options when kb.yaml declares them (#934)."""
+        from ..schema.core_types import valid_status_list
+
+        config = self.config.get_kb(kb_name)
+        schema = config.kb_schema if config else None
+        if schema is None:
+            return
+        for name, kind in schema.types.items():
+            raw = kind.settled_statuses
+            if raw is None:
+                continue
+            path = f"types.{name}.settled_statuses"
+            declared = valid_status_list(raw)
+            if declared is None:
+                issues.append(
+                    {
+                        "entry_id": "",
+                        "kb_name": kb_name,
+                        "rule": "config_error",
+                        "severity": "error",
+                        "field": path,
+                        "message": f"kb.yaml {path} must be a list of status names; got {raw!r}",
+                    }
+                )
+                continue
+            status_field = kind.fields.get("status")
+            options = [str(o) for o in (status_field.options or [])] if status_field else []
+            if not options:
+                continue
+            known = {o.strip().lower() for o in options}
+            for status in declared:
+                if status.strip().lower() not in known:
+                    issues.append(
+                        {
+                            "entry_id": "",
+                            "kb_name": kb_name,
+                            "rule": "config_error",
+                            "severity": "warning",
+                            "field": path,
+                            "message": (
+                                f"kb.yaml {path} names {status!r}, which is not in the type's "
+                                f"status options ({', '.join(options)})"
+                            ),
+                        }
+                    )
 
     def _get_rubric_action(self, kb_name: str, item: dict[str, Any] | None = None) -> str:
         """Only a named item action overrides the KB's rubric_action (#1166)."""

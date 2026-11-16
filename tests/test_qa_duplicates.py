@@ -469,3 +469,11 @@ def test_a_type_declared_only_in_kb_yaml_declares_settled_statuses(dup_setup, tm
     result = dup_setup["qa"].find_duplicates("ticket", readable_kbs=UNSCOPED)
 
     assert {s["id"] for p in result["pairs"] for s in (p["a"], p["b"])} == {"t-b", "t-c"}
+
+
+@pytest.mark.parametrize("value", ["0.5", None, True, [0.5]])
+def test_service_refuses_a_threshold_that_is_not_a_number(dup_setup, value):
+    from pyrite.exceptions import ValidationError
+
+    with pytest.raises(ValidationError):
+        dup_setup["qa"].find_duplicates("task", readable_kbs=UNSCOPED, threshold=value)
